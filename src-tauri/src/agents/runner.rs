@@ -1,4 +1,6 @@
-use super::{fixture_step, policy::*, Lease, StepResult};
+#[cfg(test)]
+use super::fixture_step;
+use super::{policy::*, Lease, StepResult};
 use crate::db::Database;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -10,7 +12,9 @@ use tokio::sync::Notify;
 pub(crate) trait Executor: Send + Sync {
     async fn execute(&self, lease: &Lease) -> Result<StepResult, ()>;
 }
+#[cfg(test)]
 struct Fixture;
+#[cfg(test)]
 #[async_trait::async_trait]
 impl Executor for Fixture {
     async fn execute(&self, lease: &Lease) -> Result<StepResult, ()> {
@@ -40,7 +44,12 @@ impl Runner {
             tauri::async_runtime::spawn(async move {
                 while !worker.stopped.load(Ordering::SeqCst) {
                     match worker
-                        .tick(&Fixture, || chrono::Utc::now().timestamp())
+                        .tick(
+                            &super::service::Production {
+                                database: worker.database.clone(),
+                            },
+                            || chrono::Utc::now().timestamp(),
+                        )
                         .await
                     {
                         Ok(true) => continue,
@@ -80,6 +89,11 @@ impl Runner {
         let db = self.database.clone();
         let owner = self.owner.clone();
         let now = clock();
+        let cleanup = db.clone();
+        tokio::task::spawn_blocking(move || cleanup.expire_research_evidence(now))
+            .await
+            .map_err(|_| "Research cleanup interrupted".to_string())?
+            .map_err(|e| e.to_string())?;
         let lease = tokio::task::spawn_blocking(move || db.claim_agent_run(&owner, now))
             .await
             .map_err(|e| e.to_string())?
@@ -99,7 +113,28 @@ impl Runner {
             self.shutdown().await?;
             return Ok(false);
         }
+        let db_check = self.database.clone();
+        let lease_check = lease.clone();
+        let wait_started = tokio::time::Instant::now();
+        let remaining = (lease.run.lease_until.unwrap_or(now) - now).max(0) as u64;
+        let check_current = async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(CANCELLATION_MILLIS)).await;
+                let db = db_check.clone();
+                let l = lease_check.clone();
+                let elapsed = wait_started.elapsed().as_secs();
+                let valid = tokio::task::spawn_blocking(move || {
+                    db.agent_lease_current(&l, now).unwrap_or(false) && elapsed < remaining
+                })
+                .await
+                .unwrap_or(false);
+                if !valid {
+                    break;
+                }
+            }
+        };
         let result = tokio::select! {
+            _=check_current=>return Ok(false),
             result=executor.execute(&lease)=>result,
             _=interrupted=> { self.shutdown().await?;return Ok(false); }
         };
@@ -110,10 +145,24 @@ impl Runner {
         let result = result.unwrap_or(StepResult::TransientFailure);
         let db = self.database.clone();
         let now = clock();
-        tokio::task::spawn_blocking(move || db.finish_agent_step(&lease, result, now))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())
+        tokio::task::spawn_blocking(move || {
+            let finished = db.finish_agent_step(&lease, result, now);
+            if finished.is_err()
+                && db
+                    .agent_workflow(&lease.run.task_id)
+                    .is_ok_and(|w| w == RESEARCH_WORKFLOW)
+            {
+                return db.finish_agent_step(
+                    &lease,
+                    StepResult::Fail("response_invalid".into()),
+                    now,
+                );
+            }
+            finished
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
     }
 }
 

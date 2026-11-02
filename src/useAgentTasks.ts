@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mailClient } from "./data/client";
-import type { AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "./domain";
+import type { AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "./domain";
 import { errorMessage } from "./errors";
 
 export const AGENT_REFRESH_MS = 2000;
@@ -77,6 +77,7 @@ export function useAgentTasks() {
     begin: (seed: AgentStart) => { setStart(seed); setSelectedId(null); }, setStart,
     enable: (value: boolean) => mutate(async () => { await mailClient.setAgentRunnerEnabled(value); const next = await mailClient.listAgentTasks(undefined, true); if (alive.current) { setEnabled(value); accept(next, false); setLoaded(true); initialized.current = true; } }),
     create: (request: CreateAgentTaskRequest) => mutate(async () => { const d = await mailClient.createAgentTask(request); if (alive.current) { setSelectedId(d.task.id); setStart(null); } return d; }),
+    createResearch: (request: AgentResearchRequest) => mutate(async () => { const d = await mailClient.createAgentResearchTask(request); if (alive.current) { setSelectedId(d.task.id); setStart(null); } return d; }),
     control,
     remove: (id: string) => mutate(() => mailClient.deleteAgentTask(id), id),
     markRead: useCallback((id: string, generation: number, turnCount: number, artifactCount: number) => mutate(() => mailClient.markAgentTaskRead(id, generation, turnCount, artifactCount)), [mutate]),

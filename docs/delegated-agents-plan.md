@@ -1,9 +1,9 @@
 # Delegated agents and invitation research
 
-**Status:** Phases 0–2 implemented: offline contracts, fixture runner, and
-interactive Agents preview. Phases 3–5 remain proposed.
-The preview runs a local demonstration only; real research tools remain unavailable.
-Live-service release gates remain explicit.
+**Status:** Phases 0–3 implemented: offline contracts, durable runner, interactive
+workspace, and explicitly configured read-only research. Phases 4–5 remain proposed.
+Real jobs require separate keys, storage eligibility, a successful explicit connection
+check, and per-task disclosure. Live-account quality validation remains explicit.
 **Planned:** 2026-11-02 against 0.194.4.
 
 **Phase 0 validated:** 2026-11-02 against 0.194.5. See the
@@ -384,6 +384,15 @@ Exit: the complete delegate/leave/return/answer/refine flow works under automate
 coverage without conflating personal task status or email unread state.
 
 ### 3. Add real read-only research
+
+**Implemented for 0.198.0.** See the [phase-3 record](agent-integrations/phase-3-research.md).
+Native Anthropic, Exa, and public-page adapters run under per-task grants and
+cumulative reservations. Retrieved quotes are required for publication; explicit
+revisions preserve earlier reports. Setup is disabled by default and separate
+from existing AI settings. Optional mailbox search and routing remain unavailable.
+The phase-3 workflow sends the user's objective and follow-up text, not the linked
+email body; selected-message snapshots and invitation-specific evaluation remain
+phase 4. No live account or paid-call certification is claimed by automated tests.
 
 Implement the validated model loop, search and text-fetch tools, source store,
 usage reservations, and explicit disclosure/settings. Add optional account-scoped

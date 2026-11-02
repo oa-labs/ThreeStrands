@@ -5,7 +5,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
-- Explore delegated work in the Agents preview: start a local demonstration from an email or personal task, answer questions, discuss the result, and review saved report versions. Web research is not connected yet; the demonstration makes no external requests.
+- Delegate read-only web research in **Agents** with separately configured Anthropic and Exa keys: review public search subjects, answer questions, discuss findings, and save report revisions with sources. Research has shared usage limits and explicit data-sharing choices; the local demonstration remains available without external requests.
 
 ### Improved
 - Click an event's address in event details, invitation cards, or meeting suggestions to open it in Google Maps.

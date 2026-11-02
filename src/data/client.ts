@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
+import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
@@ -106,6 +106,12 @@ export interface MailClient extends CorrespondenceClient {
   markAgentTaskRead(id: string, generation: number, turnCount: number, artifactCount: number): Promise<AgentDetail>;
   interactAgentTask(id: string, message: string, mode: "discuss" | "revise"): Promise<AgentDetail>;
   linkAgentTask(id: string, linkedTaskId: string | null): Promise<AgentDetail>;
+  agentResearchSettings(): Promise<AgentResearchSettings>;
+  setAgentResearchSettings(config: AgentResearchConfig): Promise<void>;
+  setAgentResearchKey(provider: "model" | "search", key: string): Promise<void>;
+  checkAgentResearchConnection(): Promise<void>;
+  createAgentResearchTask(request: AgentResearchRequest): Promise<AgentDetail>;
+  openAgentResearchSource(id: string, sourceId: string): Promise<void>;
   agentRunnerEnabled(): Promise<boolean>;
   setAgentRunnerEnabled(enabled: boolean): Promise<void>;
   createAgentTask(request: CreateAgentTaskRequest): Promise<AgentDetail>;
@@ -589,6 +595,12 @@ const tauriClient: MailClient = {
   markAgentTaskRead: (id, generation, turnCount, artifactCount) => complete("mark_agent_task_read", { id, generation, turnCount, artifactCount }),
   interactAgentTask: (id, message, mode) => complete("interact_agent_task", { id, message, mode }),
   linkAgentTask: (id, linkedTaskId) => complete("link_agent_task", { id, linkedTaskId }),
+  agentResearchSettings: () => read("agent_research_settings"),
+  setAgentResearchSettings: (config) => complete("set_agent_research_settings", { config }),
+  setAgentResearchKey: (provider, key) => complete("set_agent_research_key", { provider, key }),
+  checkAgentResearchConnection: () => complete("check_agent_research_connection"),
+  createAgentResearchTask: (request) => complete("create_agent_research_task", { request }),
+  openAgentResearchSource: (id, sourceId) => complete("open_agent_research_source", { id, sourceId }),
   agentRunnerEnabled: () => read("agent_runner_enabled"),
   setAgentRunnerEnabled: (enabled) => complete("set_agent_runner_enabled", { enabled }),
   createAgentTask: (request) => complete("create_agent_task", { request }),

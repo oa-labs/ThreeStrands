@@ -2894,6 +2894,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn research_jobs_evidence_and_configuration_stay_out_of_settings_transfer() {
+        let db=Database::open_memory();db.adopt_account("current@example.com").unwrap();
+        let prefs=current_fixture_payload().preferences;
+        let before=build_export_payload(&db,prefs.clone()).unwrap();
+        db.set_agent_runner_enabled(true,0).unwrap();
+        db.set_research_config(&crate::agents::research::ResearchConfig {enabled:true,search_enabled:true,persistence_basis:"Private account agreement marker".into(),verified:false},true,0).unwrap();
+        db.create_research_task(&crate::agents::research::ResearchRequest {task:crate::agents::CreateAgentTask {account_id:"current@example.com".into(),objective:"Private research objective".into(),source_thread_id:None,linked_task_id:None,workflow:crate::agents::policy::RESEARCH_WORKFLOW.into()},subjects:vec!["Public Show".into()],consent:true},0).unwrap();
+        let after=build_export_payload(&db,prefs).unwrap();
+        let normalized=|p:TransferPayload| {let mut v=serde_json::to_value(p).unwrap();v["exportedAt"]=serde_json::Value::Null;v};
+        assert_eq!(normalized(before),normalized(after));
+    }
+
     /// Regenerates only `v5-current`. Run deliberately, after freezing the
     /// previous file (see `this_build_still_exports_the_current_fixture_bytes`):
     /// `cargo test --lib transfer::tests::regenerate_current_settings_transfer_fixture -- --ignored`.

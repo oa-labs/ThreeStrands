@@ -1280,13 +1280,20 @@ export type SystemContactsStatus = {
   contactCount: number;
 };
 
-/** Device-local delegated work; v1 executes only the labeled fixture workflow.
+/** Device-local delegated work; real research requires separate setup and consent.
  * Times are UTC epoch seconds, matching native leases and the injected clock. */
 export type AgentRunState = "queued" | "running" | "waiting_for_input" | "paused" | "completed" | "failed" | "cancelled";
 export type AgentTaskControl = "pause" | "resume" | "retry" | "cancel" | "archive" | "unarchive" | "mark_read";
-export type CreateAgentTaskRequest = { accountId: string; objective: string; sourceThreadId?: string | null; linkedTaskId?: string | null; workflow: "fixture_research_v1" };
-export type AgentTask = { id: string; accountId: string; objective: string; sourceThreadId: string | null; linkedTaskId: string | null; workflow: "fixture_research_v1"; revision: number; createdAt: number; archived: boolean; unread: boolean };
+export type CreateAgentTaskRequest = { accountId: string; objective: string; sourceThreadId?: string | null; linkedTaskId?: string | null; workflow: "fixture_research_v1" | "web_research_v1" };
+export type AgentTask = { id: string; accountId: string; objective: string; sourceThreadId: string | null; linkedTaskId: string | null; workflow: "fixture_research_v1" | "web_research_v1"; revision: number; createdAt: number; archived: boolean; unread: boolean };
 export type AgentRun = { id: string; taskId: string; state: AgentRunState; reason: string | null; generation: number; checkpoint: number; owner: string | null; leaseUntil: number | null; startedAt: number | null; notBefore: number; dispatches: number; attempts: number; activeSeconds: number; questionId: string | null };
 export type AgentTurn = { id: string; role: "user" | "assistant"; text: string; questionId: string | null; answerTo: string | null; createdAt: number };
-export type AgentArtifact = { id: string; version: number; kind: "fixture_report"; body: string; notResearched: true; createdAt: number };
-export type AgentDetail = { task: AgentTask; run: AgentRun; turns: AgentTurn[]; artifacts: AgentArtifact[] };
+export type AgentArtifact = { id: string; version: number; kind: "fixture_report" | "research_report"; body: string; notResearched: boolean; createdAt: number };
+export type AgentDetail = { task: AgentTask; run: AgentRun; turns: AgentTurn[]; artifacts: AgentArtifact[]; research?: AgentResearchSummary | null };
+
+export type AgentResearchConfig = { enabled: boolean; searchEnabled: boolean; persistenceBasis: string; verified: boolean };
+export type AgentResearchSettings = { policy?: typeof import("../docs/agent-integrations/contract-v1.json"); config: AgentResearchConfig; modelKeyConfigured: boolean; searchKeyConfigured: boolean };
+export type AgentResearchRequest = { task: CreateAgentTaskRequest; subjects: string[]; consent: boolean };
+export type AgentResearchSource = { id: string; url: string; title: string; excerpt: string; kind: "page" | "search_snippet"; retrievedAt: number };
+export type AgentResearchUsage = { modelCalls: number; countCalls: number; searchCalls: number; pageCalls: number; reservedInput: number; reservedOutput: number; inputTokens: number; outputTokens: number; unknownUsage: number; unknownSearchCost: number; searchCostUsd: number | null };
+export type AgentResearchSummary = { citations: Record<string, string[]>; sources: AgentResearchSource[]; usage: AgentResearchUsage; subjects: string[] };

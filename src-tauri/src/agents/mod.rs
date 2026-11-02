@@ -1,8 +1,11 @@
-//! Durable, device-local delegated work. Phase 1 runs only a labeled fixture
-//! workflow; no model, network, credentials, or personal-task mutations.
+//! Durable, device-local delegated work with a labeled fixture and explicitly
+//! configured read-only research. Native policy owns dispatch and publication.
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod policy;
+pub(crate) mod research;
+pub(crate) mod transport;
+pub(crate) mod service;
 mod runner;
 pub(crate) use runner::Runner;
 
@@ -104,6 +107,7 @@ pub(crate) struct AgentDetail {
     pub run: AgentRun,
     pub turns: Vec<AgentTurn>,
     pub artifacts: Vec<AgentArtifact>,
+    pub research: Option<research::ResearchSummary>,
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +122,10 @@ pub(crate) enum StepResult {
     EvidenceCollected,
     Publish,
     TransientFailure,
+    Research(research::ResearchStep),
+    Pause(String),
+    Fail(String),
+    Retry(u64),
 }
 
 /// Deterministic fixture. The question is asked before an independent evidence

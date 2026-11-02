@@ -19,7 +19,7 @@ function Harness() {
 async function start() {
   fireEvent.click(await screen.findByRole("button", { name: "New delegated task" }));
   fireEvent.click(screen.getByRole("button", { name: "Enable local demonstration" }));
-  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Local demonstration enabled" })).toBeChecked());
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Delegated work enabled" })).toBeChecked());
   fireEvent.change(screen.getByRole("textbox", { name: "What would you like to find out?" }), { target: { value: "Evaluate the podcast invitation" } });
   fireEvent.click(screen.getByRole("button", { name: "Start demonstration" }));
   await screen.findByRole("article", { name: "Delegated task details" });
@@ -68,8 +68,8 @@ describe("delegated workspace", () => {
     render(<Harness />);
     fireEvent.click(await screen.findByRole("button", { name: "New delegated task" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Work" }), { target: { value: "web" } });
-    expect(screen.getByRole("button", { name: "Start demonstration" })).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("Web research is not available yet");
+    expect(screen.getByRole("button", { name: "Start research" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Web research is not configured");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" })); await start();
     vi.mocked(mailClient.answerAgentQuestion).mockRejectedValueOnce(new Error("Offline test failure"));
     fireEvent.change(screen.getByRole("textbox", { name: "Your answer" }), { target: { value: "Sales" } });
@@ -106,4 +106,42 @@ describe("delegated workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
     await screen.findByText("This task finished without a report.");
   });
+});
+
+describe("real research entry",()=> {
+  afterEach(()=>vi.restoreAllMocks());
+  it("requires reviewed public subjects and consent before sending an objective to native research",async()=> {
+    const client=createDemoClient(dataset);
+    await client.setAgentRunnerEnabled(true);
+    for(const key of ["agentRunnerEnabled","listAgentTasks","listTasks"] as const) vi.spyOn(mailClient,key).mockImplementation(client[key] as never);
+    vi.spyOn(mailClient,"agentResearchSettings").mockResolvedValue({config:{enabled:true,searchEnabled:true,persistenceBasis:"Applicable API agreement",verified:true},modelKeyConfigured:true,searchKeyConfigured:true});
+    const d=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Check the show",workflow:"fixture_research_v1"});
+    const create=vi.spyOn(mailClient,"createAgentResearchTask").mockResolvedValue({...d,task:{...d.task,workflow:"web_research_v1"}});
+    render(<Harness />);
+    fireEvent.click(await screen.findByRole("button",{name:"New delegated task"}));
+    fireEvent.change(screen.getByRole("combobox",{name:"Work"}),{target:{value:"web"}});
+    fireEvent.change(screen.getByRole("textbox",{name:"What would you like to find out?"}),{target:{value:"Assess audience fit"}});
+    expect(screen.getByText(/Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic/)).toBeVisible();
+    const start=screen.getByRole("button",{name:"Start research"});expect(start).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox",{name:"Public search subjects (one per line)"}),{target:{value:"Example Podcast\nExample Host"}});
+    expect(start).toBeDisabled();expect(create).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("checkbox",{name:/I reviewed these public subjects/}));
+    await waitFor(()=>expect(start).toBeEnabled());fireEvent.click(start);
+    await waitFor(()=>expect(create).toHaveBeenCalledWith({task:expect.objectContaining({workflow:"web_research_v1",objective:"Assess audience fit"}),subjects:["Example Podcast","Example Host"],consent:true}));
+  });
+  it("keeps each report's retrieved sources separate and opens only native source IDs",async()=> {
+    const client=createDemoClient(dataset);await client.setAgentRunnerEnabled(true);
+    const d=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Review sourced reports",workflow:"fixture_research_v1"});
+    d.task.workflow="web_research_v1";d.run.state="completed";d.run.questionId=null;
+    d.artifacts=[{id:"v1",version:1,kind:"research_report",body:"Old <img src=x onerror=alert(1)> report",notResearched:false,createdAt:1},{id:"v2",version:2,kind:"research_report",body:"Second report",notResearched:false,createdAt:2}];
+    d.research={subjects:["Public Show"],usage:{modelCalls:2,countCalls:2,searchCalls:1,pageCalls:1,reservedInput:100,reservedOutput:100,inputTokens:100,outputTokens:100,unknownUsage:0,unknownSearchCost:0,searchCostUsd:null},citations:{v1:["s1"],v2:["s2"]},sources:[{id:"s1",url:"https://example.com/first",title:"Old source",excerpt:"First evidence",kind:"search_snippet",retrievedAt:1},{id:"s2",url:"https://example.net/second",title:"New source",excerpt:"Second evidence",kind:"page",retrievedAt:2}]};
+    vi.spyOn(mailClient,"agentRunnerEnabled").mockResolvedValue(true);vi.spyOn(mailClient,"listAgentTasks").mockResolvedValue([d]);vi.spyOn(mailClient,"listTasks").mockResolvedValue([]);
+    const open=vi.spyOn(mailClient,"openAgentResearchSource").mockResolvedValue();
+    render(<Harness />);fireEvent.click(await screen.findByRole("button",{name:/Review sourced reports/}));
+    expect(screen.getByRole("button",{name:"New source"})).toBeVisible();expect(screen.queryByRole("button",{name:"Old source"})).toBeNull();expect(open).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("combobox",{name:"Report version"}),{target:{value:"v1"}});
+    expect(screen.queryByRole("button",{name:"New source"})).toBeNull();expect(screen.getByText("Old <img src=x onerror=alert(1)> report")).toBeVisible();expect(document.querySelector(".agent-report-body img")).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"Old source"}));expect(open).toHaveBeenCalledWith(d.task.id,"s1");
+  });
+
 });

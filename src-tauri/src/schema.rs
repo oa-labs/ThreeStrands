@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 95;
+pub(crate) const LATEST_VERSION: i64 = 96;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1056,6 +1056,12 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
                 id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
                 version INTEGER NOT NULL, record_json TEXT NOT NULL, UNIQUE(task_id,version));").map_err(error)?;
     }
+    if version < 96 {
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS agent_research (
+            task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id) ON DELETE CASCADE,
+            expires_at INTEGER, record_json TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS agent_evidence_expiry ON agent_research(expires_at);").map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1340,6 +1346,8 @@ mod tests {
 
     /// Objects each migration above the v74 baseline adds, in `schema_objects` form.
     const ABOVE_BASELINE_OBJECTS: &[&str] = &[
+        "table:agent_research",
+        "index:agent_evidence_expiry",
         "table:agent_tasks",
         "table:agent_runs",
         "table:agent_turns",

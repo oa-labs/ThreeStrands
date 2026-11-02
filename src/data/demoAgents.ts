@@ -1,3 +1,4 @@
+import researchPolicy from "../../docs/agent-integrations/contract-v1.json";
 import type { Account, AgentDetail, AgentTaskControl, CreateAgentTaskRequest, Thread, ThreadTask } from "../domain";
 
 /** In-memory preview of phase-1 fixture work. Never calls external services.
@@ -42,6 +43,12 @@ export function createDemoAgents(context: () => { accounts: Account[]; threads: 
     d.run.state = "completed"; d.run.checkpoint = 3; d.run.dispatches += 1; d.task.unread = true;
   };
   return {
+    async agentResearchSettings() { return {policy:researchPolicy,config: {enabled:false,searchEnabled:false,persistenceBasis:"",verified:false},modelKeyConfigured:false,searchKeyConfigured:false}; },
+    async setAgentResearchSettings() { throw new Error("Research setup requires the desktop app. The demonstration makes no external requests."); },
+    async setAgentResearchKey() { throw new Error("Research keys require the desktop keychain."); },
+    async checkAgentResearchConnection() { throw new Error("Research connection checks require the desktop app."); },
+    async createAgentResearchTask() { throw new Error("Web research requires configured desktop services."); },
+    async openAgentResearchSource() { throw new Error("Research sources are unavailable in the demonstration."); },
     async markAgentTaskRead(taskId: string, generation: number, turnCount: number, artifactCount: number) {
       const d = get(taskId);
       if (d.run.generation === generation && d.turns.length === turnCount && d.artifacts.length === artifactCount) d.task.unread = false;

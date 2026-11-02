@@ -1597,6 +1597,12 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::ai::ai_review_draft,
         commands::ai::ai_find_times,
         // Tasks and follow-ups
+        commands::agents::agent_research_settings,
+        commands::agents::set_agent_research_settings,
+        commands::agents::set_agent_research_key,
+        commands::agents::check_agent_research_connection,
+        commands::agents::create_agent_research_task,
+        commands::agents::open_agent_research_source,
         commands::agents::agent_runner_enabled,
         commands::agents::set_agent_runner_enabled,
         commands::agents::create_agent_task,

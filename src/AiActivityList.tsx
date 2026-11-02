@@ -11,6 +11,7 @@ export const AI_ACTIVITY_LIMIT = 100;
 const AI_ACTIVITY_SHOWN = 10;
 
 const FEATURE_LABELS: Record<string, string> = {
+  agent_research: "Agent Research",
   brief: "Brief",
   summary: "Brief",
   suggestions: "Suggestions",

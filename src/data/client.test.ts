@@ -139,6 +139,14 @@ describe("native delegated-work contract", () => {
     await client.interactAgentTask("agent-1", "Focus on sales", "revise");
     await client.linkAgentTask("agent-1", null);
     await client.markAgentTaskRead("agent-1", 2, 4, 1);
+    const config = { enabled:true, searchEnabled:true, persistenceBasis:"API agreement", verified:false };
+    const research = { task: {...request, workflow:"web_research_v1" as const}, subjects:["Example Show"], consent:true };
+    await client.agentResearchSettings();
+    await client.setAgentResearchSettings(config);
+    await client.setAgentResearchKey("search", "test-secret");
+    await client.checkAgentResearchConnection();
+    await client.createAgentResearchTask(research);
+    await client.openAgentResearchSource("agent-1", "source-1");
     expect(vi.mocked(invoke).mock.calls).toEqual([
       ["agent_runner_enabled", undefined],
       ["set_agent_runner_enabled", { enabled: true }],
@@ -151,6 +159,12 @@ describe("native delegated-work contract", () => {
       ["interact_agent_task", { id: "agent-1", message: "Focus on sales", mode: "revise" }],
       ["link_agent_task", { id: "agent-1", linkedTaskId: null }],
       ["mark_agent_task_read", { id: "agent-1", generation: 2, turnCount: 4, artifactCount: 1 }],
+      ["agent_research_settings", undefined],
+      ["set_agent_research_settings", { config }],
+      ["set_agent_research_key", { provider:"search", key:"test-secret" }],
+      ["check_agent_research_connection", undefined],
+      ["create_agent_research_task", { request:research }],
+      ["open_agent_research_source", { id:"agent-1", sourceId:"source-1" }],
     ]);
   });
 });

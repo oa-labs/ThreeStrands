@@ -99,6 +99,14 @@ particular platform package, or always-on service behavior.
   performs no external research; web research is planned separately in
   [the delegated agents plan](docs/delegated-agents-plan.md).
 
+- Delegate read-only web research in **Agents** after configuring separate
+  Anthropic and Exa keys and reviewing public search subjects. Answer clarification
+  questions, discuss saved evidence, and explicitly revise reports with retained
+  versions and sources. Research has cumulative usage limits and per-task data
+  sharing choices; mailbox search, routing, and automatic invitation evaluation
+  are not included. A local demonstration works without external requests. See
+  [the delegated agents plan](docs/delegated-agents-plan.md).
+
 ### Stay in control of local data
 
 - Read cached mail and work on drafts while offline. Mail changes and sends
