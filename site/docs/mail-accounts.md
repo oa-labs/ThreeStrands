@@ -2,7 +2,7 @@
 title: Manage Mail Accounts
 nav: Mail Accounts
 summary: Connect, recognize, reconnect, and remove accounts without confusing local setup with other devices.
-reviewed: 0.191.0
+reviewed: 0.192.2
 ---
 
 ## Connect an Account {#connect-an-account}
@@ -11,7 +11,7 @@ Use [Getting Started](getting-started.html#connect-gmail) for Gmail sign-in or [
 
 ## Gmail Sending Addresses {#gmail-sending-addresses}
 
-Add and verify aliases in Gmail's **Settings → Accounts → Send mail as**. ThreeStrands discovers them when it syncs; after changing them in Gmail, use **Settings → Mail Accounts → Sending addresses → Refresh from Gmail** to update immediately. You can see the default address and any Reply-To destination there. ThreeStrands reads these settings using your existing Gmail connection; it does not create or verify aliases for you.
+Add and verify aliases in Gmail's **Settings → Accounts → Send mail as**. ThreeStrands discovers them when it syncs; after changing them in Gmail, use **Settings → Mail Accounts → Sending Addresses → Refresh from Gmail** to update immediately. If your account only has its primary address, open **Aliases…** to find the instructions and refresh control. Accounts with aliases show the full list automatically, including the default address and any Reply-To destination. A custom Reply-To on the primary address stays visible even when the alias controls are collapsed. ThreeStrands reads these settings using your existing Gmail connection; it does not create or verify aliases for you.
 
 Choose an address in the composer's **Sending Address** picker. New messages use Gmail's default address; replies choose the matching address in the original message's recipients or delivery headers. Each address can have its own defaults in **Settings → Signatures**. Primary-account sender names still use your ThreeStrands settings; alias names and Reply-To destinations come from Gmail.
 

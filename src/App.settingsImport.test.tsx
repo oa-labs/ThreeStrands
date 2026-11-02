@@ -198,8 +198,8 @@ describe("settings section keyboard navigation", () => {
 
     const close = within(dialog).getByRole("button", { name: "Close" });
     expect(within(dialog).getByRole("button", { name: "Disconnect…" })).toBeEnabled();
-    // Sending-address refresh follows the account actions in tab order.
-    const lastControl = within(dialog).getByRole("button", { name: "Refresh from Gmail" });
+    // Primary-only accounts keep alias management behind a disclosure.
+    const lastControl = within(dialog).getByRole("button", { name: "Aliases…" });
     lastControl.focus();
     fireEvent.keyDown(lastControl, { key: "Tab" });
     expect(close).toHaveFocus();

@@ -6,7 +6,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### New
 - Connect selected Mac address books from **Contacts → Manage Contacts… → Mac Contacts…** to browse people and suggest recipients. Access is read-only, and disconnecting keeps profiles you deliberately saved in ThreeStrands.
-- Send from verified Gmail aliases using **Sending Address** in the composer. New messages use your Gmail default, replies use the address the message was sent to, and **Settings → Mail Accounts → Sending Addresses** lets you refresh your list after changing it in Gmail. Sending addresses use the same text sizes and spacing as the other account settings, with default and reply-to details shown underneath.
+- Send from verified Gmail aliases using **Sending Address** in the composer. New messages use your Gmail default, replies use the address the message was sent to, and **Settings → Mail Accounts → Sending Addresses** lets you refresh your list after changing it in Gmail. Accounts with only their primary sending address show a compact **Aliases…** action; accounts with aliases show the full list, with default and reply-to details underneath.
 - Snooze conversations until later with **h** (Remind Me), then find them in **Snoozed** to reschedule or return them to Inbox. Snoozed mail leaves Inbox in your other mail apps too, and returns when ThreeStrands is running and connected, or when a new reply arrives.
 - **Settings → Diagnostics** now shows recent AI rejection reasons, provider and model details, and request references, and lets you open the application logs folder. You can temporarily capture rejected scheduling values for troubleshooting on the affected device.
 

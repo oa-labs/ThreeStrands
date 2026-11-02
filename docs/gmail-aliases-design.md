@@ -17,6 +17,11 @@ comparison without stripping plus tags, deduplicated, and checked for header
 injection. The primary identity stays first, preserving the existing provider
 contract and primary account display-name preference.
 
+Since 0.192.2, primary-only accounts show an **Aliases…** disclosure instead of
+repeating the account address and default label. The disclosure keeps discovery
+and manual refresh accessible. Accounts with aliases show the full list
+automatically; a custom primary Reply-To remains visible when collapsed.
+
 Schema 92 stores a device-local, account-scoped cache and refresh time. Aliases,
 Reply-To addresses, and defaults are not imported from settings exports or
 replicated sync; each installation discovers them from its own Gmail connection.
