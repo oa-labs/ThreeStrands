@@ -103,6 +103,9 @@ import { nativeCorrespondence, type CorrespondenceClient } from "../corresponden
 import { demoClient } from "./demoClient";
 
 export interface MailClient extends CorrespondenceClient {
+  markAgentTaskRead(id: string, generation: number, turnCount: number, artifactCount: number): Promise<AgentDetail>;
+  interactAgentTask(id: string, message: string, mode: "discuss" | "revise"): Promise<AgentDetail>;
+  linkAgentTask(id: string, linkedTaskId: string | null): Promise<AgentDetail>;
   agentRunnerEnabled(): Promise<boolean>;
   setAgentRunnerEnabled(enabled: boolean): Promise<void>;
   createAgentTask(request: CreateAgentTaskRequest): Promise<AgentDetail>;
@@ -583,6 +586,9 @@ const tauriClient: MailClient = {
   createSnippet: (name, body) => complete("create_snippet", { request: { name, body } }),
   updateSnippet: (id, name, body) => complete("update_snippet", { request: { id, name, body } }),
   deleteSnippet: (id) => complete("delete_snippet", { id }),
+  markAgentTaskRead: (id, generation, turnCount, artifactCount) => complete("mark_agent_task_read", { id, generation, turnCount, artifactCount }),
+  interactAgentTask: (id, message, mode) => complete("interact_agent_task", { id, message, mode }),
+  linkAgentTask: (id, linkedTaskId) => complete("link_agent_task", { id, linkedTaskId }),
   agentRunnerEnabled: () => read("agent_runner_enabled"),
   setAgentRunnerEnabled: (enabled) => complete("set_agent_runner_enabled", { enabled }),
   createAgentTask: (request) => complete("create_agent_task", { request }),

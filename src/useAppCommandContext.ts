@@ -40,6 +40,7 @@ type Options = {
   draftSelection: ReturnType<typeof useDraftSelection>;
   selectAllOutbox(): void;
   createCalendarEvent?: () => void;
+  delegateSelected?: () => void;
   snoozeSelected?: (ids: string[]) => void;
   returnSnoozedSelected?: (ids: string[]) => Promise<CommandResult>;
   mutateIds: (ids: string[], template: MutationTemplate, options?: { includeUnloaded?: boolean }) => Promise<CommandResult>;
@@ -83,7 +84,7 @@ type Options = {
 
 /** Binds global commands to the current domain controllers and interaction scope. */
 export function useAppCommandContext({
-  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, snoozeSelected, returnSnoozedSelected,
+  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, delegateSelected, snoozeSelected, returnSnoozedSelected,
   recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox, mutateIds, view, ui,
 }: Options) {
   const outboxEditSource = useMemo(() => outboxEditAsNewSource(outboxSelection.selectedEntry), [outboxSelection.selectedEntry]);
@@ -114,7 +115,7 @@ export function useAppCommandContext({
     ...correspondence.context,
     toggleContextPanelFocus,
     interactionScope,
-    focusedPane: rightWorkspace === "today" ? "today" : rightWorkspace === "files" ? "files" : rightWorkspace === "week" ? "calendar" : rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
+    focusedPane: rightWorkspace === "agents" ? "agents" : rightWorkspace === "today" ? "today" : rightWorkspace === "files" ? "files" : rightWorkspace === "week" ? "calendar" : rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
     compose: () => {
       setRightWorkspace(null);
       correspondence.context.compose();
@@ -181,6 +182,8 @@ export function useAppCommandContext({
     selectedTaskStatus,
     selectedTaskHasThread,
     createCalendarEvent,
+    delegateSelected,
+    openAgentsView: workspaces.openAgentsView,
     snoozeSelected: () => snoozeSelected?.(targetIds),
     returnSnoozedSelected: () => returnSnoozedSelected?.(targetIds) ?? Promise.resolve({}),
     openSnoozed: () => openFolder("snoozed"),
@@ -279,6 +282,7 @@ export function useAppCommandContext({
       return {};
     },
     focusSearch: () => {
+      if (rightWorkspace === "agents") { runWorkspaceCommand("agents.search"); return; }
       if (rightWorkspace === "files") { runWorkspaceCommand("files.search"); return; }
       if (rightWorkspace === "contacts") { runWorkspaceCommand("contacts.search"); return; }
       setRightWorkspace(null);
@@ -334,7 +338,7 @@ export function useAppCommandContext({
     recordTriageEvent, includeArchived, toggleChecked, setMessageExpansionOverrides,
     messageStackRef, activeMessageIdRef, runBrief, isTabbedMailbox, searchOpen, setSearchOpen, closeSearch, setMailbox, activeAccountId,
     setActiveSplitInboxId, setLabelTargetIds, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt,
-    adjustFontScale, toggleTheme, undoLastAction,
+    adjustFontScale, toggleTheme, undoLastAction, delegateSelected, workspaces.openAgentsView,
   ]);
 
   return context;

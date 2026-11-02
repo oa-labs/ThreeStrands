@@ -1,6 +1,7 @@
 //! Central phase-1 bounds. Real provider/token/URL policy arrives in phase 3.
 pub(crate) const WORKFLOW: &str = "fixture_research_v1";
 pub(crate) const MAX_OBJECTIVE: usize = 4000;
+pub(crate) const MAX_TURNS: i64 = 100;
 pub(crate) const MAX_ANSWER: usize = 8000;
 pub(crate) const MAX_LIST: i64 = 100;
 pub(crate) const CONCURRENT_JOBS: i64 = 2;

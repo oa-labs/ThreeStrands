@@ -244,8 +244,14 @@ impl Database {
                         r.state=if r.question_id.is_some() {RunState::WaitingForInput} else {RunState::Queued};
                     },
                     StepResult::Publish=> {
-                        let artifact=AgentArtifact { id:Uuid::new_v4().to_string(),version:1,kind:"fixture_report".into(),body:"Fixture report. No external research was performed. Use this result only to verify delegated-work execution.".into(),not_researched:true,created_at:now };
-                        c.execute("INSERT INTO agent_artifacts(id,task_id,version,record_json) VALUES (?1,?2,1,?3)",params![artifact.id,t.id,encode(&artifact)?])?;
+                        let version:i64=c.query_row("SELECT COALESCE(MAX(version),0)+1 FROM agent_artifacts WHERE task_id=?1",[&t.id],|row|row.get(0))?;
+                        let artifact=AgentArtifact { id:Uuid::new_v4().to_string(),version,kind:"fixture_report".into(),body:"Fixture report. No external research was performed. Use this result only to verify delegated-work execution.".into(),not_researched:true,created_at:now };
+                        let mut artifact=artifact;
+                        if version>1 {
+                            let turns:Vec<AgentTurn>=records(c,"SELECT record_json FROM agent_turns WHERE task_id=?1 ORDER BY id DESC LIMIT 1",&t.id)?;
+                            if let Some(request)=turns.first() { artifact.body.push_str("\n\nRevision request: ");artifact.body.push_str(&request.text); }
+                        }
+                        c.execute("INSERT INTO agent_artifacts(id,task_id,version,record_json) VALUES (?1,?2,?3,?4)",params![artifact.id,t.id,version,encode(&artifact)?])?;
                         r.state=RunState::Completed;t.unread=true;
                     },
                     StepResult::TransientFailure=>unreachable!(),
@@ -367,6 +373,76 @@ impl Database {
             }
             save_task(c, &t)?;
             save_run(c, &r)?;
+            detail(c, id)
+        })
+    }
+    pub(crate) fn mark_agent_task_read(
+        &self,
+        id: &str,
+        generation: i64,
+        turn_count: usize,
+        artifact_count: usize,
+    ) -> DbResult<AgentDetail> {
+        self.with_transaction(|c| {
+            let mut d = detail(c, id)?;
+            if d.run.generation == generation
+                && d.turns.len() == turn_count
+                && d.artifacts.len() == artifact_count
+            {
+                d.task.unread = false;
+                save_task(c, &d.task)?;
+            }
+            detail(c, id)
+        })
+    }
+    pub(crate) fn interact_agent_task(
+        &self,
+        id: &str,
+        message: &str,
+        mode: &str,
+        now: i64,
+    ) -> DbResult<AgentDetail> {
+        bounded(message, MAX_ANSWER)?;
+        if !matches!(mode, "discuss" | "revise") {
+            return Err(DatabaseError::invalid("Unknown interaction"));
+        }
+        self.with_transaction(|c| {
+            let count:i64=c.query_row("SELECT COUNT(*) FROM agent_turns WHERE task_id=?1",[id],|r|r.get(0))?;
+            if count+2>MAX_TURNS {return Err(DatabaseError::invalid("Conversation limit reached"));}
+            let mut r=run(c,id)?;
+            if r.state!=RunState::Completed {return Err(DatabaseError::invalid("Wait for the current work to finish"));}
+            let mut t=task(c,id)?;
+            if mode=="revise" {
+                if !enabled(c)? {return Err(DatabaseError::invalid("Delegated work is disabled"));}
+                if r.dispatches>=MAX_DISPATCHES || r.active_seconds>=MAX_ACTIVE_SECONDS {return Err(DatabaseError::invalid("Agent allowance exhausted"));}
+                t.revision+=1;r.checkpoint=2;r.attempts=0;r.question_id=None;r.not_before=now;
+                invalidate(&mut r,RunState::Queued,None);
+            }
+            turn(c,id,"user",message.trim(),None,None,now)?;
+            if mode=="discuss" {turn(c,id,"assistant","This is a demonstration response based on the saved fixture report. No external research was performed. Request a report revision to save your new criteria in a separate version.",None,None,now)?;t.unread=true;}
+            save_task(c,&t)?;save_run(c,&r)?;detail(c,id)
+        })
+    }
+    pub(crate) fn link_agent_task(&self, id: &str, linked: Option<&str>) -> DbResult<AgentDetail> {
+        self.with_transaction(|c| {
+            let mut t = task(c, id)?;
+            if let Some(link) = linked {
+                let account: Option<String> = c
+                    .query_row("SELECT account_id FROM tasks WHERE id=?1", [link], |r| {
+                        r.get(0)
+                    })
+                    .optional()?;
+                if account.as_deref() != Some(t.account_id.as_str()) {
+                    return Err(DatabaseError::invalid(
+                        "Linked task must belong to the account",
+                    ));
+                }
+            }
+            t.linked_task_id = linked.map(str::to_owned);
+            c.execute(
+                "UPDATE agent_tasks SET linked_task_id=?2,record_json=?3 WHERE id=?1",
+                params![id, linked, encode(&t)?],
+            )?;
             detail(c, id)
         })
     }

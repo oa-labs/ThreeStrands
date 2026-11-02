@@ -1,7 +1,7 @@
 import type { RightWorkspace } from "./useWorkspaces";
 
 // The views the navigation rail switches between; Mail is the absence of one.
-const RESTORABLE_WORKSPACES: readonly RightWorkspace[] = ["today", "week", "tasks", "contacts", "files"];
+const RESTORABLE_WORKSPACES: readonly RightWorkspace[] = ["today", "week", "tasks", "contacts", "files", "agents"];
 const LAST_WORKSPACE_KEY = "threestrands.workspace.last";
 const LAUNCH_VIEW_KEY = "threestrands.workspace.launch";
 const SIDE_COLUMN_KEY = "threestrands.workspace.sideColumn";

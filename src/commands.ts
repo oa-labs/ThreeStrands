@@ -6,7 +6,7 @@ import { adjacentTaskStatus, isActiveTaskStatus } from "./taskViews";
 
 export type MailboxKind = "inbox" | "allMail" | "sent" | "trash" | "drafts" | "outbox" | "split" | "snoozed";
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
-export type FocusedPane = "mail" | "tasks" | "contacts" | "files" | "calendar" | "today";
+export type FocusedPane = "mail" | "tasks" | "contacts" | "files" | "calendar" | "today" | "agents";
 
 export type CommandContext = {
   interactionScope: InteractionScope;
@@ -120,6 +120,8 @@ export type CommandContext = {
   openMailView(): void;
   openTasksView(): void;
   openFilesView?(): void;
+  openAgentsView?(): void;
+  delegateSelected?(): void;
   openTodayView?(): void;
   openContactsView(): void;
   openKeepInTouchView(): void;
@@ -204,6 +206,7 @@ export const commands: Command[] = [
   workspaceCommand("contacts.new", "New Contact", ["Shift+n"], "contacts"),
   workspaceCommand("contacts.newGroup", "New Contact Group", ["Shift+g"], "contacts"),
   workspaceCommand("contacts.save", "Save Contact", ["Mod+Enter"], "contacts", true),
+  workspaceCommand("agents.new", "New Delegated Task", ["Shift+n"], "agents"),
   workspaceCommand("files.open", "Open Selected File", ["o"], "files"),
   workspaceCommand("files.save", "Save Selected File As…", ["Mod+Shift+s"], "files"),
   workspaceCommand("files.star", "Toggle File Star", ["s"], "files"),
@@ -653,6 +656,15 @@ export const commands: Command[] = [
     id: "view.files", title: "Go to Files View", keys: ["5"], group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(() => context.openFilesView?.()),
+  },
+  {
+    id: "view.agents", title: "Go to Agents View", keys: ["6"], group: "Navigation",
+    enabled: (c) => !c.composerActive, run: (c) => complete(() => c.openAgentsView?.()),
+  },
+  {
+    id: "agents.delegate", title: "Delegate Work from Conversation", keywords: ["research", "invitation", "agent"], keys: [], group: "Application",
+    enabled: (c) => isThreadMailbox(c) && Boolean(c.selectedId && c.delegateSelected) && !c.composerActive,
+    run: (c) => complete(() => c.delegateSelected?.()),
   },
   {
     id: "view.keepInTouch",

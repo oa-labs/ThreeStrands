@@ -1,8 +1,10 @@
+import { useAgentTasks, type AgentStart } from "./useAgentTasks";
 import type { Thread } from "./domain";
 import { useSignatures } from "./useSignatures";
 import type { FilesWorkspaceSnapshot } from "./FilesWorkspace";
 import type { CalendarWorkspaceSnapshot } from "./CalendarWeekView";
 import {
+  Bot,
   Archive,
   AlarmClock,
   ArrowLeft,
@@ -150,6 +152,7 @@ export { formatMailTimestamp } from "./threadPresentation";
 const Settings = lazy(() => import("./SettingsPanel").then((m) => ({ default: m.Settings })));
 const CalendarWeekView = lazy(() => import("./CalendarWeekView").then((m) => ({ default: m.CalendarWeekView })));
 const TodayWorkspace = lazy(() => import("./TodayWorkspace").then((m) => ({ default: m.TodayWorkspace })));
+const AgentsWorkspace = lazy(() => import("./AgentsWorkspace").then(m => ({ default: m.AgentsWorkspace })));
 const FilesWorkspace = lazy(() => import("./FilesWorkspace").then((m) => ({ default: m.FilesWorkspace })));
 const ContactsWorkspace = lazy(() => import("./ContactsWorkspace").then((m) => ({ default: m.ContactsWorkspace })));
 
@@ -303,6 +306,19 @@ export function App() {
     scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen,
     contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView,
   } = workspaces;
+  const agents = useAgentTasks();
+  const openAgent = (id: string) => { agents.select(id); setRightWorkspace("agents"); };
+  const beginAgent = (seed: AgentStart) => { agents.begin(seed); setRightWorkspace("agents"); };
+  const delegateSelected = () => {
+    if (visibleDetail) beginAgent({ accountId: visibleDetail.thread.accountId, sourceThreadId: visibleDetail.thread.id, objective: "Evaluate whether this invitation is worth my time." });
+  };
+  const openAgentPersonalTask = (id: string) => {
+    void mailClient.listTasks().then(list => {
+      const task = list.find(t => t.id === id);
+      if (!task) { setNotice({ message: "The personal task is no longer available." }); return; }
+      setRightWorkspace("tasks"); setTaskEditor({ kind: "edit", task });
+    }).catch(reason => setNotice({ message: errorMessage(reason) }));
+  };
   const { openTaskThreadIds, taskRevision, setTaskRevision, refreshTaskIndicators } = useTaskIndicators(activeAccountId);
   const splitInboxCatalog = useSplitInboxes();
   const senderRuleCatalog = useSenderRules();
@@ -564,6 +580,7 @@ export function App() {
   }, [selectedThreadRowRef, setQuery, setSearchOpen]);
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
+    delegateSelected,
     createCalendarEvent: () => { openCalendarView(); setCreateCalendarEventRequested(true); },
     snoozeSelected: openSnooze, returnSnoozedSelected: conversationSnooze.returnToInbox,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
@@ -723,7 +740,7 @@ export function App() {
 
   return (
     <AvailabilityProfileChoiceContext.Provider value={profileChoice(threadProfileKey, "conversation", visibleDetail?.thread.accountId)}>
-    <main className={`app-shell${rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "agents" ? " agents-open" : rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -775,6 +792,7 @@ export function App() {
             </button>
           </HoverTooltip>
           <HoverTooltip label="Files" shortcut="5"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (5)" onClick={() => executeById("view.files")}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
+          <HoverTooltip label="Agents" shortcut="6"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (6)" onClick={() => executeById("view.agents")}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
           <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail (⌘/Ctrl+R)"}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
@@ -1473,6 +1491,7 @@ export function App() {
             />
           ) : null}
           assist={visibleDetail ? (<>
+            <div className="agent-context-links"><button className="btn-link" onClick={delegateSelected}>Delegate work…</button>{agents.items.filter(d => d.task.sourceThreadId === visibleDetail.thread.id && !d.task.archived).map(d => <button className="btn-link" key={d.task.id} onClick={() => openAgent(d.task.id)}>{d.task.objective}{d.task.unread ? " · New activity" : ""}</button>)}</div>
             <ThreadAssist
               detail={visibleDetail}
               providerChosen={aiProviderChosen}
@@ -1579,6 +1598,8 @@ export function App() {
         onOpenContact={contactCardActions.onOpenContact}
         onOpenKeepInTouch={openKeepInTouchView}
       /></Suspense></ErrorBoundary> : null}
+      {agents.activity ? <aside className="agent-activity" role="status"><button className="btn-link agent-activity-action" onClick={() => { const id = agents.activity!.id; agents.patchView(id, { version: null, tab: agents.activity!.label.startsWith("Answer needed") ? "conversation" : "result" }); openAgent(id); }}>{agents.activity.label}</button><button className="btn-icon" aria-label="Dismiss agent notification" onClick={agents.dismissActivity}><X size={ICON_SIZE.sm} /></button></aside> : null}
+      {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Agents…</p>}><AgentsWorkspace controller={agents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAgentPersonalTask} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "files" ? <ErrorBoundary area="Files" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "contacts" ? <ErrorBoundary area="Contacts" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} onOpenAiSettings={() => { setRightWorkspace(null); openSettingsAt("ai"); }} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "tasks" ? (
@@ -1586,6 +1607,9 @@ export function App() {
         <TaskSidebar
           key={activeAccountId ?? "all"}
           sessions={taskSessions}
+          agentTasks={agents.items}
+          onOpenAgent={openAgent}
+          onDelegate={(task) => beginAgent({ accountId: task.accountId, sourceThreadId: task.threadId, linkedTaskId: task.id, objective: task.title })}
           ref={taskWorkspaceRef}
           accountId={activeAccountId}
           accountOptions={accounts.map((account) => account.email)}

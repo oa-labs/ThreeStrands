@@ -37,10 +37,39 @@ export function createDemoAgents(context: () => { accounts: Account[]; threads: 
       d.turns.push({ id: id(), role: "assistant", text: "Fixture evidence step completed. No external research was performed.", questionId: null, answerTo: null, createdAt: now() });
     }
     if (d.run.questionId) { d.run.state = "waiting_for_input"; return; }
-    d.artifacts.push({ id: id(), version: 1, kind: "fixture_report", body: "Fixture report. No external research was performed. Use this result only to verify delegated-work execution.", notResearched: true, createdAt: now() });
+    const version = d.artifacts.length + 1;
+    d.artifacts.push({ id: id(), version, kind: "fixture_report", body: "Fixture report. No external research was performed. Use this result only to verify delegated-work execution.", notResearched: true, createdAt: now() });
     d.run.state = "completed"; d.run.checkpoint = 3; d.run.dispatches += 1; d.task.unread = true;
   };
   return {
+    async markAgentTaskRead(taskId: string, generation: number, turnCount: number, artifactCount: number) {
+      const d = get(taskId);
+      if (d.run.generation === generation && d.turns.length === turnCount && d.artifacts.length === artifactCount) d.task.unread = false;
+      return structuredClone(d);
+    },
+    async interactAgentTask(taskId: string, message: string, mode: "discuss" | "revise") {
+      checkText(message, 8000);
+      const d = get(taskId);
+      if (d.run.state !== "completed") throw new Error("Wait for the current work to finish");
+      if (d.turns.length + 2 > 100) throw new Error("Conversation limit reached");
+      if (!["discuss", "revise"].includes(mode)) throw new Error("Unknown interaction");
+      if (mode === "revise" && (!enabled || d.run.dispatches >= 20 || d.run.activeSeconds >= 900)) throw new Error("Delegated work is disabled or its allowance is exhausted");
+      d.turns.push({ id: id(), role: "user", text: message.trim(), questionId: null, answerTo: null, createdAt: now() });
+      if (mode === "discuss") {
+        d.turns.push({ id: id(), role: "assistant", text: "This is a demonstration response based on the saved fixture report. No external research was performed. Request a report revision to save your new criteria in a separate version.", questionId: null, answerTo: null, createdAt: now() });
+        d.task.unread = true;
+      } else {
+        d.task.revision += 1; d.run.generation += 1; d.run.state = "queued"; d.run.checkpoint = 2;
+        advance(d);
+        d.artifacts.at(-1)!.body += "\n\nRevision request: " + message.trim();
+      }
+      return structuredClone(d);
+    },
+    async linkAgentTask(taskId: string, linkedTaskId: string | null) {
+      const d = get(taskId);
+      if (linkedTaskId && !context().tasks.some(t => t.id === linkedTaskId && t.accountId === d.task.accountId)) throw new Error("Linked task must belong to the account");
+      d.task.linkedTaskId = linkedTaskId; return structuredClone(d);
+    },
     async agentRunnerEnabled() { return enabled; },
     async setAgentRunnerEnabled(value: boolean) {
       enabled = value;

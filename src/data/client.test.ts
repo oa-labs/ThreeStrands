@@ -136,6 +136,9 @@ describe("native delegated-work contract", () => {
     await client.controlAgentTask("agent-1", "pause");
     await client.answerAgentQuestion("agent-1", "question-1", "Sales");
     await client.deleteAgentTask("agent-1");
+    await client.interactAgentTask("agent-1", "Focus on sales", "revise");
+    await client.linkAgentTask("agent-1", null);
+    await client.markAgentTaskRead("agent-1", 2, 4, 1);
     expect(vi.mocked(invoke).mock.calls).toEqual([
       ["agent_runner_enabled", undefined],
       ["set_agent_runner_enabled", { enabled: true }],
@@ -145,6 +148,9 @@ describe("native delegated-work contract", () => {
       ["control_agent_task", { id: "agent-1", action: "pause" }],
       ["answer_agent_question", { id: "agent-1", questionId: "question-1", answer: "Sales" }],
       ["delete_agent_task", { id: "agent-1" }],
+      ["interact_agent_task", { id: "agent-1", message: "Focus on sales", mode: "revise" }],
+      ["link_agent_task", { id: "agent-1", linkedTaskId: null }],
+      ["mark_agent_task_read", { id: "agent-1", generation: 2, turnCount: 4, artifactCount: 1 }],
     ]);
   });
 });

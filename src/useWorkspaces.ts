@@ -12,7 +12,7 @@ import type { SettingsSection } from "./settingsPanelTypes";
 import type { Notice } from "./useNotice";
 import { NARROW_LAYOUT_QUERY, useMediaQuery } from "./useMediaQuery";
 
-export type RightWorkspace = "contacts" | "tasks" | "week" | "files" | "today" | null;
+export type RightWorkspace = "contacts" | "tasks" | "week" | "files" | "today" | "agents" | null;
 // Keep-in-touch reminders fall due as time passes and as mail arrives,
 // without any local edit, so the Contacts badge is re-read on this cadence.
 const KEEP_IN_TOUCH_REFRESH_MS = 5 * 60_000;
@@ -131,6 +131,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     setDrawerRequested(true);
   }, []);
 
+  const openAgentsView = useCallback(() => setRightWorkspace("agents"), []);
   const openFilesView = useCallback(() => setRightWorkspace("files"), []);
   const openTodayView = useCallback(() => setRightWorkspace("today"), []);
 
@@ -178,7 +179,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     calendarConnected, calendarSidebarStart, openCalendarAt, toggleSchedule, openTasks,
     sideColumn, setSideColumn, scheduleShown, showMailContext, openTasksView,
     narrowLayout, sideDrawerOpen, setSideDrawerOpen: setDrawerRequested,
-    openFilesView, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
+    openAgentsView, openFilesView, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
     contextPersonEmail, openCalendarView, canReturnToToday, returnToToday,
   };
 }

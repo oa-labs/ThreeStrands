@@ -70,3 +70,39 @@ pub(crate) async fn delete_agent_task(id: String, state: State<'_, AppState>) ->
     let db = state.database.clone();
     run_database_task(move || db.delete_agent_task(&id)).await
 }
+
+#[tauri::command]
+pub(crate) async fn interact_agent_task(
+    id: String,
+    message: String,
+    mode: String,
+    state: State<'_, AppState>,
+) -> AppResult<AgentDetail> {
+    let db = state.database.clone();
+    run_database_task(move || {
+        db.interact_agent_task(&id, &message, &mode, chrono::Utc::now().timestamp())
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn link_agent_task(
+    id: String,
+    linked_task_id: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<AgentDetail> {
+    let db = state.database.clone();
+    run_database_task(move || db.link_agent_task(&id, linked_task_id.as_deref())).await
+}
+
+#[tauri::command]
+pub(crate) async fn mark_agent_task_read(
+    id: String,
+    generation: i64,
+    turn_count: usize,
+    artifact_count: usize,
+    state: State<'_, AppState>,
+) -> AppResult<AgentDetail> {
+    let db = state.database.clone();
+    run_database_task(move || db.mark_agent_task_read(&id, generation, turn_count, artifact_count))
+        .await
+}

@@ -93,6 +93,11 @@ particular platform package, or always-on service behavior.
   send qualifying conversations after the reader stays on them. Settings show
   requests, tokens, and estimated costs, with an optional fast model for
   summaries, reply drafts, and contact enrichment.
+- Explore the **Agents** preview with a local demonstration: delegate from a
+  conversation or personal task, answer questions, discuss the sample result,
+  and request report revisions. Saved versions remain available. The preview
+  performs no external research; web research is planned separately in
+  [the delegated agents plan](docs/delegated-agents-plan.md).
 
 ### Stay in control of local data
 

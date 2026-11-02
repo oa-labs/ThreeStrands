@@ -1061,7 +1061,9 @@ describe("keyboard-first task and action workspaces", () => {
 
     const filesButton=within(navbar).getByRole("button", { name: "Files (5)" });
     expect(contactsButton.parentElement?.nextElementSibling).toContainElement(filesButton);
-    const separator = filesButton.parentElement?.nextElementSibling;
+    const agentsButton=within(navbar).getByRole("button", { name: "Agents (6)" });
+    expect(filesButton.parentElement?.nextElementSibling).toContainElement(agentsButton);
+    const separator = agentsButton.parentElement?.nextElementSibling;
     expect(separator).toHaveClass("sidebar-nav-separator");
     expect(separator?.nextElementSibling).toContainElement(within(navbar).getByRole("button", { name: "Refresh mail" }));
   });

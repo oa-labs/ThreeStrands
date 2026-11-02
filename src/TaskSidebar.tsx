@@ -2,7 +2,7 @@ import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import type { CommandResult } from "./commands";
 import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, SquareCheckBig, Target, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
-import type { Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
+import type { AgentDetail, Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
 import { Modal } from "./AppChrome";
 import { GoalDialog } from "./GoalDialog";
@@ -90,6 +90,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   accountId: string | null;
   sessions?: TaskWorkspaceSessions;
   accountOptions?: string[];
+  agentTasks?: AgentDetail[];
+  onOpenAgent?(id: string): void;
+  onDelegate?(task: ThreadTask): void;
   onOpenThread(threadId: string): void;
   onTasksChanged?(): void;
   onUndoableCompletion?(result: CommandResult): () => void;
@@ -102,6 +105,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   accountId,
   sessions,
   accountOptions = [],
+  agentTasks = [], onOpenAgent, onDelegate,
   onOpenThread,
   onTasksChanged,
   onUndoableCompletion,
@@ -613,6 +617,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               onUpdate={(request) => updateTask(detailTask.id, request)} onSetStatus={(status) => void setStatus(detailTask, status)}
               onNavigate={moveSelection} onOpenThread={onOpenThread}
               onClose={() => taskCards.current.get(detailTask.id)?.querySelector<HTMLElement>(".task-card-main")?.focus()} />
+            {onDelegate ? <button className="btn-link" onClick={() => onDelegate(detailTask)}>Delegate work for this task…</button> : null}
+            {agentTasks.filter(d => d.task.linkedTaskId === detailTask.id).map(d => <button className="btn-link" key={d.task.id} onClick={() => onOpenAgent?.(d.task.id)}>{d.task.objective} · Agent work{d.task.unread ? " · New activity" : ""}</button>)}
             <WorkspaceRelatedContext target={{ kind: "task", task: detailTask }} accountIds={accountId ? [accountId] : accountOptions} onOpenThread={onOpenThread} />
           </> : <p className="context-status">Select a task to see details and related information.</p>}
         </WorkspaceContextRail>

@@ -473,3 +473,148 @@ fn a_lease_reserves_only_remaining_active_time_and_cannot_publish_at_its_deadlin
     assert_eq!(d.run.reason.as_deref(), Some("budget_exhausted"));
     assert_eq!(d.turns.len(), 1);
 }
+
+#[test]
+fn discussion_preserves_report_and_explicit_revision_adds_an_immutable_version() {
+    let db = setup();
+    let d = create(&db);
+    step(&db, 1);
+    step(&db, 2);
+    let waiting = db.get_agent_task(&d.task.id).unwrap();
+    db.answer_agent_question(
+        &d.task.id,
+        waiting.run.question_id.as_ref().unwrap(),
+        "Sales",
+        3,
+    )
+    .unwrap();
+    step(&db, 4);
+    let before = db.get_agent_task(&d.task.id).unwrap();
+    let first = before.artifacts[0].body.clone();
+    let chat = db
+        .interact_agent_task(&d.task.id, "Explain", "discuss", 5)
+        .unwrap();
+    assert_eq!(chat.artifacts[0].body, first);
+    assert_eq!(chat.artifacts.len(), 1);
+    let queued = db
+        .interact_agent_task(&d.task.id, "Focus on customers", "revise", 6)
+        .unwrap();
+    assert_eq!(queued.run.dispatches, before.run.dispatches);
+    assert_eq!(queued.task.revision, 2);
+    assert_eq!(queued.artifacts[0].body, first);
+    step(&db, 7);
+    let done = db.get_agent_task(&d.task.id).unwrap();
+    assert_eq!(done.artifacts.len(), 2);
+    assert_eq!(done.artifacts[0].body, first);
+    assert_eq!(done.artifacts[1].version, 2);
+    assert!(done.artifacts[1].body.contains("Focus on customers"));
+    let stale = db
+        .mark_agent_task_read(
+            &d.task.id,
+            before.run.generation,
+            before.turns.len(),
+            before.artifacts.len(),
+        )
+        .unwrap();
+    assert!(stale.task.unread);
+    let read = db
+        .mark_agent_task_read(
+            &d.task.id,
+            done.run.generation,
+            done.turns.len(),
+            done.artifacts.len(),
+        )
+        .unwrap();
+    assert!(!read.task.unread);
+}
+
+#[test]
+fn linking_validates_account_and_disabled_revisions_leave_existing_artifacts_intact() {
+    let db = setup();
+    let d = create(&db);
+    step(&db, 1);
+    step(&db, 2);
+    let q = db
+        .get_agent_task(&d.task.id)
+        .unwrap()
+        .run
+        .question_id
+        .unwrap();
+    db.answer_agent_question(&d.task.id, &q, "Sales", 3)
+        .unwrap();
+    step(&db, 4);
+    assert!(db.link_agent_task(&d.task.id, Some("missing")).is_err());
+    db.set_agent_runner_enabled(false, 5).unwrap();
+    assert!(db
+        .interact_agent_task(&d.task.id, "Revise", "revise", 6)
+        .is_err());
+    let done = db
+        .interact_agent_task(&d.task.id, "Explain saved result", "discuss", 6)
+        .unwrap();
+    assert_eq!(done.artifacts.len(), 1);
+    assert_eq!(done.task.revision, 1);
+}
+
+#[test]
+fn chat_is_bounded_and_link_updates_do_not_mutate_personal_tasks() {
+    let db = setup();
+    let d = create(&db);
+    step(&db, 1);
+    step(&db, 2);
+    let q = db
+        .get_agent_task(&d.task.id)
+        .unwrap()
+        .run
+        .question_id
+        .unwrap();
+    db.answer_agent_question(&d.task.id, &q, "Sales", 3)
+        .unwrap();
+    step(&db, 4);
+    db.adopt_mail_account("other@example.com", crate::models::MailProviderKind::Gmail)
+        .unwrap();
+    let make = |account: &str| {
+        db.create_task(
+            &serde_json::from_value(
+                serde_json::json!({"accountId":account,"title":"Decision","kind":"action"}),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let own = make("you@example.com");
+    let other = make("other@example.com");
+    assert!(db.link_agent_task(&d.task.id, Some(&other.id)).is_err());
+    assert_eq!(
+        db.link_agent_task(&d.task.id, Some(&own.id))
+            .unwrap()
+            .task
+            .linked_task_id
+            .as_deref(),
+        Some(own.id.as_str())
+    );
+    assert!(db
+        .link_agent_task(&d.task.id, None)
+        .unwrap()
+        .task
+        .linked_task_id
+        .is_none());
+    assert_eq!(
+        db.list_tasks(Some("you@example.com"), None).unwrap()[0].status,
+        "open"
+    );
+    let initial = db.get_agent_task(&d.task.id).unwrap();
+    for _ in 0..(MAX_TURNS - initial.turns.len() as i64) / 2 {
+        db.interact_agent_task(&d.task.id, "Explain", "discuss", 5)
+            .unwrap();
+    }
+    let final_state = db.get_agent_task(&d.task.id).unwrap();
+    assert_eq!(final_state.turns.len() as i64, MAX_TURNS);
+    assert!(db
+        .interact_agent_task(&d.task.id, "Explain", "discuss", 5)
+        .is_err());
+    assert_eq!(
+        db.get_agent_task(&d.task.id).unwrap().turns.len(),
+        final_state.turns.len()
+    );
+    assert_eq!(final_state.run.dispatches, initial.run.dispatches);
+}

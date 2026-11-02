@@ -198,7 +198,7 @@ describe("command registry", () => {
       "shift+e": ["tasks.reopenSelected", "thread.unarchive"],
       o: ["files.open", "tasks.openSelected", "thread.toggleOlderMessages"],
       s: ["files.star", "thread.star"],
-      "shift+n": ["calendar.new", "contacts.new"],
+      "shift+n": ["calendar.new", "contacts.new", "agents.new"],
       "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
       "mod+enter": ["contacts.save", "draft.send"],
       "#": ["draft.discard", "thread.trash"],
@@ -211,7 +211,7 @@ describe("command registry", () => {
       escape: ["navigation.back", "search.close"],
     });
 
-    for (const focusedPane of ["mail", "tasks", "contacts", "files", "calendar"] as const) {
+    for (const focusedPane of ["mail", "tasks", "contacts", "files", "calendar", "agents"] as const) {
       for (const selectedTaskStatus of ["open", "in_progress", "completed", "cancelled"] as const) {
         for (const [selectedArchived, taskBoardActive] of [[false, false], [true, false], [false, true], [true, true]] as const) {
           for (const mailbox of ["inbox", "drafts"] as const) {

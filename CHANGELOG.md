@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- Explore delegated work in the Agents preview: start a local demonstration from an email or personal task, answer questions, discuss the result, and review saved report versions. Web research is not connected yet; the demonstration makes no external requests.
+
 ### Fixed
 - Email images now load when their server sends a malformed content type, including signature dividers that previously appeared as alt text.
 - Returning to Mail from Contacts or another workspace now restores your place in a long email.

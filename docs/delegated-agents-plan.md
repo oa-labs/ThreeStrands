@@ -1,8 +1,9 @@
 # Delegated agents and invitation research
 
-**Status:** Phase 0 offline contracts and phase 1 fixture runner implemented;
-phases 2–5 proposed.
-No agent UI or real research tools enabled. Live-service release gates remain explicit.
+**Status:** Phases 0–2 implemented: offline contracts, fixture runner, and
+interactive Agents preview. Phases 3–5 remain proposed.
+The preview runs a local demonstration only; real research tools remain unavailable.
+Live-service release gates remain explicit.
 **Planned:** 2026-11-02 against 0.194.4.
 
 **Phase 0 validated:** 2026-11-02 against 0.194.5. See the
@@ -359,7 +360,7 @@ followed by a passing full native pre-merge run.
 The local runner is disabled by default and accepts only a clearly labeled fake
 workflow. Native persistence, command/client contracts, clarification, recovery,
 and cancellation are covered automatically. Real-service dispatch is still
-unavailable; phase 2 adds the interactive workspace.
+unavailable; phase 2 supplies the interactive workspace.
 
 Add the schema/entities, Database methods, native commands, policy, scheduler,
 startup/shutdown hooks, and fake workflow/tools. Support enqueue, cancel, pause,
@@ -368,6 +369,12 @@ Exit: a fake job survives restart, waits for an answer without model polling,
 resumes once, and cannot publish after cancellation or deletion.
 
 ### 2. Build the shared interactive workspace
+
+**Implemented for 0.196.0.** See the [phase-2 record](agent-integrations/phase-2-workspace.md).
+Agents is a full-size workspace with email and personal-task entry points,
+clarification, discussion, explicit revisions, saved report versions, and unread
+activity. Execution remains an explicitly enabled local demonstration. Reports
+are inert plain text; real providers, citations, and web research belong to phase 3.
 
 Implement the Agents list, task detail, conversation, immutable artifact viewer,
 unread activity, navigation/shortcut entry points, and optional task linkage.

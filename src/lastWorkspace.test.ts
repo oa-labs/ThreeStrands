@@ -13,7 +13,7 @@ describe("lastWorkspace", () => {
   });
 
   it("remembers each view the navigation rail switches to", () => {
-    for (const workspace of ["today", "week", "tasks", "contacts", "files"] as const) {
+    for (const workspace of ["today", "week", "tasks", "contacts", "files", "agents"] as const) {
       writeLastWorkspace(workspace);
       expect(readLastWorkspace()).toBe(workspace);
     }
