@@ -1,6 +1,6 @@
 import { installTestShortcuts } from "./test/commandContext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ContactGroup, ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
@@ -1348,17 +1348,22 @@ describe("ContactsWorkspace",()=>{
       vi.mocked(mailClient.renameContactGroup).mockResolvedValueOnce({...board,name:"Directors"}).mockRejectedValueOnce(new Error("A group named “Family” already exists"));
       groupsView();
       const name=await screen.findByRole("textbox",{name:"Group Name"});
+      // Enter saves by blurring the focused field, as it does during editing.
+      act(()=>name.focus());
+      expect(name).toHaveFocus();
       fireEvent.change(name,{target:{value:"Directors"}});
       fireEvent.keyDown(name,{key:"Enter"});
-      fireEvent.blur(name);
+      expect(name).not.toHaveFocus();
       await waitFor(()=>expect(mailClient.renameContactGroup).toHaveBeenCalledWith(board.id,"Directors"));
       expect(await screen.findByRole("button",{name:/Directors/})).toBeInTheDocument();
+      act(()=>name.focus());
       fireEvent.change(name,{target:{value:"Family"}});
-      fireEvent.blur(name);
+      act(()=>name.blur());
       expect(await screen.findByRole("alert")).toHaveTextContent("already exists");
       expect(name).toHaveValue("Directors");
       // Leaving the name unchanged saves nothing.
-      fireEvent.blur(name);
+      act(()=>name.focus());
+      act(()=>name.blur());
       expect(mailClient.renameContactGroup).toHaveBeenCalledTimes(2);
     });
 
