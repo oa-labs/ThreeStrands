@@ -142,8 +142,9 @@ snoozing is implemented in 0.190.0.
 ## Competitive feature-gap backlog
 
 Initially assessed 2026-10-31 against the 0.189.1 repository and competitor
-documentation; implementation status updated through 0.191.0 after merging snooze
-and Gmail sending aliases. Competitor capabilities have not been reassessed.
+documentation. Implementation status reviewed 2026-11-01 against merged 0.192.1,
+including snooze, Gmail sending aliases, and read-only macOS Contacts access.
+Competitor capabilities have not been reassessed.
 This is an internal planning backlog, separate from the website
 roadmap above. It records capability gaps, not measured reliability or usability
 deficits. Priorities are proposals for the current individual, Gmail-first Mac
@@ -159,8 +160,8 @@ execution while devices are closed, and proactive assistance.
 | --- | --- | --- | --- |
 | Conversation snooze | Gmail and IMAP conversations can be snoozed individually or in batches, with rescheduling, undo, new-reply return, and optional encrypted schedule sync. Returns need a running, connected installation. | Complete developer live-account validation alongside the existing release checks. | Implemented in 0.190.0; see [snooze design](docs/snooze-design.md). |
 | Gmail sending aliases | Verified aliases, Gmail defaults, addressed replies, per-address signatures, and alias-preserving server drafts are implemented. | Complete developer live-account checks with an alias, including queued and scheduled delivery. | Implemented in 0.191.0; see [Gmail alias design](docs/gmail-aliases-design.md). |
-| General rules and richer saved views | Account-specific Split Inboxes match a domain, label, or address pattern. Sender muting archives and marks mail read. Compound rules, reusable search views, and views across accounts remain gaps. | Define a first rules contract with explicit conditions and actions, previews, and account scope; support saving a search as a view. Decide whether rules run locally or at the provider. | After connected address books; planned, unscoped. |
-| Connected address books | Read-only macOS Contacts access, address-book selection, local caching, and recipient suggestions are implemented. Direct Google Contacts/CardDAV and Windows/Linux system address-book adapters remain gaps. | Validate macOS permission and configured sources in an installed build. Defer direct Google integration while existing Google OAuth scope approval is pending; retain CardDAV and other OS adapters as future extensions. | Implemented for macOS in 0.192.0; see [Mac Contacts design](docs/macos-contacts-design.md). |
+| General rules and richer saved views | Account-specific Split Inboxes match a domain, label, or address pattern. Sender muting archives and marks mail read. Compound rules, reusable search views, and views across accounts remain gaps. | Define a first rules contract with explicit conditions and actions, previews, and account scope; support saving a search as a view. Decide whether rules run locally or at the provider. | Next core workflow priority; functionality scoping required. |
+| Connected address books | macOS builds read selected system address books for names, email addresses, companies, and job titles, with local caching, automatic refresh, and recipient suggestions. Saved ThreeStrands profiles remain independent. Direct provider connections, Windows/Linux adapters, provider write-back, and richer source fields remain missing. | Validate permission, source selection, refresh, and disconnect in an installed Mac build. Keep Google Contacts API integration deferred during existing OAuth approval. Consider CardDAV and Windows/Linux adapters later; do not request new Google scopes for the current Mac connection. | macOS foundation implemented in 0.192.0; broader integration deferred. See [Mac Contacts design](docs/macos-contacts-design.md). |
 | Mobile access and workflow continuity | Desktop sync carries selected workflow data and provider drafts follow the account. No mobile companion or web client exposes the full workflow on a phone. Windows and Linux builds remain experimental. | Scope a mobile companion around reading, triage, tasks, and follow-ups; decide supported platforms, background notifications, and encrypted workflow-data access before committing to a build. | Expansion; discovery needed. |
 | Microsoft 365 / Exchange | Gmail sign-in and password/app-password IMAP exist; dedicated Microsoft authentication, mail, and calendar integration do not. IMAP is not a substitute for modern authentication or delegation. | Define Microsoft authentication and provider contracts first, then mail and calendar support. Scope delegated/shared mailbox support explicitly rather than assuming basic account support includes it. | Expansion; planned, unscoped. |
 | Broader calendar support | Google Calendar supports event editing, invitations, availability, and task time blocking. Microsoft calendars and CalDAV/iCloud connections remain missing. | Define a calendar-provider contract and invitation/availability semantics; prioritize Microsoft with the Microsoft 365 work, then evaluate CalDAV/iCloud. | Expansion; discovery needed. |
@@ -170,17 +171,19 @@ execution while devices are closed, and proactive assistance.
 
 ### Suggested focus for the next few weeks
 
-Conversation snooze (0.190.0) and Gmail sending aliases (0.191.0) are merged.
-Their remaining live-account release checks are validation work rather than
-unimplemented feature gaps. Read-only macOS Contacts access is implemented in
-0.192.0; complete installed-build permission and source validation. Defer direct
-Google Contacts integration while existing Google OAuth scope approval is pending.
-CardDAV and Windows/Linux address-book adapters remain future extensions. Richer
-rules/views are the next unimplemented core workflow gap. This is a sequencing
-recommendation, not a promise to finish the remaining work within that period.
-Continue the existing reliability and live-account release checks alongside
-feature work. If broader adoption becomes the immediate goal, revisit the
-sequence: mobile continuity and Microsoft 365 are the larger adoption blockers.
+Conversation snooze (0.190.0), Gmail sending aliases (0.191.0), and read-only
+macOS Contacts access (0.192.0) are merged. Their remaining live-account and
+installed-build checks are validation work, not unimplemented feature gaps.
+No new Google OAuth scope is needed to read the Mac's configured address books;
+direct Google Contacts integration remains deferred while existing scope
+approval is pending. CardDAV and Windows/Linux adapters are future extensions,
+not prerequisites for moving on.
+
+Next, scope general rules and richer saved views: agree on conditions and actions,
+preview behavior, account scope, saved searches, and where rules execute before
+implementation. Continue reliability and release checks alongside that work.
+This sequence is not a delivery-date commitment. If broader adoption becomes the
+immediate goal, revisit mobile continuity and Microsoft 365 as expansion priorities.
 
 ### Comparison references
 
@@ -196,7 +199,8 @@ The comparison uses [Gmail snooze](https://support.google.com/mail/answer/762201
 Competitor capabilities can change; recheck relevant references when scoping work.
 Our current behavior is documented in the help guides for
 [compatibility](site/docs/compatibility.md), [triage](site/docs/triage.md),
-[composition](site/docs/compose.md), [calendar](site/docs/calendar.md),
+[composition](site/docs/compose.md), [contacts](site/docs/contacts.md),
+[calendar](site/docs/calendar.md),
 [search](site/docs/search.md), and [AI](site/docs/ai.md).
 
 ## Current product model and decisions
