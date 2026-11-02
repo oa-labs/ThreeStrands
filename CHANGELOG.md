@@ -5,9 +5,10 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
-- Explore delegated work in the Agents preview: start a local demonstration from an email or personal task, answer questions, discuss the result, and review saved report versions. Web research is not connected yet; the demonstration makes no external requests.
+- Explore delegated work in the Agents preview from an email's **Delegate work…** button or a personal task: answer questions, discuss sample results, and review saved report versions. Web research is not connected yet; the demonstration makes no external requests.
 
 ### Improved
+- Agents now uses consistent text sizes, clearer form grouping, and aligned controls.
 - Click an event's address in event details, invitation cards, or meeting suggestions to open it in Google Maps.
 
 ### Fixed

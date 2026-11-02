@@ -1491,7 +1491,7 @@ export function App() {
             />
           ) : null}
           assist={visibleDetail ? (<>
-            <div className="agent-context-links"><button className="btn-link" onClick={delegateSelected}>Delegate work…</button>{agents.items.filter(d => d.task.sourceThreadId === visibleDetail.thread.id && !d.task.archived).map(d => <button className="btn-link" key={d.task.id} onClick={() => openAgent(d.task.id)}>{d.task.objective}{d.task.unread ? " · New activity" : ""}</button>)}</div>
+            <div className="context-ai-launcher agent-context-links"><button type="button" className="btn btn-sm" onClick={delegateSelected}><Bot size={ICON_SIZE.sm} />Delegate work…</button>{agents.items.filter(d => d.task.sourceThreadId === visibleDetail.thread.id && !d.task.archived).map(d => <button className="btn-link" key={d.task.id} onClick={() => openAgent(d.task.id)}>{d.task.objective}{d.task.unread ? " · New activity" : ""}</button>)}</div>
             <ThreadAssist
               detail={visibleDetail}
               providerChosen={aiProviderChosen}

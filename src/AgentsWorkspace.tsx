@@ -29,21 +29,29 @@ function NewAgentTask({ controller, accounts }: { controller: AgentController; a
   const change = (patch: Partial<AgentStart>) => controller.setStart({ ...seed, ...patch });
   return <form className="agent-new" aria-label="New delegated task" onSubmit={e => { e.preventDefault(); if (mode === "demo") void controller.create({ ...seed, workflow: "fixture_research_v1" }); }}>
     <h2>New delegated task</h2>
-    <p id={`${id}-scope`}>The local demonstration asks a question and prepares a sample report. It sends no email or web requests and has no provider charges.</p>
+    <p className="agent-hint" id={`${id}-scope`}>The local demonstration asks a question and prepares a sample report. It sends no email or web requests and has no provider charges.</p>
     {!controller.enabled ? <button type="button" className="btn" disabled={controller.busy} onClick={() => void controller.enable(true)}>Enable local demonstration</button> : null}
-    <label htmlFor={`${id}-account`}>Mail account</label>
-    <select id={`${id}-account`} value={seed.accountId} onChange={e => change({ accountId: e.target.value, sourceThreadId: null, linkedTaskId: null })}>
-      {accounts.filter(a => a.onThisDevice !== false).map(a => <option key={a.email} value={a.email}>{a.nickname || a.email}</option>)}
-    </select>
-    <label htmlFor={`${id}-mode`}>Work</label>
-    <select id={`${id}-mode`} value={mode} onChange={e => setMode(e.target.value)}><option value="demo">Invitation research demonstration</option><option value="web">Web research</option></select>
-    {mode === "web" ? <p role="status">Web research is not available yet. Choose the local demonstration to explore this workspace.</p> : null}
-    <label htmlFor={`${id}-objective`}>What would you like to find out?</label>
-    <textarea id={`${id}-objective`} required value={seed.objective} onChange={e => change({ objective: e.target.value })} aria-describedby={`${id}-scope`} />
-    <label htmlFor={`${id}-task`}>Link a personal task (optional)</label>
-    <select id={`${id}-task`} value={seed.linkedTaskId ?? ""} onChange={e => change({ linkedTaskId: e.target.value || null })}><option value="">No personal task</option>{tasks.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}</select>
+    <div className="agent-field">
+      <label className="agent-field-label" htmlFor={`${id}-account`}>Mail account</label>
+      <select id={`${id}-account`} value={seed.accountId} onChange={e => change({ accountId: e.target.value, sourceThreadId: null, linkedTaskId: null })}>
+        {accounts.filter(a => a.onThisDevice !== false).map(a => <option key={a.email} value={a.email}>{a.nickname || a.email}</option>)}
+      </select>
+    </div>
+    <div className="agent-field">
+      <label className="agent-field-label" htmlFor={`${id}-mode`}>Work</label>
+      <select id={`${id}-mode`} value={mode} onChange={e => setMode(e.target.value)}><option value="demo">Invitation research demonstration</option><option value="web">Web research</option></select>
+      {mode === "web" ? <p className="agent-hint" role="status">Web research is not available yet. Choose the local demonstration to explore this workspace.</p> : null}
+    </div>
+    <div className="agent-field">
+      <label className="agent-field-label" htmlFor={`${id}-objective`}>What would you like to find out?</label>
+      <textarea id={`${id}-objective`} required value={seed.objective} onChange={e => change({ objective: e.target.value })} aria-describedby={`${id}-scope`} />
+    </div>
+    <div className="agent-field">
+      <label className="agent-field-label" htmlFor={`${id}-task`}>Link a personal task (optional)</label>
+      <select id={`${id}-task`} value={seed.linkedTaskId ?? ""} onChange={e => change({ linkedTaskId: e.target.value || null })}><option value="">No personal task</option>{tasks.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}</select>
+    </div>
     {error ? <p role="alert">Could not load personal tasks: {error}</p> : null}
-    {seed.sourceThreadId ? <p>Linked to the selected conversation.</p> : null}
+    {seed.sourceThreadId ? <p className="agent-hint">Linked to the selected conversation.</p> : null}
     <div className="agent-actions"><button className="btn btn-primary" disabled={!controller.enabled || controller.busy || mode !== "demo" || !seed.accountId || !seed.objective.trim()}>Start demonstration</button><button type="button" className="btn" onClick={() => controller.setStart(null)}>Cancel</button></div>
   </form>;
 }
@@ -144,7 +152,7 @@ export function AgentsWorkspace({ controller: c, accounts, accountId, onOpenThre
       e.preventDefault(); const index = rows.findIndex(d => d.task.id === c.selectedId); c.select(rows[Math.max(0, Math.min(rows.length - 1, index + (["j", "ArrowDown"].includes(e.key) ? 1 : -1)))].task.id);
     }
   }}>
-    <header className="agents-toolbar"><h1>Agents <span className="agent-preview">Preview</span></h1><button className="btn" onClick={begin}>New delegated task</button><button className="btn" disabled={c.busy} onClick={() => void c.refresh()}>Refresh agents</button><label><input type="checkbox" checked={c.enabled} disabled={c.busy || !c.loaded} onChange={e => void c.enable(e.target.checked)} /> Local demonstration enabled</label></header>
+    <header className="agents-toolbar"><h1>Agents <span className="agent-preview">Preview</span></h1><button className="btn" onClick={begin}>New delegated task</button><button className="btn" disabled={c.busy} onClick={() => void c.refresh()}>Refresh agents</button><label className="agent-toggle"><input type="checkbox" checked={c.enabled} disabled={c.busy || !c.loaded} onChange={e => void c.enable(e.target.checked)} /> Local demonstration enabled</label></header>
     {c.error ? <p className="form-error" role="alert">{c.error} <button className="btn-link" onClick={() => void c.refresh()}>Retry loading agents</button></p> : null}
     <div className="agents-layout"><nav className="agent-list" aria-label="Delegated tasks">
       <label>Find delegated work<input ref={search} type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>
