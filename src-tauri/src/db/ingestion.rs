@@ -188,6 +188,7 @@ impl Database {
             )?;
             transaction.execute("DELETE FROM contact_interactions WHERE message_id=?1", [&message.id])?;
             contacts::index_contact_message(transaction, account_id, &thread_id, message, &mine)?;
+            super::co_recipients::index_message(transaction, account_id, message)?;
         }
         transaction.execute(
             "INSERT INTO thread_search(thread_id, subject, snippet, participants, body)

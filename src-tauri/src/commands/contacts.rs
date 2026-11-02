@@ -17,10 +17,20 @@ pub(crate) async fn list_contact_suggestions(
     account_id: String,
     query: String,
     limit: Option<usize>,
+    seeds: Option<Vec<String>>,
+    excluded: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ContactSuggestion>> {
     let database = state.database.clone();
-    run_database_task(move || database.list_contact_suggestions(&account_id, &query, limit.unwrap_or(8))).await
+    run_database_task(move || database.contextual_contact_suggestions(&account_id, &query, limit.unwrap_or(8), &seeds.unwrap_or_default(), &excluded.unwrap_or_default())).await
+}
+
+#[tauri::command]
+pub(crate) async fn rank_contact_group_candidates(
+    group_id: String, selected_ids: Vec<String>, emails: Vec<String>, state: State<'_, AppState>,
+) -> AppResult<Vec<crate::models::ContactGroupSuggestion>> {
+    let database = state.database.clone();
+    run_database_task(move || database.rank_contact_group_candidates(&group_id, &selected_ids, &emails)).await
 }
 
 #[tauri::command]

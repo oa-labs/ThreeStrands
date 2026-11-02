@@ -193,7 +193,8 @@ export interface MailClient extends CorrespondenceClient {
   recordTriageEvent(event: TriageEvent): Promise<void>;
   listTriageSenderStats(accountId: string, limit?: number): Promise<TriageSenderStats[]>;
   /** Ranked past correspondents for compose autocomplete, built from local mail history rather than an imported address book. */
-  listContactSuggestions(accountId: string, query: string, limit?: number): Promise<ContactSuggestion[]>;
+  listContactSuggestions(accountId: string, query: string, limit?: number, context?: import("../domain").RecipientContext): Promise<ContactSuggestion[]>;
+  rankContactGroupCandidates(groupId: string, selectedIds: string[], emails: string[]): Promise<import("../domain").ContactGroupSuggestion[]>;
   systemContactsStatus(): Promise<SystemContactsStatus>;
   discoverSystemContacts(): Promise<SystemContactsStatus>;
   refreshSystemContacts(selectedSources?: string[]): Promise<SystemContactsStatus>;
@@ -440,7 +441,8 @@ const tauriClient: MailClient = {
   mutateThreads: (mutations) => complete("mutate_threads", { mutations }),
   recordTriageEvent: (event) => complete("record_triage_event", { event }),
   listTriageSenderStats: (accountId, limit) => read("list_triage_sender_stats", { accountId, limit }),
-  listContactSuggestions: (accountId, query, limit) => read("list_contact_suggestions", { accountId, query, limit }),
+  listContactSuggestions: (accountId, query, limit, context) => read("list_contact_suggestions", { accountId, query, limit, ...(context ?? {}) }),
+  rankContactGroupCandidates: (groupId, selectedIds, emails) => read("rank_contact_group_candidates", { groupId, selectedIds, emails }),
   systemContactsStatus: () => read("system_contacts_status"),
   discoverSystemContacts: () => complete("discover_system_contacts"),
   refreshSystemContacts: (selectedSources) => complete("refresh_system_contacts", { selectedSources: selectedSources ?? null }),

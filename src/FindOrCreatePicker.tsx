@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 type OptionProps = {
@@ -11,8 +11,10 @@ type OptionProps = {
 export function FindOrCreatePicker<T>({
   items,
   getSearchText,
+  getItemKey,
   placeholder,
   ariaLabel,
+  ariaDescribedBy,
   listId,
   listLabel,
   emptyMessage,
@@ -29,8 +31,10 @@ export function FindOrCreatePicker<T>({
 }: {
   items: T[];
   getSearchText(item: T): string;
+  getItemKey?(item: T): string;
   placeholder: string;
   ariaLabel: string;
+  ariaDescribedBy?: string;
   listId: string;
   listLabel: string;
   emptyMessage: string;
@@ -72,6 +76,17 @@ export function FindOrCreatePicker<T>({
   const rowCount = filteredItems.length + (showCreateRow ? 1 : 0);
   const activeIndex = rowCount === 0 ? -1 : Math.min(Math.max(highlightedIndex, 0), rowCount - 1);
 
+  const previous = useRef<{ query: string; items: T[] } | null>(null);
+  useLayoutEffect(() => {
+    const before = previous.current;
+    previous.current = { query, items: filteredItems };
+    if (!getItemKey || !before || before.query !== query) return;
+    const oldItem = before.items[highlightedIndex];
+    if (!oldItem) return;
+    const index = filteredItems.findIndex((item) => getItemKey(item) === getItemKey(oldItem));
+    if (index !== highlightedIndex) setHighlightedIndex(Math.max(index, 0));
+  }, [query, filteredItems, getItemKey, highlightedIndex]);
+
   // A new query starts on the item it names exactly, so Enter picks it.
   const changeQuery = (next: string) => {
     setQuery(next);
@@ -101,6 +116,7 @@ export function FindOrCreatePicker<T>({
     onChange={(event) => changeQuery(event.target.value)}
     placeholder={tokens ? undefined : placeholder}
     aria-label={ariaLabel}
+    aria-describedby={ariaDescribedBy}
     role="combobox"
     aria-expanded="true"
     aria-controls={listId}

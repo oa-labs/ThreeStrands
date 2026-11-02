@@ -1715,6 +1715,34 @@ describe("Composer recipient autocomplete", () => {
     expect(screen.queryByRole("option", { name: /Jane Doe/ })).not.toBeInTheDocument();
   });
 
+  it("shares visible recipient context across fields, excludes Bcc seeds, and refreshes on account changes", async () => {
+    const lookup = vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([]);
+    const initial = { ...draft, to: "Alice <alice@example.com>, ", cc: "carol@example.com, ", bcc: "secret@example.com, " };
+    vi.spyOn(mailClient, "setDraftAccount").mockResolvedValue({ ...initial, account: "second@example.com", revision: 1 });
+    render(<Composer draft={initial} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const bcc = screen.getByRole("textbox", { name: "Bcc" });
+    await act(async () => { bcc.focus(); await vi.advanceTimersByTimeAsync(150); });
+    const context = { seeds: ["alice@example.com", "carol@example.com"], excluded: ["alice@example.com", "carol@example.com", "secret@example.com"] };
+    expect(lookup).toHaveBeenLastCalledWith("first@example.com", "", 8, context);
+    fireEvent.change(screen.getByRole("combobox", { name: "Send From" }), { target: { value: "second@example.com" } });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Send From" })).toHaveValue("second@example.com"));
+    await act(async () => { bcc.focus(); await vi.advanceTimersByTimeAsync(150); });
+    expect(lookup).toHaveBeenLastCalledWith("second@example.com", "", 8, context);
+  });
+
+  it("keeps a fully typed address searchable until it is committed as a recipient", async () => {
+    const lookup = vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([contact]);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+    fireEvent.change(to, { target: { value: "jane@example.com" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+    expect(lookup).toHaveBeenLastCalledWith("first@example.com", "jane@example.com", 8);
+    fireEvent.mouseDown(screen.getByRole("option", { name: /Jane Doe/ }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+    expect(lookup).toHaveBeenLastCalledWith("first@example.com", "", 8, { seeds: ["jane@example.com"], excluded: ["jane@example.com"] });
+    expect(screen.getByRole("button", { name: "Remove Jane Doe" })).toBeInTheDocument();
+  });
+
   it("loads contact groups once while a composer remains open", async () => {
     const groups = vi.spyOn(mailClient, "listContactGroupRecipients").mockResolvedValue([]);
     render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);

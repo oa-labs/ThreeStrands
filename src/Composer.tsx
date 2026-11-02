@@ -13,7 +13,7 @@ import {
 } from "./aiSettings";
 import type { MessageAppearance } from "./SafeMessage";
 import { invalidRecipients } from "./emailAddress";
-import { RecipientField } from "./RecipientField";
+import { completeRecipientEmails, RecipientField } from "./RecipientField";
 import { Modal } from "./AppChrome";
 import { DraftReviewSection, type DraftReviewAvailability } from "./DraftReviewSection";
 import { ComposeBodyEditor, type ComposeBodyEditorHandle } from "./ComposeBodyEditor";
@@ -74,6 +74,12 @@ export const Composer = forwardRef<ComposerHandle, {
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
   const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft, adopt, settled, hasUnsavedChanges, overwrite } = useDraftAutosave(initial, captureChanges, setError);
+  const [committedRecipients, setCommittedRecipients] = useState(() => ({
+    to: completeRecipientEmails(initial.to), cc: completeRecipientEmails(initial.cc), bcc: completeRecipientEmails(initial.bcc),
+  }));
+  const reportCommittedRecipients = useCallback((field: "to" | "cc" | "bcc", emails: string[]) => {
+    setCommittedRecipients((current) => current[field].join("\n") === emails.join("\n") ? current : { ...current, [field]: emails });
+  }, []);
   const [remote, setRemote] = useState<{ kind: "edited"; draft: Draft } | { kind: "removed" } | null>(null);
   const showSignaturePicker = Boolean(signatures && (draft.mode !== "reply" && draft.mode !== "replyAll" || draft.signature?.html));
   const [signaturesOpen, setSignaturesOpen] = useState(false);
@@ -448,6 +454,10 @@ export const Composer = forwardRef<ComposerHandle, {
       <Sparkles size={ICON_SIZE.md} /> Review
     </button> : null}
   </div> : null;
+  const recipientContext = {
+    seeds: [...(draft.to ? committedRecipients.to : []), ...(draft.cc ? committedRecipients.cc : [])],
+    excluded: [...(draft.to ? committedRecipients.to : []), ...(draft.cc ? committedRecipients.cc : []), ...(draft.bcc ? committedRecipients.bcc : [])],
+  };
   return <div ref={panel} className={initial.mode === "new" ? "composer composer-inline composer-new" : "composer composer-inline"} role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward Message" : "Reply Message"}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing || replyAssistOpen || scheduleOpen) return;
@@ -477,10 +487,10 @@ export const Composer = forwardRef<ComposerHandle, {
         </label>
       ) : null}</div><button className="btn-icon" aria-label="Save and Close Draft" onClick={close} disabled={busy}><X size={ICON_SIZE.lg} /></button></header>
       <div className="composer-content">
-        <RecipientField id="to" label="To" value={draft.to} account={draft.account} disabled={busy} labelExpanded={showBlankCopies} onLabelClick={() => setShowBlankCopies((visible) => !visible)} onChange={(value) => edit("to", value)} />
+        <RecipientField id="to" label="To" value={draft.to} context={recipientContext} onCommittedChange={reportCommittedRecipients} account={draft.account} disabled={busy} labelExpanded={showBlankCopies} onLabelClick={() => setShowBlankCopies((visible) => !visible)} onChange={(value) => edit("to", value)} />
         {(["cc", "bcc"] as const).map((field) => (
           (showBlankCopies || Boolean(draft[field].trim())) && (
-            <RecipientField key={field} id={field} label={field === "cc" ? "Cc" : "Bcc"} value={draft[field]} account={draft.account} disabled={busy} onChange={(value) => edit(field, value)} />
+            <RecipientField key={field} id={field} label={field === "cc" ? "Cc" : "Bcc"} value={draft[field]} context={recipientContext} onCommittedChange={reportCommittedRecipients} account={draft.account} disabled={busy} onChange={(value) => edit(field, value)} />
           )
         ))}
         <label className="compose-field"><span>Subject</span><input aria-label="Subject" value={draft.subject} onChange={(e) => edit("subject", e.target.value)} disabled={busy} /></label>

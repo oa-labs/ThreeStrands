@@ -37,7 +37,7 @@ impl Database {
         query: &str,
         limit: usize,
     ) -> DbResult<Vec<ContactSuggestion>> {
-        self.contact_suggestions(account_id, query, limit, true)
+        self.contact_suggestions(account_id, query, limit, true, &[], &[])
     }
 
     pub(crate) fn contact_suggestions_including_suppressed(
@@ -46,7 +46,14 @@ impl Database {
         query: &str,
         limit: usize,
     ) -> DbResult<Vec<ContactSuggestion>> {
-        self.contact_suggestions(account_id, query, limit, false)
+        self.contact_suggestions(account_id, query, limit, false, &[], &[])
+    }
+
+    pub fn contextual_contact_suggestions(
+        &self, account_id: &str, query: &str, limit: usize, seeds: &[String], excluded: &[String],
+    ) -> DbResult<Vec<ContactSuggestion>> {
+        if seeds.is_empty() && excluded.is_empty() { return self.list_contact_suggestions(account_id, query, limit); }
+        self.contact_suggestions(account_id, query, limit, true, seeds, excluded)
     }
 
     fn contact_suggestions(
@@ -55,6 +62,8 @@ impl Database {
         query: &str,
         limit: usize,
         hide_suppressed: bool,
+        seeds: &[String],
+        excluded: &[String],
     ) -> DbResult<Vec<ContactSuggestion>> {
         let limit = limit.clamp(1, 5_000);
         let needle = query.trim().to_ascii_lowercase();
@@ -66,7 +75,15 @@ impl Database {
                 last_interacted_at: String,
                 pinned: bool,
             }
+            let relationships = super::co_recipients::relationships(connection, Some(account_id), seeds, chrono::Utc::now())?;
+            let excluded = super::co_recipients::normalize_addresses(excluded);
+            let mine = super::sending_addresses_for_account(connection, account_id);
+            let contextual = !seeds.is_empty() || !excluded.is_empty();
             let mut by_email: HashMap<String, Agg> = HashMap::new();
+            for (email, relation) in &relationships {
+                by_email.insert(email.clone(), Agg { display_name: relation.display_name.clone(),
+                    sent_count: 0, received_count: 0, last_interacted_at: String::new(), pinned: false });
+            }
 
             let candidate_cte = if needle.is_empty() { "" } else { MATCHING_EMAILS };
             let candidate_filter = if needle.is_empty() { "" } else { "AND i.email IN (SELECT email FROM matching_emails)" };
@@ -136,6 +153,7 @@ impl Database {
                 .into_iter()
                 .filter(|(email, agg)| {
                     if hide_suppressed && suppressed.contains(email) { return false; }
+                    if contextual && (excluded.contains(email) || mine.contains(email)) { return false; }
                     let domain_matches = email
                         .split_once('@')
                         .is_some_and(|(_, domain)| domain.contains(&needle));
@@ -148,20 +166,23 @@ impl Database {
                             .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                 })
                 .map(|(email, agg)| ContactSuggestion {
-                    email,
+                    email: email.clone(),
                     display_name: agg.display_name,
                     sent_count: agg.sent_count,
                     received_count: agg.received_count,
                     last_interacted_at: agg.last_interacted_at,
+                    related_to: relationships.get(&email).map(|r| r.seeds.iter().take(3).cloned().collect()).unwrap_or_default(),
                     pinned: agg.pinned,
                 })
                 .collect();
             suggestions.sort_by(|a, b| {
                 b.pinned
                     .cmp(&a.pinned)
+                    .then_with(|| super::co_recipients::compare(relationships.get(&a.email), relationships.get(&b.email)))
                     .then(b.sent_count.cmp(&a.sent_count))
                     .then(b.received_count.cmp(&a.received_count))
                     .then(b.last_interacted_at.cmp(&a.last_interacted_at))
+                    .then(a.email.cmp(&b.email))
             });
             suggestions.truncate(limit);
             Ok(suggestions)

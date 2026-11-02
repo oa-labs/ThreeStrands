@@ -436,7 +436,11 @@ export type ContactSuggestion = {
   receivedCount: number;
   lastInteractedAt: string;
   pinned: boolean;
+  relatedTo?: string[];
 };
+
+export type ContactGroupSuggestion = { id: string; relatedTo: string[] };
+export type RecipientContext = { seeds: string[]; excluded: string[] };
 
 export type ContactProfile = {
   id: string;

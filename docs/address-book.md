@@ -27,6 +27,20 @@ profiles, bulk selection, mail-derived contacts, or typed addresses. Adding an
 unsaved person to a group saves a profile. Composer group suggestions expand
 to each member's primary address, with duplicate recipients removed.
 
+After you select a recipient in the composer, suggestions prioritize people you
+frequently email together. The focused field can suggest people before you type;
+To and Cc supply context across fields, while Bcc recipients do not seed
+recommendations. Everyone already addressed is excluded from suggestions.
+Adding members to a group uses its existing members and pending selections to
+prioritize related people from local history across accounts. Suggestions never
+add anyone until you choose them and confirm the group change.
+
+Relationship evidence uses visible To/Cc headers from cached sent mail. It stays
+on this device, is excluded from exports and encrypted sync, and disappears
+with its source mail under retention or account removal. Devices with different
+cached history may suggest different people. No message bodies or AI requests
+are needed; Bcc history is excluded.
+
 The **Keep in Touch** view combines recurring contact reminders and birthdays.
 Set a frequency for a person or a selection of people, snooze a reminder, or
 mark someone contacted. Mail in either direction across linked addresses and

@@ -316,6 +316,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       threadId: thread.id,
       sender: message.sender,
       recipients: [...message.recipients],
+      cc: [...(message.cc ?? [])],
       sentAt: message.sentAt,
       bodyHtml: message.bodyHtml,
       bodyText: message.bodyText,
@@ -393,6 +394,49 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     }] };
   };
 
+  // Browser fixtures model local header evidence; native ranking lives in Rust.
+  function relatedContacts(accountId: string | undefined, rawSeeds: string[]) {
+    const seeds = [...new Set(rawSeeds.map((email) => email.toLowerCase()))];
+    const result = new Map<string, { relatedTo: string[]; strength: number; displayName: string | null }>();
+    if (seeds.length > 100) return result;
+    for (const seed of seeds) {
+      const pairs = new Map<string, { count: number; weights: Map<string, number>; name: string | null }>();
+      let denominator = 0;
+      for (const thread of threads) {
+        if (accountId && thread.accountId !== accountId || thread.labels.includes("DRAFT") || !thread.labels.includes("SENT")) continue;
+        for (const message of messagesFor(thread)) {
+          if (parseAddress(message.sender).email.toLowerCase() !== thread.accountId.toLowerCase() || message.unsubscribe) continue;
+          const recipients = new Map([...message.recipients, ...(message.cc ?? [])].map((raw) => {
+            const address = parseAddress(raw);
+            return [address.email.toLowerCase(), address.name === address.email ? null : address.name];
+          }).filter(([email]) => email && email !== thread.accountId.toLowerCase()) as [string, string | null][]);
+          const age = Math.max(0, (Date.now() - Date.parse(message.sentAt)) / 86_400_000);
+          if (!Number.isFinite(age) || age > 365 || recipients.size < 2 || recipients.size > 20 || !recipients.has(seed)) continue;
+          const weight = 2 ** (-age / 90);
+          denominator += weight;
+          for (const [email, name] of recipients) {
+            if (seeds.includes(email)) continue;
+            const pair = pairs.get(email) ?? { count: 0, weights: new Map<string, number>(), name };
+            pair.count++;
+            const key = `${thread.accountId}/${thread.id}/${message.sentAt.slice(0, 10)}`;
+            pair.weights.set(key, Math.max(pair.weights.get(key) ?? 0, weight / (recipients.size - 1)));
+            pairs.set(email, pair);
+          }
+        }
+      }
+      for (const [email, pair] of pairs) {
+        if (pair.count < 2) continue;
+        const item = result.get(email) ?? { relatedTo: [], strength: 0, displayName: pair.name };
+        item.relatedTo.push(seed);
+        item.strength += [...pair.weights.values()].reduce((sum, n) => sum + n, 0) / denominator / seeds.length;
+        result.set(email, item);
+      }
+    }
+    return result;
+  }
+  function compareRelations(a: { relatedTo: string[]; strength: number } | undefined, b: { relatedTo: string[]; strength: number } | undefined) {
+    return (b?.relatedTo.length ?? 0) - (a?.relatedTo.length ?? 0) || (b?.strength ?? 0) - (a?.strength ?? 0);
+  }
   const client: MailClient = {
     ...demoCorrespondence(threadForMessage, () => accounts[0]?.email ?? DEMO_ACCOUNT_ID, (account) => seed.sendingIdentities?.[account] ?? [{ address: account }]),
     async listThreads(accountId) {
@@ -720,9 +764,26 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async systemContactsStatus() { return { supported: false, permission: "unsupported", connection: { sources: [], selectedSources: [], refreshedAt: null }, contactCount: 0 }; },
     async discoverSystemContacts() { return this.systemContactsStatus(); },
     async refreshSystemContacts() { return this.systemContactsStatus(); },
-    async listContactSuggestions(_accountId, query, limit = 8) {
+    async rankContactGroupCandidates(groupId, selectedIds, emails) {
+      const group = contactGroups.find((item) => item.id === groupId);
+      if (!group) return [];
+      const profiles = await this.listContactProfiles("", 5000);
+      const seeds = [...emails, ...profiles.filter((p) => group.memberIds.includes(p.id) || selectedIds.includes(p.id)).flatMap((p) => p.addresses)];
+      const relations = relatedContacts(undefined, seeds);
+      const ranked = profiles.filter((p) => !group.memberIds.includes(p.id)).flatMap((p) => {
+        const best = p.addresses.filter((email) => !suppressedContacts.has(email)).map((email) => relations.get(email)).filter((item) => item != null).sort(compareRelations)[0];
+        return best ? [{ id: p.id, favorite: p.favorite, ...best }] : [];
+      });
+      return ranked.sort((a, b) => Number(b.favorite) - Number(a.favorite) || compareRelations(a, b) || a.id.localeCompare(b.id))
+        .map((item) => ({ id: item.id, relatedTo: item.relatedTo.slice(0, 3) }));
+    },
+    async listContactSuggestions(accountId, query, limit = 8, context) {
       const needle = query.trim().toLocaleLowerCase();
+      const relations = relatedContacts(accountId, context?.seeds ?? []);
       const candidates = new Map(contacts.map(contact => [contact.email.toLowerCase(), { ...contact }]));
+      for (const [email, relation] of relations) {
+        if (!candidates.has(email)) candidates.set(email, { email, displayName: relation.displayName, pinned: false, sentCount: 0, receivedCount: 0, lastInteractedAt: "" });
+      }
       for (const profile of savedContactProfiles) {
         for (const email of profile.addresses) {
           const previous = candidates.get(email);
@@ -734,6 +795,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const matches = [...candidates.values()].filter(
         (contact) => {
           if (suppressedContacts.has(contact.email.toLowerCase())) return false;
+          if (context && (contact.email.toLowerCase() === accountId.toLowerCase() || context.excluded.some((email) => email.toLowerCase() === contact.email.toLowerCase()))) return false;
           const email = contact.email.toLocaleLowerCase();
           const domain = email.split("@").at(-1) ?? "";
           return (
@@ -747,11 +809,12 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       matches.sort(
         (a, b) =>
           Number(b.pinned) - Number(a.pinned) ||
+          compareRelations(relations.get(a.email), relations.get(b.email)) ||
           b.sentCount - a.sentCount ||
           b.receivedCount - a.receivedCount ||
           b.lastInteractedAt.localeCompare(a.lastInteractedAt),
       );
-      return structuredClone(matches.slice(0, limit));
+      return structuredClone(matches.slice(0, limit).map((item) => ({ ...item, relatedTo: relations.get(item.email)?.relatedTo.slice(0, 3) })));
     },
     async listContactProfiles(query = "", limit = 500, accountId) {
       const byEmail = new Map<string, ContactProfile>();

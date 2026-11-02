@@ -14,9 +14,11 @@ type Props = {
   value: string;
   account: string;
   disabled: boolean;
+  context?: import("./domain").RecipientContext;
   labelExpanded?: boolean;
   onLabelClick?(): void;
   onChange(value: string): void;
+  onCommittedChange?(field: Props["id"], emails: string[]): void;
 };
 
 type Chip = { email: string; displayName: string | null };
@@ -66,13 +68,17 @@ function parseExternalValue(value: string): { chips: Chip[]; draftText: string }
   return { chips, draftText: lastIsComplete ? "" : last };
 }
 
+export function completeRecipientEmails(value: string): string[] {
+  return parseExternalValue(value).chips.map((chip) => chip.email.toLowerCase()).filter(isEmailAddress);
+}
+
 function serialize(chips: Chip[], draftText: string): string {
   const formatted = chips.map(formatChip);
   if (!formatted.length) return draftText;
   return draftText ? `${formatted.join(", ")}, ${draftText}` : `${formatted.join(", ")}, `;
 }
 
-export function RecipientField({ id, label, value, account, disabled, labelExpanded, onLabelClick, onChange }: Props) {
+export function RecipientField({ id, label, value, account, disabled, context, labelExpanded, onLabelClick, onChange, onCommittedChange }: Props) {
   const inputId = useId();
   const lastEmitted = useRef(value);
   const [chips, setChips] = useState<Chip[]>(() => parseExternalValue(value).chips);
@@ -91,13 +97,31 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestId = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const seeds = context?.seeds ?? (id === "bcc" ? [] : chips.map((chip) => chip.email));
+  const excluded = context?.excluded ?? chips.map((chip) => chip.email);
+  const contextKey = JSON.stringify([seeds, excluded]);
+  useEffect(() => {
+    onCommittedChange?.(id, chips.map((chip) => chip.email.toLowerCase()).filter(isEmailAddress));
+  }, [id, chips, onCommittedChange]);
+  // Context changes invalidate before the next debounce, even in sibling fields.
+  useEffect(() => {
+    if (debounce.current) clearTimeout(debounce.current);
+    ++requestId.current;
+    setSuggestions([]);
+    if (document.activeElement === inputRef.current) query(draftText);
+    // query reads the current context; text edits have their own immediate path.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, contextKey]);
   const groupsLoaded = useRef(false);
   const groupsLoading = useRef(false);
 
-  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
+  useEffect(() => () => { ++requestId.current; if (debounce.current) clearTimeout(debounce.current); }, []);
 
   useEffect(() => {
     if (value === lastEmitted.current) return;
+    ++requestId.current;
+    if (debounce.current) clearTimeout(debounce.current);
+    setSuggestions([]);
     const parsed = parseExternalValue(value);
     lastEmitted.current = value;
     setChips(parsed.chips);
@@ -134,7 +158,8 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
       : null;
 
   const visibleSuggestions = suggestions.filter(
-    (contact) => !chips.some((chip) => chip.email.toLowerCase() === contact.email.toLowerCase()),
+    (contact) => !excluded.some((email) => email.toLowerCase() === contact.email.toLowerCase())
+      && !chips.some((chip) => chip.email.toLowerCase() === contact.email.toLowerCase()),
   );
   const draftEmail = draftText.trim() ? parseAddress(draftText.trim()).email : "";
   const candidateEmail = draftEmail && looksLikeCompleteAddress(draftEmail) ? draftEmail : null;
@@ -154,13 +179,24 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
   const effectiveActiveIndex = optionCount > 0 ? Math.min(Math.max(activeIndex, 0), optionCount - 1) : -1;
 
   function fetchSuggestions(forToken: string, thisRequest = ++requestId.current) {
-    void mailClient
-      .listContactSuggestions(account, forToken, 8)
-      .then((results) => {
-        if (thisRequest !== requestId.current) return;
-        setSuggestions(results);
-      })
-      .catch(logBackgroundFailure("Contact suggestion lookup"));
+    const highlightedEmail = visibleSuggestions[effectiveActiveIndex - contactOffset]?.email;
+    const lookup = seeds.length || excluded.length
+      ? mailClient.listContactSuggestions(account, forToken, 8, { seeds, excluded })
+      : mailClient.listContactSuggestions(account, forToken, 8);
+    void lookup.then((results) => {
+      if (thisRequest !== requestId.current) return;
+      setSuggestions(results);
+      const index = results.findIndex((item) => item.email === highlightedEmail);
+      setActiveIndex(index >= 0 ? contactOffset + index : 0);
+    }).catch((reason) => {
+      if (thisRequest !== requestId.current) return;
+      setSuggestions([]);
+      logBackgroundFailure("Contact suggestion lookup")(reason);
+      // Keep ordinary search available if contextual evidence cannot be read.
+      if (seeds.length && forToken) void mailClient.listContactSuggestions(account, forToken, 8).then((results) => {
+        if (thisRequest === requestId.current) setSuggestions(results.map((item) => ({ ...item, relatedTo: [] })));
+      }).catch(logBackgroundFailure("Contact suggestion fallback"));
+    });
   }
 
   function query(nextDraftText: string) {
@@ -168,7 +204,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
     // Invalidate immediately, including during the next debounce and on clear.
     const thisRequest = ++requestId.current;
     const token = nextDraftText.trim();
-    if (!token || !account) {
+    if ((!token && !seeds.length) || !account) {
       setSuggestions([]);
       return;
     }
@@ -191,14 +227,14 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
     const already = group.members.length - added;
     emit(next, "");
     setGroupNote(`Added ${added} ${added === 1 ? "person" : "people"} from ${group.name}${already ? ` · ${already} already in ${label}` : ""}`);
-    setDismissed(true);
+    setDismissed(false);
     setActiveIndex(-1);
     inputRef.current?.focus();
   }
 
   function select(contact: ContactSuggestion) {
     emit(mergeChip(chips, { email: contact.email, displayName: contact.displayName }), "");
-    setDismissed(true);
+    setDismissed(false);
     setActiveIndex(-1);
     inputRef.current?.focus();
   }
@@ -419,6 +455,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
               <span className="recipient-suggestion-name">
                 {contact.displayName ?? contact.email}
                 {contact.displayName && <small>{contact.email}</small>}
+                {!!contact.relatedTo?.length && <small>Often emailed with {contact.relatedTo.join(", ")}</small>}
               </span>
               <button
                 type="button"

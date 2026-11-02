@@ -673,3 +673,24 @@ describe("demoClient availability", () => {
     expect((await createDemoClient(dataset).checkProposedTime({ ...request, driveTimeBufferMinutes: 30 })).status).toBe("free");
   });
 });
+
+describe("demo co-recipient suggestions", () => {
+  it("uses visible sent recipients before truncation and respects account scope and exclusions", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-01T12:00:00Z"));
+    try {
+      const seed = defaultDemoDataset();
+      const account = seed.accounts[0].email;
+      const template = seed.threads[0];
+      seed.threads = [{ ...template, id: "pairs", accountId: account, labels: ["SENT"] }];
+      seed.messages = { pairs: [0, 1].map((n) => ({ sender: account, recipients: ["Alice <alice@example.com>"], cc: ["Bob <bob@example.com>"], sentAt: `2026-10-${29+n}T12:00:00Z`, bodyHtml: "", bodyText: "" })) };
+      seed.contacts = [{ email: "frequent@example.com", displayName: "Frequent", sentCount: 100, receivedCount: 0, lastInteractedAt: "", pinned: false }];
+      const client = createDemoClient(seed);
+      const context = { seeds: ["alice@example.com"], excluded: ["alice@example.com"] };
+      const suggestions = await client.listContactSuggestions(account, "", 1, context);
+      expect(suggestions[0]).toMatchObject({ email: "bob@example.com", relatedTo: ["alice@example.com"] });
+      expect(await client.listContactSuggestions("other@example.com", "bob", 8, context)).toEqual([]);
+      expect(await client.listContactSuggestions(account, "bob", 8, { ...context, excluded: ["bob@example.com"] })).toEqual([]);
+      expect(await client.listContactSuggestions(account, "unrelated", 8, context)).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+});

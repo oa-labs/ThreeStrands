@@ -258,3 +258,9 @@ connected, running installation that received a schedule can return due mail
 after checking current provider state. Update all devices before sharing this
 entity; older versions cannot open snapshots containing it. See
 [snooze design](snooze-design.md) for persistence and recovery behavior.
+
+Co-recipient ranking evidence, scores, and backfill progress stay on each device.
+They are rebuilt from local cached sent-mail headers and follow mail retention;
+they are excluded from settings exports and replicated sync. Saved contacts,
+favorites, and deliberately created groups keep their existing sync behavior.
+Suggestions can differ between devices with different cached mail.

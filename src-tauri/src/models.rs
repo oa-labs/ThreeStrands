@@ -630,10 +630,9 @@ pub struct TriageSenderStats {
     pub last_seen_at: String,
 }
 
-/// A past correspondent ranked for compose autocomplete. Built entirely from
-/// local send/receive history (plus anything explicitly pinned) rather than
-/// an imported address book, so every suggestion is someone the user has
-/// actually exchanged mail with.
+/// A locally ranked address from correspondence, saved profiles, or selected
+/// system contacts. Relationship reasons use visible sent-mail headers only;
+/// the derived ranking is never replicated or exported.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactSuggestion {
@@ -643,6 +642,15 @@ pub struct ContactSuggestion {
     pub received_count: i64,
     pub last_interacted_at: String,
     pub pinned: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub related_to: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactGroupSuggestion {
+    pub id: String,
+    pub related_to: Vec<String>,
 }
 
 /// One group member as a compose recipient: the primary (first) address to

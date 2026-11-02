@@ -22,6 +22,7 @@ mod compose_settings;
 pub(crate) mod contact_groups;
 pub(crate) mod contact_management;
 mod contact_suggestions;
+mod co_recipients;
 mod system_contacts;
 pub(crate) mod contacts;
 mod enrollment;

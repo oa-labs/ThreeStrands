@@ -1194,6 +1194,13 @@ fn spawn_storage_maintenance(database: Arc<Database>) {
                 log_failure("converting to incremental auto-vacuum", result);
             }
         }
+        loop {
+            let backfill_db = database.clone();
+            let indexed = tokio::task::spawn_blocking(move || backfill_db.backfill_co_recipients(200))
+                .await.ok().and_then(|result| log_failure("indexing co-recipients", result)).unwrap_or(0);
+            if indexed == 0 { break; }
+            tokio::time::sleep(BACKFILL_BATCH_PAUSE).await;
+        }
         // One-time backfill: compress any message bodies left over from
         // before body compression shipped, a batch at a time with a short
         // pause between batches so this doesn't starve the database mutex
@@ -1439,6 +1446,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::mail::record_triage_event,
         commands::mail::list_triage_sender_stats,
         commands::contacts::list_contact_suggestions,
+        commands::contacts::rank_contact_group_candidates,
         commands::contacts::list_contact_profiles,
         system_contacts::system_contacts_status,
         system_contacts::discover_system_contacts,

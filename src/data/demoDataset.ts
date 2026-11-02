@@ -24,6 +24,7 @@ export const DEMO_ACCOUNT_ID = "demo@example.com";
 export type DemoMessageSeed = {
   sender: string;
   recipients: string[];
+  cc?: string[];
   sentAt: string;
   bodyHtml: string;
   bodyText: string;

@@ -64,6 +64,16 @@ describe("native account requests", () => {
     vi.mocked(invoke).mockResolvedValue({});
   });
 
+  it("passes optional contextual ranking separately from legacy autocomplete and group mutations", async () => {
+    await client.listContactSuggestions("me@example.com", "bob", 8);
+    expect(invoke).toHaveBeenLastCalledWith("list_contact_suggestions", { accountId: "me@example.com", query: "bob", limit: 8 });
+    const context = { seeds: ["alice@example.com"], excluded: ["alice@example.com"] };
+    await client.listContactSuggestions("me@example.com", "bob", 8, context);
+    expect(invoke).toHaveBeenLastCalledWith("list_contact_suggestions", { accountId: "me@example.com", query: "bob", limit: 8, ...context });
+    await client.rankContactGroupCandidates("team", ["alice"], ["new@example.com"]);
+    expect(invoke).toHaveBeenLastCalledWith("rank_contact_group_candidates", { groupId: "team", selectedIds: ["alice"], emails: ["new@example.com"] });
+  });
+
   it("checks meeting guests through the event's calendar account", async () => {
     const request = { eventId: "meeting", accountId: "work@example.com", calendarId: "team", attendees: ["guest@example.com"],
       rangeStart: "2099-09-21T00:00:00Z", rangeEnd: "2099-09-28T00:00:00Z",

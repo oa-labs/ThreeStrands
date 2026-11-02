@@ -5,6 +5,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
+- Recipient suggestions now prioritize people you often email together after you select someone. The same suggestions help you add members to contact groups, using email history kept on this device.
 - Connect selected Mac address books from **Contacts → Manage Contacts… → Mac Contacts…** to browse people and suggest recipients. Access is read-only, and disconnecting keeps profiles you deliberately saved in ThreeStrands.
 - Send from verified Gmail aliases using **Sending Address** in the composer. New messages use your Gmail default, replies use the address the message was sent to, and **Settings → Mail Accounts → Sending Addresses** lets you refresh your list after changing it in Gmail. Accounts with only their primary sending address show a compact **Aliases…** action; accounts with aliases show the full list, with default and reply-to details underneath.
 - Snooze conversations until later with **h** (Remind Me), then find them in **Snoozed** to reschedule or return them to Inbox. Snoozed mail leaves Inbox in your other mail apps too, and returns when ThreeStrands is running and connected, or when a new reply arrives.

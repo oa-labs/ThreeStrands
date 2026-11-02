@@ -84,3 +84,12 @@ On a message you sent, click **Edit as New** beside **Forward**, or press <kbd>S
 ## Outbox {#outbox}
 
 The **Outbox** (<kbd>g</kbd> then <kbd>o</kbd>) holds mail that has not finished sending: the undo window, scheduled sends, and messages that failed or need a delivery check. Finished sends move to **Sent**. Select an item to read it with its delivery status and actions above the message. From there you can reschedule, return a message to drafts, or send it now. If ThreeStrands can't confirm that a message was delivered, it offers **Check Sent Mail** rather than sending it again.
+
+### Suggestions for people you email together
+
+After you add someone, recipient suggestions prioritize people you often email
+alongside the To and Cc recipients. Focus an empty recipient field to see
+suggestions, or type to search. A suggestion adds a person only when you choose
+it. Bcc recipients do not influence these recommendations, and Bcc history is
+excluded. The ranking uses cached sent-mail headers on this device; suggestions
+can differ between devices with different cached history.

@@ -120,3 +120,19 @@ describe("FindOrCreatePicker", () => {
     expect(onRemoveLastToken).toHaveBeenCalledTimes(1);
   });
 });
+
+// Async ranking must not move the keyboard choice to a different person.
+it("preserves the highlighted item by identity when ranked results reorder", () => {
+  const select = vi.fn();
+  const props = { getSearchText: (item: string) => item, getItemKey: (item: string) => item,
+    placeholder: "Find", ariaLabel: "People", listId: "people", listLabel: "People",
+    emptyMessage: "Empty", createLabel: (query: string) => query, onSelect: select, onCreate: vi.fn(),
+    renderItem: (item: string, option: { id: string; active: boolean }) => <div key={item} id={option.id} role="option" aria-selected={option.active}>{item}</div> };
+  const view = render(<FindOrCreatePicker {...props} items={["Alice", "Bob", "Carol"]} />);
+  const input = screen.getByRole("combobox", { name: "People" });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  expect(screen.getByRole("option", { name: "Bob" })).toHaveAttribute("aria-selected", "true");
+  view.rerender(<FindOrCreatePicker {...props} items={["Carol", "Alice", "Bob"]} />);
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(select).toHaveBeenCalledWith("Bob", "");
+});

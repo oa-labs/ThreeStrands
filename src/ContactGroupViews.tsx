@@ -2,7 +2,8 @@ import { useEffect, useId, useState } from "react";
 import { Check, Mail, Plus, Trash, UserPlus, Users, X } from "lucide-react";
 import { Modal } from "./AppChrome";
 import type { ContactGroup, ContactProfile } from "./domain";
-import { errorMessage } from "./errors";
+import { mailClient } from "./data/client";
+import { errorMessage, logBackgroundFailure } from "./errors";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { InlineConfirm } from "./InlineConfirm";
 import { ICON_SIZE } from "./iconSizes";
@@ -185,7 +186,7 @@ export function ContactGroupDetail({
  * toggles it; a typed or pasted address (or a comma-separated list of them)
  * joins the selection as a new contact unless it is already in the book.
  */
-function ContactMemberPicker({
+export function ContactMemberPicker({
   group,
   profiles,
   onAdd,
@@ -201,7 +202,27 @@ function ContactMemberPicker({
   const [contactIds, setContactIds] = useState<string[]>([]);
   const [emails, setEmails] = useState<string[]>([]);
   const listId = useId();
-  const candidates = groupCandidates(group, profiles);
+  const [rankings, setRankings] = useState<import("./domain").ContactGroupSuggestion[]>([]);
+  const rankingKey = JSON.stringify([group.id, group.memberIds, contactIds, emails]);
+  useEffect(() => {
+    let active = true;
+    setRankings([]);
+    if (group.memberIds.length || contactIds.length || emails.length) {
+      const timer = setTimeout(() => {
+        void mailClient.rankContactGroupCandidates(group.id, contactIds, emails).then((items) => {
+          if (active) setRankings(items);
+        }).catch(logBackgroundFailure("Group contact suggestions"));
+      }, 150);
+      return () => { active = false; clearTimeout(timer); };
+    }
+    // Profiles can refresh after a save, merge, or connected address-book update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rankingKey, profiles]);
+  const rankById = new Map(rankings.map((item, index) => [item.id, index]));
+  const reasonById = new Map(rankings.map((item) => [item.id, item.relatedTo]));
+  const candidates = groupCandidates(group, profiles).sort((a, b) =>
+    Number(b.favorite) - Number(a.favorite) ||
+    (rankById.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rankById.get(b.id) ?? Number.MAX_SAFE_INTEGER));
   const members = groupMembers(group, profiles);
   const owns = (profile: ContactProfile, email: string) => profile.addresses.some((address) => address.toLowerCase() === email);
   const memberFor = (email: string) => members.find((profile) => owns(profile, email));
@@ -261,11 +282,14 @@ function ContactMemberPicker({
   </span> : undefined;
   const label = busy ? "Adding…" : count ? `Add ${count} ${count === 1 ? "Member" : "Members"}` : "Add Members";
   return <Modal title={`Add to “${group.name}”`} className="goal-link-modal" onClose={onClose}>
+    <p id={`${listId}-context`}>Suggestions use email history across accounts on this device.</p>
     <FindOrCreatePicker
       items={candidates}
+      getItemKey={(profile) => profile.id}
       getSearchText={(profile) => `${profile.displayName ?? ""} ${profile.addresses.join(" ")}`}
       placeholder="Find contacts, or type or paste email addresses"
       ariaLabel="Find contacts to add"
+      ariaDescribedBy={`${listId}-context`}
       listId={listId}
       listLabel="Contacts"
       emptyMessage="Everyone in your address book is already in this group. Type an email address to add someone new."
@@ -317,6 +341,9 @@ function ContactMemberPicker({
             {contactName(profile)}
           </span>
           {profile.displayName ? <small className="contact-group-option-detail">{profile.addresses[0]}</small> : null}
+          {!!reasonById.get(profile.id)?.length && <small className="contact-group-option-detail">
+            Often emailed with {reasonById.get(profile.id)!.join(", ")}
+          </small>}
         </div>;
       }}
     />

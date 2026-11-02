@@ -894,3 +894,31 @@ for (const action of ["Reply All", "Forward"] as const) {
     }
   });
 }
+
+test("co-recipient suggestions appear after a selection and add people only when chosen", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(`import("/src/data/client.ts").then(({ mailClient }) => {
+    const contact = (email, displayName, relatedTo = []) => ({ email, displayName, relatedTo, sentCount: 2, receivedCount: 0, lastInteractedAt: "", pinned: false });
+    mailClient.listContactSuggestions = async (account, query, limit, context) => {
+      const suggestions = context?.seeds.includes("alice@example.com")
+        ? [contact("bob@example.com", "Bob", ["alice@example.com"])]
+        : query.startsWith("ali") ? [contact("alice@example.com", "Alice")] : [];
+      return suggestions.filter((item) => !context?.excluded.includes(item.email));
+    };
+  })`);
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  const to = composer.getByRole("textbox", { name: "To", exact: true });
+  await to.fill("ali");
+  await composer.getByRole("option", { name: /Alice/ }).click();
+  await expect(composer.getByRole("button", { name: "Remove Alice", exact: true })).toBeVisible();
+  await expect(composer.getByRole("option", { name: /Bob/ })).toContainText("Often emailed with alice@example.com");
+  await expect(composer.getByRole("button", { name: "Remove Bob", exact: true })).toHaveCount(0);
+  await to.press("Escape");
+  await expect(composer.getByRole("listbox", { name: "To suggestions" })).toHaveCount(0);
+  await to.blur(); await to.focus();
+  await composer.getByRole("option", { name: /Bob/ }).click();
+  await expect(composer.getByRole("button", { name: "Remove Bob", exact: true })).toBeVisible();
+  await expect(composer.getByRole("button", { name: "Remove Alice", exact: true })).toBeVisible();
+  await expect(composer.getByRole("textbox", { name: "Subject" })).toHaveValue("");
+});

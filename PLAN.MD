@@ -318,6 +318,9 @@ flowchart LR
 
 ## Source documents
 
+- [Co-recipient suggestions plan](docs/co-recipient-suggestions-plan.md) —
+  local relationship-aware autocomplete for composing mail and building contact
+  groups, including ranking, privacy boundaries, implementation steps, and tests.
 - [Scheduled send plan](docs/scheduled-send-design.md) — fixed sending-device ownership, local scheduling, and encrypted summary visibility across devices; implemented in 0.98.1, with
   Command/Ctrl+Shift+L added in 0.98.2.
 - [Design principles](DESIGN.md) — current keyboard, workspace, form, and AI

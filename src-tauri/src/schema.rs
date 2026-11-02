@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 93;
+pub(crate) const LATEST_VERSION: i64 = 94;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1021,6 +1021,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             CREATE TABLE IF NOT EXISTS system_contact_addresses(contact_id TEXT NOT NULL REFERENCES system_contact_cache(id) ON DELETE CASCADE, email TEXT NOT NULL, display_name TEXT, PRIMARY KEY(contact_id,email));
             CREATE INDEX IF NOT EXISTS system_contact_email ON system_contact_addresses(email);").map_err(error)?;
     }
+    if version < 94 {
+        // Device-local, rebuildable header index. Never a replicated entity.
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS co_recipient_addresses (
+            message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            account_id TEXT NOT NULL, email TEXT NOT NULL, display_name TEXT,
+            sender TEXT NOT NULL, sent_at TEXT NOT NULL,
+            PRIMARY KEY(message_id,email));
+            CREATE INDEX IF NOT EXISTS co_recipient_seed ON co_recipient_addresses(account_id,email,sent_at);
+            CREATE INDEX IF NOT EXISTS co_recipient_shared_seed ON co_recipient_addresses(email,sent_at);").map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1305,6 +1315,9 @@ mod tests {
 
     /// Objects each migration above the v74 baseline adds, in `schema_objects` form.
     const ABOVE_BASELINE_OBJECTS: &[&str] = &[
+        "table:co_recipient_addresses",
+        "index:co_recipient_seed",
+        "index:co_recipient_shared_seed",
         "index:sender_rules_by_account",
         "table:sender_rule_actions",
         "table:sender_rules",
