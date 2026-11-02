@@ -62,7 +62,8 @@ describe("CalendarAttachment", () => {
     render(<CalendarEvent event={{ ...event, location, description }} />);
     const link = screen.getByRole("link", { name: "Join meeting" });
     expect(link).toHaveAttribute("href", url);
-    expect(screen.getAllByRole("link")).toHaveLength(1);
+    // The place left beside the join link opens in maps.
+    expect(screen.getAllByRole("link").map((each) => each.textContent)).toEqual(place ? [place, "Join meeting"] : ["Join meeting"]);
     fireEvent.click(link);
     expect(openUrl).toHaveBeenCalledWith(url);
     if (place) expect(screen.getByText(place)).toBeVisible();
@@ -128,9 +129,24 @@ describe("CalendarAttachment", () => {
   });
 
   it.each([
-    "Room 4B", "javascript:alert(1)", "data:text/html,<script>alert(1)</script>",
+    ["Example Cafe, 100 Main St", "Example%20Cafe%2C%20100%20Main%20St"],
+    ["Room 4B", "Room%204B"],
+    ["  Café Zoë & Bar  ", "Caf%C3%A9%20Zo%C3%AB%20%26%20Bar"],
+  ])("opens a plain place in Google Maps: %s", (location, query) => {
+    render(<CalendarEvent event={{ ...event, location }} />);
+    const link = screen.getByRole("link", { name: location.trim() });
+    const url = `https://www.google.com/maps/search/?api=1&query=${query}`;
+    expect(link).toHaveAttribute("href", url);
+    expect(link).toHaveAttribute("title", "Open in Google Maps");
+    fireEvent.click(link);
+    expect(openUrl).toHaveBeenCalledExactlyOnceWith(url);
+  });
+
+  it.each([
+    "javascript:alert(1)", "data:text/html,<script>alert(1)</script>",
     "file:///tmp/invite.ics", "//example.com/meeting", "https://", '<a href="javascript:alert(1)">Join</a>',
-  ])("keeps non-web locations as inert text: %s", (location) => {
+    "TBD", "n/a", "Zoom", "Zoom Meeting", "Microsoft Teams Meeting", "Google Meet", "Phone call", "+1 (555) 010-0100",
+  ])("keeps non-web, non-place locations as inert text: %s", (location) => {
     const { container } = render(<CalendarEvent event={{ ...event, location }} />);
     expect(container).toHaveTextContent(location);
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
