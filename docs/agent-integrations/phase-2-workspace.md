@@ -77,7 +77,7 @@ link validation, cumulative budgets, and guarded unread updates.
 
 Recorded checks:
 
-- Frontend: 216 test files, 3,163 tests passed.
+- Frontend: 216 test files, 3,174 tests passed after integrating current master.
 - Native: 2,058 passed, 7 existing ignored tests.
 - Offline integration contracts: 31 passed; changelog contracts: 30 passed.
 - Production build and ESLint passed.
