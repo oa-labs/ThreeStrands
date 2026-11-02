@@ -19,6 +19,23 @@ test("C opens a focused composer and autosave and polling preserve the body care
   })).toBe(true);
 });
 
+test("C creates mail from the selected mailbox after switching accounts", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Add Account" }).click();
+  await settings.getByRole("button", { name: "Gmail", exact: true }).click();
+  await page.keyboard.press("Escape");
+  const rail = page.getByRole("radiogroup", { name: "Filter by account" });
+  await rail.getByRole("radio", { name: "demo-2@example.com" }).click();
+  await page.keyboard.press("c");
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  await expect(composer.getByRole("combobox", { name: "Send From" })).toHaveValue("demo-2@example.com");
+  await expect(composer.getByRole("combobox", { name: "Sending Address" })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(`import("/src/data/client.ts").then(async ({ mailClient }) => (await mailClient.listDrafts())[0]?.account)`)).toBe("demo-2@example.com");
+});
+
 async function openFolders(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: /Choose folder, current folder/ }).click();
   return page.getByRole("group", { name: "Folders" });
@@ -768,7 +785,7 @@ test("peer scheduled visibility cannot send or restore message content", async (
   await expect(detail.getByRole("button")).toHaveCount(0);
 });
 
-test("the composer shows a sending-address picker for a multi-identity account and records the choice", async ({ page }) => {
+test("the composer uses one From picker for a multi-identity account and records the choice", async ({ page }) => {
   await page.goto("/");
   // Make the demo account report two sending identities, using the existing
   // demo mail client (no new mock framework) — the browser-preview account is
@@ -788,12 +805,12 @@ test("the composer shows a sending-address picker for a multi-identity account a
   })`);
   await page.getByRole("button", { name: "New Message (c)" }).click();
   const composer = page.getByRole("dialog", { name: "New Message" });
-  const picker = composer.getByRole("combobox", { name: "Sending address" });
+  const picker = composer.getByRole("combobox", { name: "Send From" });
   await expect(picker).toBeVisible();
   // Native <option>s are not "visible" while the select is closed; assert the
   // option exists and that selecting it drives the backend call instead.
   await expect(picker.locator("option")).toHaveCount(2);
-  await picker.selectOption("work@example.com");
+  await picker.selectOption("identity:work@example.com");
   // The chosen identity reached setDraftFrom.
   await expect.poll(() => page.evaluate(() => (window as unknown as { __lastSetFrom?: string }).__lastSetFrom)).toBe("work@example.com");
 });

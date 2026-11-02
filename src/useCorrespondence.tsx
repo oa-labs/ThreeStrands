@@ -112,6 +112,7 @@ export function useCorrespondence(
   selectedThreadId: string | null,
   messageAppearance?: MessageAppearance,
   signatures?: SignatureState,
+  activeAccountId?: string | null,
 ) {
   const [active, setActive] = useState<Draft | null>(null);
   // Bumped to reopen the composer on a version another device saved.
@@ -185,7 +186,7 @@ export function useCorrespondence(
     try {
       await editor.current?.flush();
       const created = mode === "new"
-        ? await mailClient.createDraft(mode)
+        ? await mailClient.createDraft(mode, undefined, activeAccountId ?? undefined)
         : mode === "editAsNew"
           ? await draftFromSent(messageId ?? sourceId, options?.sourceAccount ?? sourceAccountId)
           : await mailClient.createDraft(mode, messageId ?? sourceId, sourceAccountId);
@@ -204,7 +205,7 @@ export function useCorrespondence(
     }
     catch (e) { setError(String(e)); }
     finally { opening.current = false; }
-  }, [sourceId, sourceAccountId, selectedThreadId]);
+  }, [sourceId, sourceAccountId, selectedThreadId, activeAccountId]);
   useEffect(() => {
     if (active && activeThreadId && selectedThreadId !== activeThreadId) editor.current?.close();
   }, [active, activeThreadId, selectedThreadId]);

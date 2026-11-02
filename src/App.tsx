@@ -234,6 +234,7 @@ export function App() {
     selectedId,
     { theme: effectiveThemeValue, fontScale: fontScale / 100, fontFamily, emailZoom, emailMinimumFontSize, emailTextColors, loadImages: loadRemoteImages },
     signatureLibrary,
+    activeAccountId,
   );
   const draftSelection = useDraftSelection(correspondence.drafts, correspondence.activeDraft?.id ?? null);
   const composerBelongsToVisibleThread = Boolean(

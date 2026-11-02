@@ -178,13 +178,22 @@ describe("useCorrespondence", () => {
     await waitFor(() => expect(result.current.draftCount).toBe(1));
     act(() => result.current.context.compose());
     await waitFor(() => expect(result.current.activeDraft?.mode).toBe("new"));
-    expect(createDraft).toHaveBeenCalledWith("new");
+    expect(createDraft).toHaveBeenCalledWith("new", undefined, undefined);
 
     act(() => result.current.context.openInbox());
     // Leaving the composer saves pending edits first, so it closes once that save settles.
     await waitFor(() => expect(result.current.activeDraft).toBeNull());
     act(() => result.current.context.reply());
     await waitFor(() => expect(createDraft).toHaveBeenLastCalledWith("reply", "message-1", "account@example.com"));
+  });
+
+  it.each(["personal@example.com", null])("uses the active mailbox for new messages (%s), independently of the selected conversation", async (activeAccount) => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    const create = vi.spyOn(mailClient, "createDraft").mockResolvedValue(draft);
+    const { result } = renderHook(() => useCorrespondence([], "work-message", "work@example.com", ...snippetArgs, "work-thread", undefined, undefined, activeAccount));
+    await act(async () => { result.current.context.compose(); });
+    expect(create).toHaveBeenCalledWith("new", undefined, activeAccount ?? undefined);
   });
 
   it("reloads drafts after each pull and reopens the open draft on a version saved elsewhere", async () => {
