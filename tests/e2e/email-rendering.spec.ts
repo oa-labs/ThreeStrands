@@ -1,12 +1,56 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { emailRenderingFixtures } from "../../src/test/emailRenderingFixtures";
 import { composite, contrastRatio, parseComputedColor } from "../../src/emailTextColors";
 import { EMAIL_TEXT_COLORS } from "../../src/emailRenderingPolicy";
 
+async function openRenderingFixture(page: Page, url: string) {
+  // Parent load includes every dependent frame/resource and is not the
+  // renderer's readiness contract. Wait for the actual initialized content.
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  const content = page.getByTestId("message-body");
+  await expect(content).toHaveCount(1);
+  if (await content.evaluate((element) => element.tagName === "IFRAME")) {
+    await expect(content.contentFrame().locator("[data-email-root]")).toBeAttached();
+    // handleLoad sets this trusted attribute before initializing measurement
+    // and interaction. An initial about:blank frame cannot satisfy both checks.
+    await expect(content.contentFrame().locator("body")).toHaveAttribute("data-tone", "default");
+  }
+  await expect(content).toBeVisible();
+}
+
 test.describe("email rendering fixtures", () => {
+  test("message readiness does not depend on an unrelated parent resource finishing", async ({ page }) => {
+    let release!: () => void;
+    const resourceReleased = new Promise<void>((resolve) => { release = resolve; });
+    let requested!: () => void;
+    const resourceRequested = new Promise<void>((resolve) => { requested = resolve; });
+    await page.route("**/tests/pending-resource.png", async (route) => {
+      requested();
+      await resourceReleased;
+      await route.fulfill({ status: 204, body: "" });
+    });
+    await page.route("**/tests/email-rendering.html?**", async (route) => {
+      const response = await route.fetch();
+      const html = (await response.text()).replace("</body>", '<img hidden alt="" src="/tests/pending-resource.png"></body>');
+      await route.fulfill({ response, body: html });
+    });
+    try {
+      await openRenderingFixture(page, "/tests/email-rendering.html?theme=dark&fixture=flowFooterBeforeQuote&prior=earlierFlowReport");
+      await resourceRequested;
+      expect(await page.evaluate(() => document.readyState)).toBe("interactive");
+      const body = page.locator("iframe.message-body").contentFrame().locator("body");
+      await expect(body).toHaveAttribute("data-tone", "default");
+      await expect(body.getByText("456 Demonstration Avenue", { exact: false })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Show quoted content" })).toBeVisible();
+    } finally {
+      release();
+    }
+    await page.waitForLoadState("load");
+  });
+
   for (const fixture of ["gradientTable", "gradientFlow"]) {
     test(`${fixture} keeps generated backgrounds and readable sender text`, async ({ page }) => {
-      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&fixture=${fixture}`);
       const heading = page.locator("iframe.message-body").contentFrame().getByRole("heading", { name: "Gradient headline" });
       await expect(heading).toBeVisible();
       const paint = await heading.evaluate((element) => {
@@ -29,7 +73,7 @@ test.describe("email rendering fixtures", () => {
       for (const width of [390, 1200]) {
         test(`${fixture} zoom scales text, images, spacing, and fold placement in ${theme} at ${width}px`, async ({ page }) => {
           await page.setViewportSize({ width, height: 900 });
-          await page.goto(`/tests/email-rendering.html?theme=${theme}&fixture=${fixture}&zoom=100&images`);
+          await openRenderingFixture(page, `/tests/email-rendering.html?theme=${theme}&fixture=${fixture}&zoom=100&images`);
           const frame = page.locator("iframe.message-body");
           const body = frame.contentFrame().locator("body");
           const image = frame.contentFrame().getByAltText("Zoom icon");
@@ -95,7 +139,7 @@ test.describe("email rendering fixtures", () => {
 
   for (const plain of [false, true]) {
     test(`email zoom combines with the font floor for ${plain ? "plain" : "HTML"} text`, async ({ page }) => {
-      await page.goto(`/tests/email-rendering.html?theme=light&fixture=smallTextFlow&zoom=125&minimumFontSize=18${plain ? "&plain" : ""}`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&fixture=smallTextFlow&zoom=125&minimumFontSize=18${plain ? "&plain" : ""}`);
       const text = plain ? page.getByTestId("message-body").locator("[data-email-plain-content]") : page.locator("iframe.message-body").contentFrame().locator(".small-copy");
       await expect(text).toHaveCSS("font-size", "18px");
       const width = () => text.evaluate((element) => {
@@ -115,7 +159,7 @@ test.describe("email rendering fixtures", () => {
 
   for (const fixture of ["notification", "transactional"]) {
     test(`${fixture} changes read styling without reloading or losing selection`, async ({ page }) => {
-      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}&tone`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&fixture=${fixture}&tone`);
       const frame = page.locator("iframe.message-body");
       const body = frame.contentFrame().locator("body");
       await expect(body).toHaveAttribute("data-tone", "default");
@@ -149,7 +193,7 @@ test.describe("email rendering fixtures", () => {
   for (const fixture of ["lowContrastSignatureFlow", "lowContrastTableCard"]) {
     for (const theme of ["light", "dark"]) {
       test(`${fixture} text colors meet the contrast floor and switch modes in place in ${theme}`, async ({ page }) => {
-        await page.goto(`/tests/email-rendering.html?theme=${theme}&fixture=${fixture}&textColors`);
+        await openRenderingFixture(page, `/tests/email-rendering.html?theme=${theme}&fixture=${fixture}&textColors`);
         const frame = page.locator("iframe.message-body");
         const root = frame.contentFrame().locator("[data-email-root]");
         await expect(root).toContainText(fixture === "lowContrastTableCard" ? "white card" : "Example Lab");
@@ -202,7 +246,7 @@ test.describe("email rendering fixtures", () => {
   }
 
   test("plain text respects the floor and keeps a larger app font scale", async ({ page }) => {
-    await page.goto("/tests/email-rendering.html?theme=light&fixture=smallTextFlow&minimumFontSize=18&plain");
+    await openRenderingFixture(page, "/tests/email-rendering.html?theme=light&fixture=smallTextFlow&minimumFontSize=18&plain");
     const body = page.getByTestId("message-body");
     await expect(body).toHaveCSS("font-size", "18px");
     await page.evaluate(() => document.documentElement.style.setProperty("--font-scale", "1.4"));
@@ -215,7 +259,7 @@ test.describe("email rendering fixtures", () => {
 
   for (const fixture of ["smallTextTable", "smallTextFlow"]) {
     test(`${fixture} enforces a reversible font floor across styles and responsive layout`, async ({ page }) => {
-      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}&minimumFontSize=18`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&fixture=${fixture}&minimumFontSize=18`);
       const frame = page.locator("iframe.message-body");
       const sizes = () => frame.evaluate((element) => {
         const doc = (element as HTMLIFrameElement).contentDocument!;
@@ -259,7 +303,7 @@ test.describe("email rendering fixtures", () => {
       for (const width of [390, 1200]) {
         test(`${fixture} remains complete in a conversation in ${theme} mode at ${width}px`, async ({ page }) => {
           await page.setViewportSize({ width, height: 900 });
-          await page.goto(`/tests/email-rendering.html?theme=${theme}&fixture=${fixture}&prior=${prior}`);
+          await openRenderingFixture(page, `/tests/email-rendering.html?theme=${theme}&fixture=${fixture}&prior=${prior}`);
           const frame = page.locator("iframe.message-body");
           const body = frame.contentFrame().locator("body");
           const addressText = body.getByText(address, { exact: false });
@@ -296,7 +340,7 @@ test.describe("email rendering fixtures", () => {
       for (const width of [390, 1200]) {
         test(`${fixture} stays contained in ${theme} mode at ${width}px`, async ({ page }) => {
           await page.setViewportSize({ width, height: 900 });
-          await page.goto(`/tests/email-rendering.html?theme=${theme}&fixture=${fixture}`);
+          await openRenderingFixture(page, `/tests/email-rendering.html?theme=${theme}&fixture=${fixture}`);
           const frame = page.locator("iframe.message-body");
           await expect(frame).toBeVisible();
           await expect.poll(() => frame.evaluate((element) => (element as HTMLIFrameElement).contentDocument?.body?.textContent?.trim().length ?? 0)).toBeGreaterThan(0);
@@ -325,7 +369,7 @@ test.describe("email rendering fixtures", () => {
       for (const width of [390, 1200]) {
         test(`${fixture} keeps its declared icon size beside wrapping text in ${theme} at ${width}px`, async ({ page }) => {
           await page.setViewportSize({ width, height: 900 });
-          await page.goto(`/tests/email-rendering.html?theme=${theme}&images&fixture=${fixture}`);
+          await openRenderingFixture(page, `/tests/email-rendering.html?theme=${theme}&images&fixture=${fixture}`);
           const content = page.locator("iframe.message-body").contentFrame();
           const icon = content.getByAltText(alt);
           await expect(icon).toHaveAttribute("src", /^data:image\//);
@@ -351,7 +395,7 @@ test.describe("email rendering fixtures", () => {
     const expected = await reference.evaluate(`(${measure.toString()})(document)`) as string[];
     await reference.close();
 
-    await page.goto("/tests/email-rendering.html?theme=light&fixture=legacyDimensionAttributes");
+    await openRenderingFixture(page, "/tests/email-rendering.html?theme=light&fixture=legacyDimensionAttributes");
     const frame = page.locator("iframe.message-body");
     await expect(frame.contentFrame().locator("td").first()).toBeAttached();
     const messageFrame = (await (await frame.elementHandle())!.contentFrame())!;
@@ -374,7 +418,7 @@ test.describe("email rendering fixtures", () => {
       await reference.close();
       expect(expected.length).toBeGreaterThan(0);
 
-      await page.goto(`/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
       const frame = page.locator("iframe.message-body");
       const messageFrame = (await (await frame.elementHandle())!.contentFrame())!;
       await expect.poll(() => messageFrame.evaluate(() => document.querySelectorAll("[data-blocked-src]").length)).toBe(0);
@@ -388,7 +432,7 @@ test.describe("email rendering fixtures", () => {
   ]) {
     test(`${fixture} keeps px-suffixed column widths in a fixed-layout table`, async ({ page }) => {
       await page.setViewportSize({ width: 1200, height: 900 });
-      await page.goto(`/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
       const frame = page.locator("iframe.message-body");
       const content = frame.contentFrame();
       await expect(content.getByAltText(alt)).toHaveAttribute("src", /^data:image\//);
@@ -418,7 +462,7 @@ test.describe("email rendering fixtures", () => {
         return { width: Math.round(box.width), left: Math.round(box.left - parent.left), right: Math.round(parent.right - box.right) };
       });
       await page.setViewportSize({ width: 1400, height: 900 });
-      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&fixture=${fixture}`);
       await expect.poll(async () => (await gaps()).width).toBe(width);
       const wide = await gaps();
       expect(wide.left).toBeGreaterThan(0);
@@ -439,7 +483,7 @@ test.describe("email rendering fixtures", () => {
   ]) {
     test(`${fixture} sizes its columns from <col>/<colgroup> widths`, async ({ page }) => {
       await page.setViewportSize({ width: 1400, height: 900 });
-      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&fixture=${fixture}`);
       const content = page.locator("iframe.message-body").contentFrame();
       const cells = content.locator("tr").first().locator("td");
       await expect(cells).toHaveCount(columnWidths.length);
@@ -465,7 +509,7 @@ test.describe("email rendering fixtures", () => {
   ]) {
     test(`${fixture} scales a wide image to fit a narrow pane`, async ({ page }) => {
       await page.setViewportSize({ width: 390, height: 900 });
-      await page.goto(`/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
       const frame = page.locator("iframe.message-body");
       const image = frame.contentFrame().getByAltText(alt);
       await expect(image).toHaveAttribute("src", /^data:image\//);
@@ -485,7 +529,7 @@ test.describe("email rendering fixtures", () => {
     for (const width of [390, 1200]) {
       test(`${fixture} wraps long preformatted lines inside the pane at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
-        await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+        await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&fixture=${fixture}`);
         const frame = page.locator("iframe.message-body");
         const pre = frame.contentFrame().locator("pre");
         await expect(pre).toHaveCSS("white-space", "pre-wrap");
@@ -510,7 +554,7 @@ test.describe("email rendering fixtures", () => {
 
   test("author CSS keeps preformatted text unwrapped when it asks to", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 900 });
-    await page.goto("/tests/email-rendering.html?theme=light&fixture=preformattedAuthorNoWrap");
+    await openRenderingFixture(page, "/tests/email-rendering.html?theme=light&fixture=preformattedAuthorNoWrap");
     const pre = page.locator("iframe.message-body").contentFrame().locator("pre");
     await expect(pre).toHaveCSS("white-space", "pre");
     expect(await pre.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
@@ -524,7 +568,7 @@ test.describe("email rendering fixtures", () => {
     { fixture: "replyAngleQuotedLines", current: "This is resolved now." },
   ]) {
     test(`${fixture} folds quoted history until the reader expands it`, async ({ page }) => {
-      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&fixture=${fixture}`);
       const body = page.locator("iframe.message-body").contentFrame().locator("body");
       await expect(body).toContainText(current);
       await expect(body).not.toContainText("Earlier message content.");
@@ -535,7 +579,7 @@ test.describe("email rendering fixtures", () => {
   }
 
   test("keeps the quoted-history toggle at the fold so it can refold", async ({ page }) => {
-    await page.goto("/tests/email-rendering.html?theme=light&fixture=replyAttributionInsideCitation");
+    await openRenderingFixture(page, "/tests/email-rendering.html?theme=light&fixture=replyAttributionInsideCitation");
     const frame = page.locator("iframe.message-body");
     const body = frame.contentFrame().locator("body");
     const marker = frame.contentFrame().locator("span[data-quoted-history-fold]");
@@ -561,7 +605,7 @@ test.describe("email rendering fixtures", () => {
   });
 
   test("folds a signature repeated from an earlier message along with the quoted history", async ({ page }) => {
-    await page.goto("/tests/email-rendering.html?theme=light&fixture=replyRepeatingSignature&prior=earlierMessageWithSignature");
+    await openRenderingFixture(page, "/tests/email-rendering.html?theme=light&fixture=replyRepeatingSignature&prior=earlierMessageWithSignature");
     const body = page.locator("iframe.message-body").contentFrame().locator("body");
     await expect(body).toContainText("Fixed now.");
     await expect(body).not.toContainText("Engineering Lead");

@@ -398,6 +398,34 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    /// The test owns the listener's lifetime. A deadline started before the
+    /// first URLSession is constructed can expire during CFNetwork startup.
+    struct TestServer {
+        stop: Arc<AtomicBool>,
+        thread: Option<std::thread::JoinHandle<Vec<String>>>,
+    }
+
+    impl TestServer {
+        fn join(mut self) -> std::thread::Result<Vec<String>> {
+            self.stop.store(true, Ordering::SeqCst);
+            self.thread.take().unwrap().join()
+        }
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            if let Some(thread) = self.thread.take() {
+                // Cleanup must also work when the caller's assertion panics.
+                let _ = thread.join();
+            }
+        }
+    }
 
     /// Admits the loopback listeners below, except any path starting with
     /// `/forbidden`, which stands in for a private redirect target.
@@ -428,21 +456,25 @@ mod tests {
     }
 
     /// Answers up to `limit` connections with `response(n)` and returns the
-    /// requests received, waiting at most a moment for each connection.
+    /// requests received. Stay available until the request finishes or the
+    /// owning test stops/drops the server; never race client startup.
     fn serve(
         limit: usize,
         response: impl Fn(usize) -> Vec<u8> + Send + 'static,
-    ) -> (u16, std::thread::JoinHandle<Vec<String>>) {
+    ) -> (u16, TestServer) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         listener.set_nonblocking(true).unwrap();
-        let server = std::thread::spawn(move || {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        let thread = std::thread::spawn(move || {
             let mut requests = Vec::new();
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            while requests.len() < limit && std::time::Instant::now() < deadline {
+            while requests.len() < limit && !stopped.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream.set_nonblocking(false).unwrap();
+                        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+                        stream.set_write_timeout(Some(TIMEOUT)).unwrap();
                         requests.push(read_request(&mut stream));
                         stream.write_all(&response(requests.len())).unwrap();
                     }
@@ -454,7 +486,13 @@ mod tests {
             }
             requests
         });
-        (port, server)
+        (
+            port,
+            TestServer {
+                stop,
+                thread: Some(thread),
+            },
+        )
     }
 
     fn ok_response(content_type: &str, body: &[u8]) -> Vec<u8> {
@@ -482,6 +520,20 @@ mod tests {
             max_bytes,
         )
         .await
+    }
+
+    #[test]
+    fn dropping_an_unused_fixture_server_stops_and_joins_its_thread() {
+        let (sender, receiver) = std::sync::mpsc::channel::<()>();
+        let (_, server) = serve(1, move |_| {
+            sender.send(()).unwrap();
+            ok_response("image/png", b"PNGDATA")
+        });
+        drop(server);
+        assert_eq!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        );
     }
 
     #[tokio::test]

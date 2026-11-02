@@ -127,3 +127,31 @@ unchanged since the passing frontend/build/E2E verification above.
 Investigate URLSession metrics and E2E page-load intermittency as separate
 reliability work. Completing the delegated-agent plan will not inherently fix
 either issue, and a passing rerun is not evidence of a root-cause repair.
+
+### Test reliability follow-up on 2026-11-02
+
+Both test issues now have focused fixes outside the agent implementation:
+
+- The URLSession fixture listener previously stopped after three seconds, even
+  if CFNetwork's first request had not started. Instrumentation reproduced a
+  listener exiting with zero requests before a connection-refused error and
+  consequently missing peer metrics. A test-owned server guard now keeps the
+  listener alive until the fetch completes and stops/joins it on explicit join
+  or drop, including panic cleanup. Socket I/O remains bounded, and the client
+  timeout and production peer validation are unchanged. A new regression checks
+  cleanup of an unused listener.
+- Rendering tests now navigate through DOMContentLoaded and assert initialized
+  message content: the trusted email root, the reader-owned tone attribute, and
+  a visible message container. All existing layout/security assertions remain.
+  A new regression deliberately stalls an unrelated parent-page image; it
+  reproduced the old page-load timeout and passes with content-based readiness.
+  The original intermittent full-suite navigation failure did not reproduce in
+  the diagnostic run, so this establishes removal of the unnecessary load-event
+  dependency rather than identifying every possible navigation stall.
+
+Verification passed: full native suite (2,055 passed, seven existing ignored),
+frontend suite (3,155 passed), and E2E suite (201 passed). The nine URLSession
+module tests also passed in five fresh processes, and 123 repeated affected
+rendering cases passed with five workers under concurrent test load. Focused
+ESLint and TypeScript checks passed. Temporary diagnostics were removed. These
+are test-only changes; no application version or changelog change is needed.
