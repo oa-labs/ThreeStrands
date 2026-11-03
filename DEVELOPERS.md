@@ -80,24 +80,41 @@ Put `tart.app` in `~/Applications` and run it through
 wrapper script on your `PATH`. Then:
 
 ```sh
-scripts/tart/dev-vm.sh create          # download the Xcode 26 image, install the toolchain
-scripts/tart/dev-vm.sh ssh -t passwd   # replace the image's admin/admin password
+ln -s "$PWD/scripts/macos-vm/macos-vm.sh" ~/.local/bin/macos-vm   # any directory on PATH
+macos-vm create          # download the Xcode 26 image, install the toolchains
+macos-vm ssh -t passwd   # replace the image's admin/admin password
 ```
 
 The image is a 69 GB download with a 140 GB virtual disk. The disk is sparse,
 so it takes only the space the VM writes, but Rust build output grows quickly;
 run `cargo clean` in the VM when it fills. `create` gives the VM 6 CPUs and
-16 GB of memory; set `THREESTRANDS_VM_CPUS` or `THREESTRANDS_VM_MEMORY_MB` to
-change that, or `THREESTRANDS_VM_DISK_GB` to grow the disk.
+16 GB of memory; set `MACOS_VM_CPUS` or `MACOS_VM_MEMORY_MB` to
+change that, or `MACOS_VM_DISK_GB` to grow the disk.
 
 The VM mounts the primary checkout **read-only** and works in its own clone at
-`~/threestrands`, whose `origin` is that mount. It holds no Git or forge
+`~/Source/threestrands`, whose `origin` is that mount. It holds no Git or forge
 credentials, so its code reaches the host and the server only through you:
 
+Other repositories can be shared the same way. List one absolute host path
+per line in `~/.config/macos-vm/mounts` (or the file named by
+`MACOS_VM_MOUNTS_FILE`); `#` starts a comment. Each is mounted
+read-only at `/Volumes/My Shared Files/<folder name>`, and `provision` clones
+it to `~/Source/<folder name>`. Tart sets mounts at boot, so after editing the
+file run `stop`, `start`, then `provision`. `mounts` lists what is shared.
+`provision` installs pinned, checksum-verified toolchains: Node, pnpm, and
+Rust for this repository, Temurin JDK 21 (Gradle and Kotlin come from each
+project's Gradle wrapper; `ANDROID_HOME` points at the image's Android SDK),
+and the .NET 10 SDK with the .NET 8 and 9 runtimes. Edit
+`scripts/macos-vm/provision.sh` to add others.
+
+Use `macos-vm stop` rather than `tart stop`: it shuts macOS down
+from inside first. `tart stop` alone can force the VM off before recent
+writes reach its disk.
+
 ```sh
-scripts/tart/dev-vm.sh start   # boot in a window; --no-graphics for headless
-scripts/tart/dev-vm.sh ssh     # then, in the VM:
-cd ~/threestrands && git fetch && git switch <branch>
+macos-vm start   # boot in a window; --no-graphics for headless
+macos-vm ssh     # then, in the VM:
+cd ~/Source/threestrands && git fetch && git switch <branch>
 pnpm tauri build --debug --bundles app --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
 open src-tauri/target/debug/bundle/macos/ThreeStrands.app
 ```
@@ -105,20 +122,21 @@ open src-tauri/target/debug/bundle/macos/ThreeStrands.app
 The `--config` override signs ad hoc, because the VM has no Developer ID
 certificate. `--debug` skips the [Gmail OAuth credentials](#gmail-oauth-credentials)
 that release builds require; set them in the VM shell to build without it.
-`pnpm tauri dev`, `pnpm test`, and `cargo test` run there as usual. VS Code's Remote - SSH extension can open `~/threestrands` in the VM,
-using `scripts/tart/dev-vm.sh ip` and the `~/.ssh/threestrands-tart` key.
+`pnpm tauri dev`, `pnpm test`, and `cargo test` run there as usual. VS Code's
+Remote - SSH extension can open `~/Source/threestrands` in the VM, using
+`macos-vm ip` and the `~/.ssh/macos-vm` key.
 
 To build from the host instead, commit your work and run:
 
 ```sh
-scripts/tart/dev-vm.sh build                    # current branch, debug
-scripts/tart/dev-vm.sh build --branch master --release --sign
+macos-vm build                    # current branch, debug
+macos-vm build --branch master --release --sign
 ```
 
 `build` starts the VM headless if it is stopped, checks the branch out in a
-separate VM worktree (`~/threestrands-build`, so `~/threestrands` is left
-alone), builds with ad hoc signing, and copies the app to
-`artifacts/macos-tart/`. `--sign` then runs `sign-app`. The VM sees only
+separate VM worktree (`~/Source/threestrands-build`, leaving
+`~/Source/threestrands` alone), builds with ad hoc signing, and copies the app
+to `artifacts/macos-tart/`. `--sign` then runs `sign-app`. The VM sees only
 commits, so uncommitted changes are not built. `--release` needs the
 [Gmail OAuth credentials](#gmail-oauth-credentials) set in your host shell;
 they reach the VM over SSH stdin, not a command line.
@@ -126,9 +144,9 @@ they reach the VM over SSH stdin, not a command line.
 Back on the host:
 
 ```sh
-scripts/tart/dev-vm.sh fetch      # VM branches → refs/remotes/tart/*; review before merging
-scripts/tart/dev-vm.sh pull-app   # copy the debug app (or --release) to artifacts/macos-tart/
-scripts/tart/dev-vm.sh sign-app   # sign that copy with the Developer ID identity
+macos-vm fetch      # VM branches → refs/remotes/tart/*; review before merging
+macos-vm pull-app   # copy the debug app (or --release) to artifacts/macos-tart/
+macos-vm sign-app   # sign that copy with the Developer ID identity
 ```
 
 Keep the Developer ID key out of the VM: any dependency code that runs there

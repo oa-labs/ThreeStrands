@@ -1,42 +1,51 @@
 #!/usr/bin/env bash
-# Manage a Tart macOS VM for ThreeStrands development. Runs on the host Mac.
+# Manage a Tart macOS VM for development. Runs on the host Mac.
 #
-# The VM gets a read-only view of this repository and its own clone, so
+# The VM gets read-only views of this repository and of any repositories in
+# the mounts file, and works in its own clones, so
 # npm/Cargo code that runs during builds can read the sources but cannot
 # write to the host checkout (including .git/hooks) or reach the host's
 # files and keychain. Work comes back to the host with `fetch`, which only
 # copies Git objects; it never runs code from the VM.
 #
-# Usage: scripts/tart/dev-vm.sh <command>
+# Usage: macos-vm.sh <command>   (symlink it onto PATH as `macos-vm`)
 #   create    clone the Xcode image, size the VM, and provision it
 #   provision rerun the toolchain setup (safe to repeat)
-#   build     build a committed branch in the VM and copy the app back
-#             [--branch NAME] [--release] [--sign]
+#   build     build a committed ThreeStrands branch in the VM and copy the
+#             app back [--branch NAME] [--release] [--sign]
 #   start     boot the VM in a window (pass --no-graphics for headless)
 #   stop      shut the VM down
 #   ssh       open a shell in the VM (extra args are run as a command)
 #   fetch     fetch the VM's branches into refs/remotes/tart/*
 #   pull-app  copy the VM's debug .app (or --release) to artifacts/macos-tart/
-#   sign-app  sign that copy on the host with the Developer ID identity
+#   sign-app  sign that ThreeStrands copy on the host with Developer ID
+#   mounts    list the extra read-only mounts from the mounts file
 #   ip        print the VM's address
 set -Eeuo pipefail
 
-VM_NAME="${THREESTRANDS_VM_NAME:-threestrands-dev}"
+VM_NAME="${MACOS_VM_NAME:-macos-vm}"
 # Xcode 26 matches the macos-26 release runner (Icon Composer support).
-VM_IMAGE="${THREESTRANDS_VM_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-xcode:26.5}"
-VM_CPUS="${THREESTRANDS_VM_CPUS:-6}"
-VM_MEMORY_MB="${THREESTRANDS_VM_MEMORY_MB:-16384}"
+VM_IMAGE="${MACOS_VM_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-xcode:26.5}"
+VM_CPUS="${MACOS_VM_CPUS:-6}"
+VM_MEMORY_MB="${MACOS_VM_MEMORY_MB:-16384}"
 # Empty keeps the image's disk (140 GB, sparse); Tart can only grow it.
-VM_DISK_GB="${THREESTRANDS_VM_DISK_GB:-}"
+VM_DISK_GB="${MACOS_VM_DISK_GB:-}"
 VM_USER=admin
-SSH_KEY="$HOME/.ssh/threestrands-tart"
+SSH_KEY="$HOME/.ssh/macos-vm"
 SHARE_NAME=threestrands
 GUEST_SHARE="/Volumes/My Shared Files/$SHARE_NAME"
-GUEST_CLONE="/Users/$VM_USER/threestrands"
-# `build` uses its own worktree of the clone, leaving ~/threestrands alone.
-GUEST_BUILD="/Users/$VM_USER/threestrands-build"
+GUEST_SOURCE="/Users/$VM_USER/Source"
+GUEST_CLONE="$GUEST_SOURCE/threestrands"
+# `build` uses its own worktree of the clone, leaving the clone alone.
+GUEST_BUILD="$GUEST_SOURCE/threestrands-build"
+# Other host repositories to share read-only, one absolute path per line.
+# Each appears as /Volumes/My Shared Files/<folder name> and is cloned to
+# ~/Source/<folder name> by `provision`.
+MOUNTS_FILE="${MACOS_VM_MOUNTS_FILE:-$HOME/.config/macos-vm/mounts}"
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve a PATH symlink (e.g. ~/.local/bin/macos-vm) back to the repository.
+script_path="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+script_dir="$(cd "$(dirname "$script_path")" && pwd)"
 # Share the primary checkout (not a worktree) so the VM sees every branch.
 repo_root="$(cd "$(git -C "$script_dir" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
 
@@ -53,15 +62,59 @@ vm_running() { tart list 2>/dev/null | awk -v n="$VM_NAME" '$2 == n && $NF == "r
 vm_ip() { tart ip --wait 120 "$VM_NAME"; }
 
 ssh_opts=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new
-  -o "UserKnownHostsFile=$HOME/.ssh/threestrands-tart-known-hosts")
+  -o "UserKnownHostsFile=$HOME/.ssh/macos-vm-known-hosts")
 
 vm_ssh() { ssh "${ssh_opts[@]}" "$VM_USER@$(vm_ip)" "$@"; }
 
+# Fills EXTRA_NAMES and EXTRA_PATHS from the mounts file. (macOS ships
+# bash 3.2, so no associative arrays.)
+EXTRA_NAMES=()
+EXTRA_PATHS=()
+load_extra_mounts() {
+  EXTRA_NAMES=()
+  EXTRA_PATHS=()
+  [[ -f "$MOUNTS_FILE" ]] || return 0
+  local line path name existing
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [[ -n "$line" ]] || continue
+    path="${line/#\~/$HOME}"
+    [[ "$path" == /* ]] || die "$MOUNTS_FILE: not an absolute path: $line"
+    [[ -d "$path" ]] || die "$MOUNTS_FILE: no such directory: $path"
+    name="$(basename "$path")"
+    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "$MOUNTS_FILE: unsupported folder name: $name"
+    [[ "$name" != "$SHARE_NAME" && "$name" != "threestrands-build" ]] ||
+      die "$MOUNTS_FILE: $name is reserved"
+    for existing in ${EXTRA_NAMES[@]+"${EXTRA_NAMES[@]}"}; do
+      [[ "$existing" != "$name" ]] || die "$MOUNTS_FILE: two folders named $name"
+    done
+    EXTRA_NAMES+=("$name")
+    EXTRA_PATHS+=("$path")
+  done <"$MOUNTS_FILE"
+}
+
+cmd_mounts() {
+  load_extra_mounts
+  echo "$SHARE_NAME -> $repo_root (read-only)"
+  local i
+  for ((i = 0; i < ${#EXTRA_NAMES[@]}; i++)); do
+    echo "${EXTRA_NAMES[i]} -> ${EXTRA_PATHS[i]} (read-only)"
+  done
+  echo "Mounts file: $MOUNTS_FILE"
+}
+
 start_vm() {
   if vm_running; then return; fi
+  load_extra_mounts
   local log="${TMPDIR:-/tmp}/tart-$VM_NAME.log"
-  # :ro keeps the host checkout read-only inside the VM.
-  nohup tart run "$@" --dir="$SHARE_NAME:$repo_root:ro" "$VM_NAME" >"$log" 2>&1 &
+  # :ro keeps every host folder read-only inside the VM. Tart fixes mounts
+  # at boot, so changes to the mounts file need a stop and start.
+  local dir_args=(--dir="$SHARE_NAME:$repo_root:ro") i
+  for ((i = 0; i < ${#EXTRA_NAMES[@]}; i++)); do
+    dir_args+=(--dir="${EXTRA_NAMES[i]}:${EXTRA_PATHS[i]}:ro")
+  done
+  nohup tart run "$@" "${dir_args[@]}" "$VM_NAME" >"$log" 2>&1 &
   echo "Starting $VM_NAME (log: $log)"
   vm_ip >/dev/null
 }
@@ -77,7 +130,7 @@ wait_for_ssh() {
 }
 
 install_ssh_key() {
-  [[ -f "$SSH_KEY" ]] || ssh-keygen -q -t ed25519 -N "" -C "threestrands-tart" -f "$SSH_KEY"
+  [[ -f "$SSH_KEY" ]] || ssh-keygen -q -t ed25519 -N "" -C "macos-vm" -f "$SSH_KEY"
   if vm_ssh -o BatchMode=yes true 2>/dev/null; then return; fi
   # Cirrus Labs images run the Tart guest agent, so no password is needed.
   for _ in $(seq 1 30); do
@@ -101,18 +154,36 @@ cmd_create() {
   cmd_provision
   echo
   echo "Done. Next:"
-  echo "  Open a shell:        scripts/tart/dev-vm.sh ssh"
-  echo "  Change its password: scripts/tart/dev-vm.sh ssh -t passwd"
+  echo "  Open a shell:        macos-vm ssh"
+  echo "  Change its password: macos-vm ssh -t passwd"
 }
 
 cmd_provision() {
   require_tart
-  vm_exists || die "$VM_NAME does not exist (run: scripts/tart/dev-vm.sh create)"
+  vm_exists || die "$VM_NAME does not exist (run: macos-vm create)"
   start_vm --no-graphics
   wait_for_ssh
   install_ssh_key
-  scp "${ssh_opts[@]}" "$script_dir/provision.sh" "$VM_USER@$(vm_ip):/tmp/threestrands-provision.sh"
-  vm_ssh "bash /tmp/threestrands-provision.sh '$GUEST_SHARE' '$GUEST_CLONE'"
+  scp "${ssh_opts[@]}" "$script_dir/provision.sh" "$VM_USER@$(vm_ip):/tmp/macos-vm-provision.sh"
+  load_extra_mounts
+  # Names are limited to [A-Za-z0-9._-], so they need no quoting.
+  vm_ssh "bash /tmp/macos-vm-provision.sh '$GUEST_SHARE' '$GUEST_CLONE' ${EXTRA_NAMES[*]+${EXTRA_NAMES[*]}}"
+}
+
+# `tart stop` alone can hit macOS's shutdown prompt and force the VM off
+# after 30 seconds, losing writes that were not yet on disk. Shut macOS down
+# from inside first, and force it only as a last resort.
+cmd_stop() {
+  require_tart
+  vm_running || { echo "$VM_NAME is not running"; return 0; }
+  vm_ssh -o ConnectTimeout=10 'sync && sudo -n shutdown -h now' >/dev/null 2>&1 || true
+  local _
+  for _ in $(seq 1 60); do
+    vm_running || { echo "$VM_NAME stopped"; return 0; }
+    sleep 2
+  done
+  echo "warning: $VM_NAME did not shut down; forcing it off" >&2
+  tart stop --timeout 30 "$VM_NAME"
 }
 
 cmd_fetch() {
@@ -144,7 +215,7 @@ pull_app_from() {
 cmd_sign_app() {
   local app="$repo_root/artifacts/macos-tart/ThreeStrands.app"
   local binary="$app/Contents/MacOS/threestrands"
-  [[ -f "$binary" ]] || die "no app at $app (run: scripts/tart/dev-vm.sh pull-app)"
+  [[ -f "$binary" ]] || die "no app at $app (run: macos-vm pull-app)"
   # The bundle came from the VM; refuse links that could point elsewhere.
   [[ -z "$(find "$app" -type l -print -quit)" ]] || die "$app contains symbolic links"
   local identity="${THREESTRANDS_SIGNING_IDENTITY:-$(sed -n 's/.*"signingIdentity": *"\([^"]*\)".*/\1/p' "$repo_root/src-tauri/tauri.conf.json")}"
@@ -226,11 +297,12 @@ case "$command" in
   build) cmd_build "$@" ;;
   provision) cmd_provision ;;
   start) require_tart; start_vm "$@"; wait_for_ssh; echo "Running at $(vm_ip)" ;;
-  stop) require_tart; tart stop "$VM_NAME" ;;
+  stop) cmd_stop ;;
   ssh) require_tart; vm_ssh "$@" ;;
   fetch) cmd_fetch ;;
   pull-app) cmd_pull_app "$@" ;;
   sign-app) cmd_sign_app ;;
+  mounts) cmd_mounts ;;
   ip) require_tart; vm_ip ;;
   *) sed -n '/^# Usage/,/^set /p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
