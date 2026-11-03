@@ -69,97 +69,54 @@ from the host.
 
 ### macOS VM (Tart)
 
-To build and run the macOS app without dependency code on your Mac, use a
-[Tart](https://tart.run) VM. Tart is free for personal use and small
-organizations; check its [licensing](https://tart.run/licensing/) for yours.
+To build and run the macOS app without dependency code running on your Mac,
+work in a Tart macOS VM managed by the separate `macos-vm` tool. Its README
+covers installing it, the mounts file, SSH and VS Code setup, toolchains, and
+moving work in and out. Add this repository's primary checkout to the mounts
+file under the name `threestrands`:
 
-Install Tart from its [GitHub release](https://github.com/cirruslabs/tart/releases)
-(the `cirruslabs/cli` Homebrew tap is out of date and fails to install).
-Put `tart.app` in `~/Applications` and run it through
-`~/Applications/tart.app/Contents/MacOS/tart`, for example with a `tart`
-wrapper script on your `PATH`. Then:
-
-```sh
-ln -s "$PWD/scripts/macos-vm/macos-vm.sh" ~/.local/bin/macos-vm   # any directory on PATH
-macos-vm create          # download the Xcode 26 image, install the toolchains
-macos-vm ssh -t passwd   # replace the image's admin/admin password
+```text
+threestrands=/Users/you/Source/dispatch
 ```
 
-The image is a 69 GB download with a 140 GB virtual disk. The disk is sparse,
-so it takes only the space the VM writes, but Rust build output grows quickly;
-run `cargo clean` in the VM when it fills. `create` gives the VM 6 CPUs and
-16 GB of memory; set `MACOS_VM_CPUS` or `MACOS_VM_MEMORY_MB` to
-change that, or `MACOS_VM_DISK_GB` to grow the disk.
-
-The VM mounts the primary checkout **read-only** and works in its own clone at
-`~/Source/threestrands`, whose `origin` is that mount. It holds no Git or forge
-credentials, so its code reaches the host and the server only through you:
-
-Other repositories can be shared the same way. List one absolute host path
-per line in `~/.config/macos-vm/mounts` (or the file named by
-`MACOS_VM_MOUNTS_FILE`); `#` starts a comment. Each is mounted
-read-only at `/Volumes/My Shared Files/<folder name>`, and `provision` clones
-it to `~/Source/<folder name>`. Tart sets mounts at boot, so after editing the
-file run `stop`, `start`, then `provision`. `mounts` lists what is shared.
-`provision` installs pinned, checksum-verified toolchains: Node, pnpm, and
-Rust for this repository, Temurin JDK 21 (Gradle and Kotlin come from each
-project's Gradle wrapper; `ANDROID_HOME` points at the image's Android SDK),
-and the .NET 10 SDK with the .NET 8 and 9 runtimes. Edit
-`scripts/macos-vm/provision.sh` to add others.
-
-Use `macos-vm stop` rather than `tart stop`: it shuts macOS down
-from inside first. `tart stop` alone can force the VM off before recent
-writes reach its disk.
+The VM then works in `~/Source/threestrands`. In the VM, build and run as usual:
 
 ```sh
-macos-vm start   # boot in a window; --no-graphics for headless
-macos-vm ssh     # then, in the VM:
-cd ~/Source/threestrands && git fetch && git switch <branch>
+pnpm tauri dev
 pnpm tauri build --debug --bundles app --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
-open src-tauri/target/debug/bundle/macos/ThreeStrands.app
 ```
 
 The `--config` override signs ad hoc, because the VM has no Developer ID
 certificate. `--debug` skips the [Gmail OAuth credentials](#gmail-oauth-credentials)
-that release builds require; set them in the VM shell to build without it.
-`pnpm tauri dev`, `pnpm test`, and `cargo test` run there as usual. VS Code's
-Remote - SSH extension can open `~/Source/threestrands` in the VM, using
-`macos-vm ip` and the `~/.ssh/macos-vm` key.
+that release builds require.
 
-To build from the host instead, commit your work and run:
+To build a committed branch from the host and copy the app back, run:
 
 ```sh
-macos-vm build                    # current branch, debug
-macos-vm build --branch master --release --sign
+scripts/vm-build.sh build                    # current branch, debug
+scripts/vm-build.sh build --branch master --release --sign
 ```
 
 `build` starts the VM headless if it is stopped, checks the branch out in a
-separate VM worktree (`~/Source/threestrands-build`, leaving
-`~/Source/threestrands` alone), builds with ad hoc signing, and copies the app
-to `artifacts/macos-tart/`. `--sign` then runs `sign-app`. The VM sees only
-commits, so uncommitted changes are not built. `--release` needs the
-[Gmail OAuth credentials](#gmail-oauth-credentials) set in your host shell;
-they reach the VM over SSH stdin, not a command line.
+separate VM worktree (`~/Source/threestrands-build`), builds with ad hoc
+signing, and copies the app to `artifacts/macos-vm/`. The VM sees only
+commits, so uncommitted changes are not built. `--release` needs the Gmail
+OAuth credentials set in your host shell; they reach the VM over SSH stdin, not
+a command line. `scripts/vm-build.sh pull-app` copies a build made by hand in
+`~/Source/threestrands`.
 
-Back on the host:
+`--sign` (or `scripts/vm-build.sh sign-app`) signs that copy on the host with
+the Developer ID identity, the hardened runtime, and a timestamp, as Tauri
+does. Keep the Developer ID key out of the VM: any dependency code that runs
+there could read it. `codesign` only hashes the bundle and runs nothing from
+it. Notarized, updater-signed releases still come from the release workflow.
 
-```sh
-macos-vm fetch      # VM branches → refs/remotes/tart/*; review before merging
-macos-vm pull-app   # copy the debug app (or --release) to artifacts/macos-tart/
-macos-vm sign-app   # sign that copy with the Developer ID identity
-```
-
-Keep the Developer ID key out of the VM: any dependency code that runs there
-could read it. `sign-app` signs the pulled copy on the host instead, with the
-hardened runtime and a timestamp, as Tauri does. `codesign` only hashes the
-bundle and runs nothing from it. Notarized, updater-signed releases still come
-from the release workflow.
-
-`fetch` only copies Git objects; nothing from the VM runs on the host. Running
-the pulled app on the host does run dependency code, and that build uses the
-installed app's identifier (`app.threestrands.mail`), so it opens your real
-mailbox, settings, and keychain items. Test inside the VM unless you mean to
-do that.
+Running a copied app on the host runs its dependency code there. Debug and
+local builds use the installed app's identifier (`app.threestrands.mail`), so
+they open your real mailbox, settings, and keychain items. Test inside the VM
+unless you mean to do that. Before running a VM-made branch on the host,
+review it, especially changes to `pnpm-lock.yaml`, `Cargo.lock`, and
+`supply-chain/`.
 
 ### npm
 
