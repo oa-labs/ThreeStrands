@@ -70,10 +70,11 @@ from the host.
 ### macOS VM (Tart)
 
 To build and run the macOS app without dependency code running on your Mac,
-work in a Tart macOS VM managed by the separate `macos-vm` tool. Its README
-covers installing it, the mounts file, SSH and VS Code setup, toolchains, and
-moving work in and out. Add this repository's primary checkout to the mounts
-file under the name `threestrands`:
+work in a Tart macOS VM managed by the separate `tart-vm` tool. Its README
+covers installing it, the mounts files, SSH and VS Code setup, toolchains, and
+moving work in and out. Add this repository's primary checkout to the macOS
+VM's mounts file (`~/.config/tart-vm/mac-mounts`) under the name
+`threestrands`:
 
 ```text
 threestrands=/Users/you/Source/dispatch

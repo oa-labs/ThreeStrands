@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build ThreeStrands in the macos-vm development VM and sign it on the host.
-# Runs on the host Mac. Needs the `macos-vm` tool on PATH (or MACOS_VM set to
+# Build ThreeStrands in the tart-vm macOS VM and sign it on the host.
+# Runs on the host Mac. Needs the `tart-vm` tool on PATH (or TART_VM set to
 # its path) and a mount named `threestrands` pointing at this repository's
 # primary checkout, e.g. `threestrands=/Users/you/Source/dispatch` in
-# ~/.config/macos-vm/mounts.
+# ~/.config/tart-vm/mac-mounts.
 #
 # Usage: scripts/vm-build.sh <command>
 #   build     build a committed branch in the VM and copy the app back
@@ -12,7 +12,7 @@
 #   sign-app  sign the copied app on the host with the Developer ID identity
 set -Eeuo pipefail
 
-MACOS_VM="${MACOS_VM:-macos-vm}"
+TART_VM="${TART_VM:-tart-vm}"
 GUEST_CLONE="${THREESTRANDS_VM_CLONE:-/Users/admin/Source/threestrands}"
 # `build` uses its own worktree of the clone, leaving the clone alone.
 GUEST_BUILD="${THREESTRANDS_VM_BUILD:-$GUEST_CLONE-build}"
@@ -24,13 +24,13 @@ APP_DIR="$repo_root/artifacts/macos-vm"
 
 die() { echo "error: $*" >&2; exit 1; }
 
-command -v "$MACOS_VM" >/dev/null || die "macos-vm is not on PATH (or set MACOS_VM to its path)"
+command -v "$TART_VM" >/dev/null || die "tart-vm is not on PATH (or set TART_VM to its path)"
 
 pull_app_from() {
   local bundle="$1/src-tauri/target/$2/bundle/macos"
   mkdir -p "$APP_DIR"
   rm -rf "$APP_DIR/ThreeStrands.app"
-  "$MACOS_VM" ssh "tar -C '$bundle' -cf - ThreeStrands.app" | tar -C "$APP_DIR" -xf -
+  "$TART_VM" mac ssh "tar -C '$bundle' -cf - ThreeStrands.app" | tar -C "$APP_DIR" -xf -
   echo "Copied to $APP_DIR/ThreeStrands.app"
 }
 
@@ -90,7 +90,7 @@ cmd_build() {
     done
   fi
 
-  "$MACOS_VM" start --no-graphics
+  "$TART_VM" mac start --no-graphics
   echo "Building $branch ($profile) in the VM"
   # The script travels on stdin, so the OAuth values never appear in a
   # command line on either machine.
@@ -100,7 +100,7 @@ cmd_build() {
     printf 'build_args=(%s)\n' "$(printf '%q ' "${build_args[@]}")"
     cat <<'REMOTE'
 set -Eeuo pipefail
-[[ -e "$clone/.git" ]] || { echo "error: no clone at $clone; add a 'threestrands' mount and run macos-vm provision" >&2; exit 1; }
+[[ -e "$clone/.git" ]] || { echo "error: no clone at $clone; add a 'threestrands' mount and run tart-vm mac provision" >&2; exit 1; }
 git -C "$clone" fetch --quiet --prune origin
 if [[ -e "$build/.git" ]]; then
   # Ignored build output (node_modules, target) stays for incremental builds.
@@ -114,7 +114,7 @@ echo "Commit: $(git log -1 --format='%h %s')"
 pnpm install --frozen-lockfile
 pnpm tauri build "${build_args[@]}"
 REMOTE
-  } | "$MACOS_VM" ssh 'bash -s'
+  } | "$TART_VM" mac ssh 'bash -s'
 
   pull_app_from "$GUEST_BUILD" "$profile"
   if [[ "$sign" == 1 ]]; then cmd_sign_app; fi
