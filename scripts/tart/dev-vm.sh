@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Manage a Tart macOS VM for ThreeStrands development. Runs on the host Mac.
+#
+# The VM gets a read-only view of this repository and its own clone, so
+# npm/Cargo code that runs during builds can read the sources but cannot
+# write to the host checkout (including .git/hooks) or reach the host's
+# files and keychain. Work comes back to the host with `fetch`, which only
+# copies Git objects; it never runs code from the VM.
+#
+# Usage: scripts/tart/dev-vm.sh <command>
+#   create    clone the Xcode image, size the VM, and provision it
+#   provision rerun the toolchain setup (safe to repeat)
+#   start     boot the VM in a window (pass --no-graphics for headless)
+#   stop      shut the VM down
+#   ssh       open a shell in the VM (extra args are run as a command)
+#   fetch     fetch the VM's branches into refs/remotes/tart/*
+#   pull-app  copy the VM's debug .app (or --release) to artifacts/macos-tart/
+#   ip        print the VM's address
+set -Eeuo pipefail
+
+VM_NAME="${THREESTRANDS_VM_NAME:-threestrands-dev}"
+# Xcode 26 matches the macos-26 release runner (Icon Composer support).
+VM_IMAGE="${THREESTRANDS_VM_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-xcode:26.5}"
+VM_CPUS="${THREESTRANDS_VM_CPUS:-6}"
+VM_MEMORY_MB="${THREESTRANDS_VM_MEMORY_MB:-16384}"
+# Empty keeps the image's disk (140 GB, sparse); Tart can only grow it.
+VM_DISK_GB="${THREESTRANDS_VM_DISK_GB:-}"
+VM_USER=admin
+SSH_KEY="$HOME/.ssh/threestrands-tart"
+SHARE_NAME=threestrands
+GUEST_SHARE="/Volumes/My Shared Files/$SHARE_NAME"
+GUEST_CLONE="/Users/$VM_USER/threestrands"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Share the primary checkout (not a worktree) so the VM sees every branch.
+repo_root="$(cd "$(git -C "$script_dir" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
+
+die() { echo "error: $*" >&2; exit 1; }
+
+require_tart() {
+  command -v tart >/dev/null || die "Tart is not installed: brew install cirruslabs/cli/tart"
+}
+
+vm_exists() { tart list --quiet 2>/dev/null | grep -qx "$VM_NAME"; }
+
+vm_running() { tart list 2>/dev/null | awk -v n="$VM_NAME" '$2 == n && $NF == "running" { found = 1 } END { exit !found }'; }
+
+vm_ip() { tart ip --wait 120 "$VM_NAME"; }
+
+ssh_opts=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new
+  -o "UserKnownHostsFile=$HOME/.ssh/threestrands-tart-known-hosts")
+
+vm_ssh() { ssh "${ssh_opts[@]}" "$VM_USER@$(vm_ip)" "$@"; }
+
+start_vm() {
+  if vm_running; then return; fi
+  local log="${TMPDIR:-/tmp}/tart-$VM_NAME.log"
+  # :ro keeps the host checkout read-only inside the VM.
+  nohup tart run "$@" --dir="$SHARE_NAME:$repo_root:ro" "$VM_NAME" >"$log" 2>&1 &
+  echo "Starting $VM_NAME (log: $log)"
+  vm_ip >/dev/null
+}
+
+wait_for_ssh() {
+  local ip
+  ip="$(vm_ip)"
+  for _ in $(seq 1 60); do
+    if nc -z -G 2 "$ip" 22 >/dev/null 2>&1; then return; fi
+    sleep 2
+  done
+  die "SSH did not come up on $ip"
+}
+
+install_ssh_key() {
+  [[ -f "$SSH_KEY" ]] || ssh-keygen -q -t ed25519 -N "" -C "threestrands-tart" -f "$SSH_KEY"
+  if vm_ssh -o BatchMode=yes true 2>/dev/null; then return; fi
+  # Cirrus Labs images run the Tart guest agent, so no password is needed.
+  for _ in $(seq 1 30); do
+    if tart exec -i "$VM_NAME" sh -c \
+      'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' \
+      <"$SSH_KEY.pub" 2>/dev/null; then
+      vm_ssh -o BatchMode=yes true && return
+    fi
+    sleep 2
+  done
+  die "could not install the SSH key through the Tart guest agent"
+}
+
+cmd_create() {
+  require_tart
+  vm_exists && die "$VM_NAME already exists (delete it with: tart delete $VM_NAME)"
+  echo "Cloning $VM_IMAGE (a large download)"
+  tart clone "$VM_IMAGE" "$VM_NAME"
+  tart set "$VM_NAME" --cpu "$VM_CPUS" --memory "$VM_MEMORY_MB"
+  if [[ -n "$VM_DISK_GB" ]]; then tart set "$VM_NAME" --disk-size "$VM_DISK_GB"; fi
+  cmd_provision
+  echo
+  echo "Done. Next:"
+  echo "  Open a shell:        scripts/tart/dev-vm.sh ssh"
+  echo "  Change its password: scripts/tart/dev-vm.sh ssh -t passwd"
+}
+
+cmd_provision() {
+  require_tart
+  vm_exists || die "$VM_NAME does not exist (run: scripts/tart/dev-vm.sh create)"
+  start_vm --no-graphics
+  wait_for_ssh
+  install_ssh_key
+  scp "${ssh_opts[@]}" "$script_dir/provision.sh" "$VM_USER@$(vm_ip):/tmp/threestrands-provision.sh"
+  vm_ssh "bash /tmp/threestrands-provision.sh '$GUEST_SHARE' '$GUEST_CLONE'"
+}
+
+cmd_fetch() {
+  require_tart
+  GIT_SSH_COMMAND="ssh ${ssh_opts[*]}" git -C "$repo_root" fetch "ssh://$VM_USER@$(vm_ip)$GUEST_CLONE" \
+    "+refs/heads/*:refs/remotes/tart/*"
+  echo "Fetched into refs/remotes/tart/*. Review with: git log -p master..tart/<branch>"
+}
+
+cmd_pull_app() {
+  require_tart
+  local dest="$repo_root/artifacts/macos-tart"
+  # Debug builds need no OAuth credentials; pass --release for a release build.
+  local profile=debug
+  [[ "${1:-}" == "--release" ]] && profile=release
+  local bundle="$GUEST_CLONE/src-tauri/target/$profile/bundle/macos"
+  mkdir -p "$dest"
+  rm -rf "$dest/ThreeStrands.app"
+  vm_ssh "tar -C '$bundle' -cf - ThreeStrands.app" | tar -C "$dest" -xf -
+  echo "Copied to $dest/ThreeStrands.app"
+}
+
+command="${1:-}"
+[[ $# -gt 0 ]] && shift
+case "$command" in
+  create) cmd_create ;;
+  provision) cmd_provision ;;
+  start) require_tart; start_vm "$@"; wait_for_ssh; echo "Running at $(vm_ip)" ;;
+  stop) require_tart; tart stop "$VM_NAME" ;;
+  ssh) require_tart; vm_ssh "$@" ;;
+  fetch) cmd_fetch ;;
+  pull-app) cmd_pull_app "$@" ;;
+  ip) require_tart; vm_ip ;;
+  *) sed -n '/^# Usage/,/^set /p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

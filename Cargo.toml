@@ -15,3 +15,8 @@ members = [
 # file. Folding it into this workspace would move that lock entry to a root
 # `Cargo.lock` instead.
 exclude = ["src-tauri"]
+
+# Line tables keep file/line backtraces while making debug builds far
+# smaller than full debug info. Test builds inherit this.
+[profile.dev]
+debug = "line-tables-only"
