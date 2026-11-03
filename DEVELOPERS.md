@@ -113,7 +113,14 @@ Back on the host:
 ```sh
 scripts/tart/dev-vm.sh fetch      # VM branches → refs/remotes/tart/*; review before merging
 scripts/tart/dev-vm.sh pull-app   # copy the debug app (or --release) to artifacts/macos-tart/
+scripts/tart/dev-vm.sh sign-app   # sign that copy with the Developer ID identity
 ```
+
+Keep the Developer ID key out of the VM: any dependency code that runs there
+could read it. `sign-app` signs the pulled copy on the host instead, with the
+hardened runtime and a timestamp, as Tauri does. `codesign` only hashes the
+bundle and runs nothing from it. Notarized, updater-signed releases still come
+from the release workflow.
 
 `fetch` only copies Git objects; nothing from the VM runs on the host. Running
 the pulled app on the host does run dependency code, and that build uses the

@@ -15,6 +15,7 @@
 #   ssh       open a shell in the VM (extra args are run as a command)
 #   fetch     fetch the VM's branches into refs/remotes/tart/*
 #   pull-app  copy the VM's debug .app (or --release) to artifacts/macos-tart/
+#   sign-app  sign that copy on the host with the Developer ID identity
 #   ip        print the VM's address
 set -Eeuo pipefail
 
@@ -130,6 +131,23 @@ cmd_pull_app() {
   echo "Copied to $dest/ThreeStrands.app"
 }
 
+# Sign the pulled app on the host so the Developer ID key never enters the VM.
+# codesign only hashes the bundle's files; it runs nothing from inside it.
+cmd_sign_app() {
+  local app="$repo_root/artifacts/macos-tart/ThreeStrands.app"
+  local binary="$app/Contents/MacOS/threestrands"
+  [[ -f "$binary" ]] || die "no app at $app (run: scripts/tart/dev-vm.sh pull-app)"
+  # The bundle came from the VM; refuse links that could point elsewhere.
+  [[ -z "$(find "$app" -type l -print -quit)" ]] || die "$app contains symbolic links"
+  local identity="${THREESTRANDS_SIGNING_IDENTITY:-$(sed -n 's/.*"signingIdentity": *"\([^"]*\)".*/\1/p' "$repo_root/src-tauri/tauri.conf.json")}"
+  [[ -n "$identity" ]] || die "no signingIdentity in src-tauri/tauri.conf.json"
+  # Match Tauri: hardened runtime and a secure timestamp, binary first.
+  codesign --force --options runtime --timestamp --sign "$identity" "$binary"
+  codesign --force --options runtime --timestamp --sign "$identity" "$app"
+  codesign --verify --strict --verbose=2 "$app"
+  echo "Signed $app with $identity"
+}
+
 command="${1:-}"
 [[ $# -gt 0 ]] && shift
 case "$command" in
@@ -140,6 +158,7 @@ case "$command" in
   ssh) require_tart; vm_ssh "$@" ;;
   fetch) cmd_fetch ;;
   pull-app) cmd_pull_app "$@" ;;
+  sign-app) cmd_sign_app ;;
   ip) require_tart; vm_ip ;;
   *) sed -n '/^# Usage/,/^set /p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
