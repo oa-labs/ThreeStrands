@@ -10,6 +10,8 @@
 # Usage: scripts/tart/dev-vm.sh <command>
 #   create    clone the Xcode image, size the VM, and provision it
 #   provision rerun the toolchain setup (safe to repeat)
+#   build     build a committed branch in the VM and copy the app back
+#             [--branch NAME] [--release] [--sign]
 #   start     boot the VM in a window (pass --no-graphics for headless)
 #   stop      shut the VM down
 #   ssh       open a shell in the VM (extra args are run as a command)
@@ -31,6 +33,8 @@ SSH_KEY="$HOME/.ssh/threestrands-tart"
 SHARE_NAME=threestrands
 GUEST_SHARE="/Volumes/My Shared Files/$SHARE_NAME"
 GUEST_CLONE="/Users/$VM_USER/threestrands"
+# `build` uses its own worktree of the clone, leaving ~/threestrands alone.
+GUEST_BUILD="/Users/$VM_USER/threestrands-build"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Share the primary checkout (not a worktree) so the VM sees every branch.
@@ -120,11 +124,15 @@ cmd_fetch() {
 
 cmd_pull_app() {
   require_tart
-  local dest="$repo_root/artifacts/macos-tart"
   # Debug builds need no OAuth credentials; pass --release for a release build.
   local profile=debug
   [[ "${1:-}" == "--release" ]] && profile=release
-  local bundle="$GUEST_CLONE/src-tauri/target/$profile/bundle/macos"
+  pull_app_from "$GUEST_CLONE" "$profile"
+}
+
+pull_app_from() {
+  local dest="$repo_root/artifacts/macos-tart"
+  local bundle="$1/src-tauri/target/$2/bundle/macos"
   mkdir -p "$dest"
   rm -rf "$dest/ThreeStrands.app"
   vm_ssh "tar -C '$bundle' -cf - ThreeStrands.app" | tar -C "$dest" -xf -
@@ -148,10 +156,74 @@ cmd_sign_app() {
   echo "Signed $app with $identity"
 }
 
+cmd_build() {
+  require_tart
+  local branch="" profile=debug sign=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --branch) [[ $# -ge 2 ]] || die "--branch needs a name"; branch="$2"; shift 2 ;;
+      --release) profile=release; shift ;;
+      --sign) sign=1; shift ;;
+      *) die "unknown build option: $1" ;;
+    esac
+  done
+  if [[ -z "$branch" ]]; then
+    branch="$(git branch --show-current 2>/dev/null || true)"
+    [[ -n "$branch" ]] || die "not on a branch; pass --branch NAME"
+    if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+      echo "warning: uncommitted changes are not built; the VM sees only commits" >&2
+    fi
+  fi
+  git -C "$repo_root" check-ref-format --branch "$branch" >/dev/null || die "invalid branch: $branch"
+  git -C "$repo_root" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null ||
+    die "no local branch $branch in $repo_root"
+
+  local build_args=(--bundles app --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}')
+  local env_lines=""
+  if [[ "$profile" == debug ]]; then
+    build_args=(--debug "${build_args[@]}")
+  else
+    for name in THREESTRANDS_GOOGLE_CLIENT_ID THREESTRANDS_GOOGLE_CLIENT_SECRET; do
+      [[ -n "${!name:-}" ]] || die "$name is required for --release (set it in this shell)"
+      env_lines+="export $name=$(printf '%q' "${!name}")"$'\n'
+    done
+  fi
+
+  start_vm --no-graphics
+  wait_for_ssh
+  echo "Building $branch ($profile) in $VM_NAME"
+  # The script travels on stdin, so the OAuth values never appear in a
+  # command line on either machine.
+  {
+    printf '%s' "$env_lines"
+    printf 'branch=%q clone=%q build=%q\n' "$branch" "$GUEST_CLONE" "$GUEST_BUILD"
+    printf 'build_args=(%s)\n' "$(printf '%q ' "${build_args[@]}")"
+    cat <<'REMOTE'
+set -Eeuo pipefail
+git -C "$clone" fetch --quiet --prune origin
+if [[ -d "$build/.git" || -f "$build/.git" ]]; then
+  # Ignored build output (node_modules, target) stays for incremental builds.
+  git -C "$build" checkout --quiet --force --detach "origin/$branch"
+  git -C "$build" clean --quiet -fd
+else
+  git -C "$clone" worktree add --quiet --detach "$build" "origin/$branch"
+fi
+cd "$build"
+echo "Commit: $(git log -1 --format='%h %s')"
+pnpm install --frozen-lockfile
+pnpm tauri build "${build_args[@]}"
+REMOTE
+  } | vm_ssh 'bash -s'
+
+  pull_app_from "$GUEST_BUILD" "$profile"
+  if [[ "$sign" == 1 ]]; then cmd_sign_app; fi
+}
+
 command="${1:-}"
 [[ $# -gt 0 ]] && shift
 case "$command" in
   create) cmd_create ;;
+  build) cmd_build "$@" ;;
   provision) cmd_provision ;;
   start) require_tart; start_vm "$@"; wait_for_ssh; echo "Running at $(vm_ip)" ;;
   stop) require_tart; tart stop "$VM_NAME" ;;

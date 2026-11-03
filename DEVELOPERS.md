@@ -104,9 +104,24 @@ open src-tauri/target/debug/bundle/macos/ThreeStrands.app
 
 The `--config` override signs ad hoc, because the VM has no Developer ID
 certificate. `--debug` skips the [Gmail OAuth credentials](#gmail-oauth-credentials)
-that release builds require; set them in the VM shell to build without it. `pnpm tauri dev`, `pnpm test`, and `cargo test` run there as
-usual. VS Code's Remote - SSH extension can open `~/threestrands` in the VM,
+that release builds require; set them in the VM shell to build without it.
+`pnpm tauri dev`, `pnpm test`, and `cargo test` run there as usual. VS Code's Remote - SSH extension can open `~/threestrands` in the VM,
 using `scripts/tart/dev-vm.sh ip` and the `~/.ssh/threestrands-tart` key.
+
+To build from the host instead, commit your work and run:
+
+```sh
+scripts/tart/dev-vm.sh build                    # current branch, debug
+scripts/tart/dev-vm.sh build --branch master --release --sign
+```
+
+`build` starts the VM headless if it is stopped, checks the branch out in a
+separate VM worktree (`~/threestrands-build`, so `~/threestrands` is left
+alone), builds with ad hoc signing, and copies the app to
+`artifacts/macos-tart/`. `--sign` then runs `sign-app`. The VM sees only
+commits, so uncommitted changes are not built. `--release` needs the
+[Gmail OAuth credentials](#gmail-oauth-credentials) set in your host shell;
+they reach the VM over SSH stdin, not a command line.
 
 Back on the host:
 
