@@ -57,7 +57,8 @@ so they never mix with macOS build output.
 Use it for `pnpm dev`, `pnpm lint`, `pnpm test`, `pnpm test:e2e`, `pnpm build`,
 `cargo test`, `cargo clippy`, and rust-analyzer. It cannot build or run the
 macOS app, and code under `#[cfg(target_os = "macos")]` is not compiled there;
-`pnpm tauri dev` and macOS builds still run on the host. The
+`pnpm tauri dev` and macOS builds run on the host or in the
+[macOS VM](#macos-vm-tart). The
 **ThreeStrands Linux build** container remains the x86-64 release environment.
 
 The container is a boundary for your files and keychain, not for the
@@ -65,6 +66,60 @@ repository: the checkout is mounted read-write, so anything that runs inside
 can edit sources or `.git/hooks`. VS Code also forwards your Git credentials
 and SSH agent into the container by default. Review diffs before committing
 from the host.
+
+### macOS VM (Tart)
+
+To build and run the macOS app without dependency code on your Mac, use a
+[Tart](https://tart.run) VM. Tart is free for personal use and small
+organizations; check its [licensing](https://tart.run/licensing/) for yours.
+
+Install Tart from its [GitHub release](https://github.com/cirruslabs/tart/releases)
+(the `cirruslabs/cli` Homebrew tap is out of date and fails to install).
+Put `tart.app` in `~/Applications` and run it through
+`~/Applications/tart.app/Contents/MacOS/tart`, for example with a `tart`
+wrapper script on your `PATH`. Then:
+
+```sh
+scripts/tart/dev-vm.sh create          # download the Xcode 26 image, install the toolchain
+scripts/tart/dev-vm.sh ssh -t passwd   # replace the image's admin/admin password
+```
+
+The image is a 69 GB download with a 140 GB virtual disk. The disk is sparse,
+so it takes only the space the VM writes, but Rust build output grows quickly;
+run `cargo clean` in the VM when it fills. `create` gives the VM 6 CPUs and
+16 GB of memory; set `THREESTRANDS_VM_CPUS` or `THREESTRANDS_VM_MEMORY_MB` to
+change that, or `THREESTRANDS_VM_DISK_GB` to grow the disk.
+
+The VM mounts the primary checkout **read-only** and works in its own clone at
+`~/threestrands`, whose `origin` is that mount. It holds no Git or forge
+credentials, so its code reaches the host and the server only through you:
+
+```sh
+scripts/tart/dev-vm.sh start   # boot in a window; --no-graphics for headless
+scripts/tart/dev-vm.sh ssh     # then, in the VM:
+cd ~/threestrands && git fetch && git switch <branch>
+pnpm tauri build --debug --bundles app --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+open src-tauri/target/debug/bundle/macos/ThreeStrands.app
+```
+
+The `--config` override signs ad hoc, because the VM has no Developer ID
+certificate. `--debug` skips the [Gmail OAuth credentials](#gmail-oauth-credentials)
+that release builds require; set them in the VM shell to build without it. `pnpm tauri dev`, `pnpm test`, and `cargo test` run there as
+usual. VS Code's Remote - SSH extension can open `~/threestrands` in the VM,
+using `scripts/tart/dev-vm.sh ip` and the `~/.ssh/threestrands-tart` key.
+
+Back on the host:
+
+```sh
+scripts/tart/dev-vm.sh fetch      # VM branches → refs/remotes/tart/*; review before merging
+scripts/tart/dev-vm.sh pull-app   # copy the debug app (or --release) to artifacts/macos-tart/
+```
+
+`fetch` only copies Git objects; nothing from the VM runs on the host. Running
+the pulled app on the host does run dependency code, and that build uses the
+installed app's identifier (`app.threestrands.mail`), so it opens your real
+mailbox, settings, and keychain items. Test inside the VM unless you mean to
+do that.
 
 ### npm
 

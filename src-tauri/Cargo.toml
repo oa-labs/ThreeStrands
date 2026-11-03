@@ -173,3 +173,8 @@ rustls-pki-types = "1"
 [[example]]
 name = "imap_spike"
 path = "examples/imap_spike.rs"
+
+# Line tables keep file/line backtraces while making debug builds far
+# smaller than full debug info. Test builds inherit this.
+[profile.dev]
+debug = "line-tables-only"
