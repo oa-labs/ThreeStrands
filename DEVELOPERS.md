@@ -112,7 +112,11 @@ a command line. `scripts/vm-build.sh pull-app` copies a build made by hand in
 the Developer ID identity, the hardened runtime, and a timestamp, as Tauri
 does. Keep the Developer ID key out of the VM: any dependency code that runs
 there could read it. `codesign` only hashes the bundle and runs nothing from
-it. Notarized, updater-signed releases still come from the release workflow.
+it. `--notarize` (or `scripts/vm-build.sh notarize`) then submits the signed
+copy to Apple's notary service from the host and staples the ticket, using the
+notarytool keychain profile named by `APPLE_KEYCHAIN_PROFILE` (create one with
+`xcrun notarytool store-credentials`). The VM never receives `APPLE_*`
+credentials. Updater-signed releases still come from the release workflow.
 
 Running a copied app on the host runs its dependency code there. Debug and
 local builds use the installed app's identifier (`app.threestrands.mail`), so

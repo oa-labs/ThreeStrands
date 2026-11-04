@@ -7,9 +7,14 @@
 #
 # Usage: scripts/vm-build.sh <command>
 #   build     build a committed branch in the VM and copy the app back
-#             [--branch NAME] [--release] [--sign]
+#             [--branch NAME] [--release] [--sign] [--notarize]
 #   pull-app  copy the VM clone's debug app (or --release) to artifacts/
 #   sign-app  sign the copied app on the host with the Developer ID identity
+#   notarize  notarize and staple the signed copy on the host
+#
+# Signing and notarization credentials stay on the host; nothing APPLE_* is
+# sent to the VM. Notarizing uses the notarytool keychain profile named by
+# APPLE_KEYCHAIN_PROFILE (create one with `xcrun notarytool store-credentials`).
 set -Eeuo pipefail
 
 TART_VM="${TART_VM:-tart-vm}"
@@ -58,6 +63,41 @@ cmd_sign_app() {
   echo "Signed $app with $identity"
 }
 
+# Submit the signed app to Apple's notary service from the host and staple
+# the ticket. Credentials come from a notarytool keychain profile, so no
+# password appears in a command line or environment variable.
+cmd_notarize() {
+  local app="$APP_DIR/ThreeStrands.app"
+  [[ -d "$app" ]] || die "no app at $app (run: scripts/vm-build.sh build --sign)"
+  codesign --verify --strict "$app" 2>/dev/null || die "$app is not validly signed (run: scripts/vm-build.sh sign-app)"
+  local details
+  details="$(codesign -dvv "$app" 2>&1)"
+  [[ "$details" == *$'\nAuthority=Developer ID Application'* ]] ||
+    die "$app is not signed with a Developer ID identity (run: scripts/vm-build.sh sign-app)"
+  local keychain_profile="${APPLE_KEYCHAIN_PROFILE:-}"
+  [[ -n "$keychain_profile" ]] || die "set APPLE_KEYCHAIN_PROFILE to a notarytool keychain profile (xcrun notarytool store-credentials <name> --apple-id <id> --team-id <team>)"
+
+  local tmp result status id
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/threestrands-notarize.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
+  ditto -c -k --sequesterRsrc --keepParent "$app" "$tmp/ThreeStrands.zip"
+  echo "Submitting $app to Apple's notary service (profile $keychain_profile); this can take a few minutes"
+  result="$tmp/result.plist"
+  xcrun notarytool submit "$tmp/ThreeStrands.zip" --keychain-profile "$keychain_profile" \
+    --wait --output-format plist >"$result" || true
+  status="$(plutil -extract status raw -o - "$result" 2>/dev/null || true)"
+  id="$(plutil -extract id raw -o - "$result" 2>/dev/null || true)"
+  if [[ "$status" != Accepted ]]; then
+    echo "Notarization ${status:-failed}${id:+ (submission $id)}" >&2
+    [[ -z "$id" ]] || xcrun notarytool log "$id" --keychain-profile "$keychain_profile" >&2 || true
+    die "notarization did not succeed"
+  fi
+  xcrun stapler staple "$app"
+  spctl --assess --type execute -vv "$app"
+  echo "Notarized and stapled $app (submission $id)"
+}
+
 cmd_build() {
   local branch="" profile=debug sign=0
   while [[ $# -gt 0 ]]; do
@@ -65,6 +105,7 @@ cmd_build() {
       --branch) [[ $# -ge 2 ]] || die "--branch needs a name"; branch="$2"; shift 2 ;;
       --release) profile=release; shift ;;
       --sign) sign=1; shift ;;
+      --notarize) sign=2; shift ;;
       *) die "unknown build option: $1" ;;
     esac
   done
@@ -118,7 +159,8 @@ REMOTE
   } | "$TART_VM" mac ssh 'bash -s'
 
   pull_app_from "$GUEST_BUILD" "$profile"
-  if [[ "$sign" == 1 ]]; then cmd_sign_app; fi
+  if [[ "$sign" -ge 1 ]]; then cmd_sign_app; fi
+  if [[ "$sign" == 2 ]]; then cmd_notarize; fi
 }
 
 command="${1:-}"
@@ -127,5 +169,6 @@ case "$command" in
   build) cmd_build "$@" ;;
   pull-app) cmd_pull_app "$@" ;;
   sign-app) cmd_sign_app ;;
+  notarize) cmd_notarize ;;
   *) sed -n '/^# Usage/,/^set /p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
