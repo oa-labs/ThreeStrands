@@ -175,10 +175,20 @@ binaries; keep their versions in step with `CARGO_VET_VERSION` and
 Commit the release changes on `master`, then run:
 
 ```sh
-pnpm release
+scripts/release.sh          # on a host without Node; uses the macOS VM (see above)
+pnpm release                # where Node is installed
 ```
 
-This reads the version from `package.json`, checks that it matches the Tauri
+`scripts/release.sh` runs the checks and changelog stamping below in the
+[macOS VM](#macos-vm-tart) against the committed `master`, shows you the
+stamped release notes, and asks before it commits them and does the pushes
+and the signed tag on the host, with your Git signing key and credentials.
+`--dry-run` stops after showing the notes; `--yes` skips the question.
+`scripts/release.sh docs` lists names missing from the docs, like
+`pnpm release:docs`. It also refuses to release when `master` is behind
+`primary/master` or the tag already exists.
+
+Either way, the release reads the version from `package.json`, checks that it matches the Tauri
 configuration, Cargo manifest, and application entry in `src-tauri/Cargo.lock`,
 then stamps the `## Unreleased` entries in `CHANGELOG.md` with the version and
 today's date and commits them (skipped when there are none), pushes `master`,
@@ -189,8 +199,8 @@ version `0.57.0-beta.1` produces a beta prerelease tag.
 
 Before stamping, it warns about bold UI names in the unreleased **New** and
 **Improved** entries that appear nowhere in `site/docs` or `site/index.html`,
-then releases anyway. Run `pnpm release:docs` to see that list before
-releasing. Update the docs, or add names the site words differently to
+then releases anyway. Run `pnpm release:docs` (or `scripts/release.sh docs`)
+to see that list before releasing. Update the docs, or add names the site words differently to
 `DOCS_CHECK_IGNORED` in `scripts/release.mjs`.
 
 The release workflow builds installers and attaches them to a draft GitHub

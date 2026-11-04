@@ -200,6 +200,22 @@ function localDate(now = new Date()) {
   return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, "0")).join("-");
 }
 
+/**
+ * The release checks and changelog stamping from tagRelease, without Git:
+ * scripts/release.sh runs this in the development VM and does the commit,
+ * signed tag, and pushes on the host. `date` is the host's YYYY-MM-DD.
+ */
+export async function stampChangelog(directory = root, date = localDate()) {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) throw new Error(`Invalid release date ${date}; expected YYYY-MM-DD`);
+  const sources = await readReleaseSources(directory);
+  const tag = `v${JSON.parse(sources.packageJson).version}`;
+  releaseMetadata(tag, sources);
+  const changelog = await readFile(resolve(directory, "CHANGELOG.md"), "utf8");
+  const stamped = stampRelease(changelog, tag.slice(1), date);
+  warnUndocumented(await docsCoverage(directory));
+  return { tag, changelog: stamped };
+}
+
 export async function tagRelease(directory = root) {
   const sources = await readReleaseSources(directory);
   const tag = `v${JSON.parse(sources.packageJson).version}`;
@@ -267,8 +283,11 @@ async function main() {
     warnUndocumented(await docsCoverage());
   } else if (command === "tag") {
     await tagRelease();
+  } else if (command === "stamp") {
+    // Prints the stamped CHANGELOG.md; warnings go to stderr.
+    process.stdout.write((await stampChangelog(root, argument)).changelog);
   } else {
-    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | docs | tag");
+    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | docs | tag | stamp [YYYY-MM-DD]");
   }
 }
 

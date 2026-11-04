@@ -285,7 +285,7 @@ if (action === process.env.RELEASE_TEST_FAIL_AT) process.exit(7);
   assert.equal(runtime, "node");
   return {
     directory,
-    run: () => spawnSync(process.execPath, [script, ...args], {
+    run: (commandArgs = [script, ...args]) => spawnSync(process.execPath, commandArgs, {
       cwd: directory,
       encoding: "utf8",
       env: {
@@ -633,5 +633,50 @@ describe("release installer collection", () => {
     await mkdir(output);
     await writeFile(join(output, "stale.dmg"), "stale");
     await assert.rejects(prepare(directory, output, "0.56.0"), { code: "EEXIST" });
+  });
+});
+
+describe("host release stamping", () => {
+  const pending = EMPTY_CHANGELOG.replace("## Unreleased\n", "## Unreleased\n\n### Fixed\n- A clearer fix.\n");
+  const stamp = (fixture, ...args) => fixture.run(["scripts/release.mjs", "stamp", ...args]);
+
+  it("prints the changelog stamped with the host's date and leaves Git and the file alone", async (t) => {
+    const fixture = await releaseCommand(t, { changelog: pending });
+    const result = stamp(fixture, "2026-11-03");
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^## Unreleased\n\n## 0\.56\.0 — 2026-11-03\n\n### Fixed\n- A clearer fix\.\n\n## 0\.55\.0/m);
+    assert.equal(await readFile(join(fixture.directory, "CHANGELOG.md"), "utf8"), pending);
+    assert.deepEqual(await fixture.commands(), []);
+  });
+
+  it("prints an unchanged changelog when nothing is unreleased", async (t) => {
+    const fixture = await releaseCommand(t);
+    const result = stamp(fixture, "2026-11-03");
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, EMPTY_CHANGELOG);
+  });
+
+  it("sends the docs warning to stderr so stdout stays the changelog", async (t) => {
+    const fixture = await releaseCommand(t, {
+      changelog: pending.replace("- A clearer fix.", "- A clearer fix.\n\n### New\n- **Missing Name**."),
+    });
+    const result = stamp(fixture, "2026-11-03");
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /Not mentioned in site\/docs or site\/index\.html: Missing Name\n/);
+    assert.doesNotMatch(result.stdout, /Not mentioned/);
+  });
+
+  it("rejects a malformed date and inconsistent versions without output", async (t) => {
+    const badDate = stamp(await releaseCommand(t, { changelog: pending }), "11/03/2026");
+    assert.equal(badDate.status, 1);
+    assert.match(badDate.stderr, /Invalid release date/);
+    assert.equal(badDate.stdout, "");
+
+    const fixture = await releaseCommand(t, { changelog: pending });
+    await writeFile(join(fixture.directory, "src-tauri/Cargo.lock"), sources("0.55.3").cargoLock);
+    const mismatch = stamp(fixture, "2026-11-03");
+    assert.equal(mismatch.status, 1);
+    assert.match(mismatch.stderr, /Cargo\.lock \(threestrands\) has version 0\.55\.3/);
+    assert.equal(mismatch.stdout, "");
   });
 });
