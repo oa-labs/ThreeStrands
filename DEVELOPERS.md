@@ -71,16 +71,18 @@ from the host.
 
 To build and run the macOS app without dependency code running on your Mac,
 work in a Tart macOS VM managed by the separate `tart-vm` tool. Its README
-covers installing it, the mounts files, SSH and VS Code setup, toolchains, and
+covers installing it, the projects files, SSH and VS Code setup, toolchains, and
 moving work in and out. Add this repository's primary checkout to the macOS
-VM's mounts file (`~/.config/tart-vm/mac-mounts`) under the name
-`threestrands`:
+VM's projects file (`~/.config/tart-vm/mac-projects`) under the name
+`threestrands`, then run `tart-vm mac sync`:
 
 ```text
 threestrands=/Users/you/Source/dispatch
 ```
 
-The VM then works in `~/Source/threestrands`. In the VM, build and run as usual:
+The VM then works in `~/Source/threestrands`. It sees only commits that
+`tart-vm mac sync` has sent it; `scripts/vm-build.sh` and `scripts/release.sh`
+sync first. In the VM, build and run as usual:
 
 ```sh
 pnpm tauri dev

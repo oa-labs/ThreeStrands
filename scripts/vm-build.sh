@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build ThreeStrands in the tart-vm macOS VM and sign it on the host.
 # Runs on the host Mac. Needs the `tart-vm` tool on PATH (or TART_VM set to
-# its path) and a mount named `threestrands` pointing at this repository's
-# primary checkout, e.g. `threestrands=/Users/you/Source/dispatch` in
-# ~/.config/tart-vm/mac-mounts.
+# its path) and a project named `threestrands` for this repository's primary
+# checkout, e.g. `threestrands=/Users/you/Source/dispatch` in
+# ~/.config/tart-vm/mac-projects. `build` syncs it to the VM first.
 #
 # Usage: scripts/vm-build.sh <command>
 #   build     build a committed branch in the VM and copy the app back
@@ -91,6 +91,7 @@ cmd_build() {
   fi
 
   "$TART_VM" mac start --no-graphics
+  "$TART_VM" mac sync --quiet threestrands
   echo "Building $branch ($profile) in the VM"
   # The script travels on stdin, so the OAuth values never appear in a
   # command line on either machine.
@@ -100,7 +101,7 @@ cmd_build() {
     printf 'build_args=(%s)\n' "$(printf '%q ' "${build_args[@]}")"
     cat <<'REMOTE'
 set -Eeuo pipefail
-[[ -e "$clone/.git" ]] || { echo "error: no clone at $clone; add a 'threestrands' mount and run tart-vm mac provision" >&2; exit 1; }
+[[ -e "$clone/.git" ]] || { echo "error: no clone at $clone; add a 'threestrands' project and run tart-vm mac sync" >&2; exit 1; }
 git -C "$clone" fetch --quiet --prune origin
 if [[ -e "$build/.git" ]]; then
   # Ignored build output (node_modules, target) stays for incremental builds.

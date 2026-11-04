@@ -2,7 +2,7 @@
 # Release ThreeStrands from the host Mac without running Node on it.
 #
 # The checks and changelog stamping (`node scripts/release.mjs stamp`) run in
-# the tart-vm macOS VM against the committed master. This script then shows
+# the tart-vm macOS VM against the committed master, after syncing it there. This script then shows
 # the stamped CHANGELOG.md, and on confirmation commits it, pushes master,
 # creates the signed tag, and pushes the tag, all with the host's Git, signing
 # key, and credentials. `pnpm release` still does the same in one step where
@@ -38,20 +38,21 @@ done
 command -v "$TART_VM" >/dev/null || die "tart-vm is not on PATH (or set TART_VM to its path)"
 
 # Run `node scripts/release.mjs <args>` in the VM on commit $1 and print its
-# stdout. The VM sees only commits, through its read-only view of this repo.
+# stdout. The VM sees only commits, which `tart-vm mac sync` sends it.
 in_vm() {
   local commit="$1"
   shift
   "$TART_VM" mac start --no-graphics >/dev/null
+  "$TART_VM" mac sync --quiet threestrands >&2
   {
     printf 'clone=%q work=%q commit=%q\n' "$GUEST_CLONE" "$GUEST_WORK" "$commit"
     printf 'args=(%s)\n' "$(printf '%q ' "$@")"
     cat <<'REMOTE'
 set -Eeuo pipefail
-[[ -e "$clone/.git" ]] || { echo "error: no clone at $clone; add a 'threestrands' mount and run tart-vm mac provision" >&2; exit 1; }
+[[ -e "$clone/.git" ]] || { echo "error: no clone at $clone; add a 'threestrands' project and run tart-vm mac sync" >&2; exit 1; }
 git -C "$clone" fetch --quiet origin
 git -C "$clone" cat-file -e "$commit^{commit}" 2>/dev/null ||
-  { echo "error: the VM cannot see commit $commit; is it committed in the mounted checkout?" >&2; exit 1; }
+  { echo "error: the VM cannot see commit $commit after syncing" >&2; exit 1; }
 git -C "$clone" worktree remove --force "$work" >/dev/null 2>&1 || rm -rf "$work"
 git -C "$clone" worktree prune
 git -C "$clone" worktree add --quiet --detach "$work" "$commit"
