@@ -501,8 +501,10 @@ describe("conversation brief", () => {
       expect(await screen.findByText("Added to calendar")).toBeInTheDocument();
       expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
       expect(await screen.findByRole("region", { name: "Budget review details" })).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
-      await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByText("Budget review")).not.toBeInTheDocument());
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument());
+      expect(screen.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+      expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByText("Budget review")).not.toBeInTheDocument();
     });
 
     it("opens an announced date-only event with blank times and no invitees", async () => {

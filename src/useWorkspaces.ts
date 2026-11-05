@@ -42,16 +42,17 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
   const sideDrawerOpen = narrowLayout && drawerRequested;
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
-  const [calendarOpenedFromToday, setCalendarOpenedFromToday] = useState(false);
+  // Event jumps preserve the underlying reader; Escape only needs to restore its workspace.
+  const [calendarReturnWorkspace, setCalendarReturnWorkspace] = useState<{ workspace: RightWorkspace } | null>(null);
   useEffect(() => {
-    if (rightWorkspace !== "week") setCalendarOpenedFromToday(false);
+    if (rightWorkspace !== "week") setCalendarReturnWorkspace(null);
   }, [rightWorkspace]);
-  const canReturnToToday = rightWorkspace === "week" && calendarOpenedFromToday;
-  const returnToToday = useCallback(() => {
-    if (!canReturnToToday) return;
-    setCalendarOpenedFromToday(false);
-    setRightWorkspace("today");
-  }, [canReturnToToday]);
+  const canReturnFromCalendar = rightWorkspace === "week" && calendarReturnWorkspace !== null;
+  const returnFromCalendar = useCallback(() => {
+    if (!canReturnFromCalendar || !calendarReturnWorkspace) return;
+    setRightWorkspace(calendarReturnWorkspace.workspace);
+    setCalendarReturnWorkspace(null);
+  }, [canReturnFromCalendar, calendarReturnWorkspace]);
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
   const [contactsView, setContactsView] = useState<ContactsView>(readContactsView);
   useEffect(() => { writeContactsView(contactsView); }, [contactsView]);
@@ -162,8 +163,8 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     selectedEmail: contextPersonEmail,
   }), [openContactInAddressBook, visibleThreadId, contextPersonEmail, readingMessageIdRef, showMailContext]);
   const openCalendarView = useCallback((day?: Date, event?: ScheduleEvent) => {
-    // Opening an agenda item is a reversible jump; choosing Calendar itself is navigation.
-    setCalendarOpenedFromToday(rightWorkspace === "today" && Boolean(event));
+    // Opening an event is a reversible jump; choosing Calendar itself is navigation.
+    setCalendarReturnWorkspace(event && rightWorkspace !== "week" ? { workspace: rightWorkspace } : null);
     setCalendarWeekAnchor((current) => day ? startOfLocalDay(day) : current ?? startOfLocalDay(new Date()));
     setCalendarEventToOpen(event ?? null);
     setRightWorkspace("week");
@@ -180,6 +181,6 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     sideColumn, setSideColumn, scheduleShown, showMailContext, openTasksView,
     narrowLayout, sideDrawerOpen, setSideDrawerOpen: setDrawerRequested,
     openAgentsView, openFilesView, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
-    contextPersonEmail, openCalendarView, canReturnToToday, returnToToday,
+    contextPersonEmail, openCalendarView, canReturnFromCalendar, returnFromCalendar,
   };
 }

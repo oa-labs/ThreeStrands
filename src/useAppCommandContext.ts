@@ -92,7 +92,7 @@ export function useAppCommandContext({
   const {
     rightWorkspace, setRightWorkspace, setContactsView, toggleSchedule, showMailContext, openTasks, openTasksView,
     openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openTodayView,
-    canReturnToToday, returnToToday,
+    canReturnFromCalendar, returnFromCalendar,
   } = workspaces;
   const {
     accountSplitInboxes, returnStep, goBack, goToInboxTab, openMailView, goToSplitTab,
@@ -131,8 +131,8 @@ export function useAppCommandContext({
     selectedArchived: selected?.archived ?? false,
     selectedTrashed: selected?.trashed ?? false,
     canUnsubscribe,
-    canGoBack: canReturnToToday || returnStep !== null,
-    goBack: canReturnToToday ? returnToToday : goBack,
+    canGoBack: canReturnFromCalendar || returnStep !== null,
+    goBack: canReturnFromCalendar ? returnFromCalendar : goBack,
     searchOpen: searchOpen && isTabbedMailbox,
     closeSearch,
     canNavigateMessages: displayedMessages.length > 1,
@@ -334,7 +334,7 @@ export function useAppCommandContext({
     toggleMessageFilter,
   }), [
     createCalendarEvent, snoozeSelected, returnSnoozedSelected, correspondence.context, parkedDraft, openDraft, openDraftRow, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
-    selectedId, selected, canUnsubscribe, returnStep, goBack, canReturnToToday, returnToToday, displayedMessages,
+    selectedId, selected, canUnsubscribe, returnStep, goBack, canReturnFromCalendar, returnFromCalendar, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
     aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, correspondence.activeDraft?.mode, refreshMail, toggleSchedule, showMailContext, openTasks, openMailView, openTasksView,

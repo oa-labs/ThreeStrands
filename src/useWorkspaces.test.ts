@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ThreadDetail } from "./domain";
+import type { ScheduleEvent, ThreadDetail } from "./domain";
 import { useWorkspaces } from "./useWorkspaces";
 import { mailClient } from "./data/client";
 
@@ -149,6 +149,36 @@ describe("Mail's right column", () => {
     act(() => hook.result.current.showMailContext());
     expect(hook.result.current.sideColumn).toBe("context");
     vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue([]);
+  });
+
+  it.each([null, "today", "tasks"] as const)("returns from an event jump to %s", (workspace) => {
+    const hook = render(thread("t1"));
+    const day = new Date(2026, 10, 6);
+    const event = { id: "created", start: day.toISOString() } as ScheduleEvent;
+    act(() => hook.result.current.setRightWorkspace(workspace));
+    act(() => hook.result.current.openCalendarView(day, event));
+    expect(hook.result.current.rightWorkspace).toBe("week");
+    expect(hook.result.current.calendarEventToOpen).toBe(event);
+    expect(hook.result.current.canReturnFromCalendar).toBe(true);
+    act(() => hook.result.current.returnFromCalendar());
+    expect(hook.result.current.rightWorkspace).toBe(workspace);
+    expect(hook.result.current.canReturnFromCalendar).toBe(false);
+  });
+
+  it("clears the return destination when choosing Calendar or leaving it", () => {
+    const hook = render(thread("t1"));
+    const day = new Date(2026, 10, 6);
+    const event = { id: "created", start: day.toISOString() } as ScheduleEvent;
+    act(() => hook.result.current.openCalendarView(day, event));
+    act(() => hook.result.current.openCalendarView());
+    expect(hook.result.current.canReturnFromCalendar).toBe(false);
+    act(() => hook.result.current.returnFromCalendar());
+    expect(hook.result.current.rightWorkspace).toBe("week");
+    act(() => hook.result.current.setRightWorkspace(null));
+    act(() => hook.result.current.openCalendarView(day, event));
+    act(() => hook.result.current.openTasksView());
+    act(() => hook.result.current.openCalendarView());
+    expect(hook.result.current.canReturnFromCalendar).toBe(false);
   });
 
   it("opens the schedule on a requested day", () => {

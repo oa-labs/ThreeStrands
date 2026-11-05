@@ -23,6 +23,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Fixed
 - Adding a suggested event whose time is unknown now keeps its date and asks you to enter times, instead of selecting **All day**.
+- After adding an event from an email to your calendar, press Escape to return to the email and continue processing your inbox.
 - Pasting a copied email link into an email address field now removes `mailto:` and link parameters.
 - Email images now load when their server sends a malformed content type, including signature dividers that previously appeared as alt text.
 - Returning to Mail from Contacts or another workspace now restores your place in a long email.

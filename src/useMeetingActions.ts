@@ -15,7 +15,7 @@ import { listenForOpenedCalendarFiles } from "./calendarFiles";
 import { calendarEventRange } from "./CalendarAttachment";
 import { calendarDescriptionText } from "./calendarDescription";
 import { revalidateScheduleCache } from "./calendarScheduleCache";
-import { eventDate, startOfLocalDay } from "./calendarTime";
+import { eventDate } from "./calendarTime";
 import { logBackgroundFailure } from "./errors";
 import type { useWorkspaces } from "./useWorkspaces";
 import type { useCorrespondence } from "./useCorrespondence";
@@ -33,7 +33,7 @@ function localDay(value: string): Date {
 type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
 type Options = Pick<ReturnType<typeof useThreadIntelligence>, "ownAddresses" | "removeActionProposal"> & {
-  workspaces: Pick<ReturnType<typeof useWorkspaces>, "setRightWorkspace" | "refreshCalendarOptions" | "calendarConnected" | "setCalendarWeekAnchor" | "setCalendarEventToOpen">;
+  workspaces: Pick<ReturnType<typeof useWorkspaces>, "setRightWorkspace" | "refreshCalendarOptions" | "calendarConnected" | "openCalendarView">;
   correspondence: Pick<ReturnType<typeof useCorrespondence>, "activeDraft" | "liveDraft" | "insertIntoDraft" | "replyWithAvailability" | "replyWithText">;
   visibleDetail: ThreadDetail | null;
   availabilityPreferences: ReturnType<typeof useAppPreferences>["availabilityPreferences"];
@@ -46,8 +46,7 @@ export function useMeetingActions({
   ownAddresses, removeActionProposal,
 }: Options) {
   const {
-    setRightWorkspace, refreshCalendarOptions, calendarConnected, setCalendarWeekAnchor,
-    setCalendarEventToOpen,
+    setRightWorkspace, refreshCalendarOptions, calendarConnected, openCalendarView,
   } = workspaces;
   const [meetingEditor, setMeetingEditor] = useState<MeetingEditorState | null>(null);
   const draftAvailabilityReply = useCallback((candidates: AvailabilityCandidate[], sourceMessageId?: string) => {
@@ -143,16 +142,14 @@ export function useMeetingActions({
       // The reply comes next, so stay with the conversation instead of showing the calendar.
       setRightWorkspace(null);
       meetingEventDraft.afterCreated();
+      void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
     } else {
-      setCalendarWeekAnchor(startOfLocalDay(eventDate(event)));
-      setCalendarEventToOpen(event);
-      setRightWorkspace("week");
+      openCalendarView(eventDate(event), event);
     }
-    void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
     setNotice({ message: "Added to calendar" });
   }, [
     meetingEventDraft, refreshCalendarOptions, removeActionProposal,
-    setCalendarEventToOpen, setCalendarWeekAnchor, setNotice, setRightWorkspace,
+    openCalendarView, setNotice, setRightWorkspace,
   ]);
   const confirmMeetingTime = useCallback((slot: ScheduleSlot) => {
     correspondence.replyWithText(formatConfirmationText(slot, availabilityPreferences.timeZone), visibleDetail?.messages.at(-1)?.id);
