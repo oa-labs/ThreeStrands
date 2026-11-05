@@ -116,6 +116,8 @@ export type CommandContext = {
   openGettingStarted(): void;
   openSettings(): void;
   toggleSchedule(): void;
+  /** Reopens the last draft left without sending; absent when there is none. */
+  resumeParkedDraft?(): void;
   openTasks(): void;
   openMailView(): void;
   openTasksView(): void;
@@ -226,6 +228,7 @@ export const commands: Command[] = [
   { id: "mailbox.sent", title: "Go to Sent", keys: ["g then s"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openSent) },
   { id: "mailbox.trash", title: "Go to Trash", keys: ["g then t"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openTrash) },
   { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openDrafts) },
+  { id: "draft.resume", title: "Return to Draft", keywords: ["resume", "back", "continue", "composer"], keys: ["g then c"], group: "Navigation", enabled: (c) => !c.composerActive && Boolean(c.resumeParkedDraft), run: (c) => complete(() => c.resumeParkedDraft?.()) },
   { id: "snoozed.open", title: "Open Snoozed", keys: ["g then z"], group: "Navigation", enabled: (c) => !c.composerActive && Boolean(c.openSnoozed), run: (c) => complete(() => c.openSnoozed?.()) },
   { id: "thread.snooze", title: "Snooze Conversation", keys: ["h"], keywords: ["later", "remind me", "reschedule"], group: "Triage", enabled: (c) => c.focusedPane === "mail" && hasThreadTarget(c) && isThreadMailbox(c) && !c.selectedTrashed && !c.composerActive && Boolean(c.snoozeSelected), run: (c) => complete(() => c.snoozeSelected?.()) },
   { id: "thread.returnSnoozed", title: "Return to Inbox", keys: [], group: "Triage", enabled: (c) => c.focusedPane === "mail" && c.mailbox === "snoozed" && hasThreadTarget(c) && !c.composerActive && Boolean(c.returnSnoozedSelected), run: (c) => c.returnSnoozedSelected?.() ?? Promise.resolve({}), undo: undoResult },
@@ -247,6 +250,8 @@ export const commands: Command[] = [
     run: (c) => complete(c.goToPreviousSplitTab),
   },
   { id: "draft.schedule", title: "Send later", keys: ["Mod+Shift+L"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(() => c.scheduleDraft?.()) },
+  // Plain t is text in a draft, so the composer toggles the calendar with a modifier.
+  { id: "draft.calendar", title: "Show / Hide Calendar", keywords: ["schedule", "availability"], keys: ["Mod+Shift+t"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleSchedule) },
   { id: "draft.send", title: "Send Draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
   { id: "draft.sendAndMarkDone", title: "Send & archive", keywords: ["mark done"], keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
   // The open draft in the Drafts folder is what "#" deletes there, matching

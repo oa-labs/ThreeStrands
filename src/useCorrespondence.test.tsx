@@ -187,6 +187,62 @@ describe("useCorrespondence", () => {
     await waitFor(() => expect(createDraft).toHaveBeenLastCalledWith("reply", "message-1", "account@example.com"));
   });
 
+  it("parks a draft left for another conversation until it is reopened or leaves Drafts", async () => {
+    const written = { ...draft, subject: "Budget" };
+    const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([written]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await waitFor(() => expect(result.current.draftCount).toBe(1));
+    expect(result.current.parkedDraft).toBeNull();
+
+    act(() => result.current.openDraft(written));
+    expect(result.current.parkedDraft).toBeNull();
+    act(() => result.current.context.openInbox());
+    await waitFor(() => expect(result.current.activeDraft).toBeNull());
+    expect(result.current.parkedDraft?.subject).toBe("Budget");
+
+    act(() => result.current.openDraft(written));
+    expect(result.current.activeDraft?.id).toBe(written.id);
+    expect(result.current.parkedDraft).toBeNull();
+    act(() => result.current.context.openInbox());
+    await waitFor(() => expect(result.current.parkedDraft?.id).toBe(written.id));
+
+    // Discarded or sent elsewhere: no longer offered.
+    listDrafts.mockResolvedValue([]);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.parkedDraft).toBeNull();
+  });
+
+  it("never offers back a draft its composer discarded", async () => {
+    const written = { ...draft, subject: "Throwaway", body: "Not needed" };
+    const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([written]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([]);
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => next);
+    vi.spyOn(mailClient, "discardDraft").mockImplementation(async () => { listDrafts.mockResolvedValue([]); });
+    const parked: (Draft | null)[] = [];
+    function Harness() {
+      const state = useCorrespondence([], undefined, undefined, ...snippetArgs, null);
+      parked.push(state.parkedDraft);
+      return <>
+        <button onClick={() => state.openDraft(written)}>Open</button>
+        {state.renderComposer()}
+      </>;
+    }
+    try {
+      render(<Harness />);
+      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+      fireEvent.click(screen.getByRole("button", { name: "Discard Draft" }));
+      await waitFor(() => expect(screen.queryByRole("textbox", { name: "Subject" })).toBeNull());
+      await waitFor(() => expect(listDrafts.mock.calls.length).toBeGreaterThan(1));
+      expect(parked.every((entry) => entry === null)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
   it.each(["personal@example.com", null])("uses the active mailbox for new messages (%s), independently of the selected conversation", async (activeAccount) => {
     vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
     vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);

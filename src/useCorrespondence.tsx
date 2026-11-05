@@ -115,6 +115,12 @@ export function useCorrespondence(
   activeAccountId?: string | null,
 ) {
   const [active, setActive] = useState<Draft | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  // The last draft closed without sending, which Return to Draft reopens. It
+  // is offered only while it is still in Drafts, so a discard or a send on
+  // another device drops it.
+  const [parkedId, setParkedId] = useState<string | null>(null);
   // Bumped to reopen the composer on a version another device saved.
   const [activeVersion, setActiveVersion] = useState(0);
   const [selectedQuoteDraftId, setSelectedQuoteDraftId] = useState<string | null>(null);
@@ -213,6 +219,7 @@ export function useCorrespondence(
   // another folder never drops what was typed since the last autosave.
   const closeComposer = useCallback(async () => {
     await editor.current?.flush();
+    if (activeRef.current) setParkedId(activeRef.current.id);
     setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
   }, []);
   // Called when navigating to the inline Drafts/Outbox view: makes sure
@@ -364,6 +371,7 @@ export function useCorrespondence(
     scheduleDraft, sendDraft, sendDraftAndThen, attachFiles, discardDraft, draftReplyWithAI, undoSend, canUndoSend: pendingId !== null,
   }), [scheduleDraft, attachFiles, closing, compose, composerActive, discardDraft, draftReplyWithAI, editAsNew, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
   const openDraft = useCallback((draft: Draft) => {
+    setParkedId((current) => current === draft.id ? null : current);
     setSelectedQuoteDraftId(null);
     setActiveFollowUpTaskId(draft.followUpTaskId ?? null);
     setActiveThreadId(null);
@@ -414,8 +422,15 @@ export function useCorrespondence(
       onRemoteVersion={(next) => { setActive(next); setActiveVersion((version) => version + 1); }}
       onSendAndArchive={onSendAndArchive}
       review={review}
-      onClose={() => { setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); void refresh(); }}
+      onClose={() => {
+        const closedId = active.id;
+        setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
+        // Park only after Drafts is current: closing an empty draft or the
+        // trash button discards it, and it must not be offered back meanwhile.
+        void refresh().then(() => setParkedId(closedId), logBackgroundFailure("Drafts refresh after closing the composer"));
+      }}
       onQueued={(item) => {
+        setParkedId((current) => current === active.id ? null : current);
         const followUpTaskId = activeFollowUpTaskId ?? active.followUpTaskId ?? null;
         setActive(null);
         setActiveThreadId(null);
@@ -454,6 +469,7 @@ export function useCorrespondence(
     draftCount: drafts.length,
     outboxCount: outbox.filter((o) => !["sent", "canceled"].includes(o.state)).length + summaries.filter((s) => !["sent", "canceled"].includes(s.state) && !outbox.some((o) => o.id === s.operationId && o.schedule?.report.ownerInstallationId === s.ownerInstallationId)).length,
     openDraft,
+    parkedDraft: active ? null : drafts.find((draft) => draft.id === parkedId) ?? null,
     discardListedDraft,
     discardListedDrafts,
     restoreDiscardedDrafts,

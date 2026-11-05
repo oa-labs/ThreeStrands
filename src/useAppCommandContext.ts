@@ -111,6 +111,8 @@ export function useAppCommandContext({
     openSettingsAt, adjustFontScale, toggleTheme, toggleContextPanelFocus, selectAdjacentMessage,
     getSuggestions, openThreadChat, refreshMail, closeSearch,
   } = ui;
+  const { parkedDraft, openDraft } = correspondence;
+  const openDraftRow = draftSelection.open;
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     toggleContextPanelFocus,
@@ -151,6 +153,11 @@ export function useAppCommandContext({
     openTrash: () => openFolder("trash"),
     openSplitInbox: goToSplitTab,
     openDrafts: () => openFolder("drafts"),
+    resumeParkedDraft: parkedDraft ? () => {
+      setRightWorkspace(null);
+      if (mailbox === "drafts") openDraftRow(parkedDraft.id);
+      openDraft(parkedDraft);
+    } : undefined,
     openOutbox: () => openFolder("outbox"),
     selectNext: () => {
       if (mailbox === "outbox") { outboxSelection.selectAdjacent(1); return; }
@@ -326,7 +333,7 @@ export function useAppCommandContext({
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
   }), [
-    createCalendarEvent, snoozeSelected, returnSnoozedSelected, correspondence.context, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
+    createCalendarEvent, snoozeSelected, returnSnoozedSelected, correspondence.context, parkedDraft, openDraft, openDraftRow, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
     selectedId, selected, canUnsubscribe, returnStep, goBack, canReturnToToday, returnToToday, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
