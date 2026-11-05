@@ -23,6 +23,35 @@ describe("split inbox search shortcuts", () => {
     vi.restoreAllMocks();
   });
 
+  it("reveals Starred after starring without switching and hides an emptied tab after leaving", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    let followUp = { ...(await mailClient.listThreads())[0]!, starred: false };
+    vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listThreadsPage").mockImplementation(async () => ({ threads: [followUp], hasMore: false }));
+    vi.spyOn(mailClient, "listStarredPage").mockImplementation(async () => ({ threads: followUp.starred ? [followUp] : [], hasMore: false }));
+    vi.spyOn(mailClient, "mailboxUnreadCounts").mockImplementation(async () => ({ inbox: 1, splits: {}, starred: followUp.starred ? 1 : 0 }));
+    vi.spyOn(mailClient, "mutateThreads").mockImplementation(async (mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.kind === "star") followUp = { ...followUp, starred: mutation.value };
+        if (mutation.kind === "archive") followUp = { ...followUp, archived: mutation.value };
+      }
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Star (s)" }));
+    const starred = await screen.findByRole("tab", { name: "★ Starred · 1" });
+    expect(starred).toHaveAttribute("aria-selected", "false");
+    fireEvent.click(starred);
+    expect(await screen.findByRole("listbox", { name: "Starred" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Archive (e)" }));
+    await waitFor(() => expect(followUp.archived).toBe(true));
+    expect(screen.getByRole("tab", { name: "★ Starred · 1" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(await screen.findByRole("button", { name: "Unstar (s)" }));
+    expect(await screen.findByRole("tab", { name: "★ Starred · 0" })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(within(screen.getByRole("listbox", { name: "Starred" })).queryAllByRole("option")).toHaveLength(0));
+    fireEvent.click(screen.getByRole("tab", { name: /^Main/ }));
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /Starred/ })).not.toBeInTheDocument());
+  });
+
   it.each([
     ["Inbox", "listThreadsPage"],
     ["All Mail", "listAllMailPage"],
@@ -83,6 +112,7 @@ describe("split inbox search shortcuts", () => {
 
   it("hides the lone Main tab until a split exists, keeping Add Split and Filters on the title row", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    vi.spyOn(mailClient, "mailboxUnreadCounts").mockResolvedValue({ inbox: 0, splits: {}, starred: 0 });
     const listSplits = vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([]);
     const first = render(<App />);
     const addSplit = await screen.findByRole("button", { name: "Add Split Inbox" });
@@ -148,7 +178,7 @@ describe("split inbox search shortcuts", () => {
     expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
 
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Search Mail" }), { key: "Tab", shiftKey: true });
-    await waitFor(() => expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Starred/ })).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
   });
 

@@ -28,7 +28,7 @@ export function useSettingsIntegration({
     refreshAccounts, setAuthStatus,
   } = mailAccounts;
   const {
-    setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
+    setShowStarredInbox, setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
     setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles,
   } = preferences;
   const { loadThreads, query } = mailboxThreads;
@@ -64,6 +64,7 @@ export function useSettingsIntegration({
   ]);
 
   const applyImportedSettings = useCallback(async ({ preferences: imported }: SettingsImportResult) => {
+    setShowStarredInbox(imported.showStarredInbox ?? true);
     setTheme(imported.theme);
     setAccent(imported.accent);
     setFontScale(imported.fontScale);
@@ -83,7 +84,7 @@ export function useSettingsIntegration({
     refreshAiAvailability();
     setSettingsSection("accounts");
   }, [
-    setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
+    setShowStarredInbox, setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
     setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles, setActiveAccountId,
     refreshAccounts, refreshSplitInboxes, setAuthStatus, refreshAiAvailability, setSettingsSection,
   ]);

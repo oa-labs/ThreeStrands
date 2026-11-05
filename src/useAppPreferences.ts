@@ -8,6 +8,7 @@ import {
   saveFontScale,
 } from "./fontScale";
 import {
+  readShowStarredInbox, saveShowStarredInbox,
   applyFontFamily,
   readAutoReadDelaySeconds,
   readFontFamily,
@@ -53,6 +54,7 @@ import type { AvailabilityPreferences, AvailabilityProfiles } from "./domain";
  * coordinate local state, storage, and CSS independently.
  */
 export function useAppPreferences() {
+  const [showStarredInbox, setShowStarredInboxState] = useState(readShowStarredInbox);
   const [theme, setThemeState] = useState(readTheme);
   const [accent, setAccentState] = useState(readAccent);
   const [fontScale, setFontScaleState] = useState(readFontScale);
@@ -71,6 +73,7 @@ export function useAppPreferences() {
       void pullSyncedPreferences().then((changed) => {
         if (changed) {
           setThemeState(readTheme());
+          setShowStarredInboxState(readShowStarredInbox());
           setFontScaleState(readFontScale());
           setFontFamilyState(readFontFamily());
           setEmailMinimumFontSizeState(readEmailMinimumFontSize());
@@ -110,6 +113,10 @@ export function useAppPreferences() {
     return () => query.removeEventListener("change", handleChange);
   }, [theme]);
 
+  const setShowStarredInbox = useCallback((value: boolean) => {
+    setShowStarredInboxState(saveShowStarredInbox(value));
+    queuePortablePreferences();
+  }, []);
   const setTheme = useCallback((next: Theme) => {
     saveTheme(next);
     setThemeState(next);
@@ -183,6 +190,7 @@ export function useAppPreferences() {
   [availabilityPreferences, availabilityProfileFor, preferencesByProfile]);
 
   return {
+    showStarredInbox, setShowStarredInbox,
     theme,
     effectiveTheme: effectiveTheme(theme),
     setTheme,

@@ -162,6 +162,8 @@ pub struct TransferPreferences {
     pub email_text_colors: String,
     pub auto_read_delay_seconds: i64,
     pub load_remote_images: bool,
+    #[serde(default = "default_show_starred_inbox", skip_serializing_if = "is_default_show_starred_inbox")]
+    pub show_starred_inbox: bool,
     pub selected_account_id: Option<String>,
     pub ai_provider: AiProvider,
     pub ai_model: String,
@@ -196,6 +198,14 @@ fn default_email_zoom() -> i64 {
 
 fn is_default_email_zoom(value: &i64) -> bool {
     *value == default_email_zoom()
+}
+
+fn default_show_starred_inbox() -> bool {
+    true
+}
+
+fn is_default_show_starred_inbox(value: &bool) -> bool {
+    *value
 }
 
 fn default_email_text_colors() -> String {
@@ -1117,6 +1127,7 @@ mod tests {
                 email_zoom: default_email_zoom(),
                 email_text_colors: default_email_text_colors(),
                 auto_read_delay_seconds: 2,
+                show_starred_inbox: true,
                 load_remote_images: false,
                 selected_account_id: Some("person@example.com".to_string()),
                 ai_provider: AiProvider::None,
@@ -1731,6 +1742,17 @@ mod tests {
     }
 
     #[test]
+    fn preceding_export_defaults_starred_inbox_on_and_round_trips_opt_out() {
+        let (_, result) = import_fixture(fixtures::V5_CURRENT);
+        assert!(result.preferences.show_starred_inbox);
+        assert!(serde_json::to_value(&result.preferences).unwrap().get("showStarredInbox").is_none());
+        let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
+        payload.preferences.show_starred_inbox = false;
+        let imported = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+        assert!(!imported.preferences.show_starred_inbox);
+    }
+
+    #[test]
     fn preceding_export_defaults_email_text_colors_to_contrast() {
         let (_, result) = import_fixture(fixtures::V4_CURRENT);
         assert_eq!(result.preferences.email_text_colors, "contrast");
@@ -1961,6 +1983,7 @@ mod tests {
                 email_zoom: default_email_zoom(),
                 email_text_colors: default_email_text_colors(),
                 auto_read_delay_seconds: 15,
+                show_starred_inbox: true,
                 load_remote_images: true,
                 selected_account_id: Some("current@example.com".to_string()),
                 ai_provider: AiProvider::Anthropic,

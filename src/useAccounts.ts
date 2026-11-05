@@ -30,10 +30,11 @@ export function useAccounts(settingsOpen: boolean) {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(readSelectedAccountId);
-  const [mailboxUnreadCounts, setMailboxUnreadCounts] = useState<MailboxUnreadCounts>({
-    inbox: 0,
-    splits: {},
-  });
+  const [countSnapshot, setCountSnapshot] = useState<{ accountId: string | null; counts: MailboxUnreadCounts } | null>(null);
+  const mailboxUnreadCounts = countSnapshot?.accountId === activeAccountId ? countSnapshot.counts : { inbox: 0, splits: {}, starred: 0 };
+  const countsRequest = useRef(0);
+  const activeAccountRef = useRef(activeAccountId);
+  activeAccountRef.current = activeAccountId;
   const accountsRequest = useRef(0);
 
   const refreshAccounts = useCallback(() => {
@@ -55,9 +56,14 @@ export function useAccounts(settingsOpen: boolean) {
   }, []);
 
   const refreshMailboxUnreadCounts = useCallback((accountOverride?: string | null) => {
-    const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
-    void mailClient.mailboxUnreadCounts(accountId).then(setMailboxUnreadCounts).catch(logBackgroundFailure("Mailbox unread count refresh"));
-  }, [activeAccountId]);
+    const accountId = (accountOverride !== undefined ? accountOverride : activeAccountRef.current) ?? undefined;
+    const request = ++countsRequest.current;
+    void mailClient.mailboxUnreadCounts(accountId).then((counts) => {
+      if (request === countsRequest.current && (accountId ?? null) === activeAccountRef.current) {
+        setCountSnapshot({ accountId: accountId ?? null, counts });
+      }
+    }).catch(logBackgroundFailure("Mailbox unread count refresh"));
+  }, []);
 
   /** Reorders the accounts set up here; accounts only available from other
    * devices keep their place after them. */
@@ -142,7 +148,7 @@ export function useAccounts(settingsOpen: boolean) {
     saveSelectedAccountId(activeAccountId);
   }, [activeAccountId]);
 
-  useEffect(refreshMailboxUnreadCounts, [refreshMailboxUnreadCounts]);
+  useEffect(refreshMailboxUnreadCounts, [refreshMailboxUnreadCounts, activeAccountId]);
 
   useEffect(() => {
     const interval = window.setInterval(refreshAccounts, ACCOUNT_STATUS_REFRESH_MS);

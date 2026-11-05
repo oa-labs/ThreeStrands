@@ -1430,6 +1430,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::mail::list_all_mail_page,
         commands::mail::list_trash_page,
         commands::mail::list_sent_page,
+        commands::mail::list_starred_page,
         commands::mail::get_thread,
         commands::mail::search_threads,
         commands::mail::backfill_search_threads,

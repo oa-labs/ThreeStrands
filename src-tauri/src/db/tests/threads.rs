@@ -612,3 +612,34 @@ fn a_label_merely_containing_sent_does_not_put_a_conversation_in_sent() {
         .threads
         .is_empty());
 }
+
+#[test]
+fn starred_pages_and_totals_include_read_and_archived_but_exclude_spam_and_trash() {
+    let database = database();
+    clear_seed_threads(&database);
+    let connection = database.connection().unwrap();
+    for (id, account, starred, archived, trashed, unread, labels) in [
+        ("read", "work", true, false, false, false, "[]"),
+        ("archived", "work", true, true, false, true, "[]"),
+        ("trash", "work", true, true, true, false, "[]"),
+        ("spam", "work", true, false, false, true, "[\"SPAM\"]"),
+        ("unstarred", "work", false, false, false, true, "[]"),
+        ("personal", "personal", true, true, false, false, "[]"),
+    ] {
+        connection.execute(
+            "INSERT INTO threads (id, provider_thread_id, account_id, subject, snippet, participants_json, last_message_at, last_received_at, unread, starred, archived, trashed, labels_json) VALUES (?1, ?1, ?2, '', '', '[]', '2026-11-01', ?1, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![id, account, unread, starred, archived, trashed, labels],
+        ).unwrap();
+    }
+    drop(connection);
+    let first = database.list_starred_page(Some("work"), 0, 1).unwrap();
+    assert_eq!(first.threads[0].id, "read");
+    assert!(first.has_more);
+    let second = database.list_starred_page(Some("work"), 1, 1).unwrap();
+    assert_eq!(second.threads[0].id, "archived");
+    assert!(!second.has_more);
+    assert_eq!(database.mailbox_unread_counts(Some("work")).unwrap().starred, 2);
+    assert_eq!(database.list_starred_page(None, 0, 50).unwrap().threads.len(), 3);
+    assert_eq!(database.mailbox_unread_counts(None).unwrap().starred, 3);
+    assert_eq!(database.mailbox_unread_counts(Some("missing")).unwrap().starred, 0);
+}

@@ -830,7 +830,7 @@ export function accountCommand(email: string, index: number): Command {
 }
 
 /** One entry per user-defined split inbox, reachable from the command palette alongside the sidebar. */
-export function splitInboxCommand(splitInbox: SplitInbox): Command {
+export function splitInboxCommand(splitInbox: Pick<SplitInbox, "id" | "name">): Command {
   return {
     id: `mailbox.split.${splitInbox.id}`,
     title: `Go to ${splitInbox.name}`,

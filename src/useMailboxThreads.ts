@@ -5,6 +5,7 @@ import type { SearchReport, Thread } from "./domain";
 import { mailClient } from "./data/client";
 import { searchStatusMessage } from "./searchStatusCopy";
 import { errorMessage, logBackgroundFailure } from "./errors";
+import { STARRED_INBOX_ID } from "./starredInbox";
 
 const SEARCH_PAGE_SIZE = 50;
 // While a Gmail backfill scan is running, matches land in the local cache
@@ -75,6 +76,7 @@ export function useMailboxThreads({
     if (box === "sent") return mailClient.listSentPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "trash") return mailClient.listTrashPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "split" && activeSplitInboxId) {
+      if (activeSplitInboxId === STARRED_INBOX_ID) return mailClient.listStarredPage(accountId, offset, SEARCH_PAGE_SIZE);
       return mailClient.listSplitInboxPage(activeSplitInboxId, offset, SEARCH_PAGE_SIZE);
     }
     return mailClient.listThreadsPage(accountId, offset, SEARCH_PAGE_SIZE);

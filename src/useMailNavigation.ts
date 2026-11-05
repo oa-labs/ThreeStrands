@@ -11,6 +11,7 @@ import {
 } from "react";
 import type { MailboxKind } from "./commands";
 import type { Thread, ThreadDetail } from "./domain";
+import { STARRED_INBOX_ID } from "./starredInbox";
 import { MAILBOX_TITLES } from "./mailboxTitles";
 import {
   readSelectedMailboxForAccount,
@@ -43,8 +44,10 @@ type Options = {
   threadDetail: Pick<ReturnType<typeof useThreadDetail>, "visibleDetail" | "setDetail" | "setDetailLoading">;
   reader: Pick<ReturnType<typeof useReaderState>, "messageExpansionOverrides" | "setMessageExpansionOverrides" | "messageStackRef" | "messageRefs">;
   workspaces: Pick<ReturnType<typeof useWorkspaces>, "rightWorkspace" | "setRightWorkspace">;
-  correspondence: Pick<ReturnType<typeof useCorrespondence>, "context">;
+  correspondence: { context: Pick<ReturnType<typeof useCorrespondence>["context"], "openInbox" | "openDrafts" | "openOutbox"> };
   splitInboxCatalog: Pick<ReturnType<typeof useSplitInboxes>, "splitInboxes" | "loaded">;
+  starredCount?: number;
+  showStarredInbox?: boolean;
   mailbox: MailboxKind;
   setMailbox: Dispatch<SetStateAction<MailboxKind>>;
   activeSplitInboxId: string | null;
@@ -60,6 +63,7 @@ type Options = {
 /** Coordinates mailbox/account switches and reversible jumps into conversations. */
 export function useMailNavigation({
   mailboxThreads, threadDetail, reader, workspaces, correspondence, splitInboxCatalog, mailbox,
+  starredCount = 0, showStarredInbox = true,
   setMailbox, activeSplitInboxId, setActiveSplitInboxId, activeAccountId, setActiveAccountId,
   selectedId, setSelectedId, selectedThreadRowRef, setNotice,
 }: Options) {
@@ -68,12 +72,15 @@ export function useMailNavigation({
   const { messageExpansionOverrides, setMessageExpansionOverrides, messageStackRef, messageRefs } = reader;
   const { rightWorkspace, setRightWorkspace } = workspaces;
   const { splitInboxes, loaded: splitInboxesLoaded } = splitInboxCatalog;
-  // A split inbox belongs to one account, so the tab bar (and Tab/Shift+Tab
-  // cycling) only ever offers the active account's own splits — never a
-  // different account's, and none at all in the merged "All accounts" view.
+  // Custom routing splits belong to one account. The built-in Starred view
+  // follows the current scope, including the merged All accounts view.
   const accountSplitInboxes = useMemo(
-    () => splitInboxes.filter((splitInbox) => splitInbox.accountId === activeAccountId),
-    [splitInboxes, activeAccountId],
+    () => {
+      const custom = splitInboxes.filter((splitInbox) => splitInbox.accountId === activeAccountId);
+      const showStarred = showStarredInbox && (starredCount > 0 || (mailbox === "split" && activeSplitInboxId === STARRED_INBOX_ID));
+      return showStarred ? [{ id: STARRED_INBOX_ID, name: "Starred" }, ...custom] : custom;
+    },
+    [splitInboxes, activeAccountId, starredCount, showStarredInbox, mailbox, activeSplitInboxId],
   );
   const activeSplitInbox = activeSplitInboxId
     ? accountSplitInboxes.find((candidate) => candidate.id === activeSplitInboxId) ?? null
@@ -84,10 +91,10 @@ export function useMailNavigation({
     // another render), or switching to an account it doesn't belong to,
     // shouldn't leave the thread list stuck on a rule that doesn't apply.
     if (activeSplitInboxId && splitInboxesLoaded && !activeSplitInbox) {
-      setMailbox("inbox");
+      if (mailbox === "split") setMailbox("inbox");
       setActiveSplitInboxId(null);
     }
-  }, [activeSplitInboxId, activeSplitInbox, splitInboxesLoaded, setMailbox, setActiveSplitInboxId]);
+  }, [mailbox, activeSplitInboxId, activeSplitInbox, splitInboxesLoaded, setMailbox, setActiveSplitInboxId]);
   const restoredTabAccountRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     // Restores whichever Inbox/split tab this account last had selected —
@@ -105,10 +112,10 @@ export function useMailNavigation({
     }
     const stored = readSelectedTabForAccount(activeAccountId);
     if (stored === undefined) return;
-    const target = stored && accountSplitInboxes.some((candidate) => candidate.id === stored) ? stored : null;
+    const target = stored && ((stored === STARRED_INBOX_ID && showStarredInbox) || accountSplitInboxes.some((candidate) => candidate.id === stored)) ? stored : null;
     setMailbox((current) => (current === "inbox" || current === "split" ? (target ? "split" : "inbox") : current));
     setActiveSplitInboxId(target);
-  }, [activeAccountId, splitInboxesLoaded, accountSplitInboxes, setMailbox, setActiveSplitInboxId, setQuery, setSearchOpen]);
+  }, [activeAccountId, splitInboxesLoaded, accountSplitInboxes, showStarredInbox, setMailbox, setActiveSplitInboxId, setQuery, setSearchOpen]);
   // The conversation each account last had open, so switching back to it (⌘1, ⌘2, …) reselects it.
   const selectionByAccountRef = useRef(new Map<string | null, { mailbox: MailboxKind; threadId: string }>());
   const rememberSelection = () => {

@@ -52,6 +52,24 @@ describe("useMailboxThreads", () => {
     return { ...hook, refreshUnreadCounts, refreshMailboxUnreadCounts };
   }
 
+  it("paginates Starred through its account-scoped source", async () => {
+    const page = vi.spyOn(mailClient, "listStarredPage")
+      .mockResolvedValueOnce({ threads: threads.slice(0, 1), hasMore: true })
+      .mockResolvedValueOnce({ threads: threads.slice(1, 2), hasMore: false });
+    const noop = vi.fn();
+    const { result } = renderHook(() => useMailboxThreads({
+      activeAccountId: "first@example.com", mailbox: "split", activeSplitInboxId: "builtin:starred",
+      setSelectedId: noop, refreshUnreadCounts: noop, refreshMailboxUnreadCounts: noop,
+    }));
+    await flushReload();
+    expect(page).toHaveBeenCalledWith("first@example.com", 0, 50);
+    expect(result.current.hasMoreResults).toBe(true);
+    await act(async () => result.current.loadMoreResults());
+    expect(page).toHaveBeenLastCalledWith("first@example.com", 1, 50);
+    expect(result.current.threads).toEqual(threads.slice(0, 2));
+    expect(result.current.hasMoreResults).toBe(false);
+  });
+
   it("keeps search controls open while a nonempty query filters the mailbox", async () => {
     const { result } = setup();
     await flushReload();

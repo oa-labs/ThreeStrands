@@ -486,6 +486,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const items = visibleTrash(accountId);
       return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
     },
+    async listStarredPage(accountId, offset, limit): Promise<ThreadPage> {
+      const items = visibleWhere(accountId, (thread) => thread.starred && !thread.trashed && !thread.labels.includes("SPAM"));
+      return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
+    },
     async listSentPage(accountId, offset, limit): Promise<ThreadPage> {
       const items = visibleSent(accountId);
       return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
@@ -542,7 +546,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         }
         if (matchingRules.length === 0) inbox += 1;
       }
-      return { inbox, splits };
+      const starred = visibleWhere(accountId, (thread) => thread.starred && !thread.trashed && !thread.labels.includes("SPAM")).length;
+      return { inbox, splits, starred };
     },
     // No native backend to proxy through in demo mode, so this fetches
     // directly from the browser — fine for local dev/preview, where there's

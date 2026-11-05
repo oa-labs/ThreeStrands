@@ -50,6 +50,7 @@ describe("exportable preferences", () => {
       emailTextColors: "app",
       autoReadDelaySeconds: 8,
       loadRemoteImages: true,
+      showStarredInbox: false,
       selectedAccountId: "person@example.com",
       aiProvider: "openrouter",
       aiModel: "example/model",
@@ -89,6 +90,14 @@ describe("exportable preferences", () => {
     applyExportablePreferences(preferences);
 
     expect(readExportablePreferences()).toEqual(preferences);
+  });
+
+  it("imports the preceding schema with the automatic Starred inbox enabled", () => {
+    const { showStarredInbox: _starred, ...previous } = nativeContractFixture;
+    applyExportablePreferences(nativeContractFixture);
+    expect(readExportablePreferences().showStarredInbox).toBe(false);
+    applyExportablePreferences(previous);
+    expect(readExportablePreferences().showStarredInbox).toBe(true);
   });
 
   it("imports older availability preferences with drive time disabled", () => {

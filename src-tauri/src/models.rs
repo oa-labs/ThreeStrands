@@ -1257,6 +1257,8 @@ pub struct SplitInbox {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MailboxUnreadCounts {
+    /// Total follow-ups, including read and archived conversations.
+    pub starred: i64,
     pub inbox: i64,
     pub splits: std::collections::HashMap<String, i64>,
 }

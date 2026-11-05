@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SplitInbox } from "./domain";
+import { SettingsHarness } from "./test/settingsHarness";
 import { SplitInboxesSettings } from "./SplitInboxesSettings";
 
 afterEach(cleanup);
@@ -19,6 +20,8 @@ const splitInbox: SplitInbox = {
 function renderSettings(onDelete = vi.fn<(id: string) => Promise<void>>().mockResolvedValue(undefined), splitInboxes = [splitInbox]) {
   render(
     <SplitInboxesSettings
+      showStarredInbox={true}
+      onShowStarredInboxChange={vi.fn()}
       splitInboxes={splitInboxes}
       accounts={[]}
       activeAccountId={null}
@@ -33,6 +36,20 @@ function renderSettings(onDelete = vi.fn<(id: string) => Promise<void>>().mockRe
 }
 
 describe("split inbox settings cards", () => {
+  it("persists the automatic Starred inbox opt-out", () => {
+    localStorage.removeItem("threestrands.settings.showStarredInbox");
+    const first = render(<SettingsHarness initialSection="splitInboxes" />);
+    const toggle = screen.getByRole("checkbox", { name: "Show Starred inbox automatically" });
+    expect(toggle).toBeChecked();
+    expect(toggle).toHaveAccessibleDescription();
+    fireEvent.click(toggle);
+    expect(toggle).not.toBeChecked();
+    first.unmount();
+    render(<SettingsHarness initialSection="splitInboxes" />);
+    expect(screen.getByRole("checkbox", { name: "Show Starred inbox automatically" })).not.toBeChecked();
+    localStorage.removeItem("threestrands.settings.showStarredInbox");
+  });
+
   it("starts the name and rule at the same card edge as the actions", () => {
     renderSettings();
 

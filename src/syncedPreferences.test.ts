@@ -81,6 +81,7 @@ describe("synced preferences data boundary", () => {
       "availabilityProfiles",
       "calendarColors",
       "loadRemoteImages",
+      "showStarredInbox",
       "writingProfiles",
     ]);
     const serialized = JSON.stringify(preferences);

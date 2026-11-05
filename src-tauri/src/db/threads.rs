@@ -15,6 +15,8 @@ use std::collections::HashMap;
 /// the same label, so one filter covers both providers.
 const SENT_FILTER: &str =
     "trashed = 0 AND EXISTS (SELECT 1 FROM json_each(t.labels_json) WHERE value = 'SENT')";
+/// Follow-ups remain visible after reading or archiving; Trash and Spam never qualify.
+const STARRED_FILTER: &str = "t.starred = 1 AND t.trashed = 0 AND NOT EXISTS (SELECT 1 FROM json_each(t.labels_json) WHERE value = 'SPAM')";
 /// The Inbox orders by what others sent; the other folders by latest activity.
 const RECEIVED_ORDER: &str = "last_received_at DESC";
 const LATEST_ORDER: &str = "last_message_at DESC";
@@ -28,6 +30,10 @@ pub(super) const THREAD_COLUMNS: &str = "t.id, t.provider_thread_id, t.subject, 
 
 impl Database {
     /// `account_id` merges every account when absent, or scopes to one account.
+    pub fn list_starred_page(&self, account_id: Option<&str>, offset: usize, limit: usize) -> DbResult<ThreadPage> {
+        self.list_threads_page_where(account_id, STARRED_FILTER, offset, limit)
+    }
+
     pub fn list_threads(&self, account_id: Option<&str>) -> DbResult<Vec<Thread>> {
         self.list_threads_where(account_id, "archived = 0 AND trashed = 0 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=t.id AND json_extract(s.record_json, '$.state')='active')")
     }
@@ -374,7 +380,12 @@ impl Database {
                 inbox += 1;
             }
         }
-        Ok(MailboxUnreadCounts { inbox, splits })
+        let connection = self.connection()?;
+        let starred = connection.query_row(
+            &format!("SELECT COUNT(*) FROM threads t WHERE {STARRED_FILTER} AND (?1 IS NULL OR t.account_id = ?1)"),
+            [account_id], |row| row.get(0),
+        )?;
+        Ok(MailboxUnreadCounts { inbox, splits, starred })
     }
 }
 

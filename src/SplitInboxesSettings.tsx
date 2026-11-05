@@ -63,6 +63,7 @@ function SplitInboxNameInput({
 
 export function SplitInboxesSettings({
   splitInboxes,
+  showStarredInbox, onShowStarredInboxChange,
   accounts,
   activeAccountId,
   labelsByAccount,
@@ -72,6 +73,8 @@ export function SplitInboxesSettings({
   onReorder,
 }: {
   splitInboxes: SplitInbox[];
+  showStarredInbox: boolean;
+  onShowStarredInboxChange(value: boolean): void;
   accounts: Account[];
   activeAccountId: string | null;
   labelsByAccount: Record<string, Label[]>;
@@ -112,6 +115,11 @@ export function SplitInboxesSettings({
           </p>
         </div>
       </div>
+      <label className="settings-checkbox">
+        <input type="checkbox" checked={showStarredInbox} onChange={(event) => onShowStarredInboxChange(event.target.checked)} aria-describedby="starred-inbox-description" />
+        Show Starred inbox automatically
+      </label>
+      <p id="starred-inbox-description">Appears when you have starred conversations, including archived mail. Unstar a conversation when you finish following up.</p>
       <form
         className="split-inbox-add"
         onSubmit={(event) => {

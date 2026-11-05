@@ -167,3 +167,22 @@ it("announces an account from another device once, across launches", async () =>
   await waitFor(() => expect(next.result.current.availableAccounts).toHaveLength(1));
   expect(next.result.current.newlyAvailableAccounts).toEqual([]);
 });
+
+it("clears another account's Starred count immediately and ignores its late response", async () => {
+  const [account] = await mailClient.listAccounts();
+  vi.spyOn(mailClient, "listAccounts").mockResolvedValue([account!, { ...account!, email: "other@example.com" }]);
+  let resolveOld!: (value: { inbox: number; splits: Record<string, number>; starred: number }) => void;
+  const oldCounts = new Promise<{ inbox: number; splits: Record<string, number>; starred: number }>((resolve) => { resolveOld = resolve; });
+  const counts = vi.spyOn(mailClient, "mailboxUnreadCounts").mockImplementation(async (accountId) =>
+    accountId === "other@example.com" ? oldCounts : { inbox: 0, splits: {}, starred: 2 });
+  const { result } = renderHook(() => useAccounts(false));
+  await waitFor(() => expect(result.current.accounts).toHaveLength(2));
+  await waitFor(() => expect(result.current.mailboxUnreadCounts.starred).toBe(2));
+  act(() => result.current.setActiveAccountId("other@example.com"));
+  expect(result.current.mailboxUnreadCounts.starred).toBe(0);
+  await waitFor(() => expect(counts).toHaveBeenCalledWith("other@example.com"));
+  act(() => result.current.setActiveAccountId(account!.email));
+  await waitFor(() => expect(result.current.mailboxUnreadCounts.starred).toBe(2));
+  await act(async () => resolveOld({ inbox: 0, splits: {}, starred: 99 }));
+  expect(result.current.mailboxUnreadCounts.starred).toBe(2);
+});

@@ -107,6 +107,12 @@ pub(crate) async fn list_trash(
 }
 
 #[tauri::command]
+pub(crate) async fn list_starred_page(account_id: Option<String>, offset: usize, limit: usize, state: State<'_, AppState>) -> AppResult<ThreadPage> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_starred_page(account_id.as_deref(), offset, limit)).await
+}
+
+#[tauri::command]
 pub(crate) async fn list_threads_page(
     account_id: Option<String>,
     offset: usize,

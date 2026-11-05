@@ -10,6 +10,7 @@ import {
   invertMutationTemplate,
   type MutationTemplate,
 } from "./threadMutations";
+import { STARRED_INBOX_ID } from "./starredInbox";
 import { sortByRecency, triageNow } from "./threadPresentation";
 import { buildTriageDispositionEvent } from "./triage";
 import type { useMailboxThreads } from "./useMailboxThreads";
@@ -26,6 +27,7 @@ type Options = ReturnType<typeof useTriageSession> & Pick<ReturnType<typeof useM
   setCheckedIds: Dispatch<SetStateAction<Set<string>>>;
   setSyncStatus: Dispatch<SetStateAction<SyncStatus | null>>;
   setNotice: (notice: Notice | null) => void;
+  refreshMailboxUnreadCounts(): void;
   mailbox: MailboxKind;
   activeAccountId: string | null;
   activeSplitInboxId: string | null;
@@ -39,7 +41,7 @@ export function useThreadMutations({
   threads, detail, visibleDetail, selectedId, setSelectedId, setDetail, setThreads, setCheckedIds,
   setSyncStatus, setNotice, mailbox, activeAccountId, activeSplitInboxId, includeArchived,
   isThreadMailbox, autoReadDelaySeconds, triageSessionRef, recordTriageEvent, loadThreadsRef,
-  queryRef,
+  queryRef, refreshMailboxUnreadCounts,
 }: Options) {
   const autoReadSuppressedForId = useRef<string | null>(null);
   // Identifies the thread list on screen, so work that outlives a view switch
@@ -93,11 +95,12 @@ export function useThreadMutations({
     // back while it is still the one on screen.
     const mutationView = viewKey;
     const stillInView = () => viewKeyRef.current === mutationView;
-    // "split" intentionally falls into the default branch below: a split
-    // inbox's underlying set is the same unarchived/untrashed inbox scope,
-    // so archiving/trashing/spamming a thread should remove it exactly like
-    // it would from the plain Inbox.
-    const removesFromView = mailbox === "snoozed"
+    // Custom splits use the Inbox scope. Starred follows the star across
+    // reading and archiving until the user unstars, trashes, or spams it.
+    const starredView = mailbox === "split" && activeSplitInboxId === STARRED_INBOX_ID && !queryRef.current.trim();
+    const removesFromView = starredView
+      ? (template.kind === "star" && !template.value) || ((template.kind === "trash" || template.kind === "spam") && template.value)
+      : mailbox === "snoozed"
       ? template.kind === "archive" || template.kind === "trash" || template.kind === "spam"
       : mailbox === "trash"
       ? template.kind === "trash" && !template.value
@@ -154,6 +157,7 @@ export function useThreadMutations({
     } catch {
       failedIds = targetIds;
     }
+    refreshMailboxUnreadCounts();
     const succeededIds = targetIds.filter((id) => !failedIds.includes(id));
 
     if (triageEvents) {
@@ -234,9 +238,9 @@ export function useThreadMutations({
       },
     };
   }, [
-    selectedId, mailbox, includeArchived, threads, detail, viewKey, setThreads, setDetail,
+    selectedId, mailbox, activeSplitInboxId, includeArchived, threads, detail, viewKey, setThreads, setDetail,
     triageSessionRef, setSelectedId, setCheckedIds, recordTriageEvent, loadThreadsRef, queryRef,
-    setSyncStatus, setNotice,
+    setSyncStatus, setNotice, refreshMailboxUnreadCounts,
   ]);
 
   const selected = threads.find((thread) => thread.id === selectedId);

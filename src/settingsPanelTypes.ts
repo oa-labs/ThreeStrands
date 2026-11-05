@@ -30,6 +30,8 @@ export type SyncDiagnosticsActions = {
  * `useSplitInboxes`, `useSnippets`), so App can hand them through unchanged.
  */
 export type SettingsPreferences = {
+  showStarredInbox: boolean;
+  setShowStarredInbox(value: boolean): void;
   theme: Theme;
   setTheme(theme: Theme): void;
   accent: Accent;

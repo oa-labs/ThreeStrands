@@ -1242,6 +1242,8 @@ export type UnreadCounts = Record<string, number>;
 export type MailboxUnreadCounts = {
   inbox: number;
   splits: Record<string, number>;
+  /** Total starred conversations, including read and archived mail. */
+  starred?: number;
 };
 
 export type CrashReport = {

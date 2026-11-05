@@ -313,6 +313,8 @@ export function Settings({
               accounts={mailAccounts.accounts}
               activeAccountId={mailAccounts.activeAccountId}
               labelsByAccount={labelsByAccount}
+              showStarredInbox={preferences.showStarredInbox}
+              onShowStarredInboxChange={preferences.setShowStarredInbox}
               onCreate={splitInboxes.create}
               onRename={splitInboxes.rename}
               onDelete={splitInboxes.remove}

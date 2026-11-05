@@ -1,6 +1,15 @@
 import { EMAIL_ZOOM, parseEmailZoom, parseEmailMinimumFontSize, parseEmailTextColors, type EmailTextColors } from "./emailRenderingPolicy";
 import type { AvailabilityProfile, AvailabilityProfiles } from "./domain";
 
+const SHOW_STARRED_INBOX_KEY = "threestrands.settings.showStarredInbox";
+export function readShowStarredInbox(): boolean {
+  try { return localStorage.getItem(SHOW_STARRED_INBOX_KEY) !== "false"; } catch { return true; }
+}
+export function saveShowStarredInbox(value: boolean): boolean {
+  try { localStorage.setItem(SHOW_STARRED_INBOX_KEY, String(value)); } catch { /* session preference still applies */ }
+  return value;
+}
+
 export type FontFamily = string;
 
 const FONT_FAMILY_KEY = "threestrands.settings.fontFamily";

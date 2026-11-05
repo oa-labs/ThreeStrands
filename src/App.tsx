@@ -56,6 +56,7 @@ import type { GettingStartedStepId } from "./gettingStartedSteps";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { eventDate, startOfLocalDay } from "./calendarTime";
 import { chatAttachmentOptions } from "./chatAttachments";
+import { STARRED_INBOX_ID } from "./starredInbox";
 import { labelCommand, undoResult, type CommandResult, type MailboxKind } from "./commands";
 import { FILES_CHANGED } from "./FileStarButton";
 import { draftRecipients } from "./composeChecks";
@@ -326,6 +327,7 @@ export function App() {
   const isThreadMailbox = mailbox === "snoozed" || mailbox === "inbox" || mailbox === "allMail" || mailbox === "sent" || mailbox === "trash" || mailbox === "split";
   const isTabbedMailbox = mailbox === "inbox" || mailbox === "split";
   const navigation = useMailNavigation({
+    starredCount: mailboxUnreadCounts.starred ?? 0, showStarredInbox: preferences.showStarredInbox,
     mailboxThreads, threadDetail, reader, workspaces, correspondence, splitInboxCatalog, mailbox,
     setMailbox, activeSplitInboxId, setActiveSplitInboxId, activeAccountId, setActiveAccountId,
     selectedId, setSelectedId, selectedThreadRowRef, setNotice,
@@ -409,7 +411,7 @@ export function App() {
     threads, detail, visibleDetail, selectedId, setSelectedId, setDetail, setThreads,
     setCheckedIds, setSyncStatus, setNotice, mailbox, activeAccountId, activeSplitInboxId,
     includeArchived, isThreadMailbox, autoReadDelaySeconds, triageSessionRef, recordTriageEvent,
-    loadThreadsRef, queryRef,
+    loadThreadsRef, queryRef, refreshMailboxUnreadCounts,
   });
 
   const accountColors = useMemo(
@@ -997,8 +999,8 @@ export function App() {
                             className={`mailbox-tab ${mailbox === "split" && activeSplitInboxId === splitInbox.id ? "active" : ""}`}
                             onClick={() => context.openSplitInbox(splitInbox.id)}
                           >
-                            {splitInbox.name}
-                            {mailboxUnreadCounts.splits[splitInbox.id] ? ` ${mailboxUnreadCounts.splits[splitInbox.id]}` : ""}
+                            {splitInbox.id === STARRED_INBOX_ID ? `★ Starred · ${mailboxUnreadCounts.starred ?? 0}` : splitInbox.name}
+                            {splitInbox.id !== STARRED_INBOX_ID && mailboxUnreadCounts.splits[splitInbox.id] ? ` ${mailboxUnreadCounts.splits[splitInbox.id]}` : ""}
                           </button>
                         ))}
                       </div>

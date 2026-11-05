@@ -18,6 +18,7 @@ import { readAccent, saveAccent, type Accent } from "./accent";
 import { readCalendarColors, saveCalendarColors, type CalendarColorMap } from "./calendarColors";
 import { readFontScale, saveFontScale } from "./fontScale";
 import {
+  readShowStarredInbox, saveShowStarredInbox,
   readAutoReadDelaySeconds,
   readAvailabilityPreferences,
   readAvailabilityProfiles,
@@ -49,6 +50,8 @@ import type { AvailabilityPreferences, AvailabilityProfiles, MailProvider } from
  * retention are added by the trusted layer when it creates the bundle.
  */
 export type ExportablePreferences = {
+  /** Earlier exports default to showing the automatic Starred tab. */
+  showStarredInbox?: boolean;
   theme: Theme;
   accent: Accent;
   fontScale: number;
@@ -88,6 +91,7 @@ export type SettingsImportResult = {
 
 export function readExportablePreferences(): ExportablePreferences {
   return {
+    showStarredInbox: readShowStarredInbox(),
     theme: readTheme(),
     accent: readAccent(),
     fontScale: readFontScale(),
@@ -111,6 +115,7 @@ export function readExportablePreferences(): ExportablePreferences {
 }
 
 export function applyExportablePreferences(preferences: ExportablePreferences): void {
+  saveShowStarredInbox(preferences.showStarredInbox ?? true);
   saveTheme(preferences.theme);
   saveAccent(preferences.accent);
   saveFontScale(preferences.fontScale);

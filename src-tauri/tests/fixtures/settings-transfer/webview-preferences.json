@@ -75,5 +75,6 @@
       "aboutYou": "CEO of a consulting firm.",
       "reviewInstructions": "Push for one specific next step."
     }
-  }
+  },
+  "showStarredInbox": false
 }

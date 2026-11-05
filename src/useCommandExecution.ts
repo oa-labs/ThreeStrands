@@ -55,7 +55,7 @@ export function useCommandUndo(setNotice: (notice: Notice | null) => void) {
 type Options = {
   context: CommandContext;
   accounts: Account[];
-  accountSplitInboxes: SplitInbox[];
+  accountSplitInboxes: Pick<SplitInbox, "id" | "name">[];
   checkedIds: Set<string>;
   mutateIds: (ids: string[], template: MutationTemplate) => Promise<CommandResult>;
   rememberUndo: (command: Command, result: CommandResult) => void;

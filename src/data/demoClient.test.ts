@@ -29,6 +29,31 @@ describe("demoClient split inbox exclusion", () => {
     await Promise.all(splits.map((split) => demoClient.deleteSplitInbox(split.id)));
   });
 
+  it("keeps starred follow-ups across read, archived, and split views with scoped totals", async () => {
+    const dataset = defaultDemoDataset();
+    const base = dataset.threads[0]!;
+    dataset.threads = [
+      { ...base, id: "read", starred: true, unread: false, archived: false, trashed: false, labels: [] },
+      { ...base, id: "archived", starred: true, unread: true, archived: true, trashed: false, labels: [] },
+      { ...base, id: "spam", starred: true, trashed: false, labels: ["SPAM"] },
+      { ...base, id: "trash", starred: true, trashed: true, labels: [] },
+      { ...base, id: "plain", starred: false, trashed: false, labels: [] },
+    ];
+    const client = createDemoClient(dataset);
+    const page = await client.listStarredPage(DEMO_ACCOUNT_ID, 0, 1);
+    expect(page.threads).toHaveLength(1);
+    expect(page.hasMore).toBe(true);
+    const next = await client.listStarredPage(DEMO_ACCOUNT_ID, 1, 1);
+    expect(next.threads).toHaveLength(1);
+    expect(next.hasMore).toBe(false);
+    expect(new Set([...page.threads, ...next.threads].map((thread) => thread.id))).toEqual(new Set(["read", "archived"]));
+    expect((await client.mailboxUnreadCounts(DEMO_ACCOUNT_ID)).starred).toBe(2);
+    expect((await client.mailboxUnreadCounts(OTHER_ACCOUNT_ID)).starred).toBe(0);
+    const split = await client.createSplitInbox("Follow-up sender", "pattern", base.participants[0]!, DEMO_ACCOUNT_ID);
+    expect((await client.listSplitInboxPage(split.id, 0, 50)).threads.map((thread) => thread.id)).toContain("read");
+    expect((await client.listStarredPage(undefined, 0, 50)).threads.map((thread) => thread.id).sort()).toEqual(["archived", "read"]);
+  });
+
   it("pulls a split-matched thread out of the Inbox listing", async () => {
     const before = await demoClient.listThreads();
     expect(before.some((thread) => thread.id === "roadmap")).toBe(true);
