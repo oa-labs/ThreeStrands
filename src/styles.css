@@ -1625,8 +1625,27 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-slot-option[aria-pressed="true"] { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .meeting-slot-option small { color: var(--muted); }
 .meeting-slot-option > svg { flex: none; color: var(--accent); }
-/* Holds the 12px checkmark's place so picked and unpicked times line up. */
-.meeting-slot-spacer { flex: none; width: var(--space-3); }
+/* An offered time: a checkbox to include it, and the rest of the row opens its day. */
+.meeting-slot-item { display: grid; gap: var(--space-1); }
+.meeting-slot-row { display: flex; align-items: stretch; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--secondary); background: var(--surface); }
+.meeting-slot-row-checked { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.meeting-slot-check { display: flex; flex: none; align-items: center; padding-inline: var(--space-2) var(--space-1); cursor: pointer; }
+.meeting-slot-check input[type="checkbox"] { width: var(--check-size); height: var(--check-size); margin: 0; accent-color: var(--accent); cursor: pointer; }
+.meeting-slot-day { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: var(--space-1-5); min-width: 0; padding: var(--space-1-5) var(--space-2) var(--space-1-5) var(--space-1); border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.meeting-slot-day:hover { background: var(--hover); }
+.meeting-slot-chevron { flex: none; color: var(--muted); transition: transform var(--duration-fast) ease; }
+.meeting-slot-day[aria-expanded="true"] .meeting-slot-chevron { transform: rotate(180deg); }
+/* The day around an offered time, indented under its row. */
+.slot-day-preview { display: grid; gap: var(--space-1); margin-inline-start: var(--space-3); padding: var(--space-1-5) var(--space-2); border-inline-start: 2px solid var(--border); }
+.slot-day-preview > .btn-link { justify-self: start; font-size: inherit; }
+.slot-day-rows { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.slot-day-row { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--space-2); padding-inline-start: var(--space-1-5); border-inline-start: 3px solid var(--calendar-color, var(--border-strong)); color: var(--secondary); }
+.slot-day-time { color: var(--muted); white-space: nowrap; }
+.slot-day-title { overflow-wrap: anywhere; }
+.slot-day-detail { grid-column: 2; color: var(--muted); overflow-wrap: anywhere; }
+.slot-day-proposed { padding-block: var(--space-0-5); border: 1px dashed var(--accent); border-inline-start-width: 3px; border-inline-start-style: solid; border-radius: var(--radius-sm); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); font-weight: var(--weight-semibold); }
+.slot-day-break { padding-inline-start: var(--space-2); color: var(--muted); font-style: italic; }
+.slot-day-break-tight { color: var(--warning); font-style: normal; }
 .meeting-scheduler-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1-5); }
 .meeting-scheduler-error p { margin: 0 0 var(--space-1); color: var(--text); }
 .meeting-scheduler-note { margin: 0; color: var(--muted); font-size: var(--text-meta); }
@@ -1637,6 +1656,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-scheduler-hours { display: flex; }
 .meeting-scheduler-hours .segment { flex: 1; }
 .find-times-reason { margin: 0 0 var(--space-1-5); color: var(--text); font-size: var(--text-meta); }
+.find-times-reason .btn-link, .compose-availability .context-status .btn-link { font-size: inherit; }
+.find-times-reread { display: inline-flex; align-items: center; gap: var(--space-0-5); vertical-align: baseline; }
 .find-times-coworkers { display: grid; gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); min-width: 0; }
 .find-times-coworkers legend { color: var(--text-secondary); font-size: var(--text-body); }
 .find-times-coworkers label { display: flex; align-items: baseline; gap: var(--space-1); font-size: var(--text-body); overflow-wrap: anywhere; }

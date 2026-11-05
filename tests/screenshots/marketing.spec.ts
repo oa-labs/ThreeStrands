@@ -114,7 +114,7 @@ const scenes: Scene[] = [
       const availability = page.getByRole("region", { name: "Availability", exact: true });
       await expect(availability.getByText("The conversation asks to meet next week.", { exact: true })).toBeVisible();
       await expect(availability.getByRole("button", { name: "Draft Reply With These Times", exact: true })).toBeEnabled();
-      await expect(availability.getByRole("group", { name: "Open times", exact: true }).getByRole("button", { pressed: true }).first()).toBeVisible();
+      await expect(availability.getByRole("group", { name: "Open times", exact: true }).getByRole("checkbox", { checked: true }).first()).toBeVisible();
     },
   },
   {

@@ -26,7 +26,8 @@ const AI_BUTTONS: { file: string; label: string }[] = [
   { file: "Composer.tsx", label: `title="Get feedback on this draft from AI"` },
   { file: "DraftReviewSection.tsx", label: "/>Review Again" },
   { file: "ContactsWorkspace.tsx", label: "Enhance With AI" },
-  { file: "RecipientSections.tsx", label: `"Find Times"` },
+  { file: "RecipientSections.tsx", label: "null}Find Times" },
+  { file: "RecipientSections.tsx", label: "/>Re-read" },
   { file: "FindTimesCard.tsx", label: "Adjust</button>" },
 ];
 

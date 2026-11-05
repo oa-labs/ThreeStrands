@@ -861,7 +861,7 @@ test("Find Times includes selected coworkers and marks their inaccessible calend
   await availability.getByRole("button", { name: "Find Times", exact: true }).click();
   const coworker = availability.getByRole("checkbox", { name: "coworker@example.com" });
   await expect(coworker).not.toBeChecked();
-  await expect(availability.getByRole("checkbox")).toHaveCount(1);
+  await expect(availability.getByRole("group", { name: "Include coworkers" }).getByRole("checkbox")).toHaveCount(1);
   await coworker.check();
   await expect(availability.getByRole("note")).toContainText("Couldn’t check coworker@example.com");
   await availability.getByRole("button", { name: "Mornings", exact: true }).click();

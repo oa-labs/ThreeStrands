@@ -1,11 +1,10 @@
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
-import { CalendarCheck, CalendarPlus, Check, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { CalendarCheck, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
 import type { AvailabilityCandidate, AvailabilityPreferences, CoworkerCalendars, ProposedTimeCheck, ScheduleEvent } from "./domain";
 import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, type CalendarMatch, type EventIdentity } from "./eventMatching";
 import { mailClient } from "./data/client";
-import { refreshScheduleCache } from "./calendarScheduleCache";
-import { scheduleRequestFor } from "./CalendarSidebar";
+import { eventsOnDay, SlotDayPreview } from "./SlotDayPreview";
 import { AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
 import { errorMessage } from "./errors";
 import {
@@ -91,13 +90,6 @@ function formatDay(date: string): string {
   return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(year, month - 1, day));
 }
 
-/** The day's schedule events, from the cache. */
-async function eventsOnDay(date: Date): Promise<ScheduleEvent[]> {
-  const request = scheduleRequestFor(date);
-  const result = await refreshScheduleCache(request, () => mailClient.listScheduleEvents(request.timeMin, request.timeMax, request.timeZone));
-  return result.events;
-}
-
 /** Whether a timed schedule event overlaps the slot. */
 function overlaps(event: ScheduleEvent, slot: ScheduleSlot): boolean {
   return !event.allDay && Date.parse(event.start) < Date.parse(slot.end) && Date.parse(event.end) > Date.parse(slot.start);
@@ -125,7 +117,8 @@ const sameEvent = (left: ScheduleEvent, right: ScheduleEvent) => left.accountId 
  * Checks a meeting against the user's calendar without involving AI: an
  * exact time is checked for conflicts, a range yields open slots spread
  * across its days. A range can be adjusted in place — mornings, afternoons,
- * or earlier and later days — and shows more slots on request. Every outcome goes
+ * or earlier and later days — and shows more slots on request. Each offered
+ * slot has a checkbox for whether to offer it, and opens its day below it. Every outcome goes
  * through a review step: the event dialog or a reply in the composer.
  * Given what the event is called, a time or day already on the calendar
  * under that name reads as added rather than as a conflict. Once added,
@@ -199,6 +192,9 @@ export function MeetingScheduler({
   const [visibleCount, setVisibleCount] = useState(SUGGESTED_SLOT_COUNT);
   const [state, setState] = useState<CheckState>({ phase: "idle" });
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  // The one offered time whose day is open below it.
+  const [previewing, setPreviewing] = useState<string | null>(null);
+  const previewId = useId();
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const refresh = () => setAttempt((value) => value + 1);
@@ -251,6 +247,7 @@ export function MeetingScheduler({
           errors: result.errors,
         });
         setVisibleCount(SUGGESTED_SLOT_COUNT);
+        setPreviewing(null);
         setSelected(new Set(candidates.slice(0, SUGGESTED_SLOT_COUNT).map(slotKey)));
       }
     } catch (reason) {
@@ -420,32 +417,45 @@ export function MeetingScheduler({
         <div className="meeting-slots" role="group" aria-label="Open times">
           {state.candidates.slice(0, visibleCount)
             .sort((left, right) => Date.parse(left.start) - Date.parse(right.start))
-            .map((candidate) => {
+            .map((candidate, index) => {
               const key = slotKey(candidate);
-              const pressed = selected.has(key);
-              return <button
-                type="button"
-                key={key}
-                aria-pressed={pressed}
-                className="meeting-slot-option"
-                onClick={() => setSelected((current) => {
-                  const next = new Set(current);
-                  if (pressed) next.delete(key);
-                  else next.add(key);
-                  return next;
-                })}
-              >{pressed ? <Check size={ICON_SIZE.xs} aria-hidden="true" /> : <span className="meeting-slot-spacer" aria-hidden="true" />}{formatSlot(candidate, timeZone)}</button>;
+              const checked = selected.has(key);
+              const open = previewing === key;
+              const label = formatSlot(candidate, timeZone);
+              const id = `${previewId}-${index}`;
+              // Including a time and looking at its day are separate choices.
+              return <div key={key} className="meeting-slot-item">
+                <div className={`meeting-slot-row${checked ? " meeting-slot-row-checked" : ""}`}>
+                  <label className="meeting-slot-check">
+                    <input type="checkbox" aria-label={`Include ${label}`} checked={checked} onChange={() => setSelected((current) => {
+                      const next = new Set(current);
+                      if (checked) next.delete(key);
+                      else next.add(key);
+                      return next;
+                    })} />
+                  </label>
+                  <button
+                    type="button"
+                    className="meeting-slot-day"
+                    aria-expanded={open}
+                    aria-controls={open ? id : undefined}
+                    title="Show this day on your calendar"
+                    onClick={() => setPreviewing(open ? null : key)}
+                  ><span>{label}</span><ChevronDown className="meeting-slot-chevron" size={ICON_SIZE.sm} aria-hidden="true" /></button>
+                </div>
+                {open ? <SlotDayPreview id={id} slot={candidate} timeZone={timeZone} /> : null}
+              </div>;
             })}
         </div>
         {(() => {
           const chosen = state.candidates
             .filter((candidate) => selected.has(slotKey(candidate)))
             .sort((left, right) => Date.parse(left.start) - Date.parse(right.start));
-          // The count follows each toggle, so the times above read as the button's choice.
+          // The count follows each checkbox, so the times above read as the button's choice.
           return <div className="meeting-scheduler-actions">
             <button type="button" className="btn btn-sm btn-primary" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 0 ? "Times" : chosen.length === 1 ? "1 Time" : `${chosen.length} Times`}</button>
             {visibleCount < state.candidates.length
-              ? <button type="button" className="btn btn-sm" onClick={() => setVisibleCount((current) => current + SUGGESTED_SLOT_COUNT)}>Show More</button>
+              ? <button type="button" className="btn btn-sm" onClick={() => setVisibleCount((current) => current + SUGGESTED_SLOT_COUNT)}>Show {Math.min(SUGGESTED_SLOT_COUNT, state.candidates.length - visibleCount)} More</button>
               : null}
             {extraActions}
           </div>;

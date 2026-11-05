@@ -92,14 +92,14 @@ describe("MeetingScheduler", () => {
     expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart, rangeEnd, maxPerDay: SLOTS_PER_DAY }));
   });
 
-  it("offers open times spread across the range, selectable with ordinary buttons, without booking any", async () => {
+  it("offers open times spread across the range, each with a checkbox to include it, without booking any", async () => {
     const days = [candidate(20), candidate(44), candidate(68), candidate(92)];
     const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
       candidates: days, checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
     });
     const handlers = renderScheduler(range);
 
-    const slots = within(await screen.findByRole("group", { name: "Open times" })).getAllByRole("button");
+    const slots = within(await screen.findByRole("group", { name: "Open times" })).getAllByRole("checkbox");
     expect(slots).toHaveLength(3);
     expect(find).toHaveBeenCalledWith({
       rangeStart: range.query!.start, rangeEnd: range.query!.end, maxPerDay: SLOTS_PER_DAY,
@@ -115,14 +115,14 @@ describe("MeetingScheduler", () => {
     expect(screen.getByRole("button", { name: "Draft Reply With 3 Times" })).toHaveClass("btn-primary");
     // Every calendar answered, so nothing warns that a time may conflict.
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
-    expect(slots.every((slot) => slot.getAttribute("aria-pressed") === "true")).toBe(true);
+    expect(slots.every((slot) => (slot as HTMLInputElement).checked)).toBe(true);
     // Offered times are proposals; nothing is booked until the other side picks one.
     expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
 
     fireEvent.click(slots[1]);
     fireEvent.click(slots[2]);
-    expect(slots[0]).toHaveAttribute("aria-pressed", "true");
-    expect(slots[1]).toHaveAttribute("aria-pressed", "false");
+    expect(slots[0]).toBeChecked();
+    expect(slots[1]).not.toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Draft Reply With 1 Time" }));
     expect(handlers.onReplyWithTimes).toHaveBeenCalledWith([days[0]]);
     expect(handlers.onAddToCalendar).not.toHaveBeenCalled();
@@ -523,15 +523,53 @@ describe("MeetingScheduler", () => {
       expect(within(group).getAllByRole("button")[0]).toHaveTextContent("Sep 30");
       expect(within(group).getAllByRole("button")[2]).toHaveTextContent("Oct 1");
       expect(within(group).getAllByRole("button")[0].textContent?.match(/[AP]M/g)).toHaveLength(1);
-      // Picked times carry a checkmark, so a full list still reads as chosen.
-      expect(within(group).getAllByRole("button")[0].querySelector("svg")).not.toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "Show More" }));
-      const all = within(group).getAllByRole("button");
-      expect(all[2].querySelector("svg")).toBeNull();
+      // Picked times are checked, so a full list still reads as chosen.
+      expect(within(group).getAllByRole("checkbox").every((box) => (box as HTMLInputElement).checked)).toBe(true);
+      // The button says how many more it adds, so it reads as more of these times rather than a new search.
+      fireEvent.click(screen.getByRole("button", { name: "Show 1 More" }));
+      const all = within(group).getAllByRole("checkbox");
       expect(all).toHaveLength(4);
       // Newly shown times start unselected; the first three stay selected.
-      expect(all.map((slot) => slot.getAttribute("aria-pressed"))).toEqual(["true", "true", "false", "true"]);
-      expect(screen.queryByRole("button", { name: "Show More" })).not.toBeInTheDocument();
+      expect(all.map((box) => (box as HTMLInputElement).checked)).toEqual([true, true, false, true]);
+      expect(screen.queryByRole("button", { name: /^Show \d+ More$/ })).not.toBeInTheDocument();
+    });
+
+    it("opens a time's day below it without changing whether the time is included, one day at a time", async () => {
+      pinClock();
+      vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+        candidates: [slotAt(30, 10), slotAt(31, 14)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
+      });
+      const events = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [
+        { id: "standup", accountId: "you@example.com", title: "Standup", allDay: false, start: new Date(2026, 8, 30, 9).toISOString(), end: new Date(2026, 8, 30, 9, 30).toISOString() },
+        { id: "review", accountId: "you@example.com", title: "Design review", allDay: false, start: new Date(2026, 9, 1, 15).toISOString(), end: new Date(2026, 9, 1, 16).toISOString() },
+      ], errors: [] });
+      renderScheduler(week);
+
+      const group = await screen.findByRole("group", { name: "Open times" });
+      // Nothing is read from the calendar until a day is asked for.
+      expect(events).not.toHaveBeenCalled();
+      const [first, second] = within(group).getAllByRole("button");
+      expect(first).toHaveAttribute("aria-expanded", "false");
+      expect(first).toHaveAccessibleDescription();
+      fireEvent.click(first);
+      expect(first).toHaveAttribute("aria-expanded", "true");
+      const day = await screen.findByRole("region", { name: /September 30/ });
+      expect(first).toHaveAttribute("aria-controls", day.id);
+      expect(await within(day).findByText("Standup")).toBeInTheDocument();
+      // Looking at a day leaves the time included.
+      expect(within(group).getAllByRole("checkbox").every((box) => (box as HTMLInputElement).checked)).toBe(true);
+
+      fireEvent.click(second);
+      expect(first).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByRole("region", { name: /September 30/ })).not.toBeInTheDocument();
+      expect(await within(await screen.findByRole("region", { name: /October 1/ })).findByText("Design review")).toBeInTheDocument();
+
+      // And including a time leaves its day open.
+      fireEvent.click(within(group).getAllByRole("checkbox")[1]);
+      expect(second).toHaveAttribute("aria-expanded", "true");
+      fireEvent.click(second);
+      expect(screen.queryByRole("region", { name: /October 1/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Draft Reply With 1 Time" })).toBeEnabled();
     });
 
     it("narrows the search to mornings or afternoons of the working hours, and back", async () => {

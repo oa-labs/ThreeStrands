@@ -214,12 +214,10 @@ describe("ComposeContext", () => {
     expect(within(section).queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
     // Without Draft Assist the coming week is searched, and nothing is sent to an AI provider.
     expect(mailClient.findTimes).not.toHaveBeenCalled();
-    expect(within(section).getByRole("button", { name: "Search Again" }).querySelector("svg.lucide-sparkles")).toBeNull();
     expect(within(section).queryByRole("textbox", { name: "Adjust times" })).not.toBeInTheDocument();
-    const searchAgain = within(section).getByRole("button", { name: "Search Again" });
-    expect(searchAgain).toHaveClass("btn", "btn-sm");
-    fireEvent.click(searchAgain);
-    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(2));
+    // There is nothing to read again; the card's own controls change the times.
+    expect(within(section).queryByRole("button", { name: /Find Times|Re-read/ })).not.toBeInTheDocument();
+    expect(mailClient.findAvailability).toHaveBeenCalledTimes(1);
   });
 
   it("leaves out availability without a connected calendar", () => {
@@ -260,7 +258,7 @@ describe("Find Times with AI", () => {
     const view = render(<AvailabilitySection {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Find Times" }));
     const alex = await screen.findByRole("checkbox", { name: "Alex, Smith (alex@acme.com)" });
-    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    expect(within(screen.getByRole("group", { name: "Include coworkers" })).getAllByRole("checkbox")).toHaveLength(2);
     expect(alex).not.toBeChecked();
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(1));
     expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers).toBeUndefined();
@@ -270,7 +268,8 @@ describe("Find Times with AI", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Mornings" }));
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(3));
     expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers?.emails).toEqual(["alex@acme.com"]);
-    fireEvent.click(screen.getByRole("button", { name: "Search Again" }));
+    view.rerender(<AvailabilitySection {...props} draft={{ ...current, body: `${current.body} Thursday?` }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Re-read" }));
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(4));
     expect(screen.getByRole("checkbox", { name: /Alex, Smith/ })).toBeChecked();
     view.rerender(<AvailabilitySection {...props} draft={{ ...current, to: "ann@partner.com", cc: "sam@acme.com" }} />);
@@ -286,7 +285,7 @@ describe("Find Times with AI", () => {
     expect(screen.queryByRole("button", { name: "Find Times" })).not.toBeInTheDocument();
     view.rerender(<AvailabilitySection {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Find Times" }));
-    await screen.findByRole("button", { name: "Search Again" });
+    await screen.findByRole("group", { name: "Open times" });
     view.rerender(<AvailabilitySection {...props} offered={false} />);
     expect(screen.getByRole("region", { name: "Availability" })).toBeInTheDocument();
   });
@@ -419,16 +418,50 @@ describe("Find Times with AI", () => {
     const request = vi.mocked(mailClient.findAvailability).mock.calls[0][0];
     expect(Date.parse(request.rangeEnd) - Date.parse(request.rangeStart)).toBe(7 * day);
     expect(request.preferences.workingWindows).toEqual(preferences.workingWindows);
+
+    // The read never happened, so trying it again is offered beside the failure rather than as Re-read.
+    expect(within(section()).queryByRole("button", { name: "Re-read" })).not.toBeInTheDocument();
+    vi.mocked(mailClient.findTimes).mockResolvedValue(search);
+    fireEvent.click(within(within(section()).getByRole("alert")).getByRole("button", { name: "Try Again" }));
+    expect(await within(section()).findByText(search.reason)).toBeInTheDocument();
+    expect(within(section()).queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("first reuses the range a meeting suggestion already found, then reads afresh on Search Again", async () => {
+  it("offers Re-read for edits made while reading, but not for the times it inserted", async () => {
+    let answer!: (value: typeof search) => void;
+    vi.mocked(mailClient.findTimes).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    const onInsertTimes = vi.fn();
+    const props = { preferences, ai: true, onInsertTimes, onOpenCalendarSettings: vi.fn() };
+    const view = render(<AvailabilitySection {...props} draft={reply} />);
+    fireEvent.click(screen.getByRole("button", { name: "Find Times" }));
+    await waitFor(() => expect(mailClient.findTimes).toHaveBeenCalledTimes(1));
+    // Typed while the conversation was being read: the search did not see it.
+    const typed = { ...reply, body: `${reply.body} Only Friday, actually.` };
+    view.rerender(<AvailabilitySection {...props} draft={typed} />);
+    answer(search);
+    expect(await within(section()).findByRole("button", { name: "Re-read" })).toBeInTheDocument();
+
+    vi.mocked(mailClient.findTimes).mockResolvedValue(search);
+    fireEvent.click(within(section()).getByRole("button", { name: "Re-read" }));
+    fireEvent.click(await within(section()).findByRole("button", { name: "Insert 1 Time" }));
+    expect(onInsertTimes).toHaveBeenCalledOnce();
+    // The times land in the draft, which is not news to read again.
+    view.rerender(<AvailabilitySection {...props} draft={{ ...typed, body: `${typed.body}\n- Thu, Jan 9 · 1:00 – 1:30 PM` }} />);
+    expect(within(section()).queryByRole("button", { name: "Re-read" })).not.toBeInTheDocument();
+    // What the user writes afterwards is.
+    view.rerender(<AvailabilitySection {...props} draft={{ ...typed, body: `${typed.body}\n- Thu, Jan 9 · 1:00 – 1:30 PM\nOr later that week.` }} />);
+    expect(within(section()).getByRole("button", { name: "Re-read" })).toBeInTheDocument();
+  });
+
+  it("first reuses the range a meeting suggestion already found, then reads afresh on Re-read once the draft changes", async () => {
     vi.mocked(mailClient.findTimes).mockResolvedValue({ ...search, reason: "A fresh read." });
     const suggested = {
       plan: { query: { kind: "range" as const, start: search.rangeStart, end: search.rangeEnd }, durationMinutes: 45, timeZoneAssumed: false },
       reason: "From the suggested meeting: “next week”.",
     };
     const suggest = vi.fn(() => suggested);
-    render(<AvailabilitySection preferences={preferences} ai draft={reply} suggest={suggest} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
+    const props = { preferences, ai: true, suggest, onInsertTimes: vi.fn(), onOpenCalendarSettings: vi.fn() };
+    const view = render(<AvailabilitySection {...props} draft={reply} />);
 
     // Reusing the suggestion sends nothing to the provider, so the first press carries no AI mark.
     expect(within(section()).getByRole("button", { name: "Find Times" }).querySelector("svg.lucide-sparkles")).toBeNull();
@@ -441,11 +474,20 @@ describe("Find Times with AI", () => {
     expect(mailClient.findTimes).not.toHaveBeenCalled();
     expect(await within(section()).findByRole("textbox", { name: "Adjust times" })).toBeInTheDocument();
 
-    const again = within(section()).getByRole("button", { name: "Search Again" });
+    // Reading the same conversation and draft again could only repeat the search.
+    expect(within(section()).queryByRole("button", { name: /Re-read|Find Times|Search Again/ })).not.toBeInTheDocument();
+    view.rerender(<AvailabilitySection {...props} draft={{ ...reply, body: `${reply.body} Thursday works best.` }} />);
+    const again = within(section()).getByRole("button", { name: "Re-read" });
     expect(again.querySelector("svg.lucide-sparkles")).not.toBeNull();
+    expect(again).toHaveAccessibleDescription();
+    // It sits with the reason it would replace.
+    expect(again.closest(".find-times-reason")).toHaveTextContent("From the suggested meeting");
     fireEvent.click(again);
     expect(await within(section()).findByText("A fresh read.")).toBeInTheDocument();
     expect(mailClient.findTimes).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(mailClient.findTimes).mock.calls[0][0]).toEqual(expect.objectContaining({ draftText: `${reply.body} Thursday works best.` }));
+    // Read from the current draft, so there is nothing new to read until it changes again.
+    expect(within(section()).queryByRole("button", { name: "Re-read" })).not.toBeInTheDocument();
   });
 
   it("starts as one Find Times button in a compact row, and while reading offers to start a reply with the times", async () => {
@@ -486,19 +528,22 @@ describe("Find Times with AI", () => {
     expect(mailClient.findTimes).not.toHaveBeenCalled();
   });
 
-  it("reads only a new message's own text, and asks again from scratch on Search Again", async () => {
+  it("reads only a new message's own text, and asks again from scratch on Re-read", async () => {
     let first!: (value: typeof search) => void;
     vi.mocked(mailClient.findTimes)
       .mockReturnValueOnce(new Promise((resolve) => { first = resolve; }))
       .mockResolvedValueOnce({ ...search, reason: "Second look." });
-    renderPanel({ calendarConnected: true, findTimesAi: true, draft: { ...draft, subject: "Lunch next week?", body: "Free next week?" } });
+    const lunch = { ...draft, subject: "Lunch next week?", body: "Free next week?" };
+    const { props, rerender } = renderPanel({ calendarConnected: true, findTimesAi: true, draft: lunch });
     fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
     await waitFor(() => expect(mailClient.findTimes).toHaveBeenCalledTimes(1));
     // A new message has no conversation; only its own subject and text are read.
     expect(vi.mocked(mailClient.findTimes).mock.calls[0][0]).toEqual(expect.objectContaining({ sourceMessageId: null, draftSubject: "Lunch next week?", draftText: "Free next week?" }));
     first(search);
     expect(await within(section()).findByText(search.reason)).toBeInTheDocument();
-    fireEvent.click(within(section()).getByRole("button", { name: "Search Again" }));
+    expect(within(section()).queryByRole("button", { name: "Re-read" })).not.toBeInTheDocument();
+    rerender(<ComposeContext {...props} draft={{ ...lunch, body: "Free next week? Maybe Wednesday." }} />);
+    fireEvent.click(within(section()).getByRole("button", { name: "Re-read" }));
     expect(await within(section()).findByText("Second look.")).toBeInTheDocument();
     expect(mailClient.findTimes).toHaveBeenCalledTimes(2);
     expect(vi.mocked(mailClient.findTimes).mock.calls[1][0]).toEqual(expect.objectContaining({ instruction: null, current: null }));

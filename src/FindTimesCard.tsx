@@ -43,13 +43,15 @@ export function askFindTimes(
  * and its reason; the card's caller keeps its own plan unchanged.
  */
 export function FindTimesCard({
-  plan, reason = null, preferences, calendarConnected, ai, intoDraft,
+  plan, reason = null, reasonAction = null, preferences, calendarConnected, ai, intoDraft,
   onAddToCalendar, onReplyWithTimes, onConfirmTime, onOpenCalendarSettings, identity, onOpenCalendarEvent,
   onMatchChange, matchedActions, moreActions, extraActions, coworkers,
 }: {
   plan: SchedulePlan;
   /** Why these days were chosen, shown above the times. */
   reason?: string | null;
+  /** Shown at the end of the reason, such as a way to read the conversation again. */
+  reasonAction?: ReactNode;
   preferences: AvailabilityPreferences;
   calendarConnected: boolean;
   coworkers?: CoworkerCalendars;
@@ -122,7 +124,7 @@ export function FindTimesCard({
 
   const effectivePlan = adjusted?.plan ?? plan;
   if (effectivePlan.proposedTimes?.length) return <>
-    {shownReason ? <p className="find-times-reason">{shownReason}</p> : null}
+    {shownReason || reasonAction ? <p className="find-times-reason">{shownReason}{shownReason && reasonAction ? " " : null}{reasonAction}</p> : null}
     <ProposedTimesCard times={effectivePlan.proposedTimes} preferences={preferences} calendarConnected={calendarConnected}
       intoDraft={intoDraft} onReplyWithTimes={onReplyWithTimes} onOpenCalendarSettings={onOpenCalendarSettings}
       onFindOtherTimes={() => setAdjusted((previous) => ({ key: (previous?.key ?? 0) + 1,
@@ -131,7 +133,7 @@ export function FindTimesCard({
   </>;
 
   return <>
-    {shownReason ? <p className="find-times-reason">{shownReason}</p> : null}
+    {shownReason || reasonAction ? <p className="find-times-reason">{shownReason}{shownReason && reasonAction ? " " : null}{reasonAction}</p> : null}
     <MeetingScheduler
       key={adjusted?.key ?? 0}
       plan={adjusted?.plan ?? plan}

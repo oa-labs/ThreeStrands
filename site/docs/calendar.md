@@ -30,15 +30,15 @@ Find Times works without AI, using your calendar and working hours. Connect a ca
 
 1. Open a conversation or a reply draft.
 2. Click **Find Times** at the top of its side panel, beside **Get Brief**. It appears when the conversation has a meeting to arrange, offered times, or a task to schedule, and whenever you're writing a reply.
-3. Choose times from the offered slots.
+3. Check the box beside each time you want to offer. Click the time itself to see that day below it: the meetings just before and after, where they are, and how much free time is between them. **Show Full Day** lists the rest of the day.
 4. While reading, click **Draft Reply With These Times** to start a reply. While composing, use **Insert These Times**.
 5. Review the wording and recipients before sending.
 
 ### Adjust Dates and Times {#adjust-dates-and-times}
 
-Choose **Mornings** or **Afternoons** to narrow the slots, **Later** for the following week, or **Show More** for more times on the same days. With an AI provider and **Writing** enabled under **Show AI In**, Find Times reads the conversation and draft to understand requests such as “next week.” Type “Thursday or Friday afternoon” and click **Adjust** to change the search.
+Choose **Mornings** or **Afternoons** to narrow the slots, **Later** for the following week, or **Show 3 More** for more times from the same search. With an AI provider and **Writing** enabled under **Show AI In**, Find Times reads the conversation and draft to understand requests such as “next week.” Type “Thursday or Friday afternoon” and click **Adjust** to change the search.
 
-If a brief already suggested a meeting, Find Times starts with those dates. **Search Again** reads the conversation afresh. Meeting suggestions and **Ask About This Conversation** answers offer the same calendar choices. Your calendar is not sent to the AI provider.
+If a brief already suggested a meeting, Find Times starts with those dates. If the conversation or your draft changes after the search, for example you type "Friday works best," a **Re-read** link appears after the explanation above the times. It reads them again and starts a new search. Meeting suggestions and **Ask About This Conversation** answers offer the same calendar choices. Your calendar is not sent to the AI provider.
 
 ### Check Times Someone Offered {#check-offered-times}
 

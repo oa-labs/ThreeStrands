@@ -5,14 +5,16 @@ import { dateInputValue } from "./calendarTime";
 export const SCHEDULE_LOOKAHEAD_DAYS = 7;
 /** Longest range searched for open times in one card. */
 export const MAX_SCHEDULE_RANGE_DAYS = 14;
-/** Open times offered in a card at first, and added by each "Show More". */
+/** Open times offered in a card at first, and added by each "Show 3 More". */
 export const SUGGESTED_SLOT_COUNT = 3;
-/** Open times fetched per day, so "Show More" has later slots to offer. */
+/** Open times fetched per day, so "Show 3 More" has later slots to offer. */
 export const SLOTS_PER_DAY = 3;
 /** Longest adjustment the user can type for Find Times; the native layer enforces the same limit. */
 export const FIND_TIMES_INSTRUCTION_MAX_CHARS = 300;
 /** Where Mornings end and Afternoons begin, in the user's time zone. */
 export const MIDDAY = "12:00";
+/** A break shorter than this beside an offered time is marked as tight in its day's preview. */
+export const TIGHT_BREAK_MINUTES = 15;
 export const MIN_MEETING_MINUTES = 5;
 export const MAX_MEETING_MINUTES = 720;
 
@@ -231,7 +233,7 @@ export function shiftedRange(query: ScheduleQuery, steps: number): ScheduleQuery
  * across the whole range rather than bunched on its first days: one on the
  * first day, one on the last, the rest evenly between, alternating mornings
  * and afternoons where a day has both. After them, each day's first slot
- * comes before any day's second, so "Show More" still covers new days first.
+ * comes before any day's second, so "Show 3 More" still covers new days first.
  */
 export function spreadAcrossDays<T extends Pick<AvailabilityCandidate, "start">>(candidates: T[], timeZone: string, leading = SUGGESTED_SLOT_COUNT): T[] {
   const dayOf = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });

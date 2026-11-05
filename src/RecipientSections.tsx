@@ -20,15 +20,23 @@ type FindTimesState = {
   reason: string | null;
   /** Shown when AI could not read the conversation and the coming week is used instead. */
   fallback: string | null;
+  /** The conversation and draft the search was based on, so Re-read is offered only once they change. */
+  readFrom: string;
 };
+
+/** What Find Times reads, compared to tell whether reading again could find anything new. */
+function readKey(context: FindTimesContext): string {
+  return JSON.stringify([context.sourceMessageId, context.draftSubject.trim(), context.draftText.trim()]);
+}
 
 /**
  * Open times from the calendar, inserted into the draft at the caret. The
  * first Find Times reuses a meeting suggestion's date range when the
  * conversation already has one. Otherwise, with AI, it reads the
  * conversation and the draft for which days and hours to search; without
- * it, the coming week is searched. Search Again always reads afresh. The
- * provider never sees the calendar.
+ * it, the coming week is searched. Once the conversation or the draft has
+ * changed, Re-read reads them afresh; before that it could only repeat the
+ * same search, so it is not offered. The provider never sees the calendar.
  */
 export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, offeredTimes = null, offeredTimesError = null, onRetryOfferedTimes, onInsertTimes, onOpenCalendarSettings }: {
   preferences: AvailabilityPreferences;
@@ -80,8 +88,15 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
     draftText: draftRef.current.body,
   });
 
-  const show = (plan: SchedulePlan, reason: string | null, fallback: string | null) =>
-    setSearch((previous) => ({ key: (previous?.key ?? 0) + 1, plan, reason, fallback }));
+  const show = (plan: SchedulePlan, reason: string | null, fallback: string | null, readFrom: string) =>
+    setSearch((previous) => ({ key: (previous?.key ?? 0) + 1, plan, reason, fallback, readFrom }));
+  // Times this card inserted are not news to read again; the draft's next change is taken as the insertion.
+  const inserting = useRef(false);
+  const currentRead = readKey({ sourceMessageId: draft.sourceId, draftSubject: draft.subject, draftText: draft.body });
+  if (search && search.readFrom !== currentRead && inserting.current) {
+    inserting.current = false;
+    setSearch({ ...search, readFrom: currentRead });
+  }
   const [seenOffer, setSeenOffer] = useState<OfferedTimes | null>(null);
   useEffect(() => {
     if (!offeredTimes && seenOffer) {
@@ -98,7 +113,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
     setReading(false);
     setSearch((previous) => ({ key: (previous?.key ?? 0) + 1,
       plan: { query: null, proposedTimes: offeredTimes.times, durationMinutes, ...defaultLength(stated), timeZoneAssumed: false },
-      reason: "Times offered in this conversation.", fallback: null }));
+      reason: "Times offered in this conversation.", fallback: null, readFrom: readKey(context()) }));
   }, [offeredTimes, seenOffer, preferences.defaultDurationMinutes]);
   const comingWeek = (): SchedulePlan => ({ query: lookaheadRange(new Date()), durationMinutes: preferences.defaultDurationMinutes, durationIsDefault: true, timeZoneAssumed: false });
 
@@ -114,21 +129,23 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
     }
     const suggested = search ? null : suggest?.() ?? null;
     if (suggested) {
-      show(suggested.plan, suggested.reason, null);
+      show(suggested.plan, suggested.reason, null, readKey(context()));
       return;
     }
     if (!ai) {
-      show(comingWeek(), null, null);
+      show(comingWeek(), null, null, readKey(context()));
       return;
     }
     setReading(true);
+    // What was read, not what the draft holds when the answer arrives: edits made meanwhile are still news.
+    const asked = context();
     try {
-      const result = await askFindTimes(context(), preferences.timeZone, null);
-      if (request === latest.current) show(planTimeSearch(result, new Date(), preferences.defaultDurationMinutes), result.reason, null);
+      const result = await askFindTimes(asked, preferences.timeZone, null);
+      if (request === latest.current) show(planTimeSearch(result, new Date(), preferences.defaultDurationMinutes), result.reason, null, readKey(asked));
     } catch (reason) {
       if (request === latest.current) {
         if (offeredTimesError) setReadError(`${errorMessage(reason)} No proposed times were checked.`);
-        else show(comingWeek(), null, `${errorMessage(reason)} Showing the coming week instead.`);
+        else show(comingWeek(), null, `${errorMessage(reason)} Showing the coming week instead.`, readKey(asked));
       }
     } finally {
       if (request === latest.current) setReading(false);
@@ -139,12 +156,19 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
   const explanation = readsConversation
     ? "Suggest open times from your calendar, based on what this conversation asks for."
     : "Suggest open times from your calendar for this message.";
-  const button = (
-    <button type="button" className="btn btn-sm" disabled={reading || Boolean(offeredTimesError && !readsConversation)} title={compact && !search ? explanation : undefined} onClick={() => void findTimes()}>
+  // Once there are times, the card's own controls change them; the header starts a search only.
+  const button = search ? null : (
+    <button type="button" className="btn btn-sm" disabled={reading || Boolean(offeredTimesError && !readsConversation)} title={compact ? explanation : undefined} onClick={() => void findTimes()}>
       {/* Marked only when the press reads the conversation with AI, not when it reuses a suggestion. */}
-      {readsConversation && (search !== null || !suggest?.()) ? <Sparkles size={ICON_SIZE.sm} /> : null}{search ? "Search Again" : "Find Times"}
+      {readsConversation && !suggest?.() ? <Sparkles size={ICON_SIZE.sm} /> : null}Find Times
     </button>
   );
+  // Reading the same conversation and draft again would repeat the same search, so Re-read waits for a change.
+  const reread = ai && search && !search.fallback && search.readFrom !== currentRead
+    ? <button type="button" className="btn-link find-times-reread" title="Read the conversation and your draft again for when to meet" onClick={() => void findTimes()}>
+      <Sparkles size={ICON_SIZE.xs} aria-hidden="true" />Re-read
+    </button>
+    : null;
   if (compact && !search && !reading && !offeredTimesError && !readError) {
     if (!offered) return null;
     return <section className="context-ai-launcher compose-availability" aria-label="Availability">{button}</section>;
@@ -160,7 +184,9 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
       {!search && !reading && (readError ?? offeredTimesError) ? <p className="context-status" role="alert">{readError ?? offeredTimesError}</p> : null}
       {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
       {search && !reading ? <>
-        {search.fallback ? <p className="context-status" role="alert">{search.fallback}</p> : null}
+        {search.fallback ? <p className="context-status" role="alert">
+          {search.fallback} <button type="button" className="btn-link" onClick={() => void findTimes()}>Try Again</button>
+        </p> : null}
         {!search.plan.proposedTimes?.length && coworkers.length > 0 ? <fieldset className="find-times-coworkers">
           <legend>Include coworkers</legend>
           {coworkers.map((person) => <label key={person.email}>
@@ -174,6 +200,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
           key={search.key}
           plan={search.plan}
           reason={search.reason}
+          reasonAction={reread}
           preferences={preferences}
           calendarConnected
           coworkers={emails.length && draft.account ? { accountId: draft.account, emails } : undefined}
@@ -181,7 +208,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
           intoDraft={intoDraft}
           // A range search never yields a single proposed time to add or confirm.
           onAddToCalendar={() => undefined}
-          onReplyWithTimes={onInsertTimes}
+          onReplyWithTimes={(times) => { inserting.current = true; onInsertTimes(times); }}
           onConfirmTime={() => undefined}
           onOpenCalendarSettings={onOpenCalendarSettings}
         />
