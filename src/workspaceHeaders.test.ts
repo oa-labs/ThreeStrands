@@ -207,6 +207,7 @@ describe("primary and form action buttons", () => {
   it("fills a primary button with --primary, the one primary look", () => {
     expect(lastDeclaration(".btn-primary", "background")).toBe("var(--primary)");
     expect(lastDeclaration(".btn-primary", "border-color")).toBe("var(--primary-border)");
+    expect(lastDeclaration(".btn-primary", "color")).toBe("var(--primary-text)");
   });
 
   it("never fills a button with the solid accent color", () => {

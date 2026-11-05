@@ -10,6 +10,9 @@ pub(super) const MAX_ACTION_PROPOSALS: usize = 10;
 
 const MAX_EVIDENCE_CHARS: usize = 1_000;
 
+/// Longest note naming what a suggestion may have wrong; the prompt asks for 60.
+pub(super) const MAX_UNCERTAIN_CHARS: usize = 80;
+
 /// Mirrors `MeetingProposal` and `TaskProposal`. Strict structured output
 /// requires every property to be listed as required, so optional values are
 /// nullable instead of omittable; serde's `deny_unknown_fields` still rejects
@@ -32,7 +35,7 @@ pub(super) fn proposal_array_schema() -> serde_json::Value {
         "required": [
             "type", "intent", "title", "participants", "location", "rawTimeLanguage",
             "normalizedStart", "normalizedEnd", "eventDate", "searchRangeStart", "searchRangeEnd",
-            "durationMinutes", "timeZone", "confidence", "evidence",
+            "durationMinutes", "timeZone", "confidence", "uncertain", "evidence",
         ],
         "properties": {
             "type": {"type": "string", "enum": ["meeting"]},
@@ -49,6 +52,7 @@ pub(super) fn proposal_array_schema() -> serde_json::Value {
             "durationMinutes": nullable_integer,
             "timeZone": nullable_string,
             "confidence": {"type": "number"},
+            "uncertain": nullable_string,
             "evidence": evidence,
         },
     });
@@ -57,7 +61,7 @@ pub(super) fn proposal_array_schema() -> serde_json::Value {
         "additionalProperties": false,
         "required": [
             "type", "kind", "title", "notes", "dueKind", "dueValue", "timeZone",
-            "repeatIntervalDays", "goalId", "confidence", "evidence",
+            "repeatIntervalDays", "goalId", "confidence", "uncertain", "evidence",
         ],
         "properties": {
             "type": {"type": "string", "enum": ["task"]},
@@ -70,6 +74,7 @@ pub(super) fn proposal_array_schema() -> serde_json::Value {
             "repeatIntervalDays": nullable_integer,
             "goalId": nullable_string,
             "confidence": {"type": "number"},
+            "uncertain": nullable_string,
             "evidence": evidence,
         },
     });
@@ -125,6 +130,16 @@ fn validate_action_proposal(
     proposal: &mut ActionProposal,
     messages: &[ActionMessageInput],
 ) -> Result<(), String> {
+    // A note about what may be wrong is a hint, not a requirement: one that is
+    // blank or too long is dropped rather than withholding the suggestion.
+    let uncertain = match proposal {
+        ActionProposal::Meeting(value) => &mut value.uncertain,
+        ActionProposal::Task(value) => &mut value.uncertain,
+    };
+    *uncertain = uncertain
+        .take()
+        .map(|note| note.trim().to_string())
+        .filter(|note| !note.is_empty() && note.chars().count() <= MAX_UNCERTAIN_CHARS);
     let evidence = match proposal {
         ActionProposal::Meeting(value) => {
             // A start without an end takes its length from durationMinutes;

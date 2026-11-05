@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test("delegates from mail, preserves a draft across views, answers, and revises a report", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("option", { name: /Welcome to ThreeStrands/ }).click();
-  await page.getByRole("button", { name: "Delegate work…", exact: true }).click();
+  await page.getByRole("button", { name: "Delegate Work…", exact: true }).click();
   const form = page.getByRole("form", { name: "New delegated task" });
   await expect(form.getByText("Linked to the selected conversation.")).toBeVisible();
   await form.getByRole("button", { name: "Enable local demonstration" }).click();

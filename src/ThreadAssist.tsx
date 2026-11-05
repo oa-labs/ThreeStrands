@@ -1,8 +1,8 @@
 import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { useId, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, ChevronRight, Copy, MapPin, RefreshCw, RotateCcw, Sparkles, Users, Video } from "lucide-react";
-import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ScheduleEvent, ThreadDetail } from "./domain";
+import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, MapPin, RefreshCw, RotateCcw, Sparkles, Users, Video } from "lucide-react";
+import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ScheduleEvent, TaskProposal, ThreadDetail } from "./domain";
 import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { FindTimesCard } from "./FindTimesCard";
 import { MoreActionsMenu } from "./MoreActionsMenu";
@@ -14,10 +14,11 @@ import { parseAddress } from "./emailAddress";
 import { isSummaryStale } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 import { ContextSectionHeader, useRememberedCollapse } from "./ContextSections";
-import { plural } from "./plural";
 import { latestInvitationMessage, withoutInvitationMeetings } from "./calendarInvitations";
 
 export const THREAD_ASSIST_ID = "thread-assist";
+/** Remembers whether Suggested is collapsed, apart from the Brief around it. */
+const SUGGESTIONS_COLLAPSE_ID = "thread-assist-suggestions";
 
 /** The most messages a brief sends; mirrors the native `MAX_MESSAGES`. */
 export const BRIEF_MAX_MESSAGES = 15;
@@ -75,9 +76,14 @@ export type ThreadAssistProps = {
     onOpenCalendarEvent?(event: ScheduleEvent): void;
   };
   loading: boolean;
+  /**
+   * A proactive brief will run once the reader has stayed long enough, so
+   * what is missing shows as on its way rather than as a button to press.
+   */
+  upcoming?: boolean;
+  /** The user's own addresses, named "you" among a meeting's people. */
+  ownEmails?: string[];
   error: string | null;
-  /** Who the conversation was shared with, such as "Anthropic"; null when no provider is chosen. */
-  providerName: string | null;
   /** Runs whatever is missing, or everything when `force` is set. */
   onRun(force: boolean): void;
   onOpenSettings(): void;
@@ -160,52 +166,114 @@ export function meetingPlace(location: string | null, calendarConferenceUrl: str
   return { place, joinUrl };
 }
 
+/** A suggestion's people, naming the user as "you", last; empty when the user is the only one. */
+export function participantsText(participants: string[], ownEmails: string[]): string {
+  const own = new Set(ownEmails.map((email) => email.trim().toLowerCase()));
+  const isOwn = (participant: string) => own.has(parseAddress(participant).email.trim().toLowerCase());
+  const others = [...new Set(participants.filter((participant) => !isOwn(participant)).map((participant) => participantName(parseAddress(participant).name || participant)))];
+  if (others.length === 0) return "";
+  return new Intl.ListFormat(undefined, { type: "conjunction" }).format(participants.some(isOwn) ? [...others, "you"] : others);
+}
+
 /**
- * One suggestion. A meeting keeps Edit and Dismiss in the header's ⋯ so its
- * only row of buttons is the scheduler's. Once it is on the calendar the
- * scheduler shows when it is, so the card drops the email's wording of the
- * time and moves its own actions into the scheduler's row: Dismiss beside
- * Open in Calendar, Edit in ⋯.
+ * What a suggestion may have wrong, named so the user knows what to check:
+ * the AI's own note, otherwise what the app can tell for itself. Null when
+ * nothing needs a look.
  */
-function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
+export function uncertaintyNote(proposal: ActionProposal): string | null {
+  // Meetings default to the user's timezone, which the scheduler labels, so
+  // only a task with an unzoned time is missing something the app can't fill.
+  if (proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone) return "Time zone not stated";
+  if (proposal.confidence >= 0.75) return null;
+  if (proposal.uncertain) return proposal.uncertain;
+  if (proposal.type === "meeting" && proposal.intent === "schedule" && proposal.durationMinutes == null) return "Length not stated";
+  return "Some details may be wrong";
+}
+
+/** A local `YYYY-MM-DD` the given number of days from `now`. */
+function localDay(now: Date, days: number): string {
+  const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + days);
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * A task to come back to a meeting still to be arranged, due tomorrow. It
+ * goes through the same task review as any suggested task, citing the
+ * meeting's evidence, and leaves the meeting suggestion in place.
+ */
+export function reminderTask(meeting: MeetingProposal, now: Date): TaskProposal {
+  return {
+    type: "task",
+    kind: "action",
+    title: `Reply with times: ${meeting.title}`,
+    notes: meeting.rawTimeLanguage ? `Asked for \u201c${meeting.rawTimeLanguage}\u201d` : null,
+    dueKind: "date",
+    dueValue: localDay(now, 1),
+    timeZone: null,
+    repeatIntervalDays: null,
+    confidence: meeting.confidence,
+    evidence: meeting.evidence,
+  };
+}
+
+/**
+ * One suggestion. Edit and Dismiss sit in the header's ⋯ on every card, so
+ * the only row of buttons is the card's main actions. A meeting's quote of
+ * the email's time words opens the evidence it came from; once the meeting is
+ * on the calendar the scheduler shows when it is, so the card drops the quote
+ * and moves its own actions into the scheduler's row: Dismiss beside Open in
+ * Calendar, Edit in ⋯.
+ */
+function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEmails }: {
   proposal: ActionProposal;
   index: number;
   source: string | null;
   suggestions: Pick<ThreadAssistProps["suggestions"], "onDiscard" | "onReview">;
   scheduling: ThreadAssistProps["scheduling"];
+  ownEmails: string[];
 }) {
   const [matchedEvent, setMatchedEvent] = useState<ScheduleEvent | null>(null);
   const matched = matchedEvent !== null;
-  // Meetings default to the user's timezone and the next week, so only
-  // a task with an unzoned time needs review before use.
-  const needsReview = proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone;
-  const uncertain = proposal.confidence < 0.75;
+  const note = uncertaintyNote(proposal);
   const kind = proposal.type === "task" ? "Task" : proposal.intent === "attend" ? "Event" : "Meeting";
   const edit = () => suggestions.onReview(index, proposal, "edit");
   const dismiss = <button type="button" className="btn btn-sm" onClick={() => suggestions.onDiscard(index)}>Dismiss</button>;
   const where = proposal.type === "meeting" ? meetingPlace(proposal.location, matchedEvent?.conferenceUrl) : null;
-  const people = proposal.type === "meeting" && proposal.participants.length > 0
-    ? new Intl.ListFormat(undefined, { type: "conjunction" }).format(proposal.participants.map(participantName))
-    : "";
+  const people = proposal.type === "meeting" ? participantsText(proposal.participants, ownEmails) : "";
+  // The email's own words, quoted so they read as what was asked rather than as a description.
+  const quote = proposal.type === "meeting" && !matched && proposal.rawTimeLanguage ? proposal.rawTimeLanguage : null;
+  const evidence = <details className="proposal-evidence">
+    <summary aria-label={quote ? `From the email: ${quote}` : undefined}>
+      <ChevronRight className="proposal-evidence-chevron" size={ICON_SIZE.xs} aria-hidden="true" />
+      {quote ? <span className="proposal-time-language">{quote}</span> : "From the email"}
+    </summary>
+    <blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}
+  </details>;
+  // Not an AI request: the reminder is reviewed like any other suggested task.
+  const remind = proposal.type === "meeting" && proposal.intent === "schedule"
+    ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(-1, reminderTask(proposal, new Date()), "accept")}>Remind Me</button>
+    : null;
   return <article className="action-proposal-card">
     <div className="action-proposal-card-top">
       <div className="action-proposal-card-header">
         <span className="proposal-kind">{kind}</span>
-        {uncertain || needsReview ? <button type="button" className="btn-link proposal-check" title="Some details may be wrong. Edit to check them." onClick={edit}>Check details</button> : null}
       </div>
-      {proposal.type === "meeting" && !matched ? <MoreActionsMenu label="More actions" actions={[{ label: "Edit", onSelect: edit }, { label: "Dismiss", onSelect: () => suggestions.onDiscard(index) }]} /> : null}
+      {matched ? null : <MoreActionsMenu label="More actions" actions={[{ label: "Edit", onSelect: edit }, { label: "Dismiss", onSelect: () => suggestions.onDiscard(index) }]} />}
     </div>
     <strong>{proposal.title}</strong>
+    {note ? <p className="proposal-uncertain">
+      <CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /><span>{note}</span>
+      <button type="button" className="btn-link" aria-label={`Edit to check: ${note}`} onClick={edit}>Edit</button>
+    </p> : null}
     {proposal.type === "meeting" ? <>
-      {/* The email's own words, quoted so they read as what was asked rather than as a description. */}
-      {matched ? null : proposal.rawTimeLanguage ? <p className="proposal-time-language">{proposal.rawTimeLanguage}</p> : <p>Time not specified</p>}
+      {quote ? evidence : matched ? null : <p>Time not specified</p>}
       {where?.joinUrl ? <p className="proposal-detail"><Video size={ICON_SIZE.sm} aria-hidden="true" /><span>
         {where.place ? <>{where.place} · </> : null}
         {/* The address shows on hover, since it came from the email or the calendar rather than from ThreeStrands. */}
         <a href={where.joinUrl} title={where.joinUrl} onClick={(event) => { event.preventDefault(); void openUrl(where.joinUrl!); }}>{where.place ? "Join" : "Join video meeting"}</a>
       </span></p> : where?.place ? <p className="proposal-detail"><MapPin size={ICON_SIZE.sm} aria-hidden="true" /><span><EventLocation location={where.place} /></span></p> : null}
       {people ? <p className="proposal-detail"><Users size={ICON_SIZE.sm} aria-hidden="true" /><span>{people}</span></p> : null}
-    </> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
+    </> : proposal.notes || proposal.dueValue ? <p>{[proposal.notes, proposal.dueValue ? `Due ${proposal.dueValue}` : null].filter(Boolean).join(" · ")}</p> : null}
     {proposal.type === "meeting" ? <FindTimesCard
       key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
       plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
@@ -222,23 +290,23 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
       onMatchChange={setMatchedEvent}
       matchedActions={dismiss}
       moreActions={[{ label: "Edit", onSelect: edit }]}
+      extraActions={remind}
     /> : null}
     {proposal.type === "task" ? <div className="proposal-actions">
-      {/* Icons mark the calendar actions only, so Edit and Dismiss stay plain. */}
-      <button type="button" className="btn btn-sm" onClick={edit}>Edit</button>
-      <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button>
-      {dismiss}
+      <button type="button" className="btn btn-sm btn-primary" onClick={() => suggestions.onReview(index, proposal, "accept")}>Add Task…</button>
     </div> : null}
-    <details className="proposal-evidence"><summary><ChevronRight className="proposal-evidence-chevron" size={ICON_SIZE.xs} aria-hidden="true" />From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
+    {quote ? null : evidence}
   </article>;
 }
 
-export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, error, providerName, onRun, onOpenSettings }: ThreadAssistProps) {
+export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, upcoming = false, ownEmails = [], error, onRun, onOpenSettings }: ThreadAssistProps) {
   const { thread } = detail;
   const [copiedSummary, setCopiedSummary] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
   const [collapsed, toggleCollapsed] = useRememberedCollapse(THREAD_ASSIST_ID);
+  const [suggestionsCollapsed, toggleSuggestionsCollapsed] = useRememberedCollapse(SUGGESTIONS_COLLAPSE_ID);
   const bodyId = useId();
+  const suggestionsId = useId();
   if (!providerChosen) {
     return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-label="Brief">
       <p className="context-status">Set up AI to get a brief of each conversation, suggested next steps, and answers to your questions about it.</p>
@@ -258,18 +326,25 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
   const summaryText = summary.available ? thread.summary : null;
   const copied = Boolean(summaryText) && copiedSummary === summaryText;
   const stale = Boolean(summaryText) && isSummaryStale(thread);
-  const busy = loading || summary.pending;
+  const missingSummary = summary.available && !summaryText;
+  const missingSuggestions = suggestions.available && !suggestions.requested;
+  const waiting = upcoming && (missingSummary || missingSuggestions || stale);
+  const busy = loading || summary.pending || waiting;
+  // With a brief already here, only suggestions are coming: the brief stays
+  // readable and the wait shows where the suggestions will appear.
+  const readingBrief = summary.pending || (busy && !summaryText);
+  const lookingForSuggestions = suggestions.available && !readingBrief && (loading || (waiting && missingSuggestions));
   const generated = Boolean(summaryText) || suggestions.requested;
   const visibleProposals = withoutInvitationMeetings(suggestions.proposals, detail);
   const noSuggestions = suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 && !suggestions.extraCount;
+  const failure = error ? describeAnalysisError(error) : null;
+  // Asking for suggestions belongs where they will appear, not in the Brief's header.
+  const offerSuggestions = !failure && !busy && missingSuggestions && !missingSummary;
   // With nothing suggested, a brief already says whether anything is needed,
   // so an empty Suggested section would only repeat it.
-  const showSuggestions = suggestions.available && (suggestions.requested || visibleProposals.length > 0)
+  const showSuggestions = lookingForSuggestions || offerSuggestions || (suggestions.available && (suggestions.requested || visibleProposals.length > 0)
     && (visibleProposals.length > 0 || !latestInvitationMessage(detail) || suggestions.hiddenCount > 0 || Boolean(suggestions.extraCount))
-    && !(noSuggestions && !busy && summaryText);
-  const missingSummary = summary.available && !summaryText;
-  const missingSuggestions = suggestions.available && !suggestions.requested;
-  const failure = error ? describeAnalysisError(error) : null;
+    && !(noSuggestions && !busy && summaryText));
   const messageSource = (messageId: string) => {
     const message = detail.messages.find((candidate) => candidate.id === messageId);
     if (!message) return null;
@@ -287,17 +362,18 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
     }
   };
 
-  const runButton = !failure && (missingSummary || missingSuggestions) ? (
-    <HoverTooltip title={missingSummary ? "Get Brief" : "Get Suggestions"} shortcut={missingSummary ? "i" : undefined} placement="bottom">
-      <button type="button" className="btn btn-sm thread-assist-run" aria-keyshortcuts={missingSummary ? "i" : undefined} onClick={() => onRun(false)}>
-        <Sparkles size={ICON_SIZE.sm} />{missingSummary ? "Get Brief" : "Get Suggestions"}
+  const briefButton = (
+    <HoverTooltip title="Get Brief" shortcut="i" placement="bottom">
+      <button type="button" className="btn btn-sm thread-assist-run" aria-keyshortcuts="i" onClick={() => onRun(false)}>
+        <Sparkles size={ICON_SIZE.sm} />Get Brief
       </button>
     </HoverTooltip>
-  ) : null;
+  );
+  const suggestionsButton = <button type="button" className="btn btn-sm thread-assist-run" onClick={() => onRun(false)}><Sparkles size={ICON_SIZE.sm} />Get Suggestions</button>;
   // Before anything has run, only the button shows, beside the panel's other
   // AI actions; the section opens to full width once there is something to read.
-  if (runButton && !busy && !generated && !showSuggestions) {
-    return <section id={THREAD_ASSIST_ID} className="context-ai-launcher thread-assist" aria-label={title}>{runButton}</section>;
+  if (!failure && (missingSummary || missingSuggestions) && !busy && !generated && visibleProposals.length === 0) {
+    return <section id={THREAD_ASSIST_ID} className="context-ai-launcher thread-assist" aria-label={title}>{missingSummary ? briefButton : suggestionsButton}</section>;
   }
 
   const scope = briefScope(detail);
@@ -305,19 +381,18 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
   const scopeNote = summaryText && scope.newCount < scope.coveredCount
     ? (scope.newCount === 1 ? "From the latest message" : `From the ${scope.newCount} latest messages`)
     : null;
-  const shared = generated && !busy && Boolean(providerName);
   // The recap of earlier messages, if the brief gave one, always reads last.
   const orderedLines = [...lines.filter((line) => !EARLIER_PREFIX.test(line)), ...lines.filter((line) => EARLIER_PREFIX.test(line))];
-  const headerActions = busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
+  const headerActions = readingBrief ? <span className="context-status" role="status">Reading the conversation…</span> : (
     <>
-      {runButton}
+      {!failure && missingSummary && !busy ? briefButton : null}
       {/* Copy is revealed on hover or focus, so Refresh is the action that reads first. */}
       {summaryText ? (
         <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">
           <button type="button" className="btn-icon btn-icon-sm thread-assist-copy" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={ICON_SIZE.sm} /> : <Copy size={ICON_SIZE.sm} />}</button>
         </HoverTooltip>
       ) : null}
-      {generated ? (
+      {generated && !busy ? (
         <HoverTooltip title={`Refresh ${title.toLowerCase()}`} placement="bottom">
           <button type="button" className="btn-icon btn-icon-sm" aria-label={`Refresh ${title.toLowerCase()}`} onClick={() => onRun(true)}><RefreshCw size={ICON_SIZE.sm} /></button>
         </HoverTooltip>
@@ -335,15 +410,8 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
         </li>)}
       </ul> : null}
       {stale ? <p className="context-status">New messages since this brief.</p> : null}
-      {/* Where the brief came from and what was sent for it, as one line under it. */}
-      {scopeNote || shared ? <p className="thread-assist-shared">
-        {scopeNote ? <span>{scopeNote}</span> : null}
-        {scopeNote && shared ? <span aria-hidden="true"> · </span> : null}
-        {shared ? <>
-          <span>Shared {plural(scope.sentCount, "message")} with {providerName}.</span>{" "}
-          <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Activity</button>
-        </> : null}
-      </p> : null}
+      {/* Which messages the brief covers, when not the whole conversation. */}
+      {scopeNote ? <p className="thread-assist-shared">{scopeNote}</p> : null}
       {failure ? <div className="action-analysis-error" role="alert">
         <p>{failure.summary}</p>
         <div className="action-analysis-error-actions">
@@ -352,20 +420,36 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
         </div>
       </div> : null}
       {showSuggestions ? <div className="thread-assist-suggestions">
-        {summary.available ? <h4>Suggested</h4> : null}
-        {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
-        {!busy && suggestions.hiddenCount > 0 ? <HiddenSuggestionsNotice count={suggestions.hiddenCount} /> : null}
-        {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
-        <div className="action-proposals">
-          {visibleProposals.map((proposal) => <ProposalCard
-            key={proposalKey(proposal)}
-            proposal={proposal}
-            index={suggestions.proposals.indexOf(proposal)}
-            source={messageSource(proposal.evidence.sourceMessageId)}
-            suggestions={suggestions}
-            scheduling={scheduling}
-          />)}
-        </div>
+        {offerSuggestions && visibleProposals.length === 0 ? <div className="thread-assist-suggestions-run">{suggestionsButton}</div> : <>
+          {/* Collapses on its own, so the brief can stay open while the cards are put away. */}
+          {summary.available ? <div className="thread-assist-suggestions-header">
+            <h4>
+              <button type="button" className="context-section-toggle" aria-expanded={!suggestionsCollapsed} aria-controls={suggestionsId} onClick={toggleSuggestionsCollapsed}>
+                <span className="context-row-glyph" aria-hidden="true">{suggestionsCollapsed ? <ChevronRight size={ICON_SIZE.xs} /> : <ChevronDown size={ICON_SIZE.xs} />}</span>
+                <span>Suggested</span>
+              </button>
+            </h4>
+            {visibleProposals.length > 0 ? <span className="context-count">{visibleProposals.length}</span> : null}
+          </div> : null}
+          <div id={suggestionsId} className="thread-assist-suggestions-body" hidden={summary.available && suggestionsCollapsed}>
+            {lookingForSuggestions ? <p className="context-status" role="status">Looking for suggestions…</p> : null}
+            {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
+            {!busy && suggestions.hiddenCount > 0 ? <HiddenSuggestionsNotice count={suggestions.hiddenCount} /> : null}
+            {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
+            {visibleProposals.length > 0 ? <div className="action-proposals">
+              {visibleProposals.map((proposal) => <ProposalCard
+                key={proposalKey(proposal)}
+                proposal={proposal}
+                index={suggestions.proposals.indexOf(proposal)}
+                source={messageSource(proposal.evidence.sourceMessageId)}
+                suggestions={suggestions}
+                scheduling={scheduling}
+                ownEmails={ownEmails}
+              />)}
+            </div> : null}
+            {offerSuggestions ? suggestionsButton : null}
+          </div>
+        </>}
       </div> : null}
     </div>
   </section>;

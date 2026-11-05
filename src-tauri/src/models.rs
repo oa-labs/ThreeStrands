@@ -212,6 +212,10 @@ pub struct MeetingProposal {
     #[serde(default)]
     pub time_zone: Option<String>,
     pub confidence: f32,
+    /// The detail most likely wrong, such as "Duration not stated"; absent
+    /// from suggestions saved before it was asked for.
+    #[serde(default)]
+    pub uncertain: Option<String>,
     pub evidence: ProposalEvidence,
 }
 
@@ -234,6 +238,9 @@ pub struct TaskProposal {
     #[serde(default)]
     pub goal_id: Option<String>,
     pub confidence: f32,
+    /// The detail most likely wrong; see `MeetingProposal::uncertain`.
+    #[serde(default)]
+    pub uncertain: Option<String>,
     pub evidence: ProposalEvidence,
 }
 

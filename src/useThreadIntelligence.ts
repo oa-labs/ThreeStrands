@@ -224,7 +224,9 @@ export function useThreadIntelligence({
   // the mark-read delay, fetch whatever part of the brief is missing; not
   // after the user's own reply, which has nothing new to cover. Each
   // conversation revision is attempted at most once per session, so a
-  // failure is not retried automatically.
+  // failure is not retried automatically. Whether the sender qualifies is
+  // settled before the wait starts, so the wait can be shown as on its way
+  // rather than offering a button the automatic run is about to replace.
   const runBriefRef = useRef(runBrief);
   runBriefRef.current = runBrief;
   const proactiveAttempted = useRef(new Set<string>());
@@ -232,6 +234,7 @@ export function useThreadIntelligence({
   proactiveDetailRef.current = visibleDetail;
   const proactiveKey = visibleDetail ? `${visibleDetail.thread.id}:${visibleDetail.thread.lastMessageAt}` : null;
   const ownAddresses = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
+  const [proactiveWaitingKey, setProactiveWaitingKey] = useState<string | null>(null);
   useEffect(() => {
     const detail = proactiveDetailRef.current;
     if (!aiProactive.enabled || !(aiSummaryAvailable || aiActionAvailable) || !isThreadMailbox || !detail || !proactiveKey) return;
@@ -239,16 +242,24 @@ export function useThreadIntelligence({
     const sender = proactiveBriefSender(detail, ownAddresses);
     if (!sender) return;
     let active = true;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        if (aiProactive.knownSendersOnly && !(await hasEmailedBefore(sender).catch(() => false))) return;
-        if (!active) return;
+    let timer: number | undefined;
+    const stopWaiting = () => setProactiveWaitingKey((current) => current === proactiveKey ? null : current);
+    const qualifies = aiProactive.knownSendersOnly ? hasEmailedBefore(sender).catch(() => false) : Promise.resolve(true);
+    void qualifies.then((qualified) => {
+      if (!active || !qualified) return;
+      setProactiveWaitingKey(proactiveKey);
+      timer = window.setTimeout(() => {
         proactiveAttempted.current.add(proactiveKey);
-        await runBriefRef.current();
-      })();
-    }, proactiveDwellMs(autoReadDelaySeconds));
-    return () => { active = false; window.clearTimeout(timer); };
+        // The request marks itself loading before its first await, so the
+        // waiting state hands over to it without a gap.
+        void runBriefRef.current();
+        stopWaiting();
+      }, proactiveDwellMs(autoReadDelaySeconds));
+    });
+    return () => { active = false; window.clearTimeout(timer); stopWaiting(); };
   }, [aiActionAvailable, aiProactive, aiSummaryAvailable, autoReadDelaySeconds, isThreadMailbox, ownAddresses, proactiveKey]);
+  /** A proactive brief will run for the visible revision once the reader has stayed long enough. */
+  const proactivePending = proactiveKey !== null && proactiveWaitingKey === proactiveKey;
 
   // Thread chat, kept per conversation for the session. A failed question is
   // removed from the transcript and offered again through Try Again.
@@ -377,6 +388,6 @@ export function useThreadIntelligence({
     actionProposalSource, actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested,
     actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures,
     chatFocusRequest, askThread, focusThreadChat, updateActionProposal, removeActionProposal,
-    discardActionProposal, ownAddresses,
+    discardActionProposal, ownAddresses, proactivePending,
   };
 }

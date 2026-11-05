@@ -348,7 +348,7 @@ export function App() {
     : undefined;
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const {
-    aiProviderChosen, aiProviderLabel, aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
+    aiProviderChosen, aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
     aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, aiDraftFeatureEnabled, aiDraftAvailable, refreshAiAvailability,
   } = useAiAvailability(settingsOpen);
   const {
@@ -446,7 +446,7 @@ export function App() {
   });
   const {
     summaryPending, summaryError, runBrief, actionProposals, actionProposalSource,
-    actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested, offeredTimes, offeredTimesError,
+    actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested, offeredTimes, offeredTimesError, proactivePending,
     actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures, chatFocusRequest, askThread,
     focusThreadChat, updateActionProposal, removeActionProposal, discardActionProposal,
     ownAddresses,
@@ -1490,7 +1490,8 @@ export function App() {
                 replying: Boolean(composerBelongsToVisibleThread && correspondence.liveDraft),
                 suggestionsAvailable: aiActionAvailable,
                 requested: actionAnalysisRequested,
-                loading: actionAnalysisLoading,
+                // A proactive brief on its way counts as reading, so Find Times doesn't show and then vanish.
+                loading: actionAnalysisLoading || proactivePending,
                 proposals: actionProposals,
               })}
               suggest={() => suggestedSearch(actionProposals, new Date(), threadAvailability.defaultDurationMinutes)}
@@ -1499,7 +1500,7 @@ export function App() {
             />
           ) : null}
           assist={visibleDetail ? (<>
-            <div className="context-ai-launcher agent-context-links"><button type="button" className="btn btn-sm" onClick={delegateSelected}><Bot size={ICON_SIZE.sm} />Delegate work…</button>{agents.items.filter(d => d.task.sourceThreadId === visibleDetail.thread.id && !d.task.archived).map(d => <button className="btn-link" key={d.task.id} onClick={() => openAgent(d.task.id)}>{d.task.objective}{d.task.unread ? " · New activity" : ""}</button>)}</div>
+            <div className="context-ai-launcher agent-context-links"><button type="button" className="btn btn-sm" onClick={delegateSelected}><Bot size={ICON_SIZE.sm} />Delegate Work…</button>{agents.items.filter(d => d.task.sourceThreadId === visibleDetail.thread.id && !d.task.archived).map(d => <button className="btn-link" key={d.task.id} onClick={() => openAgent(d.task.id)}>{d.task.objective}{d.task.unread ? " · New activity" : ""}</button>)}</div>
             <ThreadAssist
               detail={visibleDetail}
               providerChosen={aiProviderChosen}
@@ -1530,8 +1531,9 @@ export function App() {
                 ),
               }}
               loading={actionAnalysisLoading}
+              upcoming={proactivePending}
+              ownEmails={accounts.map((account) => account.email)}
               error={summaryError ?? actionAnalysisError}
-              providerName={aiProviderLabel}
               onRun={(force) => void runBrief({ force })}
               onOpenSettings={() => openSettingsAt("ai")}
             />

@@ -205,6 +205,33 @@ describe("useThreadIntelligence", () => {
       expect(briefThread).toHaveBeenCalledTimes(1);
     });
 
+    it("reports the brief as on its way while the reader waits, until the request takes over", async () => {
+      let finish: (value: typeof briefResult) => void = () => undefined;
+      vi.spyOn(mailClient, "briefThread").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+      const { result } = renderIntelligence({ detail: roadmap, proactive });
+      await waitFor(() => expect(result.current.proactivePending).toBe(true));
+      expect(result.current.actionAnalysisLoading).toBe(false);
+      await vi.advanceTimersByTimeAsync(dwell + 100);
+      // The request is in flight, so the panel shows it loading rather than waiting.
+      await waitFor(() => expect(result.current.actionAnalysisLoading).toBe(true));
+      expect(result.current.proactivePending).toBe(false);
+      await act(async () => finish(briefResult));
+      await waitFor(() => expect(result.current.actionAnalysisLoading).toBe(false));
+      expect(result.current.proactivePending).toBe(false);
+    });
+
+    it("never reports a brief on its way for a sender the filter rules out, or once the reader leaves", async () => {
+      vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([]);
+      const filtered = renderIntelligence({ detail: roadmap, proactive: { enabled: true, knownSendersOnly: true } });
+      await vi.advanceTimersByTimeAsync(dwell * 2);
+      expect(filtered.result.current.proactivePending).toBe(false);
+
+      const { result, rerender } = renderIntelligence({ detail: roadmap, proactive });
+      await waitFor(() => expect(result.current.proactivePending).toBe(true));
+      rerender({ detail: welcome, proactive });
+      expect(result.current.proactivePending).toBe(false);
+    });
+
     it("does nothing for a conversation left before the dwell elapses", async () => {
       const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
       const { rerender } = renderIntelligence({ detail: roadmap, proactive });

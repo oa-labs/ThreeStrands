@@ -296,6 +296,34 @@ describe("colors", () => {
     });
     expect(misses).toEqual([]);
   });
+
+  it("keeps primary button text legible on the solid --primary fill in every theme and accent", () => {
+    const luminance = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16) / 255)
+        .map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (left: string, right: string) => {
+      const [light, dark] = [luminance(left), luminance(right)].sort((a, b) => b - a);
+      return (light + 0.05) / (dark + 0.05);
+    };
+    const expand = (hex: string) => hex.length === 4 ? `#${[...hex.slice(1)].map((digit) => digit + digit).join("")}` : hex;
+    const failures: string[] = [];
+    let blocks = 0;
+    css.walkRules((rule) => {
+      if (!rule.selector.startsWith(":root")) return;
+      const own = (property: string) => rule.nodes.find((node): node is Declaration => node.type === "decl" && node.prop === property)?.value;
+      const fill = own("--primary");
+      if (!fill) return;
+      blocks += 1;
+      const text = expand(own("--primary-text") ?? rootTokens.get("--primary-text") ?? "");
+      const ratio = contrast(expand(fill), text);
+      if (ratio < 4.5) failures.push(`${rule.selector}: ${ratio.toFixed(2)}`);
+    });
+    // The default dark and light themes plus a dark and light block per accent.
+    expect(blocks).toBeGreaterThanOrEqual(14);
+    expect(failures).toEqual([]);
+  });
 });
 
 describe("icon sizes", () => {

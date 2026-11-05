@@ -617,7 +617,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               onUpdate={(request) => updateTask(detailTask.id, request)} onSetStatus={(status) => void setStatus(detailTask, status)}
               onNavigate={moveSelection} onOpenThread={onOpenThread}
               onClose={() => taskCards.current.get(detailTask.id)?.querySelector<HTMLElement>(".task-card-main")?.focus()} />
-            {onDelegate ? <button className="btn-link" onClick={() => onDelegate(detailTask)}>Delegate work for this task…</button> : null}
+            {onDelegate ? <button className="btn-link" onClick={() => onDelegate(detailTask)}>Delegate Work for This Task…</button> : null}
             {agentTasks.filter(d => d.task.linkedTaskId === detailTask.id).map(d => <button className="btn-link" key={d.task.id} onClick={() => onOpenAgent?.(d.task.id)}>{d.task.objective} · Agent work{d.task.unread ? " · New activity" : ""}</button>)}
             <WorkspaceRelatedContext target={{ kind: "task", task: detailTask }} accountIds={accountId ? [accountId] : accountOptions} onOpenThread={onOpenThread} />
           </> : <p className="context-status">Select a task to see details and related information.</p>}

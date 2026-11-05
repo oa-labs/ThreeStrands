@@ -214,9 +214,25 @@ describe("adjusting open-time searches", () => {
     expect(spreadAcrossDays(candidates, "America/New_York").map((candidate) => candidate.start)).toEqual([
       "2026-10-19T13:00:00Z", "2026-10-20T13:00:00Z", "2026-10-19T14:00:00Z", "2026-10-20T03:00:00Z",
     ]);
+    // In UTC the second offered day has an afternoon time, which is offered over its earlier one;
+    // that earlier one, still its day's first, then comes before the 19th's second.
     expect(spreadAcrossDays(candidates, "UTC").map((candidate) => candidate.start)).toEqual([
-      "2026-10-19T13:00:00Z", "2026-10-20T03:00:00Z", "2026-10-19T14:00:00Z", "2026-10-20T13:00:00Z",
+      "2026-10-19T13:00:00Z", "2026-10-20T13:00:00Z", "2026-10-20T03:00:00Z", "2026-10-19T14:00:00Z",
     ]);
+  });
+
+  it("spreads the offered times across the whole range and mixes mornings and afternoons", () => {
+    // Two weeks of weekdays, each with a 9:00 and a 14:00 opening in UTC.
+    const days = ["01", "02", "03", "04", "07", "08", "09", "10", "11", "14"];
+    const candidates = days.flatMap((day) => [{ start: `2026-12-${day}T09:00:00Z` }, { start: `2026-12-${day}T14:00:00Z` }]);
+    const offered = spreadAcrossDays(candidates, "UTC").slice(0, 3).map((candidate) => candidate.start);
+    // First day's morning, a middle day's afternoon, last day's morning: not Dec 1, 2 and 3.
+    expect(offered).toEqual(["2026-12-01T09:00:00Z", "2026-12-08T14:00:00Z", "2026-12-14T09:00:00Z"]);
+    // Every slot is still there for Show More, and none twice.
+    expect(new Set(spreadAcrossDays(candidates, "UTC")).size).toBe(candidates.length);
+    // A day without an afternoon opening offers its morning instead.
+    expect(spreadAcrossDays([{ start: "2026-12-01T09:00:00Z" }, { start: "2026-12-02T09:00:00Z" }], "UTC").map((candidate) => candidate.start))
+      .toEqual(["2026-12-01T09:00:00Z", "2026-12-02T09:00:00Z"]);
   });
 });
 
@@ -232,11 +248,13 @@ describe("offering Find Times while reading", () => {
     expect(offersFindTimes({ ...read, suggestionsAvailable: false, proposals: [] })).toBe(true);
   });
 
-  it("keeps it for tasks or a meeting still to be arranged once suggestions ran", () => {
+  it("keeps it for tasks once suggestions ran, but not beside a meeting card that already offers times", () => {
     expect(offersFindTimes({ ...read, proposals: [] })).toBe(false);
     expect(offersFindTimes({ ...read, proposals: [task] })).toBe(true);
     expect(offersFindTimes({ ...read, proposals: [meeting({ intent: "attend" })] })).toBe(false);
-    expect(offersFindTimes({ ...read, proposals: [task, meeting()] })).toBe(true);
+    expect(offersFindTimes({ ...read, proposals: [task, meeting({ intent: "attend" })] })).toBe(true);
+    expect(offersFindTimes({ ...read, proposals: [meeting()] })).toBe(false);
+    expect(offersFindTimes({ ...read, proposals: [task, meeting()] })).toBe(false);
   });
 
   it("offers it when an availability request is classified only as a reply task", () => {
