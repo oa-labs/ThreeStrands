@@ -23,6 +23,38 @@ The rules below still apply, including no `git stash`, `checkout`, or `reset`.
   worktree should exist only while its task is in progress or waiting to be
   merged. Mention any still waiting in the final summary.
 
+### In the tart VM
+
+You're in the developer's tart VM when `git remote get-url origin` is a path
+under `~/Source/.host/`. There, work reaches `master` only when the developer
+runs `tart-vm mac land <branch>` on the host. `land` signs copies of the
+branch's commits, fast-forwards the host's `master`, and then removes the
+branch and its worktree from the VM. So, in the VM, these rules replace the
+merge and cleanup rules above:
+
+- Start each task from fresh commits: run `git fetch origin`, then create the
+  worktree on a new branch from `origin/master`, not the local `master`.
+- Never merge into the VM's `master`, even when the developer asks you to merge
+  or says "merge the worktree". Commits merged there never reach the host. When
+  the work is committed and ready, tell the developer to run
+  `tart-vm mac land <branch>` on the host. Pushing is disabled in the VM, so
+  don't try it.
+- Leave the worktree and branch in place once the work is ready; `land` removes
+  them. Remove them yourself only when the developer drops the work.
+- If `land` says the branch doesn't fast-forward, run `git fetch origin` and
+  rebase the branch onto `origin/master` in its worktree. Resolve any
+  conflicts, rerun the affected tests, and ask the developer to run `land`
+  again. The developer may need to run `tart-vm mac sync` first, so that
+  `origin/master` has their latest commits.
+- At the start of a task, after `git fetch origin`, look for leftovers. A branch
+  has fully landed when `git cherry origin/master <branch>` prints no `+` lines
+  and the branch has commits of its own. Remove its worktree and the branch. Use
+  `git worktree remove` without `--force`. If it refuses because of
+  uncommitted changes, keep the worktree and tell the developer. The developer
+  can also run `tart-vm mac prune` from the host to do the same cleanup.
+- In the final summary, list each branch that's waiting to land, along with its
+  `land` command.
+
 ## Testing
 
 Agents own the automated test suite. The developer owns looking at the running app.
