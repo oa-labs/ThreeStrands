@@ -98,6 +98,7 @@ To build a committed branch from the host and copy the app back, run:
 ```sh
 scripts/vm-build.sh build                    # current branch, debug
 scripts/vm-build.sh build --branch master --release --sign
+scripts/vm-build.sh build --branch master --release --dmg   # installer for other Macs
 ```
 
 `build` starts the VM headless if it is stopped, checks the branch out in a
@@ -117,6 +118,14 @@ copy to Apple's notary service from the host and staples the ticket, using the
 notarytool keychain profile named by `APPLE_KEYCHAIN_PROFILE` (create one with
 `xcrun notarytool store-credentials`). The VM never receives `APPLE_*`
 credentials. Updater-signed releases still come from the release workflow.
+
+`--dmg` (or `scripts/vm-build.sh dmg`) builds the drag-to-install disk image
+that `pnpm tauri build` used to make. The VM builds only the app, because a
+disk image made there would hold an app signed only ad hoc. `--dmg` implies
+`--notarize` and needs `--release`. It packages the notarized app with an
+Applications shortcut, then signs, notarizes, and staples the image on the
+host. The image is named after the built app's version and architecture, as
+Tauri names its own, for example `artifacts/macos-vm/ThreeStrands_1.2.3_aarch64.dmg`.
 
 Running a copied app on the host runs its dependency code there. Debug and
 local builds use the installed app's identifier (`app.threestrands.mail`), so
