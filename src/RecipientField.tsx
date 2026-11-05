@@ -3,7 +3,7 @@ import { Pin, PinOff, UserPlus, Users, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
 import { matchingGroups, memberCountLabel } from "./contactGroups";
-import { formatAddress, isEmailAddress, looksLikeCompleteAddress, parseAddress, splitAddressList, splitTypedAddresses } from "./emailAddress";
+import { formatAddress, isEmailAddress, looksLikeCompleteAddress, normalizePastedEmailAddresses, parseAddress, splitAddressList, splitTypedAddresses } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -365,8 +365,9 @@ export function RecipientField({ id, label, value, account, disabled, context, l
             commitDraftText();
           }}
           onPaste={(event) => {
-            const pasted = event.clipboardData.getData("text");
-            if (!/[,;\n]/.test(pasted)) return;
+            const raw = event.clipboardData.getData("text");
+            const pasted = normalizePastedEmailAddresses(raw);
+            if (pasted === raw && !/[,;\n]/.test(pasted)) return;
             event.preventDefault();
             const { addresses, rest } = splitTypedAddresses(`${draftText}${pasted}`);
             emit(mergeTyped(chips, addresses), rest);

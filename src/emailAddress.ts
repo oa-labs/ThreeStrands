@@ -163,3 +163,15 @@ export function normalizeAddressList(value: string): string {
   if (!pieces.length) return value;
   return /,\s*$/.test(value) ? `${pieces.join(", ")}, ` : pieces.join(", ");
 }
+
+/** Clean a copied mailto link for an address field. Link headers never fill other fields. */
+export function normalizePastedEmailAddresses(text: string): string {
+  const trimmed = text.trim();
+  if (!/^mailto:/i.test(trimmed)) return text;
+  const destination = trimmed.slice("mailto:".length).split("?")[0];
+  // Preserve literal plus signs and malformed escapes, as when opening a mailto link.
+  return destination.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+    try { return decodeURIComponent(run).replace(/[\r\n]+/g, " "); }
+    catch { return run; }
+  });
+}

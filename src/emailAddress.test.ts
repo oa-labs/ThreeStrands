@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAddress, formatDisplayName, invalidRecipients, isEmailAddress, isValidRecipient, normalizeAddressList, parseAddress, splitAddressList, splitTypedAddresses } from "./emailAddress";
+import { formatAddress, formatDisplayName, invalidRecipients, isEmailAddress, isValidRecipient, normalizeAddressList, normalizePastedEmailAddresses, parseAddress, splitAddressList, splitTypedAddresses } from "./emailAddress";
 
 describe("parseAddress", () => {
   it("splits a display name and email out of a From-style header", () => {
@@ -168,3 +168,19 @@ describe("normalizeAddressList", () => {
   });
 });
 
+
+describe("normalizePastedEmailAddresses", () => {
+  it.each([
+    ["mailto:toddrbinnig@gmail.com", "toddrbinnig@gmail.com"],
+    ["  MAILTO:jane+news@example.com  ", "jane+news@example.com"],
+    ["mailto:a@example.com,b@example.com?cc=hidden@example.com&subject=Hello&body=Text", "a@example.com,b@example.com"],
+    ["mailto:%22Doe%2C%20Jane%22%20%3Cjane@example.com%3E", '"Doe, Jane" <jane@example.com>'],
+    ["mailto:a@example.com%0D%0ABcc:%20spy@example.com", "a@example.com Bcc: spy@example.com"],
+    ["mailto:a%zz@example.com", "a%zz@example.com"],
+    ["mailto:?to=hidden@example.com", ""],
+    ["Jane <jane@example.com>, bob@example.com", "Jane <jane@example.com>, bob@example.com"],
+    ["https://example.com", "https://example.com"],
+  ])("cleans %s", (input, expected) => {
+    expect(normalizePastedEmailAddresses(input)).toBe(expected);
+  });
+});

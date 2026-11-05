@@ -14,6 +14,13 @@ describe("contextual recipient lookup", () => {
   beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }); vi.spyOn(mailClient, "listContactGroupRecipients").mockResolvedValue([]); });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
+  it("pastes a mailto destination without importing link headers", () => {
+    const change = vi.fn();
+    render(<RecipientField {...props} onChange={change} />);
+    fireEvent.paste(screen.getByRole("textbox", { name: "To" }), { clipboardData: { getData: () => "mailto:jane@example.com?bcc=hidden@example.com&subject=Hello" } });
+    expect(change).toHaveBeenCalledWith("jane@example.com, ");
+  });
+
   it("offers empty-input recommendations on focus and adds only the selected person", async () => {
     const lookup = vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([bob]);
     const change = vi.fn();

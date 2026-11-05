@@ -4,7 +4,7 @@ import { Check, Copy, Star, Users, X } from "lucide-react";
 import { matchingGroups, memberCountLabel } from "./contactGroups";
 import { mailClient } from "./data/client";
 import type { ContactGroupRecipients, ContactProfile } from "./domain";
-import { isEmailAddress, splitTypedAddresses } from "./emailAddress";
+import { isEmailAddress, normalizePastedEmailAddresses, splitTypedAddresses } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -278,8 +278,9 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
     }
   };
   const onPaste = (event: ClipboardEvent<HTMLInputElement>) => {
-    const text = event.clipboardData.getData("text");
-    if (!(isEmail ? EMAIL_SEPARATORS : LINK_SEPARATORS).test(text.trim())) return;
+    const raw = event.clipboardData.getData("text");
+    const text = isEmail ? normalizePastedEmailAddresses(raw) : raw;
+    if (text === raw && !(isEmail ? EMAIL_SEPARATORS : LINK_SEPARATORS).test(text.trim())) return;
     event.preventDefault();
     commit(`${draft} ${text}`);
   };
