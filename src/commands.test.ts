@@ -161,6 +161,33 @@ describe("command registry", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "T", shiftKey: true }), today.keys[0]!)).toBe(false);
   });
 
+  it("toggles the calendar from a draft with Command or Control + Shift + T", () => {
+    const calendar = commands.find((command) => command.id === "draft.calendar")!;
+    const toggleSchedule = vi.fn();
+    expect(calendar.keys).toEqual(["Mod+Shift+t"]);
+    expect(calendar.enabled(noopContext())).toBe(false);
+    const composing = { ...noopContext(), composerActive: true, toggleSchedule };
+    expect(calendar.enabled(composing)).toBe(true);
+    calendar.run(composing);
+    expect(toggleSchedule).toHaveBeenCalledOnce();
+    for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+      expect(matchesShortcut(new KeyboardEvent("keydown", { key: "T", shiftKey: true, ...modifier }), calendar.keys[0])).toBe(true);
+      expect(matchesShortcut(new KeyboardEvent("keydown", { key: "t", ...modifier }), calendar.keys[0])).toBe(false);
+    }
+  });
+
+  it("returns to a parked draft with g then c only when one is parked and nothing is being composed", () => {
+    const resume = commands.find((command) => command.id === "draft.resume")!;
+    const resumeParkedDraft = vi.fn();
+    expect(resume.keys).toEqual(["g then c"]);
+    expect(resume.enabled(noopContext())).toBe(false);
+    expect(resume.enabled({ ...noopContext(), resumeParkedDraft, composerActive: true })).toBe(false);
+    const parked = { ...noopContext(), resumeParkedDraft };
+    expect(resume.enabled(parked)).toBe(true);
+    resume.run(parked);
+    expect(resumeParkedDraft).toHaveBeenCalledOnce();
+  });
+
   it("opens Send later with Command or Control + Shift + L only while composing", () => {
     const schedule = commands.find((command) => command.id === "draft.schedule")!;
     const scheduleDraft = vi.fn();

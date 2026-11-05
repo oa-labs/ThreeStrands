@@ -1123,6 +1123,14 @@ export function App() {
                     </button>
                   </HoverTooltip>
                 ) : null}
+                {correspondence.parkedDraft ? (
+                  <HoverTooltip label="Return to Draft" shortcut="g c" placement="bottom">
+                    <button type="button" className="btn-link reader-back" onClick={() => executeById("draft.resume")}>
+                      <Pencil size={ICON_SIZE.sm} aria-hidden="true" />
+                      <span className="reader-back-label">Return to Draft: {correspondence.parkedDraft.subject || "(no subject)"}</span>
+                    </button>
+                  </HoverTooltip>
+                ) : null}
                 <span className="reader-account-scope">{visibleDetail.thread.accountId}</span>
                 {conversationSystemLabels.length > 0 ? (
                   <span className="eyebrow">{conversationSystemLabels.join(" · ")}</span>

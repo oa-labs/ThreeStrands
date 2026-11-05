@@ -8,6 +8,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Delegate read-only web research in **Agents** with separately configured Anthropic and Exa keys: review public search subjects, answer questions, discuss findings, and save report revisions with sources. Research has shared usage limits and explicit data-sharing choices; the local demonstration remains available without external requests.
 
 ### Improved
+- Check something while you write: when you leave a draft to read another conversation, **Return to Draft** appears above it, and <kbd>g</kbd> then <kbd>c</kbd> takes you back to the draft from anywhere. Press <kbd>⌘/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> while writing to show your calendar beside the draft.
 - Agents now uses consistent text sizes, clearer form grouping, and aligned controls.
 - The mail search box leaves more room for your search: the / hint only shows while search is idle, and the Inbox Only filter shrinks to an icon until you turn it on.
 - Click an event's address in event details, invitation cards, or meeting suggestions to open it in Google Maps.

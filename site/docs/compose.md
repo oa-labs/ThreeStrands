@@ -15,6 +15,10 @@ Drafts save automatically. On Gmail accounts they also save to your Gmail **Draf
 
 <ts-shot scene="reply" alt="Replying to a conversation, with recipient history and related tasks in the panel beside the draft."></ts-shot>
 
+## Check Something While You Write {#check-something-while-you-write}
+
+Press <kbd>⌘/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> while writing to show your calendar beside the draft, and again to hide it. To look at another email, open it from the mail list. Your draft is saved, and **Return to Draft** appears above the conversation you are reading. Click it, or press <kbd>g</kbd> then <kbd>c</kbd> from anywhere, to continue where you left off. ThreeStrands offers back the last draft you left without sending; older ones stay in **Drafts**.
+
 ## Recipient Suggestions {#suggestions-for-people-you-email-together}
 
 After you add someone, recipient suggestions prioritize people you often email

@@ -69,7 +69,9 @@ export function useShortcutHandler(
       const scheduleShortcut = interactionScope === "compose" && event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && matchesShortcut(event, "Mod+Shift+L");
       // In Drafts, "#" discards the open draft unless focus is somewhere "#" is text.
       const discardDraftShortcut = interactionScope === "compose" && currentContext.composerActive && currentContext.mailbox === "drafts" && !isEditableTarget(event.target) && matchesShortcut(event, "#");
-      const fontShortcut = (event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
+      // The calendar sits beside the draft, so it toggles from anywhere in the composer or its side column.
+      const calendarShortcut = interactionScope === "compose" && currentContext.composerActive && matchesShortcut(event, "Mod+Shift+t");
+      const fontShortcut =(event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
       const themeShortcut = matchesShortcut(event, "Mod+d");
       // Moves between the draft and the context panel, so it must work from inside the draft's fields.
       const contextPanelShortcut = currentContext.composerActive && (matchesShortcut(event, "F6") || matchesShortcut(event, "Mod+Shift+p"));
@@ -83,7 +85,7 @@ export function useShortcutHandler(
       const entryScope = interactionScope !== "read";
       if (
         reservesNativeActivation(event)
-        || (!editableCommand && !attachShortcut && !sendShortcut && !replyAssistShortcut && !scheduleShortcut && !discardDraftShortcut && !fontShortcut && !themeShortcut && !contextPanelShortcut && !allowsMailboxTabShortcut
+        || (!editableCommand && !attachShortcut && !sendShortcut && !replyAssistShortcut && !scheduleShortcut && !calendarShortcut && !discardDraftShortcut && !fontShortcut && !themeShortcut && !contextPanelShortcut && !allowsMailboxTabShortcut
           && (entryScope || isEditableTarget(event.target) || focusedControl))
       ) {
         clearPendingStep();

@@ -109,6 +109,31 @@ describe("useShortcutHandler", () => {
     expect(execute).toHaveBeenCalledTimes(4);
   });
 
+  it("toggles the calendar with Mod+Shift+T from the draft and its side column, but not from an overlay", () => {
+    const execute = vi.fn();
+    renderHook(() => useShortcutHandler(context({ interactionScope: "compose", composerActive: true }), execute));
+    const composer = document.createElement("div");
+    composer.className = "composer";
+    composer.dataset.shortcutScope = "compose";
+    const body = document.createElement("div");
+    body.contentEditable = "true";
+    composer.append(body);
+    const sideButton = document.createElement("button");
+    const modal = document.createElement("div");
+    modal.dataset.shortcutScope = "modal";
+    const modalInput = document.createElement("input");
+    modal.append(modalInput);
+    document.body.append(composer, sideButton, modal);
+    for (const target of [body, sideButton]) {
+      const event = new KeyboardEvent("keydown", { key: "T", shiftKey: true, metaKey: true, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    body.dispatchEvent(new KeyboardEvent("keydown", { key: "t", bubbles: true }));
+    modalInput.dispatchEvent(new KeyboardEvent("keydown", { key: "T", shiftKey: true, ctrlKey: true, bubbles: true }));
+    expect(execute.mock.calls.map(([command]) => command.id)).toEqual(["draft.calendar", "draft.calendar"]);
+  });
+
   it("keeps Shift+E out of text fields and overlays, and ignores held-key repeats", () => {
     const current = context({ canUndoArchive: true });
     const execute = vi.fn();
