@@ -1025,11 +1025,10 @@ test("a Brief's offered slots reach calendar checks and a reply without a meetin
   await get.click();
   const proposed = context.getByRole("region",{name:"Proposed times"});
   await expect(proposed.getByRole("status")).toHaveText("Checking proposed times…");
-  await expect(proposed.getByRole("checkbox")).toHaveCount(0);
-  const candidates = proposed.getByRole("button",{name:/^\d+\./});
+  const candidates = proposed.getByRole("checkbox",{name:/^\d+\./});
   await expect(candidates).toHaveCount(2);
   await expect(candidates.first()).toBeDisabled();
-  await expect(proposed.locator(".context-row-title")).toHaveText([
+  await expect(proposed.locator(".proposed-time-title")).toHaveText([
     "1. Tuesday, November 3, 2099 at 7 PM for one hour",
     "2. Wednesday, November 4, 2099 at 7 PM for one hour",
   ]);
@@ -1040,23 +1039,34 @@ test("a Brief's offered slots reach calendar checks and a reply without a meetin
       const size = (role: string) => { probe.style.fontSize = `var(${role})`; return getComputedStyle(probe).fontSize; };
       const secondary = size("--text-secondary"); const meta = size("--text-meta"); probe.remove();
       const list = section.querySelector(".proposed-times-list")!;
-      const rows = [...list.querySelectorAll(".context-row")].map((row) => {
-        const title = row.querySelector(".context-row-title")!;
-        const glyph = row.querySelector(".context-row-icon")!;
-        return {titleSize:getComputedStyle(title).fontSize,detailSize:getComputedStyle(row.querySelector(".context-row-detail")!).fontSize,
-          glyphRight:glyph.getBoundingClientRect().right,titleLeft:title.getBoundingClientRect().left};
+      const left = (element: Element) => element.getBoundingClientRect().left;
+      const rows = [...list.querySelectorAll(".proposed-time")].map((row) => {
+        const title = row.querySelector(".proposed-time-title")!;
+        const detail = row.querySelector(".proposed-time-detail")!;
+        const box = row.querySelector('input[type="checkbox"]')!;
+        return {titleSize:getComputedStyle(title).fontSize,detailSize:getComputedStyle(detail).fontSize,
+          boxRight:box.getBoundingClientRect().right,titleLeft:left(title),rowLeft:left(row),
+          // Where the detail's text starts, inside its indent.
+          detailLeft:left(detail) + parseFloat(getComputedStyle(detail).paddingInlineStart)};
       });
       return {secondary,meta,rows,marker:getComputedStyle(list).listStyleType,
+        sectionLeft:left(section),summaryLeft:left(section.querySelector(".proposed-times-summary")!),
+        actionsLeft:left(section.querySelector(".proposed-times-actions")!),
         loadingSize:getComputedStyle(section.querySelector('[role="status"]')!).fontSize,
         summarySize:getComputedStyle(section.querySelector(".proposed-times-summary")!).fontSize};
     });
     expect(layout.marker).toBe("none");
     expect(layout.loadingSize).toBe(layout.meta);
     expect(layout.summarySize).toBe(layout.meta);
+    // One left edge for the summary, the options and the actions.
+    expect(layout.summaryLeft).toBe(layout.sectionLeft);
+    expect(layout.actionsLeft).toBe(layout.sectionLeft);
     for (const row of layout.rows) {
+      expect(row.rowLeft).toBe(layout.sectionLeft);
       expect(row.titleSize).toBe(layout.secondary);
       expect(row.detailSize).toBe(layout.meta);
-      expect(row.glyphRight).toBeLessThanOrEqual(row.titleLeft + 1);
+      expect(row.boxRight).toBeLessThanOrEqual(row.titleLeft + 1);
+      expect(Math.abs(row.detailLeft - row.titleLeft)).toBeLessThanOrEqual(1);
     }
   }
   await page.evaluate(async () => {
@@ -1067,9 +1077,9 @@ test("a Brief's offered slots reach calendar checks and a reply without a meetin
   await expect(candidates.first()).toBeEnabled();
   await candidates.first().focus();
   await candidates.first().press("Space");
-  await expect(candidates.first()).toHaveAttribute("aria-pressed","true");
-  await candidates.first().press("Enter");
-  await expect(candidates.first()).toHaveAttribute("aria-pressed","false");
+  await expect(candidates.first()).toBeChecked();
+  await candidates.first().press("Space");
+  await expect(candidates.first()).not.toBeChecked();
   await candidates.first().press("Space");
   await proposed.getByRole("button",{name:"Draft Reply With Selected Times"}).click();
   const reply = page.getByRole("dialog",{name:"Reply Message"});

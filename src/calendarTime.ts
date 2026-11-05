@@ -64,6 +64,50 @@ export function listSupportedTimeZones(): string[] {
   }
 }
 
+/** Zones most people pick from, listed before the full set in timezone menus. */
+export const COMMON_TIME_ZONES = [
+  "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles",
+  "America/Anchorage", "Pacific/Honolulu", "Europe/London", "Europe/Paris", "Asia/Kolkata", "Asia/Tokyo", "Australia/Sydney", "UTC",
+];
+
+/**
+ * A name people recognize, such as "Eastern Time (ET)", instead of the IANA
+ * identifier. The generic name stays right across daylight saving changes.
+ */
+export function friendlyZoneName(timeZone: string, at = new Date()): string {
+  const part = (style: "longGeneric" | "shortGeneric") => {
+    try {
+      return new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: style }).formatToParts(at)
+        .find((item) => item.type === "timeZoneName")?.value ?? null;
+    } catch { return null; }
+  };
+  const long = part("longGeneric");
+  if (!long) return timeZone;
+  const short = part("shortGeneric");
+  // Offsets such as "GMT+1" add nothing a reader recognizes.
+  return short && short !== long && !/^(GMT|UTC)[+-]/.test(short) ? `${long} (${short})` : long;
+}
+
+/** The city in an IANA identifier, such as "New York" for America/New_York. */
+function timeZoneCity(timeZone: string): string {
+  return timeZone.split("/").pop()!.replaceAll("_", " ");
+}
+
+/**
+ * Timezone menu entries: common zones by their familiar names first, then
+ * every zone by city, so zones sharing a name stay distinguishable.
+ */
+export function timeZoneChoices(current: string): { common: { value: string; label: string }[]; all: { value: string; label: string }[] } {
+  const supported = new Set(listSupportedTimeZones());
+  const common = COMMON_TIME_ZONES.filter((zone) => zone === "UTC" || supported.has(zone));
+  const all = [...new Set([...supported, current])].filter((zone) => !common.includes(zone));
+  return {
+    common: common.map((value) => ({ value, label: friendlyZoneName(value) })),
+    all: all.map((value) => ({ value, label: `${timeZoneCity(value)} — ${friendlyZoneName(value)}` }))
+      .sort((left, right) => left.label.localeCompare(right.label)),
+  };
+}
+
 /**
  * Carries the entered date across a date/date-time input switch instead of
  * discarding it: a `date` value truncates to its first 10 characters, and a

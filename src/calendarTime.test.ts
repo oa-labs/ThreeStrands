@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, eventDayBounds, formatUpcomingDate, layOutDayEvents, occursOnDay, startOfWeek } from "./calendarTime";
+import { addDays, eventDayBounds, formatUpcomingDate, friendlyZoneName, layOutDayEvents, occursOnDay, startOfWeek, timeZoneChoices } from "./calendarTime";
 import type { ScheduleEvent } from "./domain";
 
 function timedEvent(id: string, start: string, end: string): ScheduleEvent {
@@ -119,5 +119,26 @@ describe("calendar time helpers", () => {
     const next = addDays(new Date(2026, 8, 30), 1);
     expect(next.getMonth()).toBe(9);
     expect(next.getDate()).toBe(1);
+  });
+});
+
+describe("timezone names", () => {
+  it("uses names people recognize, the same in summer and winter, without bare offsets", () => {
+    for (const at of [new Date("2026-07-01T12:00:00Z"), new Date("2026-12-01T12:00:00Z")]) {
+      expect(friendlyZoneName("America/New_York", at)).toBe("Eastern Time (ET)");
+      expect(friendlyZoneName("America/Los_Angeles", at)).toBe("Pacific Time (PT)");
+    }
+    expect(friendlyZoneName("Europe/Paris")).not.toMatch(/GMT[+-]/);
+    expect(friendlyZoneName("Not/AZone")).toBe("Not/AZone");
+  });
+
+  it("lists common zones first and every other zone once by city, keeping an unlisted current zone", () => {
+    const { common, all } = timeZoneChoices("Etc/GMT+5");
+    expect(common[0]).toEqual({ value: "America/New_York", label: "Eastern Time (ET)" });
+    expect(all.some((choice) => choice.value === "America/New_York")).toBe(false);
+    expect(all.find((choice) => choice.value === "America/Detroit")?.label).toBe("Detroit — Eastern Time (ET)");
+    expect(all.some((choice) => choice.value === "Etc/GMT+5")).toBe(true);
+    const values = [...common, ...all].map((choice) => choice.value);
+    expect(new Set(values).size).toBe(values.length);
   });
 });

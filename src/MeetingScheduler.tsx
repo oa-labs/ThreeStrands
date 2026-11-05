@@ -51,12 +51,12 @@ function formatSlot(slot: ScheduleSlot, timeZone: string): string {
 }
 
 /** A meeting length, such as "30 min" or "1 hr". */
-function formatLength(minutes: number): string {
+export function formatLength(minutes: number): string {
   return minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60} hr` : `${minutes} min`;
 }
 
 /** Meeting lengths offered beside a range search; the current one is always among them. */
-const MEETING_LENGTHS = [15, 30, 45, 60, 90, 120];
+export const MEETING_LENGTHS = [15, 30, 45, 60, 90, 120];
 
 function formatRange(query: ScheduleQuery, timeZone: string): string {
   const day = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone });

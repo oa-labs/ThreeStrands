@@ -1669,7 +1669,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async checkProposedTimes(request) {
       return Promise.all(request.times.map(async (time) => {
         try {
-          if (!time.localStart) throw new Error("Date or time needs clarification");
+          if (!time.localStart) throw new Error("Couldn’t tell the date or time; ask the sender in your reply");
           if (!time.durationMinutes) throw new Error("Meeting length needs clarification");
           const choices = previewScheduleChoices(time.localStart, time.timeZone ?? request.assumedTimeZone);
           if (choices.length !== 1) throw new Error("This clock time needs clarification because the clocks change");

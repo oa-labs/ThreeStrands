@@ -865,8 +865,8 @@ describe("conversation brief", () => {
       }
       const offered = await within(panel).findByRole("region", {name:"Proposed times"});
       // Slots stay disabled until the calendar check returns.
-      await waitFor(() => expect(within(offered).getByRole("button",{name:/^1\./})).toBeEnabled());
-      fireEvent.click(within(offered).getByRole("button",{name:/^1\./}));
+      await waitFor(() => expect(within(offered).getByRole("checkbox",{name:/^1\./})).toBeEnabled());
+      fireEvent.click(within(offered).getByRole("checkbox",{name:/^1\./}));
       await waitFor(() => expect(within(offered).getByRole("button", {name:"Draft Reply With Selected Times"})).toBeEnabled());
       fireEvent.click(within(offered).getByRole("button", {name:"Draft Reply With Selected Times"}));
       const composer = await screen.findByRole("dialog", {name:"Reply Message"});

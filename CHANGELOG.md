@@ -17,6 +17,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - The mail search box leaves more room for your search: the / hint only shows while search is idle, and the Inbox Only filter shrinks to an icon until you turn it on.
 - Click an event's address in event details, invitation cards, or meeting suggestions to open it in Google Maps.
 - In **Find Times**, click an offered time to see that day below it: the meetings just before and after, where they are, and how much free time is between them. Use the checkbox beside each time to choose which ones to offer.
+- When an email offers meeting times, each one has a checkbox for choosing it, and timezones go by familiar names such as Eastern Time (ET). If the email doesn't say how long the meeting is, your usual length is assumed and can be changed, so the times can still be offered. Times written together, such as "Monday at 2:00 or 3:00 pm", both keep their day and AM/PM.
 - **Show 3 More** replaces **Show More**, and adds more times from the same search. **Search Again** is replaced by a **Re-read** link beside the explanation, shown only after the conversation or your draft changes, since reading the same conversation again would find the same times.
 
 ### Fixed

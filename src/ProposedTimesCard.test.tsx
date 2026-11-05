@@ -22,20 +22,19 @@ beforeEach(() => { vi.useFakeTimers({toFake:["Date"]}); vi.setSystemTime(new Dat
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("proposed times", () => {
-  it("renders one number per pending option in shared context rows without overlapping checkbox controls", () => {
+  it("renders one number per pending option as a checkbox that waits for the calendar check", () => {
     vi.spyOn(mailClient,"checkProposedTimes").mockReturnValue(new Promise(() => {}));
     const sourceTexts = ["1) Saturday, Oct. 31st. - 2 PM", "(2) Saturday, Oct. 31st. - 7 PM", "3. Sunday, Nov. 1st - 4 PM", "Sunday, Nov. 1st - 7 PM", "10.31 at 7 PM"];
     const {container} = render(<ProposedTimesCard {...props()} times={sourceTexts.map((sourceText) => ({sourceText,localStart:null,durationMinutes:60,timeZone:null}))} />);
-    const titles = [...container.querySelectorAll(".proposed-time-row .context-row-title")].map((title) => title.textContent);
+    const titles = [...container.querySelectorAll(".proposed-time-title")].map((title) => title.textContent);
     expect(titles).toEqual(["1. Saturday, Oct. 31st. - 2 PM", "2. Saturday, Oct. 31st. - 7 PM", "3. Sunday, Nov. 1st - 4 PM", "4. Sunday, Nov. 1st - 7 PM", "5. 10.31 at 7 PM"]);
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveClass("context-status");
-    const candidates = screen.getAllByRole("button",{name:/^\d+\./});
+    const candidates = screen.getAllByRole("checkbox",{name:/^\d+\./});
     expect(candidates).toHaveLength(5);
     for (const candidate of candidates) {
       expect(candidate).toBeDisabled();
-      expect(candidate).toHaveAttribute("aria-pressed","false");
-      expect(candidate).toHaveClass("context-row-main");
+      expect(candidate).not.toBeChecked();
+      expect(candidate).toHaveAccessibleDescription("Not checked");
     }
   });
 
@@ -93,9 +92,9 @@ describe("proposed times", () => {
 
   it("keeps unresolved sender text inert and visible", async () => {
     const sourceText = '<img src="https://sender.example/track" onerror="alert(1)"> Saturday, time unclear';
-    vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue([{start:null,end:null,issue:"Date or time needs clarification",check:null,outsideWorkingHours:false}]);
+    vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue([{start:null,end:null,issue:"Couldn’t tell the date or time; ask the sender in your reply",check:null,outsideWorkingHours:false}]);
     const {container} = render(<ProposedTimesCard {...props()} times={[{sourceText,localStart:null,durationMinutes:60,timeZone:null}]} />);
-    await screen.findByText("Date or time needs clarification");
+    await screen.findByText("Couldn’t tell the date or time; ask the sender in your reply");
     expect(screen.getByText(`1. ${sourceText}`)).toBeInTheDocument();
     expect(container.querySelector("img")).toBeNull();
   });
@@ -107,12 +106,12 @@ describe("proposed times", () => {
     render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
     expect(check).toHaveBeenCalledWith({times, assumedTimeZone:"America/New_York", preferences});
-    expect(screen.getAllByRole("button", {name:/^\d+\./})).toHaveLength(7);
+    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})).toHaveLength(7);
     expect(screen.getByText("Conflict · Outside your usual hours")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", {name:/^\d+\./})[0]).toBeDisabled();
-    for (const input of screen.getAllByRole("button", {name:/^\d+\./})) expect(input).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(screen.getAllByRole("button", {name:/^\d+\./})[2]);
-    fireEvent.click(screen.getAllByRole("button", {name:/^\d+\./})[6]);
+    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})[0]).toBeDisabled();
+    for (const input of screen.getAllByRole("checkbox", {name:/^\d+\./})) expect(input).not.toBeChecked();
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^\d+\./})[2]);
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^\d+\./})[6]);
     fireEvent.click(screen.getByRole("button",{name:"Draft Reply With Selected Times"}));
     await waitFor(() => expect(current.onReplyWithTimes).toHaveBeenCalledWith([2,6].map((index) => ({start:rows[index].start,end:rows[index].end,status:"verified"}))));
     expect(check).toHaveBeenCalledTimes(2);
@@ -121,25 +120,77 @@ describe("proposed times", () => {
   it("preserves uncertainty and partial coverage instead of calling those times free", async () => {
     vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue([
       row(0,"partiallyChecked"), row(1,"unverified"),
-      {...row(2),start:null,end:null,check:null,outsideWorkingHours:false,issue:"Meeting length needs clarification"},
+      {...row(2),start:null,end:null,check:null,outsideWorkingHours:false,issue:"This proposed time has passed"},
     ]);
     render(<ProposedTimesCard {...props()} times={times.slice(0,3)} />);
     await screen.findByText(/Partially checked/);
     expect(screen.getByText(/Unable to check/)).toBeInTheDocument();
-    expect(screen.getByText("Meeting length needs clarification")).toBeInTheDocument();
+    expect(screen.getByText("This proposed time has passed")).toBeInTheDocument();
     expect(screen.getByText(/Couldn’t check: Personal/)).toBeInTheDocument();
-    for (const input of screen.getAllByRole("button", {name:/^\d+\./})) expect(input).toBeDisabled();
+    for (const input of screen.getAllByRole("checkbox", {name:/^\d+\./})) expect(input).toBeDisabled();
+  });
+
+  it("assumes the usual meeting length when the email doesn't say, and rechecks when it changes", async () => {
+    const unstated = [{sourceText:"Monday at 2:00 or 3:00 pm",localStart:"2026-11-02T14:00",durationMinutes:null,timeZone:null},{sourceText:"Monday at 2:00 or 3:00 pm",localStart:"2026-11-02T15:00",durationMinutes:null,timeZone:null}];
+    const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue([row(4),row(5)]);
+    render(<ProposedTimesCard {...props()} times={unstated} />);
+    await waitFor(() => expect(check).toHaveBeenCalledOnce());
+    expect(check.mock.lastCall?.[0].times.map((time) => time.durationMinutes)).toEqual([30,30]);
+    const length = screen.getByRole("combobox",{name:"Meeting length"});
+    expect(length).toHaveValue("30");
+    expect(length).toHaveAccessibleDescription();
+    expect(await screen.findAllByText("Free · Outside your usual hours · Assumes 30 min")).toHaveLength(2);
+    // The assumption makes the times selectable instead of blocking them.
+    for (const option of screen.getAllByRole("checkbox",{name:/^\d+\./})) expect(option).toBeEnabled();
+    fireEvent.click(screen.getAllByRole("checkbox",{name:/^\d+\./})[0]);
+    fireEvent.change(length,{target:{value:"60"}});
+    await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+    expect(check.mock.lastCall?.[0].times.map((time) => time.durationMinutes)).toEqual([60,60]);
+    expect(screen.getAllByRole("checkbox",{name:/^\d+\./})[0]).not.toBeChecked();
+  });
+
+  it("keeps a stated meeting length and offers no length choice", async () => {
+    vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
+    render(<ProposedTimesCard {...props()} />);
+    await screen.findAllByText("Free · Outside your usual hours");
+    expect(screen.queryByRole("combobox",{name:"Meeting length"})).not.toBeInTheDocument();
+    expect(screen.getByText("7 proposed times · 1 hr each")).toBeInTheDocument();
+  });
+
+  it("names timezones the way people say them and mentions the reader's zone only when it differs", async () => {
+    const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
+    render(<ProposedTimesCard {...props()} />);
+    await screen.findAllByText("Free · Outside your usual hours");
+    const zone = screen.getByRole("combobox",{name:"Sender’s timezone"});
+    expect(zone).toHaveValue("America/New_York");
+    expect(within(zone).getByRole("option",{selected:true})).toHaveTextContent("Eastern Time (ET)");
+    expect(within(zone).getByRole("group",{name:"Common"})).toBeInTheDocument();
+    expect(within(zone).getByRole("option",{name:"Pacific Time (PT)"})).toHaveValue("America/Los_Angeles");
+    expect(screen.queryByText(/Shown in your timezone/)).not.toBeInTheDocument();
+    expect(screen.getByText("Check the times you want to offer.")).toBeInTheDocument();
+    fireEvent.change(zone,{target:{value:"America/Los_Angeles"}});
+    await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+    expect(check.mock.lastCall?.[0].assumedTimeZone).toBe("America/Los_Angeles");
+    expect(screen.getByText("Shown in your timezone, Eastern Time (ET).")).toBeInTheDocument();
+  });
+
+  it("asks for a choice only when one of the times can be offered", async () => {
+    vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue([row(0,"conflicting")]);
+    render(<ProposedTimesCard {...props()} times={times.slice(0,1)} />);
+    await screen.findByText("Conflict · Outside your usual hours");
+    expect(screen.queryByText("Check the times you want to offer.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Draft Reply With Selected Times"})).toBeDisabled();
   });
 
   it("rechecks on timezone, calendar preference, and calendar availability changes", async () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
     const current = props(); const view = render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
-    fireEvent.click(screen.getAllByRole("button", {name:/^\d+\./})[1]);
-    fireEvent.change(screen.getByRole("combobox",{name:"Assuming timezone"}),{target:{value:"Europe/London"}});
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^\d+\./})[1]);
+    fireEvent.change(screen.getByRole("combobox",{name:"Sender’s timezone"}),{target:{value:"Europe/London"}});
     await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
     expect(check.mock.lastCall?.[0].assumedTimeZone).toBe("Europe/London");
-    expect(screen.getAllByRole("button", {name:/^\d+\./})[1]).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})[1]).not.toBeChecked();
     view.rerender(<ProposedTimesCard {...current} preferences={{...preferences, driveTimeBufferMinutes:30}} />);
     await waitFor(() => expect(check).toHaveBeenCalledTimes(3));
     act(() => window.dispatchEvent(new Event(CALENDAR_AVAILABILITY_CHANGED)));
@@ -150,19 +201,19 @@ describe("proposed times", () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
     const current = props(); render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
-    fireEvent.click(screen.getAllByRole("button", {name:/^\d+\./})[1]);
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^\d+\./})[1]);
     check.mockResolvedValue(times.map((_,index) => row(index,index === 1 ? "partiallyChecked" : "free")));
     fireEvent.click(screen.getByRole("button",{name:"Draft Reply With Selected Times"}));
     await screen.findByRole("alert");
     expect(current.onReplyWithTimes).not.toHaveBeenCalled();
-    expect(screen.getAllByRole("button", {name:/^\d+\./})[1]).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})[1]).not.toBeChecked();
   });
 
   it("shows retryable calendar failures without discarding the sender's list", async () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockRejectedValueOnce(new Error("Calendar offline")).mockResolvedValue(times.map((_,index) => row(index)));
     render(<ProposedTimesCard {...props()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Calendar offline");
-    expect(screen.getAllByRole("button", {name:/^\d+\./})).toHaveLength(7);
+    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})).toHaveLength(7);
     fireEvent.click(screen.getByRole("button",{name:"Check Again"}));
     await screen.findAllByText("Free · Outside your usual hours");
     expect(check).toHaveBeenCalledTimes(2);
@@ -187,7 +238,7 @@ describe("proposed times", () => {
     render(<AvailabilitySection compact offered={false} preferences={preferences} ai draft={{sourceId:"m1",subject:"CRT",body:""}} offeredTimes={{sourceMessageId:"m1",times}} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
     expect(await screen.findByRole("region",{name:"Proposed times"})).toBeInTheDocument();
     expect(find).not.toHaveBeenCalled();
-    expect(within(screen.getByRole("region",{name:"Proposed times"})).getAllByRole("button", {name:/^\d+\./})).toHaveLength(7);
+    expect(within(screen.getByRole("region",{name:"Proposed times"})).getAllByRole("checkbox", {name:/^\d+\./})).toHaveLength(7);
     fireEvent.click(screen.getByRole("button",{name:"Find Other Times"}));
     await waitFor(() => expect(other).toHaveBeenCalledWith(expect.objectContaining({preferences:expect.objectContaining({defaultDurationMinutes:60})})));
   });
@@ -200,7 +251,7 @@ describe("proposed times", () => {
     render(<AvailabilitySection compact preferences={preferences} ai draft={{sourceId:"m1",subject:"CRT",body:""}} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
     fireEvent.click(screen.getByRole("button",{name:"Find Times"}));
     await screen.findByRole("region",{name:"Proposed times"});
-    expect(screen.getAllByRole("button", {name:/^\d+\./})).toHaveLength(7);
+    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})).toHaveLength(7);
     saveAiProvider("none");
   });
 });

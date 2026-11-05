@@ -98,7 +98,7 @@ pub fn resolve(
     let start = time
         .local_start
         .as_deref()
-        .ok_or("Date or time needs clarification")?;
+        .ok_or("Couldn’t tell the date or time; ask the sender in your reply")?;
     let duration = time
         .duration_minutes
         .ok_or("Meeting length needs clarification")?;
@@ -352,7 +352,7 @@ mod tests {
         missing.local_start = None;
         assert!(resolve(&missing, "America/New_York", now())
             .unwrap_err()
-            .contains("clarification"));
+            .contains("ask the sender"));
         let mut explicit = option("2026-11-04T19:00");
         explicit.time_zone = Some("Europe/London".into());
         assert_eq!(
