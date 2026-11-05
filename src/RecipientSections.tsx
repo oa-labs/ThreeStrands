@@ -9,6 +9,7 @@ import type { AvailabilityCandidate, AvailabilityPreferences, ContactProfile, Of
 import { ContextSectionHeader } from "./ContextSections";
 import { errorMessage } from "./errors";
 import { askFindTimes, FindTimesCard, type FindTimesContext } from "./FindTimesCard";
+import type { ScheduleSlot } from "./MeetingScheduler";
 import { defaultLength, lookaheadRange, planTimeSearch, type SchedulePlan, type SuggestedSearch } from "./scheduling";
 import { ICON_SIZE } from "./iconSizes";
 
@@ -29,6 +30,9 @@ function readKey(context: FindTimesContext): string {
   return JSON.stringify([context.sourceMessageId, context.draftSubject.trim(), context.draftText.trim()]);
 }
 
+/** Lets a meeting suggestion point the reader at the times offered here. */
+export const AVAILABILITY_SECTION_ID = "availability-section";
+
 /**
  * Open times from the calendar, inserted into the draft at the caret. The
  * first Find Times reuses a meeting suggestion's date range when the
@@ -38,7 +42,7 @@ function readKey(context: FindTimesContext): string {
  * changed, Re-read reads them afresh; before that it could only repeat the
  * same search, so it is not offered. The provider never sees the calendar.
  */
-export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, offeredTimes = null, offeredTimesError = null, onRetryOfferedTimes, onInsertTimes, onOpenCalendarSettings }: {
+export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, offeredTimes = null, offeredTimesError = null, onRetryOfferedTimes, onInsertTimes, onAcceptTime, onOpenCalendarSettings }: {
   preferences: AvailabilityPreferences;
   /** Draft Assist is on and an AI provider is ready. */
   ai: boolean;
@@ -64,6 +68,8 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
   /** Re-read the Brief using its own enabled feature and model. */
   onRetryOfferedTimes?(): Promise<void>;
   onInsertTimes(candidates: AvailabilityCandidate[]): void;
+  /** Takes one of the times the conversation offered, when not writing a draft. */
+  onAcceptTime?(slot: ScheduleSlot): void;
   onOpenCalendarSettings(): void;
 }) {
   const [search, setSearch] = useState<FindTimesState | null>(null);
@@ -175,7 +181,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
   }
 
   return (
-    <section className="context-section compose-availability" aria-label="Availability">
+    <section id={AVAILABILITY_SECTION_ID} className="context-section compose-availability" aria-label="Availability">
       <ContextSectionHeader
         title="Availability"
         icon={<CalendarDays size={ICON_SIZE.xs} />}
@@ -209,6 +215,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
           // A range search never yields a single proposed time to add or confirm.
           onAddToCalendar={() => undefined}
           onReplyWithTimes={(times) => { inserting.current = true; onInsertTimes(times); }}
+          onAcceptTime={onAcceptTime}
           onConfirmTime={() => undefined}
           onOpenCalendarSettings={onOpenCalendarSettings}
         />

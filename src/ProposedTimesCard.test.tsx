@@ -197,6 +197,44 @@ describe("proposed times", () => {
     await waitFor(() => expect(check).toHaveBeenCalledTimes(4));
   });
 
+  it("offers Accept & Add to Calendar for exactly one chosen time, rechecking it first", async () => {
+    const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
+    const onAcceptTime = vi.fn();
+    const current = props();
+    render(<ProposedTimesCard {...current} onAcceptTime={onAcceptTime} />);
+    await screen.findAllByText("Free · Outside your usual hours");
+    expect(screen.queryByRole("button",{name:"Accept & Add to Calendar"})).not.toBeInTheDocument();
+    const options = screen.getAllByRole("checkbox",{name:/^\d+\./});
+    fireEvent.click(options[2]);
+    const accept = screen.getByRole("button",{name:"Accept & Add to Calendar"});
+    expect(accept).toHaveClass("btn-primary");
+    expect(screen.getByRole("button",{name:"Draft Reply With Selected Times"})).not.toHaveClass("btn-primary");
+    // Two times are an offer back, not an acceptance.
+    fireEvent.click(options[4]);
+    expect(screen.queryByRole("button",{name:"Accept & Add to Calendar"})).not.toBeInTheDocument();
+    fireEvent.click(options[4]);
+    fireEvent.click(screen.getByRole("button",{name:"Accept & Add to Calendar"}));
+    await waitFor(() => expect(onAcceptTime).toHaveBeenCalledWith({start:row(2).start,end:row(2).end}));
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(current.onReplyWithTimes).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a time that stopped being free, and never offers Accept while writing a draft", async () => {
+    const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
+    const onAcceptTime = vi.fn();
+    const view = render(<ProposedTimesCard {...props()} onAcceptTime={onAcceptTime} />);
+    await screen.findAllByText("Free · Outside your usual hours");
+    fireEvent.click(screen.getAllByRole("checkbox",{name:/^\d+\./})[1]);
+    check.mockResolvedValue(times.map((_,index) => row(index,index === 1 ? "conflicting" : "free")));
+    fireEvent.click(screen.getByRole("button",{name:"Accept & Add to Calendar"}));
+    await screen.findByRole("alert");
+    expect(onAcceptTime).not.toHaveBeenCalled();
+    view.rerender(<ProposedTimesCard {...props()} intoDraft onAcceptTime={onAcceptTime} />);
+    fireEvent.click(screen.getAllByRole("checkbox",{name:/^\d+\./})[2]);
+    expect(screen.queryByRole("button",{name:"Accept & Add to Calendar"})).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Insert Selected Times"})).toHaveClass("btn-primary");
+  });
+
   it("blocks a stale claim when a selected time gains a conflict or coverage is lost", async () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
     const current = props(); render(<ProposedTimesCard {...current} />);

@@ -7,12 +7,18 @@ import { formatLength, MEETING_LENGTHS } from "./MeetingScheduler";
 import { AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
 import { errorMessage } from "./errors";
 
-export function ProposedTimesCard({ times: offered, preferences, intoDraft, onReplyWithTimes, onFindOtherTimes, calendarConnected, onOpenCalendarSettings }: {
+export function ProposedTimesCard({ times: offered, preferences, intoDraft, onReplyWithTimes, onAcceptTime, onFindOtherTimes, calendarConnected, onOpenCalendarSettings }: {
   times: ProposedTime[];
   preferences: AvailabilityPreferences;
   intoDraft?: boolean;
   calendarConnected: boolean;
   onReplyWithTimes(times: AvailabilityCandidate[]): void;
+  /**
+   * Takes one of the sender's times: the event dialog opens for it, and the
+   * confirmation reply follows once the event is saved. Not offered while
+   * writing a draft, where the times go into the draft instead.
+   */
+  onAcceptTime?(slot: { start: string; end: string }): void;
   onFindOtherTimes(): void;
   onOpenCalendarSettings(): void;
 }) {
@@ -54,12 +60,12 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
   }, [times, zone, preferences, attempt, calendarConnected]);
 
   const selectable = (row: CheckedProposedTime) => row.start && row.end && !row.issue && row.check?.status === "free" && Date.parse(row.start) > Date.now();
-  const reply = async () => {
+  // Recheck immediately before claiming any time works; keep other rows visible.
+  const recheck = async (proceed: (fresh: CheckedProposedTime[], chosen: number[]) => void) => {
     const version = generation.current;
     setChecking(true);
     setError("");
     try {
-      // Recheck immediately before claiming any time works; keep other rows visible.
       const fresh = await mailClient.checkProposedTimes({ times, assumedTimeZone: zone, preferences });
       if (version !== generation.current) return;
       setRows(fresh);
@@ -68,10 +74,13 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
         setError("Availability changed. Review the updated times before drafting your reply.");
         return;
       }
-      onReplyWithTimes([...selected].sort((a, b) => a - b).map((index) => ({ start: fresh[index].start!, end: fresh[index].end!, status: "verified" })));
+      proceed(fresh, [...selected].sort((a, b) => a - b));
     } catch (reason) { if (version === generation.current) setError(errorMessage(reason)); }
     finally { setChecking(false); }
   };
+  const reply = () => recheck((fresh, chosen) => onReplyWithTimes(chosen.map((index) => ({ start: fresh[index].start!, end: fresh[index].end!, status: "verified" }))));
+  const accept = () => recheck((fresh, [index]) => onAcceptTime?.({ start: fresh[index].start!, end: fresh[index].end! }));
+  const acceptable = Boolean(onAcceptTime) && !intoDraft && selected.size === 1;
   const durations = [...new Set(offered.map((time) => time.durationMinutes))];
   const lengths = [...new Set([...MEETING_LENGTHS, length])].sort((a, b) => a - b);
   const anySelectable = Boolean(rows?.some(selectable));
@@ -131,7 +140,9 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
     {rows && rows.some((row) => row.check?.errors.length) ? <details><summary>Calendar check details</summary>{[...new Set(rows.flatMap((row) => row.check?.errors ?? []))].map((message) => <p key={message}>{message}</p>)}</details> : null}
     {error ? <p role="alert">{error}</p> : null}
     <div className="meeting-scheduler-actions proposed-times-actions">
-      <button type="button" className="btn btn-sm btn-primary" disabled={!selected.size || checking} onClick={() => void reply()}>{checking ? "Checking…" : intoDraft ? "Insert Selected Times" : "Draft Reply With Selected Times"}</button>
+      {/* With one of the sender's own times chosen, taking it is the likelier answer than offering it back. */}
+      {acceptable ? <button type="button" className="btn btn-sm btn-primary" disabled={checking} title="Add this time to your calendar, then draft a reply confirming it" onClick={() => void accept()}>{checking ? "Checking…" : "Accept & Add to Calendar"}</button> : null}
+      <button type="button" className={`btn btn-sm${acceptable ? "" : " btn-primary"}`} disabled={!selected.size || checking} onClick={() => void reply()}>{checking && !acceptable ? "Checking…" : intoDraft ? "Insert Selected Times" : "Draft Reply With Selected Times"}</button>
       <button type="button" className="btn btn-sm" disabled={checking || !calendarConnected} onClick={() => setAttempt((value) => value + 1)}>Check Again</button>
       <button type="button" className="btn-link context-link-button" disabled={checking} onClick={onFindOtherTimes}>Find Other Times</button>
     </div>

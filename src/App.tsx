@@ -72,7 +72,7 @@ import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocu
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { mailClient } from "./data/client";
-import type { ActionProposal, SenderRule } from "./domain";
+import type { ActionProposal, MeetingProposal, SenderRule } from "./domain";
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { AvailableAccountsNotice } from "./AvailableAccountsNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -466,8 +466,13 @@ export function App() {
   const {
     meetingEditor, setMeetingEditor, meetingEventDraft, setMeetingEventDraft, openedCalendarFiles,
     dismissOpenedCalendarFile, addOpenedInvitationToCalendar, addMeetingToCalendar,
-    meetingCreated, meetingScheduling, draftAvailabilityReply,
+    meetingCreated, meetingScheduling, draftAvailabilityReply, acceptOfferedTime,
   } = useMeetingActions({ workspaces, correspondence, visibleDetail, availabilityPreferences: threadAvailability, openSettingsAt, setNotice, ownAddresses, removeActionProposal });
+  // The meeting the offered times are for: the suggestion read from the same message, or else the one still to be agreed.
+  const offeredMeeting = offeredTimes ? (() => {
+    const meetings = actionProposals.filter((proposal): proposal is MeetingProposal => proposal.type === "meeting" && proposal.intent === "schedule");
+    return meetings.find((meeting) => meeting.evidence.sourceMessageId === offeredTimes.sourceMessageId) ?? (meetings.length === 1 ? meetings[0] : undefined);
+  })() : undefined;
   const { systemLabelNames: conversationSystemLabels, userLabels: conversationUserLabels } = visibleDetail
     ? conversationLabelGroups(visibleDetail.thread.labels, labelsByAccount[visibleDetail.thread.accountId])
     : { systemLabelNames: [], userLabels: [] };
@@ -1498,6 +1503,12 @@ export function App() {
               })}
               suggest={() => suggestedSearch(actionProposals, new Date(), threadAvailability.defaultDurationMinutes)}
               onInsertTimes={(candidates) => draftAvailabilityReply(candidates, offeredTimes?.sourceMessageId)}
+              onAcceptTime={(slot) => acceptOfferedTime(
+                slot,
+                offeredMeeting ?? null,
+                offeredMeeting && actionProposalSource ? { from: actionProposalSource, proposal: offeredMeeting } : null,
+                offeredTimes?.sourceMessageId,
+              )}
               onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
             />
           ) : null}
@@ -1519,6 +1530,8 @@ export function App() {
               }}
               scheduling={{
                 ...meetingScheduling,
+                // Availability holds the sender's times, so a meeting to be agreed points there instead of searching again.
+                offeredTimesShown: Boolean(offeredTimes?.times.length && calendarConnected && !invitationMessage),
                 onOpenCalendarEvent: (event) => openCalendarView(eventDate(event), event),
                 onAddToCalendar: (_index, proposal, slot) => addMeetingToCalendar(
                   slot,

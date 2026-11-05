@@ -15,6 +15,7 @@ import { isSummaryStale } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 import { ContextSectionHeader, useRememberedCollapse } from "./ContextSections";
 import { latestInvitationMessage, withoutInvitationMeetings } from "./calendarInvitations";
+import { AVAILABILITY_SECTION_ID } from "./RecipientSections";
 
 export const THREAD_ASSIST_ID = "thread-assist";
 /** Remembers whether Suggested is collapsed, apart from the Brief around it. */
@@ -74,6 +75,12 @@ export type ThreadAssistProps = {
     onOpenCalendarSettings(): void;
     /** Opens the calendar event a suggestion is already on the calendar as. */
     onOpenCalendarEvent?(event: ScheduleEvent): void;
+    /**
+     * Availability lists times this conversation offered. A meeting still to
+     * be agreed then points there, rather than offering a dateless Add to
+     * Calendar or a second, different set of times.
+     */
+    offeredTimesShown?: boolean;
   };
   loading: boolean;
   /**
@@ -249,6 +256,13 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
     </summary>
     <blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}
   </details>;
+  // Brings the offered times into view and puts focus on the first one that can be chosen.
+  const showOfferedTimes = () => {
+    const section = document.getElementById(AVAILABILITY_SECTION_ID);
+    section?.scrollIntoView?.({ block: "nearest" });
+    const first = section?.querySelector<HTMLElement>('input[type="checkbox"]:not(:disabled)') ?? section?.querySelector<HTMLElement>("select, button");
+    first?.focus();
+  };
   // Not an AI request: the reminder is reviewed like any other suggested task.
   const remind = proposal.type === "meeting" && proposal.intent === "schedule"
     ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(-1, reminderTask(proposal, new Date()), "accept")}>Remind Me</button>
@@ -274,7 +288,13 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
       </span></p> : where?.place ? <p className="proposal-detail"><MapPin size={ICON_SIZE.sm} aria-hidden="true" /><span><EventLocation location={where.place} /></span></p> : null}
       {people ? <p className="proposal-detail"><Users size={ICON_SIZE.sm} aria-hidden="true" /><span>{people}</span></p> : null}
     </> : proposal.notes || proposal.dueValue ? <p>{[proposal.notes, proposal.dueValue ? `Due ${proposal.dueValue}` : null].filter(Boolean).join(" · ")}</p> : null}
-    {proposal.type === "meeting" ? <FindTimesCard
+    {proposal.type === "meeting" && proposal.intent === "schedule" && scheduling.offeredTimesShown ? <div className="meeting-scheduler" role="group" aria-label="Schedule">
+      <p className="context-status">The email offers times for this meeting.</p>
+      <div className="meeting-scheduler-actions">
+        <button type="button" className="btn btn-sm btn-primary" onClick={showOfferedTimes}>Choose a Time in Availability</button>
+        {remind}
+      </div>
+    </div> : proposal.type === "meeting" ? <FindTimesCard
       key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
       plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
       preferences={scheduling.preferences}

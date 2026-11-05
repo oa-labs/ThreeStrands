@@ -431,6 +431,49 @@ describe("conversation brief", () => {
       return { panel, schedule };
     }
 
+    it("accepts one offered time: the event dialog opens from the suggestion, and the confirmation is drafted once the event exists", async () => {
+      clearScheduleCache();
+      await enableAi({ summarize: true, actionExtraction: true });
+      vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" }]);
+      vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([{ id: "primary", accountId: "calendar@example.com", name: "Work", primary: true, selected: true, writable: true }]);
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+      const meeting = { ...meetingAt(3), rawTimeLanguage: "Monday at 2:00 or 3:00 pm", normalizedStart: null, normalizedEnd: null, location: "Alloy26" };
+      const times = [{ sourceText: "Monday at 2:00 or 3:00 pm", localStart: "2099-11-02T14:00", durationMinutes: null, timeZone: null }];
+      vi.spyOn(mailClient, "briefThread").mockResolvedValue({ ...briefResult, analysis: { proposals: [meeting], hiddenCount: 0 }, offeredTimes: { sourceMessageId: "welcome-message", times } });
+      const slot = { start: "2099-11-02T19:00:00Z", end: "2099-11-02T19:30:00Z" };
+      vi.spyOn(mailClient, "checkProposedTimes").mockResolvedValue([{ ...slot, issue: null, outsideWorkingHours: false, check: { status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] } }]);
+      const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ id: "created", accountId: "calendar@example.com", title: "Budget review", start: slot.start, end: slot.end, allDay: false });
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+      fireEvent.click(await within(panel).findByRole("button", { name: "Get Brief" }));
+
+      const offered = await within(panel).findByRole("region", { name: "Proposed times" });
+      const option = await within(offered).findByRole("checkbox", { name: /^1\./ });
+      await waitFor(() => expect(option).toBeEnabled());
+      // The suggestion defers to the offered times instead of adding an event with no time.
+      const schedule = within(panel).getByRole("group", { name: "Schedule" });
+      expect(within(schedule).queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
+      fireEvent.click(within(schedule).getByRole("button", { name: "Choose a Time in Availability" }));
+      expect(option).toHaveFocus();
+
+      fireEvent.click(option);
+      fireEvent.click(within(offered).getByRole("button", { name: "Accept & Add to Calendar" }));
+      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      expect(within(dialog).getByLabelText("Title")).toHaveValue("Budget review");
+      expect(within(dialog).getByLabelText("Location")).toHaveValue("Alloy26");
+      expect(within(dialog).getByRole("button", { name: "Remove jane@example.com" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument();
+      await waitFor(() => expect(within(dialog).getByLabelText("Calendar")).toHaveValue("calendar@example.com\nprimary"));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+
+      await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: "Budget review", start: new Date(slot.start).toISOString(), attendees: ["jane@example.com"] })));
+      const reply = await screen.findByRole("dialog", { name: "Reply Message" });
+      await waitFor(() => expect(within(reply).getByRole("textbox", { name: "Message Body" })).toHaveTextContent("That time works for me:"));
+      expect(screen.getByText("Added to calendar")).toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument();
+    });
+
     it("checks the proposed time, then adds it to the calendar through the prefilled event dialog", async () => {
       const meeting = meetingAt(1);
       const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });

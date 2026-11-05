@@ -7,6 +7,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### New
 - Starred conversations now appear in an automatic **Starred** inbox tab, including read and archived mail, so follow-ups stay easy to find. The tab hides when empty; you can turn it off in **Settings → Split Inboxes**.
 - Delegate read-only web research in **Agents** with separately configured Anthropic and Exa keys: review public search subjects, answer questions, discuss findings, and save report revisions with sources. Research has shared usage limits and explicit data-sharing choices; the local demonstration remains available without external requests.
+- When an email offers meeting times, check one and choose **Accept & Add to Calendar**: the new event opens already filled in from the meeting suggestion, and once you save it, a reply confirming the time is drafted for you. The meeting suggestion now points you to **Availability** instead of offering to add an event with no time.
 
 ### Improved
 - Meeting suggestions offer times spread across the whole range, mixing mornings and afternoons, instead of the first few days. You can change the meeting length right on the card, the reply button counts the times you picked, and **Remind Me** adds a task, due tomorrow, to send times later.

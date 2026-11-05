@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
+import { AVAILABILITY_SECTION_ID } from "./RecipientSections";
 import { briefScope, meetingPlace, participantName, participantsText, reminderTask, ThreadAssist, uncertaintyNote, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
 
@@ -463,6 +464,37 @@ describe("ThreadAssist", () => {
     expect(screen.getAllByRole("group", { name: "Schedule" })).toHaveLength(1);
     fireEvent.click(await screen.findByRole("button", { name: "Add to Calendar" }));
     expect(onAddToCalendar).toHaveBeenCalledWith(1, meeting, { kind: "specific", start: new Date(meeting.normalizedStart!).toISOString(), end: new Date(meeting.normalizedEnd!).toISOString() });
+  });
+
+  it("points a meeting still to be agreed at the offered times instead of adding it without a time", () => {
+    const day = new Date(Date.now() + 4 * 86_400_000);
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "schedule", title: "Meeting with Carolyn", participants: ["carolyn@example.com"], location: "Alloy26",
+      rawTimeLanguage: "Monday at 2:00 or 3:00 pm", normalizedStart: null, normalizedEnd: null,
+      eventDate: `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: null, timeZone: null, confidence: 0.6,
+      evidence: { sourceMessageId: "message-1", excerpt: "Monday at 2:00 or 3:00 pm" },
+    };
+    const event: ActionProposal = { ...meeting, intent: "attend", title: "Alloy26 keynote" };
+    const onAddToCalendar = vi.fn();
+    const onReview = vi.fn();
+    const target = document.createElement("section");
+    target.id = AVAILABILITY_SECTION_ID;
+    target.innerHTML = '<input type="checkbox" disabled aria-label="past"><input type="checkbox" aria-label="first open">';
+    document.body.append(target);
+    try {
+      render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting, event], onReview }, scheduling: { calendarConnected: true, onAddToCalendar, offeredTimesShown: true } })} />);
+      const [pointer, announced] = screen.getAllByRole("group", { name: "Schedule" });
+      expect(within(pointer).queryByText(/Time not set/)).not.toBeInTheDocument();
+      expect(within(pointer).queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
+      fireEvent.click(within(pointer).getByRole("button", { name: "Choose a Time in Availability" }));
+      expect(within(target).getByRole("checkbox", { name: "first open" })).toHaveFocus();
+      // Remind Me stays: the offered times can still be answered later.
+      fireEvent.click(within(pointer).getByRole("button", { name: "Remind Me" }));
+      expect(onReview).toHaveBeenCalledWith(-1, expect.objectContaining({ type: "task" }), "accept");
+      // An announced event has a set date, so it keeps its own Add to Calendar.
+      expect(within(announced).getByRole("button", { name: "Add to Calendar" })).toBeInTheDocument();
+    } finally { target.remove(); }
   });
 
   it("reports withheld suggestions instead of claiming there was nothing to do", () => {

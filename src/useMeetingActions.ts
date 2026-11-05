@@ -77,6 +77,8 @@ export function useMeetingActions({
     sourceMessageId?: string;
     /** Added from an opened calendar file, which is dismissed once the event exists. */
     fromOpenedFile?: boolean;
+    /** Runs once the event exists, such as drafting the reply that accepts its time; never on cancel. */
+    afterCreated?: () => void;
   } | null>(null);
   // .ics files macOS opened with ThreeStrands, shown one at a time.
   const [openedCalendarFiles, setOpenedCalendarFiles] = useState<{ id: number; file: OpenedCalendarFile }[]>([]);
@@ -111,6 +113,7 @@ export function useMeetingActions({
     slot: CalendarAddition,
     meeting: { title: string; participants: string[]; excerpt: string | null; location?: string | null; announced?: boolean },
     source: { from: ProposalSource; proposal: ActionProposal } | null,
+    afterCreated?: () => void,
   ) => {
     if (!visibleDetail) return;
     const invitees = meeting.participants.filter((participant) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(participant.trim())).map((participant) => participant.trim());
@@ -128,6 +131,7 @@ export function useMeetingActions({
       description: [`Scheduled from “${visibleDetail.thread.subject}”.`, meeting.excerpt ? `“${meeting.excerpt}”` : null].filter(Boolean).join("\n\n"),
       source,
       sourceMessageId: source?.proposal.evidence.sourceMessageId,
+      afterCreated,
     });
   }, [ownAddresses, refreshCalendarOptions, visibleDetail]);
   const meetingCreated = useCallback((event: ScheduleEvent) => {
@@ -135,18 +139,42 @@ export function useMeetingActions({
     if (source) removeActionProposal(source.from, source.proposal, event);
     setMeetingEventDraft(null);
     revalidateScheduleCache();
-    setCalendarWeekAnchor(startOfLocalDay(eventDate(event)));
-    setCalendarEventToOpen(event);
-    setRightWorkspace("week");
+    if (meetingEventDraft?.afterCreated) {
+      // The reply comes next, so stay with the conversation instead of showing the calendar.
+      setRightWorkspace(null);
+      meetingEventDraft.afterCreated();
+    } else {
+      setCalendarWeekAnchor(startOfLocalDay(eventDate(event)));
+      setCalendarEventToOpen(event);
+      setRightWorkspace("week");
+    }
     void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
     setNotice({ message: "Added to calendar" });
   }, [
-    meetingEventDraft?.source, refreshCalendarOptions, removeActionProposal,
+    meetingEventDraft, refreshCalendarOptions, removeActionProposal,
     setCalendarEventToOpen, setCalendarWeekAnchor, setNotice, setRightWorkspace,
   ]);
   const confirmMeetingTime = useCallback((slot: ScheduleSlot) => {
     correspondence.replyWithText(formatConfirmationText(slot, availabilityPreferences.timeZone), visibleDetail?.messages.at(-1)?.id);
   }, [availabilityPreferences.timeZone, correspondence, visibleDetail]);
+  // Taking one of the times an email offered: the event comes first, and the
+  // reply confirming it is drafted only once the event is saved.
+  const acceptOfferedTime = useCallback((
+    slot: ScheduleSlot,
+    meeting: MeetingProposal | null,
+    source: { from: ProposalSource; proposal: ActionProposal } | null,
+    sourceMessageId: string | undefined,
+  ) => {
+    if (!visibleDetail) return;
+    addMeetingToCalendar(
+      slot,
+      meeting
+        ? { title: meeting.title, participants: meeting.participants, excerpt: meeting.evidence.excerpt, location: meeting.location }
+        : { title: visibleDetail.thread.subject, participants: [], excerpt: null },
+      source,
+      () => correspondence.replyWithText(formatConfirmationText(slot, availabilityPreferences.timeZone), sourceMessageId ?? visibleDetail.messages.at(-1)?.id),
+    );
+  }, [addMeetingToCalendar, availabilityPreferences.timeZone, correspondence, visibleDetail]);
   const meetingScheduling = {
     calendarConnected,
     preferences: availabilityPreferences,
@@ -158,6 +186,6 @@ export function useMeetingActions({
   return {
     meetingEditor, setMeetingEditor, meetingEventDraft, setMeetingEventDraft, openedCalendarFiles,
     dismissOpenedCalendarFile, addOpenedInvitationToCalendar, addMeetingToCalendar,
-    meetingCreated, meetingScheduling, draftAvailabilityReply,
+    meetingCreated, meetingScheduling, draftAvailabilityReply, acceptOfferedTime,
   };
 }
