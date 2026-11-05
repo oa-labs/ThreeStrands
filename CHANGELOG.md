@@ -21,6 +21,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Show 3 More** replaces **Show More**, and adds more times from the same search. **Search Again** is replaced by a **Re-read** link beside the explanation, shown only after the conversation or your draft changes, since reading the same conversation again would find the same times.
 
 ### Fixed
+- Adding a suggested event whose time is unknown now keeps its date and asks you to enter times, instead of selecting **All day**.
 - Pasting a copied email link into an email address field now removes `mailto:` and link parameters.
 - Email images now load when their server sends a malformed content type, including signature dividers that previously appeared as alt text.
 - Returning to Mail from Contacts or another workspace now restores your place in a long email.

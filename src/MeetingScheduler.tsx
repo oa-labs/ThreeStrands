@@ -15,8 +15,8 @@ import { ICON_SIZE } from "./iconSizes";
 import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
 
 export type ScheduleSlot = Pick<AvailabilityCandidate, "start" | "end">;
-/** A time to add to the calendar; an all-day addition carries inclusive `YYYY-MM-DD` days. */
-export type CalendarAddition = ScheduleSlot & { allDay?: boolean };
+/** All-day and time-unspecified additions carry inclusive local `YYYY-MM-DD` days. */
+export type CalendarAddition = ScheduleSlot & { allDay?: boolean; timeUnspecified?: boolean };
 
 type CheckState =
   | { phase: "idle" | "loading" }
@@ -338,9 +338,9 @@ export function MeetingScheduler({
       {dayMatch ? <div className="meeting-scheduler-actions">
         {onOpenCalendarEvent ? <button type="button" className="btn btn-sm btn-primary" onClick={() => onOpenCalendarEvent(dayMatch.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
         {matchedActions}
-        <MoreActionsMenu label="More actions" actions={[{ label: "Add Again", onSelect: () => onAddToCalendar({ start: day, end: day, allDay: true }) }, ...moreActions]} />
+        <MoreActionsMenu label="More actions" actions={[{ label: "Add Again", onSelect: () => onAddToCalendar({ start: day, end: day, allDay: false, timeUnspecified: true }) }, ...moreActions]} />
       </div> : <div className="meeting-scheduler-actions">
-        <button type="button" className={`btn btn-sm${announced ? " btn-primary" : ""}`} onClick={() => onAddToCalendar({ start: day, end: day, allDay: true })}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
+        <button type="button" className={`btn btn-sm${announced ? " btn-primary" : ""}`} onClick={() => onAddToCalendar({ start: day, end: day, allDay: false, timeUnspecified: true })}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
       </div>}
     </div>;
   }

@@ -248,7 +248,7 @@ describe("MeetingScheduler", () => {
     expect(screen.queryByRole("button", { name: "Reply “That Works”" })).not.toBeInTheDocument();
   });
 
-  it("adds a date-only event as an all-day event without checking the calendar", () => {
+  it("requires times for a date-only event without checking availability", () => {
     const check = vi.spyOn(mailClient, "checkProposedTime");
     const search = vi.spyOn(mailClient, "findAvailability");
     const handlers = renderScheduler({ query: null, day: "2026-11-07", durationMinutes: 30, timeZoneAssumed: false, announced: true });
@@ -256,7 +256,7 @@ describe("MeetingScheduler", () => {
     expect(screen.getByText("Sat, Nov 7 · Time not set")).toBeInTheDocument();
     expect(screen.queryByText("Checking your calendar…")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add to Calendar" }));
-    expect(handlers.onAddToCalendar).toHaveBeenCalledWith({ start: "2026-11-07", end: "2026-11-07", allDay: true });
+    expect(handlers.onAddToCalendar).toHaveBeenCalledWith({ start: "2026-11-07", end: "2026-11-07", allDay: false, timeUnspecified: true });
     expect(check).not.toHaveBeenCalled();
     expect(search).not.toHaveBeenCalled();
   });
@@ -411,7 +411,7 @@ describe("MeetingScheduler", () => {
       expect(screen.getByText("Sat, Nov 7 · All day")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "More actions" }));
       fireEvent.click(screen.getByRole("menuitem", { name: "Add Again" }));
-      expect(handlers.onAddToCalendar).toHaveBeenCalledWith({ start: "2026-11-07", end: "2026-11-07", allDay: true });
+      expect(handlers.onAddToCalendar).toHaveBeenCalledWith({ start: "2026-11-07", end: "2026-11-07", allDay: false, timeUnspecified: true });
       expect(check).not.toHaveBeenCalled();
       cleanup();
 

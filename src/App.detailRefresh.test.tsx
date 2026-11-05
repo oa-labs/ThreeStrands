@@ -462,7 +462,7 @@ describe("conversation brief", () => {
       await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByText("Budget review")).not.toBeInTheDocument());
     });
 
-    it("adds an announced date-only event as the user's own all-day event, inviting no one", async () => {
+    it("opens an announced date-only event with blank times and no invitees", async () => {
       const day = new Date(Date.now() + 5 * 86_400_000);
       const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
       const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
@@ -479,7 +479,12 @@ describe("conversation brief", () => {
       expect(within(schedule).getByText(/· Time not set$/)).toBeInTheDocument();
       fireEvent.click(within(schedule).getByRole("button", { name: "Add to Calendar" }));
       const dialog = await screen.findByRole("dialog", { name: "New event" });
-      expect(within(dialog).getByLabelText("All day")).toBeChecked();
+      expect(within(dialog).getByLabelText("All day")).not.toBeChecked();
+      expect(within(dialog).getByLabelText("Start date")).toHaveValue(date);
+      expect(within(dialog).getByLabelText("Start time")).toHaveValue("");
+      expect(within(dialog).getByLabelText("End time")).toHaveValue("");
+      // All-day creation is still available when explicitly selected.
+      fireEvent.click(within(dialog).getByLabelText("All day"));
       expect(within(dialog).getByLabelText("Location")).toHaveValue("Glenn's house");
       // The sender is not invited to an event they announced.
       expect(within(dialog).queryByRole("button", { name: /^Remove / })).not.toBeInTheDocument();

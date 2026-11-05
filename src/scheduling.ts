@@ -45,7 +45,7 @@ export type SchedulePlan = {
    * agreed: it is added as given, never answered with other times.
    */
   announced?: boolean;
-  /** A `YYYY-MM-DD` day with no time, added as an all-day event. */
+  /** A `YYYY-MM-DD` day whose time must be entered before adding. */
   day?: string;
   /** An announced event that names no date yet. */
   undated?: boolean;

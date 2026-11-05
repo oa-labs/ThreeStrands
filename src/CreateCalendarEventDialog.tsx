@@ -54,6 +54,7 @@ export function CreateCalendarEventDialog({
   initialDescription = "",
   initialLocation = "",
   initialAllDay = false,
+  initialTimeUnspecified = false,
   sourceMessageId,
   sourceTask,
   onClose,
@@ -70,6 +71,8 @@ export function CreateCalendarEventDialog({
   initialDescription?: string;
   initialLocation?: string;
   initialAllDay?: boolean;
+  /** Keep the suggested dates, but require the user to supply times. */
+  initialTimeUnspecified?: boolean;
   /** The email the event comes from, so it can be recognized on the calendar later. */
   sourceMessageId?: string;
   /** The task the event books time for; its account's calendar comes first. */
@@ -84,8 +87,8 @@ export function CreateCalendarEventDialog({
     ? calendarKey : defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "";
   const [title, setTitle] = useState(initialTitle);
   const [allDay, setAllDay] = useState(initialAllDay);
-  const [startValue, setStartValue] = useState(() => initialAllDay ? dateInputValue(start) : localDateTimeValue(start));
-  const [endValue, setEndValue] = useState(() => initialAllDay ? dateInputValue(end) : localDateTimeValue(end));
+  const [startValue, setStartValue] = useState(() => (initialAllDay || initialTimeUnspecified) ? dateInputValue(start) : localDateTimeValue(start));
+  const [endValue, setEndValue] = useState(() => (initialAllDay || initialTimeUnspecified) ? dateInputValue(end) : localDateTimeValue(end));
   const [location, setLocation] = useState(initialLocation);
   const [invitees, setInvitees] = useState<string[]>(initialInvitees);
   const [pendingInvitee, setPendingInvitee] = useState("");
@@ -98,6 +101,9 @@ export function CreateCalendarEventDialog({
     if (next) {
       setStartValue(startValue.slice(0, 10));
       setEndValue(endValue.slice(0, 10) < startValue.slice(0, 10) ? startValue.slice(0, 10) : endValue.slice(0, 10));
+    } else if (initialTimeUnspecified) {
+      setStartValue(startValue.slice(0, 10));
+      setEndValue(endValue.slice(0, 10));
     } else {
       setStartValue(`${startValue.slice(0, 10)}T09:00`);
       setEndValue(`${startValue.slice(0, 10)}T10:00`);
@@ -123,6 +129,9 @@ export function CreateCalendarEventDialog({
       startAt = dateInputValue(startDay);
       endAt = dateInputValue(addDays(lastDay, 1));
     } else {
+      if (!startValue.includes("T") || !endValue.includes("T") || !startValue.split("T")[1] || !endValue.split("T")[1]) {
+        setError("Enter a start and end time, or choose All day."); return;
+      }
       const startsAt = new Date(startValue);
       const endsAt = new Date(endValue);
       if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || endsAt <= startsAt) {
@@ -172,8 +181,15 @@ export function CreateCalendarEventDialog({
         <label>Title<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={1024} required placeholder="Add title" /></label>
         <label className="calendar-event-all-day-field"><input type="checkbox" checked={allDay} onChange={(change) => changeAllDay(change.target.checked)} />All day</label>
         <div className="calendar-event-time-fields">
-          <label>Starts<input type={allDay ? "date" : "datetime-local"} value={startValue} onChange={(event) => setStartValue(event.target.value)} required /></label>
-          <label>Ends<input type={allDay ? "date" : "datetime-local"} value={endValue} onChange={(event) => setEndValue(event.target.value)} required /></label>
+          {initialTimeUnspecified && !allDay ? <>
+            <label>Start date<input type="date" value={startValue.split("T")[0]} onChange={(event) => setStartValue(`${event.target.value}T${startValue.split("T")[1] ?? ""}`)} required /></label>
+            <label>Start time<input type="time" value={startValue.split("T")[1] ?? ""} onChange={(event) => setStartValue(`${startValue.split("T")[0]}T${event.target.value}`)} required /></label>
+            <label>End date<input type="date" value={endValue.split("T")[0]} onChange={(event) => setEndValue(`${event.target.value}T${endValue.split("T")[1] ?? ""}`)} required /></label>
+            <label>End time<input type="time" value={endValue.split("T")[1] ?? ""} onChange={(event) => setEndValue(`${endValue.split("T")[0]}T${event.target.value}`)} required /></label>
+          </> : <>
+            <label>Starts<input type={allDay ? "date" : "datetime-local"} value={startValue} onChange={(event) => setStartValue(event.target.value)} required /></label>
+            <label>Ends<input type={allDay ? "date" : "datetime-local"} value={endValue} onChange={(event) => setEndValue(event.target.value)} required /></label>
+          </>}
         </div>
         <label>Location<input value={location} onChange={(event) => setLocation(event.target.value)} maxLength={4096} placeholder="Add location" /></label>
         <label>Calendar

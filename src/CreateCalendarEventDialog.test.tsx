@@ -134,7 +134,56 @@ describe("CreateCalendarEventDialog", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(saved));
   });
 
-  it("creates an all-day event with a location from a date-only suggestion", async () => {
+  it("keeps a date-only suggestion timed, preserves its dates, and requires both times", async () => {
+    const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, title: "Lunch",
+      start: new Date(2026, 10, 7, 12).toISOString(), end: new Date(2026, 10, 7, 13).toISOString(), allDay: false };
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
+    render(<CreateCalendarEventDialog start={new Date(2026, 10, 7)} end={new Date(2026, 10, 7)}
+      accounts={accounts} calendars={calendars} initialTitle="Lunch" initialTimeUnspecified
+      onClose={vi.fn()} onCreated={vi.fn()} />);
+    expect(screen.getByLabelText("All day")).not.toBeChecked();
+    expect(screen.getByLabelText("Start date")).toHaveValue("2026-11-07");
+    expect(screen.getByLabelText("End date")).toHaveValue("2026-11-07");
+    expect(screen.getByLabelText("Start time")).toHaveValue("");
+    expect(screen.getByLabelText("End time")).toHaveValue("");
+    // Submitting directly also exercises validation beyond the required inputs.
+    const form = screen.getByRole("button", { name: "Create event" }).closest("form")!;
+    fireEvent.submit(form);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter a start and end time");
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Start time"), { target: { value: "12:00" } });
+    fireEvent.submit(form);
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("End time"), { target: { value: "11:00" } });
+    fireEvent.submit(form);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The end time must be after the start time.");
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("End time"), { target: { value: "13:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create event" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      allDay: false, start: saved.start, end: saved.end,
+    })));
+  });
+
+  it("lets the user explicitly choose all day for an unknown time without inventing times when switching back", async () => {
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ id: "saved", accountId: accounts[0].email,
+      title: "Lunch", start: "2026-11-07", end: "2026-11-08", allDay: true });
+    render(<CreateCalendarEventDialog start={new Date(2026, 10, 7)} end={new Date(2026, 10, 7)}
+      accounts={accounts} calendars={calendars} initialTitle="Lunch" initialTimeUnspecified
+      onClose={vi.fn()} onCreated={vi.fn()} />);
+    fireEvent.click(screen.getByLabelText("All day"));
+    expect(screen.getByLabelText("Starts")).toHaveValue("2026-11-07");
+    fireEvent.click(screen.getByLabelText("All day"));
+    expect(screen.getByLabelText("Start time")).toHaveValue("");
+    expect(screen.getByLabelText("End time")).toHaveValue("");
+    fireEvent.click(screen.getByLabelText("All day"));
+    fireEvent.click(screen.getByRole("button", { name: "Create event" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      allDay: true, start: "2026-11-07", end: "2026-11-08",
+    })));
+  });
+
+  it("creates an explicitly all-day event with a location", async () => {
     const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Girls group bonfire",
       start: "2026-11-07", end: "2026-11-08", allDay: true };
     const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);

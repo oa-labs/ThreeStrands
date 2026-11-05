@@ -62,10 +62,11 @@ export function useMeetingActions({
   // Add to Calendar from a meeting suggestion or a chat answer: the event
   // dialog opens prefilled and nothing is created until the user submits.
   const [meetingEventDraft, setMeetingEventDraft] = useState<{
-    /** For an all-day event, the first and last local days. */
+    /** For all-day or time-unspecified events, the first and last local days. */
     start: Date;
     end: Date;
     allDay?: boolean;
+    timeUnspecified?: boolean;
     location?: string;
     title: string;
     invitees: string[];
@@ -117,9 +118,10 @@ export function useMeetingActions({
     // The dialog lists writable calendars, which load lazily elsewhere.
     void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
     setMeetingEventDraft({
-      start: slot.allDay ? localDay(slot.start) : new Date(slot.start),
-      end: slot.allDay ? localDay(slot.end) : new Date(slot.end),
+      start: (slot.allDay || slot.timeUnspecified) ? localDay(slot.start) : new Date(slot.start),
+      end: (slot.allDay || slot.timeUnspecified) ? localDay(slot.end) : new Date(slot.end),
       allDay: slot.allDay,
+      timeUnspecified: slot.timeUnspecified,
       location: meeting.location ?? undefined,
       title: meeting.title,
       invitees: invitees.length > 0 ? invitees : sender ? [sender] : [],

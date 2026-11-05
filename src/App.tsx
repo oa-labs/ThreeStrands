@@ -1655,6 +1655,7 @@ export function App() {
           initialDescription={meetingEventDraft.description}
           initialLocation={meetingEventDraft.location}
           initialAllDay={meetingEventDraft.allDay}
+          initialTimeUnspecified={meetingEventDraft.timeUnspecified}
           sourceMessageId={meetingEventDraft.sourceMessageId}
           onClose={() => setMeetingEventDraft(null)}
           onCreated={(event) => {
