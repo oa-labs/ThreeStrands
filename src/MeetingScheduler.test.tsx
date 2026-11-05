@@ -92,7 +92,7 @@ describe("MeetingScheduler", () => {
     expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart, rangeEnd, maxPerDay: SLOTS_PER_DAY }));
   });
 
-  it("offers the first open time on each of the next days, selectable with ordinary buttons, without booking any", async () => {
+  it("offers open times spread across the range, selectable with ordinary buttons, without booking any", async () => {
     const days = [candidate(20), candidate(44), candidate(68), candidate(92)];
     const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
       candidates: days, checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
@@ -106,12 +106,13 @@ describe("MeetingScheduler", () => {
       preferences: { ...preferences, defaultDurationMinutes: 45 },
     });
     expect(screen.getByText("Times in Eastern Time (the email didn’t say)")).toBeInTheDocument();
-    expect(screen.getByText(/· 45 min$/)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Meeting Length" })).toHaveValue("45");
     // The time zone and the ways to narrow the times come before the times; the reply is the main action.
     const hours = screen.getByRole("group", { name: "Part of the day" });
     expect(hours.compareDocumentPosition(screen.getByRole("group", { name: "Open times" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(hours).getByRole("button", { name: "Any Time" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Draft Reply With These Times" })).toHaveClass("btn-primary");
+    // The main action counts the chosen times, so toggling one visibly changes what it will send.
+    expect(screen.getByRole("button", { name: "Draft Reply With 3 Times" })).toHaveClass("btn-primary");
     // Every calendar answered, so nothing warns that a time may conflict.
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(slots.every((slot) => slot.getAttribute("aria-pressed") === "true")).toBe(true);
@@ -122,12 +123,17 @@ describe("MeetingScheduler", () => {
     fireEvent.click(slots[2]);
     expect(slots[0]).toHaveAttribute("aria-pressed", "true");
     expect(slots[1]).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(screen.getByRole("button", { name: "Draft Reply With This Time" }));
+    fireEvent.click(screen.getByRole("button", { name: "Draft Reply With 1 Time" }));
     expect(handlers.onReplyWithTimes).toHaveBeenCalledWith([days[0]]);
     expect(handlers.onAddToCalendar).not.toHaveBeenCalled();
 
     fireEvent.click(slots[0]);
-    expect(screen.getByRole("button", { name: "Draft Reply With These Times" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Draft Reply With Times" })).toBeDisabled();
+
+    // A different length searches again at that length.
+    fireEvent.change(screen.getByRole("combobox", { name: "Meeting Length" }), { target: { value: "60" } });
+    await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ preferences: { ...preferences, defaultDurationMinutes: 60 } })));
+    expect(screen.getByRole("combobox", { name: "Meeting Length" })).toHaveValue("60");
   });
 
   it("does not check anything without a connected calendar", () => {
@@ -295,7 +301,7 @@ describe("MeetingScheduler", () => {
         preferences: expect.objectContaining({ workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60 }),
       })));
       expect(await screen.findByRole("button", { name: "Afternoons" })).toHaveAttribute("aria-pressed", "true");
-      expect(screen.getByText(/· 1 hr$/)).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Meeting Length" })).toHaveValue("60");
     });
 
     it("keeps a length the email stated", async () => {

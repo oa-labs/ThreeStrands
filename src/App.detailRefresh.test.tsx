@@ -629,7 +629,7 @@ describe("conversation brief", () => {
       fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
       const card = (await within(panel).findByText("Try the command palette")).closest("article")!;
 
-      fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Review & Add Task" }));
+      fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Add Task…" }));
       const dialog = await screen.findByRole("dialog", { name: "Add Task" });
       fireEvent.click(within(dialog).getByRole("button", { name: "Add Task" }));
 
@@ -656,17 +656,19 @@ describe("conversation brief", () => {
 
       const discardCard = (await within(panel).findByText("Star a conversation")).closest("article") as HTMLElement;
       const suggestions = within(panel).getByRole("region", { name: "Suggestions" });
-      fireEvent.click(within(discardCard).getByRole("button", { name: "Dismiss" }));
+      fireEvent.click(within(discardCard).getByRole("button", { name: "More actions" }));
+      fireEvent.click(within(discardCard).getByRole("menuitem", { name: "Dismiss" }));
       await waitFor(() => expect(remove).toHaveBeenCalledWith("welcome", revision, discardMe));
 
       // Edit first, then add: the saved copy still holds the provider's original wording.
       const card = within(suggestions).getByText("Try the command palette").closest("article") as HTMLElement;
-      fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+      fireEvent.click(within(card).getByRole("button", { name: "More actions" }));
+      fireEvent.click(within(card).getByRole("menuitem", { name: "Edit" }));
       const editor = await screen.findByRole("dialog", { name: "Edit Task Proposal" });
       fireEvent.change(within(editor).getByLabelText("Task"), { target: { value: "Open the palette with Cmd+K" } });
       fireEvent.click(within(editor).getByRole("button", { name: "Save Proposal" }));
       const edited = (await within(suggestions).findByText("Open the palette with Cmd+K")).closest("article") as HTMLElement;
-      fireEvent.click(within(edited).getByRole("button", { name: "Review & Add Task" }));
+      fireEvent.click(within(edited).getByRole("button", { name: "Add Task…" }));
       fireEvent.click(within(await screen.findByRole("dialog", { name: "Add Task" })).getByRole("button", { name: "Add Task" }));
 
       await waitFor(() => expect(remove).toHaveBeenLastCalledWith("welcome", revision, taskProposal));

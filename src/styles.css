@@ -21,8 +21,9 @@
   --focus-glow: #6e69d833;
   --quote-border: #66617f;
   --star: #e3b341;
-  --primary: #373263;
-  --primary-border: #514c91;
+  --primary: #6d66d9;
+  --primary-border: #8078ff;
+  --primary-text: #fff;
   --error: #f29595;
   --error-contrast: #2a0d10;
   --error-strong: #d96b6b;
@@ -192,8 +193,8 @@
   --focus-glow: #6350c633;
   --quote-border: #aaa1c7;
   --star: #896500;
-  --primary: #e6e0fc;
-  --primary-border: #b0a1df;
+  --primary: #6350c6;
+  --primary-border: #6350c6;
   --error: #b02d3c;
   --error-contrast: #fff;
   --error-strong: #8f1f2d;
@@ -216,8 +217,8 @@
   --link: #9cc3fb;
   --focus-glow: #3b76d833;
   --quote-border: #5f7396;
-  --primary: #2b3c62;
-  --primary-border: #47679f;
+  --primary: #3f74c9;
+  --primary-border: #4d8ef5;
   --selected: #232d3c;
 }
 :root[data-accent="blue"][data-theme="light"] {
@@ -226,8 +227,8 @@
   --link: #2a5cc2;
   --focus-glow: #1a73e833;
   --quote-border: #a3b3d1;
-  --primary: #dde8fb;
-  --primary-border: #a2b9e6;
+  --primary: #1a73e8;
+  --primary-border: #1a73e8;
   --selected: #e1e9fb;
 }
 
@@ -237,8 +238,8 @@
   --link: #7fd4e4;
   --focus-glow: #1d9cb433;
   --quote-border: #5e8289;
-  --primary: #173f4b;
-  --primary-border: #2c7484;
+  --primary: #158094;
+  --primary-border: #1a9cb4;
   --selected: #1d2d31;
 }
 :root[data-accent="teal"][data-theme="light"] {
@@ -247,8 +248,8 @@
   --link: #0c6478;
   --focus-glow: #0e749033;
   --quote-border: #9cbcc3;
-  --primary: #d6eff3;
-  --primary-border: #90c5cf;
+  --primary: #0e7490;
+  --primary-border: #0e7490;
   --selected: #dcf0f3;
 }
 
@@ -258,8 +259,8 @@
   --link: #8fd8ab;
   --focus-glow: #2f9e5733;
   --quote-border: #63816e;
-  --primary: #234c36;
-  --primary-border: #3b8259;
+  --primary: #268447;
+  --primary-border: #2ea156;
   --selected: #20302a;
 }
 :root[data-accent="green"][data-theme="light"] {
@@ -268,8 +269,8 @@
   --link: #156a3a;
   --focus-glow: #18803833;
   --quote-border: #a1c2ae;
-  --primary: #dcf2e3;
-  --primary-border: #9bd1b5;
+  --primary: #188038;
+  --primary-border: #188038;
   --selected: #dff3e6;
 }
 
@@ -280,8 +281,8 @@
   --link: #f0cd7f;
   --focus-glow: #d9a44133;
   --quote-border: #8a7d5f;
-  --primary: #55410f;
-  --primary-border: #8d6d24;
+  --primary: #8f7129;
+  --primary-border: #e3b341;
   --selected: #2f2a1c;
 }
 :root[data-accent="amber"][data-theme="light"] {
@@ -291,8 +292,8 @@
   --link: #74550a;
   --focus-glow: #89650033;
   --quote-border: #c8b68f;
-  --primary: #f6ecd2;
-  --primary-border: #d4b97e;
+  --primary: #896500;
+  --primary-border: #896500;
   --selected: #f5edd8;
 }
 
@@ -302,8 +303,8 @@
   --link: #f5a196;
   --focus-glow: #e25b4d33;
   --quote-border: #8a645e;
-  --primary: #572b24;
-  --primary-border: #945049;
+  --primary: #c24e42;
+  --primary-border: #e25b4d;
   --selected: #322321;
 }
 :root[data-accent="rose"][data-theme="light"] {
@@ -312,8 +313,8 @@
   --link: #a1332c;
   --focus-glow: #c5221f33;
   --quote-border: #cda4a0;
-  --primary: #fbe3e1;
-  --primary-border: #e6aba6;
+  --primary: #c5221f;
+  --primary-border: #c5221f;
   --selected: #fae6e4;
 }
 
@@ -323,8 +324,8 @@
   --link: #b6b6c0;
   --focus-glow: #8a8a9433;
   --quote-border: #6e6e78;
-  --primary: #3d3d46;
-  --primary-border: #6b6b74;
+  --primary: #74747c;
+  --primary-border: #8a8a94;
   --selected: #2b2b32;
 }
 :root[data-accent="graphite"][data-theme="light"] {
@@ -333,8 +334,8 @@
   --link: #4a4a53;
   --focus-glow: #5f636833;
   --quote-border: #b3b3bd;
-  --primary: #e8e8ec;
-  --primary-border: #b4b4be;
+  --primary: #5f6368;
+  --primary-border: #5f6368;
   --selected: #e9e9ef;
 }
 
@@ -510,8 +511,10 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .btn-sm { height: var(--control-h-sm); padding: 0 var(--space-2); }
 /* The sparkles mark on any AI button, in one color everywhere; a primary button keeps its own text color. */
 .btn:not(.btn-primary) > .lucide-sparkles { color:var(--accent); }
-/* One primary look everywhere: the --primary fill, never a solid accent. */
-.btn-primary { border-color: var(--primary-border); background: var(--primary); color: var(--text); }
+/* One primary look everywhere: the solid --primary fill with --primary-text, never the raw accent,
+ * whose lighter dark-mode shades cannot carry white text. */
+.btn-primary { border-color: var(--primary-border); background: var(--primary); color: var(--primary-text); font-weight: var(--weight-semibold); }
+.btn-primary:hover:not(:disabled) { border-color: var(--primary-border); background: color-mix(in srgb, var(--primary) 90%, var(--text)); }
 .btn-danger { border-color: color-mix(in srgb, var(--error) 50%, var(--border-strong)); color: var(--error); }
 .btn-danger:hover { border-color: var(--error); }
 /* Solid, highest-emphasis destructive action — reserved for the broadest blast
@@ -1594,7 +1597,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   text-align: right;
 }
 .thread-assist-shared { margin: 0; padding-left:calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); }
-.thread-assist-shared .context-link-button { margin-top:0; font-size:inherit; }
 .action-analysis-error { margin-top: var(--space-2); padding: var(--space-2) var(--space-2-5); border: 1px solid var(--warning); border-radius: var(--radius-sm); background: var(--input); font-size: var(--text-secondary); }
 .action-analysis-error p { margin: 0; color: var(--text); }
 .action-analysis-error-actions { display: flex; align-items: center; gap: var(--space-2-5); margin-top: var(--space-1-5); }
@@ -1606,8 +1608,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .proposal-kind { color: var(--accent); }
 .action-proposal-card-top { display: flex; align-items: center; gap: var(--space-1-5); }
 .action-proposal-card-top .action-proposal-card-header { flex: 1; min-width: 0; }
-/* A link rather than a label, so it keeps sentence case beside the uppercase kind. */
-.proposal-check { color: var(--warning); font-size: var(--text-meta); text-transform: none; letter-spacing: normal; }
+/* Names what the AI may have wrong, with the way to check it right beside it. */
+.proposal-uncertain { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); margin: 0; color: var(--warning); font-size: var(--text-meta); }
+.proposal-uncertain svg { flex-shrink: 0; }
+.proposal-uncertain .btn-link { font-size: inherit; }
 .proposal-time-language { color: var(--muted); font-style: italic; }
 .proposal-time-language::before { content: "\201C"; }
 .proposal-time-language::after { content: "\201D"; }
@@ -1628,6 +1632,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-scheduler-note { margin: 0; color: var(--muted); font-size: var(--text-meta); }
 .meeting-scheduler-range { display: flex; align-items: center; gap: var(--space-1); color: var(--muted); }
 .meeting-scheduler-range p { flex: 1; min-width: 0; margin: 0; text-align: center; }
+.meeting-scheduler-length { height: var(--control-h-xs); padding-inline: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--surface); font: inherit; font-size: var(--text-control); cursor: pointer; }
 .meeting-scheduler-adjust { display: grid; gap: var(--space-1-5); }
 .meeting-scheduler-hours { display: flex; }
 .meeting-scheduler-hours .segment { flex: 1; }
@@ -2314,8 +2319,13 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-section-header-actions .thread-assist-run { margin-right:var(--space-1); }
 /* Suggested belongs to the Brief: its label and notes start at the brief's text edge, its cards at the chevrons'. */
 .thread-assist-suggestions { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:var(--space-2); margin-top:var(--space-3); padding-inline:var(--context-row-inset); }
-.thread-assist-suggestions h4,
-.thread-assist-suggestions > .context-status { margin:0; padding-left:var(--context-glyph-column); color:var(--muted); }
+.thread-assist-suggestions-header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); }
+.thread-assist-suggestions h4 { min-width:0; margin:0; color:var(--muted); }
+.thread-assist-suggestions-body { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:var(--space-2); }
+.thread-assist-suggestions-body[hidden] { display:none; }
+.thread-assist-suggestions-body > .context-status { margin:0; padding-left:var(--context-glyph-column); color:var(--muted); }
+.thread-assist-suggestions-body > .thread-assist-run,
+.thread-assist-suggestions-run { justify-self:start; margin-left:var(--context-glyph-column); }
 /* Copy is a secondary action: it shows on hover or focus, and stays while it confirms a copy. */
 .thread-assist-copy { opacity:0; }
 .thread-assist:hover .thread-assist-copy,
@@ -3033,7 +3043,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .sync-setup-step-header { display: flex; align-items: center; gap: var(--space-2-5); }
 .sync-setup-step-header h4 { flex: 1; margin: 0; }
 .sync-setup-step-marker { display: grid; place-items: center; flex-shrink: 0; width: 22px; height: 22px; border: 1px solid var(--border-strong); border-radius: var(--radius-circle); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-bold); }
-.sync-setup-step-current .sync-setup-step-marker { border-color: var(--primary-border); background: var(--primary); color: var(--text); }
+.sync-setup-step-current .sync-setup-step-marker { border-color: var(--primary-border); background: var(--primary); color: var(--primary-text); }
 .sync-setup-step-done .sync-setup-step-marker { color: var(--success); }
 .sync-setup-step-state { color: var(--muted); font-size: var(--text-meta); }
 .sync-setup-step-upcoming h4 { color: var(--muted); }

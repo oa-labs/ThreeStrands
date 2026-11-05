@@ -183,7 +183,7 @@ describe("invitation card responses", () => {
     const callbacks = props();
     render(<InvitationCard {...callbacks} />);
     fireEvent.click(await screen.findByRole("button", { name: "Suggest a different time" }));
-    const draft = await screen.findByRole("button", { name: "Draft Reply With This Time" });
+    const draft = await screen.findByRole("button", { name: "Draft Reply With 1 Time" });
     expect(mailClient.findAvailability).toHaveBeenCalledWith(expect.objectContaining({ preferences: expect.objectContaining({ defaultDurationMinutes: 120 }) }));
     fireEvent.click(draft);
     expect(callbacks.onReplyWithTimes).toHaveBeenCalledWith([candidate], message.id);

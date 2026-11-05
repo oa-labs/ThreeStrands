@@ -45,7 +45,7 @@ export function askFindTimes(
 export function FindTimesCard({
   plan, reason = null, preferences, calendarConnected, ai, intoDraft,
   onAddToCalendar, onReplyWithTimes, onConfirmTime, onOpenCalendarSettings, identity, onOpenCalendarEvent,
-  onMatchChange, matchedActions, moreActions, coworkers,
+  onMatchChange, matchedActions, moreActions, extraActions, coworkers,
 }: {
   plan: SchedulePlan;
   /** Why these days were chosen, shown above the times. */
@@ -67,6 +67,8 @@ export function FindTimesCard({
   /** Shown with Open in Calendar once the event is on the calendar. */
   matchedActions?: ReactNode;
   moreActions?: MoreAction[];
+  /** The caller's own actions, beside the scheduler's while the event is not on the calendar. */
+  extraActions?: ReactNode;
 }) {
   const [adjusted, setAdjusted] = useState<{ key: number; plan: SchedulePlan; reason: string } | null>(null);
   const [instruction, setInstruction] = useState("");
@@ -146,6 +148,7 @@ export function FindTimesCard({
       onMatchChange={onMatchChange}
       matchedActions={matchedActions}
       moreActions={moreActions}
+      extraActions={extraActions}
       onSearchChange={(effective) => { shown.current = effective; }}
       adjustInput={adjustInput}
     />

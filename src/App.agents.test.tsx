@@ -11,7 +11,7 @@ describe("Agents workspace wiring", () => {
     const createTask = vi.spyOn(mailClient, "createTask");
     render(<App />);
     fireEvent.click(await screen.findByRole("option", { name: /Welcome to ThreeStrands/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Delegate work…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delegate Work…" }));
     await screen.findByRole("form", { name: "New delegated task" });
     expect(screen.getByText("Linked to the selected conversation.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));

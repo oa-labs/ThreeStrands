@@ -18,7 +18,8 @@ const AI_CLIENT_METHODS = [
 
 /** Where each AI request starts, and the text of the button that starts it. */
 const AI_BUTTONS: { file: string; label: string }[] = [
-  { file: "ThreadAssist.tsx", label: `"Get Brief" : "Get Suggestions"}` },
+  { file: "ThreadAssist.tsx", label: "/>Get Brief" },
+  { file: "ThreadAssist.tsx", label: "/>Get Suggestions" },
   { file: "ThreadChat.tsx", label: "Ask</button>" },
   { file: "Composer.tsx", label: "Draft Reply" },
   { file: "Composer.tsx", label: `"Generate Draft"` },

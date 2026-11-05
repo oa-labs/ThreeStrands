@@ -204,7 +204,7 @@ describe("ComposeContext", () => {
       preferences: expect.objectContaining({ defaultDurationMinutes: 30 }),
       maxPerDay: SLOTS_PER_DAY,
     })));
-    fireEvent.click(await within(section).findByRole("button", { name: "Insert These Times" }));
+    fireEvent.click(await within(section).findByRole("button", { name: /^Insert \d+ Times$/ }));
     expect(props.onInsertTimes).toHaveBeenCalledWith([
       expect.objectContaining({ start: "2030-01-07T15:00:00Z" }),
       expect.objectContaining({ start: "2030-01-08T15:00:00Z" }),
@@ -367,7 +367,7 @@ describe("Find Times with AI", () => {
       { weekday: 4, start: "13:00", end: "17:00" },
       { weekday: 5, start: "13:00", end: "17:00" },
     ]);
-    expect(await within(section()).findByRole("button", { name: "Insert This Time" })).toBeInTheDocument();
+    expect(await within(section()).findByRole("button", { name: "Insert 1 Time" })).toBeInTheDocument();
   });
 
   it("adjusts the search on screen, including chip changes, from the user's words", async () => {
@@ -469,7 +469,7 @@ describe("Find Times with AI", () => {
     await waitFor(() => expect(mailClient.findTimes).toHaveBeenCalledWith(expect.objectContaining({ sourceMessageId: "message-9", draftText: "" }), "openai", "gpt-4o", null));
     expect(await within(section()).findByRole("heading", { name: "Availability" })).toBeInTheDocument();
     expect(section()).not.toHaveClass("context-ai-launcher");
-    fireEvent.click(await within(section()).findByRole("button", { name: "Draft Reply With This Time" }));
+    fireEvent.click(await within(section()).findByRole("button", { name: "Draft Reply With 1 Time" }));
     expect(onInsertTimes).toHaveBeenCalledOnce();
   });
 

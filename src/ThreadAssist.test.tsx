@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
-import { briefScope, meetingPlace, participantName, ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
+import { briefScope, meetingPlace, participantName, participantsText, reminderTask, ThreadAssist, uncertaintyNote, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -72,7 +72,6 @@ function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestio
     providerChosen: true,
     loading: false,
     error: null,
-    providerName: "Anthropic",
     onRun: vi.fn(),
     onOpenSettings: vi.fn(),
     ...rest,
@@ -154,17 +153,11 @@ describe("ThreadAssist", () => {
     expect(screen.getByText("The client needs the website.")).toBeVisible();
   });
 
-  it("says in words what was shared and with whom, and links to the activity log", () => {
-    const onOpenSettings = vi.fn();
-    const { rerender } = render(<ThreadAssist {...props({ onOpenSettings, detail: summarized, suggestions: { requested: true } })} />);
-    expect(screen.getByText(/Shared 1 message with Anthropic\./)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "AI Activity" }));
-    expect(onOpenSettings).toHaveBeenCalled();
-    rerender(<ThreadAssist {...props({ detail: summarized, providerName: "your custom endpoint", suggestions: { requested: true } })} />);
-    expect(screen.getByText(/Shared 1 message with your custom endpoint\./)).toBeInTheDocument();
-    // Nothing is claimed while the brief is still being read.
-    rerender(<ThreadAssist {...props({ detail: summarized, loading: true, suggestions: { requested: true } })} />);
+  it("adds no note of what was shared, since the user chose the provider and pressed an AI action", () => {
+    render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true } })} />);
+    expect(screen.getByText("The client needs the website.")).toBeInTheDocument();
     expect(screen.queryByText(/^Shared /)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "AI Activity" })).not.toBeInTheDocument();
   });
 
   it("says when a brief covers only the latest messages and reads the recap of earlier ones last", () => {
@@ -184,9 +177,6 @@ describe("ThreadAssist", () => {
     const items = screen.getAllByRole("listitem");
     expect(items.map((item) => item.textContent)).toEqual(["They now want it Monday instead.", "Earlier: The client asked for the website by Friday."]);
     expect(items[1]).toHaveClass("thread-assist-summary-earlier");
-    expect(screen.getByText(/Shared 3 messages with Anthropic\./)).toBeInTheDocument();
-    // Where the brief came from and what was shared read as one line under it.
-    expect(screen.getByText("From the latest message").parentElement).toBe(screen.getByText(/Shared 3 messages/).parentElement);
     expect(screen.getByRole("list").compareDocumentPosition(screen.getByText("From the latest message")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     rerender(<ThreadAssist {...props({ detail: { ...thread, thread: { ...thread.thread, summaryFocusFrom: "2026-09-20T10:00:00Z" } }, suggestions: { requested: true } })} />);
@@ -240,10 +230,13 @@ describe("ThreadAssist", () => {
     expect(container.querySelector(".context-section-header")).toBeNull();
     expect(container.querySelectorAll(".thread-assist-run")).toHaveLength(1);
 
-    // A brief without suggestions yet offers them from the header.
+    // A brief without suggestions yet offers them where they will appear, not from the Brief's header.
     rerender(<ThreadAssist {...props({ detail: summarized })} />);
     const header = container.querySelector(".context-section-header")!;
-    expect(within(header as HTMLElement).getByRole("button", { name: "Get Suggestions" })).toBeInTheDocument();
+    expect(within(header as HTMLElement).queryByRole("button", { name: "Get Suggestions" })).not.toBeInTheDocument();
+    const suggestionsArea = container.querySelector(".thread-assist-suggestions") as HTMLElement;
+    expect(within(suggestionsArea).getByRole("button", { name: "Get Suggestions" })).toBeInTheDocument();
+    expect(screen.getByText("The client needs the website.").compareDocumentPosition(suggestionsArea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     rerender(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true } })} />);
     expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
@@ -260,9 +253,46 @@ describe("ThreadAssist", () => {
     expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
     const getSuggestions = screen.getByRole("button", { name: "Get Suggestions" });
     expect(getSuggestions).not.toHaveAttribute("aria-keyshortcuts");
-    expect(within(getSuggestions.parentElement as HTMLElement).getByRole("tooltip").querySelector("kbd")).toBeNull();
     fireEvent.click(getSuggestions);
     expect(onRun).toHaveBeenCalledWith(false);
+  });
+
+  it("shows a proactive brief as on its way instead of a button the automatic run would replace", () => {
+    const onRun = vi.fn();
+    const { rerender, container } = render(<ThreadAssist {...props({ onRun, detail: summarized, upcoming: true })} />);
+    // Only suggestions are missing: the brief stays readable and the wait shows where they will appear.
+    expect(screen.getByText("The client needs the website.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Get Suggestions" })).not.toBeInTheDocument();
+    const suggestionsArea = container.querySelector(".thread-assist-suggestions") as HTMLElement;
+    expect(within(suggestionsArea).getByRole("status")).toHaveTextContent("Looking for suggestions…");
+    expect(within(container.querySelector(".context-section-header") as HTMLElement).queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh brief" })).not.toBeInTheDocument();
+
+    // The request itself reads the same way.
+    rerender(<ThreadAssist {...props({ onRun, detail: summarized, loading: true, suggestions: { requested: true } })} />);
+    expect(within(container.querySelector(".thread-assist-suggestions") as HTMLElement).getByRole("status")).toHaveTextContent("Looking for suggestions…");
+
+    // With no brief yet, the whole section is on its way rather than a Get Brief button.
+    rerender(<ThreadAssist {...props({ onRun, upcoming: true })} />);
+    expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
+    expect(within(container.querySelector(".context-section-header") as HTMLElement).getByRole("status")).toHaveTextContent("Reading the conversation…");
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("collapses Suggested on its own and remembers it, leaving the brief open", () => {
+    localStorage.clear();
+    const { unmount } = render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal] } })} />);
+    const toggle = within(screen.getByRole("heading", { name: "Suggested" })).getByRole("button", { name: "Suggested" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Set up the website")).toBeVisible();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Set up the website")).not.toBeVisible();
+    expect(screen.getByText("The client needs the website.")).toBeVisible();
+    unmount();
+    render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal] } })} />);
+    expect(within(screen.getByRole("heading", { name: "Suggested" })).getByRole("button")).toHaveAttribute("aria-expanded", "false");
+    localStorage.clear();
   });
 
   it("flags a summary that predates the newest message", () => {
@@ -335,12 +365,17 @@ describe("ThreadAssist", () => {
     expect(screen.getByText("Please set up the website by Friday.")).toBeInTheDocument();
     expect(screen.getByText(/^client@example\.com · /)).toBeInTheDocument();
     expect(screen.queryByText(/confidence/i)).not.toBeInTheDocument();
-    expect(screen.queryByText("Check details")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review & Add Task" }));
+    expect(document.querySelector(".proposal-uncertain")).toBeNull();
+    // One way to add the task, which opens its review; Edit and Dismiss wait in ⋯ as on a meeting.
+    const card = screen.getByText("Set up the website").closest("article") as HTMLElement;
+    expect(within(card).getAllByRole("button").map((button) => button.textContent)).toEqual(["", "Add Task…"]);
+    fireEvent.click(within(card).getByRole("button", { name: "Add Task…" }));
     expect(onReview).toHaveBeenCalledWith(0, taskProposal, "accept");
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(card).getByRole("button", { name: "More actions" }));
+    fireEvent.click(within(card).getByRole("menuitem", { name: "Edit" }));
     expect(onReview).toHaveBeenLastCalledWith(0, taskProposal, "edit");
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    fireEvent.click(within(card).getByRole("button", { name: "More actions" }));
+    fireEvent.click(within(card).getByRole("menuitem", { name: "Dismiss" }));
     expect(onDiscard).toHaveBeenCalledWith(0);
     // What was sent is said in words; the request itself is in Settings → AI.
     expect(screen.queryByText("What was shared with AI")).not.toBeInTheDocument();
@@ -363,9 +398,10 @@ describe("ThreadAssist", () => {
     const { rerender } = render(<ThreadAssist {...props({ detail: invitationDetail, suggestions: { requested: true, proposals: [meeting, taskProposal], onReview, onDiscard } })} />);
     expect(screen.queryByText("Duplicate invitation")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review & Add Task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Task…" }));
     expect(onReview).toHaveBeenCalledWith(1, taskProposal, "accept");
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Dismiss" }));
     expect(onDiscard).toHaveBeenCalledWith(1);
     rerender(<ThreadAssist {...props({ detail: invitationDetail, suggestions: { requested: true, proposals: [meeting] } })} />);
     expect(screen.queryByRole("heading", { name: "Suggested" })).not.toBeInTheDocument();
@@ -387,14 +423,16 @@ describe("ThreadAssist", () => {
       durationMinutes: 30,
       timeZone: null,
       confidence: 0.4,
+      uncertain: "Unclear which week",
       evidence: { sourceMessageId: "message-unknown", excerpt: "Let's meet next week." },
     };
     const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     const onReview = vi.fn();
     render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting], onReview }, scheduling: { calendarConnected: true } })} />);
 
-    // The flag says where to look: it opens the editor.
-    fireEvent.click(screen.getByRole("button", { name: "Check details" }));
+    // The flag names what may be wrong, and its Edit opens the editor to check it.
+    expect(screen.getByText("Unclear which week").closest(".proposal-uncertain")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit to check: Unclear which week" }));
     expect(onReview).toHaveBeenCalledWith(0, meeting, "edit");
     // The email's wording of the time reads as a quote, not a description.
     expect(screen.getByText("sometime next week")).toHaveClass("proposal-time-language");
@@ -404,7 +442,10 @@ describe("ThreadAssist", () => {
     expect(within(schedule).getByText("Times in Eastern Time (the email didn’t say)")).toBeInTheDocument();
     await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ maxPerDay: SLOTS_PER_DAY })));
     expect(await within(schedule).findByText("No open times in your working hours for this range.")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("From the email"));
+    // The quote is the way into the evidence, so the card has no second "From the email".
+    expect(screen.queryByText("From the email")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("sometime next week"));
+    expect(screen.getByText("Let's meet next week.")).toBeVisible();
     expect(screen.queryByText(/message-unknown/)).not.toBeInTheDocument();
   });
 
@@ -569,9 +610,53 @@ describe("ThreadAssist", () => {
     expect(card.querySelector(".proposal-actions")).toBeNull();
     fireEvent.click(within(card).getByRole("button", { name: "More actions" }));
     expect(within(card).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Edit", "Dismiss"]);
-    expect(card.lastElementChild).toHaveClass("proposal-evidence");
+    // The email's time words open the excerpt they came from, right under the title.
+    expect(screen.getByText("December 9th").closest("summary")?.parentElement).toHaveClass("proposal-evidence");
+    expect(within(card).getByText("Finance Council").nextElementSibling).toHaveClass("proposal-evidence");
     // The disclosure uses the app's chevron rather than the browser's triangle.
     expect(card.querySelector(".proposal-evidence > summary > svg.proposal-evidence-chevron")).not.toBeNull();
+  });
+
+  it("names the user as you, last, among a meeting's people", () => {
+    expect(participantsText(["joel@example.com", "Marek Hajn"], ["Joel@Example.com"])).toBe("Marek Hajn and you");
+    expect(participantsText(["Me <joel@example.com>", "Marek Hajn", "Ana Rivera"], ["joel@example.com"])).toBe("Marek Hajn, Ana Rivera, and you");
+    expect(participantsText(["Marek Hajn"], ["joel@example.com"])).toBe("Marek Hajn");
+    // A meeting with only the user names no one.
+    expect(participantsText(["joel@example.com"], ["joel@example.com"])).toBe("");
+  });
+
+  it("says what a suggestion may have wrong, from the AI's note or what the app can tell", () => {
+    const meeting = { type: "meeting" as const, intent: "schedule", title: "Plan", participants: [], location: null, rawTimeLanguage: "December",
+      normalizedStart: null, normalizedEnd: null, searchRangeStart: null, searchRangeEnd: null, durationMinutes: null, timeZone: null,
+      confidence: 0.5, evidence: taskProposal.evidence };
+    expect(uncertaintyNote({ ...meeting, uncertain: "Unclear which week" })).toBe("Unclear which week");
+    expect(uncertaintyNote(meeting)).toBe("Length not stated");
+    expect(uncertaintyNote({ ...meeting, durationMinutes: 45 })).toBe("Some details may be wrong");
+    expect(uncertaintyNote({ ...meeting, confidence: 0.9, uncertain: "Unclear which week" })).toBeNull();
+    expect(uncertaintyNote({ ...taskProposal, dueKind: "datetime", dueValue: "2026-12-01T10:00:00", timeZone: null })).toBe("Time zone not stated");
+  });
+
+  it("offers Remind Me on a meeting still to be arranged, as a task due tomorrow for review", async () => {
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "schedule", title: "Joint event planning with Marek Hajn", participants: ["Marek Hajn", "you@example.com"], location: null,
+      rawTimeLanguage: "sometime in December", normalizedStart: null, normalizedEnd: null,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: null, timeZone: null, confidence: 0.9,
+      evidence: { sourceMessageId: "message-1", excerpt: "send a few December times" },
+    };
+    vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+    const onReview = vi.fn();
+    render(<ThreadAssist {...props({ ownEmails: ["you@example.com"], suggestions: { requested: true, proposals: [meeting], onReview }, scheduling: { calendarConnected: true } })} />);
+    expect(screen.getByText("Marek Hajn and you")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Remind Me" }));
+    const [index, task, intent] = onReview.mock.calls[0];
+    // Not a listed suggestion, so adding it leaves the meeting card in place.
+    expect(index).toBe(-1);
+    expect(intent).toBe("accept");
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    expect(task).toMatchObject({ type: "task", title: "Reply with times: Joint event planning with Marek Hajn", dueKind: "date", evidence: meeting.evidence });
+    expect(task.dueValue).toBe(`${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`);
+    expect(reminderTask(meeting, new Date(2026, 11, 31)).dueValue).toBe("2027-01-01");
   });
 
   it("explains unreadable provider output in plain language and keeps the details available", () => {

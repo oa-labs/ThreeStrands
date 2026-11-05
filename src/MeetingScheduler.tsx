@@ -56,6 +56,9 @@ function formatLength(minutes: number): string {
   return minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60} hr` : `${minutes} min`;
 }
 
+/** Meeting lengths offered beside a range search; the current one is always among them. */
+const MEETING_LENGTHS = [15, 30, 45, 60, 90, 120];
+
 function formatRange(query: ScheduleQuery, timeZone: string): string {
   const day = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone });
   // The range end is exclusive; name the last day it covers.
@@ -144,6 +147,7 @@ export function MeetingScheduler({
   onMatchChange,
   matchedActions,
   moreActions = [],
+  extraActions,
   intoDraft = false,
 }: {
   plan: SchedulePlan;
@@ -170,6 +174,8 @@ export function MeetingScheduler({
   matchedActions?: ReactNode;
   /** The caller's less common actions, added to the ⋯ menu once the event is on the calendar. */
   moreActions?: MoreAction[];
+  /** The caller's own actions, after the scheduler's, while the event is not on the calendar. */
+  extraActions?: ReactNode;
 }) {
   // Plans computed from "now" differ on every render; keep the one this
   // scheduler mounted with. Callers key the scheduler by what it schedules.
@@ -180,8 +186,9 @@ export function MeetingScheduler({
   if (preferences !== latestPreferences && JSON.stringify(preferences) !== JSON.stringify(latestPreferences)) {
     setPreferences(latestPreferences);
   }
-  // A length nothing stated follows the availability profile in use.
-  const durationMinutes = plan.durationIsDefault ? preferences.defaultDurationMinutes : plan.durationMinutes;
+  // A length nothing stated follows the availability profile in use, until the user picks one.
+  const [chosenLength, setChosenLength] = useState<number | null>(null);
+  const durationMinutes = chosenLength ?? (plan.durationIsDefault ? preferences.defaultDurationMinutes : plan.durationMinutes);
   // "Find Other Times" replaces a conflicting exact time with a search.
   const [override, setOverride] = useState<ScheduleQuery | null>(null);
   const baseQuery = override ?? plan.query;
@@ -288,9 +295,9 @@ export function MeetingScheduler({
   }, [matchedKey]);
   useEffect(() => {
     if (query?.kind === "range") onSearchChange?.({ query, durationMinutes, bounds });
-    // Reported once per distinct search, identified by `queryKey`.
+    // Reported once per distinct search, identified by `queryKey` and its length.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryKey]);
+  }, [queryKey, durationMinutes]);
 
   const findOtherTimes = (start: string) => {
     const day = new Date(start);
@@ -321,6 +328,7 @@ export function MeetingScheduler({
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
       <p className="context-status">Connect a calendar to check times for this meeting.</p>
       <button type="button" className="btn-link context-link-button" onClick={onOpenCalendarSettings}>Calendar Settings</button>
+      {extraActions ? <div className="meeting-scheduler-actions">{extraActions}</div> : null}
     </div>;
   }
   // A bare day or an undated event has nothing to check against the calendar.
@@ -383,6 +391,7 @@ export function MeetingScheduler({
         {announced || (state.check.status === "conflicting" && !(state.match?.kind === "same" && state.conflictTitles.length === 0)) ? null
           : <button type="button" className="btn btn-sm" onClick={() => onConfirmTime(query)}>Reply &ldquo;That Works&rdquo;</button>}
         {announced ? null : <button type="button" className="btn btn-sm" onClick={() => findOtherTimes(query.start)}>Find Other Times</button>}
+        {matched ? null : extraActions}
         {matched ? <>
           {matchedActions}
           <MoreActionsMenu label="More actions" actions={[{ label: "Add Again", onSelect: () => onAddToCalendar(query) }, ...moreActions]} />
@@ -392,13 +401,22 @@ export function MeetingScheduler({
     {state.phase === "range" && query.kind === "range" ? <>
       <div className="meeting-scheduler-range">
         <button type="button" className="btn-icon btn-icon-sm" aria-label="Earlier" title="Earlier days" disabled={shift === 0} onClick={() => setShift((current) => current - 1)}><ChevronLeft size={ICON_SIZE.sm} /></button>
-        <p><span>{[formatRange(query, timeZone), formatBounds(bounds)].filter(Boolean).join(" · ")}</span> · {formatLength(durationMinutes)}</p>
+        <p><span>{[formatRange(query, timeZone), formatBounds(bounds)].filter(Boolean).join(" · ")}</span> · <select
+          className="meeting-scheduler-length"
+          aria-label="Meeting Length"
+          value={durationMinutes}
+          onChange={(event) => setChosenLength(Number(event.target.value))}
+        >{[...new Set([...MEETING_LENGTHS, durationMinutes])].sort((left, right) => left - right)
+            .map((minutes) => <option key={minutes} value={minutes}>{formatLength(minutes)}</option>)}</select></p>
         <button type="button" className="btn-icon btn-icon-sm" aria-label="Later" title="Later days" onClick={() => setShift((current) => current + 1)}><ChevronRight size={ICON_SIZE.sm} /></button>
       </div>
       {/* What the times mean comes before the times, and so do the ways to change them. */}
       {assumedZone}
       {adjust}
-      {state.candidates.length === 0 ? <p className="context-status">No open times in your working hours for this range.</p> : <>
+      {state.candidates.length === 0 ? <>
+        <p className="context-status">No open times in your working hours for this range.</p>
+        {extraActions ? <div className="meeting-scheduler-actions">{extraActions}</div> : null}
+      </> : <>
         <div className="meeting-slots" role="group" aria-label="Open times">
           {state.candidates.slice(0, visibleCount)
             .sort((left, right) => Date.parse(left.start) - Date.parse(right.start))
@@ -423,11 +441,13 @@ export function MeetingScheduler({
           const chosen = state.candidates
             .filter((candidate) => selected.has(slotKey(candidate)))
             .sort((left, right) => Date.parse(left.start) - Date.parse(right.start));
+          // The count follows each toggle, so the times above read as the button's choice.
           return <div className="meeting-scheduler-actions">
-            <button type="button" className="btn btn-sm btn-primary" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 1 ? "This Time" : "These Times"}</button>
+            <button type="button" className="btn btn-sm btn-primary" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 0 ? "Times" : chosen.length === 1 ? "1 Time" : `${chosen.length} Times`}</button>
             {visibleCount < state.candidates.length
               ? <button type="button" className="btn btn-sm" onClick={() => setVisibleCount((current) => current + SUGGESTED_SLOT_COUNT)}>Show More</button>
               : null}
+            {extraActions}
           </div>;
         })()}
       </>}

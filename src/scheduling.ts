@@ -144,9 +144,10 @@ export function suggestedSearch(proposals: ActionProposal[], now: Date, defaultD
 /**
  * Whether reading a conversation should offer Find Times. Suggestions are the
  * evidence: before they have run, or when they can't run, it is offered; once
- * they ran, a task or a meeting still to be arranged keeps it. Availability
- * requests can be classified as reply tasks, so a missing meeting proposal
- * is not evidence that calendar access is unnecessary. A reply always offers it.
+ * they ran, a task keeps it. Availability requests can be classified as reply
+ * tasks, so a missing meeting proposal is not evidence that calendar access is
+ * unnecessary. A meeting still to be arranged already offers times on its own
+ * card, so Find Times would only repeat it. A reply always offers it.
  */
 export function offersFindTimes({ replying, suggestionsAvailable, requested, loading, proposals }: {
   replying: boolean;
@@ -159,7 +160,8 @@ export function offersFindTimes({ replying, suggestionsAvailable, requested, loa
   // Held back while suggestions are read, so it doesn't show and then vanish.
   if (loading) return false;
   if (!requested) return true;
-  return proposals.some((proposal) => proposal.type === "task" || proposal.intent === "schedule");
+  if (proposals.some((proposal) => proposal.type === "meeting" && proposal.intent === "schedule")) return false;
+  return proposals.some((proposal) => proposal.type === "task");
 }
 
 /** Plans the calendar search a chat answer asked for, with any weekdays and hours it named. */
@@ -225,13 +227,23 @@ export function shiftedRange(query: ScheduleQuery, steps: number): ScheduleQuery
 }
 
 /**
- * Orders open times so each day's first slot comes before any day's second:
- * the first few cover different days, and "Show More" fills in later slots.
+ * Orders open times so the first few, the ones offered by default, are spread
+ * across the whole range rather than bunched on its first days: one on the
+ * first day, one on the last, the rest evenly between, alternating mornings
+ * and afternoons where a day has both. After them, each day's first slot
+ * comes before any day's second, so "Show More" still covers new days first.
  */
-export function spreadAcrossDays<T extends Pick<AvailabilityCandidate, "start">>(candidates: T[], timeZone: string): T[] {
+export function spreadAcrossDays<T extends Pick<AvailabilityCandidate, "start">>(candidates: T[], timeZone: string, leading = SUGGESTED_SLOT_COUNT): T[] {
   const dayOf = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });
+  const hourOf = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone });
+  const chronological = [...candidates].sort((left, right) => Date.parse(left.start) - Date.parse(right.start));
+  const days = new Map<string, T[]>();
+  for (const candidate of chronological) {
+    const day = dayOf.format(new Date(candidate.start));
+    days.set(day, [...(days.get(day) ?? []), candidate]);
+  }
   const seen = new Map<string, number>();
-  return candidates
+  const byRank = chronological
     .map((candidate) => {
       const day = dayOf.format(new Date(candidate.start));
       const rank = seen.get(day) ?? 0;
@@ -240,4 +252,13 @@ export function spreadAcrossDays<T extends Pick<AvailabilityCandidate, "start">>
     })
     .sort((left, right) => left.rank - right.rank || Date.parse(left.candidate.start) - Date.parse(right.candidate.start))
     .map(({ candidate }) => candidate);
+  const slotsByDay = [...days.values()];
+  const count = Math.min(leading, slotsByDay.length);
+  const picks: T[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const daySlots = slotsByDay[count === 1 ? 0 : Math.round(index * (slotsByDay.length - 1) / (count - 1))];
+    const afternoon = index % 2 === 1 ? daySlots.find((slot) => Number(hourOf.format(new Date(slot.start))) >= Number(MIDDAY.slice(0, 2))) : undefined;
+    picks.push(afternoon ?? daySlots[0]);
+  }
+  return [...picks, ...byRank.filter((candidate) => !picks.includes(candidate))];
 }

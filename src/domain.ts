@@ -802,6 +802,8 @@ export type MeetingProposal = {
   durationMinutes: number | null;
   timeZone: string | null;
   confidence: number;
+  /** The detail most likely wrong, such as "Duration not stated"; absent from earlier suggestions. */
+  uncertain?: string | null;
   evidence: ProposalEvidence;
 };
 
@@ -817,6 +819,8 @@ export type TaskProposal = {
   /** A goal the suggested task would support; only a goal of the thread's account that the app listed. */
   goalId?: string | null;
   confidence: number;
+  /** The detail most likely wrong; absent from earlier suggestions. */
+  uncertain?: string | null;
   evidence: ProposalEvidence;
 };
 

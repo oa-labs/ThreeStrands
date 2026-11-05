@@ -244,9 +244,25 @@ The context panel's brief combines the thread summary and suggestions. When
 both features are enabled and both are missing, fetch them in one provider
 request; otherwise request only the missing part. A saved summary that is
 current for the newest message is never regenerated without an explicit
-refresh. Show confidence as a "Check details" flag, not a percentage, and
-count suggestions withheld by validation instead of reporting that nothing
-was found.
+refresh. Show low confidence as a note naming what may be wrong ("Length
+not stated"), never a percentage, with Edit beside it; the AI supplies the
+note, and the app names what it can tell itself when there is none. Count
+suggestions withheld by validation instead of reporting that nothing was
+found.
+
+Show each piece where it will appear. Get Suggestions sits where the cards
+will be, not in the Brief's header, and a proactive brief on its way shows
+as "Looking for suggestions…" (or "Reading the conversation…" with no brief
+yet) rather than as a button the automatic run is about to replace. The
+user chose the provider and pressed an AI action, so the panel does not
+repeat what was shared; AI Activity in Settings keeps the record.
+
+Say each request once. A meeting still to be arranged offers times on its
+own card, so the prompt asks for no matching "send times" task and Find
+Times is not offered beside it; its Remind Me opens a task review due
+tomorrow instead. A meeting's quote of the email's time words is the
+disclosure for its evidence, its people name the user as "you", and every
+card keeps Edit and Dismiss in its ⋯ menu.
 
 Proactive suggestions are opt-in. They run the same brief request after the
 reader stays on a conversation for the mark-read delay (never less than the
@@ -273,8 +289,10 @@ rather than being sent.
 Meeting suggestions and chat answers about availability are scheduled inside
 the card, from the user's calendar and without AI. An exact time is checked
 for conflicts as soon as the card appears, naming the events it overlaps; a
-range, or a meeting with no usable time, offers the first open working-hour
-slot on each of the next few days. A missing meeting timezone defaults to the
+range, or a meeting with no usable time, offers a few open working-hour slots
+spread across the whole range, first day to last, mixing mornings and
+afternoons; the main button counts the chosen times, and the meeting length
+can be changed beside the range. A missing meeting timezone defaults to the
 user's and is labelled. Candidate times are toggle buttons reached with Tab and
 chosen with Space or Enter, never with letter or number keys, which stay
 application shortcuts. Every outcome crosses a review boundary: Add to Calendar
@@ -409,6 +427,9 @@ and `--duration-slow`.
 
 Colors come from theme tokens. Text on an accent fill uses
 `--accent-contrast`, because some accents are light enough to need dark text.
+A primary button is the one solid fill: `--primary` with `--primary-text`,
+at least 4.5:1 in every theme and accent, never the raw accent, whose lighter
+dark-mode shades cannot carry white text.
 Marks on a user-chosen account or calendar color, or on a dark overlay, use
 `--on-color`. Tints toward white or black are written as `color-mix()` with
 the `white` or `black` keyword.
