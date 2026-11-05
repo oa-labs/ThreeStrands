@@ -22,6 +22,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Show 3 More** replaces **Show More**, and adds more times from the same search. **Search Again** is replaced by a **Re-read** link beside the explanation, shown only after the conversation or your draft changes, since reading the same conversation again would find the same times.
 
 ### Fixed
+- Pressing <kbd>Tab</kbd> after choosing recipients in **To**, **Cc**, or **Bcc** now moves to the next field, instead of losing your place when contact suggestions were showing.
 - Adding a suggested event whose time is unknown now keeps its date and asks you to enter times, instead of selecting **All day**.
 - After adding an event from an email to your calendar, press Escape to return to the email and continue processing your inbox.
 - Pasting a copied email link into an email address field now removes `mailto:` and link parameters.

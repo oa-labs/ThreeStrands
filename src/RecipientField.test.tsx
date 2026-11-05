@@ -36,6 +36,17 @@ describe("contextual recipient lookup", () => {
     expect(change).toHaveBeenCalledWith("Bob <bob@example.com>, ");
   });
 
+  it("keeps the open suggestions out of the Tab order so Tab leaves the field", async () => {
+    vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([bob]);
+    const togglePin = vi.spyOn(mailClient, "pinContact").mockResolvedValue(undefined as never);
+    render(<RecipientField {...props} context={context} />);
+    act(() => screen.getByRole("textbox", { name: "To" }).focus()); await tick();
+    const pin = screen.getByRole("button", { name: "Pin bob@example.com" });
+    expect(pin).toHaveAttribute("tabindex", "-1");
+    fireEvent.click(pin);
+    expect(togglePin).toHaveBeenCalled();
+  });
+
   it("invalidates old context and account results immediately, including during debounce", async () => {
     const old = deferred<ContactSuggestion[]>();
     const current = deferred<ContactSuggestion[]>();

@@ -458,8 +458,10 @@ export function RecipientField({ id, label, value, account, disabled, context, l
                 {contact.displayName && <small>{contact.email}</small>}
                 {!!contact.relatedTo?.length && <small>Often emailed with {contact.relatedTo.join(", ")}</small>}
               </span>
+              {/* Out of the Tab order: Tab leaves the field, which closes this list. */}
               <button
                 type="button"
+                tabIndex={-1}
                 className="recipient-pin-toggle"
                 aria-label={contact.pinned ? `Unpin ${contact.email}` : `Pin ${contact.email}`}
                 aria-pressed={contact.pinned}
