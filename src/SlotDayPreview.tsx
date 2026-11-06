@@ -6,7 +6,7 @@ import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, ScheduleEvent } from "./domain";
 import { isDeclined, mergeCalendarCopies } from "./agendaEvents";
 import { occursOnDay } from "./calendarTime";
-import { refreshScheduleCache } from "./calendarScheduleCache";
+import { readScheduleCache, refreshScheduleCache } from "./calendarScheduleCache";
 import { scheduleRequestFor } from "./CalendarSidebar";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { errorMessage } from "./errors";
@@ -14,11 +14,42 @@ import { TIGHT_BREAK_MINUTES } from "./scheduling";
 
 type Slot = Pick<AvailabilityCandidate, "start" | "end">;
 
+/** The day's schedule events last read, if any, to show while they are read again. */
+function cachedEventsOnDay(date: Date): ScheduleEvent[] | null {
+  return readScheduleCache(scheduleRequestFor(date))?.events ?? null;
+}
+
 /** The day's schedule events, from the cache. */
 export async function eventsOnDay(date: Date): Promise<ScheduleEvent[]> {
   const request = scheduleRequestFor(date);
   const result = await refreshScheduleCache(request, () => mailClient.listScheduleEvents(request.timeMin, request.timeMax, request.timeZone));
   return result.events;
+}
+
+const rangeRequest = (start: string, end: string) => ({ timeMin: start, timeMax: end, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" });
+
+/** The schedule events across a search's range last read, if any, to show while they are read again. */
+export function cachedEventsInRange(start: string, end: string): ScheduleEvent[] | null {
+  return readScheduleCache(rangeRequest(start, end))?.events ?? null;
+}
+
+/** The schedule events across a search's range, read once for all its offered times. */
+export async function eventsInRange(start: string, end: string): Promise<ScheduleEvent[]> {
+  const request = rangeRequest(start, end);
+  const result = await refreshScheduleCache(request, () => mailClient.listScheduleEvents(request.timeMin, request.timeMax, request.timeZone));
+  return result.events;
+}
+
+/**
+ * Whether an offered time leaves too little break beside another meeting,
+ * such as "Back-to-back" with no break at all, so it shows before the day
+ * is opened. Null when every break is at least the tight limit.
+ */
+export function breakWarning(events: readonly ScheduleEvent[], slot: Slot): string | null {
+  const breaks = slotNeighborhood(events, slot, false).rows.flatMap((row) => row.kind === "break" ? [row.minutes] : []);
+  if (breaks.some((minutes) => minutes <= 0)) return "Back-to-back";
+  if (breaks.some((minutes) => minutes < TIGHT_BREAK_MINUTES)) return "Short break";
+  return null;
 }
 
 /** A length of free time, such as "30 min" or "1 hr 15 min". */
@@ -86,12 +117,17 @@ type LoadState = { phase: "loading" } | { phase: "ready"; events: ScheduleEvent[
  */
 export function SlotDayPreview({ id, slot, timeZone }: { id: string; slot: Slot; timeZone: string }) {
   const colors = useCalendarColors();
-  const [state, setState] = useState<LoadState>({ phase: "loading" });
+  const [state, setState] = useState<LoadState>(() => {
+    const cached = cachedEventsOnDay(new Date(slot.start));
+    return cached ? { phase: "ready", events: cached } : { phase: "loading" };
+  });
   const [full, setFull] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let current = true;
-    setState({ phase: "loading" });
+    // A day read before stays on screen while it is read again.
+    const cached = cachedEventsOnDay(new Date(slot.start));
+    setState(cached ? { phase: "ready", events: cached } : { phase: "loading" });
     eventsOnDay(new Date(slot.start))
       .then((events) => { if (current) setState({ phase: "ready", events }); })
       .catch((reason) => { if (current) setState({ phase: "error", message: errorMessage(reason) }); });
@@ -111,18 +147,21 @@ export function SlotDayPreview({ id, slot, timeZone }: { id: string; slot: Slot;
         {view.rows.map((row, index) => {
           if (row.kind === "proposed") {
             return <li key="proposed" className="slot-day-row slot-day-proposed">
-              <span className="slot-day-time">{formatSpan(slot.start, slot.end, timeZone)}</span>
               <span className="slot-day-title">This time</span>
+              <span className="slot-day-meta">{formatSpan(slot.start, slot.end, timeZone)}</span>
             </li>;
           }
           if (row.kind === "break") {
             return <li key={`break-${index}`} className={`slot-day-break${row.minutes < TIGHT_BREAK_MINUTES ? " slot-day-break-tight" : ""}`}>{row.text}</li>;
           }
           const { event } = row;
-          return <li key={`${event.accountId}:${event.calendarId ?? ""}:${event.id}`} className="slot-day-row" style={calendarColorStyle(colors, event.accountId, event.calendarId)}>
-            <span className="slot-day-time">{event.allDay ? "All day" : formatSpan(event.start, event.end, timeZone)}</span>
+          // Each meeting is a card like the week's; a long place fits one line, in full on hover.
+          return <li key={`${event.accountId}:${event.calendarId ?? ""}:${event.id}`} className="slot-day-row slot-day-event" style={calendarColorStyle(colors, event.accountId, event.calendarId)}>
             <span className="slot-day-title">{event.title}</span>
-            {row.overlaps || event.location ? <span className="slot-day-detail">{[row.overlaps ? "Overlaps, but doesn’t block this time" : null, event.location].filter(Boolean).join(" · ")}</span> : null}
+            <span className="slot-day-meta" title={event.location ?? undefined}>
+              {[event.allDay ? "All day" : formatSpan(event.start, event.end, timeZone), event.location].filter(Boolean).join(" · ")}
+            </span>
+            {row.overlaps ? <span className="slot-day-detail">Overlaps, but doesn’t block this time</span> : null}
           </li>;
         })}
       </ol>

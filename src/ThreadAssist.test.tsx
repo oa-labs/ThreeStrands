@@ -5,7 +5,7 @@ import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
 import { AVAILABILITY_SECTION_ID } from "./RecipientSections";
-import { briefScope, meetingPlace, participantName, participantsText, reminderTask, ThreadAssist, uncertaintyNote, type ThreadAssistProps } from "./ThreadAssist";
+import { briefScope, meetingPlace, ownNamesIn, participantName, participantsText, reminderTask, ThreadAssist, uncertaintyNote, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -489,8 +489,10 @@ describe("ThreadAssist", () => {
       expect(within(pointer).queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
       fireEvent.click(within(pointer).getByRole("button", { name: "Choose a Time in Availability" }));
       expect(within(target).getByRole("checkbox", { name: "first open" })).toHaveFocus();
-      // Remind Me stays: the offered times can still be answered later.
-      fireEvent.click(within(pointer).getByRole("button", { name: "Remind Me" }));
+      // Remind Me stays in ⋯: the offered times can still be answered later.
+      const meetingCard = pointer.closest("article") as HTMLElement;
+      fireEvent.click(within(meetingCard).getByRole("button", { name: "More actions" }));
+      fireEvent.click(within(meetingCard).getByRole("menuitem", { name: "Remind Me" }));
       expect(onReview).toHaveBeenCalledWith(-1, expect.objectContaining({ type: "task" }), "accept");
       // An announced event has a set date, so it keeps its own Add to Calendar.
       expect(within(announced).getByRole("button", { name: "Add to Calendar" })).toBeInTheDocument();
@@ -655,6 +657,18 @@ describe("ThreadAssist", () => {
     expect(participantsText(["Marek Hajn"], ["joel@example.com"])).toBe("Marek Hajn");
     // A meeting with only the user names no one.
     expect(participantsText(["joel@example.com"], ["joel@example.com"])).toBe("");
+    // The AI may name the user as the conversation does, without an address.
+    expect(participantsText(["Carolyn Casavan", "Joel Reed"], ["joel@example.com"], ["joel reed"])).toBe("Carolyn Casavan and you");
+    // A bare name only matches a whole name; an address is matched by address alone.
+    expect(participantsText(["Joel Reedy", "joel.reed@other.example"], ["joel@example.com"], ["Joel Reed"])).toBe("Joel Reedy and joel.reed@other.example");
+  });
+
+  it("learns the user's names from their own addresses in the conversation", () => {
+    expect(ownNamesIn([
+      { sender: "Carolyn Casavan <carolyn@example.com>", recipients: ["Joel Reed <JOEL@example.com>"], cc: ["Sam <sam@example.com>"] },
+      { sender: "joel@example.com", recipients: ["Carolyn Casavan <carolyn@example.com>"] },
+      { sender: "Joel R. <joel@example.com>", recipients: [] },
+    ], ["joel@example.com"])).toEqual(["Joel Reed", "Joel R."]);
   });
 
   it("says what a suggestion may have wrong, from the AI's note or what the app can tell", () => {
@@ -679,7 +693,11 @@ describe("ThreadAssist", () => {
     const onReview = vi.fn();
     render(<ThreadAssist {...props({ ownEmails: ["you@example.com"], suggestions: { requested: true, proposals: [meeting], onReview }, scheduling: { calendarConnected: true } })} />);
     expect(screen.getByText("Marek Hajn and you")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "Remind Me" }));
+    // A less common choice than offering times, so it waits in ⋯ beside Edit and Dismiss.
+    await screen.findByText("No open times in your working hours for this range.");
+    expect(screen.queryByRole("button", { name: "Remind Me" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remind Me" }));
     const [index, task, intent] = onReview.mock.calls[0];
     // Not a listed suggestion, so adding it leaves the meeting card in place.
     expect(index).toBe(-1);

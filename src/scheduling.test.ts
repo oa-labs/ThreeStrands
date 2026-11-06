@@ -34,6 +34,17 @@ describe("meeting scheduling plans", () => {
     expect(planMeeting(meeting({ searchRangeStart: "2026-09-01T00:00:00Z", searchRangeEnd: "2026-09-02T00:00:00Z" }), now, 30).query).toBeNull();
   });
 
+  it("keeps a range to the weekdays the email named, and allows every day without them", () => {
+    const range = { searchRangeStart: "2026-09-30T04:00:00Z", searchRangeEnd: "2026-10-07T04:00:00Z" };
+    expect(planMeeting(meeting({ ...range, weekdays: [4, 2, 4] }), now, 30).bounds).toEqual({ ...ANY_TIME, weekdays: [2, 4] });
+    // Saved before weekdays existed, empty, or holding no real weekday: every day.
+    expect(planMeeting(meeting(range), now, 30).bounds).toBeUndefined();
+    expect(planMeeting(meeting({ ...range, weekdays: [] }), now, 30).bounds).toBeUndefined();
+    expect(planMeeting(meeting({ ...range, weekdays: [7, -1, 2.5] }), now, 30).bounds).toBeUndefined();
+    // Only a range is narrowed; an exact time is checked as it is.
+    expect(planMeeting(meeting({ normalizedStart: "2026-10-01T19:00:00Z", weekdays: [2] }), now, 30).bounds).toBeUndefined();
+  });
+
   it("falls back to the next week and the user's timezone for a vague meeting", () => {
     const plan = planMeeting(meeting({ timeZone: null }), now, 25);
     expect(plan.query).toEqual({ kind: "range", start: now.toISOString(), end: new Date(now.getTime() + SCHEDULE_LOOKAHEAD_DAYS * day).toISOString() });

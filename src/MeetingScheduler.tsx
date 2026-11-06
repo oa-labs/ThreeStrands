@@ -1,10 +1,11 @@
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { CalendarCheck, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
-import type { AvailabilityCandidate, AvailabilityPreferences, CoworkerCalendars, ProposedTimeCheck, ScheduleEvent } from "./domain";
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { availabilityKey, readAvailability, rememberAvailabilityView, sameAvailability, storeAvailability, type AvailabilityView } from "./availabilityCache";
+import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, CoworkerCalendars, ProposedTimeCheck, ScheduleEvent } from "./domain";
 import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, type CalendarMatch, type EventIdentity } from "./eventMatching";
 import { mailClient } from "./data/client";
-import { eventsOnDay, SlotDayPreview } from "./SlotDayPreview";
+import { breakWarning, cachedEventsInRange, eventsInRange, eventsOnDay, SlotDayPreview } from "./SlotDayPreview";
 import { AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
 import { errorMessage } from "./errors";
 import {
@@ -71,15 +72,18 @@ function formatClock(clock: string): string {
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(2000, 0, 1, hours, minutes));
 }
 
-/** The days and hours a search is limited to, such as "Thu, Fri · from 3:00 PM"; empty for any time. */
-function formatBounds(bounds: DayBounds): string {
-  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" });
-  // 2000-01-02 was a Sunday, weekday 0.
-  const days = bounds.weekdays.map((day) => weekday.format(new Date(2000, 0, 2 + day))).join(", ");
-  const hours = bounds.dayStart && bounds.dayEnd ? `${formatClock(bounds.dayStart)}–${formatClock(bounds.dayEnd)}`
+/** The hours a search is limited to, such as "from 3:00 PM"; empty for any time. */
+function formatHours(bounds: DayBounds): string {
+  return bounds.dayStart && bounds.dayEnd ? `${formatClock(bounds.dayStart)}–${formatClock(bounds.dayEnd)}`
     : bounds.dayStart ? `from ${formatClock(bounds.dayStart)}`
       : bounds.dayEnd ? `until ${formatClock(bounds.dayEnd)}` : "";
-  return [days, hours].filter(Boolean).join(" · ");
+}
+
+/** The weekdays a search is limited to, such as "Tue and Thu". */
+function formatWeekdays(weekdays: number[]): string {
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" });
+  // 2000-01-02 was a Sunday, weekday 0.
+  return new Intl.ListFormat(undefined, { type: "conjunction" }).format([...weekdays].sort((left, right) => left - right).map((day) => weekday.format(new Date(2000, 0, 2 + day))));
 }
 
 /** The search a range card is showing, after any adjustments. */
@@ -212,10 +216,37 @@ export function MeetingScheduler({
   const timeZone = preferences.timeZone;
   const announced = plan.announced === true;
 
+  // The search whose times are shown.
+  const rangeKey = useRef<string | null>(null);
   const run = useCallback(async (target: ScheduleQuery, isCurrent: () => boolean) => {
-    setState({ phase: "loading" });
+    // Shows a range's times, keeping the user's choices among them where they still apply.
+    const showRange = (result: AvailabilityResult, view: AvailabilityView | null, keepCurrent: boolean) => {
+      const candidates = spreadAcrossDays(result.candidates, timeZone);
+      const keys = new Set(candidates.map(slotKey));
+      const defaults = () => new Set(candidates.slice(0, SUGGESTED_SLOT_COUNT).map(slotKey));
+      setState({
+        phase: "range",
+        candidates,
+        verified: result.totalCalendarCount > 0 && result.checkedCalendarCount === result.totalCalendarCount,
+        unchecked: result.uncheckedCalendars,
+        errors: result.errors,
+      });
+      if (keepCurrent) {
+        setSelected((current) => {
+          const kept = [...current].filter((key) => keys.has(key));
+          return kept.length ? new Set(kept) : defaults();
+        });
+        setPreviewing((current) => current && keys.has(current) ? current : null);
+        return;
+      }
+      const restored = view?.selected.filter((key) => keys.has(key)) ?? [];
+      setSelected(view && (restored.length || view.selected.length === 0) ? new Set(restored) : defaults());
+      setPreviewing(view?.previewing && keys.has(view.previewing) ? view.previewing : null);
+      setVisibleCount(view?.visibleCount ?? SUGGESTED_SLOT_COUNT);
+    };
     try {
       if (target.kind === "specific") {
+        setState({ phase: "loading" });
         const check = await mailClient.checkProposedTime({ start: target.start, end: target.end, timeZone, driveTimeBufferMinutes: preferences.driveTimeBufferMinutes });
         // An event added from this email may sit at another time that day, so
         // its day is read even when the time itself is free.
@@ -226,7 +257,7 @@ export function MeetingScheduler({
         const conflictTitles = [...new Set(overlapping.filter((event) => !match || !sameEvent(event, match.event)).map((event) => event.title))];
         if (isCurrent()) setState({ phase: "specific", check, conflictTitles, match });
       } else {
-        const result = await mailClient.findAvailability({
+        const request = {
           rangeStart: target.start,
           rangeEnd: target.end,
           preferences: {
@@ -236,24 +267,45 @@ export function MeetingScheduler({
           },
           maxPerDay: SLOTS_PER_DAY,
           ...(coworkers ? { coworkers } : {}),
-        });
-        const candidates = spreadAcrossDays(result.candidates, timeZone);
+        };
+        const key = availabilityKey(request);
+        rangeKey.current = key;
+        // Times found moments ago show at once while the calendar is checked again.
+        const cached = readAvailability(key);
+        if (cached) showRange(cached.result, cached.view, false);
+        else setState({ phase: "loading" });
+        const result = await mailClient.findAvailability(request);
+        storeAvailability(key, result);
         if (!isCurrent()) return;
-        setState({
-          phase: "range",
-          candidates,
-          verified: result.totalCalendarCount > 0 && result.checkedCalendarCount === result.totalCalendarCount,
-          unchecked: result.uncheckedCalendars,
-          errors: result.errors,
-        });
-        setVisibleCount(SUGGESTED_SLOT_COUNT);
-        setPreviewing(null);
-        setSelected(new Set(candidates.slice(0, SUGGESTED_SLOT_COUNT).map(slotKey)));
+        if (cached && sameAvailability(cached.result, result)) return;
+        showRange(result, null, cached !== null);
       }
     } catch (reason) {
       if (isCurrent()) setState({ phase: "error", message: errorMessage(reason) });
     }
   }, [bounds, coworkers, identity, durationMinutes, preferences, timeZone]);
+
+  // The user's choices among the shown times outlast the card.
+  useEffect(() => {
+    if (state.phase === "range" && rangeKey.current) {
+      rememberAvailabilityView(rangeKey.current, { selected: [...selected], previewing, visibleCount });
+    }
+  }, [state, selected, previewing, visibleCount]);
+
+  // The range's meetings, read once, flag a time with little break beside it before its day is opened.
+  const [rangeEvents, setRangeEvents] = useState<ScheduleEvent[] | null>(null);
+  const rangeStart = state.phase === "range" && query?.kind === "range" ? query.start : null;
+  const rangeEnd = rangeStart && query ? query.end : null;
+  useEffect(() => {
+    setRangeEvents(rangeStart && rangeEnd ? cachedEventsInRange(rangeStart, rangeEnd) : null);
+    if (!rangeStart || !rangeEnd) return;
+    let current = true;
+    eventsInRange(rangeStart, rangeEnd)
+      .then((events) => { if (current) setRangeEvents(events); })
+      // Without them the times still show, just without the flag.
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, [rangeStart, rangeEnd, attempt]);
 
   const boundsKey = `${bounds.weekdays.join(",")}|${bounds.dayStart ?? ""}|${bounds.dayEnd ?? ""}`;
   const queryKey = query ? `${query.kind}:${query.start}:${query.end}:${query.kind === "range" ? boundsKey : ""}` : "none";
@@ -307,12 +359,27 @@ export function MeetingScheduler({
   const toggleHours = (hours: typeof MORNINGS | typeof AFTERNOONS, pressed: boolean) =>
     setBounds((current) => ({ ...current, ...(pressed ? { dayStart: null, dayEnd: null } : hours) }));
   // Part of the day narrows the times shown; the arrows beside the range move to other days.
+  // The length sits with the part of the day: both change which times fit, while the range row only pages.
   const adjust = <div className="meeting-scheduler-adjust">
-    <div className="segmented meeting-scheduler-hours" role="group" aria-label="Part of the day">
-      <button type="button" className="segment" aria-pressed={!bounds.dayStart && !bounds.dayEnd} onClick={() => setBounds((current) => ({ ...current, dayStart: null, dayEnd: null }))}>Any Time</button>
-      <button type="button" className="segment" aria-pressed={mornings} onClick={() => toggleHours(MORNINGS, mornings)}>Mornings</button>
-      <button type="button" className="segment" aria-pressed={afternoons} onClick={() => toggleHours(AFTERNOONS, afternoons)}>Afternoons</button>
+    <div className="meeting-scheduler-when">
+      <div className="segmented meeting-scheduler-hours" role="group" aria-label="Part of the day">
+        <button type="button" className="segment" aria-pressed={!bounds.dayStart && !bounds.dayEnd} onClick={() => setBounds((current) => ({ ...current, dayStart: null, dayEnd: null }))}>Any Time</button>
+        <button type="button" className="segment" aria-pressed={mornings} onClick={() => toggleHours(MORNINGS, mornings)}>Mornings</button>
+        <button type="button" className="segment" aria-pressed={afternoons} onClick={() => toggleHours(AFTERNOONS, afternoons)}>Afternoons</button>
+      </div>
+      <select
+        className="meeting-scheduler-length"
+        aria-label="Meeting Length"
+        value={durationMinutes}
+        onChange={(event) => setChosenLength(Number(event.target.value))}
+      >{[...new Set([...MEETING_LENGTHS, durationMinutes])].sort((left, right) => left - right)
+          .map((minutes) => <option key={minutes} value={minutes}>{formatLength(minutes)}</option>)}</select>
     </div>
+    {/* Days the email named narrow the search; the user can still look at the others. */}
+    {bounds.weekdays.length ? <p className="meeting-scheduler-note">
+      Only {formatWeekdays(bounds.weekdays)}{" "}
+      <button type="button" className="btn-link" onClick={() => setBounds((current) => ({ ...current, weekdays: [] }))}>Show All Days</button>
+    </p> : null}
     <AvailabilityProfileSelect />
     {adjustInput}
   </div>;
@@ -398,13 +465,7 @@ export function MeetingScheduler({
     {state.phase === "range" && query.kind === "range" ? <>
       <div className="meeting-scheduler-range">
         <button type="button" className="btn-icon btn-icon-sm" aria-label="Earlier" title="Earlier days" disabled={shift === 0} onClick={() => setShift((current) => current - 1)}><ChevronLeft size={ICON_SIZE.sm} /></button>
-        <p><span>{[formatRange(query, timeZone), formatBounds(bounds)].filter(Boolean).join(" · ")}</span> · <select
-          className="meeting-scheduler-length"
-          aria-label="Meeting Length"
-          value={durationMinutes}
-          onChange={(event) => setChosenLength(Number(event.target.value))}
-        >{[...new Set([...MEETING_LENGTHS, durationMinutes])].sort((left, right) => left - right)
-            .map((minutes) => <option key={minutes} value={minutes}>{formatLength(minutes)}</option>)}</select></p>
+        <p>{[formatRange(query, timeZone), formatHours(bounds)].filter(Boolean).join(" · ")}</p>
         <button type="button" className="btn-icon btn-icon-sm" aria-label="Later" title="Later days" onClick={() => setShift((current) => current + 1)}><ChevronRight size={ICON_SIZE.sm} /></button>
       </div>
       {/* What the times mean comes before the times, and so do the ways to change them. */}
@@ -423,6 +484,7 @@ export function MeetingScheduler({
               const open = previewing === key;
               const label = formatSlot(candidate, timeZone);
               const id = `${previewId}-${index}`;
+              const warning = rangeEvents ? breakWarning(rangeEvents, candidate) : null;
               // Including a time and looking at its day are separate choices.
               return <div key={key} className="meeting-slot-item">
                 <div className={`meeting-slot-row${checked ? " meeting-slot-row-checked" : ""}`}>
@@ -441,7 +503,9 @@ export function MeetingScheduler({
                     aria-controls={open ? id : undefined}
                     title="Show this day on your calendar"
                     onClick={() => setPreviewing(open ? null : key)}
-                  ><span>{label}</span><ChevronDown className="meeting-slot-chevron" size={ICON_SIZE.sm} aria-hidden="true" /></button>
+                  ><span>{label}</span>
+                    {warning ? <span className="meeting-slot-warning">{warning}</span> : null}
+                    <ChevronDown className="meeting-slot-chevron" size={ICON_SIZE.sm} aria-hidden="true" /></button>
                 </div>
                 {open ? <SlotDayPreview id={id} slot={candidate} timeZone={timeZone} /> : null}
               </div>;

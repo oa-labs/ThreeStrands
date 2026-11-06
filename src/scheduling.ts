@@ -116,7 +116,10 @@ export function planMeeting(proposal: MeetingProposal, now: Date, defaultDuratio
     };
   }
   if (proposal.searchRangeStart && proposal.searchRangeEnd) {
-    return { query: boundedRange(new Date(proposal.searchRangeStart), new Date(proposal.searchRangeEnd), now), ...length, timeZoneAssumed, ...kind };
+    // Days the email named, such as "Tuesday or Thursday", narrow the range; the card can widen it again.
+    const weekdays = (proposal.weekdays ?? []).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+    const bounds = weekdays.length ? { bounds: { ...ANY_TIME, weekdays: [...new Set(weekdays)].sort((left, right) => left - right) } } : {};
+    return { query: boundedRange(new Date(proposal.searchRangeStart), new Date(proposal.searchRangeEnd), now), ...length, ...bounds, timeZoneAssumed, ...kind };
   }
   if (announced) return { query: null, undated: true, durationMinutes, timeZoneAssumed, announced };
   return { query: lookaheadRange(now), ...length, timeZoneAssumed };

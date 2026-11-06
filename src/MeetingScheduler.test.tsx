@@ -8,7 +8,7 @@ import { MeetingScheduler, uncheckedNote, zoneName } from "./MeetingScheduler";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences } from "./domain";
-import { SLOTS_PER_DAY, type SchedulePlan } from "./scheduling";
+import { SLOTS_PER_DAY, TIGHT_BREAK_MINUTES, type SchedulePlan } from "./scheduling";
 
 const preferences: AvailabilityPreferences = {
   timeZone: "America/New_York",
@@ -546,8 +546,9 @@ describe("MeetingScheduler", () => {
       renderScheduler(week);
 
       const group = await screen.findByRole("group", { name: "Open times" });
-      // Nothing is read from the calendar until a day is asked for.
-      expect(events).not.toHaveBeenCalled();
+      // The range is read once, to flag tight breaks, before any day is asked for.
+      await waitFor(() => expect(events).toHaveBeenCalledTimes(1));
+      expect(events.mock.calls[0].slice(0, 2)).toEqual([week.query!.start, week.query!.end]);
       const [first, second] = within(group).getAllByRole("button");
       expect(first).toHaveAttribute("aria-expanded", "false");
       expect(first).toHaveAccessibleDescription();
@@ -601,7 +602,8 @@ describe("MeetingScheduler", () => {
       const onSearchChange = vi.fn();
       renderScheduler({ ...week, bounds: { weekdays: [4, 5], dayStart: "15:00", dayEnd: null } }, { onSearchChange });
 
-      expect(await screen.findByText(`Wed, Sep 30 – Tue, Oct 6 · Thu, Fri · from ${label(15)}`)).toBeInTheDocument();
+      expect(await screen.findByText(`Wed, Sep 30 – Tue, Oct 6 · from ${label(15)}`)).toBeInTheDocument();
+      expect(screen.getByText(/^Only Thu and Fri/)).toBeInTheDocument();
       // Thursday and Friday from 3 PM: other days' windows are left out.
       expect(find.mock.calls[0][0].preferences.workingWindows).toEqual([
         { weekday: 4, start: "15:00", end: "17:00" },
@@ -612,7 +614,7 @@ describe("MeetingScheduler", () => {
       expect(onSearchChange).toHaveBeenLastCalledWith({ query: week.query, durationMinutes: 30, bounds: { weekdays: [4, 5], dayStart: "15:00", dayEnd: null } });
 
       fireEvent.click(screen.getByRole("button", { name: "Mornings" }));
-      expect(await screen.findByText(`Wed, Sep 30 – Tue, Oct 6 · Thu, Fri · until ${label(12)}`)).toBeInTheDocument();
+      expect(await screen.findByText(`Wed, Sep 30 – Tue, Oct 6 · until ${label(12)}`)).toBeInTheDocument();
       expect(find.mock.calls[1][0].preferences.workingWindows).toEqual([
         { weekday: 4, start: "09:00", end: "12:00" },
         { weekday: 5, start: "09:00", end: "12:00" },
@@ -620,11 +622,115 @@ describe("MeetingScheduler", () => {
       expect(onSearchChange).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { weekdays: [4, 5], dayStart: null, dayEnd: "12:00" } }));
 
       fireEvent.click(screen.getByRole("button", { name: "Mornings" }));
-      expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6 · Thu, Fri")).toBeInTheDocument();
+      expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6")).toBeInTheDocument();
+      expect(screen.getByText(/^Only Thu and Fri/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Later" }));
       await waitFor(() => expect(onSearchChange).toHaveBeenLastCalledWith(expect.objectContaining({
         query: { kind: "range", start: "2026-10-07T04:00:00.000Z", end: "2026-10-14T04:00:00.000Z" },
       })));
+    });
+
+    it("names the days it keeps to apart from the range, and can widen them to every day", async () => {
+      pinClock();
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+      renderScheduler({ ...week, bounds: { weekdays: [2, 4], dayStart: null, dayEnd: null } });
+      expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6")).toBeInTheDocument();
+      expect(screen.getByText(/^Only Tue and Thu/)).toBeInTheDocument();
+      expect(find.mock.calls[0][0].preferences.workingWindows.map((window) => window.weekday)).toEqual([2, 4]);
+
+      fireEvent.click(screen.getByRole("button", { name: "Show All Days" }));
+      await waitFor(() => expect(find).toHaveBeenCalledTimes(2));
+      expect(find.mock.calls[1][0].preferences.workingWindows.map((window) => window.weekday)).toEqual([1, 2, 3, 4, 5]);
+      expect(screen.queryByText(/^Only /)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Show All Days" })).not.toBeInTheDocument();
+    });
+
+    it("keeps the meeting length beside the part of the day rather than in the range row", async () => {
+      pinClock();
+      vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+      renderScheduler(week);
+      const length = await screen.findByRole("combobox", { name: "Meeting Length" });
+      expect(screen.getByText("Wed, Sep 30 – Tue, Oct 6")).not.toContainElement(length);
+      expect(length.parentElement).toContainElement(screen.getByRole("group", { name: "Part of the day" }));
+    });
+
+    it("flags a time with no break or a short one beside another meeting before its day is opened", async () => {
+      pinClock();
+      vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+        candidates: [slotAt(30, 10), slotAt(31, 10), slotAt(32, 10)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
+      });
+      const meeting = (id: string, start: Date, end: Date) => ({ id, accountId: "you@example.com", title: id, allDay: false, start: start.toISOString(), end: end.toISOString() });
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [
+        // Ends as the first time starts; starts 10 minutes after the second ends; 15 after the third.
+        meeting("Standup", new Date(2026, 8, 30, 9, 30), new Date(2026, 8, 30, 10)),
+        meeting("Interview", new Date(2026, 9, 1, 10, 40), new Date(2026, 9, 1, 11)),
+        meeting("Lunch", new Date(2026, 9, 2, 10, 30 + TIGHT_BREAK_MINUTES), new Date(2026, 9, 2, 12)),
+      ], errors: [] });
+      renderScheduler(week);
+      const group = await screen.findByRole("group", { name: "Open times" });
+      await within(group).findByText("Back-to-back");
+      const [first, second, third] = within(group).getAllByRole("button");
+      expect(first).toHaveTextContent("Back-to-back");
+      expect(second).toHaveTextContent("Short break");
+      expect(third).not.toHaveTextContent(/Back-to-back|Short break/);
+
+      // Coming back, the flags show with the kept times rather than after the range is read again.
+      cleanup();
+      vi.mocked(mailClient.listScheduleEvents).mockImplementation(() => new Promise(() => undefined));
+      renderScheduler(week);
+      expect(within(screen.getByRole("group", { name: "Open times" })).getAllByRole("button")[0]).toHaveTextContent("Back-to-back");
+    });
+
+    describe("coming back to a card", () => {
+      const found = (candidates: AvailabilityCandidate[]) => ({ candidates, checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+
+      it("shows the times found moments ago at once, with the choices made, while it checks again", async () => {
+        pinClock();
+        const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue(found([slotAt(30, 10), slotAt(31, 10), slotAt(32, 10)]));
+        vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+        renderScheduler(week);
+        let group = await screen.findByRole("group", { name: "Open times" });
+        fireEvent.click(within(group).getAllByRole("checkbox")[1]);
+        fireEvent.click(within(group).getAllByRole("button")[0]);
+        cleanup();
+
+        // The check again is still on its way; the kept times show without waiting for it.
+        let finish!: (value: ReturnType<typeof found>) => void;
+        find.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+        renderScheduler(week);
+        group = screen.getByRole("group", { name: "Open times" });
+        expect(screen.queryByText("Checking your calendar…")).not.toBeInTheDocument();
+        expect(within(group).getAllByRole("checkbox").map((box) => (box as HTMLInputElement).checked)).toEqual([true, false, true]);
+        expect(within(group).getAllByRole("button")[0]).toHaveAttribute("aria-expanded", "true");
+        expect(find).toHaveBeenCalledTimes(2);
+
+        // A time taken since drops out; the choices among the rest stay.
+        await act(async () => finish(found([slotAt(30, 10), slotAt(31, 10)])));
+        expect(within(group).getAllByRole("checkbox").map((box) => (box as HTMLInputElement).checked)).toEqual([true, false]);
+        expect(within(group).getAllByRole("button")[0]).toHaveAttribute("aria-expanded", "true");
+      });
+
+      it("checks again from the start after the calendar changes, rather than showing what it kept", async () => {
+        pinClock();
+        vi.spyOn(mailClient, "findAvailability").mockResolvedValue(found([slotAt(30, 10)]));
+        renderScheduler(week);
+        await screen.findByRole("group", { name: "Open times" });
+        cleanup();
+        window.dispatchEvent(new Event(CALENDAR_AVAILABILITY_CHANGED));
+        renderScheduler(week);
+        expect(screen.getByText("Checking your calendar…")).toBeInTheDocument();
+        expect(await screen.findByRole("group", { name: "Open times" })).toBeInTheDocument();
+      });
+
+      it("finds times afresh for a different search", async () => {
+        pinClock();
+        vi.spyOn(mailClient, "findAvailability").mockResolvedValue(found([slotAt(30, 10)]));
+        renderScheduler(week);
+        await screen.findByRole("group", { name: "Open times" });
+        cleanup();
+        renderScheduler({ ...week, durationMinutes: 60 });
+        expect(screen.getByText("Checking your calendar…")).toBeInTheDocument();
+      });
     });
 
     it("shows what it is given beside the adjustment chips", async () => {

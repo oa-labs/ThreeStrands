@@ -35,7 +35,7 @@ pub(super) fn proposal_array_schema() -> serde_json::Value {
         "required": [
             "type", "intent", "title", "participants", "location", "rawTimeLanguage",
             "normalizedStart", "normalizedEnd", "eventDate", "searchRangeStart", "searchRangeEnd",
-            "durationMinutes", "timeZone", "confidence", "uncertain", "evidence",
+            "weekdays", "durationMinutes", "timeZone", "confidence", "uncertain", "evidence",
         ],
         "properties": {
             "type": {"type": "string", "enum": ["meeting"]},
@@ -49,6 +49,7 @@ pub(super) fn proposal_array_schema() -> serde_json::Value {
             "eventDate": nullable_string,
             "searchRangeStart": nullable_string,
             "searchRangeEnd": nullable_string,
+            "weekdays": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 6}},
             "durationMinutes": nullable_integer,
             "timeZone": nullable_string,
             "confidence": {"type": "number"},
@@ -164,6 +165,15 @@ fn validate_action_proposal(
             if value.normalized_start.is_some() {
                 value.event_date = None;
             }
+            if value.weekdays.iter().any(|day| *day > 6) {
+                return Err("The AI provider returned invalid meeting weekdays".to_string());
+            }
+            // Weekdays only narrow a range still to be searched.
+            if value.search_range_start.is_none() || value.normalized_start.is_some() {
+                value.weekdays.clear();
+            }
+            value.weekdays.sort_unstable();
+            value.weekdays.dedup();
             if let Some(duration) = value.duration_minutes {
                 if !(5..=720).contains(&duration) {
                     return Err("The AI provider returned an invalid meeting duration".to_string());

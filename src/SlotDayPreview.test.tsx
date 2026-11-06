@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SlotDayPreview } from "./SlotDayPreview";
+import { breakWarning, SlotDayPreview } from "./SlotDayPreview";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { ScheduleEvent } from "./domain";
@@ -100,6 +100,37 @@ describe("SlotDayPreview", () => {
     ]);
     fireEvent.click(screen.getByRole("button", { name: "Show Less" }));
     expect(screen.queryByText("Breakfast")).not.toBeInTheDocument();
+  });
+
+  it("shows each meeting as its own card, with a long place kept to one line and given in full on hover", async () => {
+    const address = "Aladdin's Eatery Cranberry Twp, 20424 Rte 19 #400, Cranberry Township, PA 16066, USA";
+    renderDay([event("before", "Lunch", at(12), at(12, 30), { location: address }), event("after", "1:1", at(14), at(14, 30))]);
+    await rows();
+    const lunch = screen.getByText("Lunch").closest("li")!;
+    expect(lunch).toHaveClass("slot-day-event");
+    expect(within(lunch).getByTitle(address)).toHaveClass("slot-day-meta");
+    // The free time between meetings is a connector, not another card.
+    expect(screen.getByText("30 min after Lunch")).not.toHaveClass("slot-day-event");
+    expect(screen.getByText("This time").closest("li")).toHaveClass("slot-day-proposed");
+  });
+
+  it("shows a day read before at once, without saying it is loading, while it reads it again", async () => {
+    const list = renderDay([event("before", "Planning", at(11), at(12))]);
+    await rows();
+    cleanup();
+    list.mockImplementation(() => new Promise(() => undefined));
+    render(<SlotDayPreview id="day" slot={slot} timeZone={timeZone} />);
+    expect(screen.getByText("Planning")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("flags a time back-to-back with a meeting or with a break under the tight limit, but not one at it", () => {
+    expect(breakWarning([event("before", "Planning", at(12, 30), at(13))], slot)).toBe("Back-to-back");
+    expect(breakWarning([event("after", "Interview", at(13, 30), at(14))], slot)).toBe("Back-to-back");
+    expect(breakWarning([event("before", "Planning", at(12, 30), at(12, 60 - TIGHT_BREAK_MINUTES + 1))], slot)).toBe("Short break");
+    expect(breakWarning([event("before", "Planning", at(12, 0), at(12, 60 - TIGHT_BREAK_MINUTES))], slot)).toBeNull();
+    expect(breakWarning([], slot)).toBeNull();
   });
 
   it("says when nothing else is on the calendar that day", async () => {

@@ -207,6 +207,10 @@ pub struct MeetingProposal {
     pub search_range_start: Option<String>,
     #[serde(default)]
     pub search_range_end: Option<String>,
+    /// Weekdays (0 for Sunday) the email named within the search range;
+    /// empty allows every day, and is absent from earlier suggestions.
+    #[serde(default)]
+    pub weekdays: Vec<u8>,
     #[serde(default)]
     pub duration_minutes: Option<u32>,
     #[serde(default)]

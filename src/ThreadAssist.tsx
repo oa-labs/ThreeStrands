@@ -2,7 +2,7 @@ import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { useId, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, MapPin, RefreshCw, RotateCcw, Sparkles, Users, Video } from "lucide-react";
-import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ScheduleEvent, TaskProposal, ThreadDetail } from "./domain";
+import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, Message, ScheduleEvent, TaskProposal, ThreadDetail } from "./domain";
 import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { FindTimesCard } from "./FindTimesCard";
 import { MoreActionsMenu } from "./MoreActionsMenu";
@@ -174,12 +174,27 @@ export function meetingPlace(location: string | null, calendarConferenceUrl: str
 }
 
 /** A suggestion's people, naming the user as "you", last; empty when the user is the only one. */
-export function participantsText(participants: string[], ownEmails: string[]): string {
+export function participantsText(participants: string[], ownEmails: string[], ownNames: string[] = []): string {
   const own = new Set(ownEmails.map((email) => email.trim().toLowerCase()));
-  const isOwn = (participant: string) => own.has(parseAddress(participant).email.trim().toLowerCase());
+  const names = new Set(ownNames.map((name) => name.trim().toLowerCase()).filter(Boolean));
+  // The AI may name the user without an address, as their name appears in the conversation.
+  const isOwn = (participant: string) => {
+    const { name, email } = parseAddress(participant);
+    return own.has(email.trim().toLowerCase()) || (!email.includes("@") && names.has(name.trim().toLowerCase()));
+  };
   const others = [...new Set(participants.filter((participant) => !isOwn(participant)).map((participant) => participantName(parseAddress(participant).name || participant)))];
   if (others.length === 0) return "";
   return new Intl.ListFormat(undefined, { type: "conjunction" }).format(participants.some(isOwn) ? [...others, "you"] : others);
+}
+
+/** The names the user's own addresses carry in a conversation, such as "Joel Reed". */
+export function ownNamesIn(messages: readonly Pick<Message, "sender" | "recipients" | "cc">[], ownEmails: string[]): string[] {
+  const own = new Set(ownEmails.map((email) => email.trim().toLowerCase()));
+  const names = messages.flatMap((message) => [message.sender, ...message.recipients, ...(message.cc ?? [])])
+    .map(parseAddress)
+    .filter(({ name, email }) => own.has(email.trim().toLowerCase()) && name !== email)
+    .map(({ name }) => name);
+  return [...new Set(names)];
 }
 
 /**
@@ -231,13 +246,14 @@ export function reminderTask(meeting: MeetingProposal, now: Date): TaskProposal 
  * and moves its own actions into the scheduler's row: Dismiss beside Open in
  * Calendar, Edit in ⋯.
  */
-function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEmails }: {
+function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEmails, ownNames }: {
   proposal: ActionProposal;
   index: number;
   source: string | null;
   suggestions: Pick<ThreadAssistProps["suggestions"], "onDiscard" | "onReview">;
   scheduling: ThreadAssistProps["scheduling"];
   ownEmails: string[];
+  ownNames: string[];
 }) {
   const [matchedEvent, setMatchedEvent] = useState<ScheduleEvent | null>(null);
   const matched = matchedEvent !== null;
@@ -246,7 +262,7 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
   const edit = () => suggestions.onReview(index, proposal, "edit");
   const dismiss = <button type="button" className="btn btn-sm" onClick={() => suggestions.onDiscard(index)}>Dismiss</button>;
   const where = proposal.type === "meeting" ? meetingPlace(proposal.location, matchedEvent?.conferenceUrl) : null;
-  const people = proposal.type === "meeting" ? participantsText(proposal.participants, ownEmails) : "";
+  const people = proposal.type === "meeting" ? participantsText(proposal.participants, ownEmails, ownNames) : "";
   // The email's own words, quoted so they read as what was asked rather than as a description.
   const quote = proposal.type === "meeting" && !matched && proposal.rawTimeLanguage ? proposal.rawTimeLanguage : null;
   const evidence = <details className="proposal-evidence">
@@ -264,15 +280,16 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
     first?.focus();
   };
   // Not an AI request: the reminder is reviewed like any other suggested task.
+  // A less common choice than offering times, so it waits in the ⋯ menu with Edit and Dismiss.
   const remind = proposal.type === "meeting" && proposal.intent === "schedule"
-    ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(-1, reminderTask(proposal, new Date()), "accept")}>Remind Me</button>
-    : null;
+    ? [{ label: "Remind Me", onSelect: () => suggestions.onReview(-1, reminderTask(proposal, new Date()), "accept") }]
+    : [];
   return <article className="action-proposal-card">
     <div className="action-proposal-card-top">
       <div className="action-proposal-card-header">
         <span className="proposal-kind">{kind}</span>
       </div>
-      {matched ? null : <MoreActionsMenu label="More actions" actions={[{ label: "Edit", onSelect: edit }, { label: "Dismiss", onSelect: () => suggestions.onDiscard(index) }]} />}
+      {matched ? null : <MoreActionsMenu label="More actions" actions={[{ label: "Edit", onSelect: edit }, ...remind, { label: "Dismiss", onSelect: () => suggestions.onDiscard(index) }]} />}
     </div>
     <strong>{proposal.title}</strong>
     {note ? <p className="proposal-uncertain">
@@ -292,10 +309,9 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
       <p className="context-status">The email offers times for this meeting.</p>
       <div className="meeting-scheduler-actions">
         <button type="button" className="btn btn-sm btn-primary" onClick={showOfferedTimes}>Choose a Time in Availability</button>
-        {remind}
       </div>
     </div> : proposal.type === "meeting" ? <FindTimesCard
-      key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
+      key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.weekdays?.join(","), proposal.durationMinutes, proposal.timeZone].join("|")}
       plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
       preferences={scheduling.preferences}
       calendarConnected={scheduling.calendarConnected}
@@ -310,7 +326,6 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
       onMatchChange={setMatchedEvent}
       matchedActions={dismiss}
       moreActions={[{ label: "Edit", onSelect: edit }]}
-      extraActions={remind}
     /> : null}
     {proposal.type === "task" ? <div className="proposal-actions">
       <button type="button" className="btn btn-sm btn-primary" onClick={() => suggestions.onReview(index, proposal, "accept")}>Add Task…</button>
@@ -321,6 +336,7 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
 
 export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, upcoming = false, ownEmails = [], error, onRun, onOpenSettings }: ThreadAssistProps) {
   const { thread } = detail;
+  const ownNames = ownNamesIn(detail.messages ?? [], ownEmails);
   const [copiedSummary, setCopiedSummary] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
   const [collapsed, toggleCollapsed] = useRememberedCollapse(THREAD_ASSIST_ID);
@@ -465,6 +481,7 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
                 suggestions={suggestions}
                 scheduling={scheduling}
                 ownEmails={ownEmails}
+                ownNames={ownNames}
               />)}
             </div> : null}
             {offerSuggestions ? suggestionsButton : null}

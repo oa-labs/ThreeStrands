@@ -799,6 +799,8 @@ export type MeetingProposal = {
   eventDate?: string | null;
   searchRangeStart: string | null;
   searchRangeEnd: string | null;
+  /** Weekdays (0 for Sunday) the email named within the search range; empty or absent allows every day. */
+  weekdays?: number[];
   durationMinutes: number | null;
   timeZone: string | null;
   confidence: number;

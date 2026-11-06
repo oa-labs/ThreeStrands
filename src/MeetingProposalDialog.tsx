@@ -55,6 +55,7 @@ export function MeetingProposalDialog({
       ...(start ? { eventDate: null } : {}),
       searchRangeStart: null,
       searchRangeEnd: null,
+      weekdays: [],
       durationMinutes: duration ? Number(duration) : null,
       timeZone: timeZone.trim() || null,
     });

@@ -1627,25 +1627,33 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-slot-option > svg { flex: none; color: var(--accent); }
 /* An offered time: a checkbox to include it, and the rest of the row opens its day. */
 .meeting-slot-item { display: grid; gap: var(--space-1); }
-.meeting-slot-row { display: flex; align-items: stretch; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--secondary); background: var(--surface); }
+.meeting-slot-row { display: flex; align-items: stretch; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--secondary); background: var(--surface); }
 .meeting-slot-row-checked { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
-.meeting-slot-check { display: flex; flex: none; align-items: center; padding-inline: var(--space-2) var(--space-1); cursor: pointer; }
+/* A divider marks the checkbox as its own control, apart from the part that opens the day. */
+.meeting-slot-check { display: flex; flex: none; align-items: center; padding-inline: var(--space-2); border-inline-end: 1px solid var(--border); cursor: pointer; }
+.meeting-slot-row-checked .meeting-slot-check { border-inline-end-color: color-mix(in srgb, var(--accent) 35%, transparent); }
 .meeting-slot-check input[type="checkbox"] { width: var(--check-size); height: var(--check-size); margin: 0; accent-color: var(--accent); cursor: pointer; }
-.meeting-slot-day { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: var(--space-1-5); min-width: 0; padding: var(--space-1-5) var(--space-2) var(--space-1-5) var(--space-1); border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.meeting-slot-day { display: flex; flex: 1; align-items: center; gap: var(--space-1-5); min-width: 0; padding: var(--space-1-5) var(--space-2); border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .meeting-slot-day:hover { background: var(--hover); }
+.meeting-slot-day > span:first-child { flex: 1; min-width: 0; }
+.meeting-slot-warning { flex: none; padding: 0 var(--space-1-5); border-radius: var(--radius-pill); color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); font-size: var(--text-meta); white-space: nowrap; }
 .meeting-slot-chevron { flex: none; color: var(--muted); transition: transform var(--duration-fast) ease; }
 .meeting-slot-day[aria-expanded="true"] .meeting-slot-chevron { transform: rotate(180deg); }
-/* The day around an offered time, indented under its row. */
-.slot-day-preview { display: grid; gap: var(--space-1); margin-inline-start: var(--space-3); padding: var(--space-1-5) var(--space-2); border-inline-start: 2px solid var(--border); }
+/* The day around an offered time, indented under its row: each meeting a card
+   tinted with its calendar's color, as in the week, and the free time between
+   them a connector rather than a card. */
+.slot-day-preview { display: grid; gap: var(--space-1); margin-inline-start: var(--space-3); padding-block: var(--space-1); }
 .slot-day-preview > .btn-link { justify-self: start; font-size: inherit; }
 .slot-day-rows { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
-.slot-day-row { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--space-2); padding-inline-start: var(--space-1-5); border-inline-start: 3px solid var(--calendar-color, var(--border-strong)); color: var(--secondary); }
-.slot-day-time { color: var(--muted); white-space: nowrap; }
-.slot-day-title { overflow-wrap: anywhere; }
-.slot-day-detail { grid-column: 2; color: var(--muted); overflow-wrap: anywhere; }
-.slot-day-proposed { padding-block: var(--space-0-5); border: 1px dashed var(--accent); border-inline-start-width: 3px; border-inline-start-style: solid; border-radius: var(--radius-sm); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); font-weight: var(--weight-semibold); }
-.slot-day-break { padding-inline-start: var(--space-2); color: var(--muted); font-style: italic; }
-.slot-day-break-tight { color: var(--warning); font-style: normal; }
+.slot-day-row { display: grid; gap: var(--space-0-5); min-width: 0; padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); line-height: var(--leading-snug); }
+.slot-day-event { border: 1px solid color-mix(in srgb, var(--calendar-color, var(--accent)) 25%, transparent); border-inline-start: 3px solid var(--calendar-color, var(--border-strong)); color: var(--text); background: color-mix(in srgb, var(--calendar-color, var(--accent)) 18%, var(--raised)); }
+.slot-day-title { font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+.slot-day-meta { overflow: hidden; color: var(--secondary); text-overflow: ellipsis; white-space: nowrap; }
+.slot-day-detail { color: var(--secondary); overflow-wrap: anywhere; }
+.slot-day-proposed { border: 1px dashed var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.slot-day-proposed .slot-day-title { color: var(--accent); }
+.slot-day-break { margin-inline-start: var(--space-2); padding: var(--space-0-5) var(--space-2); border-inline-start: 1px dashed var(--border-strong); color: var(--muted); font-size: var(--text-meta); font-style: italic; }
+.slot-day-break-tight { border-inline-start-color: var(--warning); color: var(--warning); font-style: normal; }
 .meeting-scheduler-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1-5); }
 .meeting-scheduler-error p { margin: 0 0 var(--space-1); color: var(--text); }
 .meeting-scheduler-note { margin: 0; color: var(--muted); font-size: var(--text-meta); }
@@ -1653,7 +1661,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-scheduler-range p { flex: 1; min-width: 0; margin: 0; text-align: center; }
 .meeting-scheduler-length { height: var(--control-h-xs); padding-inline: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--surface); font: inherit; font-size: var(--text-control); cursor: pointer; }
 .meeting-scheduler-adjust { display: grid; gap: var(--space-1-5); }
-.meeting-scheduler-hours { display: flex; }
+.meeting-scheduler-when { display: flex; align-items: center; gap: var(--space-1-5); }
+.meeting-scheduler-when .meeting-scheduler-length { flex: none; height: auto; align-self: stretch; }
+.meeting-scheduler-hours { display: flex; flex: 1; min-width: 0; }
 .meeting-scheduler-hours .segment { flex: 1; }
 .find-times-reason { margin: 0 0 var(--space-1-5); color: var(--text); font-size: var(--text-meta); }
 .find-times-reason .btn-link, .compose-availability .context-status .btn-link { font-size: inherit; }
@@ -1694,6 +1704,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .proposal-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
 .proposal-detail { display: flex; align-items: flex-start; gap: var(--space-1); }
 .proposal-detail svg { flex-shrink: 0; margin-top: var(--space-0-5); }
+/* Places and join links read as the app's links, like Edit, not the browser's default blue. */
+.proposal-detail a { color: var(--accent); text-decoration: none; }
+.proposal-detail a:hover { text-decoration: underline; }
 /* A suggestion card already frames its scheduler; a rule separates them instead of a second box. */
 .action-proposal-card .meeting-scheduler { margin-top: 0; padding: var(--space-2) 0 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: none; }
 .more-actions { position: relative; }

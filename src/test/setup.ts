@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
+import { clearAvailabilityCache } from "../availabilityCache";
 
 // The full App mounts lazily and does a lot on first render; on a busy CI
 // runner its first screen can take longer than Testing Library's 1 s default
@@ -14,6 +15,8 @@ configure({ asyncUtilTimeout: 5_000 });
 // conversations where they were left, so each test starts at the latest message.
 afterEach(() => {
   cleanup();
+  // Found times are kept between cards; each test finds its own.
+  clearAvailabilityCache();
   localStorage.removeItem("threestrands.workspace.last");
   localStorage.removeItem("threestrands.workspace.sideColumn");
   localStorage.removeItem("threestrands.readingPositions");
