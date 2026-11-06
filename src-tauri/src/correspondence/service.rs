@@ -197,6 +197,19 @@ impl Correspondence {
             .await
             .is_some_and(|auth| auth.available())
     }
+    /// Learns the primary account's address only while it is unknown: a
+    /// pre-upgrade install, or a connect that never finished. An account's
+    /// address doesn't change, so asking the server on every refresh only
+    /// spends quota.
+    pub async fn refresh_identity_if_unknown(&self) -> Result<(), String> {
+        let Some(auth) = self.primary_auth().await else {
+            return Ok(());
+        };
+        if identity_known(&auth.key(), self.database.compose_identity().is_ok()) {
+            return Ok(());
+        }
+        self.refresh_identity().await.map(|_| ())
+    }
     pub async fn refresh_identity(&self) -> Result<String, String> {
         let auth = self
             .primary_auth()
@@ -1182,5 +1195,24 @@ impl Correspondence {
             let delay = if self.tick().await.is_ok() { 2 } else { 30 };
             tokio::time::sleep(Duration::from_secs(delay)).await;
         }
+    }
+}
+
+/// Whether the primary account's address is already established: its key is
+/// a real address and a sending identity has been recorded.
+fn identity_known(key: &str, has_compose_identity: bool) -> bool {
+    !crate::auth::is_placeholder_key(key) && has_compose_identity
+}
+
+#[cfg(test)]
+mod identity_refresh_tests {
+    use super::identity_known;
+
+    #[test]
+    fn the_address_is_learned_only_while_unknown() {
+        assert!(identity_known("you@example.com", true));
+        assert!(!identity_known("default", true), "a pre-upgrade install");
+        assert!(!identity_known("pending", true), "a connect that never finished");
+        assert!(!identity_known("you@example.com", false), "no sending identity yet");
     }
 }

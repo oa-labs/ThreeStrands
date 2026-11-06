@@ -286,7 +286,12 @@ export interface MailClient extends CorrespondenceClient {
   pinContact(accountId: string, email: string, displayName: string | null): Promise<void>;
   unpinContact(accountId: string, email: string): Promise<void>;
   unsubscribe(messageId: string): Promise<UnsubscribeResult>;
-  sync(): Promise<SyncStatus>;
+  /**
+   * Syncs every connected account. A `catchUp` (the window coming back to
+   * the front) skips accounts synced moments ago or backing off after the
+   * server refused a sync; without it, every account syncs.
+   */
+  sync(options?: { catchUp?: boolean }): Promise<SyncStatus>;
   flushPending(): Promise<SyncStatus>;
   syncStatus(): Promise<SyncStatus>;
   /** Accounts checking their provider for mail right now; `mail-sync-activity` events report changes. */
@@ -512,7 +517,7 @@ const tauriClient: MailClient = {
   pinContact: (accountId, email, displayName) => complete("pin_contact", { accountId, email, displayName }),
   unpinContact: (accountId, email) => complete("unpin_contact", { accountId, email }),
   unsubscribe: (messageId) => complete("unsubscribe", { messageId }),
-  sync: () => complete("sync_account"),
+  sync: (options) => complete("sync_account", { catchUp: options?.catchUp ?? false }),
   flushPending: () => complete("flush_pending_mutations"),
   syncStatus: () => read("sync_status"),
   mailSyncActivity: () => read("mail_sync_activity"),

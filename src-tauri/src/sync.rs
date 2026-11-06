@@ -159,10 +159,11 @@ pub struct SyncService {
     /// by every clone, so it reaches runs started outside the polling loop.
     retired: Arc<watch::Sender<bool>>,
     last_attempt: Arc<StdMutex<Option<Instant>>>,
+    /// Until when catch-ups leave the account alone, because the server
+    /// refused its last sync with a rate limit or server error. Matches the
+    /// polling loop's backoff for that failure.
+    backoff_until: Arc<StdMutex<Option<Instant>>>,
     activity: SyncActivity,
-    /// Signalled when the user returns to the app; see
-    /// [`Self::reset_poll_backoff`].
-    wake: Arc<Notify>,
     foreground: Arc<watch::Sender<bool>>,
     inbox_changed: Arc<Notify>,
 }
@@ -186,8 +187,8 @@ impl SyncService {
             gate: Arc::new(Mutex::new(())),
             retired: Arc::new(watch::Sender::new(false)),
             last_attempt: Arc::new(StdMutex::new(None)),
+            backoff_until: Arc::new(StdMutex::new(None)),
             activity: SyncActivity::default(),
-            wake: Arc::new(Notify::new()),
             foreground: Arc::new(watch::Sender::new(false)),
             inbox_changed: Arc::new(Notify::new()),
         }
@@ -197,14 +198,6 @@ impl SyncService {
     pub fn with_activity(mut self, activity: SyncActivity) -> Self {
         self.activity = activity;
         self
-    }
-
-    /// Brings an idle account's polling back to [`MIN_POLL_INTERVAL`] when
-    /// the user returns, instead of leaving the next check up to
-    /// [`MAX_POLL_INTERVAL`] away. A signal sent while a poll is running is
-    /// kept for the next wait.
-    pub fn reset_poll_backoff(&self) {
-        self.wake.notify_one();
     }
 
     /// Window focus controls polling cadence for every connected account.
@@ -296,6 +289,7 @@ impl SyncService {
         if let Ok(mut last_attempt) = self.last_attempt.lock() {
             *last_attempt = Some(Instant::now());
         }
+        self.record_backoff(&result, Instant::now());
         let changed = match result {
             Ok(changed) => changed,
             Err(error) => {
@@ -313,14 +307,35 @@ impl SyncService {
         Ok((status, changed))
     }
 
-    /// Incremental catch-up for OS resume / window focus. Skips if polling
-    /// or another catch-up already ran within [`MIN_POLL_INTERVAL`].
+    /// Incremental catch-up for the user returning to the app. Skips if
+    /// polling or another catch-up already ran within [`MIN_POLL_INTERVAL`],
+    /// or while the server is still owed the backoff from a refused sync:
+    /// returning to the window is no reason to ask a rate-limited server
+    /// again sooner.
     pub async fn sync_if_stale(&self) -> Result<SyncStatus, String> {
+        let now = Instant::now();
         let last_attempt = self.last_attempt.lock().ok().and_then(|guard| *guard);
-        if should_skip_stale_sync(last_attempt, Instant::now(), MIN_POLL_INTERVAL) {
+        if should_skip_stale_sync(last_attempt, now, MIN_POLL_INTERVAL) || self.backing_off(now) {
             return Ok(self.database.sync_status(&self.account_id())?);
         }
         self.sync().await
+    }
+
+    /// A rate-limited or failing server is left alone by catch-ups for the
+    /// polling loop's backoff; any other outcome ends the backoff.
+    fn record_backoff<T>(&self, result: &ProviderResult<T>, now: Instant) {
+        if let Ok(mut backoff_until) = self.backoff_until.lock() {
+            *backoff_until = matches!(result, Err(ProviderError::RetryableServer(_)))
+                .then(|| now + MAX_POLL_INTERVAL);
+        }
+    }
+
+    fn backing_off(&self, now: Instant) -> bool {
+        self.backoff_until
+            .lock()
+            .ok()
+            .and_then(|guard| *guard)
+            .is_some_and(|until| now < until)
     }
 
     pub async fn flush_pending(&self) -> Result<SyncStatus, String> {
@@ -493,7 +508,7 @@ impl SyncService {
             // same outage and retrying in lockstep; `next_poll_delay` itself
             // stays deterministic so its unit tests aren't flaky.
             let jitter = Duration::from_millis(rand::rng().random_range(0..250));
-            delay = wait_for_next_poll(&self.wake, &self.foreground, &self.inbox_changed, allow_notifications, delay, jitter).await;
+            delay = wait_for_next_poll(&self.foreground, &self.inbox_changed, allow_notifications, delay, jitter).await;
             if !self.auth.available() {
                 delay = AUTH_UNAVAILABLE_RETRY_INTERVAL;
                 allow_notifications = false;
@@ -612,15 +627,15 @@ where
     }
 }
 
-/// Sleeps out `delay` (plus `jitter`) before the next poll. A wake signal
-/// means the user is back: the delay drops to [`MIN_POLL_INTERVAL`] and the
-/// poll comes no later than that floor from the signal. Returns the delay
-/// the next backoff step grows from.
+/// Sleeps out `delay` (plus `jitter`) before the next poll. Coming to the
+/// foreground brings the poll to within [`ACTIVE_POLL_INTERVAL`], and an
+/// inbox notification to within [`MAIL_CHANGE_DEBOUNCE`], but only after a
+/// successful poll: neither bypasses a failed poll's retry or rate-limit
+/// backoff. Returns the delay the next backoff step grows from.
 async fn wait_for_next_poll(
-    wake: &Notify,
     foreground: &watch::Sender<bool>,
     inbox_changed: &Notify,
-    allow_notifications: bool,
+    last_poll_succeeded: bool,
     mut delay: Duration,
     jitter: Duration,
 ) -> Duration {
@@ -629,31 +644,17 @@ async fn wait_for_next_poll(
     loop {
         tokio::select! {
             _ = tokio::time::sleep_until(deadline) => return delay,
-            // Notifications must not bypass a failed poll's retry/rate-limit backoff.
-            _ = inbox_changed.notified(), if allow_notifications => {
+            _ = inbox_changed.notified(), if last_poll_succeeded => {
                 deadline = deadline.min(tokio::time::Instant::now() + MAIL_CHANGE_DEBOUNCE + jitter);
             }
             changed = foreground.changed() => {
-                if changed.is_ok() && *foreground.borrow_and_update() {
+                if changed.is_ok() && *foreground.borrow_and_update() && last_poll_succeeded {
                     delay = ACTIVE_POLL_INTERVAL;
                     deadline = deadline.min(tokio::time::Instant::now() + ACTIVE_POLL_INTERVAL + jitter);
                 }
             }
-            _ = wake.notified() => {
-                delay = MIN_POLL_INTERVAL;
-                deadline = woken_poll_deadline(deadline, tokio::time::Instant::now(), jitter);
-            }
         }
     }
-}
-
-/// A wake signal only ever brings the next poll closer.
-fn woken_poll_deadline(
-    deadline: tokio::time::Instant,
-    now: tokio::time::Instant,
-    jitter: Duration,
-) -> tokio::time::Instant {
-    deadline.min(now + MIN_POLL_INTERVAL + jitter)
 }
 
 fn next_poll_delay(
@@ -719,7 +720,12 @@ pub async fn sync_with(
         match provider.refresh_sending_identities(account_id).await {
             Ok(Some(identities)) => identities_changed = database.store_gmail_sending_identities(account_id, &identities, crate::clock::unix_millis()).map_err(database_provider_error)?,
             Ok(None) => {},
-            Err(error) => log::warn!("Sending address refresh for {account_id}: {error}"),
+            Err(error) => {
+                log::warn!("Sending address refresh for {account_id}: {error}");
+                database
+                    .record_gmail_identities_refresh_failure(account_id, crate::clock::unix_millis())
+                    .map_err(database_provider_error)?;
+            }
         }
     }
     let result = sync_active_with(database, account_id, provider).await.map(|changed| changed || identities_changed);
@@ -1749,59 +1755,62 @@ mod tests {
         assert!(events.lock().unwrap().is_empty());
     }
 
-    async fn background_poll_wait(wake: &Notify, delay: Duration, jitter: Duration) -> Duration {
-        wait_for_next_poll(wake, &watch::Sender::new(false), &Notify::new(), true, delay, jitter).await
-    }
-
     #[tokio::test(start_paused = true)]
-    async fn an_unwoken_wait_sleeps_out_the_backed_off_delay() {
-        let wake = Notify::new();
+    async fn an_undisturbed_wait_sleeps_out_the_backed_off_delay() {
         let started = tokio::time::Instant::now();
 
-        let delay = background_poll_wait(&wake, MAX_POLL_INTERVAL, Duration::ZERO).await;
+        let delay = wait_for_next_poll(&watch::Sender::new(false), &Notify::new(), true, MAX_POLL_INTERVAL, Duration::ZERO).await;
 
         assert_eq!(delay, MAX_POLL_INTERVAL);
         assert_eq!(started.elapsed(), MAX_POLL_INTERVAL);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn waking_a_backed_off_wait_polls_within_the_floor_and_resets_backoff() {
-        let wake = Arc::new(Notify::new());
+    async fn foregrounding_does_not_shorten_a_failed_polls_backoff() {
+        let foreground = Arc::new(watch::Sender::new(false));
         let started = tokio::time::Instant::now();
         let waiter = tokio::spawn({
-            let wake = Arc::clone(&wake);
-            async move { background_poll_wait(&wake, MAX_POLL_INTERVAL, Duration::ZERO).await }
+            let foreground = foreground.clone();
+            async move { wait_for_next_poll(&foreground, &Notify::new(), false, MAX_POLL_INTERVAL, Duration::ZERO).await }
         });
         tokio::time::sleep(Duration::from_secs(60)).await;
-
-        wake.notify_one();
-
-        assert_eq!(waiter.await.unwrap(), MIN_POLL_INTERVAL);
-        assert_eq!(started.elapsed(), Duration::from_secs(60) + MIN_POLL_INTERVAL);
+        foreground.send_replace(true);
+        assert_eq!(waiter.await.unwrap(), MAX_POLL_INTERVAL);
+        assert_eq!(started.elapsed(), MAX_POLL_INTERVAL);
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn a_wake_sent_during_a_poll_applies_to_the_next_wait() {
-        let wake = Notify::new();
-        wake.notify_one();
-        let started = tokio::time::Instant::now();
+    #[tokio::test]
+    async fn a_catch_up_leaves_a_rate_limited_account_alone_until_its_backoff_ends() {
+        let service = offline_service();
+        let account = service.account_id();
+        // A paused account syncs without contacting the provider, so an
+        // attempt shows only as the recorded attempt time.
+        service.database.adopt_account(&account).unwrap();
+        service.database.mark_account_needs_reauth(&account, "revoked").unwrap();
+        let attempted = || service.last_attempt.lock().unwrap().is_some();
 
-        let delay = background_poll_wait(&wake, MAX_POLL_INTERVAL, Duration::ZERO).await;
+        let refused: ProviderResult<()> = Err(ProviderError::RetryableServer("403 Forbidden: Quota exceeded".into()));
+        service.record_backoff(&refused, Instant::now());
+        service.sync_if_stale().await.unwrap();
+        assert!(!attempted(), "returning to the window doesn't ask a rate-limited server again");
 
-        assert_eq!(delay, MIN_POLL_INTERVAL);
-        assert_eq!(started.elapsed(), MIN_POLL_INTERVAL);
+        // The backoff has run out.
+        service.record_backoff(&refused, Instant::now() - MAX_POLL_INTERVAL);
+        service.sync_if_stale().await.unwrap();
+        assert!(attempted());
     }
 
     #[test]
-    fn a_wake_never_postpones_a_poll_that_was_already_closer() {
-        let now = tokio::time::Instant::now();
-        let soon = now + Duration::from_secs(3);
-        assert_eq!(woken_poll_deadline(soon, now, Duration::ZERO), soon);
-        let jitter = Duration::from_millis(100);
-        assert_eq!(
-            woken_poll_deadline(now + MAX_POLL_INTERVAL, now, jitter),
-            now + MIN_POLL_INTERVAL + jitter
-        );
+    fn only_a_refused_sync_backs_off_catch_ups() {
+        let service = offline_service();
+        let now = Instant::now();
+        service.record_backoff(&ProviderResult::<()>::Err(ProviderError::RetryableServer("503".into())), now);
+        assert!(service.backing_off(now + MAX_POLL_INTERVAL - Duration::from_secs(1)));
+        assert!(!service.backing_off(now + MAX_POLL_INTERVAL));
+        service.record_backoff(&ProviderResult::<()>::Ok(()), now);
+        assert!(!service.backing_off(now));
+        service.record_backoff(&ProviderResult::<()>::Err(ProviderError::TransientTransport("offline".into())), now);
+        assert!(!service.backing_off(now));
     }
 
     #[test]
@@ -1851,7 +1860,7 @@ mod tests {
         let started = tokio::time::Instant::now();
         let waiter = tokio::spawn({
             let foreground = foreground.clone();
-            async move { wait_for_next_poll(&Notify::new(), &foreground, &Notify::new(), true, MAX_POLL_INTERVAL, Duration::ZERO).await }
+            async move { wait_for_next_poll(&foreground, &Notify::new(), true, MAX_POLL_INTERVAL, Duration::ZERO).await }
         });
         tokio::time::sleep(Duration::from_secs(60)).await;
         foreground.send_replace(true);
@@ -1862,7 +1871,7 @@ mod tests {
         let started = tokio::time::Instant::now();
         let waiter = tokio::spawn({
             let foreground = foreground.clone();
-            async move { wait_for_next_poll(&Notify::new(), &foreground, &Notify::new(), true, ACTIVE_POLL_INTERVAL, Duration::ZERO).await }
+            async move { wait_for_next_poll(&foreground, &Notify::new(), true, ACTIVE_POLL_INTERVAL, Duration::ZERO).await }
         });
         tokio::time::sleep(Duration::from_secs(5)).await;
         foreground.send_replace(false);
@@ -1876,7 +1885,7 @@ mod tests {
         let started = tokio::time::Instant::now();
         let waiter = tokio::spawn({
             let changes = changes.clone();
-            async move { wait_for_next_poll(&Notify::new(), &watch::Sender::new(false), &changes, true, MAX_POLL_INTERVAL, Duration::ZERO).await }
+            async move { wait_for_next_poll(&watch::Sender::new(false), &changes, true, MAX_POLL_INTERVAL, Duration::ZERO).await }
         });
         tokio::time::sleep(Duration::from_secs(60)).await;
         for _ in 0..20 { changes.notify_one(); }
@@ -1889,7 +1898,7 @@ mod tests {
         let changes = Notify::new();
         changes.notify_one();
         let started = tokio::time::Instant::now();
-        wait_for_next_poll(&Notify::new(), &watch::Sender::new(true), &changes, false, MAX_POLL_INTERVAL, Duration::ZERO).await;
+        wait_for_next_poll(&watch::Sender::new(true), &changes, false, MAX_POLL_INTERVAL, Duration::ZERO).await;
         assert_eq!(started.elapsed(), MAX_POLL_INTERVAL);
     }
 

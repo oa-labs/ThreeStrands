@@ -41,9 +41,9 @@ export function useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTa
     dismissProblems: async () => setSyncStatus(await mailClient.dismissSyncProblems()),
     dismissRecovery: () => setRecoveryStatus(null),
   }), [setSyncStatus]);
-  const refreshMail = useCallback(() => {
+  const runRefresh = useCallback((catchUp: boolean) => {
     setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
-    void mailClient.sync()
+    void mailClient.sync({ catchUp })
       .then((status) => {
         setSyncStatus(status);
       })
@@ -62,9 +62,12 @@ export function useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTa
         void refreshTaskIndicators();
       });
   }, [loadThreadsRef, query, refreshTaskIndicators, setSyncStatus]);
+  // Refresh is the user asking: every account syncs.
+  const refreshMail = useCallback(() => runRefresh(false), [runRefresh]);
 
-  const refreshMailRef = useRef(refreshMail);
-  refreshMailRef.current = refreshMail;
+  // Returning to the window only catches up; see `MailClient.sync`.
+  const catchUpRef = useRef(runRefresh);
+  catchUpRef.current = runRefresh;
 
   useEffect(() => {
     let timer = 0;
@@ -76,7 +79,7 @@ export function useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTa
       }, 150);
     };
     const catchUp = createForegroundRefreshController(() => {
-      refreshMailRef.current();
+      catchUpRef.current(true);
     });
     const onVisibility = () => {
       if (document.visibilityState === "hidden") {

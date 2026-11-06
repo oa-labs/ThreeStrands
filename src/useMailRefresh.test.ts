@@ -38,7 +38,16 @@ describe("foreground mail refresh", () => {
       await vi.advanceTimersByTimeAsync(FOREGROUND_DEBOUNCE_MS);
     });
 
-    expect(sync).toHaveBeenCalled();
+    expect(sync).toHaveBeenCalledWith({ catchUp: true });
+  });
+
+  it("syncs every account when the user asks to refresh", async () => {
+    const sync = vi.spyOn(mailClient, "sync");
+    const { result } = renderRefresh();
+
+    act(() => result.current.refreshMail());
+
+    expect(sync).toHaveBeenCalledWith({ catchUp: false });
   });
 
   it("does not sync on a brief focus flicker", async () => {

@@ -42,6 +42,11 @@ const OAUTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 /// by the real address the moment it's learned, via `OAuthCredential::rekey_to`.
 pub(crate) const LEGACY_KEY: &str = "default";
 const PENDING_KEY: &str = "pending";
+
+/// Whether `key` is a placeholder for an account whose address isn't known yet.
+pub(crate) fn is_placeholder_key(key: &str) -> bool {
+    key == LEGACY_KEY || key == PENDING_KEY
+}
 /// Returned when a newer sign-in attempt superseded this one.
 const CANCELED: &str = "Sign-in was canceled by a newer attempt.";
 

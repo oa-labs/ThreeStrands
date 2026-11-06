@@ -881,19 +881,16 @@ fn update_mail_foreground(handle: &tauri::AppHandle) {
     });
 }
 
+/// Catches up replicated settings when the window comes to the front. Mail
+/// catches up through the window's own refresh (`sync_account` with
+/// `catch_up`), once per account, so it isn't also synced from here.
 fn spawn_foreground_sync(handle: &tauri::AppHandle) {
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
         if let Some(state) = handle.try_state::<AppState>() {
-            for service in sync_services(&state, None).await {
-                service.reset_poll_backoff();
-            }
             let engine = state.replicated_sync.clone();
             log_failure("foreground replicated sync", engine.sync_once().await);
             reconcile_account_registry(&handle);
-        }
-        if let Some(service) = primary_service(&handle).await {
-            log_failure("foreground mail sync", service.sync_if_stale().await);
         }
     });
 }
@@ -1088,7 +1085,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let worker = correspondence.clone();
     tauri::async_runtime::spawn(async move {
         if worker.is_connected().await {
-            log_failure("refreshing account identity", worker.refresh_identity().await);
+            log_failure("refreshing account identity", worker.refresh_identity_if_unknown().await);
         }
         worker.run().await;
     });

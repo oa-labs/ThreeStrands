@@ -6,6 +6,12 @@ use rusqlite::{params, OptionalExtension};
 
 pub(crate) const REFRESH_INTERVAL_MS: i64 = 15 * 60 * 1000;
 
+/// The wait after `failures` failed refreshes in a row: two minutes,
+/// doubling, up to the ordinary refresh interval.
+fn failed_refresh_backoff_ms(failures: u32) -> i64 {
+    (60_000_i64 << failures.min(8)).min(REFRESH_INTERVAL_MS)
+}
+
 pub(super) fn cached_gmail_identities(
     connection: &rusqlite::Connection,
     account: &str,
@@ -31,7 +37,21 @@ pub(super) fn cached_gmail_identities(
 }
 
 impl Database {
+    /// Whether to ask Gmail for `account`'s sending addresses at `at`: when
+    /// none are cached or the cache is old, unless a recent refresh failed,
+    /// in which case the next try backs off instead of repeating every sync.
     pub(crate) fn gmail_identities_refresh_due(&self, account: &str, at: i64) -> DbResult<bool> {
+        let failed = self
+            .gmail_identity_refresh_failures
+            .lock()
+            .map_err(|_| DatabaseError::ConnectionPoisoned)?
+            .get(account)
+            .copied();
+        if let Some((failed_at, failures)) = failed {
+            if (0..failed_refresh_backoff_ms(failures)).contains(&at.saturating_sub(failed_at)) {
+                return Ok(false);
+            }
+        }
         self.with_connection(|connection| {
             let last: Option<i64> = connection
                 .query_row(
@@ -45,6 +65,17 @@ impl Database {
             }
             Ok(last.is_none_or(|last| at < last || at.saturating_sub(last) >= REFRESH_INTERVAL_MS))
         })
+    }
+
+    /// Notes that refreshing `account`'s sending addresses failed at `at`.
+    pub(crate) fn record_gmail_identities_refresh_failure(&self, account: &str, at: i64) -> DbResult<()> {
+        let mut failures = self
+            .gmail_identity_refresh_failures
+            .lock()
+            .map_err(|_| DatabaseError::ConnectionPoisoned)?;
+        let entry = failures.entry(account.to_string()).or_insert((at, 0));
+        *entry = (at, entry.1.saturating_add(1));
+        Ok(())
     }
 
     pub(crate) fn store_gmail_sending_identities(
@@ -91,6 +122,11 @@ impl Database {
                 ON CONFLICT(account_id) DO UPDATE SET identities_json=excluded.identities_json, refreshed_at=excluded.refreshed_at",
                 params![account, serde_json::to_string(identities).map_err(serialization_error)?, at])?;
             Ok(before.as_deref()!=Some(identities))
+        })
+        .inspect(|_| {
+            if let Ok(mut failures) = self.gmail_identity_refresh_failures.lock() {
+                failures.remove(account);
+            }
         })
     }
 }

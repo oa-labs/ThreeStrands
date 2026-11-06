@@ -132,6 +132,10 @@ pub struct Database {
     /// thread while a projection is in progress must still be recorded. See
     /// `replicated_sync.rs`.
     pub(crate) replicated_sync_projecting: Mutex<HashMap<ThreadId, usize>>,
+    /// Per account, when its Gmail sending addresses last failed to refresh
+    /// and how many times in a row. Kept in memory: a restart may simply try
+    /// again.
+    pub(crate) gmail_identity_refresh_failures: Mutex<HashMap<String, (i64, u32)>>,
 }
 
 impl Database {

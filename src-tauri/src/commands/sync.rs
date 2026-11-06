@@ -47,11 +47,18 @@ pub(crate) fn recovery_status(state: State<'_, AppState>) -> Option<db::Recovery
 }
 
 #[tauri::command]
-pub(crate) async fn sync_account(state: State<'_, AppState>) -> AppResult<SyncStatus> {
+pub(crate) async fn sync_account(
+    state: State<'_, AppState>,
+    catch_up: Option<bool>,
+) -> AppResult<SyncStatus> {
     log_failure(
         "refreshing account identity",
-        state.correspondence.refresh_identity().await,
+        state.correspondence.refresh_identity_if_unknown().await,
     );
+    // A catch-up (the user returning to the window) skips an account synced
+    // moments ago or still backing off from a refused sync. Refresh always
+    // syncs; the account's Gmail quota budget still holds it to any pause.
+    let catch_up = catch_up.unwrap_or(false);
     let services = {
         let accounts = state.accounts.lock().await;
         accounts
@@ -71,7 +78,10 @@ pub(crate) async fn sync_account(state: State<'_, AppState>) -> AppResult<SyncSt
     // full sync of one imported mailbox does not delay every other mailbox.
     let mut tasks = tokio::task::JoinSet::new();
     for (email, service) in services {
-        tasks.spawn(async move { (email, service.sync().await) });
+        tasks.spawn(async move {
+            let result = if catch_up { service.sync_if_stale().await } else { service.sync().await };
+            (email, result)
+        });
     }
     let mut task_errors = Vec::new();
     while let Some(result) = tasks.join_next().await {
