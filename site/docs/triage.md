@@ -123,6 +123,18 @@ Risky attachments, including programs, macro-enabled Office files, disk images, 
 
 ## Mark as Read {#mark-as-read}
 
-Open **Settings → Reading & Triage** to choose how many seconds after opening a conversation it is marked read. Set the delay to 0 for immediate marking.
+Open **Settings → Reading & Triage** and choose **Mark Read After Opening**:
 
-Turn on **When Archiving a Conversation** to mark conversations read as you archive them, including bulk actions and conversations you have not opened. This option is off by default. Undo restores the conversation's previous read status. These preferences travel with encrypted settings transfer and portable preference sync.
+- **Immediately** marks a conversation read as soon as you open it.
+- **After a Delay** waits the number of seconds you choose, up to 60. If you move to another conversation sooner, the first one stays unread.
+- **Never** leaves conversations unread until you mark them read with <kbd>u</kbd>.
+
+Turn on **Mark Read When Archiving**, **Mark Read When Moving to Trash**, or **Mark Read When Snoozing** to mark conversations read as you handle them, including bulk actions and conversations you have not opened. These options are off by default, and Undo restores each conversation's earlier read status.
+
+## What Opens Next {#what-opens-next}
+
+**After Archiving or Moving to Trash** chooses what replaces the conversation you just handled: **Open Next Older** (the default, the one below it in the list), **Open Next Newer** (the one above), or **Return to List**. Marking spam follows the same choice.
+
+Turn on **Return Snoozed Conversations as Unread** to have snoozed conversations come back to the Inbox marked unread, even if you had read them before snoozing.
+
+These preferences travel with encrypted settings transfer and portable preference sync.

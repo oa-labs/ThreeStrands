@@ -78,7 +78,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "defaultApps", label: "Default Apps", group: "General", description: "Open email links and calendar invitations in ThreeStrands.", keywords: "mailto default email reader mail client ics calendar invitation handler macos windows linux", icon: AppWindow },
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail imap smtp sender name color reconnect disconnect", icon: Mail },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
-  { id: "reading", label: "Reading & Triage", group: "Workflow", description: "Choose when conversations are marked read.", keywords: "mark read unread delay timer archive archiving conversation", icon: Inbox, autosaves: true },
+  { id: "reading", label: "Reading & Triage", group: "Workflow", description: "Choose when conversations are marked read and what opens next as you triage.", keywords: "mark read unread delay timer never manually archive archiving trash delete snooze return next older newer advance conversation", icon: Inbox, autosaves: true },
   { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern", icon: Inbox },
   { id: "mutedSenders", label: "Muted Senders", group: "Workflow", description: "Review senders whose new mail skips the Inbox.", keywords: "mute muted sender newsletter archive automatically skip inbox unmute rule", icon: BellOff },
   { id: "signatures", label: "Signatures", group: "Workflow", description: "Create signatures and choose defaults for each sending address.", keywords: "signature sign-off logo alias footer compose", icon: Signature },
@@ -266,6 +266,16 @@ export function Settings({
             <ReadingSettings
               markReadOnArchive={preferences.markReadOnArchive}
               onMarkReadOnArchiveChange={preferences.setMarkReadOnArchive}
+              markReadOnOpen={preferences.markReadOnOpen}
+              onMarkReadOnOpenChange={preferences.setMarkReadOnOpen}
+              markReadOnTrash={preferences.markReadOnTrash}
+              onMarkReadOnTrashChange={preferences.setMarkReadOnTrash}
+              markReadOnSnooze={preferences.markReadOnSnooze}
+              onMarkReadOnSnoozeChange={preferences.setMarkReadOnSnooze}
+              snoozeReturnsUnread={preferences.snoozeReturnsUnread}
+              onSnoozeReturnsUnreadChange={preferences.setSnoozeReturnsUnread}
+              afterTriage={preferences.afterTriage}
+              onAfterTriageChange={preferences.setAfterTriage}
               autoReadDelaySeconds={preferences.autoReadDelaySeconds}
               onAutoReadDelayChange={preferences.setAutoReadDelaySeconds}
             />

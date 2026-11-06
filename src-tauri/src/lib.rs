@@ -1556,6 +1556,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::settings::cancel_settings_import,
         commands::settings::get_retention_days,
         commands::settings::set_retention_days,
+        commands::settings::set_snooze_returns_unread,
         // Split inboxes, snippets, and labels
         commands::settings::list_split_inboxes,
         commands::settings::create_split_inbox,

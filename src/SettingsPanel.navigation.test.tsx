@@ -123,10 +123,10 @@ describe("settings section navigation", () => {
     expect(within(dialog).getByText("Accounts")).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
     expect(within(dialog).getByText("Changes save automatically")).toBeInTheDocument();
-    expect(within(dialog).queryByRole("spinbutton", { name: "Auto-Read Delay" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("spinbutton", { name: "Mark Read Delay in Seconds" })).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Reading & Triage" }));
-    expect(within(dialog).getByRole("spinbutton", { name: "Auto-Read Delay" })).toBeInTheDocument();
-    const archive = within(dialog).getByRole("checkbox", { name: "When Archiving a Conversation" });
+    expect(within(dialog).getByRole("spinbutton", { name: "Mark Read Delay in Seconds" })).toBeInTheDocument();
+    const archive = within(dialog).getByRole("checkbox", { name: "Mark Read When Archiving" });
     expect(archive).not.toBeChecked();
     expect(archive).toHaveAccessibleDescription();
     fireEvent.click(archive);

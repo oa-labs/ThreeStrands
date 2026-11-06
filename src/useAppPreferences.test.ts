@@ -3,17 +3,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readAvailabilityPreferences, saveAvailabilityPreferences, SYSTEM_FONT_STACK } from "./settings";
 import { useAppPreferences } from "./useAppPreferences";
 
-const { listenMock, pullMock } = vi.hoisted(() => ({
+const { listenMock, pullMock, invokeMock } = vi.hoisted(() => ({
   listenMock: vi.fn(async () => () => {}),
   pullMock: vi.fn(async () => true),
+  invokeMock: vi.fn(async () => undefined),
 }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("./syncedPreferences", () => ({ pullSyncedPreferences: pullMock, queuePortablePreferences: vi.fn() }));
 
 afterEach(() => {
   delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   listenMock.mockClear();
   pullMock.mockClear();
+  invokeMock.mockClear();
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
   document.documentElement.removeAttribute("data-accent");
@@ -34,6 +37,11 @@ describe("useAppPreferences", () => {
     act(() => result.current.setEmailZoom(125));
     act(() => result.current.setAutoReadDelaySeconds(10));
     act(() => result.current.setMarkReadOnArchive(true));
+    expect(result.current.markReadOnOpen).toBe(true);
+    act(() => result.current.setMarkReadOnOpen(false));
+    act(() => result.current.setMarkReadOnTrash(true));
+    act(() => result.current.setMarkReadOnSnooze(true));
+    act(() => result.current.setAfterTriage("newer"));
     act(() => result.current.setLoadRemoteImages(true));
 
     expect(result.current.theme).toBe("dark");
@@ -47,6 +55,12 @@ describe("useAppPreferences", () => {
     expect(result.current.autoReadDelaySeconds).toBe(10);
     expect(result.current.markReadOnArchive).toBe(true);
     expect(localStorage.getItem("threestrands.settings.markReadOnArchive")).toBe("true");
+    expect(result.current.markReadOnOpen).toBe(false);
+    expect(localStorage.getItem("threestrands.settings.markReadOnOpen")).toBe("false");
+    expect(result.current.markReadOnTrash).toBe(true);
+    expect(result.current.markReadOnSnooze).toBe(true);
+    expect(result.current.afterTriage).toBe("newer");
+    expect(localStorage.getItem("threestrands.settings.afterTriage")).toBe("newer");
     expect(result.current.loadRemoteImages).toBe(true);
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.dataset.accent).toBe("green");
@@ -73,6 +87,22 @@ describe("useAppPreferences", () => {
     await act(async () => { onSyncStatus(); await Promise.resolve(); });
     expect(result.current.availabilityPreferences).not.toBe(before);
     expect(result.current.availabilityPreferences.defaultDurationMinutes).toBe(before.defaultDurationMinutes + 15);
+  });
+
+  it("mirrors the snooze return choice to the native snooze loop on start and on change", async () => {
+    (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    localStorage.setItem("threestrands.settings.snoozeReturnsUnread", "true");
+    const { result } = renderHook(() => useAppPreferences());
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_snooze_returns_unread", { value: true }));
+    act(() => result.current.setSnoozeReturnsUnread(false));
+    await waitFor(() => expect(invokeMock).toHaveBeenLastCalledWith("set_snooze_returns_unread", { value: false }));
+    expect(localStorage.getItem("threestrands.settings.snoozeReturnsUnread")).toBe("false");
+  });
+
+  it("does not call native commands outside the desktop app", () => {
+    const { result } = renderHook(() => useAppPreferences());
+    act(() => result.current.setSnoozeReturnsUnread(true));
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("gives each account its profile's preferences, the same object until settings change", () => {

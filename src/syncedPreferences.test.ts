@@ -71,6 +71,7 @@ describe("synced preferences data boundary", () => {
 
     const preferences = queuedPreferences();
     expect(Object.keys(preferences).sort()).toEqual([
+      "afterTriage",
       "aiEndpoint",
       "aiFastModel",
       "aiFeatures",
@@ -82,7 +83,11 @@ describe("synced preferences data boundary", () => {
       "calendarColors",
       "loadRemoteImages",
       "markReadOnArchive",
+      "markReadOnOpen",
+      "markReadOnSnooze",
+      "markReadOnTrash",
       "showStarredInbox",
+      "snoozeReturnsUnread",
       "writingProfiles",
     ]);
     const serialized = JSON.stringify(preferences);

@@ -104,8 +104,8 @@ describe("settings import navigation", () => {
       "true",
     );
     fireEvent.click(within(dialog).getByRole("button", { name: "Reading & Triage" }));
-    expect(within(dialog).getByRole("checkbox", { name: "When Archiving a Conversation" })).toBeChecked();
-    expect(within(dialog).getByRole("spinbutton", { name: "Auto-Read Delay" })).toHaveValue(8);
+    expect(within(dialog).getByRole("checkbox", { name: "Mark Read When Archiving" })).toBeChecked();
+    expect(within(dialog).getByRole("spinbutton", { name: "Mark Read Delay in Seconds" })).toHaveValue(8);
     expect(previewSettingsImport).toHaveBeenCalledWith("password123");
     expect(applySettingsImport).toHaveBeenCalledWith([]);
     expect(localStorage.getItem("threestrands.settings.emailZoom")).toBe("125");

@@ -162,6 +162,20 @@ pub struct TransferPreferences {
     pub email_text_colors: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub mark_read_on_archive: bool,
+    // Preceding exports always marked opened conversations read. Omitted
+    // while on, so earlier versions (which deny unknown fields) still import.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub mark_read_on_open: bool,
+    // Reading & Triage choices added together. Each is omitted at its
+    // default, so earlier versions still import exports that keep it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mark_read_on_trash: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mark_read_on_snooze: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub snooze_returns_unread: bool,
+    #[serde(default = "default_after_triage", skip_serializing_if = "is_default_after_triage")]
+    pub after_triage: String,
     pub auto_read_delay_seconds: i64,
     pub load_remote_images: bool,
     #[serde(default = "default_show_starred_inbox", skip_serializing_if = "is_default_show_starred_inbox")]
@@ -212,6 +226,22 @@ fn is_default_show_starred_inbox(value: &bool) -> bool {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn default_after_triage() -> String {
+    "older".to_string()
+}
+
+fn is_default_after_triage(value: &String) -> bool {
+    *value == default_after_triage()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 fn default_email_text_colors() -> String {
@@ -268,6 +298,10 @@ impl TransferPreferences {
         // Mirrors EMAIL_TEXT_COLORS in emailRenderingPolicy.ts.
         if !matches!(self.email_text_colors.as_str(), "sender" | "contrast" | "app") {
             return Err("The transfer contains an invalid email text color mode".to_string());
+        }
+        // Mirrors AFTER_TRIAGE_CHOICES in settings.ts.
+        if !matches!(self.after_triage.as_str(), "older" | "newer" | "list") {
+            return Err("The transfer contains an invalid choice for after archiving".to_string());
         }
         if !(0..=60).contains(&self.auto_read_delay_seconds) {
             return Err("The transfer contains an invalid read delay".to_string());
@@ -1133,6 +1167,11 @@ mod tests {
                 email_zoom: default_email_zoom(),
                 email_text_colors: default_email_text_colors(),
                 mark_read_on_archive: false,
+                mark_read_on_open: true,
+                mark_read_on_trash: false,
+                mark_read_on_snooze: false,
+                snooze_returns_unread: false,
+                after_triage: default_after_triage(),
                 auto_read_delay_seconds: 2,
                 show_starred_inbox: true,
                 load_remote_images: false,
@@ -1735,6 +1774,51 @@ mod tests {
     }
 
     #[test]
+    fn preceding_export_defaults_mark_read_on_open_on_and_round_trips_opt_out() {
+        let (_, result) = import_fixture(fixtures::V5_CURRENT);
+        assert!(result.preferences.mark_read_on_open);
+        assert!(serde_json::to_value(&result.preferences).unwrap().get("markReadOnOpen").is_none());
+        let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
+        payload.preferences.mark_read_on_open = false;
+        let imported = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+        assert!(!imported.preferences.mark_read_on_open);
+        assert_eq!(serde_json::to_value(&imported.preferences).unwrap()["markReadOnOpen"], false);
+    }
+
+    #[test]
+    fn preceding_export_defaults_triage_choices_and_round_trips_changes() {
+        let (_, result) = import_fixture(fixtures::V5_CURRENT);
+        let preferences = &result.preferences;
+        assert!(!preferences.mark_read_on_trash && !preferences.mark_read_on_snooze && !preferences.snooze_returns_unread);
+        assert_eq!(preferences.after_triage, "older");
+        let json = serde_json::to_value(preferences).unwrap();
+        for key in ["markReadOnTrash", "markReadOnSnooze", "snoozeReturnsUnread", "afterTriage"] {
+            assert!(json.get(key).is_none(), "{key} should be omitted at its default");
+        }
+        let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
+        payload.preferences.mark_read_on_trash = true;
+        payload.preferences.mark_read_on_snooze = true;
+        payload.preferences.snooze_returns_unread = true;
+        payload.preferences.after_triage = "list".to_string();
+        let imported = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap().preferences;
+        assert!(imported.mark_read_on_trash && imported.mark_read_on_snooze && imported.snooze_returns_unread);
+        assert_eq!(imported.after_triage, "list");
+    }
+
+    #[test]
+    fn after_triage_accepts_each_choice_and_rejects_others() {
+        let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
+        for value in ["older", "newer", "list"] {
+            payload.preferences.after_triage = value.to_string();
+            assert!(payload.preferences.validate().is_ok());
+        }
+        for value in ["", "next", "Older"] {
+            payload.preferences.after_triage = value.to_string();
+            assert!(payload.preferences.validate().is_err());
+        }
+    }
+
+    #[test]
     fn email_zoom_round_trips_and_rejects_invalid_bounds() {
         let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
         for value in [50, 51, 100, 125, 199, 200] {
@@ -2001,6 +2085,11 @@ mod tests {
                 email_zoom: default_email_zoom(),
                 email_text_colors: default_email_text_colors(),
                 mark_read_on_archive: false,
+                mark_read_on_open: true,
+                mark_read_on_trash: false,
+                mark_read_on_snooze: false,
+                snooze_returns_unread: false,
+                after_triage: default_after_triage(),
                 auto_read_delay_seconds: 15,
                 show_starred_inbox: true,
                 load_remote_images: true,

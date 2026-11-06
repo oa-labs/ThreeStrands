@@ -19,6 +19,60 @@ export function saveMarkReadOnArchive(value: boolean): boolean {
   return value;
 }
 
+const MARK_READ_ON_OPEN_KEY = "threestrands.settings.markReadOnOpen";
+/** Opening a conversation marks it read unless the user chose to mark read only by hand. */
+export function readMarkReadOnOpen(): boolean {
+  try { return localStorage.getItem(MARK_READ_ON_OPEN_KEY) !== "false"; } catch { return true; }
+}
+export function saveMarkReadOnOpen(value: boolean): boolean {
+  try { localStorage.setItem(MARK_READ_ON_OPEN_KEY, String(value)); } catch { /* session preference still applies */ }
+  return value;
+}
+
+const MARK_READ_ON_TRASH_KEY = "threestrands.settings.markReadOnTrash";
+export function readMarkReadOnTrash(): boolean {
+  try { return localStorage.getItem(MARK_READ_ON_TRASH_KEY) === "true"; } catch { return false; }
+}
+export function saveMarkReadOnTrash(value: boolean): boolean {
+  try { localStorage.setItem(MARK_READ_ON_TRASH_KEY, String(value)); } catch { /* session preference still applies */ }
+  return value;
+}
+
+const MARK_READ_ON_SNOOZE_KEY = "threestrands.settings.markReadOnSnooze";
+export function readMarkReadOnSnooze(): boolean {
+  try { return localStorage.getItem(MARK_READ_ON_SNOOZE_KEY) === "true"; } catch { return false; }
+}
+export function saveMarkReadOnSnooze(value: boolean): boolean {
+  try { localStorage.setItem(MARK_READ_ON_SNOOZE_KEY, String(value)); } catch { /* session preference still applies */ }
+  return value;
+}
+
+const SNOOZE_RETURNS_UNREAD_KEY = "threestrands.settings.snoozeReturnsUnread";
+export function readSnoozeReturnsUnread(): boolean {
+  try { return localStorage.getItem(SNOOZE_RETURNS_UNREAD_KEY) === "true"; } catch { return false; }
+}
+export function saveSnoozeReturnsUnread(value: boolean): boolean {
+  try { localStorage.setItem(SNOOZE_RETURNS_UNREAD_KEY, String(value)); } catch { /* session preference still applies */ }
+  return value;
+}
+
+/** Which conversation opens after the open one leaves the list (archive, trash, spam). */
+export const AFTER_TRIAGE_CHOICES = ["older", "newer", "list"] as const;
+export type AfterTriage = typeof AFTER_TRIAGE_CHOICES[number];
+export const DEFAULT_AFTER_TRIAGE: AfterTriage = "older";
+const AFTER_TRIAGE_KEY = "threestrands.settings.afterTriage";
+export function parseAfterTriage(value: unknown): AfterTriage {
+  return AFTER_TRIAGE_CHOICES.includes(value as AfterTriage) ? value as AfterTriage : DEFAULT_AFTER_TRIAGE;
+}
+export function readAfterTriage(): AfterTriage {
+  try { return parseAfterTriage(localStorage.getItem(AFTER_TRIAGE_KEY)); } catch { return DEFAULT_AFTER_TRIAGE; }
+}
+export function saveAfterTriage(value: AfterTriage): AfterTriage {
+  const next = parseAfterTriage(value);
+  try { localStorage.setItem(AFTER_TRIAGE_KEY, next); } catch { /* session preference still applies */ }
+  return next;
+}
+
 export type FontFamily = string;
 
 const FONT_FAMILY_KEY = "threestrands.settings.fontFamily";

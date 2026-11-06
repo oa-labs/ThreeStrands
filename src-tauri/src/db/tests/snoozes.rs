@@ -77,6 +77,23 @@ fn returns_at_exact_time_and_catches_up_when_overdue_without_repeating() {
 }
 
 #[test]
+fn returns_unread_only_when_this_device_chose_it() {
+    for returns_unread in [false, true] {
+        let db = setup();
+        assert!(!db.snooze_returns_unread().unwrap());
+        db.set_snooze_returns_unread(returns_unread).unwrap();
+        assert_eq!(db.snooze_returns_unread().unwrap(), returns_unread);
+        db.with_transaction(|tx| Database::apply_mutation(tx, &ThreadMutation::Read { thread_id: id(), value: true })).unwrap();
+        snooze(&db);
+        assert!(db.wake_due_snoozes(ACCOUNT, due()).unwrap());
+        let thread = db.get_thread(&id()).unwrap();
+        assert!(!thread.thread.archived);
+        assert_eq!(thread.thread.unread, returns_unread);
+        assert_eq!(thread.messages.iter().any(|message| message.unread), returns_unread);
+    }
+}
+
+#[test]
 fn new_incoming_reply_wakes_but_own_sent_messages_and_old_refreshes_do_not() {
     let db = setup();
     snooze(&db);

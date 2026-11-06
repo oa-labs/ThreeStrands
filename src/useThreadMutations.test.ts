@@ -15,8 +15,10 @@ function conversation(id: string, unread: boolean): Thread {
   };
 }
 
-function setup(markReadOnArchive: boolean, selectedId: string | null = null) {
-  const initial = [conversation("unread", true), conversation("read", false)];
+type ExtraOptions = Partial<Pick<Parameters<typeof useThreadMutations>[0], "markReadOnTrash" | "afterTriage" | "mailbox" | "includeArchived" | "setSelectedId">>;
+
+function setup(markReadOnArchive: boolean, selectedId: string | null = null, markReadOnOpen?: boolean, extra: ExtraOptions = {}, initialThreads?: Thread[]) {
+  const initial = initialThreads ?? [conversation("unread", true), conversation("read", false)];
   const initialDetail = {
     thread: initial[0], messages: [{ id: "m1", unread: true }, { id: "m2", unread: true }],
   } as ThreadDetail;
@@ -29,14 +31,104 @@ function setup(markReadOnArchive: boolean, selectedId: string | null = null) {
       setThreads, setDetail, setSelectedId: vi.fn(), setCheckedIds: vi.fn(),
       setSyncStatus: vi.fn(), setNotice: vi.fn(), refreshMailboxUnreadCounts: vi.fn(),
       mailbox: "allMail", activeAccountId: null, activeSplitInboxId: null,
-      includeArchived: true, isThreadMailbox: true, autoReadDelaySeconds: 60, markReadOnArchive,
+      includeArchived: true, isThreadMailbox: true, autoReadDelaySeconds: 60, markReadOnArchive, markReadOnOpen,
       triageSessionRef: { current: null }, recordTriageEvent: vi.fn(),
       loadThreadsRef: { current: reload }, queryRef: { current: "" },
+      ...extra,
     });
     return { mutate, threads, detail };
   });
   return hook;
 }
+
+describe("mark read after opening", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(mailClient, "mutateThreads").mockResolvedValue(undefined);
+    vi.spyOn(mailClient, "flushPending").mockResolvedValue({} as never);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it("marks the open conversation read once the delay passes", async () => {
+    const { result } = setup(false, "unread");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(result.current.threads[0].unread).toBe(false);
+  });
+
+  it("leaves the open conversation unread when set to Never", async () => {
+    const { result } = setup(false, "unread", false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(result.current.threads[0].unread).toBe(true);
+    expect(mailClient.mutateThreads).not.toHaveBeenCalled();
+  });
+});
+
+describe("what opens after triage", () => {
+  beforeEach(() => {
+    vi.spyOn(mailClient, "mutateThreads").mockResolvedValue(undefined);
+    vi.spyOn(mailClient, "flushPending").mockResolvedValue({} as never);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  // Newest first, as the list shows them.
+  const list = () => [conversation("newest", false), conversation("middle", false), conversation("oldest", false)];
+
+  it.each([
+    ["older", "middle", "oldest"],
+    ["newer", "middle", "newest"],
+    ["list", "middle", null],
+    // At either end of the list, the neighbor that exists opens instead.
+    ["newer", "newest", "middle"],
+    ["older", "oldest", "middle"],
+  ] as const)("with %s, archiving %s opens %s", async (afterTriage, selected, expected) => {
+    const setSelectedId = vi.fn();
+    const { result } = setup(false, selected, undefined, { afterTriage, setSelectedId, mailbox: "inbox", includeArchived: false }, list());
+    await act(async () => { await result.current.mutate([selected], { kind: "archive", value: true }); });
+    expect(setSelectedId).toHaveBeenCalledWith(expected);
+  });
+
+  it("opens the next older conversation by default", async () => {
+    const setSelectedId = vi.fn();
+    const { result } = setup(false, "middle", undefined, { setSelectedId, mailbox: "inbox", includeArchived: false }, list());
+    await act(async () => { await result.current.mutate(["middle"], { kind: "trash", value: true }); });
+    expect(setSelectedId).toHaveBeenCalledWith("oldest");
+  });
+});
+
+describe("trash read status", () => {
+  beforeEach(() => {
+    vi.spyOn(mailClient, "mutateThreads").mockResolvedValue(undefined);
+    vi.spyOn(mailClient, "flushPending").mockResolvedValue({} as never);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("preserves unread status with the preference off", async () => {
+    const { result } = setup(false);
+    await act(async () => { await result.current.mutate(["unread"], { kind: "trash", value: true }); });
+    expect(mailClient.mutateThreads).toHaveBeenCalledWith([{ kind: "trash", threadId: "unread", value: true }]);
+  });
+
+  it("marks conversations read when moving them to Trash, and Undo restores only the unread ones", async () => {
+    const { result } = setup(false, null, undefined, { markReadOnTrash: true });
+    let command!: CommandResult;
+    await act(async () => { command = await result.current.mutate(["unread", "read"], { kind: "trash", value: true }); });
+    expect(mailClient.mutateThreads).toHaveBeenCalledWith([
+      { kind: "read", threadId: "unread", value: true }, { kind: "trash", threadId: "unread", value: true },
+      { kind: "read", threadId: "read", value: true }, { kind: "trash", threadId: "read", value: true },
+    ]);
+    await act(async () => { await command.undoAction?.(); });
+    expect(mailClient.mutateThreads).toHaveBeenLastCalledWith([
+      { kind: "trash", threadId: "unread", value: false }, { kind: "read", threadId: "unread", value: false },
+      { kind: "trash", threadId: "read", value: false },
+    ]);
+  });
+
+  it("does not mark archives read through the Trash preference", async () => {
+    const { result } = setup(false, null, undefined, { markReadOnTrash: true });
+    await act(async () => { await result.current.mutate(["unread"], { kind: "archive", value: true }); });
+    expect(mailClient.mutateThreads).toHaveBeenCalledWith([{ kind: "archive", threadId: "unread", value: true }]);
+  });
+});
 
 describe("archive read status", () => {
   beforeEach(() => {

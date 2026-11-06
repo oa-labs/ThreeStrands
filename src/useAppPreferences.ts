@@ -1,6 +1,8 @@
 import type { EmailTextColors } from "./emailRenderingPolicy";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { logBackgroundFailure } from "./errors";
 import {
   applyFontScale,
   changeFontScale,
@@ -10,6 +12,11 @@ import {
 import {
   readShowStarredInbox, saveShowStarredInbox,
   readMarkReadOnArchive, saveMarkReadOnArchive,
+  readMarkReadOnOpen, saveMarkReadOnOpen,
+  readMarkReadOnTrash, saveMarkReadOnTrash,
+  readMarkReadOnSnooze, saveMarkReadOnSnooze,
+  readSnoozeReturnsUnread, saveSnoozeReturnsUnread,
+  readAfterTriage, saveAfterTriage, type AfterTriage,
   applyFontFamily,
   readAutoReadDelaySeconds,
   readFontFamily,
@@ -64,6 +71,11 @@ export function useAppPreferences() {
   const [emailTextColors, setEmailTextColorsState] = useState(readEmailTextColors);
   const [fontFamily, setFontFamilyState] = useState(readFontFamily);
   const [markReadOnArchive, setMarkReadOnArchiveState] = useState(readMarkReadOnArchive);
+  const [markReadOnOpen, setMarkReadOnOpenState] = useState(readMarkReadOnOpen);
+  const [markReadOnTrash, setMarkReadOnTrashState] = useState(readMarkReadOnTrash);
+  const [markReadOnSnooze, setMarkReadOnSnoozeState] = useState(readMarkReadOnSnooze);
+  const [snoozeReturnsUnread, setSnoozeReturnsUnreadState] = useState(readSnoozeReturnsUnread);
+  const [afterTriage, setAfterTriageState] = useState(readAfterTriage);
   const [autoReadDelaySeconds, setAutoReadDelayState] = useState(readAutoReadDelaySeconds);
   const [loadRemoteImages, setLoadRemoteImagesState] = useState(readLoadRemoteImages);
   const [availabilityPreferences, setAvailabilityPreferencesState] = useState(readAvailabilityPreferences);
@@ -81,6 +93,11 @@ export function useAppPreferences() {
           setEmailMinimumFontSizeState(readEmailMinimumFontSize());
           setAutoReadDelayState(readAutoReadDelaySeconds());
           setMarkReadOnArchiveState(readMarkReadOnArchive());
+          setMarkReadOnOpenState(readMarkReadOnOpen());
+          setMarkReadOnTrashState(readMarkReadOnTrash());
+          setMarkReadOnSnoozeState(readMarkReadOnSnooze());
+          setSnoozeReturnsUnreadState(readSnoozeReturnsUnread());
+          setAfterTriageState(readAfterTriage());
           setLoadRemoteImagesState(readLoadRemoteImages());
           // Keep the same object when availability didn't change: meeting
           // cards re-check the calendar whenever it is replaced.
@@ -107,6 +124,13 @@ export function useAppPreferences() {
   useEffect(() => applyAccent(accent), [accent]);
   useEffect(() => applyFontScale(fontScale), [fontScale]);
   useEffect(() => applyFontFamily(fontFamily), [fontFamily]);
+  // Snoozes return in the native loop, even with no window open, so it keeps
+  // its own copy of this choice. Sync, import, and Settings all land here.
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    void invoke("set_snooze_returns_unread", { value: snoozeReturnsUnread })
+      .catch(logBackgroundFailure("Saving the snooze return setting"));
+  }, [snoozeReturnsUnread]);
   useEffect(() => {
     if (theme !== "system") return;
     const query = window.matchMedia?.("(prefers-color-scheme: light)");
@@ -159,6 +183,26 @@ export function useAppPreferences() {
   }, []);
   const setMarkReadOnArchive = useCallback((value: boolean) => {
     setMarkReadOnArchiveState(saveMarkReadOnArchive(value));
+    queuePortablePreferences();
+  }, []);
+  const setMarkReadOnOpen = useCallback((value: boolean) => {
+    setMarkReadOnOpenState(saveMarkReadOnOpen(value));
+    queuePortablePreferences();
+  }, []);
+  const setMarkReadOnTrash = useCallback((value: boolean) => {
+    setMarkReadOnTrashState(saveMarkReadOnTrash(value));
+    queuePortablePreferences();
+  }, []);
+  const setMarkReadOnSnooze = useCallback((value: boolean) => {
+    setMarkReadOnSnoozeState(saveMarkReadOnSnooze(value));
+    queuePortablePreferences();
+  }, []);
+  const setSnoozeReturnsUnread = useCallback((value: boolean) => {
+    setSnoozeReturnsUnreadState(saveSnoozeReturnsUnread(value));
+    queuePortablePreferences();
+  }, []);
+  const setAfterTriage = useCallback((value: AfterTriage) => {
+    setAfterTriageState(saveAfterTriage(value));
     queuePortablePreferences();
   }, []);
   const setAutoReadDelaySeconds = useCallback((value: number) => {
@@ -216,6 +260,11 @@ export function useAppPreferences() {
     emailTextColors,
     setEmailTextColors,
     markReadOnArchive, setMarkReadOnArchive,
+    markReadOnOpen, setMarkReadOnOpen,
+    markReadOnTrash, setMarkReadOnTrash,
+    markReadOnSnooze, setMarkReadOnSnooze,
+    snoozeReturnsUnread, setSnoozeReturnsUnread,
+    afterTriage, setAfterTriage,
     autoReadDelaySeconds,
     setAutoReadDelaySeconds,
     loadRemoteImages,

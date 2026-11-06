@@ -3035,6 +3035,15 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .settings-default-app-row { width: 100%; }
 .settings-field.settings-field-inline input { width: 76px; }
 .settings-row { display: flex; align-items: center; gap: var(--space-2-5); }
+/* One setting: its control row with the help text tucked directly beneath, and
+   a clearly larger gap before the next setting so each hint reads as its own. */
+.reading-settings { width: 100%; max-width: 640px; }
+.settings-item { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; }
+.settings-item + .settings-item { margin-top: var(--space-4); }
+.settings-item .settings-switch { padding: 0; }
+.settings-item-control { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: 100%; min-height: var(--control-h); font-size: var(--text-body); }
+.settings-item-control select { width: auto; }
+.settings-item-control input[type="number"] { width: 64px; height: var(--control-h); padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background-color: var(--input); font-size: var(--text-body); }
 .settings-radio-row { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: var(--text-body); }
 .import-account-choices { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; margin: 0; padding: var(--space-2) var(--space-2-5); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .import-account-choices legend { padding: 0 var(--space-1); color: var(--muted); font-size: var(--text-secondary); }
