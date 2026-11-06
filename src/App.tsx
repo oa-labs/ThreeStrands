@@ -1671,6 +1671,7 @@ export function App() {
           initialAllDay={meetingEventDraft.allDay}
           initialTimeUnspecified={meetingEventDraft.timeUnspecified}
           sourceMessageId={meetingEventDraft.sourceMessageId}
+          preferredAccountId={meetingEventDraft.accountId}
           onClose={() => setMeetingEventDraft(null)}
           onCreated={(event) => {
             if (meetingEventDraft.fromOpenedFile) dismissOpenedCalendarFile();

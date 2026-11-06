@@ -10,7 +10,7 @@ import type { CalendarAccount, CalendarOption, CreateCalendarEventRequest, Sched
 import { errorMessage } from "./errors";
 import { EmailBadgeField } from "./ContactAddressField";
 import { isEmailAddress } from "./emailAddress";
-import { defaultEventCalendar, showCalendar, writableCalendars } from "./taskBooking";
+import { defaultEventCalendar, primaryCalendarsFirst, showCalendar, writableCalendars } from "./taskBooking";
 
 function localDateTimeValue(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -44,6 +44,17 @@ function blockedByPendingInvitee(form: HTMLFormElement, pending: string): boolea
   return true;
 }
 
+/**
+ * Splits primary calendars from the rest so they are easy to find in a long
+ * list; a list with only one kind needs no headings.
+ */
+function calendarGroups(ordered: CalendarOption[]): { label: string | null; options: CalendarOption[] }[] {
+  const primary = ordered.filter((calendar) => calendar.primary);
+  const other = ordered.filter((calendar) => !calendar.primary);
+  if (!primary.length || !other.length) return [{ label: null, options: ordered }];
+  return [{ label: "Primary calendars", options: primary }, { label: "Other calendars", options: other }];
+}
+
 export function CreateCalendarEventDialog({
   start,
   end,
@@ -57,6 +68,7 @@ export function CreateCalendarEventDialog({
   initialTimeUnspecified = false,
   sourceMessageId,
   sourceTask,
+  preferredAccountId,
   onClose,
   onCreated,
 }: {
@@ -77,11 +89,13 @@ export function CreateCalendarEventDialog({
   sourceMessageId?: string;
   /** The task the event books time for; its account's calendar comes first. */
   sourceTask?: { id: string; accountId: string };
+  /** The account whose calendar comes first, such as the one the email arrived on. */
+  preferredAccountId?: string;
   onClose(): void;
   onCreated(event: ScheduleEvent): void;
 }) {
-  const writable = useMemo(() => writableCalendars(accounts, calendars), [accounts, calendars]);
-  const defaultCalendar = defaultEventCalendar(writable, sourceTask?.accountId);
+  const writable = useMemo(() => primaryCalendarsFirst(writableCalendars(accounts, calendars)), [accounts, calendars]);
+  const defaultCalendar = defaultEventCalendar(writable, sourceTask?.accountId ?? preferredAccountId);
   const [calendarKey, setCalendarKey] = useState(() => defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "");
   const selectedCalendarKey = writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === calendarKey)
     ? calendarKey : defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "";
@@ -195,11 +209,14 @@ export function CreateCalendarEventDialog({
         <label>Calendar
           <select value={selectedCalendarKey} onChange={(event) => setCalendarKey(event.target.value)} required>
             {writable.length === 0 ? <option value="">No writable calendars</option> : null}
-            {writable.map((calendar) => (
-              <option key={`${calendar.accountId}:${calendar.id}`} value={`${calendar.accountId}\n${calendar.id}`}>
-                {calendar.name} · {calendar.accountId}
-              </option>
-            ))}
+            {calendarGroups(writable).map(({ label, options }) => {
+              const items = options.map((calendar) => (
+                <option key={`${calendar.accountId}:${calendar.id}`} value={`${calendar.accountId}\n${calendar.id}`}>
+                  {calendar.name} · {calendar.accountId}
+                </option>
+              ));
+              return label ? <optgroup key={label} label={label}>{items}</optgroup> : items;
+            })}
           </select>
         </label>
         {writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === selectedCalendarKey && !calendar.selected)

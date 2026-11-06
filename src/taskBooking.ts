@@ -23,6 +23,11 @@ export function defaultEventCalendar(writable: CalendarOption[], preferredAccoun
   return (preferredAccountId ? pick(writable.filter((calendar) => calendar.accountId === preferredAccountId)) : undefined) ?? pick(writable);
 }
 
+/** Each account's primary calendar first, then the rest, otherwise in listed order. */
+export function primaryCalendarsFirst(writable: CalendarOption[]): CalendarOption[] {
+  return [...writable.filter((calendar) => calendar.primary), ...writable.filter((calendar) => !calendar.primary)];
+}
+
 /** Selects a hidden calendar first, so the event created on it shows in the schedule. */
 export async function showCalendar(calendar: CalendarOption, calendars: CalendarOption[]): Promise<void> {
   if (calendar.selected) return;

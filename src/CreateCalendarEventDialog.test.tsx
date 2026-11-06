@@ -417,6 +417,30 @@ describe("CreateCalendarEventDialog", () => {
     expect(screen.getByLabelText("Calendar")).toHaveValue("you@example.com\nclasses");
   });
 
+  it("defaults to the preferred account's calendar and lists each account's primary calendar first", () => {
+    const twoAccounts: CalendarAccount[] = [...accounts, { email: "work@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" }];
+    render(<CreateCalendarEventDialog start={new Date()} end={new Date(Date.now() + 3600000)} accounts={twoAccounts}
+      calendars={[
+        { ...calendars[0], id: "family", name: "Family", primary: false },
+        calendars[0],
+        { id: "team", accountId: "work@example.com", name: "Team", primary: false, selected: true, writable: true },
+        { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true, writable: true },
+      ]}
+      preferredAccountId="work@example.com" onClose={vi.fn()} onCreated={vi.fn()} />);
+    const select = screen.getByLabelText("Calendar");
+    expect(select).toHaveValue("work@example.com\nwork");
+    const groups = within(select).getAllByRole("group");
+    expect(groups.map((group) => group.getAttribute("label"))).toEqual(["Primary calendars", "Other calendars"]);
+    expect(within(groups[0]).getAllByRole("option").map((option) => option.textContent)).toEqual(["You · you@example.com", "Work · work@example.com"]);
+    expect(within(groups[1]).getAllByRole("option").map((option) => option.textContent)).toEqual(["Family · you@example.com", "Team · work@example.com"]);
+  });
+
+  it("lists calendars without headings when none or all are primary", () => {
+    render(<CreateCalendarEventDialog start={new Date()} end={new Date(Date.now() + 3600000)} accounts={accounts}
+      calendars={calendars} onClose={vi.fn()} onCreated={vi.fn()} />);
+    expect(within(screen.getByLabelText("Calendar")).queryByRole("group")).not.toBeInTheDocument();
+  });
+
   it("shows an explicitly chosen hidden calendar before creating, preserving the account's other selections", async () => {
     let finishSelection!: () => void;
     const select = vi.spyOn(mailClient, "setCalendarSelection").mockImplementation(() => new Promise((resolve) => {

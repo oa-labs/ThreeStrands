@@ -74,6 +74,8 @@ export function useMeetingActions({
     source: { from: ProposalSource; proposal: ActionProposal } | null;
     /** The email the suggestion was read from, tagged on the event. */
     sourceMessageId?: string;
+    /** The mail account the conversation is on; its calendar is the default. */
+    accountId?: string;
     /** Added from an opened calendar file, which is dismissed once the event exists. */
     fromOpenedFile?: boolean;
     /** Runs once the event exists, such as drafting the reply that accepts its time; never on cancel. */
@@ -130,6 +132,7 @@ export function useMeetingActions({
       description: [`Scheduled from “${visibleDetail.thread.subject}”.`, meeting.excerpt ? `“${meeting.excerpt}”` : null].filter(Boolean).join("\n\n"),
       source,
       sourceMessageId: source?.proposal.evidence.sourceMessageId,
+      accountId: visibleDetail.thread.accountId,
       afterCreated,
     });
   }, [ownAddresses, refreshCalendarOptions, visibleDetail]);

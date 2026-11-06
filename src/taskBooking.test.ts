@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CalendarAccount, CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
-import { bookedBlock, defaultEventCalendar, openTasksFor, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
+import { bookedBlock, defaultEventCalendar, openTasksFor, primaryCalendarsFirst, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
 
 function calendar(id: string, accountId: string, overrides: Partial<CalendarOption> = {}): CalendarOption {
   return { id, accountId, name: id, primary: false, selected: true, writable: true, ...overrides };
@@ -40,6 +40,17 @@ describe("task booking", () => {
     // An account without a writable calendar books on the usual default.
     expect(defaultEventCalendar(writable, "imap:home")?.id).toBe("joel");
     expect(defaultEventCalendar([])).toBeUndefined();
+  });
+
+  it("lists each account's primary calendar ahead of the rest, keeping the listed order otherwise", () => {
+    const listed = [
+      calendar("family", "joel@example.com"),
+      calendar("joel", "joel@example.com", { primary: true }),
+      calendar("team", "work@example.com"),
+      calendar("work", "work@example.com", { primary: true }),
+    ];
+    expect(primaryCalendarsFirst(listed).map((option) => option.id)).toEqual(["joel", "work", "family", "team"]);
+    expect(primaryCalendarsFirst([])).toEqual([]);
   });
 
   it("keeps To Do and In Progress tasks of the shown accounts, soonest due first", () => {

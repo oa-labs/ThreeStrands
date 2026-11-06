@@ -416,11 +416,11 @@ describe("conversation brief", () => {
       evidence: { sourceMessageId: "welcome-message", excerpt: "command palette" },
     });
 
-    async function openWithMeeting(meeting: MeetingProposal) {
+    async function openWithMeeting(meeting: MeetingProposal, calendarEmails = ["calendar@example.com"]) {
       clearScheduleCache();
       await enableAi({ actionExtraction: true, threadChat: true });
-      vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" }]);
-      vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([{ id: "primary", accountId: "calendar@example.com", name: "Work", primary: true, selected: true, writable: true }]);
+      vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue(calendarEmails.map((email) => ({ email, connectedAt: "2026-09-01T00:00:00Z", status: "connected" as const })));
+      vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue(calendarEmails.map((accountId) => ({ id: "primary", accountId, name: "Work", primary: true, selected: true, writable: true })));
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
       vi.spyOn(mailClient, "analyzeThread").mockResolvedValue({ proposals: [meeting], hiddenCount: 0 });
       render(<App />);
@@ -505,6 +505,13 @@ describe("conversation brief", () => {
       await waitFor(() => expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument());
       expect(screen.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
       expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByText("Budget review")).not.toBeInTheDocument();
+    });
+
+    it("defaults the event to the primary calendar of the account the email arrived on", async () => {
+      const { schedule } = await openWithMeeting(meetingAt(1), ["calendar@example.com", DEMO_ACCOUNT_ID]);
+      fireEvent.click(await within(schedule).findByRole("button", { name: "Add to Calendar" }));
+      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      await waitFor(() => expect(within(dialog).getByLabelText("Calendar")).toHaveValue(`${DEMO_ACCOUNT_ID}\nprimary`));
     });
 
     it("opens an announced date-only event with blank times and no invitees", async () => {
