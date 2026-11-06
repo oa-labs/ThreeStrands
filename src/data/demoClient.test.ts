@@ -388,6 +388,14 @@ describe("showcase dataset", () => {
     expect(wide.events.some((event) => event.id === "offsite")).toBe(true);
   });
 
+  it("suggests event locations that contain the typed text, ignoring spacing and case", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    expect(await client.searchEventLocations("STUDIO")).toEqual(["Riverside Studio", "Studio"]);
+    expect(await client.searchEventLocations("room4")).toEqual(["Room 4B"]);
+    expect(await client.searchEventLocations("ro")).toEqual([]);
+    expect(await client.searchEventLocations("nowhere")).toEqual([]);
+  });
+
   it("creates a meeting on a writable calendar and includes it in the schedule", async () => {
     const client = createDemoClient(buildShowcaseDataset(now));
     const calendar = (await client.listCalendarOptions()).find((option) => option.accountId === SHOWCASE_WORK_ACCOUNT && option.primary)!;

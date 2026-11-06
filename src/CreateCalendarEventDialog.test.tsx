@@ -15,6 +15,16 @@ describe("EditCalendarEventDialog", () => {
     start: "2026-10-01T09:00:00", end: "2026-10-01T10:30:00", allDay: false,
   };
 
+  it("saves a location chosen from the calendar's places", async () => {
+    vi.spyOn(mailClient, "searchEventLocations").mockResolvedValue(["Alloy 26, 100 S Commons, Pittsburgh, PA"]);
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    render(<EditCalendarEventDialog event={event} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Location" }), { target: { value: "alloy" } });
+    fireEvent.mouseDown(await screen.findByRole("option", { name: "Alloy 26, 100 S Commons, Pittsburgh, PA" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ location: "Alloy 26, 100 S Commons, Pittsburgh, PA" })));
+  });
+
   it.each([
     ["a later day", event.start, event.end, "2026-10-05T09:00", "2026-10-05T10:30"],
     ["an earlier year", event.start, event.end, "2025-12-31T09:00", "2025-12-31T10:30"],
@@ -97,6 +107,18 @@ describe("EditCalendarEventDialog", () => {
 
 describe("CreateCalendarEventDialog", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("saves a location chosen from the calendar's places", async () => {
+    vi.spyOn(mailClient, "searchEventLocations").mockResolvedValue(["Alloy 26, 100 S Commons, Pittsburgh, PA"]);
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ id: "saved", accountId: accounts[0].email, title: "Cowork",
+      start: new Date(2026, 9, 1, 9).toISOString(), end: new Date(2026, 9, 1, 10).toISOString(), allDay: false });
+    render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 9)} end={new Date(2026, 9, 1, 10)} accounts={accounts} calendars={calendars}
+      initialTitle="Cowork" onClose={vi.fn()} onCreated={vi.fn()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Location" }), { target: { value: "alloy" } });
+    fireEvent.mouseDown(await screen.findByRole("option", { name: "Alloy 26, 100 S Commons, Pittsburgh, PA" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create event" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ location: "Alloy 26, 100 S Commons, Pittsburgh, PA" })));
+  });
 
   it("starts from a meeting suggestion's details and still creates only on submit", async () => {
     const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Website kickoff",

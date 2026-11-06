@@ -597,6 +597,95 @@ pub async fn fetch_schedule(
     Ok(schedule)
 }
 
+#[derive(Deserialize)]
+struct LocationSearchPage {
+    #[serde(default)]
+    items: Vec<LocationSearchEvent>,
+}
+
+#[derive(Deserialize)]
+struct LocationSearchEvent {
+    status: Option<String>,
+    location: Option<String>,
+    start: Option<GoogleEventTime>,
+}
+
+/// A location written on one event, and when that event starts (Unix seconds),
+/// for ranking.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocationUse {
+    pub location: String,
+    pub starts_at: Option<i64>,
+}
+
+fn event_start_seconds(time: &GoogleEventTime) -> Option<i64> {
+    if let Some(value) = &time.date_time {
+        return chrono::DateTime::parse_from_rfc3339(value).ok().map(|instant| instant.timestamp());
+    }
+    let date = chrono::NaiveDate::parse_from_str(time.date.as_deref()?, "%Y-%m-%d").ok()?;
+    Some(date.and_hms_opt(0, 0, 0)?.and_utc().timestamp())
+}
+
+/// Reads the locations of events on one calendar that Google's free-text
+/// search matches. A recurring series counts once, as its master event, so a
+/// weekly meeting does not crowd out places visited a few times. Only one page
+/// is read: suggestions are a convenience, and every keystroke repeats this.
+pub async fn search_event_locations(auth: OAuthCredential, calendar_id: &str, query: &str) -> Result<Vec<LocationUse>, String> {
+    let Some(url) = events_url(calendar_id)? else { return Ok(Vec::new()) };
+    let token = auth.access_token().await.map_err(|error| error.to_string())?;
+    fetch_location_uses(&calendar_client()?, &token, url, query).await
+}
+
+async fn fetch_location_uses(client: &reqwest::Client, token: &str, url: url::Url, query: &str) -> Result<Vec<LocationUse>, String> {
+    let max_results = crate::limits::MAX_LOCATION_SEARCH_EVENTS.to_string();
+    let response = client.get(url).bearer_auth(token).query(&[
+        ("q", query),
+        ("maxResults", max_results.as_str()),
+        ("fields", "items(status,location,start)"),
+    ]).send().await.map_err(|error| error.to_string())?;
+    let page: LocationSearchPage = checked_json(response).await?;
+    Ok(page.items.into_iter()
+        .filter(|event| event.status.as_deref() != Some("cancelled"))
+        .filter_map(|event| {
+            let location = event.location?.split_whitespace().collect::<Vec<_>>().join(" ");
+            (!location.is_empty()).then(|| LocationUse { starts_at: event.start.as_ref().and_then(event_start_seconds), location })
+        })
+        .collect())
+}
+
+/// Letters and digits only, lowercased, so "Alloy26" matches "Alloy 26," and
+/// two spellings of one place that differ only in spacing, case, or
+/// punctuation count as one.
+fn location_key(text: &str) -> String {
+    text.chars().filter(|character| character.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// The distinct locations that contain what the user typed, most used first,
+/// then most recent. Google also matches titles and descriptions, so a
+/// location that does not itself contain the query is not suggested. Each
+/// place is shown as it was most recently written.
+pub fn rank_locations(uses: Vec<LocationUse>, query: &str, limit: usize) -> Vec<String> {
+    let needle = location_key(query);
+    if needle.is_empty() { return Vec::new(); }
+    struct Place { text: String, count: usize, latest: Option<i64> }
+    let mut places: std::collections::HashMap<String, Place> = std::collections::HashMap::new();
+    for item in uses {
+        let key = location_key(&item.location);
+        if !key.contains(&needle) { continue; }
+        let place = places.entry(key).or_insert(Place { text: item.location.clone(), count: 0, latest: None });
+        place.count += 1;
+        if item.starts_at > place.latest || place.count == 1 {
+            place.latest = item.starts_at;
+            place.text = item.location;
+        }
+    }
+    let mut ranked = places.into_values().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| right.count.cmp(&left.count)
+        .then(right.latest.cmp(&left.latest))
+        .then_with(|| left.text.cmp(&right.text)));
+    ranked.into_iter().take(limit).map(|place| place.text).collect()
+}
+
 /// Looks an invitation up by its iCalendar UID on an account's primary
 /// calendar, where Google files the invitations it receives. Google's primary
 /// calendar ID is the account address, which keeps the result's ID in the
@@ -1222,6 +1311,92 @@ fn person_name(entry: &ICalendarEntry) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn place(location: &str, starts_at: Option<i64>) -> LocationUse {
+        LocationUse { location: location.into(), starts_at }
+    }
+
+    #[test]
+    fn location_suggestions_merge_spellings_and_rank_by_use_then_recency() {
+        let uses = vec![
+            place("Alloy 26, 100 S Commons, Pittsburgh, PA", Some(100)),
+            place("alloy 26, 100 S Commons, Pittsburgh, PA", Some(300)),
+            place("Alloy26 — 100 S. Commons, Pittsburgh PA", Some(50)),
+            place("Alloy 26", Some(500)),
+            place("Allegheny Center Alliance Church", Some(900)),
+        ];
+        // "Alloy26" and "Alloy 26" are one search, and spellings that differ
+        // only in spacing, case, or punctuation are one place, shown as most
+        // recently written. Used three times, it outranks the later "Alloy 26".
+        assert_eq!(rank_locations(uses.clone(), "alloy26", 8), vec![
+            "alloy 26, 100 S Commons, Pittsburgh, PA",
+            "Alloy 26",
+        ]);
+        assert_eq!(rank_locations(uses, "ALLOY 26", 1), vec!["alloy 26, 100 S Commons, Pittsburgh, PA"]);
+    }
+
+    #[test]
+    fn location_suggestions_require_the_query_in_the_location_itself() {
+        // Google's search also matches titles and descriptions.
+        let uses = vec![place("100 S Commons", Some(1)), place("Room 4B", None)];
+        assert!(rank_locations(uses.clone(), "alloy", 8).is_empty());
+        assert!(rank_locations(uses.clone(), "  ,. ", 8).is_empty());
+        assert_eq!(rank_locations(uses, "room", 8), vec!["Room 4B"]);
+    }
+
+    #[test]
+    fn location_suggestions_order_undated_places_after_dated_ones_with_equal_use() {
+        let uses = vec![place("Studio B", None), place("Studio A", Some(1)), place("Studio C", None)];
+        assert_eq!(rank_locations(uses, "studio", 8), vec!["Studio A", "Studio B", "Studio C"]);
+    }
+
+    #[test]
+    fn location_suggestions_stop_at_the_limit() {
+        let uses = (0..12).map(|index| place(&format!("Room {index}"), Some(index))).collect();
+        assert_eq!(rank_locations(uses, "room", crate::limits::MAX_LOCATION_SUGGESTIONS).len(), crate::limits::MAX_LOCATION_SUGGESTIONS);
+    }
+
+    #[tokio::test]
+    async fn location_search_reads_one_page_of_matching_series_and_skips_cancelled_and_blank_locations() {
+        use axum::{extract::Query, http::HeaderMap, routing::get, Json, Router};
+        async fn page(headers: HeaderMap, Query(query): Query<std::collections::HashMap<String, String>>) -> Json<serde_json::Value> {
+            assert_eq!(headers["authorization"], "Bearer test-token");
+            assert_eq!(query["q"], "alloy");
+            assert_eq!(query["maxResults"], crate::limits::MAX_LOCATION_SEARCH_EVENTS.to_string());
+            // One entry per recurring series, not one per occurrence.
+            assert!(!query.contains_key("singleEvents"));
+            assert!(!query.contains_key("pageToken"));
+            Json(serde_json::json!({"nextPageToken": "more", "items": [
+                {"status": "confirmed", "location": "  Alloy 26,\n100 S Commons ", "start": {"dateTime": "2026-03-04T09:00:00-05:00"}},
+                {"status": "confirmed", "location": "Alloy 26", "start": {"date": "2026-05-01"}},
+                {"status": "confirmed", "location": "Alloy 26"},
+                {"status": "cancelled", "location": "Cancelled Place", "start": {"date": "2026-05-01"}},
+                {"status": "confirmed", "location": "   ", "start": {"date": "2026-05-01"}},
+                {"status": "confirmed", "start": {"date": "2026-05-01"}},
+            ]}))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = url::Url::parse(&format!("http://{}/events", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, Router::new().route("/events", get(page))).await.unwrap() });
+        let uses = fetch_location_uses(&crate::http_client::builder().build().unwrap(), "test-token", url, "alloy").await.unwrap();
+        server.abort();
+        assert_eq!(uses, vec![
+            place("Alloy 26, 100 S Commons", Some(1_772_632_800)),
+            place("Alloy 26", Some(1_777_593_600)),
+            place("Alloy 26", None),
+        ]);
+    }
+
+    #[tokio::test]
+    async fn location_search_reports_a_failed_calendar() {
+        use axum::{http::StatusCode, routing::get, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = url::Url::parse(&format!("http://{}/events", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, Router::new().route("/events", get(|| async { StatusCode::FORBIDDEN }))).await.unwrap() });
+        let result = fetch_location_uses(&crate::http_client::builder().build().unwrap(), "test-token", url, "alloy").await;
+        server.abort();
+        assert!(result.is_err());
+    }
 
     #[test]
     fn parses_event_card_fields() {

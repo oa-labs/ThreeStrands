@@ -617,6 +617,48 @@ pub(crate) async fn list_schedule_events(
     })
 }
 
+/// Places the user has written on past or upcoming events that contain
+/// `query`, for the Location field. Searches the calendars shown on the
+/// Calendar (an account's primary calendar until it has a selection), never
+/// holiday feeds. Suggestions are a convenience: a calendar that cannot be
+/// searched is skipped rather than failing the rest.
+#[tauri::command]
+pub(crate) async fn search_event_locations(
+    query: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<String>> {
+    let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !location_query_searchable(&query) {
+        return Ok(Vec::new());
+    }
+    let config = state.auth_config.google()?;
+    let mut searches = Vec::new();
+    for account in connected_calendar_accounts(config, &state.database)? {
+        for calendar_id in location_search_calendar_ids(state.database.calendar_selection(&account.email)?, &account.email) {
+            let auth = config.calendar_account(&account.email);
+            let query = query.clone();
+            searches.push(async move {
+                calendar::search_event_locations(auth, &calendar_id, &query).await
+                    .map_err(|error| eprintln!("Location search on a calendar failed: {error}"))
+                    .unwrap_or_default()
+            });
+        }
+    }
+    let uses = futures::future::join_all(searches).await.into_iter().flatten().collect();
+    Ok(calendar::rank_locations(uses, &query, limits::MAX_LOCATION_SUGGESTIONS))
+}
+
+fn location_query_searchable(query: &str) -> bool {
+    query.chars().count() >= limits::MIN_LOCATION_QUERY_CHARS && query.len() <= limits::MAX_LOCATION_QUERY_BYTES
+}
+
+fn location_search_calendar_ids(selection: Option<Vec<String>>, email: &str) -> Vec<String> {
+    selection.unwrap_or_else(|| vec![email.to_string()])
+        .into_iter()
+        .filter(|id| !calendar::is_holiday_calendar(id))
+        .collect()
+}
+
 #[tauri::command]
 pub(crate) async fn update_calendar_response(
     account_id: String,
@@ -1010,6 +1052,30 @@ pub(crate) async fn check_proposed_time(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn location_search_needs_three_characters_and_bounds_long_text() {
+        use super::location_query_searchable;
+        assert!(!location_query_searchable("al"));
+        assert!(location_query_searchable("all"));
+        // Characters, not bytes, decide the minimum.
+        assert!(location_query_searchable("日本語"));
+        let limit = crate::limits::MAX_LOCATION_QUERY_BYTES;
+        assert!(location_query_searchable(&"a".repeat(limit)));
+        assert!(!location_query_searchable(&"a".repeat(limit + 1)));
+    }
+
+    #[test]
+    fn location_search_uses_shown_calendars_or_the_primary_and_never_holiday_feeds() {
+        use super::location_search_calendar_ids;
+        assert_eq!(location_search_calendar_ids(None, "you@example.com"), vec!["you@example.com"]);
+        assert_eq!(location_search_calendar_ids(Some(vec![
+            "you@example.com".into(),
+            "team@group.calendar.google.com".into(),
+            "en.usa#holiday@group.v.calendar.google.com".into(),
+        ]), "you@example.com"), vec!["you@example.com", "team@group.calendar.google.com"]);
+        assert!(location_search_calendar_ids(Some(Vec::new()), "you@example.com").is_empty());
+    }
+
     use super::*;
 
     fn account(email: &str, status: &str) -> CalendarAccount {

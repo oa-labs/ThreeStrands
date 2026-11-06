@@ -17,3 +17,13 @@ pub(crate) const MAX_PENDING_CALENDAR_FILES: usize = 16;
 
 /// Longest iCalendar UID looked up on connected calendars.
 pub(crate) const MAX_CALENDAR_UID_BYTES: usize = 1024;
+
+/// Shortest and longest text searched for event location suggestions. One or
+/// two characters match too much of a calendar to be worth a request.
+pub(crate) const MIN_LOCATION_QUERY_CHARS: usize = 3;
+pub(crate) const MAX_LOCATION_QUERY_BYTES: usize = 256;
+
+/// Events read from each calendar per location search, and the suggestions
+/// returned.
+pub(crate) const MAX_LOCATION_SEARCH_EVENTS: usize = 250;
+pub(crate) const MAX_LOCATION_SUGGESTIONS: usize = 8;

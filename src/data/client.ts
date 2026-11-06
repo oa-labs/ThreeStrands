@@ -358,6 +358,8 @@ export interface MailClient extends CorrespondenceClient {
   updateCalendarResponse(event: ScheduleEvent, responseStatus: "accepted" | "declined" | "tentative"): Promise<ScheduleEvent>;
   /** Finds an invitation on the connected calendars by its iCalendar UID; null when none has it. */
   findCalendarInvitation(uid: string): Promise<ScheduleEvent | null>;
+  /** Places written on the user's events that contain `query`, most used first; empty for fewer than three characters. */
+  searchEventLocations(query: string): Promise<string[]>;
   defaultAppStatus(): Promise<DefaultAppStatus>;
   /** Asks macOS (which confirms with the user) to make ThreeStrands the default for `role`. */
   makeDefaultApp(role: DefaultAppRole): Promise<DefaultAppStatus>;
@@ -567,6 +569,7 @@ const tauriClient: MailClient = {
   updateCalendarResponse: (event, responseStatus) =>
     complete("update_calendar_response", { accountId: event.accountId, calendarId: event.calendarId, eventId: event.id, responseStatus }),
   findCalendarInvitation: (uid) => complete("find_calendar_invitation", { uid }),
+  searchEventLocations: (query) => complete("search_event_locations", { query }),
   defaultAppStatus: () => read("default_app_status"),
   makeDefaultApp: (role) => complete("make_default_app", { role }),
   createCalendarEvent: (request) => complete("create_calendar_event", { request }),

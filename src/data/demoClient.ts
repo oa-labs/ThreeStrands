@@ -1575,6 +1575,22 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async findCalendarInvitation(_uid) {
       return null;
     },
+    async searchEventLocations(query) {
+      // Mirrors the native ranking: letters and digits decide a match, most used first.
+      const key = (text: string) => text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+      const needle = key(query);
+      if ([...query.trim()].length < 3 || !needle) return [];
+      const places = new Map<string, { text: string; count: number }>();
+      for (const event of scheduleEvents) {
+        const location = event.location?.trim().replace(/\s+/g, " ");
+        if (!location || !key(location).includes(needle)) continue;
+        const place = places.get(key(location)) ?? { text: location, count: 0 };
+        place.count += 1;
+        places.set(key(location), place);
+      }
+      return [...places.values()].sort((left, right) => right.count - left.count || left.text.localeCompare(right.text))
+        .slice(0, 8).map((place) => place.text);
+    },
     async defaultAppStatus() {
       return { supported: false, mail: false, calendar: false, opensSystemSettings: false };
     },

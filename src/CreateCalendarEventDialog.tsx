@@ -9,6 +9,7 @@ import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption, CreateCalendarEventRequest, ScheduleEvent, UpdateCalendarEventRequest } from "./domain";
 import { errorMessage } from "./errors";
 import { EmailBadgeField } from "./ContactAddressField";
+import { EventLocationField } from "./EventLocationField";
 import { isEmailAddress } from "./emailAddress";
 import { defaultEventCalendar, primaryCalendarsFirst, showCalendar, writableCalendars } from "./taskBooking";
 
@@ -205,7 +206,7 @@ export function CreateCalendarEventDialog({
             <label>Ends<input type={allDay ? "date" : "datetime-local"} value={endValue} onChange={(event) => setEndValue(event.target.value)} required /></label>
           </>}
         </div>
-        <label>Location<input value={location} onChange={(event) => setLocation(event.target.value)} maxLength={4096} placeholder="Add location" /></label>
+        <EventLocationField value={location} disabled={saving} onChange={setLocation} />
         <label>Calendar
           <select value={selectedCalendarKey} onChange={(event) => setCalendarKey(event.target.value)} required>
             {writable.length === 0 ? <option value="">No writable calendars</option> : null}
@@ -401,7 +402,7 @@ export function EditCalendarEventDialog({
             originalStart={event.start} originalEnd={event.end} start={range.startTime} end={range.endTime}
             disabled={saving} onSelect={selectTime}
           /> : null}
-          <label>Location<input value={location} onChange={(change) => setLocation(change.target.value)} maxLength={4096} placeholder="Add location" /></label>
+          <EventLocationField value={location} disabled={saving} onChange={setLocation} />
           <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
           <label>Description<textarea value={description} onChange={(change) => setDescription(change.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>
           <p className="modal-form-context">Guests are notified of changes.</p>
