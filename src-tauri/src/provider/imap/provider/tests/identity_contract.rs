@@ -1,5 +1,6 @@
 //! Identity compatibility fixtures through the real wire parser, durable store,
-//! and sync engine. No extension implementation is implied by advertising it.
+//! and sync engine. Advertisement-only fixtures remain distinct from fixtures
+//! that actually return authoritative X-GM-MSGID attributes.
 use super::*;
 use crate::provider::imap::{
     fetch,
@@ -7,6 +8,146 @@ use crate::provider::imap::{
 };
 
 const ACCOUNT: &str = "me@example.com";
+
+#[tokio::test]
+async fn server_identity_mapping_separates_duplicate_headers_across_all_ingest_paths() {
+    let corpus = Corpus::load();
+    let path = crate::db::test_support::TempDbPath::new();
+    let mut mailbox = FakeMailbox::new(100);
+    mailbox.capabilities.push("X-GM-EXT-1".into());
+    mailbox.add(&[], &corpus.message("root").raw);
+    mailbox.add(&[], &corpus.message("duplicate-id").raw);
+    mailbox.inbox().messages[0].gmail_message_id = Some(100);
+    mailbox.inbox().messages[1].gmail_message_id = Some(101);
+    mailbox.add_to("Trash", 90, &[], &corpus.message("duplicate-id").raw);
+    mailbox.folder("Trash", 90).messages[0].gmail_message_id = Some(101);
+    mailbox.folder("Archive", 80);
+    let mailbox = Arc::new(Mutex::new(mailbox));
+    let duplicate_id;
+    {
+        let db = Arc::new(Database::open(&path.path).unwrap());
+        let (provider, store) = provider_with_database(mailbox.clone(), db.clone());
+        sync_n(&provider, db.as_ref(), 1).await;
+        let locations = store.locations_in_mailbox("INBOX").unwrap();
+        assert_eq!(locations.len(), 2);
+        let original_id = &locations.iter().find(|l| l.uid == 1).unwrap().message_id;
+        duplicate_id = locations
+            .iter()
+            .find(|l| l.uid == 2)
+            .unwrap()
+            .message_id
+            .clone();
+        assert_ne!(
+            original_id, &duplicate_id,
+            "server IDs separate reused sender Message-ID headers"
+        );
+        assert_eq!(
+            store
+                .location_message_id("Trash", 90, 1)
+                .unwrap()
+                .as_deref(),
+            Some(duplicate_id.as_str()),
+            "index-only ingestion must use the same resolver as body acquisition"
+        );
+        let thread = db.get_thread_for_message(original_id).unwrap();
+        assert_eq!(
+            thread.messages.len(),
+            2,
+            "header-linked conversation contains both distinct messages"
+        );
+        assert!(thread
+            .messages
+            .iter()
+            .any(|m| m.body_text.trim() == "original body"));
+        assert!(thread
+            .messages
+            .iter()
+            .any(|m| m.body_text.trim() == "different body"));
+        {
+            let mut server = mailbox.lock().unwrap();
+            server.add_to("Archive", 80, &[], &corpus.message("duplicate-id").raw);
+            server.folder("Archive", 80).messages[0].gmail_message_id = Some(101);
+        }
+        let plan = provider.build_sync_plan().unwrap();
+        let entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.mailbox == "Archive")
+            .unwrap();
+        let mut session = provider.open_session().await.unwrap();
+        provider
+            .acquire_uids(session.as_mut(), entry, &[1], 80)
+            .await
+            .unwrap();
+        session.logout().await.unwrap();
+        assert_eq!(
+            store
+                .location_message_id("Archive", 80, 1)
+                .unwrap()
+                .as_deref(),
+            Some(duplicate_id.as_str()),
+            "server-search acquisition reuses the mapped identity"
+        );
+        assert_eq!(store.pinned_uids("Archive", 80).unwrap(), vec![1]);
+        assert_eq!(
+            mailbox.lock().unwrap().counts("Archive").1,
+            0,
+            "the cached duplicate's body is reused"
+        );
+    }
+    {
+        let mut server = mailbox.lock().unwrap();
+        let archive = server.folder("Archive", 80);
+        archive.uidvalidity = 200;
+        archive.messages[0].uid = 77;
+        archive.uidnext = 78;
+    }
+    let db = Arc::new(Database::open(&path.path).unwrap());
+    let (provider, store) = provider_with_database(mailbox.clone(), db.clone());
+    sync_n(&provider, db.as_ref(), 2).await;
+    assert_eq!(
+        store
+            .location_message_id("Archive", 200, 77)
+            .unwrap()
+            .as_deref(),
+        Some(duplicate_id.as_str())
+    );
+    assert_eq!(
+        mailbox.lock().unwrap().counts("Archive").1,
+        0,
+        "mapping and cached body survive reopening SQLite and a UID reset"
+    );
+    assert_eq!(
+        db.get_thread_for_message(&duplicate_id)
+            .unwrap()
+            .messages
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn unsupported_servers_never_receive_gmail_identity_fetch_attributes() {
+    let corpus = Corpus::load();
+    let mut mailbox = FakeMailbox::new(100);
+    mailbox.add(&[], &corpus.message("root").raw);
+    // The fake rejects X-GM-MSGID when the capability is absent. Supplying an
+    // internal fixture value also verifies it isn't returned unless requested.
+    mailbox.inbox().messages[0].gmail_message_id = Some(100);
+    let (provider, store) = provider_with(Arc::new(Mutex::new(mailbox)));
+    sync_n(&provider, store.database().as_ref(), 1).await;
+    let count: i64 = store
+        .database()
+        .test_with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT COUNT(*) FROM imap_message_identities WHERE namespace='gmail-message-id'",
+                [],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(count, 0);
+}
 
 #[tokio::test]
 async fn identity_fixtures_match_on_body_and_index_fetches_with_optional_capabilities() {

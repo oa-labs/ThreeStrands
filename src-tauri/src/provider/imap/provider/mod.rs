@@ -103,12 +103,16 @@ impl ImapSessionSource for ManagerSessionSource {
             .connect_leased(ConnectionRole::Command, &self.username, &self.password)
             .await
         {
-            Ok((session, lease)) => Ok(Box::new(LeasedSession { session, _lease: lease })),
+            Ok((mut session, lease)) => {
+                session.capabilities().await?;
+                Ok(Box::new(LeasedSession { session, _lease: lease }))
+            }
             Err(error) if error.retry_mutation() || is_transient(&error) => {
-                let (session, lease) = self
+                let (mut session, lease) = self
                     .manager
                     .connect_leased(ConnectionRole::Command, &self.username, &self.password)
                     .await?;
+                session.capabilities().await?;
                 Ok(Box::new(LeasedSession { session, _lease: lease }))
             }
             Err(error) => Err(error),

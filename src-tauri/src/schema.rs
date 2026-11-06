@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 96;
+pub(crate) const LATEST_VERSION: i64 = 97;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1062,6 +1062,18 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             expires_at INTEGER, record_json TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS agent_evidence_expiry ON agent_research(expires_at);").map_err(error)?;
     }
+    if version < 97 {
+        // Device-local identity reservations outlive locations and body eviction.
+        // Multiple candidates retain contradictory evidence instead of overwriting it.
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS imap_message_identities (
+            account_id TEXT NOT NULL,
+            namespace TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            PRIMARY KEY(account_id, namespace, external_id, message_id)
+        ); CREATE INDEX IF NOT EXISTS imap_message_identities_message
+            ON imap_message_identities(account_id, message_id, namespace);").map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1346,6 +1358,8 @@ mod tests {
 
     /// Objects each migration above the v74 baseline adds, in `schema_objects` form.
     const ABOVE_BASELINE_OBJECTS: &[&str] = &[
+        "table:imap_message_identities",
+        "index:imap_message_identities_message",
         "table:agent_research",
         "index:agent_evidence_expiry",
         "table:agent_tasks",
@@ -1401,6 +1415,27 @@ mod tests {
                 .unwrap(),
             super::LATEST_VERSION
         );
+    }
+
+    #[test]
+    fn v96_identity_mapping_upgrade_keeps_existing_account_and_location_ids() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch("DROP TABLE imap_message_identities;
+            PRAGMA user_version=96;
+            INSERT INTO accounts(email,color,status,sort_order,connected_at,provider)
+                VALUES('me@example.com','#000000','connected',0,'now','imap');
+            INSERT INTO imap_locations(account_id,mailbox,uidvalidity,uid,message_id,flags_json)
+                VALUES('me@example.com','INBOX',1,7,'existing-id','[]');").unwrap();
+        super::migrate(&mut connection).unwrap();
+        let id: String = connection.query_row("SELECT message_id FROM imap_locations WHERE uid=7", [], |row| row.get(0)).unwrap();
+        assert_eq!(id, "existing-id");
+        let count: i64 = connection.query_row("SELECT COUNT(*) FROM imap_message_identities", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0, "do not infer authoritative IDs from legacy headers");
+        connection.execute("INSERT INTO imap_message_identities VALUES('me@example.com','gmail-message-id','7b','existing-id')", []).unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(connection.query_row("SELECT message_id FROM imap_message_identities", [], |r| r.get::<_, String>(0)).unwrap(), "existing-id");
     }
 
     #[test]

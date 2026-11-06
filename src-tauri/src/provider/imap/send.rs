@@ -231,15 +231,13 @@ pub(super) fn raw_message_id(raw: &[u8]) -> Option<String> {
 /// Build the provider message id for a successfully submitted message.
 ///
 /// Uses [`derive_message_id`] with the `Message-ID` header of `raw`, so it
-/// matches the id sync will later derive for the same message when the server
-/// supplies no `OBJECTID`/`EMAILID`.
+/// matches the ordinary IMAP fallback when no authoritative server identity is
+/// available. An SMTP receipt cannot yet know a subsequently assigned server ID;
+/// it is a delivery receipt, not an authoritative message-mapping reservation.
 ///
-/// OBJECTID caveat: a server that DOES later advertise `OBJECTID`/`EMAILID`
-/// would derive a different id for the same message (the server id wins over
-/// the Message-ID hash). The design's sticky-reuse rule (handled by the sync
-/// ingest, not here) keeps the already-recorded id, so this value stays
-/// authoritative for the sent copy; we do NOT try to solve the OBJECTID case
-/// here.
+/// Sync uses the persistent identity resolver. A server-ID-backed Sent copy
+/// can therefore have a different internal ID; Sent-copy verification locates
+/// it by the RFC Message-ID in the raw message rather than this receipt value.
 pub fn provider_message_id_for(account: &str, raw: &[u8]) -> String {
     derive_message_id(
         account,

@@ -18,8 +18,9 @@
 //!    `BODY.PEEK[]` fetched. One extra byte detects unadvertised oversize.
 //! 3. **Keep the `imap-next` swap cheap.** These helpers go THROUGH the
 //!    existing `ImapSession` trait rather than widening it. async-imap's
-//!    `Fetch` does not surface the RFC 8474 `EMAILID`, so on the live path the
-//!    id takes the mandatory hash route (see the EMAILID note below).
+//!    `Fetch` exposes `X-GM-MSGID` when requested by a capability-aware session.
+//!    All ingest paths resolve it through the persistent identity store. RFC
+//!    8474 `EMAILID` remains unavailable on this library's live path.
 //!
 //! ### EMAILID (RFC 8474), investigated
 //!
@@ -27,13 +28,15 @@
 //! `AttributeValue::EmailId` / `ThreadId`, but async-imap 0.12's `Fetch` type
 //! exposes no accessor for them and keeps its parsed attributes private, so a
 //! live `uid_fetch` cannot read an EMAILID back without either forking
-//! async-imap or re-parsing the raw wire bytes it does not hand out. Per the
-//! brief this slice ships the HASH path on the live route (mandatory, always
-//! correct) and keeps the OBJECTID path as a pure parser unit-tested with a
+//! async-imap or re-parsing the raw wire bytes it does not hand out. The
+//! original implementation shipped the header-hash fallback on the live route
+//! and kept the OBJECTID path as a pure parser unit-tested with a
 //! synthetic response, ready for the day the trait is backed by `imap-next`
 //! (which exposes attributes) — the swap stays local to the session impl.
 
-use super::identity::{derive_message_id, IdentityInputs};
+use super::identity::IdentityInputs;
+#[cfg(test)]
+use super::identity::derive_message_id;
 use super::policy;
 use super::session::{flag_to_wire, ImapSession};
 use super::ImapStateStore;
@@ -126,8 +129,8 @@ pub async fn fetch_flags_only(
 }
 
 /// Collect identity rows for a UID set via the cheap identity pass. EMAILID is
-/// not read here (async-imap's `Fetch` cannot surface it); the id resolves via
-/// the mandatory hash route from the four headers plus RFC822.SIZE.
+/// not read here (async-imap's `Fetch` cannot surface it). The session requests
+/// X-GM-MSGID only when advertised; headers remain the ordinary IMAP fallback.
 pub async fn fetch_identity(
     session: &mut dyn ImapSession,
     uid_set: &str,
@@ -141,7 +144,8 @@ pub async fn fetch_identity(
         };
         let flags = fetch.flags().map(|flag| flag_to_wire(&flag)).collect();
         let header_block = fetch.header().unwrap_or_default();
-        let inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
+        let mut inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
+        inputs.gmail_message_id = fetch.gmail_msg_id().copied();
         rows.push(IdentityRow { uid, flags, inputs });
     }
     Ok(rows)
@@ -165,7 +169,8 @@ pub async fn fetch_identity_index(
         };
         let flags = fetch.flags().map(|flag| flag_to_wire(&flag)).collect();
         let header_block = fetch.header().unwrap_or_default();
-        let inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
+        let mut inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
+        inputs.gmail_message_id = fetch.gmail_msg_id().copied();
         let threading = parse_threading_headers(header_block);
         rows.push((IdentityRow { uid, flags, inputs }, threading));
     }
@@ -312,10 +317,10 @@ pub struct ResolvedBody {
 
 /// Resolve a message's stable id and cache its body exactly once.
 ///
-/// 1. **Sticky id.** If `(mailbox, uidvalidity, uid)` is already in
-///    `imap_locations`, reuse its recorded `message_id`. A server that later
-///    starts advertising OBJECTID must not re-key a message we already know.
-/// 2. Otherwise derive the id from the identity inputs (hash route live).
+/// 1. Resolve through account-scoped persistent identity mappings. Exact
+///    locations teach new server IDs without re-keying known messages.
+/// 2. Reuse authoritative server IDs across folders/resets; use the header
+///    fallback only when there is no known ambiguity. Stop on conflicts.
 /// 3. If the body is not cached, `BODY.PEEK[]` once and store it. A second
 ///    call for the same message, OR a second copy of it in another mailbox,
 ///    resolves to the same id and performs NO second body fetch.
@@ -339,14 +344,9 @@ pub async fn resolve_and_cache_body(
 ) -> Result<ResolvedBody, ProviderError> {
     let uid = row.uid as i64;
 
-    // Sticky id: an existing location for this exact coordinate wins.
-    let existing = store
-        .location_message_id(mailbox, uidvalidity, uid)
+    let message_id = store
+        .resolve_message_identity(mailbox, uidvalidity, uid, &row.inputs)
         .map_err(db_to_provider)?;
-    let message_id = match existing {
-        Some(id) => id,
-        None => derive_message_id(store.account_id(), &row.inputs),
-    };
 
     // Body once: a cached id (reached from any mailbox) is never refetched.
     if cache.contains(&message_id).map_err(db_to_provider)? {

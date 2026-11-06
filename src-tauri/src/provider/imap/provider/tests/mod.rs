@@ -26,6 +26,7 @@ struct FakeMessage {
     flags: Vec<String>,
     raw: String,
     advertised_size: Option<usize>,
+    gmail_message_id: Option<u64>,
 }
 
 /// One named mailbox (folder) on the fake server: its UIDVALIDITY, next
@@ -64,6 +65,7 @@ impl FakeFolder {
             flags: flags.iter().map(|f| f.to_string()).collect(),
             raw: raw.to_string(),
             advertised_size,
+            gmail_message_id: None,
         });
         uid
     }
@@ -264,6 +266,11 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                     body_fetches += 1;
                 }
                 let flags_only = !wants_body && !is_identity;
+                let wants_gmail_id = upper.contains("X-GM-MSGID");
+                if wants_gmail_id && !capabilities.iter().any(|cap| cap == "X-GM-EXT-1") {
+                    reply(&mut server, &format!("{tag} BAD Unsupported identity attribute\r\n")).await;
+                    continue;
+                }
                 let set = parse_uid_set(rest, folder);
                 let mut out = String::new();
                 for (seq, uid) in set.iter().enumerate() {
@@ -273,6 +280,7 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                             message,
                             wants_body,
                             flags_only,
+                            wants_gmail_id,
                         ));
                     }
                 }
@@ -318,7 +326,7 @@ fn parse_uid_set(command: &str, folder: &FakeFolder) -> Vec<u32> {
 /// Render one FETCH response line for a message. `wants_body` is the whole
 /// `BODY.PEEK[]` pass; `flags_only` is the FLAGS-only sweep; otherwise it
 /// is the identity pass.
-fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only: bool) -> String {
+fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only: bool, wants_gmail_id: bool) -> String {
     let flags = message.flags.join(" ");
     if wants_body {
         format!(
@@ -340,8 +348,10 @@ fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only:
             .map(|(h, _)| format!("{h}\r\n\r\n"))
             .unwrap_or_else(|| message.raw.clone());
         let size = message.advertised_size.unwrap_or(message.raw.len());
+        let external = message.gmail_message_id.filter(|_| wants_gmail_id)
+            .map(|id| format!("X-GM-MSGID {id} ")).unwrap_or_default();
         format!(
-            "* {seq} FETCH (UID {} FLAGS ({}) RFC822.SIZE {} BODY[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)] {{{}}}\r\n{})\r\n",
+            "* {seq} FETCH (UID {} {external}FLAGS ({}) RFC822.SIZE {} BODY[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)] {{{}}}\r\n{})\r\n",
             message.uid,
             flags,
             size,
@@ -366,7 +376,9 @@ impl ImapSessionSource for FakeSource {
             .login("user", "password")
             .await
             .map_err(|(error, _)| super::super::error::map_imap_error(&error))?;
-        Ok(Box::new(super::super::session::AsyncImapSession::new(session)))
+        let mut session = super::super::session::AsyncImapSession::new(session);
+        session.capabilities().await?;
+        Ok(Box::new(session))
     }
 }
 

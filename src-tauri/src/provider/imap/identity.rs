@@ -133,6 +133,9 @@ fn hex(bytes: &[u8]) -> String {
 pub struct IdentityInputs {
     /// RFC 8474 `EMAILID` (`OBJECTID`), when the server returned one.
     pub email_id: Option<String>,
+    /// X-GM-MSGID from the wire. Canonicalized to Gmail API hexadecimal form
+    /// only at the external identity boundary; never used to re-key known mail.
+    pub gmail_message_id: Option<u64>,
     /// The raw `Message-ID` header value, when present.
     pub message_id: Option<String>,
     /// `Date` header (raw), for the no-Message-ID fallback.
@@ -173,6 +176,42 @@ pub fn derive_message_id(account: &str, inputs: &IdentityInputs) -> String {
             inputs.rfc822_size,
         ),
     )
+}
+
+/// Header-derived evidence is deliberately separate from authoritative server
+/// identities. Several distinct messages may share it; conversion must not use
+/// it as proof of identity.
+pub(crate) fn header_identity(account: &str, inputs: &IdentityInputs) -> String {
+    derive_message_id(account, &IdentityInputs {
+        email_id: None,
+        gmail_message_id: None,
+        ..inputs.clone()
+    })
+}
+
+/// A deterministic internal ID for a newly observed authoritative server ID.
+/// Namespaces are domain-separated so equal server tokens cannot collide, and
+/// discovery order on fresh devices cannot assign duplicate headers differently.
+pub(crate) fn external_message_id(account: &str, namespace: &str, token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"external\n");
+    hasher.update(namespace.as_bytes());
+    hasher.update([0]);
+    hasher.update(token.as_bytes());
+    assemble(account, &hex(&hasher.finalize()))
+}
+
+impl IdentityInputs {
+    pub(crate) fn server_identities(&self) -> Vec<(&'static str, String)> {
+        let mut identities = Vec::new();
+        if let Some(id) = self.email_id.as_deref().filter(|id| !id.is_empty()) {
+            identities.push(("objectid-emailid", id.to_string()));
+        }
+        if let Some(id) = self.gmail_message_id {
+            identities.push(("gmail-message-id", format!("{id:x}")));
+        }
+        identities
+    }
 }
 
 #[cfg(test)]

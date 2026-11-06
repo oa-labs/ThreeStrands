@@ -916,21 +916,9 @@ impl ImapProvider {
                 // the same way, so a message in INBOX and in Trash is ONE id.
                 let rows = crate::provider::imap::fetch::fetch_identity_index(session, &set).await?;
                 for (row, threading) in rows {
-                    let message_id = {
-                        // Sticky id: an id already recorded for this coordinate
-                        // wins; otherwise derive it from the identity inputs.
-                        match self
-                            .store
-                            .location_message_id(mailbox, server_uidvalidity, row.uid as i64)
-                            .map_err(db_err)?
-                        {
-                            Some(existing) => existing,
-                            None => crate::provider::imap::identity::derive_message_id(
-                                self.store.account_id(),
-                                &row.inputs,
-                            ),
-                        }
-                    };
+                    let message_id = self.store.resolve_message_identity(
+                        mailbox, server_uidvalidity, row.uid as i64, &row.inputs,
+                    ).map_err(db_err)?;
                     outcome.locations.push(ImapLocation {
                         mailbox: mailbox.to_string(),
                         uidvalidity: server_uidvalidity,

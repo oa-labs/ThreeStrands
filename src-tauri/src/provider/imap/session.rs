@@ -176,6 +176,7 @@ where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
     session: Session<T>,
+    gmail_message_ids: bool,
 }
 
 impl<T> AsyncImapSession<T>
@@ -184,7 +185,7 @@ where
 {
     /// Takes ownership of an already-authenticated `async-imap` session.
     pub fn new(session: Session<T>) -> Self {
-        Self { session }
+        Self { session, gmail_message_ids: false }
     }
 }
 
@@ -251,6 +252,19 @@ where
     }
 
     async fn uid_fetch(&mut self, uid_set: &str, items: &str) -> Result<Vec<Fetch>, ProviderError> {
+        // Optional identity attributes belong on both identity tiers, never on
+        // body/flag fetches. Only enable after post-login capability discovery.
+        let extended;
+        let items = if self.gmail_message_ids
+            && matches!(items, super::fetch::IDENTITY_ITEMS | super::fetch::INDEX_IDENTITY_ITEMS)
+        {
+            extended = format!("{} X-GM-MSGID)", items.strip_suffix(')').unwrap_or(items));
+            // Preserve the nested HEADER.FIELDS closing parentheses: remove
+            // only the outer FETCH list delimiter.
+            extended.as_str()
+        } else {
+            items
+        };
         let stream = self
             .session
             .uid_fetch(uid_set, items)
@@ -269,10 +283,13 @@ where
             .capabilities()
             .await
             .map_err(|e| map_imap_error(&e))?;
-        Ok(caps
+        let capabilities: Vec<String> = caps
             .iter()
             .map(|cap| format!("{cap:?}").to_ascii_uppercase())
-            .collect())
+            .collect();
+        self.gmail_message_ids = capabilities.iter()
+            .any(|cap| super::write::capability_matches(cap, "X-GM-EXT-1"));
+        Ok(capabilities)
     }
 
     async fn list_mailboxes(&mut self) -> Result<Vec<MailboxEntry>, ProviderError> {

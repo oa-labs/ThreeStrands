@@ -5,6 +5,12 @@ changes are implemented by this document. Update the checklist as work lands.
 This supplements [the IMAP design](imap-design.md), whose historical phase
 status is not a complete description of today's implementation.
 
+Progress: the [identity audit](imap-identity-audit.md) and regression fixtures
+are complete. [Persistent message identity mappings](imap-identity-mappings.md)
+and X-GM-MSGID retrieval are implemented; external conversation identities and
+safe account conversion remain later work. The current IMAP user can rebuild
+their account if necessary, so eager legacy identity backfill is not required.
+
 ## Goal and scope
 
 Make IMAP a dependable alternative if Gmail API authorization is unavailable,
@@ -30,16 +36,16 @@ and re-add accounts to test the new path.
 
 ### 0. Establish identity and compatibility contracts
 
-- [ ] Trace message/thread IDs through IMAP acquisition, deduplication, thread
+- [x] Trace message/thread IDs through IMAP acquisition, deduplication, thread
   aliases, tasks, goals, snoozes, reader state, drafts, queued mutations/sends,
   and encrypted replication. Record each reference and its migration behavior.
 - [ ] Decide how advertised `X-GM-MSGID` and `X-GM-THRID` become external identity
   mappings without invalidating existing header-derived IMAP IDs. Prefer stable
   internal IDs with external mappings over changing primary keys on reconnect.
-- [ ] Define ambiguous identity handling: no subject-only matches and no silent
+- [x] Define ambiguous identity handling: no subject-only matches and no silent
   reassociation when Message-ID headers are missing or duplicated. Preserve and
   expose unresolved references rather than deleting workflow data.
-- [ ] Add fixtures for a plain IMAP server and an extension-capable server,
+- [x] Add fixtures for a plain IMAP server and an extension-capable server,
   overlapping folders, missing/duplicate Message-ID headers, late replies, and
   UIDVALIDITY changes. All subsequent stages reuse these contracts.
 

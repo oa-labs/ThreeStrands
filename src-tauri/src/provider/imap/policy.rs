@@ -34,6 +34,10 @@ use crate::provider::ProviderError;
 /// bytes before either runs.
 pub const MAX_RAW_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Bound opaque server identity tokens before persisting them. They are data,
+/// never IMAP command text; reject controls rather than silently normalizing.
+pub const MAX_EXTERNAL_ID_BYTES: usize = 1024;
+
 /// Ask for one extra byte so an unknown or understated RFC822.SIZE cannot
 /// cause us to cache a silently truncated message at the acceptance boundary.
 pub const MAX_RAW_FETCH_BYTES: usize = MAX_RAW_MESSAGE_BYTES + 1;

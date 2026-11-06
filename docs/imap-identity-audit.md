@@ -1,5 +1,10 @@
 # IMAP identity audit and regression fixtures
 
+Implementation follow-up: [persistent message identity mappings](imap-identity-mappings.md)
+now provide the shared resolver and capability-gated X-GM-MSGID acquisition.
+The tables below describe the audited pre-mapping snapshot and retain the
+remaining account-conversion and conversation-mapping requirements.
+
 Recorded 2026-11-06 against master `59325de7`. This is the identity foundation
 for the essential IMAP parity work. It changes tests and documentation only;
 it does not implement account conversion or new protocol extensions.

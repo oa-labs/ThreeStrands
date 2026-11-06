@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+mod identity;
+
 use rusqlite::OptionalExtension;
 
 use super::{Database, DbResult};

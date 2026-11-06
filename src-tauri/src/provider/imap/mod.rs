@@ -27,7 +27,7 @@ mod delta;
 mod discovery;
 mod error;
 mod fetch;
-mod identity;
+pub(crate) mod identity;
 mod labels;
 mod mailboxes;
 pub(crate) mod plan;
