@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 97;
+pub(crate) const LATEST_VERSION: i64 = 98;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1074,6 +1074,12 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         ); CREATE INDEX IF NOT EXISTS imap_message_identities_message
             ON imap_message_identities(account_id, message_id, namespace);").map_err(error)?;
     }
+    if version < 98 {
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS imap_label_snapshots (
+            account_id TEXT NOT NULL, message_id TEXT NOT NULL, labels_json TEXT NOT NULL,
+            PRIMARY KEY(account_id,message_id)
+        );").map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1358,6 +1364,7 @@ mod tests {
 
     /// Objects each migration above the v74 baseline adds, in `schema_objects` form.
     const ABOVE_BASELINE_OBJECTS: &[&str] = &[
+        "table:imap_label_snapshots",
         "table:imap_message_identities",
         "index:imap_message_identities_message",
         "table:agent_research",
@@ -1436,6 +1443,23 @@ mod tests {
         connection.execute("INSERT INTO imap_message_identities VALUES('me@example.com','gmail-message-id','7b','existing-id')", []).unwrap();
         super::migrate(&mut connection).unwrap();
         assert_eq!(connection.query_row("SELECT message_id FROM imap_message_identities", [], |r| r.get::<_, String>(0)).unwrap(), "existing-id");
+    }
+
+    #[test]
+    fn v97_adds_label_snapshots_without_rekeying_or_erasing_cached_mail() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch("DROP TABLE imap_label_snapshots; PRAGMA user_version=97;
+            INSERT INTO imap_message_identities VALUES('me@example.com','gmail-message-id','7b','stable-message');
+            INSERT INTO imap_bodies VALUES('me@example.com','stable-message',x'616263',3,1);").unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(connection.query_row("SELECT message_id FROM imap_message_identities", [], |row| row.get::<_, String>(0)).unwrap(), "stable-message");
+        assert_eq!(connection.query_row("SELECT raw FROM imap_bodies", [], |row| row.get::<_, Vec<u8>>(0)).unwrap(), b"abc");
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM imap_label_snapshots", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        connection.execute("INSERT INTO imap_label_snapshots VALUES('me@example.com','stable-message','[]')", []).unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(connection.query_row("SELECT labels_json FROM imap_label_snapshots", [], |row| row.get::<_, String>(0)).unwrap(), "[]");
     }
 
     #[test]

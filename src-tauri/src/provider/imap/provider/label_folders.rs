@@ -485,7 +485,7 @@ impl ImapProvider {
                 .iter()
                 .map(|location| location.uid as u32)
                 .collect();
-            let flags = self.fetch_flags(session, &uids).await?;
+            let (flags, _) = self.fetch_flags(session, &uids).await?;
             for location in locations {
                 if flags.get(&(location.uid as u32)).is_some_and(|flags| {
                     !flags

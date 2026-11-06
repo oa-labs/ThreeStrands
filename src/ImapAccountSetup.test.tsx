@@ -167,6 +167,23 @@ describe("IMAP account setup", () => {
     });
   });
 
+  it("confirms label-based accounts without creating an unused Archive mailbox", async () => {
+    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({
+      labelArchive: true, proposals: [{ role: "all", mailbox: "Everything", source: "special_use" }],
+      selectable: [{ name: "Everything", delimiter: "/", specialUse: "\\All" }], labelContainers: [],
+    });
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    await save();
+    expect(screen.queryByLabelText("Create a New Archive Mailbox")).not.toBeInTheDocument();
+    expect(screen.getByText("Archiving keeps your mail and its other labels.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm Mapping" })).toBeEnabled();
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith({
+      email: account.email, archive: null, createArchive: null, mailboxOverrides: { all: "Everything" }, labelContainer: null,
+    });
+  });
+
   it.each(["special_use", "name_match"] as const)("keeps an existing %s Archive proposal", async (source) => {
     vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({
       proposals: [{ role: "archive", mailbox: "Storage", source }],

@@ -41,7 +41,7 @@ pub(super) struct SystemMovePlan {
 /// The six system-move operations, each a (source role, destination role)
 /// pair. Named so the no-command and nothing-movable messages are specific.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SystemMoveOp {
+pub(super) enum SystemMoveOp {
     /// `remove [INBOX]`: move the INBOX copy to Archive.
     Archive,
     /// `add [INBOX]`: move the Archive copy to INBOX.
@@ -231,6 +231,20 @@ impl ImapProvider {
     ) -> ProviderResult<()> {
         let sync_plan = self.build_sync_plan()?;
         let op = plan_move.op;
+
+        // Authoritative label/identity evidence selects membership operations,
+        // never a move to an invented Archive folder on a label-based server.
+        let mut native = false;
+        for id in message_ids {
+            native |= self.store.gmail_message_id(id).map_err(db_err)?.is_some()
+                || self.store.message_labels(id).map_err(db_err)?.is_some();
+        }
+        if native {
+            let mut session = self.open_session().await?;
+            let result = self.apply_label_move(session.as_mut(), message_ids, &sync_plan, op).await;
+            let _ = session.logout().await;
+            return result;
+        }
 
         // Resolve the destination mailbox up front (same for every message).
         let dest_role = op.dest_role();

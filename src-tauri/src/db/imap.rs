@@ -63,6 +63,33 @@ pub struct ImapStateStore {
 }
 
 impl ImapStateStore {
+    /// Inbox membership can be learned through All Mail even when the Inbox
+    /// copy is outside its acquisition window. Authoritative absence also
+    /// overrides a stale physical Inbox location during reconciliation.
+    pub(crate) fn inbox_thread_ids(&self) -> DbResult<Vec<String>> {
+        self.database.with_connection(|c| {
+            let mut query = c.prepare("SELECT DISTINCT t.thread_id FROM imap_threads t
+                LEFT JOIN imap_label_snapshots s ON s.account_id=t.account_id AND s.message_id=t.message_id
+                WHERE t.account_id=?1
+                  AND EXISTS(SELECT 1 FROM imap_locations live WHERE live.account_id=t.account_id AND live.message_id=t.message_id)
+                  AND ((s.labels_json IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(s.labels_json) WHERE lower(value)=lower(?2)))
+                    OR (s.labels_json IS NULL AND EXISTS(SELECT 1 FROM imap_locations l
+                        WHERE l.account_id=t.account_id AND l.message_id=t.message_id AND lower(l.mailbox)='inbox')))
+                ORDER BY t.thread_id")?;
+            let rows = query.query_map(rusqlite::params![self.account_id, "\\Inbox"], |row| row.get(0))?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+    }
+    /// Complete server label membership, independent of local folder windows.
+    pub(crate) fn message_labels(&self, message_id: &str) -> DbResult<Option<Vec<String>>> {
+        self.database.with_connection(|c| {
+            let json: Option<String> = c.query_row(
+                "SELECT labels_json FROM imap_label_snapshots WHERE account_id=?1 AND message_id=?2",
+                rusqlite::params![self.account_id, message_id], |row| row.get(0),
+            ).optional()?;
+            json.map(|value| serde_json::from_str(&value).map_err(super::serialization_error)).transpose()
+        })
+    }
     /// Binds a store to one account's rows in the shared database.
     pub fn new(database: Arc<Database>, account_id: impl Into<String>) -> Self {
         Self {
@@ -780,6 +807,7 @@ impl ImapStateStore {
 
     /// Thread ids currently located in a given mailbox (via the location ->
     /// thread join). Used by `list_inbox`. Returned sorted and de-duplicated.
+    #[cfg(test)]
     pub fn thread_ids_in_mailbox(&self, mailbox: &str) -> DbResult<Vec<String>> {
         self.database.with_connection(|connection| {
             let mut statement = connection.prepare(
@@ -1508,6 +1536,12 @@ impl ImapStateStore {
             }
 
             let next = current + 1;
+            for (message_id, labels) in &round.label_snapshots {
+                transaction.execute("INSERT INTO imap_label_snapshots VALUES(?1,?2,?3)
+                    ON CONFLICT(account_id,message_id) DO UPDATE SET labels_json=excluded.labels_json",
+                    rusqlite::params![self.account_id, message_id,
+                        serde_json::to_string(labels).map_err(super::serialization_error)?])?;
+            }
             // A brand-new account's row is born `tokens_backfilled = 1`: this
             // run writes tokens at assignment, so a new account never has
             // token-less threads and must not trigger the upgrade backfill. An
@@ -1794,6 +1828,8 @@ impl ImapStateStore {
 /// double-counted.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SyncRoundWrite {
+    /// Complete authoritative label sets observed during this atomic round.
+    pub label_snapshots: Vec<(String, Vec<String>)>,
     /// Location rows to insert or update (new mail and flag changes alike).
     pub locations: Vec<ImapLocation>,
     /// `(mailbox, uidvalidity, uid)` location rows to delete (expunged).
@@ -1869,7 +1905,8 @@ impl SyncRoundWrite {
     /// upserts/releases are likewise metadata (schema v70) and are not counted:
     /// a round that only (re)pins or TTL-releases does not bump the generation.
     pub fn is_empty(&self) -> bool {
-        self.locations.is_empty()
+        self.label_snapshots.is_empty()
+            && self.locations.is_empty()
             && self.deletions.is_empty()
             && self.thread_assignments.is_empty()
             && self.aliases.is_empty()

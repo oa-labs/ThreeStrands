@@ -44,4 +44,6 @@ Your active mail search stays in place when you visit Contacts or another view. 
 
 Local results are available offline for cached mail. Server results need a connection and valid account sign-in; a local search is not proof that older mail is absent from the server. [Retention](privacy.html#keep-mail-on-this-device) limits the cache, not the mail kept by your provider.
 
+IMAP server searches include All Mail and user folders, so mail stored outside your Inbox can be found too. Searches that reach a time, folder, or result limit show partial coverage; narrow the query or name a folder to search more precisely. Supported label-based servers can also evaluate their native search syntax.
+
 Search follows the current workspace: in **Files** it searches filenames and senders, and in **Contacts** it searches contacts. Return to **Mail** to use mail operators. If you still cannot find something, use [missing-message troubleshooting](troubleshooting.html#a-message-is-missing).

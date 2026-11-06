@@ -90,7 +90,32 @@ pub fn labels_for_location_ids(location_ids: &[String], flags: &[String]) -> Vec
     if is_flagged(flags) && !labels.iter().any(|l| l == "STARRED") {
         labels.push("STARRED".to_string());
     }
+    if flags.iter().any(|flag| flag.eq_ignore_ascii_case("\\Draft")) && !labels.iter().any(|label| label == "DRAFT") {
+        labels.push("DRAFT".into());
+    }
     labels
+}
+
+/// Full membership from a negotiated label extension outranks locally cached
+/// folder copies. Empty is meaningful: archived mail can have no labels at all.
+pub(super) fn labels_for_server_membership(
+    plan: &super::plan::SyncPlan, membership: &[String], flags: &[String],
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    for label in membership {
+        let system = match label.to_ascii_lowercase().as_str() {
+            "\\inbox" => Some("INBOX"), "\\sent" => Some("SENT"),
+            "\\trash" => Some("TRASH"), "\\spam" | "\\junk" => Some("SPAM"),
+            "\\draft" | "\\drafts" => Some("DRAFT"), _ => None,
+        };
+        if let Some(id) = system { ids.push(id.to_string()); }
+        else if !label.starts_with('\\') {
+            let mapped = plan.location_label_ids_for_mailbox(label);
+            if mapped.is_empty() { ids.push(format!("folder:{label}")); }
+            else { ids.extend(mapped); }
+        }
+    }
+    labels_for_location_ids(&ids, flags)
 }
 
 #[cfg(test)]

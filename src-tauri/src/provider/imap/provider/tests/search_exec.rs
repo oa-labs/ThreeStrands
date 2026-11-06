@@ -749,7 +749,7 @@ mod report_mapping {
         let result = provider.run_search_plan(&plan, search_plan).await.unwrap();
         let report = imap_search_report(&result);
         assert_eq!(report.unsynced_mailboxes, 1, "Archive counted unsynced");
-        assert_eq!(report.status, SearchReportStatus::Complete);
+        assert_eq!(report.status, SearchReportStatus::Partial { reasons: vec![crate::provider::PartialSearchReason::Budget] });
     }
 
     /// The report survives the whole backfill path:

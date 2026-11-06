@@ -11,6 +11,11 @@ and X-GM-MSGID retrieval are implemented; external conversation identities and
 safe account conversion remain later work. The current IMAP user can rebuild
 their account if necessary, so eager legacy identity backfill is not required.
 
+[All Mail, archive, and search completeness](imap-all-mail.md) is implemented:
+bounded aggregate acquisition, negotiated label membership/system actions,
+broader server search, and explicit partial coverage. General label management
+is the next functional stage.
+
 ## Goal and scope
 
 Make IMAP a dependable alternative if Gmail API authorization is unavailable,
@@ -55,21 +60,20 @@ foundation, not a claim that all threading enhancements ship in this stage.
 
 ### 1. Complete archive and search access
 
-Current gaps: `plan.rs` excludes `\All`; default server search selects Inbox,
-Archive, and Sent. Existing archived mail available only through All Mail can
-therefore be absent. Ordinary IMAP archive moves also need distinct handling
-from a server's aggregate/label model.
+Implemented behavior and validation are recorded in [All Mail, archive, and
+search completeness](imap-all-mail.md). Ordinary physical-folder moves remain
+distinct from negotiated label membership operations.
 
-- [ ] Design aggregate mailbox acquisition and reconciliation without treating
+- [x] Design aggregate mailbox acquisition and reconciliation without treating
   All Mail as an additional user label or downloading each body per location.
-- [ ] For advertised label extensions, archive removes Inbox membership while
+- [x] For advertised label extensions, archive removes Inbox membership while
   preserving other labels. Keep ordinary Archive-folder moves for plain IMAP.
-- [ ] Define correct trash, spam, unarchive, undo, and snooze-return behavior
+- [x] Define correct trash, spam, unarchive, undo, and snooze-return behavior
   across both models. Removing a folder membership must not imply global deletion.
-- [ ] Make default search cover relevant server mail, including archive-only and
+- [x] Make default search cover relevant server mail, including archive-only and
   folder-only messages. Deduplicate hits; retain explicit Trash/Spam exclusions.
   Support advertised `X-GM-RAW` with a generic IMAP search fallback.
-- [ ] Surface incomplete coverage, unsupported terms, deadlines, and acquisition
+- [x] Surface incomplete coverage, unsupported terms, deadlines, and acquisition
   limits. Keep bounded acquisition and retention; completeness of search access
   does not require downloading the entire mailbox.
 

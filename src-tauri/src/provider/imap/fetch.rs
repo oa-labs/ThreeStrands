@@ -68,6 +68,25 @@ pub struct IdentityRow {
     pub uid: u32,
     pub flags: Vec<String>,
     pub inputs: IdentityInputs,
+    pub labels: Option<Vec<String>>,
+}
+
+pub(super) fn server_labels(fetch: &async_imap::types::Fetch) -> Option<Vec<String>> {
+    fetch.gmail_labels().map(|labels| {
+        // imap-proto retains quoted-string escapes. Decode only the two IMAP
+        // quoted specials; atom system labels such as \Inbox stay untouched.
+        let mut labels: Vec<String> = labels.iter().map(|label| {
+            let mut chars = label.chars().peekable();
+            let mut out = String::new();
+            while let Some(ch) = chars.next() {
+                if ch == '\\' && chars.peek().is_some_and(|ch| matches!(ch, '\\' | '"')) {
+                    if let Some(escaped) = chars.next() { out.push(escaped); }
+                } else { out.push(ch); }
+            }
+            out
+        }).collect();
+        labels.sort(); labels.dedup(); labels
+    })
 }
 
 /// Parse the four identity headers out of a `BODY.PEEK[HEADER.FIELDS (...)]`
@@ -115,7 +134,7 @@ pub fn parse_identity_headers(header_block: &[u8], rfc822_size: u32) -> Identity
 pub async fn fetch_flags_only(
     session: &mut dyn ImapSession,
     uid_set: &str,
-) -> Result<Vec<(u32, Vec<String>)>, ProviderError> {
+) -> Result<Vec<(u32, Vec<String>, Option<Vec<String>>)>, ProviderError> {
     let fetches = session.uid_fetch(uid_set, FLAGS_ITEMS).await?;
     let mut rows = Vec::with_capacity(fetches.len());
     for fetch in &fetches {
@@ -123,7 +142,7 @@ pub async fn fetch_flags_only(
             continue;
         };
         let flags = fetch.flags().map(|flag| flag_to_wire(&flag)).collect();
-        rows.push((uid, flags));
+        rows.push((uid, flags, server_labels(fetch)));
     }
     Ok(rows)
 }
@@ -146,7 +165,7 @@ pub async fn fetch_identity(
         let header_block = fetch.header().unwrap_or_default();
         let mut inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
         inputs.gmail_message_id = fetch.gmail_msg_id().copied();
-        rows.push(IdentityRow { uid, flags, inputs });
+        rows.push(IdentityRow { uid, flags, inputs, labels: server_labels(fetch) });
     }
     Ok(rows)
 }
@@ -172,7 +191,7 @@ pub async fn fetch_identity_index(
         let mut inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
         inputs.gmail_message_id = fetch.gmail_msg_id().copied();
         let threading = parse_threading_headers(header_block);
-        rows.push((IdentityRow { uid, flags, inputs }, threading));
+        rows.push((IdentityRow { uid, flags, inputs, labels: server_labels(fetch) }, threading));
     }
     Ok(rows)
 }
@@ -524,6 +543,7 @@ mod tests {
 
     fn row(uid: u32, message_id: &str) -> IdentityRow {
         IdentityRow {
+            labels: None,
             uid,
             flags: vec!["\\Seen".into()],
             inputs: IdentityInputs {

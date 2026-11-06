@@ -471,7 +471,8 @@ function MailboxMappingReview({
     Object.fromEntries(ROLE_ORDER.map((role) => [role, proposalFor(role)?.mailbox ?? ""])),
   );
   // Archive-specific: when no Archive mailbox exists, offer to create one.
-  const [createArchive, setCreateArchive] = useState(() => !proposalFor("archive"));
+  const labelArchive = mapping.labelArchive === true;
+  const [createArchive, setCreateArchive] = useState(() => !labelArchive && !proposalFor("archive"));
   const [newArchiveName, setNewArchiveName] = useState("Archive");
   const [chosenContainer, setChosenContainer] = useState(labelContainer);
 
@@ -488,8 +489,8 @@ function MailboxMappingReview({
     const archiveChoice = choices.archive || null;
     onConfirm({
       email,
-      archive: createArchive ? null : archiveChoice,
-      createArchive: createArchive ? newArchiveName || "Archive" : null,
+      archive: labelArchive || createArchive ? null : archiveChoice,
+      createArchive: !labelArchive && createArchive ? newArchiveName || "Archive" : null,
       mailboxOverrides,
       labelContainer: labelStorage === "folders" ? chosenContainer || null : null,
     });
@@ -504,7 +505,7 @@ function MailboxMappingReview({
         of them below.
       </p>
       <dl>
-        {ROLE_ORDER.map((role) => {
+        {ROLE_ORDER.filter((role) => !labelArchive || role !== "archive").map((role) => {
           const proposal = proposalFor(role);
           const isArchive = role === "archive";
           return (
@@ -571,9 +572,10 @@ function MailboxMappingReview({
           </select>
         </label>
       )}
+      {labelArchive && <p>Archiving keeps your mail and its other labels.</p>}
       <div className="imap-mapping-actions">
         <button type="button" className="btn btn-primary" onClick={confirm}
-          disabled={busy || (!createArchive && !choices.archive)}>
+          disabled={busy || (!labelArchive && !createArchive && !choices.archive)}>
           Confirm Mapping
         </button>
         <button type="button" className="btn" onClick={() => void onSkip()} disabled={busy}>
