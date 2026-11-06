@@ -6,7 +6,7 @@ import type { useMailboxThreads } from "./useMailboxThreads";
 import type { MailAccountSettings, SettingsSection } from "./settingsPanelTypes";
 import type { SettingsImportResult } from "./userPreferences";
 import { mailClient } from "./data/client";
-import { DEFAULT_AVAILABILITY_PROFILES } from "./settings";
+import { DEFAULT_AFTER_TRIAGE, DEFAULT_AVAILABILITY_PROFILES } from "./settings";
 
 type Options = {
   mailAccounts: ReturnType<typeof useAccounts>;
@@ -29,7 +29,8 @@ export function useSettingsIntegration({
   } = mailAccounts;
   const {
     setShowStarredInbox, setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
-    setMarkReadOnArchive, setMarkReadOnOpen, setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles,
+    setMarkReadOnArchive, setMarkReadOnOpen, setMarkReadOnTrash, setMarkReadOnSnooze, setSnoozeReturnsUnread, setAfterTriage,
+    setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles,
   } = preferences;
   const { loadThreads, query } = mailboxThreads;
   // Removing or reconnecting an account changes which threads are visible,
@@ -74,6 +75,10 @@ export function useSettingsIntegration({
     setEmailTextColors(imported.emailTextColors ?? EMAIL_TEXT_COLORS.defaultMode);
     setMarkReadOnArchive(imported.markReadOnArchive ?? false);
     setMarkReadOnOpen(imported.markReadOnOpen ?? true);
+    setMarkReadOnTrash(imported.markReadOnTrash ?? false);
+    setMarkReadOnSnooze(imported.markReadOnSnooze ?? false);
+    setSnoozeReturnsUnread(imported.snoozeReturnsUnread ?? false);
+    setAfterTriage(imported.afterTriage ?? DEFAULT_AFTER_TRIAGE);
     setAutoReadDelaySeconds(imported.autoReadDelaySeconds);
     setLoadRemoteImages(imported.loadRemoteImages);
     setAvailabilityProfiles(imported.availabilityProfiles ?? DEFAULT_AVAILABILITY_PROFILES, imported.availabilityPreferences);
@@ -87,7 +92,8 @@ export function useSettingsIntegration({
     setSettingsSection("accounts");
   }, [
     setShowStarredInbox, setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
-    setMarkReadOnArchive, setMarkReadOnOpen, setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles, setActiveAccountId,
+    setMarkReadOnArchive, setMarkReadOnOpen, setMarkReadOnTrash, setMarkReadOnSnooze, setSnoozeReturnsUnread, setAfterTriage,
+    setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles, setActiveAccountId,
     refreshAccounts, refreshSplitInboxes, setAuthStatus, refreshAiAvailability, setSettingsSection,
   ]);
 

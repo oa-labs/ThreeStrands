@@ -21,6 +21,10 @@ import {
   readShowStarredInbox, saveShowStarredInbox,
   readMarkReadOnArchive, saveMarkReadOnArchive,
   readMarkReadOnOpen, saveMarkReadOnOpen,
+  readMarkReadOnTrash, saveMarkReadOnTrash,
+  readMarkReadOnSnooze, saveMarkReadOnSnooze,
+  readSnoozeReturnsUnread, saveSnoozeReturnsUnread,
+  readAfterTriage, saveAfterTriage, DEFAULT_AFTER_TRIAGE, type AfterTriage,
   readAutoReadDelaySeconds,
   readAvailabilityPreferences,
   readAvailabilityProfiles,
@@ -67,6 +71,14 @@ export type ExportablePreferences = {
   markReadOnArchive?: boolean;
   /** Earlier exports always mark opened conversations read. */
   markReadOnOpen?: boolean;
+  /** Earlier exports preserve unread status when moving to Trash. */
+  markReadOnTrash?: boolean;
+  /** Earlier exports preserve unread status when snoozing. */
+  markReadOnSnooze?: boolean;
+  /** Earlier exports return snoozed conversations with their read status unchanged. */
+  snoozeReturnsUnread?: boolean;
+  /** Earlier exports open the next older conversation. */
+  afterTriage?: AfterTriage;
   autoReadDelaySeconds: number;
   loadRemoteImages: boolean;
   selectedAccountId: string | null;
@@ -107,6 +119,10 @@ export function readExportablePreferences(): ExportablePreferences {
     emailTextColors: readEmailTextColors(),
     markReadOnArchive: readMarkReadOnArchive(),
     markReadOnOpen: readMarkReadOnOpen(),
+    markReadOnTrash: readMarkReadOnTrash(),
+    markReadOnSnooze: readMarkReadOnSnooze(),
+    snoozeReturnsUnread: readSnoozeReturnsUnread(),
+    afterTriage: readAfterTriage(),
     autoReadDelaySeconds: readAutoReadDelaySeconds(),
     loadRemoteImages: readLoadRemoteImages(),
     selectedAccountId: readSelectedAccountId(),
@@ -133,6 +149,10 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveEmailTextColors(preferences.emailTextColors ?? EMAIL_TEXT_COLORS.defaultMode);
   saveMarkReadOnArchive(preferences.markReadOnArchive ?? false);
   saveMarkReadOnOpen(preferences.markReadOnOpen ?? true);
+  saveMarkReadOnTrash(preferences.markReadOnTrash ?? false);
+  saveMarkReadOnSnooze(preferences.markReadOnSnooze ?? false);
+  saveSnoozeReturnsUnread(preferences.snoozeReturnsUnread ?? false);
+  saveAfterTriage(preferences.afterTriage ?? DEFAULT_AFTER_TRIAGE);
   saveAutoReadDelaySeconds(preferences.autoReadDelaySeconds);
   saveLoadRemoteImages(preferences.loadRemoteImages);
   saveSelectedAccountId(preferences.selectedAccountId);

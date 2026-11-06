@@ -50,6 +50,10 @@ describe("exportable preferences", () => {
       emailTextColors: "app",
       markReadOnArchive: true,
       markReadOnOpen: false,
+      markReadOnTrash: true,
+      markReadOnSnooze: true,
+      snoozeReturnsUnread: true,
+      afterTriage: "list",
       autoReadDelaySeconds: 8,
       loadRemoteImages: true,
       showStarredInbox: false,
@@ -131,6 +135,15 @@ describe("exportable preferences", () => {
     expect(readExportablePreferences().markReadOnOpen).toBe(false);
     applyExportablePreferences(previous);
     expect(readExportablePreferences().markReadOnOpen).toBe(true);
+  });
+
+  it("imports the preceding preference schema with the earlier triage behavior", () => {
+    const { markReadOnTrash: _trash, markReadOnSnooze: _snooze, snoozeReturnsUnread: _returns, afterTriage: _after, ...previous } = nativeContractFixture;
+    applyExportablePreferences({ ...nativeContractFixture, markReadOnTrash: true, markReadOnSnooze: true, snoozeReturnsUnread: true, afterTriage: "list" });
+    applyExportablePreferences(previous);
+    expect(readExportablePreferences()).toMatchObject({
+      markReadOnTrash: false, markReadOnSnooze: false, snoozeReturnsUnread: false, afterTriage: "older",
+    });
   });
 
   it("imports the preceding preference schema at 100% email zoom", () => {

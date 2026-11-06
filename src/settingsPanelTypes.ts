@@ -13,7 +13,7 @@ import type {
 } from "./domain";
 import type { Accent } from "./accent";
 import type { Theme } from "./theme";
-import type { FontFamily } from "./settings";
+import type { AfterTriage, FontFamily } from "./settings";
 
 export type SettingsSection = "reading" | "replicatedSync" | "appearance" | "defaultApps" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "mutedSenders" | "snippets" | "signatures" | "writingProfile" | "ai" | "research" | "privacy" | "diagnostics" | "data";
 
@@ -49,6 +49,14 @@ export type SettingsPreferences = {
   markReadOnArchive: boolean;
   setMarkReadOnArchive(value: boolean): void;
   markReadOnOpen: boolean;
+  markReadOnTrash: boolean;
+  setMarkReadOnTrash(value: boolean): void;
+  markReadOnSnooze: boolean;
+  setMarkReadOnSnooze(value: boolean): void;
+  snoozeReturnsUnread: boolean;
+  setSnoozeReturnsUnread(value: boolean): void;
+  afterTriage: AfterTriage;
+  setAfterTriage(value: AfterTriage): void;
   setMarkReadOnOpen(value: boolean): void;
   autoReadDelaySeconds: number;
   setAutoReadDelaySeconds(value: number): void;

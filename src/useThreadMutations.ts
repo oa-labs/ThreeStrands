@@ -10,6 +10,7 @@ import {
   invertMutationTemplate,
   type MutationTemplate,
 } from "./threadMutations";
+import type { AfterTriage } from "./settings";
 import { STARRED_INBOX_ID } from "./starredInbox";
 import { sortByRecency, triageNow } from "./threadPresentation";
 import { buildTriageDispositionEvent } from "./triage";
@@ -37,13 +38,17 @@ type Options = ReturnType<typeof useTriageSession> & Pick<ReturnType<typeof useM
   /** False leaves opened conversations unread until the user marks them. */
   markReadOnOpen?: boolean;
   markReadOnArchive: boolean;
+  /** Moving to Trash also marks the conversations read. */
+  markReadOnTrash?: boolean;
+  /** Which conversation opens after the open one leaves the list. */
+  afterTriage?: AfterTriage;
 };
 
 /** Applies optimistic mail changes, rollback and undo within the originating view. */
 export function useThreadMutations({
   threads, detail, visibleDetail, selectedId, setSelectedId, setDetail, setThreads, setCheckedIds,
   setSyncStatus, setNotice, mailbox, activeAccountId, activeSplitInboxId, includeArchived,
-  isThreadMailbox, autoReadDelaySeconds, markReadOnOpen = true, markReadOnArchive, triageSessionRef, recordTriageEvent, loadThreadsRef,
+  isThreadMailbox, autoReadDelaySeconds, markReadOnOpen = true, markReadOnArchive, markReadOnTrash = false, afterTriage = "older", triageSessionRef, recordTriageEvent, loadThreadsRef,
   queryRef, refreshMailboxUnreadCounts,
 }: Options) {
   const autoReadSuppressedForId = useRef<string | null>(null);
@@ -93,10 +98,11 @@ export function useThreadMutations({
     const previous = new Map(
       threads.filter((thread) => targetIds.includes(thread.id)).map((thread) => [thread.id, thread] as const),
     );
-    const markArchivedRead = template.kind === "archive" && template.value && markReadOnArchive;
+    const markRemovedRead = template.value
+      && ((template.kind === "archive" && markReadOnArchive) || (template.kind === "trash" && markReadOnTrash));
     const applyChange = (thread: Thread) => {
       const changed = applyMutationTemplate(thread, template);
-      return markArchivedRead ? { ...changed, unread: false } : changed;
+      return markRemovedRead ? { ...changed, unread: false } : changed;
     };
     const unreadBefore = new Map([...previous].map(([id, thread]) => [id, thread.unread]));
     const previousDetail = detail && targetIds.includes(detail.thread.id) ? detail : null;
@@ -129,10 +135,10 @@ export function useThreadMutations({
     });
     setDetail((current) => {
       if (!current || !targetIds.includes(current.thread.id)) return current;
-      const messages = template.kind === "read" || markArchivedRead
+      const messages = template.kind === "read" || markRemovedRead
         ? current.messages.map((message, index) => ({
             ...message,
-            unread: markArchivedRead || template.value ? false : index === current.messages.length - 1,
+            unread: markRemovedRead || template.value ? false : index === current.messages.length - 1,
           }))
         : current.messages;
       return { ...current, thread: applyChange(current.thread), messages };
@@ -141,8 +147,13 @@ export function useThreadMutations({
     if (removesFromView && selectedId && targetIds.includes(selectedId)) {
       const currentIndex = threads.findIndex((thread) => thread.id === selectedId);
       const remaining = threads.filter((thread) => !targetIds.includes(thread.id));
-      const nextIndex = Math.min(currentIndex, remaining.length - 1);
-      setSelectedId(remaining[nextIndex]?.id ?? null);
+      // The list runs newest first: the conversation that slides into the
+      // removed row is the next older one, and the row above is newer. At
+      // either end, fall back to the neighbor that exists.
+      const nextIndex = afterTriage === "newer"
+        ? (currentIndex > 0 ? currentIndex - 1 : 0)
+        : Math.min(currentIndex, remaining.length - 1);
+      setSelectedId(afterTriage === "list" ? null : remaining[nextIndex]?.id ?? null);
     }
 
     if (removesFromView) {
@@ -162,14 +173,14 @@ export function useThreadMutations({
       if (changesLocation && [...previous.values()].some((thread) => thread.snoozedUntil)) {
         snoozesBefore = (await mailClient.listSnoozeRecords()).filter((record) => targetIds.includes(record.id) && record.state === "active");
       }
-      if (markArchivedRead && options?.includeUnloaded) {
+      if (markRemovedRead && options?.includeUnloaded) {
         await Promise.all(targetIds.filter((id) => !previous.has(id)).map(async (id) => {
           const snapshot = await mailClient.getThread(id);
           unreadBefore.set(id, snapshot.thread.unread);
         }));
       }
       await mailClient.mutateThreads(targetIds.flatMap((id) => [
-        ...(markArchivedRead ? [buildThreadMutation(id, { kind: "read", value: true })] : []),
+        ...(markRemovedRead ? [buildThreadMutation(id, { kind: "read", value: true })] : []),
         buildThreadMutation(id, template),
       ]));
     } catch {
@@ -238,7 +249,7 @@ export function useThreadMutations({
         }
         await mailClient.mutateThreads(succeededIds.flatMap((id) => [
           buildThreadMutation(id, undoTemplate),
-          ...(markArchivedRead && unreadBefore.get(id)
+          ...(markRemovedRead && unreadBefore.get(id)
             ? [buildThreadMutation(id, { kind: "read", value: false })] : []),
         ]));
         const restore = snoozesBefore.filter((record) => succeededIds.includes(record.id));
@@ -262,7 +273,7 @@ export function useThreadMutations({
   }, [
     selectedId, mailbox, activeSplitInboxId, includeArchived, threads, detail, viewKey, setThreads, setDetail,
     triageSessionRef, setSelectedId, setCheckedIds, recordTriageEvent, loadThreadsRef, queryRef,
-    setSyncStatus, setNotice, refreshMailboxUnreadCounts, markReadOnArchive,
+    setSyncStatus, setNotice, refreshMailboxUnreadCounts, markReadOnArchive, markReadOnTrash, afterTriage,
   ]);
 
   const selected = threads.find((thread) => thread.id === selectedId);

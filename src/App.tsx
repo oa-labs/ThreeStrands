@@ -175,6 +175,9 @@ export function App() {
     emailTextColors,
     markReadOnArchive,
     markReadOnOpen,
+    markReadOnTrash,
+    markReadOnSnooze,
+    afterTriage,
     autoReadDelaySeconds,
     loadRemoteImages,
     availabilityPreferences,
@@ -376,7 +379,7 @@ export function App() {
     setCheckedIds(new Set());
     await loadThreadsRef.current(queryRef.current);
   }, [loadThreadsRef, queryRef, setCheckedIds]);
-  const conversationSnooze = useConversationSnooze(refreshAfterSnooze);
+  const conversationSnooze = useConversationSnooze(refreshAfterSnooze, markReadOnSnooze);
   const openSnooze = useCallback((ids: string[]) => {
     const targets = threads.filter((thread) => ids.includes(thread.id) && !thread.trashed && !thread.labels.includes("SPAM"));
     if (targets.length) setSnoozeTargets(targets);
@@ -412,7 +415,7 @@ export function App() {
   const mutateIds = useThreadMutations({
     threads, detail, visibleDetail, selectedId, setSelectedId, setDetail, setThreads,
     setCheckedIds, setSyncStatus, setNotice, mailbox, activeAccountId, activeSplitInboxId,
-    includeArchived, isThreadMailbox, autoReadDelaySeconds, markReadOnOpen, markReadOnArchive, triageSessionRef, recordTriageEvent,
+    includeArchived, isThreadMailbox, autoReadDelaySeconds, markReadOnOpen, markReadOnArchive, markReadOnTrash, afterTriage, triageSessionRef, recordTriageEvent,
     loadThreadsRef, queryRef, refreshMailboxUnreadCounts,
   });
 

@@ -82,6 +82,21 @@ fn store(tx: &Transaction<'_>, item: &ConversationSnooze, publish: bool) -> DbRe
     Ok(())
 }
 
+/// This device's Reading & Triage choice, mirrored from the webview so returns
+/// that happen while no window is open follow it too. Absent means off.
+const RETURNS_UNREAD_KEY: &str = "snooze_returns_unread";
+
+fn returns_unread(connection: &rusqlite::Connection) -> DbResult<bool> {
+    Ok(connection
+        .query_row(
+            "SELECT value FROM compose_settings WHERE key=?1",
+            [RETURNS_UNREAD_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .is_some_and(|value| value == "true"))
+}
+
 fn return_to_inbox(tx: &Transaction<'_>, item: &ConversationSnooze) -> DbResult<()> {
     let eligible: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1 AND trashed=0
@@ -97,11 +112,35 @@ fn return_to_inbox(tx: &Transaction<'_>, item: &ConversationSnooze) -> DbResult<
                 value: false,
             },
         )?;
+        if returns_unread(tx)? {
+            Database::apply_mutation(
+                tx,
+                &ThreadMutation::Read {
+                    thread_id: item.id.clone(),
+                    value: false,
+                },
+            )?;
+        }
     }
     Ok(())
 }
 
 impl Database {
+    #[cfg(test)]
+    pub(crate) fn snooze_returns_unread(&self) -> DbResult<bool> {
+        self.with_connection(returns_unread)
+    }
+
+    pub(crate) fn set_snooze_returns_unread(&self, value: bool) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO compose_settings VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![RETURNS_UNREAD_KEY, value.to_string()],
+            )?;
+            Ok(())
+        })
+    }
+
     /// One transaction covers the entire batch, the archive queue, and replica.
     pub(crate) fn snooze_threads(
         &self,

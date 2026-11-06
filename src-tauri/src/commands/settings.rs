@@ -200,6 +200,14 @@ pub(crate) async fn get_retention_days(state: State<'_, AppState>) -> AppResult<
     run_database_task(move || database.retention_days()).await
 }
 
+/// Mirrors the webview's Reading & Triage choice for snooze returns, which the
+/// native snooze loop applies even when no window is open.
+#[tauri::command(async)]
+pub(crate) fn set_snooze_returns_unread(value: bool, state: State<'_, AppState>) -> AppResult<()> {
+    state.database.set_snooze_returns_unread(value)?;
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub(crate) fn set_retention_days(days: Option<i64>, state: State<'_, AppState>) -> AppResult<()> {
     state.database.set_retention_days(days)?;
