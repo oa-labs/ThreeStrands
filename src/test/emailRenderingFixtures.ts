@@ -303,6 +303,23 @@ export const emailRenderingFixtures = {
     <img height="20" src="https://example.com/height-only.png" alt="inline cap" style="max-width:10px">
     <img height="20" src="https://example.com/height-only.png" alt="stylesheet cap" class="limited-icon">
   `,
+  // A header logo that declares its box both inline and as attributes keeps
+  // that box beside wrapping text.
+  declaredLogoHeaderTable: `
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td valign="top"><img src="https://example.com/header-logo.png" alt="header logo" width="101" height="37" style="outline:none;text-decoration:none;height:37px;width:101px"></td>
+      <td style="font-size:16px;padding-left:12px">Your weekly account summary is ready. Review recent sign-ins, connected devices and security settings before the end of the month.</td>
+    </tr></table>
+  `,
+  // Images with a declared pixel box wider than their container scale down
+  // proportionally rather than keeping their declared height.
+  wideBoxInNarrowCell: `
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td width="40%" valign="top"><img src="https://example.com/wide-box.png" alt="wide box" width="400" height="100"></td>
+      <td style="font-size:16px">This announcement explains the upcoming changes to your plan, including new storage limits, billing dates and the features that become available.</td>
+    </tr></table>
+  `,
+  wideBoxInNarrowFlow: `<div style="max-width:150px"><img src="https://example.com/wide-flow.png" alt="wide flow" style="width:300px;height:100px;display:block"></div>`,
   // Images wider than a narrow reading pane must still scale to fit.
   heroInTable: `
     <table width="100%" cellpadding="0" cellspacing="0"><tr>

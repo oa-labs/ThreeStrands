@@ -8,6 +8,7 @@ import {
   safeColor,
   safeImageSrc,
   preservedImageMinWidth,
+  declaredImageAspectRatio,
   safeStyleProperties,
   emailFrameHeight,
   EMAIL_IMAGE_LIMITS,
@@ -438,6 +439,21 @@ export function sanitizeMessageHtml(html: string): string {
       const cssWidth = declarations.find((declaration) => declaration.property === "width")?.value ?? null;
       const minWidth = preservedImageMinWidth(cssWidth, element.getAttribute("width"));
       if (minWidth !== null) declarations.push({ property: "min-width", value: minWidth, important: false });
+    }
+    if (tag === "img") {
+      // A fixed pixel height survives the frame's `max-width: 100%`
+      // fallback, so an image narrowed to fit its cell or the pane would be
+      // squashed. Derive the height from the declared box's ratio instead:
+      // the same size when there is room, proportional when it shrinks.
+      // Box-model geometry only; it fetches nothing and adds no capability.
+      const declaredValue = (property: string) => declarations.find((declaration) => declaration.property === property)?.value ?? null;
+      const ratio = declaredImageAspectRatio(declaredValue("width"), element.getAttribute("width"), declaredValue("height"), element.getAttribute("height"));
+      if (ratio !== null) {
+        const height = declarations.find((declaration) => declaration.property === "height");
+        if (height) height.value = "auto";
+        else declarations.push({ property: "height", value: "auto", important: false });
+        declarations.push({ property: "aspect-ratio", value: ratio, important: height?.important ?? false });
+      }
     }
     element.removeAttribute("style");
     if (declarations.length) {

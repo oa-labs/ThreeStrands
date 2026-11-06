@@ -94,9 +94,10 @@ export const EMAIL_IMAGE_LIMITS = {
    * Largest declared pixel width kept as an image's minimum width. The frame's
    * `max-width: 100%` fallback lets table layout compress an image to nothing
    * beside wrapping text; icons, avatars and social buttons up to this width
-   * keep their declared size, while wider images still scale to fit.
+   * keep their declared size, while wider images still scale to fit. Header
+   * logos commonly declare around 100px, so they stay inside this limit too.
    */
-  maxPreservedImageWidthPx: 64,
+  maxPreservedImageWidthPx: 128,
   /**
    * Attachment chip thumbnails. The per-file cap matches the native raster
    * validator's byte limit, so a larger file is never requested only to be
@@ -613,11 +614,36 @@ export function sanitizeHtmlFontSize(value: string): string | null {
  * to the frame's fallback scaling.
  */
 export function preservedImageMinWidth(cssWidth: string | null, attributeWidth: string | null): string | null {
-  const declared = cssWidth?.trim().toLowerCase() || attributeWidth?.trim() || "";
+  const declared = declaredImagePixels(cssWidth, attributeWidth);
+  return declared !== null && Number(declared) <= EMAIL_IMAGE_LIMITS.maxPreservedImageWidthPx ? `${declared}px` : null;
+}
+
+/**
+ * The `width / height` ratio of an image's declared pixel box, used so that an
+ * image the frame's `max-width: 100%` fallback shrinks keeps its proportions
+ * instead of keeping its declared height. Each dimension comes from its
+ * sanitized inline CSS value when present and otherwise from its sanitized
+ * attribute, as for `preservedImageMinWidth`. Null unless both are positive
+ * plain pixel lengths; percentage, `auto`, or missing dimensions already
+ * scale with the width.
+ */
+export function declaredImageAspectRatio(
+  cssWidth: string | null,
+  attributeWidth: string | null,
+  cssHeight: string | null,
+  attributeHeight: string | null,
+): string | null {
+  const width = declaredImagePixels(cssWidth, attributeWidth);
+  const height = declaredImagePixels(cssHeight, attributeHeight);
+  return width !== null && height !== null ? `${width} / ${height}` : null;
+}
+
+/** A positive plain pixel length (unitless number), or null. CSS wins over the attribute. */
+function declaredImagePixels(css: string | null, attribute: string | null): string | null {
+  const declared = css?.trim().toLowerCase() || attribute?.trim() || "";
   const match = /^(\d+(?:\.\d+)?)(px)?$/.exec(declared);
-  if (!match || (cssWidth?.trim() && !match[2])) return null;
-  const amount = Number(match[1]);
-  return amount > 0 && amount <= EMAIL_IMAGE_LIMITS.maxPreservedImageWidthPx ? `${match[1]}px` : null;
+  if (!match || (css?.trim() && !match[2])) return null;
+  return Number(match[1]) > 0 ? match[1] : null;
 }
 
 export function isAllowedCssProperty(property: string): boolean {

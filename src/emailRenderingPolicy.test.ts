@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMAIL_ZOOM, parseEmailZoom, EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_TEXT_COLORS, parseEmailTextColors, belowMinimumContrast, isDeliberatelyHiddenText, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, sanitizeHtmlFontSize, EMAIL_LEGACY_FONT_SIZE } from "./emailRenderingPolicy";
+import { EMAIL_ZOOM, parseEmailZoom, EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_TEXT_COLORS, parseEmailTextColors, belowMinimumContrast, isDeliberatelyHiddenText, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, declaredImageAspectRatio, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, sanitizeHtmlFontSize, EMAIL_LEGACY_FONT_SIZE } from "./emailRenderingPolicy";
 
 describe("email rendering numeric policy", () => {
   it("validates email zoom at both bounds without clamping or accepting CSS", () => {
@@ -76,6 +76,23 @@ describe("email rendering numeric policy", () => {
     expect(preservedImageMinWidth("18", null)).toBeNull();
     for (const value of ["0", "10%", "2em", "-4", "calc(10px)", ""]) {
       expect(preservedImageMinWidth(null, value)).toBeNull();
+    }
+  });
+
+  it("derives an image's aspect ratio only from a declared pixel width and height", () => {
+    expect(declaredImageAspectRatio(null, "101", null, "37")).toBe("101 / 37");
+    expect(declaredImageAspectRatio("300px", null, "100px", null)).toBe("300 / 100");
+    expect(declaredImageAspectRatio("17.5px", null, null, "7")).toBe("17.5 / 7");
+    // Inline CSS overrides the attribute, so it alone decides each dimension.
+    expect(declaredImageAspectRatio("400px", "20", "100px", "20")).toBe("400 / 100");
+    expect(declaredImageAspectRatio("50%", "400", null, "100")).toBeNull();
+    expect(declaredImageAspectRatio(null, "400", "auto", "100")).toBeNull();
+    // A missing dimension already scales with the width.
+    expect(declaredImageAspectRatio(null, "400", null, null)).toBeNull();
+    expect(declaredImageAspectRatio(null, null, null, "100")).toBeNull();
+    for (const value of ["0", "10%", "2em", "-4", "calc(10px)", "", "100;color:red"]) {
+      expect([value, declaredImageAspectRatio(null, value, null, "100")]).toEqual([value, null]);
+      expect([value, declaredImageAspectRatio(null, "100", null, value)]).toEqual([value, null]);
     }
   });
 

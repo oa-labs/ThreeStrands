@@ -806,6 +806,53 @@ describe("SafeMessage", () => {
     expect(container.querySelector("td[width]")?.getAttribute("style")).toBeNull();
   });
 
+  it("sizes images with a declared pixel box by its ratio so shrinking keeps their proportions", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <img alt="attributes" src="https://example.com/a.png" width="400" height="100">
+      <img alt="inline" src="https://example.com/b.png" style="width:101px;height:37px" width="101" height="37">
+      <img alt="important" src="https://example.com/c.png" style="width:300px !important;height:100px !important">
+      <img alt="width only" src="https://example.com/d.png" width="400">
+      <img alt="height only" src="https://example.com/e.png" height="20">
+      <img alt="percent" src="https://example.com/f.png" style="width:100%;height:100px">
+      <img alt="auto height" src="https://example.com/g.png" width="400" style="height:auto">
+      <table width="400" height="100"><tr><td width="400" height="100">Not an image</td></tr></table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const image = (alt: string) => container.querySelector<HTMLImageElement>(`img[alt="${alt}"]`)!;
+
+    expect(image("attributes").getAttribute("style")).toBe("height: auto; aspect-ratio: 400 / 100");
+    // The attributes stay so the box is still described before styles apply.
+    expect(image("attributes").getAttribute("height")).toBe("100");
+    expect(image("inline").getAttribute("style")).toBe("width: 101px; height: auto; min-width: 101px; aspect-ratio: 101 / 37");
+    expect(image("important").getAttribute("style")).toBe("width: 300px !important; height: auto !important; aspect-ratio: 300 / 100 !important");
+    for (const alt of ["width only", "height only", "percent", "auto height"]) {
+      expect([alt, image(alt).style.aspectRatio]).toEqual([alt, ""]);
+    }
+    expect(image("percent").style.height).toBe("100px");
+    expect(container.querySelector("table")?.getAttribute("style")).toBeNull();
+    expect(container.querySelector("td")?.getAttribute("style")).toBeNull();
+  });
+
+  it("derives no aspect ratio from unsafe or out-of-policy image dimensions", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <img alt="a" src="https://example.com/a.png" width="calc(100vw)" height="100">
+      <img alt="b" src="https://example.com/b.png" width="400" height="${EMAIL_CSS_LIMITS.maxAbsolutePx + 1}">
+      <img alt="c" src="https://example.com/c.png" width="0" height="100">
+      <img alt="d" src="https://example.com/d.png" style="width:expression(alert(1));height:url(https://tracker.invalid/h)" width="400" height="100">
+      <img alt="e" src="https://example.com/e.png" style="height:10vh" width="400" height="100">
+      <img alt="f" src="https://example.com/f.png" width="400" height="100; background:url(https://tracker.invalid)">
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const ratios = Array.from(container.querySelectorAll("img"), (image) => image.style.aspectRatio);
+
+    // Only values that survived sanitization reach the ratio: d and e fall
+    // back to their safe attributes, f keeps only the attribute's leading number.
+    expect(ratios).toEqual(["", "", "", "400 / 100", "400 / 100", "400 / 100"]);
+    expect(sanitized).not.toMatch(/expression|calc|tracker\.invalid|vh/i);
+  });
+
   it("derives no minimum width from unsafe or out-of-policy image dimensions", () => {
     const sanitized = sanitizeMessageHtml(`
       <img src="https://example.com/a.png" width="calc(100vw)">

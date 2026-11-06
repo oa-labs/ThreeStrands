@@ -364,6 +364,7 @@ test.describe("email rendering fixtures", () => {
     { fixture: "iconCalloutTable", alt: "note", imageWidth: 24, imageHeight: 24 },
     { fixture: "heightOnlyIconTable", alt: "mail", imageWidth: 20, imageHeight: 20 },
     { fixture: "heightOnlyIconFlex", alt: "notice", imageWidth: 40, imageHeight: 20 },
+    { fixture: "declaredLogoHeaderTable", alt: "header logo", imageWidth: 101, imageHeight: 37 },
   ]) {
     for (const theme of ["light", "dark"]) {
       for (const width of [390, 1200]) {
@@ -522,6 +523,23 @@ test.describe("email rendering fixtures", () => {
         return root.scrollWidth - root.clientWidth;
       });
       expect(overflow).toBeLessThanOrEqual(0);
+    });
+  }
+
+  for (const { fixture, alt, declaredWidth, declaredHeight } of [
+    { fixture: "wideBoxInNarrowCell", alt: "wide box", declaredWidth: 400, declaredHeight: 100 },
+    { fixture: "wideBoxInNarrowFlow", alt: "wide flow", declaredWidth: 300, declaredHeight: 100 },
+  ]) {
+    test(`${fixture} keeps its declared proportions when it shrinks to fit`, async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 900 });
+      await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
+      const image = page.locator("iframe.message-body").contentFrame().getByAltText(alt);
+      await expect(image).toHaveAttribute("src", /^data:image\//);
+      await expect.poll(async () => (await image.boundingBox())?.width).toBeLessThan(declaredWidth);
+      const box = (await image.boundingBox())!;
+      expect(box.width).toBeGreaterThan(0);
+      expect(box.height).toBeLessThan(declaredHeight);
+      expect(box.width / box.height).toBeCloseTo(declaredWidth / declaredHeight, 1);
     });
   }
 

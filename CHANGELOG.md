@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Fixed
+- Logos and other images in emails no longer look squashed or stretched. Small logos keep the size the sender chose, and images that have to shrink to fit the reading pane keep their shape.
+
 ## 0.205.0 — 2026-11-06
 
 ### New
