@@ -14,6 +14,7 @@ const sections: Record<SettingsSection, true> = {
   signatures: true,
   writingProfile: true,
   ai: true,
+  research: true,
   replicatedSync: true,
   privacy: true,
   diagnostics: true,

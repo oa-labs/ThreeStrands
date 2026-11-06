@@ -7,6 +7,7 @@ import {
   ArrowLeftRight,
   BellOff,
   CalendarDays,
+  Globe,
   Check,
   Clock,
   Inbox,
@@ -40,6 +41,7 @@ import { SplitInboxesSettings } from "./SplitInboxesSettings";
 import { MutedSendersSettings } from "./MutedSendersSettings";
 import { SnippetsSettings } from "./SnippetsSettings";
 import { AiProviderSettings } from "./AiProviderSettings";
+import { WebResearchSettings } from "./WebResearchSettings";
 import { WritingProfileSettings } from "./WritingProfileSettings";
 import { aiAreaEnabled, readAiFeatures, readAiProvider } from "./aiSettings";
 import { PrivacySettings } from "./PrivacySettings";
@@ -84,6 +86,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "writingProfile", label: "Writing Profile", group: "Workflow", description: "Tell Draft Review who you are and how to review your email, for each account.", keywords: "about you review instructions draft review feedback ai sales tone role company", icon: UserPen, autosaves: true },
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
   { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
+  { id: "research", label: "Web Research", group: "Integrations", description: "Let delegated tasks in Agents research the web with Anthropic and Exa.", keywords: "agents delegated research anthropic claude exa search api key storage agreement connections limits cost", icon: Globe },
   { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted", icon: Network },
   { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache", icon: ShieldCheck, autosaves: true },
   { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect sync health, AI failures, application logs, and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting AI suggestions logs capture", icon: Activity, autosaves: true },
@@ -346,6 +349,7 @@ export function Settings({
             />
           ) : null}
           {section === "ai" ? <AiProviderSettings onChange={() => { onAiConfigChange(); queuePortablePreferences(); }} /> : null}
+          {section === "research" ? <WebResearchSettings /> : null}
           {section === "privacy" ? (
             <PrivacySettings
               loadRemoteImages={preferences.loadRemoteImages}

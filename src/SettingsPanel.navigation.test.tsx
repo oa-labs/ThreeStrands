@@ -2,6 +2,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsHarness } from "./test/settingsHarness";
+import { mailClient } from "./data/client";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
@@ -159,6 +160,17 @@ describe("settings section navigation", () => {
     expect(within(dialog).getByRole("region", { name: "Writing Profile" })).toBeInTheDocument();
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     expect(within(nav).queryByRole("button", { name: "AI Provider" })).not.toBeInTheDocument();
+  });
+
+  it("keeps web research setup in Settings under Integrations", async () => {
+    const research = vi.spyOn(mailClient, "agentResearchSettings").mockResolvedValue({ config: { enabled: false, searchEnabled: true, persistenceBasis: "", verified: false }, modelKeyConfigured: false, searchKeyConfigured: false });
+    const dialog = await openSettings();
+    fireEvent.change(within(dialog).getByRole("searchbox", { name: "Search Settings" }), { target: { value: "exa" } });
+    expect(within(dialog).getByRole("button", { name: "Web Research" })).toHaveAttribute("aria-current", "true");
+    expect(within(dialog).getByText("Integrations")).toBeInTheDocument();
+    expect(await within(dialog).findByRole("checkbox", { name: "Web Research" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("region", { name: "Web Research" })).toBeInTheDocument();
+    research.mockRestore();
   });
 
   it("puts both account removal scopes behind one confirmation", async () => {

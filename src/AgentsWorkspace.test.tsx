@@ -11,10 +11,11 @@ import type { AgentDetail } from "./domain";
 const dataset = defaultDemoDataset();
 const openThread = vi.fn();
 const openTask = vi.fn();
+const openResearchSettings = vi.fn();
 function Harness() {
   const c = useAgentTasks();
   const [shown, show] = useState(true);
-  return <><button onClick={() => show(!shown)}>Switch workspace</button>{shown ? <AgentsWorkspace controller={c} accounts={dataset.accounts} accountId={null} onOpenThread={openThread} onOpenTask={openTask} /> : <p>Another workspace</p>}</>;
+  return <><button onClick={() => show(!shown)}>Switch workspace</button>{shown ? <AgentsWorkspace controller={c} accounts={dataset.accounts} accountId={null} onOpenThread={openThread} onOpenTask={openTask} onOpenResearchSettings={openResearchSettings} /> : <p>Another workspace</p>}</>;
 }
 async function start() {
   fireEvent.click(await screen.findByRole("button", { name: "New delegated task" }));
@@ -128,6 +129,21 @@ describe("real research entry",()=> {
     fireEvent.click(screen.getByRole("checkbox",{name:/I reviewed these public subjects/}));
     await waitFor(()=>expect(start).toBeEnabled());fireEvent.click(start);
     await waitFor(()=>expect(create).toHaveBeenCalledWith({task:expect.objectContaining({workflow:"web_research_v1",objective:"Assess audience fit"}),subjects:["Example Podcast","Example Host"],consent:true}));
+  });
+  it("sends research setup to Settings and re-reads it when Settings closes",async()=> {
+    const client=createDemoClient(dataset);
+    for(const key of ["agentRunnerEnabled","listAgentTasks","listTasks"] as const) vi.spyOn(mailClient,key).mockImplementation(client[key] as never);
+    const read=vi.spyOn(mailClient,"agentResearchSettings").mockResolvedValue({config:{enabled:false,searchEnabled:true,persistenceBasis:"",verified:false},modelKeyConfigured:false,searchKeyConfigured:false});
+    function Workspace({settingsOpen}:{settingsOpen:boolean}) {const c=useAgentTasks();return <AgentsWorkspace controller={c} accounts={dataset.accounts} accountId={null} onOpenThread={openThread} onOpenTask={openTask} onOpenResearchSettings={openResearchSettings} settingsOpen={settingsOpen} />;}
+    openResearchSettings.mockReset();
+    const view=render(<Workspace settingsOpen={false} />);
+    fireEvent.click(await screen.findByRole("button",{name:"Research settings"}));
+    expect(openResearchSettings).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(()=>expect(read).toHaveBeenCalledTimes(1));
+    view.rerender(<Workspace settingsOpen />);
+    view.rerender(<Workspace settingsOpen={false} />);
+    await waitFor(()=>expect(read).toHaveBeenCalledTimes(3));
   });
   it("keeps each report's retrieved sources separate and opens only native source IDs",async()=> {
     const client=createDemoClient(dataset);await client.setAgentRunnerEnabled(true);

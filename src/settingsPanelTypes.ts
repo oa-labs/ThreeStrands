@@ -15,7 +15,7 @@ import type { Accent } from "./accent";
 import type { Theme } from "./theme";
 import type { FontFamily } from "./settings";
 
-export type SettingsSection = "reading" | "replicatedSync" | "appearance" | "defaultApps" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "mutedSenders" | "snippets" | "signatures" | "writingProfile" | "ai" | "privacy" | "diagnostics" | "data";
+export type SettingsSection = "reading" | "replicatedSync" | "appearance" | "defaultApps" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "mutedSenders" | "snippets" | "signatures" | "writingProfile" | "ai" | "research" | "privacy" | "diagnostics" | "data";
 
 export type SyncDiagnosticsActions = {
   retryFailed(): Promise<void>;

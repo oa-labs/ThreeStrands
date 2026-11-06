@@ -6,8 +6,9 @@ invitation-evaluation workflow in phase 4.
 
 ## Setup and delegation
 
-**Agents → Research settings** holds a separate Anthropic key and an optional
-paid Exa key in the operating-system keychain, using the phase-0 service and
+**Settings → Web Research** (also reached from **Agents → Research settings**)
+holds a separate Anthropic key and the required paid Exa key in the
+operating-system keychain, using the phase-0 service and
 account names. Existing AI provider settings and credentials remain untouched.
 Research and Exa search default off. Saving setup never queues work. Disconnecting
 a key or editing setup invalidates in-flight generations and pauses affected jobs.

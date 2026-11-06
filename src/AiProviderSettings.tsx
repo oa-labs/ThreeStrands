@@ -403,15 +403,17 @@ const AUTOMATIC_BRIEF_OPTIONS: { value: AiAutomaticBriefs; label: string }[] = [
 /** A switch whose accessible name stays the short label while its longer
  * explanation is attached as a description, so the row reads as one unit
  * without the explanation floating loose below unrelated switches. */
-function SettingsToggle({
+export function SettingsToggle({
   label,
   description,
   checked,
+  disabled,
   onChange,
 }: {
   label: string;
   description?: string;
   checked: boolean;
+  disabled?: boolean;
   onChange(value: boolean): void;
 }) {
   const descriptionId = useId();
@@ -426,6 +428,7 @@ function SettingsToggle({
         aria-label={label}
         aria-describedby={description ? descriptionId : undefined}
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
     </label>

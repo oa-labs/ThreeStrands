@@ -3158,6 +3158,17 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .settings-section p.settings-connection-status { margin: 0; }
 .settings-field-detail .settings-hint, p.settings-field-detail { display: block; margin-top: var(--space-1); }
 .ai-key-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
+/* Web Research reuses the AI Provider key rows; the agreement is the one
+   multi-line field, so its label sits at the top of the box. */
+.research-settings .research-agreement-row { align-items: start; }
+.research-settings .research-agreement-row > span { padding-top: var(--space-2); }
+.research-settings .research-agreement-row textarea { max-width: 420px; min-height: 72px; }
+.research-agreement-actions { margin-top: var(--space-2); }
+.research-disclosure-list { margin: 0; padding-left: var(--space-5); color: var(--muted); font-size: var(--text-body); line-height: var(--leading-normal); }
+.research-disclosure-list li + li { margin-top: var(--space-1); }
+.research-limits { display: grid; grid-template-columns: max-content max-content; gap: var(--space-1) var(--space-6); margin: 0; font-size: var(--text-body); }
+.research-limits dt { color: var(--muted); }
+.research-limits dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; }
 .settings-toggle-list { display: flex; flex-direction: column; width: 100%; }
 .settings-toggle-list > .settings-toggle + .settings-toggle { border-top: 1px solid var(--border); }
 .settings-toggle { align-items: flex-start; }
@@ -3873,14 +3884,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .agent-tab[aria-selected="true"] { background:var(--selected); }
 .agent-new h2, .agent-empty h2 { font-size:var(--text-pane-title); }
 
-/* Research setup inherits the same UI roles and field geometry as settings. */
-.agent-research-settings { width:min(var(--dialog-w-lg),calc(100vw - var(--dialog-edge))); font-size:var(--text-body); }
-.agent-research-settings form { display:grid; gap:var(--space-3); }
-.agent-research-settings label { display:grid; gap:var(--space-1); }
-.agent-research-settings input:not([type="checkbox"]), .agent-research-settings textarea { width:100%; font:inherit; padding:var(--space-2); border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--input); color:var(--text); }
-.agent-research-settings input:not([type="checkbox"]) { height:var(--control-h); }
-.agent-research-settings textarea { min-height:90px; resize:vertical; }
-.agents-workspace .agent-toggle, .agent-research-settings .agent-toggle { display:flex; align-items:center; gap:var(--space-2); }
+.agents-workspace .agent-toggle { display:flex; align-items:center; gap:var(--space-2); }
 .agent-hint { font-size:var(--text-secondary); color:var(--secondary); }
 .agent-sources { padding-left:var(--space-5); }
 .agent-sources p { font-size:var(--text-meta); color:var(--muted); margin:var(--space-1) 0 var(--space-3); overflow-wrap:anywhere; }

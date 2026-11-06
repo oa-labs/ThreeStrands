@@ -73,3 +73,15 @@ Type `@` in **Ask About This Conversation** and choose a readable attachment. Se
 ### Provider Accounts and Billing {#provider-accounts-and-billing}
 
 Requests go directly to the provider you choose. Its API billing, model access, and data-handling terms apply; a consumer chat subscription may not include API access. Check those terms in your provider account before sharing sensitive content. Estimated app costs are not a bill or spending cap. Use [AI troubleshooting](troubleshooting.html#ai-is-unavailable-or-failing) for connection failures.
+
+## Web Research {#web-research}
+
+Delegated tasks in **Agents** can research the web. Web research is separate from your AI provider: it uses its own Anthropic and Exa API keys, both stored in your operating system's credential store.
+
+1. Open **Settings → Web Research**.
+2. Paste your **Anthropic API Key** and **Exa API Key**, clicking **Save Key** for each.
+3. Under **Storage Agreement**, record the API or customer agreement that allows ThreeStrands to keep search metadata, excerpts, and reports, then click **Save Agreement**.
+4. Click **Check Connections**. This sends one public test search to Exa, which may be billed, and checks that the model is available at Anthropic.
+5. Turn on **Web Research**.
+
+Changing any of these settings pauses research that is running and means checking connections again. Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic. Exa receives only the public subjects you review for each task. Each task has fixed limits on model calls, searches, pages, tokens, and time, listed under **Limits and Estimated Cost**.
