@@ -1,6 +1,6 @@
 import { installTestShortcuts } from "./test/commandContext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ContactGroup, ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
@@ -1343,27 +1343,23 @@ describe("ContactsWorkspace",()=>{
       expect(options.map(option=>option.getAttribute("aria-label"))).toEqual(["Newer Person"]);
     });
 
-    it("renames on Enter and restores the name when the rename fails",async()=>{
+    it("saves a group rename and restores the name when the rename fails",async()=>{
       vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
       vi.mocked(mailClient.renameContactGroup).mockResolvedValueOnce({...board,name:"Directors"}).mockRejectedValueOnce(new Error("A group named “Family” already exists"));
       groupsView();
       const name=await screen.findByRole("textbox",{name:"Group Name"});
-      // Enter saves by blurring the focused field, as it does during editing.
-      act(()=>name.focus());
-      expect(name).toHaveFocus();
+      // Enter-to-blur is covered directly in ContactGroupViews.test.tsx.
+      // Keep this async workspace test focused on persistence and recovery.
       fireEvent.change(name,{target:{value:"Directors"}});
-      fireEvent.keyDown(name,{key:"Enter"});
-      expect(name).not.toHaveFocus();
+      fireEvent.blur(name);
       await waitFor(()=>expect(mailClient.renameContactGroup).toHaveBeenCalledWith(board.id,"Directors"));
       expect(await screen.findByRole("button",{name:/Directors/})).toBeInTheDocument();
-      act(()=>name.focus());
       fireEvent.change(name,{target:{value:"Family"}});
-      act(()=>name.blur());
+      fireEvent.blur(name);
       expect(await screen.findByRole("alert")).toHaveTextContent("already exists");
       expect(name).toHaveValue("Directors");
       // Leaving the name unchanged saves nothing.
-      act(()=>name.focus());
-      act(()=>name.blur());
+      fireEvent.blur(name);
       expect(mailClient.renameContactGroup).toHaveBeenCalledTimes(2);
     });
 

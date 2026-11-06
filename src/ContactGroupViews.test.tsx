@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ContactMemberPicker } from "./ContactGroupViews";
+import { ContactGroupDetail, ContactMemberPicker } from "./ContactGroupViews";
 import { mailClient } from "./data/client";
 import type { ContactProfile, ContactGroup, ContactGroupSuggestion } from "./domain";
 
@@ -13,6 +13,26 @@ const profiles = [profile("alice", "Alice"), profile("carol", "Carol"), { ...pro
 const group: ContactGroup = { id: "team", name: "Team", memberIds: ["alice"], createdAt: "", updatedAt: "" };
 const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(150); });
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
+
+describe("group name editing", () => {
+  it("blurs on Enter and saves the edited name exactly once", async () => {
+    const rename = vi.fn().mockResolvedValue(true);
+    render(<ContactGroupDetail group={group} profiles={profiles} busy={false}
+      onOpenContact={vi.fn()} onRename={rename} onDelete={vi.fn()}
+      onAddMembers={vi.fn()} onRemoveMember={vi.fn()} />);
+    const name = screen.getByRole("textbox", { name: "Group Name" });
+    await act(async () => name.focus());
+    expect(name).toHaveFocus();
+    fireEvent.change(name, { target: { value: "Directors" } });
+    expect(name).toHaveValue("Directors");
+    expect(rename).not.toHaveBeenCalled();
+
+    await act(async () => { fireEvent.keyDown(name, { key: "Enter" }); });
+
+    expect(name).not.toHaveFocus();
+    expect(rename).toHaveBeenCalledExactlyOnceWith("Directors");
+  });
+});
 
 describe("group member recommendations", () => {
   beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
