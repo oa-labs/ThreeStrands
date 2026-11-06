@@ -1,53 +1,99 @@
-import { MAX_AUTO_READ_DELAY_SECONDS, MIN_AUTO_READ_DELAY_SECONDS } from "./settings";
+import { DEFAULT_AUTO_READ_DELAY_SECONDS, MAX_AUTO_READ_DELAY_SECONDS, MIN_AUTO_READ_DELAY_SECONDS } from "./settings";
+
+type OpenMode = "immediately" | "delay" | "never";
+
+const OPEN_MODE_HINTS: Record<OpenMode, string> = {
+  immediately: "Conversations are marked read as soon as you open them.",
+  delay: "Conversations you leave sooner stay unread.",
+  never: "Conversations stay unread until you mark them read.",
+};
+
+/** A delay of zero is the "Immediately" choice, so the delay field starts at one second. */
+const MIN_DELAY_CHOICE_SECONDS = Math.max(1, MIN_AUTO_READ_DELAY_SECONDS);
 
 export function ReadingSettings({
   markReadOnArchive,
   onMarkReadOnArchiveChange,
+  markReadOnOpen,
+  onMarkReadOnOpenChange,
   autoReadDelaySeconds,
   onAutoReadDelayChange,
 }: {
   markReadOnArchive: boolean;
   onMarkReadOnArchiveChange(value: boolean): void;
+  markReadOnOpen: boolean;
+  onMarkReadOnOpenChange(value: boolean): void;
   autoReadDelaySeconds: number;
   onAutoReadDelayChange(value: number): void;
 }) {
+  const openMode: OpenMode = !markReadOnOpen ? "never" : autoReadDelaySeconds === 0 ? "immediately" : "delay";
+
+  const chooseOpenMode = (mode: OpenMode) => {
+    if (mode === "never") {
+      onMarkReadOnOpenChange(false);
+      return;
+    }
+    if (!markReadOnOpen) onMarkReadOnOpenChange(true);
+    if (mode === "immediately") onAutoReadDelayChange(0);
+    else if (autoReadDelaySeconds === 0) onAutoReadDelayChange(DEFAULT_AUTO_READ_DELAY_SECONDS);
+  };
+
   return (
-    <section className="settings-section" aria-label="Mark as Read">
+    <section className="settings-section reading-settings" aria-label="Mark as Read">
       <h3>Mark as Read</h3>
-      <label className="settings-field settings-field-inline">
-        <span>After Opening a Conversation</span>
-        <div className="settings-row">
-          <input
-            type="number"
-            min={MIN_AUTO_READ_DELAY_SECONDS}
-            max={MAX_AUTO_READ_DELAY_SECONDS}
-            step="1"
-            value={autoReadDelaySeconds}
-            aria-label="Auto-Read Delay"
-            onChange={(event) => {
-              if (event.target.value === "") return;
-              const next = Number(event.target.value);
-              if (Number.isFinite(next)) onAutoReadDelayChange(next);
-            }}
-          />
-          <span>seconds</span>
+      <div className="settings-item">
+        <div className="settings-item-control">
+          <label htmlFor="mark-read-on-open">Mark Read After Opening</label>
+          <div className="settings-row">
+            <select
+              id="mark-read-on-open"
+              value={openMode}
+              onChange={(event) => chooseOpenMode(event.target.value as OpenMode)}
+              aria-describedby="mark-read-on-open-hint"
+            >
+              <option value="immediately">Immediately</option>
+              <option value="delay">After a Delay</option>
+              <option value="never">Never</option>
+            </select>
+            {openMode === "delay" ? (
+              <>
+                <input
+                  type="number"
+                  min={MIN_DELAY_CHOICE_SECONDS}
+                  max={MAX_AUTO_READ_DELAY_SECONDS}
+                  step="1"
+                  value={autoReadDelaySeconds}
+                  aria-label="Mark Read Delay in Seconds"
+                  aria-describedby="mark-read-on-open-hint"
+                  onChange={(event) => {
+                    if (event.target.value === "") return;
+                    const next = Number(event.target.value);
+                    // Zero belongs to the Immediately choice; ignoring it here
+                    // keeps the field from vanishing mid-edit.
+                    if (Number.isFinite(next) && next >= MIN_DELAY_CHOICE_SECONDS) onAutoReadDelayChange(next);
+                  }}
+                />
+                <span aria-hidden="true">sec</span>
+              </>
+            ) : null}
+          </div>
         </div>
-      </label>
-      <p className="settings-hint">
-        Set to 0 to mark conversations read immediately. The timer resets when you open a different conversation.
-      </p>
-      <label className="settings-switch">
-        <span>When Archiving a Conversation</span>
-        <input
-          type="checkbox"
-          checked={markReadOnArchive}
-          onChange={(event) => onMarkReadOnArchiveChange(event.target.checked)}
-          aria-describedby="archive-mark-read-hint"
-        />
-      </label>
-      <p id="archive-mark-read-hint" className="settings-hint">
-        Also applies when archiving without opening the conversation.
-      </p>
+        <p id="mark-read-on-open-hint" className="settings-hint">{OPEN_MODE_HINTS[openMode]}</p>
+      </div>
+      <div className="settings-item">
+        <label className="settings-switch">
+          <span>Mark Read When Archiving</span>
+          <input
+            type="checkbox"
+            checked={markReadOnArchive}
+            onChange={(event) => onMarkReadOnArchiveChange(event.target.checked)}
+            aria-describedby="archive-mark-read-hint"
+          />
+        </label>
+        <p id="archive-mark-read-hint" className="settings-hint">
+          Includes conversations you archive from the list without opening them.
+        </p>
+      </div>
     </section>
   );
 }

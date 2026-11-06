@@ -10,6 +10,7 @@ import {
 import {
   readShowStarredInbox, saveShowStarredInbox,
   readMarkReadOnArchive, saveMarkReadOnArchive,
+  readMarkReadOnOpen, saveMarkReadOnOpen,
   applyFontFamily,
   readAutoReadDelaySeconds,
   readFontFamily,
@@ -64,6 +65,7 @@ export function useAppPreferences() {
   const [emailTextColors, setEmailTextColorsState] = useState(readEmailTextColors);
   const [fontFamily, setFontFamilyState] = useState(readFontFamily);
   const [markReadOnArchive, setMarkReadOnArchiveState] = useState(readMarkReadOnArchive);
+  const [markReadOnOpen, setMarkReadOnOpenState] = useState(readMarkReadOnOpen);
   const [autoReadDelaySeconds, setAutoReadDelayState] = useState(readAutoReadDelaySeconds);
   const [loadRemoteImages, setLoadRemoteImagesState] = useState(readLoadRemoteImages);
   const [availabilityPreferences, setAvailabilityPreferencesState] = useState(readAvailabilityPreferences);
@@ -81,6 +83,7 @@ export function useAppPreferences() {
           setEmailMinimumFontSizeState(readEmailMinimumFontSize());
           setAutoReadDelayState(readAutoReadDelaySeconds());
           setMarkReadOnArchiveState(readMarkReadOnArchive());
+          setMarkReadOnOpenState(readMarkReadOnOpen());
           setLoadRemoteImagesState(readLoadRemoteImages());
           // Keep the same object when availability didn't change: meeting
           // cards re-check the calendar whenever it is replaced.
@@ -161,6 +164,10 @@ export function useAppPreferences() {
     setMarkReadOnArchiveState(saveMarkReadOnArchive(value));
     queuePortablePreferences();
   }, []);
+  const setMarkReadOnOpen = useCallback((value: boolean) => {
+    setMarkReadOnOpenState(saveMarkReadOnOpen(value));
+    queuePortablePreferences();
+  }, []);
   const setAutoReadDelaySeconds = useCallback((value: number) => {
     setAutoReadDelayState(saveAutoReadDelaySeconds(value));
     queuePortablePreferences();
@@ -216,6 +223,7 @@ export function useAppPreferences() {
     emailTextColors,
     setEmailTextColors,
     markReadOnArchive, setMarkReadOnArchive,
+    markReadOnOpen, setMarkReadOnOpen,
     autoReadDelaySeconds,
     setAutoReadDelaySeconds,
     loadRemoteImages,

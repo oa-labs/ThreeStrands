@@ -48,6 +48,8 @@ export type SettingsPreferences = {
   setFontFamily(value: FontFamily): void;
   markReadOnArchive: boolean;
   setMarkReadOnArchive(value: boolean): void;
+  markReadOnOpen: boolean;
+  setMarkReadOnOpen(value: boolean): void;
   autoReadDelaySeconds: number;
   setAutoReadDelaySeconds(value: number): void;
   loadRemoteImages: boolean;

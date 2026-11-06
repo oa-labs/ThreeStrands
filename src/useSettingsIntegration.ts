@@ -29,7 +29,7 @@ export function useSettingsIntegration({
   } = mailAccounts;
   const {
     setShowStarredInbox, setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
-    setMarkReadOnArchive, setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles,
+    setMarkReadOnArchive, setMarkReadOnOpen, setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles,
   } = preferences;
   const { loadThreads, query } = mailboxThreads;
   // Removing or reconnecting an account changes which threads are visible,
@@ -73,6 +73,7 @@ export function useSettingsIntegration({
     setEmailZoom(imported.emailZoom ?? EMAIL_ZOOM.defaultPercent);
     setEmailTextColors(imported.emailTextColors ?? EMAIL_TEXT_COLORS.defaultMode);
     setMarkReadOnArchive(imported.markReadOnArchive ?? false);
+    setMarkReadOnOpen(imported.markReadOnOpen ?? true);
     setAutoReadDelaySeconds(imported.autoReadDelaySeconds);
     setLoadRemoteImages(imported.loadRemoteImages);
     setAvailabilityProfiles(imported.availabilityProfiles ?? DEFAULT_AVAILABILITY_PROFILES, imported.availabilityPreferences);
@@ -86,7 +87,7 @@ export function useSettingsIntegration({
     setSettingsSection("accounts");
   }, [
     setShowStarredInbox, setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
-    setMarkReadOnArchive, setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles, setActiveAccountId,
+    setMarkReadOnArchive, setMarkReadOnOpen, setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles, setActiveAccountId,
     refreshAccounts, refreshSplitInboxes, setAuthStatus, refreshAiAvailability, setSettingsSection,
   ]);
 

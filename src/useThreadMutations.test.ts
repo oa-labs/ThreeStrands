@@ -15,7 +15,7 @@ function conversation(id: string, unread: boolean): Thread {
   };
 }
 
-function setup(markReadOnArchive: boolean, selectedId: string | null = null) {
+function setup(markReadOnArchive: boolean, selectedId: string | null = null, markReadOnOpen?: boolean) {
   const initial = [conversation("unread", true), conversation("read", false)];
   const initialDetail = {
     thread: initial[0], messages: [{ id: "m1", unread: true }, { id: "m2", unread: true }],
@@ -29,7 +29,7 @@ function setup(markReadOnArchive: boolean, selectedId: string | null = null) {
       setThreads, setDetail, setSelectedId: vi.fn(), setCheckedIds: vi.fn(),
       setSyncStatus: vi.fn(), setNotice: vi.fn(), refreshMailboxUnreadCounts: vi.fn(),
       mailbox: "allMail", activeAccountId: null, activeSplitInboxId: null,
-      includeArchived: true, isThreadMailbox: true, autoReadDelaySeconds: 60, markReadOnArchive,
+      includeArchived: true, isThreadMailbox: true, autoReadDelaySeconds: 60, markReadOnArchive, markReadOnOpen,
       triageSessionRef: { current: null }, recordTriageEvent: vi.fn(),
       loadThreadsRef: { current: reload }, queryRef: { current: "" },
     });
@@ -37,6 +37,28 @@ function setup(markReadOnArchive: boolean, selectedId: string | null = null) {
   });
   return hook;
 }
+
+describe("mark read after opening", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(mailClient, "mutateThreads").mockResolvedValue(undefined);
+    vi.spyOn(mailClient, "flushPending").mockResolvedValue({} as never);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it("marks the open conversation read once the delay passes", async () => {
+    const { result } = setup(false, "unread");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(result.current.threads[0].unread).toBe(false);
+  });
+
+  it("leaves the open conversation unread when set to Never", async () => {
+    const { result } = setup(false, "unread", false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(result.current.threads[0].unread).toBe(true);
+    expect(mailClient.mutateThreads).not.toHaveBeenCalled();
+  });
+});
 
 describe("archive read status", () => {
   beforeEach(() => {

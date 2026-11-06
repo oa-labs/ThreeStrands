@@ -19,6 +19,16 @@ export function saveMarkReadOnArchive(value: boolean): boolean {
   return value;
 }
 
+const MARK_READ_ON_OPEN_KEY = "threestrands.settings.markReadOnOpen";
+/** Opening a conversation marks it read unless the user chose to mark read only by hand. */
+export function readMarkReadOnOpen(): boolean {
+  try { return localStorage.getItem(MARK_READ_ON_OPEN_KEY) !== "false"; } catch { return true; }
+}
+export function saveMarkReadOnOpen(value: boolean): boolean {
+  try { localStorage.setItem(MARK_READ_ON_OPEN_KEY, String(value)); } catch { /* session preference still applies */ }
+  return value;
+}
+
 export type FontFamily = string;
 
 const FONT_FAMILY_KEY = "threestrands.settings.fontFamily";

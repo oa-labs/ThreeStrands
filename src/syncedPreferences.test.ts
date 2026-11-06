@@ -82,6 +82,7 @@ describe("synced preferences data boundary", () => {
       "calendarColors",
       "loadRemoteImages",
       "markReadOnArchive",
+      "markReadOnOpen",
       "showStarredInbox",
       "writingProfiles",
     ]);

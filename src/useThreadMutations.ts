@@ -34,6 +34,8 @@ type Options = ReturnType<typeof useTriageSession> & Pick<ReturnType<typeof useM
   includeArchived: boolean;
   isThreadMailbox: boolean;
   autoReadDelaySeconds: number;
+  /** False leaves opened conversations unread until the user marks them. */
+  markReadOnOpen?: boolean;
   markReadOnArchive: boolean;
 };
 
@@ -41,7 +43,7 @@ type Options = ReturnType<typeof useTriageSession> & Pick<ReturnType<typeof useM
 export function useThreadMutations({
   threads, detail, visibleDetail, selectedId, setSelectedId, setDetail, setThreads, setCheckedIds,
   setSyncStatus, setNotice, mailbox, activeAccountId, activeSplitInboxId, includeArchived,
-  isThreadMailbox, autoReadDelaySeconds, markReadOnArchive, triageSessionRef, recordTriageEvent, loadThreadsRef,
+  isThreadMailbox, autoReadDelaySeconds, markReadOnOpen = true, markReadOnArchive, triageSessionRef, recordTriageEvent, loadThreadsRef,
   queryRef, refreshMailboxUnreadCounts,
 }: Options) {
   const autoReadSuppressedForId = useRef<string | null>(null);
@@ -276,7 +278,8 @@ export function useThreadMutations({
 
   useEffect(() => {
     if (
-      !selectedId
+      !markReadOnOpen
+      || !selectedId
       || visibleDetail?.thread.id !== selectedId
       || !isThreadMailbox
       || autoReadSuppressedForId.current === selectedId
@@ -287,7 +290,7 @@ export function useThreadMutations({
       void mutateIdsRef.current([selectedId], { kind: "read", value: true });
     }, autoReadDelaySeconds * 1000);
     return () => window.clearTimeout(timer);
-  }, [autoReadDelaySeconds, isThreadMailbox, selected?.unread, selectedId, visibleDetail?.thread.id]);
+  }, [autoReadDelaySeconds, isThreadMailbox, markReadOnOpen, selected?.unread, selectedId, visibleDetail?.thread.id]);
 
   return mutateIds;
 }

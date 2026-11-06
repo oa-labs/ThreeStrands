@@ -20,6 +20,7 @@ import { readFontScale, saveFontScale } from "./fontScale";
 import {
   readShowStarredInbox, saveShowStarredInbox,
   readMarkReadOnArchive, saveMarkReadOnArchive,
+  readMarkReadOnOpen, saveMarkReadOnOpen,
   readAutoReadDelaySeconds,
   readAvailabilityPreferences,
   readAvailabilityProfiles,
@@ -64,6 +65,8 @@ export type ExportablePreferences = {
   emailTextColors?: EmailTextColors;
   /** Earlier exports preserve unread status when archiving. */
   markReadOnArchive?: boolean;
+  /** Earlier exports always mark opened conversations read. */
+  markReadOnOpen?: boolean;
   autoReadDelaySeconds: number;
   loadRemoteImages: boolean;
   selectedAccountId: string | null;
@@ -103,6 +106,7 @@ export function readExportablePreferences(): ExportablePreferences {
     emailMinimumFontSize: readEmailMinimumFontSize(),
     emailTextColors: readEmailTextColors(),
     markReadOnArchive: readMarkReadOnArchive(),
+    markReadOnOpen: readMarkReadOnOpen(),
     autoReadDelaySeconds: readAutoReadDelaySeconds(),
     loadRemoteImages: readLoadRemoteImages(),
     selectedAccountId: readSelectedAccountId(),
@@ -128,6 +132,7 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveEmailMinimumFontSize(preferences.emailMinimumFontSize ?? 0);
   saveEmailTextColors(preferences.emailTextColors ?? EMAIL_TEXT_COLORS.defaultMode);
   saveMarkReadOnArchive(preferences.markReadOnArchive ?? false);
+  saveMarkReadOnOpen(preferences.markReadOnOpen ?? true);
   saveAutoReadDelaySeconds(preferences.autoReadDelaySeconds);
   saveLoadRemoteImages(preferences.loadRemoteImages);
   saveSelectedAccountId(preferences.selectedAccountId);

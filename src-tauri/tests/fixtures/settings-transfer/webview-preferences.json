@@ -4,6 +4,7 @@
   "fontScale": 120,
   "fontFamily": "Georgia",
   "markReadOnArchive": true,
+  "markReadOnOpen": false,
   "autoReadDelaySeconds": 8,
   "loadRemoteImages": true,
   "selectedAccountId": "person@example.com",

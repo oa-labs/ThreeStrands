@@ -162,6 +162,10 @@ pub struct TransferPreferences {
     pub email_text_colors: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub mark_read_on_archive: bool,
+    // Preceding exports always marked opened conversations read. Omitted
+    // while on, so earlier versions (which deny unknown fields) still import.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub mark_read_on_open: bool,
     pub auto_read_delay_seconds: i64,
     pub load_remote_images: bool,
     #[serde(default = "default_show_starred_inbox", skip_serializing_if = "is_default_show_starred_inbox")]
@@ -212,6 +216,14 @@ fn is_default_show_starred_inbox(value: &bool) -> bool {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 fn default_email_text_colors() -> String {
@@ -1133,6 +1145,7 @@ mod tests {
                 email_zoom: default_email_zoom(),
                 email_text_colors: default_email_text_colors(),
                 mark_read_on_archive: false,
+                mark_read_on_open: true,
                 auto_read_delay_seconds: 2,
                 show_starred_inbox: true,
                 load_remote_images: false,
@@ -1735,6 +1748,18 @@ mod tests {
     }
 
     #[test]
+    fn preceding_export_defaults_mark_read_on_open_on_and_round_trips_opt_out() {
+        let (_, result) = import_fixture(fixtures::V5_CURRENT);
+        assert!(result.preferences.mark_read_on_open);
+        assert!(serde_json::to_value(&result.preferences).unwrap().get("markReadOnOpen").is_none());
+        let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
+        payload.preferences.mark_read_on_open = false;
+        let imported = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+        assert!(!imported.preferences.mark_read_on_open);
+        assert_eq!(serde_json::to_value(&imported.preferences).unwrap()["markReadOnOpen"], false);
+    }
+
+    #[test]
     fn email_zoom_round_trips_and_rejects_invalid_bounds() {
         let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
         for value in [50, 51, 100, 125, 199, 200] {
@@ -2001,6 +2026,7 @@ mod tests {
                 email_zoom: default_email_zoom(),
                 email_text_colors: default_email_text_colors(),
                 mark_read_on_archive: false,
+                mark_read_on_open: true,
                 auto_read_delay_seconds: 15,
                 show_starred_inbox: true,
                 load_remote_images: true,

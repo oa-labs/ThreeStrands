@@ -49,6 +49,7 @@ describe("exportable preferences", () => {
       emailZoom: 125,
       emailTextColors: "app",
       markReadOnArchive: true,
+      markReadOnOpen: false,
       autoReadDelaySeconds: 8,
       loadRemoteImages: true,
       showStarredInbox: false,
@@ -122,6 +123,14 @@ describe("exportable preferences", () => {
     applyExportablePreferences({ ...nativeContractFixture, markReadOnArchive: true });
     applyExportablePreferences(previous);
     expect(readExportablePreferences().markReadOnArchive).toBe(false);
+  });
+
+  it("imports the preceding preference schema with opened conversations marked read", () => {
+    const { markReadOnOpen: _open, ...previous } = nativeContractFixture;
+    applyExportablePreferences({ ...nativeContractFixture, markReadOnOpen: false });
+    expect(readExportablePreferences().markReadOnOpen).toBe(false);
+    applyExportablePreferences(previous);
+    expect(readExportablePreferences().markReadOnOpen).toBe(true);
   });
 
   it("imports the preceding preference schema at 100% email zoom", () => {
