@@ -1,5 +1,8 @@
 # IMAP/SMTP provider design
 
+For the essential Gmail-fallback work, safe connection conversion, and remaining
+functional gaps, see [IMAP parity and Gmail fallback](imap-parity-plan.md).
+
 Status: accepted (2026-10-08); implementation in progress. Phases 1–4 of
 [Phasing](#phasing) are implemented (2026-10-09 to 2026-10-11, through 0.104.0):
 the provider seam, read-only sync, changes, and SMTP sending with identities.
