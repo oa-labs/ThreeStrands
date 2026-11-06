@@ -29,8 +29,8 @@
 //! container) contribute a dynamic `lf:<name relative to the container>` label.
 //! Under any other `label_storage` the label container is not in play, so a
 //! "child of the container" is treated as an ordinary user folder (there is no
-//! container to be relative to). `\All`, `\Flagged` (Proton "Starred" has
-//! `\Flagged` and NO role), `\Drafts` and the label container itself are
+//! container to be relative to). All Mail is acquired in bounded chunks without
+//! contributing a label. `\Flagged`, `\Drafts` and the label container itself are
 //! `NotSynced` and contribute no label.
 //!
 //! Discovery never persists `\Noselect` containers (see `mailboxes.rs`), so a
@@ -107,6 +107,16 @@ pub struct SyncPlan {
 }
 
 impl SyncPlan {
+    /// Search pins are only valid in the mailbox set the background scheduler
+    /// can maintain. Use its same system-first cap rather than just synced_now.
+    pub(super) fn sync_eligible_mailboxes(&self) -> std::collections::BTreeSet<String> {
+        let candidates = self.synced().filter(|entry| !entry.is_inbox).map(|entry| super::policy::ScheduleCandidate {
+            mailbox: entry.mailbox.clone(), last_attempt: 0, last_visited_at: 0, visited_in_epoch: 0,
+            is_system_role: entry.role.is_some(),
+        }).collect::<Vec<_>>();
+        let (allowed, _) = super::policy::cap_synced_mailboxes(&candidates, super::policy::MAX_SYNCED_MAILBOXES);
+        allowed.into_iter().chain(self.synced().filter(|entry| entry.is_inbox).map(|entry| entry.mailbox.clone())).collect()
+    }
     /// The entries this run actually syncs, INBOX first.
     pub fn synced(&self) -> impl Iterator<Item = &PlanEntry> {
         self.entries.iter().filter(|entry| entry.synced_now)
@@ -360,10 +370,14 @@ pub fn build_plan(
             continue;
         }
         let (window_class, label_kind, location_label_id, synced_now, bucket_synced) = match role {
-            // Aggregates and Drafts: never synced, no label.
-            Some(MailboxRole::All) | Some(MailboxRole::Drafts) => {
+            // Drafts have their own sync path; All Mail is a bounded, label-free
+            // location so archive-only mail can be acquired and search-pinned.
+            Some(MailboxRole::Drafts) => {
                 (SyncWindowClass::NotSynced, LabelKind::None, None, false, false)
             }
+            Some(MailboxRole::All) => (
+                SyncWindowClass::Folder, LabelKind::SystemRole, None, true, true,
+            ),
             // Sent: synced THIS run (run 3), Sent class, SENT label.
             // Its 5,000 is a non-evicting ACQUISITION bound (see
             // SyncWindowClass::Sent / SyncLimits::sent), filled in chunked
@@ -548,8 +562,11 @@ mod tests {
             "Archive has no location label"
         );
 
-        // All Mail (\All) and Drafts: NotSynced, no label.
-        for name in ["All Mail", "Drafts"] {
+        let all = find("All Mail");
+        assert_eq!(all.window_class, SyncWindowClass::Folder);
+        assert!(all.synced_now);
+        assert_eq!(all.location_label_id, None, "aggregate acquisition must not invent a label");
+        for name in ["Drafts"] {
             let e = find(name);
             assert_eq!(e.window_class, SyncWindowClass::NotSynced);
             assert_eq!(e.label_kind, LabelKind::None);
@@ -597,6 +614,7 @@ mod tests {
                 "Spam",
                 "Sent",
                 "Archive",
+                "All Mail",
                 "Clients/Acme",
                 "Labels/Work",
             ]

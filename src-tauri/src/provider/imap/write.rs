@@ -160,6 +160,11 @@ pub type WriteResult<T> = Result<T, WriteError>;
 /// already-encoded destination from [`build_mailbox_arg`].
 #[async_trait]
 pub trait ImapWriteSession: ImapSession {
+    /// Capability-gated system label membership. Implementations must validate
+    /// UID sets and labels before constructing a wire command.
+    async fn uid_store_labels(&mut self, _uid_set: &str, _op: StoreOp, _labels: &[String]) -> Result<(), ProviderError> {
+        Err(ProviderError::InvalidOperation("System-label extensions are unavailable".into()))
+    }
     /// `UID STORE <set> ±FLAGS.SILENT (<flags>)`. `uid_set` is a built set
     /// string; `flags` are already-validated wire spellings. Does NOT verify
     /// the change — [`verified_store`] layers that on top.

@@ -82,7 +82,7 @@ async fn live_provider_syncs_inbox_keeps_seen_absent_and_is_stable_on_re_poll() 
         .await
         .expect("flags");
     assert!(
-        rows.iter().all(|(_, flags)| !mentions_seen(flags)),
+        rows.iter().all(|(_, flags, _)| !mentions_seen(flags)),
         "sync must not set \\Seen"
     );
     let _ = probe.logout().await;
@@ -171,7 +171,7 @@ async fn live_provider_syncs_sent_trash_and_junk_as_designed() {
         .await
         .expect("flags");
     assert!(
-        rows.iter().all(|(_, flags)| !mentions_seen(flags)),
+        rows.iter().all(|(_, flags, _)| !mentions_seen(flags)),
         "sync must not set \\Seen on the INBOX copy"
     );
     let _ = probe.logout().await;
@@ -298,7 +298,7 @@ async fn live_provider_follows_an_inbox_to_archive_move_without_notfound_or_seen
         .await
         .expect("flags");
     assert!(
-        rows.iter().all(|(_, flags)| !mentions_seen(flags)),
+        rows.iter().all(|(_, flags, _)| !mentions_seen(flags)),
         "sync must not set \\Seen on the archived copy"
     );
     let _ = probe.logout().await;

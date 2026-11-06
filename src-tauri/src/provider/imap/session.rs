@@ -104,6 +104,8 @@ pub struct MailboxEntry {
 /// IMAP error classification so callers only ever see [`ProviderError`].
 #[async_trait]
 pub trait ImapSession: Send {
+    /// Cached post-login capability; never infer label semantics from a host.
+    fn supports_label_extensions(&self) -> bool { false }
     /// SELECT a mailbox for read/write and return its status.
     async fn select(&mut self, mailbox: &str) -> Result<MailboxStatus, ProviderError>;
 
@@ -194,6 +196,7 @@ impl<T> ImapSession for AsyncImapSession<T>
 where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
+    fn supports_label_extensions(&self) -> bool { self.gmail_message_ids }
     async fn watch_inbox(self: Box<Self>, changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> Result<(), ProviderError> {
         use async_imap::extensions::idle::IdleResponse;
         use super::policy::{IDLE_RENEW_INTERVAL, IDLE_COMMAND_TIMEOUT};
@@ -256,9 +259,10 @@ where
         // body/flag fetches. Only enable after post-login capability discovery.
         let extended;
         let items = if self.gmail_message_ids
-            && matches!(items, super::fetch::IDENTITY_ITEMS | super::fetch::INDEX_IDENTITY_ITEMS)
+            && matches!(items, super::fetch::IDENTITY_ITEMS | super::fetch::INDEX_IDENTITY_ITEMS | super::fetch::FLAGS_ITEMS)
         {
-            extended = format!("{} X-GM-MSGID)", items.strip_suffix(')').unwrap_or(items));
+            let extra = if items == super::fetch::FLAGS_ITEMS { "X-GM-LABELS" } else { "X-GM-MSGID X-GM-LABELS" };
+            extended = format!("{} {extra})", items.strip_suffix(')').unwrap_or(items));
             // Preserve the nested HEADER.FIELDS closing parentheses: remove
             // only the outer FETCH list delimiter.
             extended.as_str()
@@ -537,6 +541,16 @@ impl<T> super::write::ImapWriteSession for AsyncImapSession<T>
 where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
+    async fn uid_store_labels(&mut self, uid_set: &str, op: super::write::StoreOp, labels: &[String]) -> Result<(), ProviderError> {
+        if !self.gmail_message_ids || labels.is_empty()
+            || labels.iter().any(|l| !["\\Inbox", "\\Trash", "\\Spam"].contains(&l.as_str()))
+            || uid_set.is_empty() || uid_set.split(',').any(|uid| uid.parse::<u32>().ok().filter(|uid| *uid > 0).is_none())
+        {
+            return Err(ProviderError::InvalidOperation("Unsupported or invalid IMAP system-label mutation".into()));
+        }
+        let item = match op { super::write::StoreOp::Add => "+X-GM-LABELS", super::write::StoreOp::Remove => "-X-GM-LABELS" };
+        self.run_write_command_plain(&format!("UID STORE {uid_set} {item} ({})", labels.join(" "))).await
+    }
     async fn uid_store(
         &mut self,
         uid_set: &str,

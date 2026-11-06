@@ -165,6 +165,33 @@ fn an_empty_sync_round_is_a_no_op_and_does_not_bump_the_generation() {
 }
 
 #[test]
+fn label_snapshots_are_atomic_with_thread_assignments_and_account_scoped() {
+    let mine = store();
+    let theirs = ImapStateStore::new(mine.database().clone(), "other@example.com");
+    let labels = vec!["\\Inbox".into(), "Projects/Keep".into()];
+    mine.commit_sync_round(&SyncRoundWrite { label_snapshots: vec![("message".into(), labels.clone())], ..Default::default() }).unwrap();
+    assert_eq!(mine.message_labels("message").unwrap(), Some(labels.clone()));
+    assert_eq!(theirs.message_labels("message").unwrap(), None);
+    let generation = mine.generation().unwrap();
+    mine.database().test_with_connection(|c| {
+        c.execute_batch("CREATE TEMP TRIGGER fail_labels_round BEFORE INSERT ON imap_threads
+            BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")?;
+        Ok(())
+    }).unwrap();
+    assert!(mine.commit_sync_round(&SyncRoundWrite {
+        label_snapshots: vec![("message".into(), Vec::new())],
+        thread_assignments: vec![("message".into(), "thread".into())], ..Default::default()
+    }).is_err());
+    assert_eq!(mine.message_labels("message").unwrap(), Some(labels));
+    assert_eq!(mine.generation().unwrap(), generation);
+    mine.database().test_with_connection(|c| { c.execute_batch("DROP TRIGGER fail_labels_round")?; Ok(()) }).unwrap();
+    theirs.commit_sync_round(&SyncRoundWrite { label_snapshots: vec![("message".into(), vec!["Other".into()])], ..Default::default() }).unwrap();
+    mine.database().remove_account("me@example.com").unwrap();
+    assert_eq!(mine.message_labels("message").unwrap(), None);
+    assert_eq!(theirs.message_labels("message").unwrap(), Some(vec!["Other".into()]));
+}
+
+#[test]
 fn a_sync_round_applies_locations_deletions_and_journal_atomically() {
     // SLICE5A_FIXES item 1 at the store level: a round's location writes,
     // deletions, thread rows and journal all land together and bump the

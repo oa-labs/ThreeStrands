@@ -145,8 +145,6 @@ pub enum OverLimit {
     TermBytes,
     /// Over [`policy::MAX_SEARCH_QUERY_BYTES`] (the whole rendered criteria).
     QueryBytes,
-    /// Over [`policy::MAX_SEARCH_TARGET_MAILBOXES`].
-    TargetMailboxes,
 }
 
 /// Which user-supplied field a value came from, for an
@@ -182,7 +180,6 @@ impl std::fmt::Display for OverLimit {
             OverLimit::Terms => "too many search terms",
             OverLimit::TermBytes => "a search term is too long",
             OverLimit::QueryBytes => "the search query is too long",
-            OverLimit::TargetMailboxes => "the search would touch too many mailboxes",
         };
         f.write_str(text)
     }
@@ -524,6 +521,10 @@ impl PlanBuilder {
             self.skip(notice);
             return;
         }
+        if location.eq_ignore_ascii_case("anywhere") {
+            self.restrict(ctx.plan.synced().map(|entry| entry.mailbox.clone()).collect(), "in:anywhere".into());
+            return;
+        }
         match resolve_location(location, ctx.plan) {
             Some(mailboxes) => self.restrict(mailboxes, format!("in:{location}")),
             None => self.no_match(SearchNotice::UnknownMailbox {
@@ -547,28 +548,22 @@ impl PlanBuilder {
         }
 
         // Determine the mailbox set: an explicit restriction, else the default
-        // (INBOX, Archive, Sent, present-in-plan only).
+        // (Inbox, aggregate/archive, Sent, and synced user/label folders).
+        let scoped = self.restriction.is_some();
         let mailboxes = match self.restriction.take() {
             Some(restriction) => restriction.mailboxes,
             None => default_search_mailboxes(ctx.plan),
         };
-        if policy::check_search_target_mailboxes(mailboxes.len()).is_err() {
-            return ImapSearchOutcome::Skipped {
-                reasons: vec![SearchNotice::OverLimit {
-                    limit: OverLimit::TargetMailboxes,
-                }],
-            };
-        }
-        // A query made only of a mailbox restriction and/or a local filter has
-        // no server criteria. We never send `ALL`; such a query matches
-        // everything in the mailbox set, so fall back to the server-cheap
-        // `UNDELETED` only if there is at least one real criterion. With no
-        // criteria at all the server search is meaningless — skip it.
-        if self.criteria.is_empty() {
+        // The driver bounds mailbox visits and reports partial coverage instead
+        // of discarding every server result when an account has many folders.
+        // Location-only and local-filter queries use a bounded UNDELETED
+        // scan. Truly empty input still has no useful server operation.
+        if self.criteria.is_empty() && !scoped && self.local_filters.is_empty() {
             return ImapSearchOutcome::Skipped {
                 reasons: vec![SearchNotice::EmptyQuery],
             };
         }
+        if self.criteria.is_empty() { self.criteria.push("UNDELETED".into()); }
 
         let criteria = format!("CHARSET UTF-8 {}", self.criteria.join(" "));
         // Guard the whole rendered criteria length (the raw query bound).
@@ -602,12 +597,67 @@ fn default_search_mailboxes(plan: &SyncPlan) -> Vec<String> {
     if let Some(inbox) = plan.entries.iter().find(|e| e.is_inbox) {
         out.push(inbox.mailbox.clone());
     }
-    for role in [MailboxRole::Archive, MailboxRole::Sent] {
+    for role in [MailboxRole::All, MailboxRole::Archive, MailboxRole::Sent] {
         if let Some(entry) = plan.entries.iter().find(|e| e.role == Some(role)) {
             out.push(entry.mailbox.clone());
         }
     }
+    for entry in &plan.entries {
+        if entry.role.is_none() && !entry.is_inbox && entry.synced_now && !out.contains(&entry.mailbox) {
+            out.push(entry.mailbox.clone());
+        }
+    }
     out
+}
+
+/// Native search is selected only after the session negotiated the extension.
+/// The complete expression is one escaped IMAP string, never command syntax.
+pub(super) fn render_label_search(source: &str, query: &SearchQuery, plan: &SyncPlan) -> ImapSearchOutcome {
+    let skip = |reason| ImapSearchOutcome::Skipped { reasons: vec![reason] };
+    if source.chars().any(char::is_control) {
+        return skip(SearchNotice::InvalidCharacters { field: SearchField::FreeText });
+    }
+    if query.terms.is_empty() { return skip(SearchNotice::EmptyQuery); }
+    let leaves: Vec<_> = query.terms.iter().flat_map(QueryTerm::leaves).collect();
+    if policy::check_search_terms(leaves.len()).is_err() {
+        return skip(SearchNotice::OverLimit { limit: OverLimit::Terms });
+    }
+    if leaves.iter().any(|(term, _)| {
+        let bytes = match term {
+            QueryTerm::FreeText { text, .. } => text.len(),
+            QueryTerm::From(value) | QueryTerm::To(value) | QueryTerm::Subject(value)
+            | QueryTerm::Label(value) | QueryTerm::In(value) | QueryTerm::Raw(value) => value.len(),
+            _ => render_gmail_term(term).len(),
+        };
+        policy::check_search_term_bytes(bytes).is_err()
+    }) {
+        return skip(SearchNotice::OverLimit { limit: OverLimit::TermBytes });
+    }
+    fn translate(term: &QueryTerm) -> QueryTerm {
+        match term {
+            QueryTerm::In(name) if name.eq_ignore_ascii_case("archive") => QueryTerm::Not(Box::new(QueryTerm::In("inbox".into()))),
+            QueryTerm::Not(term) => QueryTerm::Not(Box::new(translate(term))),
+            QueryTerm::AnyOf(terms) => QueryTerm::AnyOf(terms.iter().map(translate).collect()),
+            _ => term.clone(),
+        }
+    }
+    let mut translated = query.clone();
+    translated.terms = query.terms.iter().map(translate).collect();
+    let allows = |names: &[&str]| leaves.iter().any(|(term, negated)| !negated && matches!(term, QueryTerm::In(name) if names.iter().any(|value| name.eq_ignore_ascii_case(value))));
+    let trash = allows(&["trash", "anywhere"]);
+    let spam = allows(&["spam", "junk", "anywhere"]);
+    let mut expression = format!("{} in:anywhere", translated.render_gmail());
+    if !trash { expression.push_str(" -in:trash"); }
+    if !spam { expression.push_str(" -in:spam"); }
+    let criteria = format!("X-GM-RAW {}", quote_search_string(&expression));
+    if policy::check_search_query_bytes(criteria.len()).is_err() {
+        return skip(SearchNotice::OverLimit { limit: OverLimit::QueryBytes });
+    }
+    let mut mailboxes: Vec<_> = plan.entries.iter().filter(|e| e.role == Some(super::MailboxRole::All)).map(|e| e.mailbox.clone()).collect();
+    for (enabled, role) in [(trash, super::MailboxRole::Trash), (spam, super::MailboxRole::Junk)] {
+        if enabled { mailboxes.extend(plan.entries.iter().filter(|e| e.role == Some(role)).map(|e| e.mailbox.clone())); }
+    }
+    ImapSearchOutcome::Plan(ImapSearchPlan { mailboxes, criteria, local_filters: Vec::new() })
 }
 
 /// Resolve an `in:` location token to the mailbox wire name(s) to search:
@@ -880,13 +930,10 @@ mod tests {
     }
 
     #[test]
-    fn has_attachment_is_a_local_filter_but_needs_a_server_criterion() {
-        // has:attachment alone has no server criterion -> Skipped (empty query
-        // on the server), never ALL.
-        assert!(matches!(
-            render("has:attachment", LabelStorage::Keywords),
-            ImapSearchOutcome::Skipped { .. }
-        ));
+    fn attachment_only_search_uses_a_bounded_server_scan_and_local_filter() {
+        let attachment = plan_of(&render("has:attachment", LabelStorage::Keywords));
+        assert_eq!(attachment.criteria, "CHARSET UTF-8 UNDELETED");
+        assert_eq!(attachment.local_filters, vec![LocalFilter::HasAttachment]);
         // Combined with a real term, it is carried as a local filter.
         let outcome = render("from:alice has:attachment", LabelStorage::Keywords);
         let plan = plan_of(&outcome);
@@ -1035,9 +1082,9 @@ mod tests {
     // --- in: / mailbox selection -----------------------------------------
 
     #[test]
-    fn default_mailboxes_are_inbox_archive_sent_in_order() {
+    fn default_mailboxes_include_user_and_label_folders() {
         let plan = plan_of(&render("from:alice", LabelStorage::Keywords));
-        assert_eq!(plan.mailboxes, vec!["INBOX", "Archive", "Sent"]);
+        assert_eq!(plan.mailboxes, vec!["INBOX", "Archive", "Sent", "Clients/Acme", "Labels/Work"]);
     }
 
     #[test]
@@ -1123,6 +1170,73 @@ mod tests {
     }
 
     // --- combinations + determinism --------------------------------------
+
+    fn native(input: &str) -> ImapSearchOutcome {
+        let config = settings(LabelStorage::None, None);
+        let mut plan = standard_plan(&config);
+        plan.entries.push(super::super::plan::PlanEntry {
+            mailbox: "Everything".into(), role: Some(super::super::MailboxRole::All), is_inbox: false,
+            window_class: super::super::policy::SyncWindowClass::Folder,
+            label_kind: super::super::plan::LabelKind::SystemRole, location_label_id: None, synced_now: true,
+        });
+        render_label_search(input, &SearchQuery::parse(input), &plan)
+    }
+
+    #[test]
+    fn native_search_covers_archive_and_uses_explicit_trash_spam_scopes() {
+        let ordinary = plan_of(&native("invoice has:attachment"));
+        assert_eq!(ordinary.mailboxes, vec!["Everything"]);
+        assert!(ordinary.local_filters.is_empty(), "the native server evaluates attachment predicates");
+        assert!(ordinary.criteria.contains("-in:trash") && ordinary.criteria.contains("-in:spam"));
+        let archive = plan_of(&native("in:archive"));
+        assert!(archive.criteria.contains("-in:inbox"));
+        assert!(!archive.criteria.contains("in:archive"));
+        let anywhere = plan_of(&native("in:anywhere invoice"));
+        assert_eq!(anywhere.mailboxes, vec!["Everything", "Trash", "Spam"]);
+        assert!(!anywhere.criteria.contains("-in:trash") && !anywhere.criteria.contains("-in:spam"));
+        let spam = plan_of(&native("in:spam invoice"));
+        assert_eq!(spam.mailboxes, vec!["Everything", "Spam"]);
+        assert!(matches!(native("category:promotions"), ImapSearchOutcome::Plan(_)), "advertised native syntax need not be expressible in generic IMAP");
+    }
+
+    #[test]
+    fn native_search_quotes_data_and_rejects_command_controls() {
+        let outcome = native("subject:\"a quote\" from:evil\\name");
+        let plan = plan_of(&outcome);
+        assert!(plan.criteria.starts_with("X-GM-RAW \"") && plan.criteria.ends_with('"'));
+        assert!(plan.criteria.contains("\\\""));
+        assert!(!plan.criteria.contains(['\r', '\n', '\0']));
+        for control in ['\r', '\n', '\0'] {
+            assert!(matches!(native(&format!("invoice{control}LOGOUT")), ImapSearchOutcome::Skipped { reasons }
+                if reasons == vec![SearchNotice::InvalidCharacters { field: SearchField::FreeText }]));
+        }
+    }
+
+    #[test]
+    fn native_search_uses_shared_term_and_rendered_query_boundaries() {
+        for size in [policy::MAX_SEARCH_TERM_BYTES - 1, policy::MAX_SEARCH_TERM_BYTES, policy::MAX_SEARCH_TERM_BYTES + 1] {
+            assert_eq!(matches!(native(&format!("from:{}", "x".repeat(size))), ImapSearchOutcome::Plan(_)), size <= policy::MAX_SEARCH_TERM_BYTES);
+        }
+        for count in [policy::MAX_SEARCH_TERMS - 1, policy::MAX_SEARCH_TERMS, policy::MAX_SEARCH_TERMS + 1] {
+            assert_eq!(matches!(native(&vec!["x"; count].join(" ")), ImapSearchOutcome::Plan(_)), count <= policy::MAX_SEARCH_TERMS);
+        }
+        let overhead = format!("X-GM-RAW {}", quote_search_string(" in:anywhere -in:trash -in:spam")).len();
+        for bytes in [policy::MAX_SEARCH_QUERY_BYTES - 1, policy::MAX_SEARCH_QUERY_BYTES, policy::MAX_SEARCH_QUERY_BYTES + 1] {
+            let source_length = bytes - overhead;
+            let source = format!("{} {}", vec!["x".repeat(200); 4].join(" "), "x".repeat(source_length - 804));
+            let outcome = native(&source);
+            if bytes <= policy::MAX_SEARCH_QUERY_BYTES {
+                assert_eq!(plan_of(&outcome).criteria.len(), bytes);
+            } else { assert!(matches!(outcome, ImapSearchOutcome::Skipped { reasons } if reasons == vec![SearchNotice::OverLimit { limit: OverLimit::QueryBytes }])); }
+        }
+    }
+
+    #[test]
+    fn generic_location_and_anywhere_queries_have_bounded_server_plans() {
+        assert_eq!(criteria_of(&render("in:archive", LabelStorage::None)), "CHARSET UTF-8 UNDELETED");
+        let anywhere = plan_of(&render("in:anywhere invoice", LabelStorage::None));
+        assert!(anywhere.mailboxes.contains(&"Trash".into()) && anywhere.mailboxes.contains(&"Spam".into()));
+    }
 
     #[test]
     fn a_combination_renders_each_term_in_order() {

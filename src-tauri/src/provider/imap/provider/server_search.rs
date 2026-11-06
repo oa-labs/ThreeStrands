@@ -70,7 +70,28 @@ impl ImapProvider {
             delimiter: Some(delimiter.as_str()),
         };
         let parsed = crate::search_query::SearchQuery::parse(query);
-        match render_imap(&parsed, &context) {
+        let deadline = tokio::time::Instant::now()
+            + self.search_deadline_override.unwrap_or(policy::SEARCH_DEADLINE);
+        let mut outcome = render_imap(&parsed, &context);
+        let mut prepared = None;
+        if plan.entries.iter().any(|e| e.role == Some(crate::provider::imap::MailboxRole::All)) {
+            // One negotiated session for rendering and execution; capability
+            // discovery and cleanup share the same overall search deadline.
+            let mut session = match tokio::time::timeout_at(deadline, self.open_session()).await {
+                Ok(result) => result?,
+                Err(_) => {
+                    let mut result = empty_search_result(None, None);
+                    result.partial = Some(PartialReason::DeadlineExpired { mailboxes_searched: 0, mailboxes_planned: plan.synced().count() });
+                    return Ok(result);
+                }
+            };
+            if session.supports_label_extensions() {
+                outcome = search::render_label_search(query, &parsed, &plan);
+            }
+            if matches!(outcome, ImapSearchOutcome::Plan(_)) { prepared = Some(session); }
+            else { let _ = tokio::time::timeout_at(deadline, session.logout()).await; }
+        }
+        match outcome {
             ImapSearchOutcome::Skipped { reasons } => {
                 // A term the server cannot honestly evaluate: keep local
                 // results only, make NO network call. Log the reason, not the
@@ -88,7 +109,7 @@ impl ImapProvider {
                 Ok(empty_search_result(None, Some(reason)))
             }
             ImapSearchOutcome::Plan(search_plan) => {
-                self.run_search_plan(&plan, search_plan).await
+                self.execute_search_plan(&plan, search_plan, prepared, deadline).await
             }
         }
     }
@@ -96,6 +117,7 @@ impl ImapProvider {
     /// Execute a rendered [`search::ImapSearchPlan`] against ONE session: the
     /// steps 2–8 above. Split out so `search_detailed` stays the parse/render
     /// decision and this owns the network + budget + deadline loop.
+    #[cfg(test)]
     pub(super) async fn run_search_plan(
         &self,
         plan: &SyncPlan,
@@ -103,13 +125,21 @@ impl ImapProvider {
     ) -> ProviderResult<ImapSearchResult> {
         let deadline = tokio::time::Instant::now()
             + self.search_deadline_override.unwrap_or(policy::SEARCH_DEADLINE);
+        self.execute_search_plan(plan, search_plan, None, deadline).await
+    }
+
+    async fn execute_search_plan(
+        &self, plan: &SyncPlan, search_plan: search::ImapSearchPlan,
+        prepared: Option<Box<dyn crate::provider::imap::session::ImapSession>>,
+        deadline: tokio::time::Instant,
+    ) -> ProviderResult<ImapSearchResult> {
         let mailboxes_planned = search_plan.mailboxes.len();
         let per_mailbox = policy::search_acquire_share(policy::MAX_SEARCH_ACQUIRE, mailboxes_planned);
         let want_attachment = search_plan
             .local_filters
             .contains(&LocalFilter::HasAttachment);
 
-        let mut session = match tokio::time::timeout_at(deadline, self.open_session()).await {
+        let mut session = if let Some(session) = prepared { session } else { match tokio::time::timeout_at(deadline, self.open_session()).await {
             Ok(result) => result?,
             Err(_) => {
                 let mut result = empty_search_result(None, None);
@@ -119,7 +149,7 @@ impl ImapProvider {
                 });
                 return Ok(result);
             }
-        };
+        }};
 
         // Ordered (thread_id, deciding-uid) pairs, newest-UID-first within a
         // mailbox and mailboxes in plan order, deduplicated globally.
@@ -137,8 +167,14 @@ impl ImapProvider {
         // search holds the account's sync gate. Such a session is dropped
         // (closing the socket and releasing the lease) without LOGOUT.
         let mut connection_poisoned = false;
+        let eligible = plan.sync_eligible_mailboxes();
 
-        for wire in search_plan.mailboxes.iter() {
+        for (index, wire) in search_plan.mailboxes.iter().enumerate() {
+            if policy::check_search_target_mailboxes(index + 1).is_err() {
+                unsynced_mailboxes.extend(search_plan.mailboxes[index..].iter().cloned());
+                partial.get_or_insert(PartialReason::BudgetReached);
+                break;
+            }
             // Deadline: stop STARTING a new mailbox once the budget is spent;
             // return what we have as a PARTIAL result (not an error).
             if tokio::time::Instant::now() >= deadline {
@@ -162,8 +198,9 @@ impl ImapProvider {
                 unsynced_mailboxes.push(wire.clone());
                 continue;
             };
-            if !entry.synced_now {
+            if !entry.synced_now || !eligible.contains(wire) {
                 unsynced_mailboxes.push(wire.clone());
+                partial.get_or_insert(PartialReason::BudgetReached);
                 continue;
             }
 

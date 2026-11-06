@@ -58,6 +58,7 @@ mod drafts;
 mod label_folders;
 mod mail_send;
 mod moves;
+mod label_moves;
 mod mutate;
 mod refresh;
 mod snoozes;
@@ -130,6 +131,9 @@ struct LeasedSession {
 
 #[async_trait]
 impl ImapSession for LeasedSession {
+    fn supports_label_extensions(&self) -> bool {
+        self.session.supports_label_extensions()
+    }
     async fn watch_inbox(self: Box<Self>, changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> ProviderResult<()> {
         let Self { session, _lease } = *self;
         let result = Box::new(session).watch_inbox(changed).await;
@@ -178,6 +182,9 @@ impl ImapSession for LeasedSession {
 
 #[async_trait]
 impl super::write::ImapWriteSession for LeasedSession {
+    async fn uid_store_labels(&mut self, uid_set: &str, op: super::write::StoreOp, labels: &[String]) -> ProviderResult<()> {
+        self.session.uid_store_labels(uid_set, op, labels).await
+    }
     async fn uid_store(
         &mut self,
         uid_set: &str,
@@ -322,6 +329,7 @@ pub(super) struct Refreshed {
 /// (new mail) and `acquire_uids` (a search's explicit UID list).
 #[derive(Debug, Default)]
 pub(super) struct IngestOutcome {
+    pub label_snapshots: Vec<(String, Vec<String>)>,
     /// Location rows to insert (deferred to the atomic round commit).
     pub locations: Vec<ImapLocation>,
     /// Threading inputs for the batch's messages.

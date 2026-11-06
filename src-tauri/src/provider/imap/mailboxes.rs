@@ -41,8 +41,8 @@ use super::session::MailboxEntry;
 
 /// One of the app's system mailbox roles that discovery maps a server mailbox
 /// onto. These are the RFC 6154 special-use roles the design cares about;
-/// `\All` is an aggregate view (not synced as a location) but is still mapped
-/// so the sync slices can recognise and skip it.
+/// `\All` is acquired as a label-free aggregate, distinct from an ordinary
+/// physical Archive destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MailboxRole {
@@ -52,8 +52,8 @@ pub enum MailboxRole {
     Trash,
     Junk,
     /// The RFC 6154 `\All` aggregate mailbox ("All Mail"). A view of mail
-    /// stored elsewhere, so it is never synced as a location; mapped so the
-    /// sync engine can skip it rather than labelling everything `folder:All`.
+    /// stored elsewhere and archive-only mail. Acquired without inventing a
+    /// `folder:All` label or downloading overlapping bodies again.
     All,
 }
 
@@ -166,6 +166,9 @@ pub struct DiscoveredMailbox {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MailboxMapping {
+    /// Runtime discovery hint, not a persisted account/transfer setting.
+    #[serde(default)]
+    pub label_archive: bool,
     /// One proposal per role that an attribute or a name matched, in
     /// [`MailboxRole::ALL`] order.
     pub proposals: Vec<RoleProposal>,
@@ -284,7 +287,7 @@ pub fn propose_mapping(entries: &[MailboxEntry]) -> MailboxMapping {
         })
         .collect();
 
-    MailboxMapping { proposals, selectable, label_containers }
+    MailboxMapping { label_archive: false, proposals, selectable, label_containers }
 }
 
 /// Discover an account's mailboxes end to end over an authenticated session:

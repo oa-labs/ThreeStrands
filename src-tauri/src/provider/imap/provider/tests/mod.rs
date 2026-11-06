@@ -27,6 +27,7 @@ struct FakeMessage {
     raw: String,
     advertised_size: Option<usize>,
     gmail_message_id: Option<u64>,
+    gmail_labels: Option<Vec<String>>,
 }
 
 /// One named mailbox (folder) on the fake server: its UIDVALIDITY, next
@@ -66,6 +67,7 @@ impl FakeFolder {
             raw: raw.to_string(),
             advertised_size,
             gmail_message_id: None,
+            gmail_labels: None,
         });
         uid
     }
@@ -87,6 +89,7 @@ type CommandCounts = Arc<Mutex<std::collections::BTreeMap<String, (usize, usize,
 struct FakeMailbox {
     folders: std::collections::BTreeMap<String, FakeFolder>,
     capabilities: Vec<String>,
+    search_log: Arc<Mutex<Vec<(String, String)>>>,
     /// Per-mailbox `(searches, body_fetches, identity_fetches)` counters,
     /// accumulated across every session opened against this snapshot's
     /// shared handle. Shared so a test reads them after sync.
@@ -108,6 +111,7 @@ impl FakeMailbox {
         Self {
             folders,
             capabilities: vec!["IMAP4rev1".into()],
+            search_log: Arc::new(Mutex::new(Vec::new())),
             command_counts: Arc::new(Mutex::new(Default::default())),
             list_fails: false,
             noselect: Vec::new(),
@@ -157,6 +161,7 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
     let noselect = mailbox.noselect.clone();
     let logout_stalls = mailbox.logout_stalls;
     let capabilities = mailbox.capabilities.clone();
+    let search_log = mailbox.search_log.clone();
     let task = tokio::spawn(async move {
         let mut server = BufReader::new(server);
         server.get_mut().write_all(b"* OK ready\r\n").await.unwrap();
@@ -225,6 +230,7 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                 );
                 reply(&mut server, &body).await;
             } else if upper.starts_with("UID SEARCH") {
+                search_log.lock().unwrap().push((selected.clone(), rest.to_string()));
                 let folder = folders.get(&selected).unwrap_or(&empty);
                 counts.lock().unwrap().entry(selected.clone()).or_default().0 += 1;
                 if folder.search_stalls {
@@ -281,6 +287,7 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                             wants_body,
                             flags_only,
                             wants_gmail_id,
+                            upper.contains("X-GM-LABELS"),
                         ));
                     }
                 }
@@ -326,8 +333,11 @@ fn parse_uid_set(command: &str, folder: &FakeFolder) -> Vec<u32> {
 /// Render one FETCH response line for a message. `wants_body` is the whole
 /// `BODY.PEEK[]` pass; `flags_only` is the FLAGS-only sweep; otherwise it
 /// is the identity pass.
-fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only: bool, wants_gmail_id: bool) -> String {
+fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only: bool, wants_gmail_id: bool, wants_labels: bool) -> String {
     let flags = message.flags.join(" ");
+    let labels = message.gmail_labels.as_ref().filter(|_| wants_labels).map(|labels| {
+        format!(" X-GM-LABELS ({})", labels.iter().map(|label| if label.starts_with('\\') { label.clone() } else { super::super::search::quote_search_string(label) }).collect::<Vec<_>>().join(" "))
+    }).unwrap_or_default();
     if wants_body {
         format!(
             "* {seq} FETCH (UID {} BODY[]<0> {{{}}}\r\n{})\r\n",
@@ -336,7 +346,7 @@ fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only:
             message.raw
         )
     } else if flags_only {
-        format!("* {seq} FETCH (UID {} FLAGS ({}))\r\n", message.uid, flags)
+        format!("* {seq} FETCH (UID {} FLAGS ({}){labels})\r\n", message.uid, flags)
     } else {
         // Header fields block = the message's header section (up to the
         // blank line). The real server returns only the requested fields,
@@ -351,7 +361,7 @@ fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only:
         let external = message.gmail_message_id.filter(|_| wants_gmail_id)
             .map(|id| format!("X-GM-MSGID {id} ")).unwrap_or_default();
         format!(
-            "* {seq} FETCH (UID {} {external}FLAGS ({}) RFC822.SIZE {} BODY[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)] {{{}}}\r\n{})\r\n",
+            "* {seq} FETCH (UID {} {external}FLAGS ({}){labels} RFC822.SIZE {} BODY[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)] {{{}}}\r\n{})\r\n",
             message.uid,
             flags,
             size,
@@ -2019,7 +2029,7 @@ async fn a_uidvalidity_reset_in_trash_only_drops_trash_locations() {
 /// intentional contract changes; this test previously named only
 /// INBOX/Trash/Junk/Sent as synced and asserted Archive was never synced.)
 #[tokio::test]
-async fn only_inbox_trash_junk_sent_and_archive_are_ever_synced() {
+async fn all_mail_is_synced_with_system_folders_while_drafts_stay_separate() {
     let mut mb = FakeMailbox::new(100);
     mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
     mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
@@ -2036,12 +2046,12 @@ async fn only_inbox_trash_junk_sent_and_archive_are_ever_synced() {
     crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
 
     // Synced mailboxes have locations (Sent and Archive included this run).
-    for synced in ["INBOX", "Trash", "Junk", "Sent", "Archive"] {
+    for synced in ["INBOX", "Trash", "Junk", "Sent", "Archive", "All Mail"] {
         assert!(!store.locations_in_mailbox(synced).unwrap().is_empty(), "{synced} synced");
     }
     // Never-synced mailboxes have NO locations and were never SEARCHed.
     let counts = mailbox.lock().unwrap();
-    for never in ["Drafts", "All Mail"] {
+    for never in ["Drafts"] {
         assert!(store.locations_in_mailbox(never).unwrap().is_empty(), "{never} not synced");
         assert_eq!(counts.counts(never).0, 0, "{never} never SEARCHed");
     }
@@ -3942,6 +3952,7 @@ mod search_exec;
 mod idle;
 
 mod identity_contract;
+mod all_mail;
 
 #[tokio::test]
 async fn snoozed_archive_locations_survive_the_window_and_release_on_cancellation() {

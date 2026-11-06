@@ -1,4 +1,5 @@
 use super::*;
+mod all_mail;
 use async_trait::async_trait;
 
 use crate::provider::{
@@ -21,6 +22,8 @@ struct MutMessage {
     uid: u32,
     flags: Vec<String>,
     raw: String,
+    gmail_message_id: Option<u64>,
+    labels: Option<Vec<String>>,
 }
 
 /// One mailbox on the fake server.
@@ -60,6 +63,8 @@ impl MutFolder {
         let uid = self.uidnext;
         self.uidnext += 1;
         self.messages.push(MutMessage {
+            gmail_message_id: None,
+            labels: None,
             uid,
             flags: flags.iter().map(|f| f.to_string()).collect(),
             raw: raw.to_string(),
@@ -72,6 +77,8 @@ impl MutFolder {
 /// connection is visible to a later sweep.
 #[derive(Clone, Default)]
 struct MutServer {
+    drop_label_response_once: bool,
+    reset_label_validity_once: bool,
     capabilities: Vec<String>,
     folders: BTreeMap<String, MutFolder>,
     /// Every write command the server saw (minus LOGIN/LOGOUT), so a test
@@ -103,6 +110,8 @@ struct MutServer {
 impl MutServer {
     fn new() -> Self {
         Self {
+            drop_label_response_once: false,
+            reset_label_validity_once: false,
             capabilities: vec![
                 "IMAP4REV1".into(),
                 "MOVE".into(),
@@ -234,12 +243,26 @@ fn build_response(
             false,
         )
     } else if upper.starts_with("UID SEARCH") {
+        let server_id = upper.strip_prefix("UID SEARCH X-GM-MSGID ").and_then(|value| value.parse::<u64>().ok());
         let uids: Vec<String> = state
             .folders
             .get(selected.as_str())
-            .map(|f| f.messages.iter().map(|m| m.uid.to_string()).collect())
+            .map(|f| f.messages.iter().filter(|m| server_id.is_none() || m.gmail_message_id == server_id).map(|m| m.uid.to_string()).collect())
             .unwrap_or_default();
         (format!("* SEARCH {}\r\n{tag} OK done\r\n", uids.join(" ")), false)
+    } else if upper.starts_with("UID STORE") && upper.contains("X-GM-LABELS") {
+        let set = parse_uid_set(rest);
+        let changing = store_flags(rest);
+        let is_add = upper.contains("+X-GM-LABELS");
+        all_mail::update_membership(state, selected, &set, &changing, is_add);
+        if state.reset_label_validity_once {
+            state.reset_label_validity_once = false;
+            if let Some(folder) = state.folders.get_mut(selected.as_str()) { folder.uidvalidity += 1; }
+        }
+        if state.drop_label_response_once {
+            state.drop_label_response_once = false;
+            (String::new(), true)
+        } else { (format!("{tag} OK STORE done\r\n"), false) }
     } else if upper.starts_with("UID STORE") {
         let flags = store_flags(rest);
         let is_add = upper.contains("+FLAGS");
@@ -282,7 +305,7 @@ fn build_response(
         let mut out = String::new();
         for (seq, uid) in set.iter().enumerate() {
             if let Some(message) = messages.iter().find(|m| &m.uid == uid) {
-                out.push_str(&fetch_line(seq as u32 + 1, message, wants_body, is_identity));
+                out.push_str(&fetch_line(seq as u32 + 1, message, wants_body, is_identity, upper.contains("X-GM-LABELS"), upper.contains("X-GM-MSGID")));
             }
         }
         out.push_str(&format!("{tag} OK done\r\n"));
@@ -373,6 +396,8 @@ fn build_response(
                     uid: new_uid,
                     flags: msg.flags.clone(),
                     raw: msg.raw.clone(),
+                    gmail_message_id: msg.gmail_message_id,
+                    labels: msg.labels.clone(),
                 });
             }
         }
@@ -420,6 +445,8 @@ fn build_response(
                     uid: new_uid,
                     flags: msg.flags.clone(),
                     raw: msg.raw.clone(),
+                    gmail_message_id: msg.gmail_message_id,
+                    labels: msg.labels.clone(),
                 });
             }
         }
@@ -507,8 +534,13 @@ fn parse_uid_set(cmd: &str) -> Vec<u32> {
     uids
 }
 
-fn fetch_line(seq: u32, message: &MutMessage, wants_body: bool, is_identity: bool) -> String {
+fn fetch_line(seq: u32, message: &MutMessage, wants_body: bool, is_identity: bool, wants_labels: bool, wants_id: bool) -> String {
     let flags = message.flags.join(" ");
+    let mut attrs = String::new();
+    if let Some(id) = message.gmail_message_id.filter(|_| wants_id) { attrs.push_str(&format!(" X-GM-MSGID {id}")); }
+    if let Some(labels) = message.labels.as_ref().filter(|_| wants_labels) {
+        attrs.push_str(&format!(" X-GM-LABELS ({})", labels.iter().map(|label| if label.starts_with('\\') { label.clone() } else { crate::provider::imap::search::quote_search_string(label) }).collect::<Vec<_>>().join(" ")));
+    }
     if wants_body {
         format!(
             "* {seq} FETCH (UID {} BODY[]<0> {{{}}}\r\n{})\r\n",
@@ -523,7 +555,7 @@ fn fetch_line(seq: u32, message: &MutMessage, wants_body: bool, is_identity: boo
             .map(|(h, _)| format!("{h}\r\n\r\n"))
             .unwrap_or_else(|| message.raw.clone());
         format!(
-            "* {seq} FETCH (UID {} FLAGS ({flags}) RFC822.SIZE {} BODY[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)] {{{}}}\r\n{})\r\n",
+            "* {seq} FETCH (UID {} FLAGS ({flags}){attrs} RFC822.SIZE {} BODY[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)] {{{}}}\r\n{})\r\n",
             message.uid,
             message.raw.len(),
             header_block.len(),
@@ -531,7 +563,7 @@ fn fetch_line(seq: u32, message: &MutMessage, wants_body: bool, is_identity: boo
         )
     } else {
         // FLAGS-only (verify + sweep).
-        format!("* {seq} FETCH (UID {} FLAGS ({flags}))\r\n", message.uid)
+        format!("* {seq} FETCH (UID {} FLAGS ({flags}){attrs})\r\n", message.uid)
     }
 }
 
@@ -549,7 +581,11 @@ impl ImapSessionSource for MutSource {
             .login("user", "password")
             .await
             .map_err(|(error, _)| super::super::error::map_imap_error(&error))?;
-        Ok(Box::new(super::super::session::AsyncImapSession::new(session)))
+        let mut session = super::super::session::AsyncImapSession::new(session);
+        if self.server.lock().unwrap().capabilities.iter().any(|cap| cap == "X-GM-EXT-1") {
+            session.capabilities().await?;
+        }
+        Ok(Box::new(session))
     }
 }
 
@@ -580,6 +616,7 @@ fn infer_special_use(name: &str) -> Option<String> {
         "Junk" | "Spam" => Some("\\Junk".into()),
         "Sent" => Some("\\Sent".into()),
         "Archive" => Some("\\Archive".into()),
+        "All Mail" => Some("\\All".into()),
         _ => None,
     }
 }

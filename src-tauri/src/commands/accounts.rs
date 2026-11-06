@@ -328,8 +328,14 @@ pub(crate) async fn discover_imap_mailboxes(
         .await
         .map_err(|error| AppError::message(imap::plain_language(&error)))?;
     let store = imap::ImapStateStore::new(state.database.clone(), email.clone());
+    session.capabilities().await.map_err(|error| AppError::message(imap::plain_language(&error)))?;
     let mapping = imap::discover_and_persist(&mut session, &store)
         .await
+        .map(|mut mapping| {
+            mapping.label_archive = session.supports_label_extensions()
+                && mapping.selectable.iter().any(|entry| entry.special_use.as_deref() == Some("\\All"));
+            mapping
+        })
         .map_err(|error| AppError::message(imap::plain_language(&error)));
     let _ = session.logout().await;
     mapping
@@ -369,10 +375,15 @@ fn save_imap_mailbox_mapping(
     database: &Database,
     mut settings: imap::ImapAccountSettings,
     commit: ImapMailboxMappingCommit,
+    label_archive: bool,
 ) -> AppResult<()> {
     // Mailbox names are opaque server identifiers. Only the empty string is
     // a cleared choice; whitespace can be part of an existing mailbox name.
-    settings.archive_mailbox = Some(commit.archive_choice()?.to_string());
+    settings.archive_mailbox = match commit.archive_choice() {
+        Ok(choice) => Some(choice.to_string()),
+        Err(_) if label_archive => None,
+        Err(error) => return Err(error),
+    };
     for (role_key, mailbox) in commit.mailbox_overrides {
         if mailbox.is_empty() {
             settings.mailbox_overrides.remove(&role_key);
@@ -403,6 +414,20 @@ pub(crate) async fn commit_imap_mailbox_mapping(
 
     // Resolve the Archive mailbox: an explicit create wins (and actually
     // creates it on the server), otherwise the chosen existing mailbox.
+    if commit.archive_choice().is_err() {
+        // Never trust a frontend discovery hint to relax the mapping contract.
+        // Re-check the live capability and the catalog's standard \All role.
+        let password = crate::auth::ImapCredential::for_account(&commit.email).load()?.imap;
+        let mut session = imap::connect_with_settings(&settings, &password).await
+            .map_err(|error| AppError::message(imap::plain_language(&error)))?;
+        let checked = session.capabilities().await;
+        let label_archive = checked.is_ok() && session.supports_label_extensions()
+            && imap::ImapStateStore::new(state.database.clone(), &commit.email).mailboxes()?
+                .iter().any(|mailbox| mailbox.special_use.as_deref() == Some("\\All"));
+        let _ = session.logout().await;
+        checked.map_err(|error| AppError::message(imap::plain_language(&error)))?;
+        return save_imap_mailbox_mapping(&state.database, settings, commit, label_archive);
+    }
     let archive = commit.archive_choice()?;
     if commit
         .create_archive
@@ -422,7 +447,7 @@ pub(crate) async fn commit_imap_mailbox_mapping(
         created?;
     }
 
-    save_imap_mailbox_mapping(&state.database, settings, commit)
+    save_imap_mailbox_mapping(&state.database, settings, commit, false)
 }
 
 /// Make a newly saved IMAP account usable without restarting the app. Both
@@ -1220,7 +1245,7 @@ mod imap_setup_tests {
             "labelContainer": " Labels "
         }))
         .unwrap();
-        super::save_imap_mailbox_mapping(&database, settings, commit).unwrap();
+        super::save_imap_mailbox_mapping(&database, settings, commit, false).unwrap();
         let settings = database
             .imap_account_settings(&request.email)
             .unwrap()
@@ -1237,7 +1262,7 @@ mod imap_setup_tests {
         }))
         .unwrap();
         assert_eq!(commit.archive_choice().unwrap(), " New Archive ");
-        super::save_imap_mailbox_mapping(&database, settings, commit).unwrap();
+        super::save_imap_mailbox_mapping(&database, settings, commit, false).unwrap();
         let settings = database
             .imap_account_settings(&request.email)
             .unwrap()
@@ -1390,7 +1415,7 @@ mod imap_setup_tests {
                 mailbox_overrides: Default::default(),
                 label_container: None,
             };
-            assert!(super::save_imap_mailbox_mapping(&database, before.clone(), commit).is_err());
+            assert!(super::save_imap_mailbox_mapping(&database, before.clone(), commit, false).is_err());
             assert_eq!(
                 database
                     .imap_account_settings(&request.email)
@@ -1399,6 +1424,23 @@ mod imap_setup_tests {
                 before
             );
         }
+    }
+
+    #[test]
+    fn a_verified_label_archive_keeps_all_mail_separate_from_an_archive_destination() {
+        let database = Database::open_memory();
+        let request = imap_setup_request();
+        super::save_tested_imap_settings(&database, &request, None, None).unwrap();
+        let settings = database.imap_account_settings(&request.email).unwrap().unwrap();
+        let commit = super::ImapMailboxMappingCommit {
+            email: request.email.clone(), archive: None, create_archive: None,
+            mailbox_overrides: std::collections::BTreeMap::from([("all".into(), "Everything".into())]),
+            label_container: None,
+        };
+        super::save_imap_mailbox_mapping(&database, settings, commit, true).unwrap();
+        let saved = database.imap_account_settings(&request.email).unwrap().unwrap();
+        assert_eq!(saved.archive_mailbox, None);
+        assert_eq!(saved.mailbox_overrides["all"], "Everything");
     }
 }
 

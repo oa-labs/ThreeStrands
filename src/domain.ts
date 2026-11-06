@@ -1124,6 +1124,8 @@ export type ImapDiscoveredMailbox = {
 
 /** The proposed role mapping plus the selectable-mailbox list the mapping screen renders. */
 export type ImapMailboxMapping = {
+  /** Negotiated label archive with an All Mail mailbox; no separate Archive needed. */
+  labelArchive?: boolean;
   proposals: ImapRoleProposal[];
   selectable: ImapDiscoveredMailbox[];
   /** Potential label containers, including non-selectable hierarchy nodes. */

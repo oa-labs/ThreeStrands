@@ -24,6 +24,22 @@ use super::{
 };
 
 impl ImapProvider {
+    fn message_label_ids(&self, plan: &SyncPlan, message_id: &str, locations: &[ImapLocation]) -> ProviderResult<Vec<String>> {
+        if let Some(membership) = self.store.message_labels(message_id).map_err(db_err)? {
+            let preferred = locations.iter().find(|l| l.mailbox.eq_ignore_ascii_case(INBOX)
+                && membership.iter().any(|label| label.eq_ignore_ascii_case("\\Inbox")))
+                .or_else(|| locations.iter().find(|l| plan.entry_for(&l.mailbox)
+                    .is_some_and(|e| e.role == Some(crate::provider::imap::MailboxRole::All))))
+                .or_else(|| locations.first());
+            let flags = preferred.and_then(|l| serde_json::from_str::<Vec<String>>(&l.flags_json).ok()).unwrap_or_default();
+            return Ok(crate::provider::imap::labels::labels_for_server_membership(plan, &membership, &flags));
+        }
+        let per_copy: Vec<Vec<String>> = locations.iter().map(|location| {
+            let flags: Vec<String> = serde_json::from_str(&location.flags_json).unwrap_or_default();
+            labels_for_location_ids(&plan.location_label_ids_for_mailbox(&location.mailbox), &flags)
+        }).collect();
+        Ok(merge_label_sets(&per_copy))
+    }
     /// Refresh every synced mailbox against the server and return the new
     /// generation. INBOX is swept first and every poll; the other synced
     /// mailboxes (Trash, Junk, then Sent) follow in plan order with cheap
@@ -160,7 +176,12 @@ impl ImapProvider {
             // A folder that errors is simply not stamped for this epoch, so the
             // epoch stays open until it succeeds (the safe direction: the
             // emptied-thread grace never advances early).
-            match self.refresh_mailbox_with(session, entry, false).await {
+            // Membership changes need not alter EXISTS/UIDNEXT. All Mail is
+            // the authoritative label view, so sweep its bounded window even
+            // when counters are unchanged (never re-download cached bodies).
+            let labels_changed_without_counters = entry.role == Some(crate::provider::imap::MailboxRole::All)
+                && session.supports_label_extensions();
+            match self.refresh_mailbox_with(session, entry, labels_changed_without_counters).await {
                 Ok(committed) => generation = committed,
                 Err(error) if error.requires_reauthentication() => return Err(error),
                 Err(error) => {
@@ -393,14 +414,13 @@ impl ImapProvider {
             }
             limits
         };
-        // A thread is hot if it has a location in INBOX or Sent.
-        let makes_hot = entry.is_inbox || matches!(entry.role, Some(crate::provider::imap::MailboxRole::Sent));
-        // Sent is acquired in CHUNKS (item 2): newest-first, at most
-        // SENT_ROUND_MESSAGES still-unacquired UIDs per round, with a NULL/UID
-        // `backfill_low_uid` watermark marking completeness. It is non-evicting
-        // (SyncLimits::sent) and its backfill-in-progress state must defeat the
-        // cheap cadence skip below.
-        let is_sent = matches!(entry.role, Some(crate::provider::imap::MailboxRole::Sent));
+        // Inbox, Sent, and All Mail acquire bodies into the hot store.
+        let makes_hot = entry.is_inbox || matches!(entry.role, Some(crate::provider::imap::MailboxRole::Sent | crate::provider::imap::MailboxRole::All));
+        // Sent and All Mail are acquired newest-first in bounded chunks,
+        // sharing the durable per-mailbox backfill watermark. Sent remains
+        // non-evicting; All Mail uses the folder window. Incomplete backfill
+        // defeats the cheap cadence skip below.
+        let is_chunked = matches!(entry.role, Some(crate::provider::imap::MailboxRole::Sent | crate::provider::imap::MailboxRole::All));
 
         // 1. EXAMINE (read-only) — never SELECT, so sync never sets \Seen.
         let status = session.examine(mailbox).await?;
@@ -430,7 +450,7 @@ impl ImapProvider {
         let uidvalidity_changed =
             matches!(local_uidvalidity_pre, Some(stored) if stored != server_uidvalidity);
         let stored = self.store.mailbox_sync_state(mailbox).map_err(db_err)?;
-        let backfill_incomplete = is_sent
+        let backfill_incomplete = is_chunked
             && policy::sent_backfill_incomplete(
                 self.store.sent_backfill_low_uid(mailbox).map_err(db_err)?,
             );
@@ -573,7 +593,7 @@ impl ImapProvider {
             effective
         };
 
-        let server_flags = self
+        let (server_flags, server_labels) = self
             .fetch_flags(session, &flag_uids.into_iter().collect::<Vec<_>>())
             .await?;
         let server_view = crate::provider::imap::delta::ServerMailboxView {
@@ -608,7 +628,7 @@ impl ImapProvider {
         // fell beyond the window unseen. We record it in the SAME round, so the
         // cadence gate above reads an accurate pending flag next poll.
         let mut sent_backfill_write: Option<Option<i64>> = None;
-        if is_sent {
+        if is_chunked {
             let budget = self.sent_round_budget.unwrap_or(policy::SENT_ROUND_MESSAGES);
             let acquiring_total = delta.new_uids.len();
             if acquiring_total > budget {
@@ -647,13 +667,13 @@ impl ImapProvider {
             }
             if delta.beyond_window > 0 {
                 log::info!(
-                    "imap sync: Sent backfill — {} UID(s) beyond the {}-message window will not be acquired",
+                    "imap sync: {mailbox:?} backfill — {} UID(s) beyond the {}-message window will not be acquired",
                     delta.beyond_window,
                     limits.mailbox_window
                 );
             }
             log::info!(
-                "imap sync: Sent backfill — acquiring {} this round, {} still pending",
+                "imap sync: {mailbox:?} backfill — acquiring {} this round, {} still pending",
                 delta.new_uids.len(),
                 remaining_after_chunk
             );
@@ -689,6 +709,16 @@ impl ImapProvider {
 
         let mut threading_inputs: Vec<ThreadingInput> = Vec::new();
         let mut changed_message_ids: Vec<String> = Vec::new();
+        if !delta.uidvalidity_reset {
+            for (uid, labels) in server_labels {
+                if let Some(id) = self.store.location_message_id(mailbox, server_uidvalidity, uid as i64).map_err(db_err)? {
+                    if self.store.message_labels(&id).map_err(db_err)?.as_ref() != Some(&labels) {
+                        changed_message_ids.push(id.clone());
+                        round.label_snapshots.push((id, labels));
+                    }
+                }
+            }
+        }
         // Message ids newly located in this mailbox this round (new mail), used
         // to compute hotness and label transitions.
         let mut new_message_ids: Vec<String> = Vec::new();
@@ -703,6 +733,7 @@ impl ImapProvider {
             .ingest_new_uids(session, mailbox, server_uidvalidity, &delta.new_uids, makes_hot)
             .await?;
         round.locations.extend(ingest.locations);
+        round.label_snapshots.extend(ingest.label_snapshots);
         threading_inputs.extend(ingest.threading_inputs);
         changed_message_ids.extend(ingest.changed_message_ids);
         new_message_ids.extend(ingest.new_message_ids);
@@ -876,6 +907,7 @@ impl ImapProvider {
                     )
                     .await?;
                     let message_id = resolved.message_id;
+                    if let Some(labels) = row.labels { outcome.label_snapshots.push((message_id.clone(), labels)); }
                     outcome.locations.push(ImapLocation {
                         mailbox: mailbox.to_string(),
                         uidvalidity: server_uidvalidity,
@@ -919,6 +951,7 @@ impl ImapProvider {
                     let message_id = self.store.resolve_message_identity(
                         mailbox, server_uidvalidity, row.uid as i64, &row.inputs,
                     ).map_err(db_err)?;
+                    if let Some(labels) = row.labels { outcome.label_snapshots.push((message_id.clone(), labels)); }
                     outcome.locations.push(ImapLocation {
                         mailbox: mailbox.to_string(),
                         uidvalidity: server_uidvalidity,
@@ -994,7 +1027,7 @@ impl ImapProvider {
         // refresh and expunge detection all run inside that mailbox's sync
         // round. A pin in a mailbox outside the sync cap would never be
         // maintained or released, so refuse before any network work.
-        if !entry.synced_now {
+        if !entry.synced_now || !self.build_sync_plan().map_err(AcquireError::Provider)?.sync_eligible_mailboxes().contains(mailbox) {
             return Err(AcquireError::MailboxNotSynced {
                 mailbox: mailbox.to_string(),
             });
@@ -1104,6 +1137,7 @@ impl ImapProvider {
 
         let mut round = SyncRoundWrite {
             locations: ingest.locations,
+            label_snapshots: ingest.label_snapshots,
             ..Default::default()
         };
 
@@ -1277,18 +1311,20 @@ impl ImapProvider {
         &self,
         session: &mut dyn ImapSession,
         uids: &[u32],
-    ) -> ProviderResult<std::collections::BTreeMap<u32, Vec<String>>> {
+    ) -> ProviderResult<(std::collections::BTreeMap<u32, Vec<String>>, std::collections::BTreeMap<u32, Vec<String>>)> {
         let mut out = std::collections::BTreeMap::new();
+        let mut labels_by_uid = std::collections::BTreeMap::new();
         for batch in chunk(uids, policy::UID_BATCH_SIZE) {
             if batch.is_empty() {
                 continue;
             }
             let set = uid_set(batch);
-            for (uid, flags) in crate::provider::imap::fetch::fetch_flags_only(session, &set).await? {
+            for (uid, flags, labels) in crate::provider::imap::fetch::fetch_flags_only(session, &set).await? {
                 out.insert(uid, flags);
+                if let Some(labels) = labels { labels_by_uid.insert(uid, labels); }
             }
         }
-        Ok(out)
+        Ok((out, labels_by_uid))
     }
 
     /// Seed the threader's prior state from PERSISTED tokens — never from
@@ -1454,7 +1490,7 @@ impl MailSync for ImapProvider {
         // already have been pruned. Repeating this after a crash is harmless.
         let inbox: std::collections::BTreeSet<String> = self
             .store
-            .thread_ids_in_mailbox(INBOX)
+            .inbox_thread_ids()
             .map_err(db_err)?
             .into_iter()
             .collect();
@@ -1501,7 +1537,7 @@ impl MailSync for ImapProvider {
     async fn list_inbox(&self, _page: Option<&str>) -> ProviderResult<ThreadPage> {
         // A single page from the local store: thread ids with an INBOX
         // location. next = None (no server paging this slice).
-        let thread_ids = self.store.thread_ids_in_mailbox(INBOX).map_err(db_err)?;
+        let thread_ids = self.store.inbox_thread_ids().map_err(db_err)?;
         Ok(ThreadPage {
             thread_ids,
             next: None,
@@ -1587,13 +1623,12 @@ impl MailSync for ImapProvider {
         // union — they are unioned over all messages by the engine already.
         let mut thread_dynamic: Vec<String> = Vec::new();
         for message_id in &message_ids {
-            for location in self.store.locations_for_message(message_id).map_err(db_err)? {
-                for id in plan.location_label_ids_for_mailbox(&location.mailbox) {
-                    if (id.starts_with("folder:") || id.starts_with("lf:"))
-                        && !thread_dynamic.contains(&id)
-                    {
-                        thread_dynamic.push(id);
-                    }
+            let locations = self.store.locations_for_message(message_id).map_err(db_err)?;
+            for id in self.message_label_ids(&plan, message_id, &locations)? {
+                if (id.starts_with("folder:") || id.starts_with("lf:"))
+                    && !thread_dynamic.contains(&id)
+                {
+                    thread_dynamic.push(id);
                 }
             }
         }
@@ -1613,19 +1648,9 @@ impl MailSync for ImapProvider {
             // mailbox's RESOLVED location (never an ad-hoc name parse), then
             // the thread-wide dynamic union appended so every message carries
             // the thread's `folder:`/`lf:` labels (fact 1).
-            let mut per_copy: Vec<Vec<String>> = locations
-                .iter()
-                .map(|location| {
-                    let flags: Vec<String> =
-                        serde_json::from_str(&location.flags_json).unwrap_or_default();
-                    labels_for_location_ids(
-                        &plan.location_label_ids_for_mailbox(&location.mailbox),
-                        &flags,
-                    )
-                })
-                .collect();
-            per_copy.push(thread_dynamic.clone());
-            let label_ids = merge_label_sets(&per_copy);
+            let label_ids = merge_label_sets(&[
+                self.message_label_ids(&plan, message_id, &locations)?, thread_dynamic.clone(),
+            ]);
 
             // Body: cache first, else fetch from the best live location.
             let raw = match self.cache.get(message_id).map_err(db_err)? {
