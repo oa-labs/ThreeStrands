@@ -2655,9 +2655,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .modal > header h2 { font-size: var(--text-pane-title); }
 .task-editor-modal { overflow-y: auto; }
 .task-editor-modal { width: min(var(--dialog-w-lg), calc(100vw - var(--dialog-edge))); }
-.calendar-event-modal { width: min(var(--dialog-w-md), calc(100vw - var(--dialog-edge))); overflow-y: auto; }
+.calendar-event-modal { width: min(var(--dialog-w-lg), calc(100vw - var(--dialog-edge))); overflow-y: auto; }
 .calendar-event-date-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2-5); }
-.calendar-event-date-row > .calendar-event-time-fields { flex: 1 1 25rem; min-width: 0; }
+.calendar-event-date-row > .calendar-event-time-fields { flex: 1 1 30rem; min-width: 0; }
 .modal-form .calendar-event-all-day-field { display: flex; min-height: var(--control-h); flex: 0 0 auto; white-space: nowrap; align-items: center; gap: var(--space-2); width: fit-content; color: var(--text); font-size: var(--text-body); }
 .modal-form .calendar-event-all-day-field input[type="checkbox"] { width: auto; flex: 0 0 auto; margin: 0; padding: 0; }
 .calendar-event-time-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2-5); }
@@ -3899,3 +3899,24 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .agent-hint { font-size:var(--text-secondary); color:var(--secondary); }
 .agent-sources { padding-left:var(--space-5); }
 .agent-sources p { font-size:var(--text-meta); color:var(--muted); margin:var(--space-1) 0 var(--space-3); overflow-wrap:anywhere; }
+
+/* Event dates use an app-styled calendar; times remain directly editable. */
+.event-date-time-field { min-width: 0; margin: 0; padding: 0; border: 0; }
+.event-date-time-field legend { margin-bottom: var(--space-1); padding: 0; color: var(--muted); font-size: var(--text-meta); }
+.event-date-time-inputs { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: var(--space-1); }
+.event-date-time-all-day .event-date-time-inputs { grid-template-columns: minmax(0, 1fr); }
+.date-picker-field { position: relative; min-width: 0; }
+.modal-form .date-picker-field input { height: var(--control-h); padding-right: var(--control-h-sm); font-variant-numeric: tabular-nums; }
+.date-picker-trigger { position: absolute; right: 0; top: 0; width: var(--control-h-sm); height: var(--control-h); color: var(--muted); }
+.date-picker-panel { position: absolute; left: 0; top: calc(100% + var(--space-1)); z-index: var(--z-local-popover); width: 280px; max-width: calc(100vw - var(--dialog-edge) - 2 * var(--dialog-inset)); box-sizing: border-box; padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover); }
+.event-date-time-field:last-child .date-picker-panel { left: auto; right: 0; }
+.date-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); font-size: var(--text-body); font-weight: var(--weight-semibold); }
+.date-picker-panel table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.date-picker-panel th { padding-bottom: var(--space-1); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-medium); text-align: center; }
+.date-picker-panel td { padding: var(--space-0-5); text-align: center; }
+.date-picker-day { display: grid; place-items: center; width: 100%; height: var(--control-h); padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: var(--text-body); cursor: pointer; }
+.date-picker-day:hover { background: var(--hover); }
+.date-picker-day.date-picker-outside-month { color: var(--muted); }
+.date-picker-day[aria-current="date"] { box-shadow: inset 0 0 0 1px var(--accent); }
+.date-picker-day.date-picker-day-selected { background: var(--primary); color: var(--primary-text); }
+.date-picker-today { width: 100%; margin-top: var(--space-2); }

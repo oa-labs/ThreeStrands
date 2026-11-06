@@ -1,3 +1,5 @@
+import { parseCalendarDate } from "./DatePickerField";
+import { EventDateTimeField } from "./EventDateTimeField";
 import { MeetingAvailabilityPicker } from "./MeetingAvailabilityPicker";
 import { readAvailabilityPreferencesFor } from "./settings";
 import { schedulingConflicts, schedulingCoverage } from "./meetingAvailability";
@@ -20,13 +22,13 @@ function localDateTimeValue(date: Date): string {
 
 /** Reads a `YYYY-MM-DD` value as a local calendar day, not UTC midnight. */
 function localDate(value: string): Date {
-  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
-  return new Date(year, month - 1, day);
+  return parseCalendarDate(value.slice(0, 10)) ?? new Date(NaN);
 }
 
 function eventFieldTime(value: string, allDay: boolean): number {
   // Date-only fields use calendar-day arithmetic, independent of DST. Timed
   // events keep their elapsed duration in the user's local time zone.
+  if (!parseCalendarDate(value.split("T")[0])) return NaN;
   return new Date(allDay ? `${value}T00:00:00Z` : value).getTime();
 }
 
@@ -196,15 +198,8 @@ export function CreateCalendarEventDialog({
         <label>Title<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={1024} required placeholder="Add title" /></label>
         <div className="calendar-event-date-row">
           <div className="calendar-event-time-fields">
-            {initialTimeUnspecified && !allDay ? <>
-              <label>Start date<input type="date" value={startValue.split("T")[0]} onChange={(event) => setStartValue(`${event.target.value}T${startValue.split("T")[1] ?? ""}`)} required /></label>
-              <label>Start time<input type="time" value={startValue.split("T")[1] ?? ""} onChange={(event) => setStartValue(`${startValue.split("T")[0]}T${event.target.value}`)} required /></label>
-              <label>End date<input type="date" value={endValue.split("T")[0]} onChange={(event) => setEndValue(`${event.target.value}T${endValue.split("T")[1] ?? ""}`)} required /></label>
-              <label>End time<input type="time" value={endValue.split("T")[1] ?? ""} onChange={(event) => setEndValue(`${endValue.split("T")[0]}T${event.target.value}`)} required /></label>
-            </> : <>
-              <label>Starts<input type={allDay ? "date" : "datetime-local"} value={startValue} onChange={(event) => setStartValue(event.target.value)} required /></label>
-              <label>Ends<input type={allDay ? "date" : "datetime-local"} value={endValue} onChange={(event) => setEndValue(event.target.value)} required /></label>
-            </>}
+            <EventDateTimeField label="Starts" allDay={allDay} value={startValue} onChange={setStartValue} />
+            <EventDateTimeField label="Ends" allDay={allDay} value={endValue} onChange={setEndValue} />
           </div>
           <label className="calendar-event-all-day-field"><input type="checkbox" checked={allDay} onChange={(change) => changeAllDay(change.target.checked)} />All day</label>
         </div>
@@ -382,7 +377,6 @@ export function EditCalendarEventDialog({
     }
   }
 
-  const timeType = allDay ? "date" : "datetime-local";
   return (
     <Modal title="Edit event" className={`calendar-event-modal${findingTime && !allDay ? " calendar-event-modal-scheduling" : ""}`} onClose={onClose} dismissible={!saving}>
       <form className="modal-form" onSubmit={(formEvent) => { void submit(formEvent); }} onKeyDown={(keyEvent) => {
@@ -395,8 +389,8 @@ export function EditCalendarEventDialog({
           <label>Title<input value={title} onChange={(change) => setTitle(change.target.value)} maxLength={1024} required placeholder="Add title" /></label>
           <div className="calendar-event-date-row">
             <div className="calendar-event-time-fields">
-              <label>Starts<input type={timeType} value={startValue} onChange={(change) => changeStart(change.target.value)} required /></label>
-              <label>Ends<input type={timeType} value={endValue} onChange={(change) => changeEnd(change.target.value)} required /></label>
+              <EventDateTimeField label="Starts" allDay={allDay} value={startValue} onChange={changeStart} />
+              <EventDateTimeField label="Ends" allDay={allDay} value={endValue} onChange={changeEnd} />
             </div>
             <label className="calendar-event-all-day-field"><input type="checkbox" checked={allDay} onChange={(change) => changeAllDay(change.target.checked)} />All day</label>
           </div>

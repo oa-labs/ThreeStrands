@@ -1,3 +1,4 @@
+import { changeEventDateTime, expectEventDateTime } from "./test/calendarEventFields";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CreateCalendarEventDialog, EditCalendarEventDialog } from "./CreateCalendarEventDialog";
@@ -37,8 +38,8 @@ describe("EditCalendarEventDialog", () => {
     const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
     render(<EditCalendarEventDialog event={{ ...event, start, end }} onClose={vi.fn()} onSaved={vi.fn()} />);
 
-    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: nextStart } });
-    expect(screen.getByLabelText("Ends")).toHaveValue(nextEnd);
+    changeEventDateTime(screen, "Starts", nextStart);
+    expectEventDateTime(screen, "Ends", nextEnd);
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({
       start: new Date(nextStart).toISOString(),
@@ -54,11 +55,11 @@ describe("EditCalendarEventDialog", () => {
   ])("uses an explicitly edited end %s as the new duration", async (_name, nextEnd, expectedEnd) => {
     const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
     render(<EditCalendarEventDialog event={event} onClose={vi.fn()} onSaved={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("Ends"), { target: { value: nextEnd } });
-    expect(screen.getByLabelText("Starts")).toHaveValue("2026-10-01T09:00");
-    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-05T09:00" } });
-    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-06T14:00" } });
-    expect(screen.getByLabelText("Ends")).toHaveValue(expectedEnd);
+    changeEventDateTime(screen, "Ends", nextEnd);
+    expectEventDateTime(screen, "Starts", "2026-10-01T09:00");
+    changeEventDateTime(screen, "Starts", "2026-10-05T09:00");
+    changeEventDateTime(screen, "Starts", "2026-10-06T14:00");
+    expectEventDateTime(screen, "Ends", expectedEnd);
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ end: new Date(expectedEnd).toISOString() })));
   });
@@ -71,37 +72,37 @@ describe("EditCalendarEventDialog", () => {
   ])("preserves %s for all-day events and saves an exclusive end", async (_name, start, end, nextStart, lastDay, exclusiveEnd) => {
     const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
     render(<EditCalendarEventDialog event={{ ...event, start, end, allDay: true }} onClose={vi.fn()} onSaved={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: nextStart } });
-    expect(screen.getByLabelText("Ends")).toHaveValue(lastDay);
+    changeEventDateTime(screen, "Starts", nextStart);
+    expectEventDateTime(screen, "Ends", lastDay);
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ start: nextStart, end: exclusiveEnd, allDay: true })));
   });
 
   it("uses an edited all-day end to reset the day count, including a single day", () => {
     render(<EditCalendarEventDialog event={{ ...event, start: "2026-10-01", end: "2026-10-03", allDay: true }} onClose={vi.fn()} onSaved={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("Ends"), { target: { value: "2026-10-04" } });
-    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-10" } });
-    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-13");
-    fireEvent.change(screen.getByLabelText("Ends"), { target: { value: "2026-10-10" } });
-    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-20" } });
-    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-20");
+    changeEventDateTime(screen, "Ends", "2026-10-04");
+    changeEventDateTime(screen, "Starts", "2026-10-10");
+    expectEventDateTime(screen, "Ends", "2026-10-13");
+    changeEventDateTime(screen, "Ends", "2026-10-10");
+    changeEventDateTime(screen, "Starts", "2026-10-20");
+    expectEventDateTime(screen, "Ends", "2026-10-20");
   });
 
   it.each(["Starts", "Ends"])("retains duration while the %s field is temporarily empty", (label) => {
     render(<EditCalendarEventDialog event={event} onClose={vi.fn()} onSaved={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText(label), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-05T09:00" } });
-    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-05T10:30");
+    changeEventDateTime(screen, label, "");
+    changeEventDateTime(screen, "Starts", "2026-10-05T09:00");
+    expectEventDateTime(screen, "Ends", "2026-10-05T10:30");
   });
 
   it("recalculates duration when switching between all-day and timed events", () => {
     render(<EditCalendarEventDialog event={event} onClose={vi.fn()} onSaved={vi.fn()} />);
     fireEvent.click(screen.getByLabelText("All day"));
-    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-05" } });
-    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-05");
+    changeEventDateTime(screen, "Starts", "2026-10-05");
+    expectEventDateTime(screen, "Ends", "2026-10-05");
     fireEvent.click(screen.getByLabelText("All day"));
-    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-06T23:30" } });
-    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-07T00:30");
+    changeEventDateTime(screen, "Starts", "2026-10-06T23:30");
+    expectEventDateTime(screen, "Ends", "2026-10-07T00:30");
   });
 });
 
@@ -144,7 +145,7 @@ describe("CreateCalendarEventDialog", () => {
     expect(within(dialog).getByRole("button", { name: "Remove bob@example.com" })).toBeInTheDocument();
     expect(within(dialog).getByRole("textbox", { name: "Invite People" })).toHaveValue("");
     expect(within(dialog).getByLabelText("Description")).toHaveValue("From: Please set up the website by Friday.");
-    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-10-01T15:00");
+    expectEventDateTime(within(dialog), "Starts", "2026-10-01T15:00");
     expect(create).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
@@ -194,7 +195,7 @@ describe("CreateCalendarEventDialog", () => {
       accounts={accounts} calendars={calendars} initialTitle="Lunch" initialTimeUnspecified
       onClose={vi.fn()} onCreated={vi.fn()} />);
     fireEvent.click(screen.getByLabelText("All day"));
-    expect(screen.getByLabelText("Starts")).toHaveValue("2026-11-07");
+    expectEventDateTime(screen, "Starts", "2026-11-07");
     fireEvent.click(screen.getByLabelText("All day"));
     expect(screen.getByLabelText("Start time")).toHaveValue("");
     expect(screen.getByLabelText("End time")).toHaveValue("");
@@ -223,8 +224,8 @@ describe("CreateCalendarEventDialog", () => {
 
     const dialog = screen.getByRole("dialog", { name: "New event" });
     expect(within(dialog).getByLabelText("All day")).toBeChecked();
-    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-11-07");
-    expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-11-07");
+    expectEventDateTime(within(dialog), "Starts", "2026-11-07");
+    expectEventDateTime(within(dialog), "Ends", "2026-11-07");
     expect(within(dialog).getByLabelText("Location")).toHaveValue("Glenn's house");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
     // Google stores the day after the last day as the exclusive end.
@@ -242,13 +243,13 @@ describe("CreateCalendarEventDialog", () => {
     const dialog = screen.getByRole("dialog", { name: "New event" });
     expect(within(dialog).getByLabelText("All day")).not.toBeChecked();
     fireEvent.click(within(dialog).getByLabelText("All day"));
-    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-10-01");
-    fireEvent.change(within(dialog).getByLabelText("Ends"), { target: { value: "2026-09-30" } });
+    expectEventDateTime(within(dialog), "Starts", "2026-10-01");
+    changeEventDateTime(within(dialog), "Ends", "2026-09-30");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("The end date must be on or after the start date.");
     expect(create).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByLabelText("All day"));
-    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-10-01T09:00");
+    expectEventDateTime(within(dialog), "Starts", "2026-10-01T09:00");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
       allDay: false, location: "", start: new Date(2026, 9, 1, 9, 0).toISOString(), end: new Date(2026, 9, 1, 10, 0).toISOString(),

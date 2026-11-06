@@ -1,3 +1,4 @@
+import { changeEventDateTime, expectEventDateTime } from "./test/calendarEventFields";
 import { installTestShortcuts } from "./test/commandContext";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -560,13 +561,13 @@ describe("CalendarWeekView", () => {
       fireEvent.click(within(screen.getByRole("region", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
       const form = screen.getByRole("dialog", { name: "Edit event" });
       expect(within(form).getByLabelText("Title")).toHaveValue("Planning");
-      expect(within(form).getByLabelText("Starts")).toHaveValue("2026-09-22T09:00");
-      expect(within(form).getByLabelText("Ends")).toHaveValue("2026-09-22T10:00");
+      expectEventDateTime(within(form), "Starts", "2026-09-22T09:00");
+      expectEventDateTime(within(form), "Ends", "2026-09-22T10:00");
       expect(within(form).getByLabelText("Location")).toHaveValue("Room 4B");
       expect(within(form).getByRole("button", { name: "Remove jane@example.com" })).toBeInTheDocument();
       expect(within(form).getByLabelText("All day")).not.toBeChecked();
       fireEvent.change(within(form).getByLabelText("Title"), { target: { value: "Quarterly planning" } });
-      fireEvent.change(within(form).getByLabelText("Ends"), { target: { value: "2026-09-22T11:00" } });
+      changeEventDateTime(within(form), "Ends", "2026-09-22T11:00");
       const invitees = within(form).getByRole("textbox", { name: "Invite People" });
       fireEvent.change(invitees, { target: { value: "Theo@Example.com" } });
       fireEvent.blur(invitees);
@@ -601,11 +602,11 @@ describe("CalendarWeekView", () => {
       fireEvent.click(within(screen.getByRole("region", { name: "Offsite details" })).getByRole("button", { name: "Edit Event" }));
       const form = screen.getByRole("dialog", { name: "Edit event" });
       expect(within(form).getByLabelText("All day")).toBeChecked();
-      expect(within(form).getByLabelText("Starts")).toHaveValue("2026-09-23");
+      expectEventDateTime(within(form), "Starts", "2026-09-23");
       // Google's end date is exclusive; the form shows the last day.
-      expect(within(form).getByLabelText("Ends")).toHaveValue("2026-09-24");
+      expectEventDateTime(within(form), "Ends", "2026-09-24");
       expect(within(form).getByLabelText("Description")).toHaveValue("Bring laptops");
-      fireEvent.change(within(form).getByLabelText("Ends"), { target: { value: "2026-09-25" } });
+      changeEventDateTime(within(form), "Ends", "2026-09-25");
       fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
       await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({
         allDay: true, start: "2026-09-23", end: "2026-09-26", description: "Bring <b>laptops</b>",
@@ -619,14 +620,14 @@ describe("CalendarWeekView", () => {
       fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       fireEvent.click(within(screen.getByRole("region", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
       const form = screen.getByRole("dialog", { name: "Edit event" });
-      fireEvent.change(within(form).getByLabelText("Ends"), { target: { value: "2026-09-22T08:00" } });
+      changeEventDateTime(within(form), "Ends", "2026-09-22T08:00");
       fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
       expect(await within(form).findByRole("alert")).toHaveTextContent("The end time must be after the start time.");
       expect(update).not.toHaveBeenCalled();
 
       fireEvent.click(within(form).getByLabelText("All day"));
-      expect(within(form).getByLabelText("Starts")).toHaveValue("2026-09-22");
-      expect(within(form).getByLabelText("Ends")).toHaveValue("2026-09-22");
+      expectEventDateTime(within(form), "Starts", "2026-09-22");
+      expectEventDateTime(within(form), "Ends", "2026-09-22");
       fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
       await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ allDay: true, start: "2026-09-22", end: "2026-09-23" })));
     });
@@ -996,8 +997,8 @@ describe("CalendarWeekView", () => {
 
       const dialog = await screen.findByRole("dialog", { name: "New event" });
       expect(within(dialog).getByLabelText("Title")).toHaveValue("Write proposal");
-      expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-09-22T15:00");
-      expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-09-22T15:30");
+      expectEventDateTime(within(dialog), "Starts", "2026-09-22T15:00");
+      expectEventDateTime(within(dialog), "Ends", "2026-09-22T15:30");
       expect(within(dialog).getByLabelText("Calendar")).toHaveValue("joel@example.com\nprimary");
       fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
       await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: "Write proposal", sourceTaskId: "proposal" })));
@@ -1131,8 +1132,8 @@ describe("CalendarWeekView", () => {
     fireEvent.pointerDown(column, { button: 0, pointerId: 1, clientY: 9.25 * 64 });
     fireEvent.pointerUp(column, { button: 0, pointerId: 1, clientY: 9.25 * 64 });
     const dialog = await screen.findByRole("dialog", { name: "New event" });
-    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-09-22T09:15");
-    expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-09-22T10:15");
+    expectEventDateTime(within(dialog), "Starts", "2026-09-22T09:15");
+    expectEventDateTime(within(dialog), "Ends", "2026-09-22T10:15");
     expect(within(dialog).getByLabelText("Calendar")).toHaveValue("joel@example.com\nprimary");
     fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Planning" } });
     // A pasted or typed list becomes one badge per address when the field commits.
@@ -1168,7 +1169,7 @@ describe("CalendarWeekView", () => {
     fireEvent.pointerUp(column, { button: 0, pointerId: 2, clientY: 11.25 * 64 });
 
     const dialog = await screen.findByRole("dialog", { name: "New event" });
-    expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-09-22T11:30");
+    expectEventDateTime(within(dialog), "Ends", "2026-09-22T11:30");
     fireEvent.change(within(dialog).getByLabelText("Calendar"), { target: { value: "joel@example.com\nteam" } });
     fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Team sync" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
@@ -1183,8 +1184,8 @@ describe("CalendarWeekView", () => {
     fireEvent.pointerDown(column, { button: 0, pointerId: 3, clientY: 23.75 * 64 });
     fireEvent.pointerUp(column, { button: 0, pointerId: 3, clientY: 23.75 * 64 });
     const dialog = await screen.findByRole("dialog", { name: "New event" });
-    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-09-22T23:45");
-    expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-09-23T00:45");
+    expectEventDateTime(within(dialog), "Starts", "2026-09-22T23:45");
+    expectEventDateTime(within(dialog), "Ends", "2026-09-23T00:45");
   });
 
   it("keeps the dialog open on a save error and excludes read-only calendars", async () => {
@@ -1195,11 +1196,11 @@ describe("CalendarWeekView", () => {
     expect(within(dialog).getByRole("option", { name: /joel@example.com/ })).toBeInTheDocument();
     expect(within(dialog).queryByRole("option", { name: /Holidays/ })).not.toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Planning" } });
-    fireEvent.change(within(dialog).getByLabelText("Ends"), { target: { value: "2026-09-22T08:00" } });
+    changeEventDateTime(within(dialog), "Ends", "2026-09-22T08:00");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
     expect(within(dialog).getByRole("alert")).toHaveTextContent("end time must be after");
     expect(mailClient.createCalendarEvent).not.toHaveBeenCalled();
-    fireEvent.change(within(dialog).getByLabelText("Ends"), { target: { value: "2026-09-22T16:00" } });
+    changeEventDateTime(within(dialog), "Ends", "2026-09-22T16:00");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Reconnect this calendar account");
     expect(dialog).toBeInTheDocument();
