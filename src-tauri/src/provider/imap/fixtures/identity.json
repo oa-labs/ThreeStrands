@@ -1,0 +1,60 @@
+{
+  "profiles": [
+    {
+      "name": "plain",
+      "capabilities": [
+        "IMAP4rev1"
+      ]
+    },
+    {
+      "name": "extension-advertisement",
+      "capabilities": [
+        "IMAP4rev1",
+        "X-GM-EXT-1",
+        "OBJECTID"
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "key": "root",
+      "raw": "Message-ID: <Root@Example.test>\r\nDate: Mon, 06 Oct 2025 09:00:00 +0000\r\nFrom: a@example.test\r\nTo: me@example.com\r\nSubject: Project\r\n\r\noriginal body",
+      "expected_id": "imap:me@example.com:5d25209ead86adf1aabf20232cf69966a8163e9dccbaeb7ed6bfecf52356cd3d"
+    },
+    {
+      "key": "reply",
+      "raw": "Message-ID: <reply@example.test>\r\nDate: Mon, 06 Oct 2025 09:00:00 +0000\r\nFrom: a@example.test\r\nTo: me@example.com\r\nSubject: Re: Project\r\nIn-Reply-To: <Root@Example.test>\r\nReferences: <Root@Example.test>\r\n\r\nreply body",
+      "expected_id": "imap:me@example.com:49bcc034d8b9d98ccd39c1f6d9a6c3812b229523f6f0ac0549fb42ca8d07629c"
+    },
+    {
+      "key": "unrelated",
+      "raw": "Message-ID: <unrelated@example.test>\r\nDate: Mon, 06 Oct 2025 09:00:00 +0000\r\nFrom: a@example.test\r\nTo: me@example.com\r\nSubject: Project\r\n\r\nunrelated body",
+      "expected_id": "imap:me@example.com:6ae466a18c8fce32b7a878b938fdbdae92a52a02785556dfdb8fc4285c9f7a7a"
+    },
+    {
+      "key": "late-reply",
+      "raw": "Message-ID: <late-reply@example.test>\r\nDate: Mon, 06 Oct 2025 09:00:00 +0000\r\nFrom: a@example.test\r\nTo: me@example.com\r\nSubject: Re: Later\r\nIn-Reply-To: <late-parent@example.test>\r\n\r\nlate reply",
+      "expected_id": "imap:me@example.com:9ffc1b5814274e725c0711b5b43a1b4c41f8fcad4eff3c59f493f93cac6ea84f"
+    },
+    {
+      "key": "late-parent",
+      "raw": "Message-ID: <late-parent@example.test>\r\nDate: Mon, 06 Oct 2025 09:00:00 +0000\r\nFrom: a@example.test\r\nTo: me@example.com\r\nSubject: Later\r\n\r\nlate parent",
+      "expected_id": "imap:me@example.com:5d1c3b1c4cc52aa32b92f9610701f3708decf994c9b832c70704b8a29c167811"
+    },
+    {
+      "key": "missing-id",
+      "raw": "Date: Mon, 06 Oct 2025 09:00:00 +0000\r\nFrom: a@example.test\r\nTo: me@example.com\r\nSubject: No ID\r\n\r\nbody A",
+      "expected_id": "imap:me@example.com:827f6c0b083bb7c87a4b1bdc3a695a1992ae394b1287f1e9884616eec036c1de"
+    },
+    {
+      "key": "missing-id-collision",
+      "raw": "Date: Mon, 06 Oct 2025 09:00:00 +0000\r\nFrom: a@example.test\r\nTo: me@example.com\r\nSubject: No ID\r\n\r\nbody B",
+      "expected_id": "imap:me@example.com:827f6c0b083bb7c87a4b1bdc3a695a1992ae394b1287f1e9884616eec036c1de"
+    },
+    {
+      "key": "duplicate-id",
+      "raw": "Message-ID: <root@example.test>\r\nDate: Mon, 06 Oct 2025 09:00:00 +0000\r\nFrom: a@example.test\r\nTo: me@example.com\r\nSubject: Different content\r\n\r\ndifferent body",
+      "expected_id": "imap:me@example.com:5d25209ead86adf1aabf20232cf69966a8163e9dccbaeb7ed6bfecf52356cd3d"
+    }
+  ]
+}

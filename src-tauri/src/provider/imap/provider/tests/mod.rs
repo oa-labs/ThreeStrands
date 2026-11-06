@@ -84,6 +84,7 @@ type CommandCounts = Arc<Mutex<std::collections::BTreeMap<String, (usize, usize,
 #[derive(Clone, Default)]
 struct FakeMailbox {
     folders: std::collections::BTreeMap<String, FakeFolder>,
+    capabilities: Vec<String>,
     /// Per-mailbox `(searches, body_fetches, identity_fetches)` counters,
     /// accumulated across every session opened against this snapshot's
     /// shared handle. Shared so a test reads them after sync.
@@ -104,6 +105,7 @@ impl FakeMailbox {
         folders.insert("INBOX".to_string(), FakeFolder::new(uidvalidity));
         Self {
             folders,
+            capabilities: vec!["IMAP4rev1".into()],
             command_counts: Arc::new(Mutex::new(Default::default())),
             list_fails: false,
             noselect: Vec::new(),
@@ -152,6 +154,7 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
     let list_fails = mailbox.list_fails;
     let noselect = mailbox.noselect.clone();
     let logout_stalls = mailbox.logout_stalls;
+    let capabilities = mailbox.capabilities.clone();
     let task = tokio::spawn(async move {
         let mut server = BufReader::new(server);
         server.get_mut().write_all(b"* OK ready\r\n").await.unwrap();
@@ -171,6 +174,11 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
             let empty = FakeFolder::default();
             if upper.starts_with("LOGIN") {
                 reply(&mut server, &format!("{tag} OK logged in\r\n")).await;
+            } else if upper == "CAPABILITY" {
+                reply(
+                    &mut server,
+                    &format!("* CAPABILITY {}\r\n{tag} OK done\r\n", capabilities.join(" ")),
+                ).await;
             } else if upper.starts_with("LIST") {
                 if list_fails {
                     reply(&mut server, &format!("{tag} NO LIST failed\r\n")).await;
@@ -382,13 +390,25 @@ async fn open_scripted_session(mailbox: FakeMailbox) -> Box<dyn ImapSession> {
 /// would. INBOX-only tests get an INBOX catalog row and nothing else.
 fn provider_with(mailbox: Arc<Mutex<FakeMailbox>>) -> (ImapProvider, ImapStateStore) {
     let database = Arc::new(Database::open_memory());
+    provider_with_database(mailbox, database)
+}
+
+fn provider_with_database(
+    mailbox: Arc<Mutex<FakeMailbox>>,
+    database: Arc<Database>,
+) -> (ImapProvider, ImapStateStore) {
     database
         .adopt_mail_account("me@example.com", crate::models::MailProviderKind::Imap)
         .unwrap();
     let store = ImapStateStore::new(database.clone(), "me@example.com");
 
     // Seed the catalog from the fake server's folders.
+    let existing = store.mailboxes().unwrap();
     for (name, folder) in &mailbox.lock().unwrap().folders {
+        // Reopened fixtures must retain the last observed server counters.
+        if existing.iter().any(|mailbox| &mailbox.name == name) {
+            continue;
+        }
         let special_use = infer_special_use(name);
         store
             .upsert_mailbox(&super::super::ImapMailbox {
@@ -3908,6 +3928,8 @@ mod search_pins;
 mod search_exec;
 
 mod idle;
+
+mod identity_contract;
 
 #[tokio::test]
 async fn snoozed_archive_locations_survive_the_window_and_release_on_cancellation() {

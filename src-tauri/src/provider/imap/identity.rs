@@ -176,8 +176,96 @@ pub fn derive_message_id(account: &str, inputs: &IdentityInputs) -> String {
 }
 
 #[cfg(test)]
+pub(crate) mod fixtures {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Profile {
+        pub name: String,
+        pub capabilities: Vec<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Message {
+        pub key: String,
+        pub raw: String,
+        pub expected_id: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Corpus {
+        pub profiles: Vec<Profile>,
+        pub messages: Vec<Message>,
+    }
+
+    impl Corpus {
+        pub fn load() -> Self {
+            serde_json::from_str(include_str!("fixtures/identity.json")).unwrap()
+        }
+
+        pub fn message(&self, key: &str) -> &Message {
+            self.messages
+                .iter()
+                .find(|message| message.key == key)
+                .unwrap()
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persisted_identity_fixture_ids_keep_their_literal_values() {
+        // Literal IDs in the corpus protect existing databases against accidental
+        // changes to normalization, account encoding, hash tags, or size inputs.
+        for message in fixtures::Corpus::load().messages {
+            let inputs = super::super::fetch::parse_identity_headers(
+                message.raw.as_bytes(),
+                message.raw.len() as u32,
+            );
+            assert_eq!(
+                derive_message_id("me@example.com", &inputs),
+                message.expected_id,
+                "{}",
+                message.key,
+            );
+        }
+    }
+
+    #[test]
+    fn ambiguity_fixtures_show_header_identity_is_not_conversion_proof() {
+        // Characterization of known limitations, NOT desired deduplication:
+        // distinct sender content can share a header ID or synthetic envelope.
+        // A future collision-aware resolver must update this test intentionally
+        // and must never use these hashes alone to migrate workflow references.
+        let corpus = fixtures::Corpus::load();
+        for (left, right) in [
+            ("root", "duplicate-id"),
+            ("missing-id", "missing-id-collision"),
+        ] {
+            let a = corpus.message(left);
+            let b = corpus.message(right);
+            assert_ne!(a.raw, b.raw);
+            assert_eq!(a.expected_id, b.expected_id);
+            for account in ["me@example.com", "other@example.com"] {
+                let id = |raw: &str| {
+                    derive_message_id(
+                        account,
+                        &super::super::fetch::parse_identity_headers(
+                            raw.as_bytes(),
+                            raw.len() as u32,
+                        ),
+                    )
+                };
+                assert_eq!(id(&a.raw), id(&b.raw));
+                if account != "me@example.com" {
+                    assert_ne!(id(&a.raw), a.expected_id, "ambiguity stays account-scoped");
+                }
+            }
+        }
+    }
 
     #[test]
     fn normalization_strips_brackets_comments_whitespace_and_lowercases() {

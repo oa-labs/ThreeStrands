@@ -328,8 +328,8 @@ fn ingesting_a_merge_reparents_tasks_and_rolls_back_on_failure() {
         .upsert_threads(account, &[vec![a.clone()], vec![b.clone()]])
         .unwrap();
     database.with_connection(|c| {
-        c.execute("INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, created_at, updated_at)
-            VALUES ('task', ?1, ?2, 'Keep this task', 'action', 'none', 'open', 'now', 'now')",
+        c.execute("INSERT INTO tasks(id, account_id, thread_id, source_message_id, title, kind, due_kind, status, created_at, updated_at)
+            VALUES ('task', ?1, ?2, 'b', 'Keep this task', 'action', 'none', 'open', 'now', 'now')",
             params![account, local_thread_id(account, "old")])?;
         Ok(())
     }).unwrap();
@@ -362,6 +362,7 @@ fn ingesting_a_merge_reparents_tasks_and_rolls_back_on_failure() {
             .unwrap()
     };
     assert_eq!(task_thread(), local_thread_id(account, "old"));
+    assert_eq!(database.get_thread_for_message("b").unwrap().thread.id, local_thread_id(account, "old"));
     database
         .apply_ingested_threads_with_aliases(
             account,
@@ -379,4 +380,9 @@ fn ingesting_a_merge_reparents_tasks_and_rolls_back_on_failure() {
         2
     );
     assert_eq!(task_thread(), local_thread_id(account, "survivor"));
+    let source: String = database.with_connection(|c| {
+        Ok(c.query_row("SELECT source_message_id FROM tasks WHERE id='task'", [], |row| row.get(0))?)
+    }).unwrap();
+    assert_eq!(source, "b", "thread aliases must not replace stable source message IDs");
+    assert_eq!(database.get_thread_for_message(&source).unwrap().thread.id, local_thread_id(account, "survivor"));
 }

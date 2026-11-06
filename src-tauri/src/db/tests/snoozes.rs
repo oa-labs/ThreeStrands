@@ -335,6 +335,15 @@ fn retention_keeps_active_snoozed_mail_until_return_and_aliases_keep_the_schedul
     let mut mail = message("first", "survivor", "2026-01-01T09:00:00Z", "hello");
     mail.from = "other@example.com".into();
     mail.labels = vec![];
+    // Alias cleanup happens before ingestion. A later failure must restore
+    // both the original schedule and its message references atomically.
+    assert!(db.apply_ingested_threads_with_aliases(
+        ACCOUNT,
+        &[("survivor".into(), vec![mail.clone(), mail.clone()], vec![])],
+        &[("conversation".into(), "survivor".into())],
+    ).is_err());
+    assert_eq!(db.list_snooze_records(None).unwrap(), vec![original.clone()]);
+    assert!(db.get_thread(&id()).is_ok());
     db.apply_ingested_threads_with_aliases(
         ACCOUNT,
         &[("survivor".into(), vec![mail], vec![])],

@@ -192,6 +192,9 @@ as the account's label container (see [User labels](#user-labels)).
 
 ### Message identity
 
+The [identity audit and regression fixtures](imap-identity-audit.md) describe
+current ID dependencies and the compatibility contract for IMAP parity work.
+
 IMAP UIDs are only unique within one mailbox while its `UIDVALIDITY` stays the
 same, and they change whenever a message moves. ThreeStrands needs a message ID
 that stays stable across moves. It must also be unique across accounts, because
