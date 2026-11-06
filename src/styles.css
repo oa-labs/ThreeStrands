@@ -3830,6 +3830,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .agents-workspace { font-size:var(--text-body); line-height:var(--leading-normal); min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .agents-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-3); padding:var(--space-4); border-bottom:1px solid var(--border); }
 .agents-toolbar h1 { margin:0 auto 0 0; font-size:var(--text-page-title); }
+.agents-paused { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2) var(--space-3); padding:var(--space-2-5) var(--space-4); border-bottom:1px solid var(--border); background:color-mix(in srgb, var(--warning) 10%, var(--surface)); color:var(--text); font-size:var(--text-body); }
+.agents-paused > svg { flex-shrink:0; color:var(--warning); }
+.agents-paused > span { flex:1 1 16rem; }
 .agent-preview, .agent-disclosure { color:var(--muted); font-size:var(--text-meta); }
 .agents-layout { flex:1; min-height:0; display:grid; grid-template-columns:minmax(200px,260px) minmax(0,1fr); }
 .agent-list { padding:var(--space-3); overflow:auto; border-right:1px solid var(--border); }

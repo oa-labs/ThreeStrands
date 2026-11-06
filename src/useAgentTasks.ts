@@ -76,6 +76,21 @@ export function useAgentTasks() {
     select: (id: string) => { setSelectedId(id); setStart(null); setActivity(a => a?.id === id ? null : a); },
     begin: (seed: AgentStart) => { setStart(seed); setSelectedId(null); }, setStart,
     enable: (value: boolean) => mutate(async () => { await mailClient.setAgentRunnerEnabled(value); const next = await mailClient.listAgentTasks(undefined, true); if (alive.current) { setEnabled(value); accept(next, false); setLoaded(true); initialized.current = true; } }),
+    /** Turns delegated work back on and resumes only the tasks Pause All
+     * stopped; tasks paused for any other reason stay paused for review. */
+    resumeAll: () => mutate(async () => {
+      await mailClient.setAgentRunnerEnabled(true);
+      if (alive.current) setEnabled(true);
+      const stopped = current.current.filter(pausedByPauseAll);
+      let failed = 0;
+      for (const d of stopped) {
+        try { await mailClient.controlAgentTask(d.task.id, "resume"); } catch { failed++; }
+      }
+      const next = await mailClient.listAgentTasks(undefined, true);
+      if (!alive.current) return;
+      accept(next, false); setLoaded(true); initialized.current = true;
+      if (failed) setError(`${failed === 1 ? "1 task" : `${failed} tasks`} could not resume. Open ${failed === 1 ? "it" : "each one"} to review.`);
+    }),
     create: (request: CreateAgentTaskRequest) => mutate(async () => { const d = await mailClient.createAgentTask(request); if (alive.current) { setSelectedId(d.task.id); setStart(null); } return d; }),
     createResearch: (request: AgentResearchRequest) => mutate(async () => { const d = await mailClient.createAgentResearchTask(request); if (alive.current) { setSelectedId(d.task.id); setStart(null); } return d; }),
     control,
@@ -87,3 +102,8 @@ export function useAgentTasks() {
   };
 }
 export type AgentController = ReturnType<typeof useAgentTasks>;
+
+/** Pause All pauses queued and running work with this reason. */
+export function pausedByPauseAll(d: AgentDetail): boolean {
+  return d.run.state === "paused" && d.run.reason === "disabled";
+}

@@ -20,7 +20,7 @@ function Harness() {
 async function start() {
   fireEvent.click(await screen.findByRole("button", { name: "New delegated task" }));
   fireEvent.click(screen.getByRole("button", { name: "Enable local demonstration" }));
-  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Delegated work enabled" })).toBeChecked());
+  expect(await screen.findByRole("button", { name: "Pause All" })).toBeEnabled();
   fireEvent.change(screen.getByRole("textbox", { name: "What would you like to find out?" }), { target: { value: "Evaluate the podcast invitation" } });
   fireEvent.click(screen.getByRole("button", { name: "Start demonstration" }));
   await screen.findByRole("article", { name: "Delegated task details" });
@@ -160,4 +160,64 @@ describe("real research entry",()=> {
     fireEvent.click(screen.getByRole("button",{name:"Old source"}));expect(open).toHaveBeenCalledWith(d.task.id,"s1");
   });
 
+});
+
+describe("pause all",()=> {
+  afterEach(()=>vi.restoreAllMocks());
+  async function tasks() {
+    const client=createDemoClient(dataset);await client.setAgentRunnerEnabled(true);
+    const running=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Running work",workflow:"fixture_research_v1"});
+    const held=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Held for review",workflow:"fixture_research_v1"});
+    running.run.state="running";running.run.reason=null;
+    held.run.state="paused";held.run.reason="user";
+    return {running,held};
+  }
+  it("pauses everything, says how many tasks wait, and resumes only what Pause All stopped",async()=> {
+    const {running,held}=await tasks();
+    let enabled=true;
+    let list=[running,held];
+    vi.spyOn(mailClient,"agentRunnerEnabled").mockImplementation(async()=>enabled);
+    vi.spyOn(mailClient,"listAgentTasks").mockImplementation(async()=>list);
+    vi.spyOn(mailClient,"listTasks").mockResolvedValue([]);
+    const toggle=vi.spyOn(mailClient,"setAgentRunnerEnabled").mockImplementation(async(value)=>{
+      enabled=value;
+      if(!value) list=[{...running,run:{...running.run,state:"paused",reason:"disabled"}},held];
+    });
+    const control=vi.spyOn(mailClient,"controlAgentTask").mockImplementation(async(id)=>{list=list.map(d=>d.task.id===id?{...d,run:{...d.run,state:"queued",reason:null}}:d);return list.find(d=>d.task.id===id)!;});
+    render(<Harness />);
+    expect(screen.queryByRole("checkbox",{name:/Delegated work/})).not.toBeInTheDocument();
+    const pause=await screen.findByRole("button",{name:"Pause All"});
+    expect(pause).toHaveAccessibleDescription();
+    fireEvent.click(pause);
+    await waitFor(()=>expect(toggle).toHaveBeenCalledWith(false));
+    expect(await screen.findByText("1 task is waiting to resume.")).toBeVisible();
+    expect(screen.queryByRole("button",{name:"Pause All"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Resume All"}));
+    await waitFor(()=>expect(screen.queryByRole("button",{name:"Resume All"})).not.toBeInTheDocument());
+    expect(toggle).toHaveBeenLastCalledWith(true);
+    expect(control).toHaveBeenCalledOnce();
+    expect(control).toHaveBeenCalledWith(running.task.id,"resume");
+    expect(screen.getByRole("button",{name:"Pause All"})).toBeEnabled();
+  });
+  it("keeps delegated work on and reports tasks that could not resume",async()=> {
+    const {running}=await tasks();
+    const stopped={...running,run:{...running.run,state:"paused" as const,reason:"disabled"}};
+    vi.spyOn(mailClient,"agentRunnerEnabled").mockResolvedValue(false);
+    vi.spyOn(mailClient,"listAgentTasks").mockResolvedValue([stopped]);
+    vi.spyOn(mailClient,"listTasks").mockResolvedValue([]);
+    vi.spyOn(mailClient,"setAgentRunnerEnabled").mockResolvedValue();
+    vi.spyOn(mailClient,"controlAgentTask").mockRejectedValue(new Error("Agent allowance exhausted"));
+    render(<Harness />);
+    fireEvent.click(await screen.findByRole("button",{name:"Resume All"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("1 task could not resume.");
+    expect(screen.getByRole("button",{name:"Pause All"})).toBeInTheDocument();
+  });
+  it("shows no paused state before any delegated work exists",async()=> {
+    vi.spyOn(mailClient,"agentRunnerEnabled").mockResolvedValue(false);
+    vi.spyOn(mailClient,"listAgentTasks").mockResolvedValue([]);
+    render(<Harness />);
+    await screen.findByText("No delegated tasks in this view.");
+    expect(screen.queryByRole("button",{name:"Resume All"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Pause All"})).not.toBeInTheDocument();
+  });
 });
