@@ -4,11 +4,25 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.207.0 — 2026-11-06
+
 ### New
 - **Settings → Reading & Triage** brings together when conversations are marked read, including a new option to mark them read when archiving, even without opening them. The archive option starts off, and the reading delay has moved here from Appearance.
 
+### Improved
+- **Settings → Diagnostics** shows a failed Gmail sync as one readable line with the error code and Google's message, instead of the raw reply. A failed sync attempt, which clears once the next sync succeeds, no longer counts as an item to review.
+- Web research setup has moved from a separate dialog in **Agents** to **Settings → Web Research**. It now shows what is still needed before research can start, and lets you save each key on its own. It no longer asks you to record a storage agreement.
+- **Agents** replaces the "Delegated work enabled" checkbox with **Pause All**. While work is paused, a notice says how many tasks are waiting, and **Resume All** restarts only the tasks it paused.
+- **Settings** groups its Workflow sections by task: incoming mail first, then writing, then scheduling.
+
 ### Fixed
 - Logos and other images in emails no longer look squashed or stretched. Small logos keep the size the sender chose, and images that have to shrink to fit the reading pane keep their shape.
+- Gmail accounts no longer run into Gmail's per-minute usage limit while syncing, opening messages, and saving drafts at the same time. When Gmail does report the limit, ThreeStrands now pauses that account's requests until the limit resets instead of retrying until sync fails.
+  When the same account is signed in on several computers, each one slows down after Gmail reports the limit and speeds back up gradually, so they share the limit instead of taking turns failing.
+- IMAP messages with reused sender message IDs stay separate when the server supplies unique identifiers. Their identities remain stable across folder copies, moves, and reconnects.
+- Very long conversations that go over ThreeStrands' size or message limit now keep their newest messages and leave out the oldest, instead of cutting off the latest replies.
+- **Settings → Diagnostics** lists the messages left out of each conversation as one entry with a count, and no longer shows them as new every time the conversation syncs again.
+- A new message started from **All accounts** now keeps the sending account you last used, instead of switching back to your first account whenever ThreeStrands checks for mail.
 
 ## 0.205.0 — 2026-11-06
 
