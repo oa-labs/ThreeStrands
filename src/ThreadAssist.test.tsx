@@ -161,6 +161,21 @@ describe("ThreadAssist", () => {
     expect(screen.queryByRole("button", { name: "AI Activity" })).not.toBeInTheDocument();
   });
 
+  it("labels what would complete the conversation and keeps it before the recap of earlier messages", () => {
+    const thread: ThreadDetail = {
+      ...summarized,
+      thread: {
+        ...summarized.thread,
+        summary: "- Waiting on the vendor.\n- Earlier: Roles kept vanishing.\n- To close: the vendor fixes the sync.",
+      },
+    };
+    render(<ThreadAssist {...props({ detail: thread, suggestions: { requested: true } })} />);
+    const items = screen.getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual(["Waiting on the vendor.", "To close: the vendor fixes the sync.", "Earlier: Roles kept vanishing."]);
+    expect(items[1]).toHaveClass("thread-assist-summary-close");
+    expect(within(items[1]).getByText("To close:").tagName).toBe("STRONG");
+  });
+
   it("says when a brief covers only the latest messages and reads the recap of earlier ones last", () => {
     const message = (id: string, sentAt: string) => ({ ...detail.messages[0], id, sentAt });
     const thread: ThreadDetail = {

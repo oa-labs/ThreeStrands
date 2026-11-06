@@ -16,8 +16,8 @@ mod test_support;
 mod usage;
 
 pub use brief::{
-    analyze, brief, brief_focus_start, summarize, AnalyzeRequest, GoalPromptInput, PriorCoverage,
-    SummarizeRequest, MAX_PROMPT_GOALS, MAX_PROMPT_USER_ADDRESSES,
+    analyze, brief, brief_focus_start, summarize, user_names, AnalyzeRequest, GoalPromptInput,
+    PriorCoverage, SummarizeRequest, MAX_PROMPT_GOALS, MAX_PROMPT_USER_ADDRESSES,
 };
 pub use chat::{chat, chat_search_terms, ChatAttachmentInput, ChatRequest, ChatThreadInput};
 pub(crate) use chat::{MAX_CHAT_TURN_CHARS, MAX_MAILBOX_CHAT_THREADS};
@@ -250,6 +250,7 @@ mod tests {
             current_time: "2026-09-25T10:00:00Z".into(),
             user_time_zone: "UTC".into(),
             user_addresses: vec![],
+            user_names: vec![],
             goals: vec![],
             focus_from: None,
         };

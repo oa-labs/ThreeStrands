@@ -94,6 +94,19 @@ fn account_addresses(state: &AppState, account_id: &str) -> AppResult<Vec<String
         .collect())
 }
 
+/// The names the user goes by in this thread's account, so a brief can tell
+/// when a message names the reader; see `ai::user_names`.
+fn account_names(state: &AppState, detail: &ThreadDetail, user_addresses: &[String]) -> AppResult<Vec<String>> {
+    let account = state.database.get_account(&detail.thread.account_id)?;
+    let identities = state.database.account_sending_identities(&detail.thread.account_id)?;
+    let known = account
+        .iter()
+        .filter_map(|account| account.display_name.as_deref())
+        .chain(identities.iter().filter_map(|identity| identity.display_name.as_deref()));
+    let senders = detail.messages.iter().map(|message| message.sender.as_str());
+    Ok(ai::user_names(known, senders, user_addresses))
+}
+
 /// Where the messages a brief, summary, or suggestions should focus on
 /// start; see `ai::brief_focus_start`.
 fn brief_focus(state: &AppState, detail: &ThreadDetail, user_addresses: &[String]) -> AppResult<Option<String>> {
@@ -173,6 +186,7 @@ async fn thread_analysis_request(
         .collect();
     let user_addresses = account_addresses(state, &detail.thread.account_id)?;
     let focus_from = brief_focus(state, &detail, &user_addresses)?;
+    let user_names = account_names(state, &detail, &user_addresses)?;
     let request = ai::AnalyzeRequest {
         provider,
         model,
@@ -192,6 +206,7 @@ async fn thread_analysis_request(
         current_time: Utc::now().to_rfc3339(),
         user_time_zone,
         user_addresses,
+        user_names,
         goals,
         focus_from,
     };

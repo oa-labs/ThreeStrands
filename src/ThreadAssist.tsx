@@ -26,6 +26,8 @@ export const BRIEF_MAX_MESSAGES = 15;
 
 /** A summary line recapping the conversation before the new messages. */
 const EARLIER_PREFIX = /^Earlier:\s*/i;
+/** A summary line saying what would complete the conversation. */
+const TO_CLOSE_PREFIX = /^To close:\s*/i;
 
 // Suggestions keep their object identity while listed, so a card keeps its
 // key — and its calendar check — when an earlier card is discarded.
@@ -441,9 +443,13 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
     <div id={bodyId} hidden={collapsed}>
       {copyFailed ? <p className="context-status" role="status">Could not copy brief</p> : null}
       {orderedLines.length === 1 ? <p className="thread-assist-summary thread-assist-summary-paragraph">{orderedLines[0]}</p> : summaryText ? <ul className="thread-assist-summary" role="list">
-        {orderedLines.map((line, index) => <li key={index} className={EARLIER_PREFIX.test(line) ? "thread-assist-summary-earlier" : undefined}>
-          <span className="context-row-glyph thread-assist-summary-marker" aria-hidden="true"><svg width={ICON_SIZE.xs} height={ICON_SIZE.xs} viewBox="0 0 12 12"><circle cx="6" cy="6" r="2" fill="currentColor" /></svg></span><span>{line}</span>
-        </li>)}
+        {orderedLines.map((line, index) => {
+          const toClose = TO_CLOSE_PREFIX.test(line);
+          return <li key={index} className={EARLIER_PREFIX.test(line) ? "thread-assist-summary-earlier" : toClose ? "thread-assist-summary-close" : undefined}>
+            <span className="context-row-glyph thread-assist-summary-marker" aria-hidden="true"><svg width={ICON_SIZE.xs} height={ICON_SIZE.xs} viewBox="0 0 12 12"><circle cx="6" cy="6" r="2" fill="currentColor" /></svg></span>
+            {toClose ? <span><strong className="thread-assist-summary-label">To close:</strong> {line.replace(TO_CLOSE_PREFIX, "")}</span> : <span>{line}</span>}
+          </li>;
+        })}
       </ul> : null}
       {stale ? <p className="context-status">New messages since this brief.</p> : null}
       {/* Which messages the brief covers, when not the whole conversation. */}
