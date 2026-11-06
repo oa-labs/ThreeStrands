@@ -20,7 +20,7 @@
 set -Eeuo pipefail
 
 TART_VM="${TART_VM:-tart-vm}"
-REMOTE="${THREESTRANDS_RELEASE_REMOTE:-primary}"
+REMOTE="${THREESTRANDS_RELEASE_REMOTE:-origin}"
 GUEST_CLONE="${THREESTRANDS_VM_CLONE:-/Users/admin/Source/threestrands}"
 GUEST_WORK="$GUEST_CLONE-release"
 
