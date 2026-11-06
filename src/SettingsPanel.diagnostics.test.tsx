@@ -48,7 +48,7 @@ describe("DiagnosticsSettings", () => {
         error: "network unreachable\nauthentication expired",
         quarantinedMessages: [{
           messageId: "bad-message", threadId: "provider-thread", error: "Invalid message body",
-          createdAt: "2026-01-02T03:04:05Z",
+          createdAt: "2026-01-02T03:04:05Z", messageCount: 1,
         }],
       }}
       recovery={{ kind: "restoredFromBackup", corruptPath: null, backupPath: "/cache/mail.backup.db" }}
@@ -175,6 +175,7 @@ describe("DiagnosticsSettings", () => {
         threadId: "provider-thread",
         error: "Invalid Gmail base64url body",
         createdAt: "2026-01-02T03:04:05Z",
+        messageCount: 1,
       }],
     };
 
@@ -189,6 +190,35 @@ describe("DiagnosticsSettings", () => {
     ))).toBeInTheDocument();
     fireEvent.click(within(issue).getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(handlers.dismissProblems).toHaveBeenCalledTimes(1));
+  });
+
+  it("reports a conversation's set-aside messages as one entry with their count", () => {
+    const status: SyncStatus = {
+      ...healthy,
+      quarantinedMessages: [{
+        messageId: "old-1",
+        threadId: "long-thread",
+        error: "Conversation is larger than 16 MB, so its oldest messages aren’t shown",
+        createdAt: "2026-01-02T03:04:05Z",
+        messageCount: 7,
+      }, {
+        messageId: "bad-message",
+        threadId: "other-thread",
+        error: "Invalid Gmail base64url body",
+        createdAt: "2026-01-01T03:04:05Z",
+        messageCount: 1,
+      }],
+    };
+
+    render(<DiagnosticsSettings status={status} accountCount={1} />);
+
+    const issue = screen.getByRole("group", { name: "8 messages couldn’t be read" });
+    const entries = within(issue).getAllByRole("listitem");
+    expect(entries).toHaveLength(2);
+    expect(within(entries[0]).getByText("7 messages")).toBeInTheDocument();
+    expect(entries[0]).toHaveTextContent("Thread long-thread");
+    expect(within(entries[0]).queryByText(/old-1/)).not.toBeInTheDocument();
+    expect(within(entries[1]).getByText("Message bad-message")).toBeInTheDocument();
   });
 
   it("lets a database recovery notice be dismissed", () => {

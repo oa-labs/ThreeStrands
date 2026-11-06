@@ -386,3 +386,95 @@ fn ingesting_a_merge_reparents_tasks_and_rolls_back_on_failure() {
     assert_eq!(source, "b", "thread aliases must not replace stable source message IDs");
     assert_eq!(database.get_thread_for_message(&source).unwrap().thread.id, local_thread_id(account, "survivor"));
 }
+
+mod quarantine_reports {
+    use super::*;
+
+    const ACCOUNT: &str = "long@example.com";
+    const OVER: &str = "Conversation is larger than 16 MB";
+
+    fn ingest(database: &Database, thread: &str, set_aside: &[(&str, &str)]) {
+        let kept = message(&format!("{thread}-kept"), thread, "2026-01-05T00:00:00Z", "newest");
+        let set_aside = set_aside
+            .iter()
+            .map(|(id, error)| (id.to_string(), error.to_string()))
+            .collect();
+        database
+            .apply_ingested_threads(ACCOUNT, &[(thread.into(), vec![kept], set_aside)])
+            .unwrap();
+    }
+
+    fn backdate(database: &Database) {
+        database
+            .connection()
+            .unwrap()
+            .execute("UPDATE quarantined_messages SET created_at = '2026-01-01T00:00:00+00:00'", [])
+            .unwrap();
+    }
+
+    #[test]
+    fn a_conversation_reports_its_set_aside_messages_as_one_entry() {
+        let database = database();
+        database.adopt_account(ACCOUNT).unwrap();
+        ingest(&database, "long", &[("old-1", OVER), ("old-2", OVER), ("old-3", OVER)]);
+        ingest(&database, "other", &[("broken", "Invalid Gmail base64url body")]);
+
+        let mut entries = database.sync_status(ACCOUNT).unwrap().quarantined_messages;
+        entries.sort_by(|a, b| a.thread_id.cmp(&b.thread_id));
+        let summary: Vec<_> = entries
+            .iter()
+            .map(|entry| (entry.thread_id.as_str(), entry.message_count, entry.message_id.as_str()))
+            .collect();
+        assert_eq!(summary, [("long", 3, "old-1"), ("other", 1, "broken")]);
+    }
+
+    #[test]
+    fn a_resync_with_the_same_messages_set_aside_keeps_when_they_were_first_seen() {
+        let database = database();
+        database.adopt_account(ACCOUNT).unwrap();
+        ingest(&database, "long", &[("old-1", OVER), ("old-2", OVER)]);
+        backdate(&database);
+
+        ingest(&database, "long", &[("old-1", OVER), ("old-2", OVER)]);
+
+        let entries = database.sync_status(ACCOUNT).unwrap().quarantined_messages;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].created_at, "2026-01-01T00:00:00+00:00");
+        assert_eq!(entries[0].message_count, 2);
+    }
+
+    #[test]
+    fn a_newly_set_aside_message_updates_the_entry_and_a_kept_one_leaves_it() {
+        let database = database();
+        database.adopt_account(ACCOUNT).unwrap();
+        ingest(&database, "long", &[("old-1", OVER), ("old-2", OVER)]);
+        backdate(&database);
+
+        // The conversation grew: old-2 no longer fits, old-3 joins it, and
+        // old-1 has since been deleted from the server.
+        ingest(&database, "long", &[("old-2", OVER), ("old-3", OVER)]);
+
+        let entries = database.sync_status(ACCOUNT).unwrap().quarantined_messages;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message_count, 2);
+        assert_eq!(entries[0].message_id, "old-2");
+        assert_ne!(entries[0].created_at, "2026-01-01T00:00:00+00:00");
+
+        ingest(&database, "long", &[]);
+        assert!(database.sync_status(ACCOUNT).unwrap().quarantined_messages.is_empty());
+    }
+
+    #[test]
+    fn a_changed_reason_is_reported_as_new() {
+        let database = database();
+        database.adopt_account(ACCOUNT).unwrap();
+        ingest(&database, "long", &[("old-1", "Invalid Gmail base64url body")]);
+        backdate(&database);
+
+        ingest(&database, "long", &[("old-1", OVER)]);
+
+        let entries = database.sync_status(ACCOUNT).unwrap().quarantined_messages;
+        assert_eq!(entries[0].error, OVER);
+        assert_ne!(entries[0].created_at, "2026-01-01T00:00:00+00:00");
+    }
+}

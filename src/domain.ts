@@ -1015,11 +1015,15 @@ export type AccountSyncError = {
   error: string;
 };
 
+/** Messages of one conversation set aside for the same reason. */
 export type QuarantinedMessage = {
+  /** One of the messages, named when it is the only one. */
   messageId: string;
   threadId: string;
   error: string;
+  /** When the most recent of these messages was first set aside. */
   createdAt: string;
+  messageCount: number;
 };
 
 /// Reported once at startup only when the local cache had to be recovered
