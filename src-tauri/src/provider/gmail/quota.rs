@@ -7,6 +7,13 @@
 //! in a process-wide registry keyed by account, charges every request its
 //! documented quota cost, and, once Gmail reports the limit exceeded, holds
 //! back every request for that account until the backoff has passed.
+//!
+//! The budget adapts. Every installation signed in to an account spends the
+//! same per-user quota, and each can see only its own requests, so a refusal
+//! is the sign that the account's other traffic leaves this one less room.
+//! Each overrun halves the budget, down to a floor; after a quiet spell it
+//! grows back steadily. Installations that back off together settle below
+//! the limit without having to know about one another.
 
 use std::{
     collections::HashMap,
@@ -20,14 +27,30 @@ use tokio::{
     time::{sleep, Instant},
 };
 
-/// Sustained spend. Two thirds of the 6,000 per-user units a minute, leaving
-/// headroom for another client signed in to the same account.
+/// Sustained spend while Gmail hasn't refused this account: two thirds of
+/// the 6,000 per-user units a minute, leaving headroom for another
+/// installation signed in to the same account.
 pub(super) const UNITS_PER_MINUTE: u32 = 4_000;
 
-/// Units that may be spent back to back after a quiet period. Large enough
-/// for the costliest single call (a send, 100 units), small enough that a
-/// burst cannot approach a per-second ceiling.
-pub(super) const BURST_UNITS: u32 = 200;
+/// The least an overrun cuts the budget to, so mail keeps moving however
+/// busy the account's other installations are.
+pub(super) const MIN_UNITS_PER_MINUTE: u32 = 500;
+
+/// Refusals this close to the last cut belong to the same overrun, so one
+/// burst of 403s halves the budget once.
+const CUT_WINDOW: Duration = Duration::from_secs(60);
+
+/// How long the budget stays at a cut before growing back.
+const RECOVERY_QUIET: Duration = Duration::from_secs(2 * 60);
+
+/// How fast the budget grows back after [`RECOVERY_QUIET`], in units a
+/// minute gained per minute.
+const RECOVERY_UNITS_PER_MINUTE: u32 = 250;
+
+/// Units that may be spent back to back after a quiet period. Exactly the
+/// costliest single call (a send, 100 units), and small enough that several
+/// installations bursting together stay under Gmail's short-window limit.
+pub(super) const BURST_UNITS: u32 = 100;
 
 /// Cost charged for an endpoint missing from [`cost`]'s table.
 const UNKNOWN_COST: u32 = 10;
@@ -43,6 +66,9 @@ struct State {
     available: f64,
     refilled: Instant,
     paused_until: Instant,
+    /// The budget the last overrun cut to, and when; `None` until Gmail
+    /// first refuses this account.
+    cut: Option<(f64, Instant)>,
 }
 
 impl QuotaGate {
@@ -54,6 +80,7 @@ impl QuotaGate {
                 available: f64::from(BURST_UNITS),
                 refilled: now,
                 paused_until: now,
+                cut: None,
             }),
         }
     }
@@ -77,7 +104,7 @@ impl QuotaGate {
                         state.available = (state.available - units).max(0.0);
                         return;
                     }
-                    let seconds = (units - state.available) / units_per_second();
+                    let seconds = (units - state.available) / state.units_per_second(now);
                     Duration::from_micros((seconds * 1e6).ceil() as u64)
                 }
             };
@@ -90,12 +117,24 @@ impl QuotaGate {
     /// traffic ramps up instead of bursting back into the limit.
     pub(super) fn pause(&self, delay: Duration) {
         let mut state = self.state.lock().unwrap();
-        let until = Instant::now() + delay;
+        let now = Instant::now();
+        if state.cut.is_none_or(|(_, at)| now.duration_since(at) >= CUT_WINDOW) {
+            let budget = (state.units_per_minute(now) / 2.0).max(f64::from(MIN_UNITS_PER_MINUTE));
+            log::info!("Gmail quota exceeded; this account now spends at most {budget:.0} units a minute");
+            state.cut = Some((budget, now));
+        }
+        let until = now + delay;
         if until > state.paused_until {
             state.paused_until = until;
         }
         state.available = 0.0;
         state.refilled = state.paused_until;
+    }
+
+    /// The account's current budget.
+    #[cfg(test)]
+    pub(super) fn units_per_minute(&self) -> f64 {
+        self.state.lock().unwrap().units_per_minute(Instant::now())
     }
 
     /// How much longer requests are held back by a quota pause.
@@ -106,18 +145,31 @@ impl QuotaGate {
 }
 
 impl State {
+    /// The budget at `now`: the full rate until Gmail first refuses this
+    /// account; after an overrun, the cut rate for [`RECOVERY_QUIET`], then
+    /// growing by [`RECOVERY_UNITS_PER_MINUTE`] each minute back to the full
+    /// rate.
+    fn units_per_minute(&self, now: Instant) -> f64 {
+        let full = f64::from(UNITS_PER_MINUTE);
+        let Some((cut, at)) = self.cut else {
+            return full;
+        };
+        let recovering = now.saturating_duration_since(at).saturating_sub(RECOVERY_QUIET);
+        (cut + f64::from(RECOVERY_UNITS_PER_MINUTE) * recovering.as_secs_f64() / 60.0).min(full)
+    }
+
+    fn units_per_second(&self, now: Instant) -> f64 {
+        self.units_per_minute(now) / 60.0
+    }
+
     fn refill(&mut self, now: Instant) {
         if now <= self.refilled {
             return;
         }
-        let earned = (now - self.refilled).as_secs_f64() * units_per_second();
+        let earned = (now - self.refilled).as_secs_f64() * self.units_per_second(now);
         self.available = (self.available + earned).min(f64::from(BURST_UNITS));
         self.refilled = now;
     }
-}
-
-fn units_per_second() -> f64 {
-    f64::from(UNITS_PER_MINUTE) / 60.0
 }
 
 static GATES: LazyLock<StdMutex<HashMap<String, Arc<QuotaGate>>>> =
@@ -215,7 +267,7 @@ mod tests {
     async fn a_burst_is_served_immediately_then_paced_to_the_sustained_rate() {
         let gate = QuotaGate::new();
         let start = Instant::now();
-        // Twenty thread fetches spend the whole burst without waiting.
+        // Ten thread fetches spend the whole burst without waiting.
         for _ in 0..BURST_UNITS / 10 {
             gate.acquire(10).await;
         }
@@ -259,10 +311,10 @@ mod tests {
             finished.push(waiter.await.unwrap());
         }
         finished.sort();
-        // Nothing passes during the pause, and the budget restarts empty, so
-        // even the first request waits for its own units to accrue.
-        assert_near(finished[0], Duration::from_millis(15_075));
-        assert_near(finished[1], Duration::from_millis(15_150));
+        // Nothing passes during the pause, and the budget restarts empty at
+        // half the rate, so even the first request waits for its own units.
+        assert_near(finished[0], Duration::from_millis(15_150));
+        assert_near(finished[1], Duration::from_millis(15_300));
     }
 
     #[tokio::test(start_paused = true)]
@@ -273,5 +325,58 @@ mod tests {
         gate.pause(Duration::from_secs(5));
         gate.acquire(1).await;
         assert!(Instant::now() - start >= Duration::from_secs(30));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_overrun_halves_the_budget_once_down_to_a_floor() {
+        let gate = QuotaGate::new();
+        assert_eq!(gate.units_per_minute(), 4_000.0);
+        // A burst of refusals is one overrun.
+        for _ in 0..3 {
+            gate.pause(Duration::from_secs(1));
+        }
+        assert_eq!(gate.units_per_minute(), 2_000.0);
+        let mut expected = Vec::new();
+        let mut seen = Vec::new();
+        for budget in [1_000.0, 500.0, 500.0] {
+            tokio::time::advance(CUT_WINDOW).await;
+            gate.pause(Duration::from_secs(1));
+            expected.push(budget);
+            seen.push(gate.units_per_minute());
+        }
+        assert_eq!(seen, expected);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_budget_grows_back_after_a_quiet_spell() {
+        let gate = QuotaGate::new();
+        gate.pause(Duration::from_secs(1));
+        tokio::time::advance(RECOVERY_QUIET).await;
+        assert_eq!(gate.units_per_minute(), 2_000.0);
+        tokio::time::advance(Duration::from_secs(4 * 60)).await;
+        assert_eq!(gate.units_per_minute(), 3_000.0);
+        tokio::time::advance(Duration::from_secs(30 * 60)).await;
+        assert_eq!(gate.units_per_minute(), f64::from(UNITS_PER_MINUTE));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_overrun_while_recovering_halves_the_recovered_budget() {
+        let gate = QuotaGate::new();
+        gate.pause(Duration::from_secs(1));
+        tokio::time::advance(RECOVERY_QUIET + Duration::from_secs(4 * 60)).await;
+        gate.pause(Duration::from_secs(1));
+        assert_eq!(gate.units_per_minute(), 1_500.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cut_budget_paces_requests_more_slowly() {
+        let gate = QuotaGate::new();
+        gate.pause(Duration::ZERO);
+        let start = Instant::now();
+        // 2,000 units a minute: ten units every 300ms, from an empty budget.
+        for _ in 0..3 {
+            gate.acquire(10).await;
+        }
+        assert_near(Instant::now() - start, Duration::from_millis(900));
     }
 }
