@@ -100,16 +100,22 @@ export function DiagnosticsSettings({
   const quarantined = status?.quarantinedMessages ?? [];
   const quarantinedCount = quarantined.reduce((total, entry) => total + entry.messageCount, 0);
   const syncErrors = independentSyncErrors(status);
-  const issueCount = (recovery ? 1 : 0) + (failed.length ? 1 : 0) + (quarantined.length ? 1 : 0) + (syncErrors.length ? 1 : 0);
+  // Only what the user can act on counts as an item to review; a failed
+  // sync attempt clears by itself when the next one succeeds.
+  const reviewCount = (recovery ? 1 : 0) + (failed.length ? 1 : 0) + (quarantined.length ? 1 : 0);
+  const attention = reviewCount > 0 || syncErrors.length > 0;
+  const summary = reviewCount
+    ? `${plural(reviewCount, "item")} to review`
+    : syncErrors.length ? "Sync will retry automatically" : "Sync is healthy";
   const pendingCount = status?.pendingMutations ?? 0;
 
   return (
     <section className="settings-section" aria-label="Diagnostics">
       <h3>Sync Health</h3>
-      <div className={`diagnostics-summary${issueCount ? " attention" : ""}`} role="status">
-        {issueCount ? <CircleAlert size={ICON_SIZE.lg} aria-hidden="true" /> : <CircleCheck size={ICON_SIZE.lg} aria-hidden="true" />}
+      <div className={`diagnostics-summary${attention ? " attention" : ""}`} role="status">
+        {attention ? <CircleAlert size={ICON_SIZE.lg} aria-hidden="true" /> : <CircleCheck size={ICON_SIZE.lg} aria-hidden="true" />}
         <div>
-          <strong>{issueCount ? `${plural(issueCount, "item")} to review` : "Sync is healthy"}</strong>
+          <strong>{summary}</strong>
           <span>
             {status?.lastSuccessfulSync
               ? `Last synced ${new Date(status.lastSuccessfulSync).toLocaleString()}`

@@ -257,7 +257,7 @@ impl GmailClient {
                 let delay = retry_after.map_or(backoff, |after| after.max(backoff));
                 self.quota.pause(delay + jitter());
                 if attempt == retries {
-                    return Err(ProviderError::RetryableServer(format!("{status}: {body}")));
+                    return Err(ProviderError::RetryableServer(gmail_error_detail(status, &body)));
                 }
                 attempt += 1;
                 continue;
@@ -267,14 +267,14 @@ impl GmailClient {
                 || status.is_server_error()
             {
                 if attempt == retries {
-                    return Err(ProviderError::RetryableServer(format!("{status}: {body}")));
+                    return Err(ProviderError::RetryableServer(gmail_error_detail(status, &body)));
                 }
                 let delay = retry_after.unwrap_or_else(|| retry_delay(attempt, false));
                 sleep(delay + jitter()).await;
                 attempt += 1;
                 continue;
             }
-            let detail = format!("{status}: {body}");
+            let detail = gmail_error_detail(status, &body);
             return Err(classify_client_rejection(status, detail));
         }
         Err(ProviderError::RetryableServer(
@@ -711,6 +711,67 @@ fn retry_delay(attempt: u32, quota_limited: bool) -> Duration {
 /// exact-value tests stay deterministic.
 fn jitter() -> Duration {
     Duration::from_millis(rand::rng().random_range(0..250))
+}
+
+/// The longest raw reply kept when Gmail's answer isn't its error JSON.
+const MAX_RAW_ERROR_CHARS: usize = 300;
+
+/// Gmail's error reply as one readable line: the HTTP status, Google's
+/// message, and its reason (such as `rateLimitExceeded`) when it gives one,
+/// instead of the JSON it arrived in. A reply that isn't Google's error JSON
+/// is kept, collapsed onto one line and shortened.
+fn gmail_error_detail(status: StatusCode, body: &str) -> String {
+    #[derive(Deserialize)]
+    struct Reply {
+        error: ErrorBody,
+    }
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        #[serde(default)]
+        message: String,
+        #[serde(default)]
+        errors: Vec<ErrorItem>,
+    }
+    #[derive(Deserialize)]
+    struct ErrorItem {
+        #[serde(default)]
+        message: String,
+        #[serde(default)]
+        reason: String,
+    }
+    let one_line = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let described = match serde_json::from_str::<Reply>(body) {
+        Ok(Reply { error }) => {
+            let message = Some(error.message.as_str())
+                .into_iter()
+                .chain(error.errors.iter().map(|item| item.message.as_str()))
+                .map(one_line)
+                .find(|message| !message.is_empty());
+            let reason = error
+                .errors
+                .iter()
+                .map(|item| item.reason.trim())
+                .find(|reason| !reason.is_empty());
+            match (message, reason) {
+                (Some(message), Some(reason)) => format!("{message} ({reason})"),
+                (Some(message), None) => message,
+                (None, Some(reason)) => reason.to_string(),
+                (None, None) => String::new(),
+            }
+        }
+        Err(_) => {
+            let raw = one_line(body);
+            match raw.char_indices().nth(MAX_RAW_ERROR_CHARS) {
+                Some((cut, _)) => format!("{}…", &raw[..cut]),
+                None => raw,
+            }
+        }
+    };
+    if described.is_empty() {
+        status.to_string()
+    } else {
+        format!("{status}: {described}")
+    }
 }
 
 fn is_quota_error(body: &str) -> bool {
@@ -1316,6 +1377,51 @@ mod tests {
                 result.map(|found| found.map(|r| r.provider_message_id))
             );
         }
+    }
+
+    #[test]
+    fn gmail_errors_read_as_status_message_and_reason() {
+        let quota = r#"{
+  "error": {
+    "code": 403,
+    "message": "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user'.",
+    "errors": [
+      {
+        "message": "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user'.",
+        "domain": "usageLimits",
+        "reason": "rateLimitExceeded"
+      }
+    ],
+    "status": "PERMISSION_DENIED"
+  }
+}"#;
+        assert_eq!(
+            gmail_error_detail(StatusCode::FORBIDDEN, quota),
+            "403 Forbidden: Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user'. (rateLimitExceeded)"
+        );
+        // Only the item carries a message, or only a reason.
+        assert_eq!(
+            gmail_error_detail(StatusCode::BAD_REQUEST, r#"{"error":{"errors":[{"message":"Invalid id value","reason":"invalidArgument"}]}}"#),
+            "400 Bad Request: Invalid id value (invalidArgument)"
+        );
+        assert_eq!(
+            gmail_error_detail(StatusCode::FORBIDDEN, r#"{"error":{"errors":[{"reason":"insufficientPermissions"}]}}"#),
+            "403 Forbidden: insufficientPermissions"
+        );
+    }
+
+    #[test]
+    fn a_reply_that_is_not_gmail_error_json_stays_on_one_short_line() {
+        assert_eq!(gmail_error_detail(StatusCode::BAD_GATEWAY, ""), "502 Bad Gateway");
+        assert_eq!(
+            gmail_error_detail(StatusCode::SERVICE_UNAVAILABLE, "<html>\n  <body>Down</body>\n</html>"),
+            "503 Service Unavailable: <html> <body>Down</body> </html>"
+        );
+        let long = "é".repeat(MAX_RAW_ERROR_CHARS + 50);
+        let detail = gmail_error_detail(StatusCode::INTERNAL_SERVER_ERROR, &long);
+        assert!(detail.ends_with('…'));
+        assert_eq!(detail.chars().filter(|c| *c == 'é').count(), MAX_RAW_ERROR_CHARS);
+        assert!(!gmail_error_detail(StatusCode::FORBIDDEN, r#"{"error":{"message":"a\nb"}}"#).contains('\n'));
     }
 
     #[test]

@@ -55,7 +55,8 @@ describe("DiagnosticsSettings", () => {
       accountCount={1}
     />);
 
-    expect(screen.getByText("4 items to review")).toBeInTheDocument();
+    // The failed sync attempt clears by itself, so it isn't counted.
+    expect(screen.getByText("3 items to review")).toBeInTheDocument();
     const recovery = screen.getByRole("group", { name: "Mail cache was recovered" });
     expect(within(recovery).getByText(/restored from its most recent local backup/)).toBeInTheDocument();
     expect(within(recovery).queryByRole("list")).not.toBeInTheDocument();
@@ -162,7 +163,19 @@ describe("DiagnosticsSettings", () => {
     const issue = screen.getByRole("group", { name: "Last sync attempt failed" });
     expect(within(issue).getByText("home@example.com: network unreachable")).toBeInTheDocument();
     expect(within(issue).queryByText(/invalid label/)).not.toBeInTheDocument();
-    expect(screen.getByText("2 items to review")).toBeInTheDocument();
+    expect(screen.getByText("1 item to review")).toBeInTheDocument();
+  });
+
+  it("doesn't ask the user to review a failed sync attempt that will retry by itself", () => {
+    render(<DiagnosticsSettings
+      status={{ ...healthy, state: "error", error: "you@example.com: 403 Forbidden: Quota exceeded (rateLimitExceeded)" }}
+      accountCount={1}
+    />);
+
+    expect(screen.getByText("Sync will retry automatically")).toBeInTheDocument();
+    expect(screen.queryByText(/to review/)).not.toBeInTheDocument();
+    const issue = screen.getByRole("group", { name: "Last sync attempt failed" });
+    expect(within(issue).getAllByRole("listitem")).toHaveLength(1);
   });
 
   it("shows quarantined message identifiers and normalization errors with a dismiss action", async () => {
