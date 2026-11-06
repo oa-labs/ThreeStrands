@@ -41,6 +41,13 @@ describe("ContextPanel",()=>{
     vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>Object.fromEntries(
       emails.filter(email=>email==="jane@example.com"||email==="bob@example.com")
         .map(email=>[email,`contact:${email}`])));
+    // Stars read back what was last written, however the reads and writes interleave.
+    const stars=new Set<string>();
+    vi.mocked(mailClient.setFileStar).mockImplementation(async(_account,messageId,attachmentId,starred)=>{
+      if(starred) stars.add(`${messageId}\n${attachmentId}`); else stars.delete(`${messageId}\n${attachmentId}`);
+    });
+    vi.mocked(mailClient.fileStars).mockImplementation(async messageIds=>[...stars]
+      .map(key=>key.split("\n") as [string,string]).filter(([messageId])=>messageIds.includes(messageId)));
   });
   afterEach(()=>{cleanup();vi.clearAllMocks();vi.restoreAllMocks();});
   it("defaults to the latest external sender and follows a participant picked in the reader",async()=>{
@@ -345,7 +352,6 @@ describe("ContextPanel",()=>{
     const reportActions=within(files).getByRole("button",{name:"Star Report 4.pdf"}).closest(".context-row-action")!;
     expect([...reportActions.querySelectorAll("button")].map((button)=>button.getAttribute("aria-label"))).toEqual(["Show the email with Report 4.pdf","Star Report 4.pdf"]);
     // Contact files carry no account; the star names none and the backend uses the message's own.
-    vi.mocked(mailClient.fileStars).mockResolvedValueOnce([["m4","a4"]]);
     fireEvent.click(within(files).getByRole("button",{name:"Star Report 4.pdf"}));
     await waitFor(()=>expect(mailClient.setFileStar).toHaveBeenCalledWith(undefined,"m4","a4",true));
     expect(await within(files).findByRole("button",{name:"Unstar Report 4.pdf"})).toBeInTheDocument();
