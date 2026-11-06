@@ -337,20 +337,19 @@ pub(super) fn as_write_session(
     })
 }
 
-/// A classified `modify_messages` request in label-folder terms: either a flag
-/// change (handled by run 2's flag path) or a single `lf:` add/remove.
+/// A classified message request: a system flag change or one existing
+/// user-label membership change (native or label-folder).
 enum MessageMutationKind {
     /// Only `UNREAD`/`STARRED` ids — the run-2 flag path.
     Flag,
-    /// A single `lf:<name>` ADD (`add == true`) or REMOVE (`add == false`).
+    /// A single `lf:<name>` or `folder:<name>` ADD (`add == true`) or REMOVE (`add == false`).
     Label { id: String, add: bool },
 }
 
-/// Classify a `modify_messages` `(add, remove)` request. A request naming no
-/// `lf:` id is the flag path (run 2's `plan_flag_mutation` still rejects a
-/// `folder:`/system/`kw:`/unknown id or an id in both lists). A request that
-/// names exactly ONE `lf:` id — `([lf:X], [])` or `([], [lf:X])`, the two
-/// shapes the engine delivers a user-label change in — is the label path.
+/// Classify flag changes separately from single user-label additions/removals.
+/// A folder: ID is writable only on a negotiated native-label account; an lf:
+/// ID can also use the existing plain IMAP label-folder path. The caller checks
+/// those capabilities after validating this request shape.
 /// Anything else (a label mixed with another id, several labels, a label in
 /// both lists, a label alongside a flag) is a permanent `InvalidOperation`
 /// BEFORE any command.
@@ -358,22 +357,22 @@ fn classify_message_mutation(
     add: &[String],
     remove: &[String],
 ) -> ProviderResult<MessageMutationKind> {
-    let is_lf = |id: &String| id.starts_with("lf:");
-    let any_lf = add.iter().chain(remove.iter()).any(is_lf);
-    if !any_lf {
+    let is_user_label = |id: &String| id.starts_with("lf:") || id.starts_with("folder:");
+    let any_user_label = add.iter().chain(remove.iter()).any(is_user_label);
+    if !any_user_label {
         return Ok(MessageMutationKind::Flag);
     }
-    // Exactly one lf: id, alone, in exactly one list.
+    // Exactly one user-label ID, alone, in exactly one list.
     match (add, remove) {
-        ([only], []) if is_lf(only) => {
+        ([only], []) if is_user_label(only) => {
             Ok(MessageMutationKind::Label { id: only.clone(), add: true })
         }
-        ([], [only]) if is_lf(only) => {
+        ([], [only]) if is_user_label(only) => {
             Ok(MessageMutationKind::Label { id: only.clone(), add: false })
         }
         _ => Err(ProviderError::InvalidOperation(format!(
-            "the IMAP provider accepts a user-label change only as a single lf: id added or \
-             removed on its own ([lf:X],[]) or ([],[lf:X]); the request add={add:?} remove={remove:?} \
+            "the IMAP provider accepts a user-label change only as a single lf: or folder: id added or \
+             removed on its own; the request add={add:?} remove={remove:?} \
              mixes a label with other ids, names several, or repeats one; refusing permanently"
         ))),
     }
@@ -438,15 +437,18 @@ impl MailMutate for ImapProvider {
                 "modify_messages called with no message ids".into(),
             ));
         }
-        // A `modify_messages` request is EITHER a flag change (UNREAD/STARRED)
-        // or a single user-label (`lf:`) add/remove — the two shapes the engine
-        // delivers through this method. Classify first (rejecting a mixed /
-        // multi-label / folder: / unknown shape permanently BEFORE any
-        // command), then route.
+        // Validate the single-label/flag request shape before any network
+        // command, then select native or physical label-folder semantics.
         match classify_message_mutation(add, remove)? {
             MessageMutationKind::Flag => self.apply_flag_mutation(ids, add, remove).await,
             MessageMutationKind::Label { id, add } => {
-                self.apply_label_mutation(ids, &id, add).await
+                if self.store.uses_native_labels().map_err(db_err)? {
+                    self.apply_native_label(ids, &id, add).await
+                } else if id.starts_with("lf:") {
+                    self.apply_label_mutation(ids, &id, add).await
+                } else {
+                    Err(ProviderError::InvalidOperation("This account cannot toggle folder membership as labels".into()))
+                }
             }
         }
     }
@@ -492,7 +494,13 @@ impl MailMutate for ImapProvider {
             },
         ];
         let plan = self.build_sync_plan()?;
+        let native = self.store.uses_native_labels().map_err(db_err)?;
+        let catalog = self.store.mailboxes().map_err(db_err)?;
         for (id, kind) in plan.dynamic_labels() {
+            if native && !plan.entries.iter().any(|entry| entry.location_label_id.as_deref() == Some(&id)
+                && catalog.iter().any(|row| row.name == entry.mailbox && row.special_use.is_none())) {
+                continue;
+            }
             // Display name: the id with its `lf:` / `folder:` prefix stripped
             // (the relative label path, or the full user-folder name).
             let name = id
@@ -504,13 +512,16 @@ impl MailMutate for ImapProvider {
             labels.push(Label {
                 id,
                 name,
-                kind: kind.to_string(),
+                kind: if native { "user".into() } else { kind.to_string() },
             });
         }
         Ok(labels)
     }
 
     async fn create_label(&self, name: &str) -> ProviderResult<Label> {
+        if self.store.uses_native_labels().map_err(db_err)? {
+            return Err(ProviderError::InvalidOperation("Create labels in another client; this account supports applying existing labels".into()));
+        }
         self.create_label_folder(name).await
     }
 
@@ -534,6 +545,9 @@ impl MailMutate for ImapProvider {
     }
 
     async fn delete_label(&self, id: &str) -> ProviderResult<()> {
+        if self.store.uses_native_labels().map_err(db_err)? {
+            return Err(ProviderError::InvalidOperation("Deleting native labels is not supported yet; remove the label from messages instead".into()));
+        }
         self.delete_label_folder(id).await
     }
 }

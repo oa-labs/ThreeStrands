@@ -543,13 +543,24 @@ where
 {
     async fn uid_store_labels(&mut self, uid_set: &str, op: super::write::StoreOp, labels: &[String]) -> Result<(), ProviderError> {
         if !self.gmail_message_ids || labels.is_empty()
-            || labels.iter().any(|l| !["\\Inbox", "\\Trash", "\\Spam"].contains(&l.as_str()))
+            || labels.iter().any(|l| l.is_empty() || l.chars().any(char::is_control)
+                || (l.starts_with('\\') && !["\\Inbox", "\\Trash", "\\Spam"].contains(&l.as_str()))
+                || l.eq_ignore_ascii_case("INBOX"))
             || uid_set.is_empty() || uid_set.split(',').any(|uid| uid.parse::<u32>().ok().filter(|uid| *uid > 0).is_none())
         {
-            return Err(ProviderError::InvalidOperation("Unsupported or invalid IMAP system-label mutation".into()));
+            return Err(ProviderError::InvalidOperation("Unsupported or invalid IMAP label mutation".into()));
+        }
+        let mut arguments = Vec::new();
+        for label in labels {
+            super::policy::check_mailbox_name_len(label.len())?;
+            // Catalog names and X-GM-LABELS are already modified UTF-7 wire
+            // names. Quote exactly once, without re-encoding ampersands.
+            arguments.push(if label.starts_with('\\') { label.clone() } else {
+                format!("\"{}\"", label.replace('\\', "\\\\").replace('"', "\\\""))
+            });
         }
         let item = match op { super::write::StoreOp::Add => "+X-GM-LABELS", super::write::StoreOp::Remove => "-X-GM-LABELS" };
-        self.run_write_command_plain(&format!("UID STORE {uid_set} {item} ({})", labels.join(" "))).await
+        self.run_write_command_plain(&format!("UID STORE {uid_set} {item} ({})", arguments.join(" "))).await
     }
     async fn uid_store(
         &mut self,

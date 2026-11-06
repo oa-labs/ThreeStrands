@@ -7,6 +7,39 @@ fn store() -> ImapStateStore {
 }
 
 #[test]
+fn native_label_capabilities_survive_reopen_are_scoped_and_never_downgrade_to_folder_deletion() {
+    let temp = crate::db::test_support::TempDbPath::new();
+    {
+        let database = Arc::new(Database::open(&temp.path).unwrap());
+        let mine = ImapStateStore::new(database.clone(), "me@example.com");
+        mine.set_native_labels(true).unwrap();
+        ImapStateStore::new(database, "other@example.com").set_native_labels(false).unwrap();
+    }
+    let database = Arc::new(Database::open(&temp.path).unwrap());
+    let mine = ImapStateStore::new(database.clone(), "me@example.com");
+    let other = ImapStateStore::new(database.clone(), "other@example.com");
+    assert!(mine.native_labels().unwrap());
+    assert!(mine.uses_native_labels().unwrap());
+    assert!(!other.uses_native_labels().unwrap());
+    mine.set_native_labels(false).unwrap();
+    assert!(!mine.native_labels().unwrap());
+    assert!(mine.uses_native_labels().unwrap());
+    mine.set_native_labels(true).unwrap();
+    assert!(mine.native_labels().unwrap());
+    database.remove_account("me@example.com").unwrap();
+    assert!(!mine.uses_native_labels().unwrap());
+    assert!(!other.uses_native_labels().unwrap());
+
+    // A preceding-version snapshot is enough evidence to forbid physical
+    // label-folder removal, even before the first new capability handshake.
+    other.commit_sync_round(&SyncRoundWrite {
+        label_snapshots: vec![("message".into(), vec!["Project".into()])], ..Default::default()
+    }).unwrap();
+    assert!(other.uses_native_labels().unwrap());
+    assert!(!other.native_labels().unwrap());
+}
+
+#[test]
 fn copy_intents_survive_reopen_and_are_account_and_destination_scoped() {
     let temp = crate::db::test_support::TempDbPath::new();
     {

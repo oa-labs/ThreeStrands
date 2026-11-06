@@ -63,6 +63,31 @@ pub struct ImapStateStore {
 }
 
 impl ImapStateStore {
+    pub(crate) fn set_native_labels(&self, supported: bool) -> DbResult<()> {
+        self.database.with_connection(|c| {
+            c.execute("INSERT INTO imap_server_capabilities(account_id,native_labels,native_labels_seen) VALUES(?1,?2,?2)
+                ON CONFLICT(account_id) DO UPDATE SET native_labels=excluded.native_labels,
+                    native_labels_seen=MAX(native_labels_seen,excluded.native_labels_seen)
+                WHERE native_labels<>excluded.native_labels",
+                rusqlite::params![self.account_id, supported])?;
+            Ok(())
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_labels(&self) -> DbResult<bool> {
+        self.database.with_connection(|c| Ok(native_label_model_on(c, &self.account_id)? == Some(crate::provider::LabelModel::ImapNativeLabels)))
+    }
+
+    /// Native semantics remain sticky if a server temporarily loses support:
+    /// user-label removal must never fall back to deleting a folder copy.
+    pub(crate) fn uses_native_labels(&self) -> DbResult<bool> {
+        self.database.with_connection(|c| Ok(native_label_model_on(c, &self.account_id)?.is_some()))
+    }
+
+    pub(crate) fn native_label_model(&self) -> DbResult<Option<crate::provider::LabelModel>> {
+        self.database.with_connection(|c| native_label_model_on(c, &self.account_id))
+    }
     /// Inbox membership can be learned through All Mail even when the Inbox
     /// copy is outside its acquisition window. Authoritative absence also
     /// overrides a stale physical Inbox location during reconciliation.
@@ -1814,6 +1839,20 @@ impl ImapStateStore {
             Ok(())
         })
     }
+}
+
+pub(super) fn native_label_model_on(c: &rusqlite::Connection, account: &str) -> DbResult<Option<crate::provider::LabelModel>> {
+    let mut support: Option<bool> = c.query_row("SELECT native_labels FROM imap_server_capabilities WHERE account_id=?1 AND native_labels_seen=1",
+        [account], |row| row.get(0)).optional()?;
+    // Upgraded accounts may already have authoritative snapshots from before
+    // capability caching existed. Keep their native semantics, but wait for
+    // fresh negotiation before advertising writable labels.
+    if support.is_none() && c.query_row("SELECT EXISTS(SELECT 1 FROM imap_label_snapshots WHERE account_id=?1)",
+        [account], |row| row.get::<_, bool>(0))? {
+        support = Some(false);
+    }
+    Ok(support.map(|supported| if supported { crate::provider::LabelModel::ImapNativeLabels }
+        else { crate::provider::LabelModel::ImapNoUserLabels }))
 }
 
 /// The writes one sync round applies atomically through

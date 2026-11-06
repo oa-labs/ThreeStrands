@@ -63,6 +63,7 @@ impl ImapProvider {
         &self,
         session: &mut dyn ImapSession,
     ) -> ProviderResult<Refreshed> {
+        self.store.set_native_labels(session.supports_label_extensions()).map_err(db_err)?;
         // Catalog refresh (item 3): at baseline and whenever the account's
         // periodic sweep is due, LIST the server and upsert NAME/DELIMITER/
         // SPECIAL_USE so a mailbox created after setup (a new Sent/Trash/Junk)
@@ -249,7 +250,11 @@ impl ImapProvider {
                 special_use: row.special_use.clone(),
             })
             .collect();
-        let mut plan = plan::build_plan(&catalog, Some(&delimiter), &self.settings);
+        let mut plan = if self.store.uses_native_labels().map_err(db_err)? {
+            plan::build_native_plan(&catalog, Some(&delimiter), &self.settings)
+        } else {
+            plan::build_plan(&catalog, Some(&delimiter), &self.settings)
+        };
         // TEST KNOB: re-class named mailboxes as synced USER FOLDERS (role
         // None, synced_now true) so the coverage-epoch logic can be exercised
         // with real server-backed folders that are subject to the per-poll

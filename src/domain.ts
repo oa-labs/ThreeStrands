@@ -1063,7 +1063,7 @@ export type MailProvider = "gmail" | "imap";
  * - `imapNoUserLabels`: an IMAP account with no user-label storage — no label
  *   actions at all.
  */
-export type LabelModel = "gmailLabels" | "imapKeywords" | "imapLabelFolders" | "imapNoUserLabels";
+export type LabelModel = "gmailLabels" | "imapKeywords" | "imapLabelFolders" | "imapNoUserLabels" | "imapNativeLabels";
 
 /** How a mail connection reaches TLS. Mirrors the Rust `SecurityMode`. */
 export type ImapSecurityMode = "implicit_tls" | "start_tls";

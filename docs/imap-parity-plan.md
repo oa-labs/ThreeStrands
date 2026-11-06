@@ -14,7 +14,8 @@ their account if necessary, so eager legacy identity backfill is not required.
 [All Mail, archive, and search completeness](imap-all-mail.md) is implemented:
 bounded aggregate acquisition, negotiated label membership/system actions,
 broader server search, and explicit partial coverage. General label management
-is the next functional stage.
+remains in progress. Existing native-label apply/remove support is recorded in
+[native label membership](imap-native-labels.md).
 
 ## Goal and scope
 
@@ -84,11 +85,14 @@ and negative cases where a label removal must not delete mail.
 
 ### 2. Make labels and folders usable
 
-Current gaps: writable IMAP labels require a configured container; label-folder
-rename is disabled; keyword writes are not implemented. Existing Gmail labels
-are exposed as folders rather than native writable labels.
+Existing labels on servers advertising `X-GM-EXT-1` can now be applied and
+removed without a configured container. Their existing IDs are preserved.
+Remaining gaps: native label create/rename/delete, label-folder rename, and
+keyword writes. Ordinary label-folder writes still require a container.
 
-- [ ] Read/write advertised `X-GM-LABELS` and expose existing labels directly.
+- [x] Read/write advertised `X-GM-LABELS` and expose existing labels directly.
+- [x] Apply/remove existing native labels with verified, additive membership
+  writes; preserve unrelated labels and reconcile external membership changes.
 - [ ] Support label create, rename, apply, remove, and delete, including hierarchy
   and non-ASCII names. Preserve Split Inbox references and other saved label
   references through rename; refresh changes made in other clients.

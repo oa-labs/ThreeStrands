@@ -186,6 +186,7 @@ fn resolve_role(
     mailbox: &CatalogMailbox,
     delimiter: Option<&str>,
     settings: &ImapAccountSettings,
+    native_labels: bool,
 ) -> Option<MailboxRole> {
     // An explicit destination owns the role account-wide. In particular, the
     // previous special-use/name candidate must not keep the same role.
@@ -206,6 +207,9 @@ fn resolve_role(
         }
     }
     // 3. Conservative name match (reuse mailboxes.rs's logic).
+    // Native label servers advertise system mailboxes explicitly. A user
+    // label named Archive or Projects/Sent must remain an ordinary label.
+    if native_labels { return None; }
     MailboxRole::match_by_name(&mailbox.name, delimiter)
         .filter(|role| explicit_destination(*role, settings).is_none())
 }
@@ -294,6 +298,18 @@ pub fn build_plan(
     delimiter: Option<&str>,
     settings: &ImapAccountSettings,
 ) -> SyncPlan {
+    build_plan_with_roles(catalog, delimiter, settings, false)
+}
+
+pub(super) fn build_native_plan(
+    catalog: &[CatalogMailbox], delimiter: Option<&str>, settings: &ImapAccountSettings,
+) -> SyncPlan {
+    build_plan_with_roles(catalog, delimiter, settings, true)
+}
+
+fn build_plan_with_roles(
+    catalog: &[CatalogMailbox], delimiter: Option<&str>, settings: &ImapAccountSettings, native_labels: bool,
+) -> SyncPlan {
     let mut inbox: Vec<PlanEntry> = Vec::new();
     let mut synced: Vec<PlanEntry> = Vec::new();
     let mut rest: Vec<PlanEntry> = Vec::new();
@@ -314,12 +330,12 @@ pub fn build_plan(
             continue;
         }
 
-        let role = resolve_role(mailbox, delimiter, settings);
+        let role = resolve_role(mailbox, delimiter, settings, native_labels);
         let explicitly_mapped = role.is_some_and(|role| {
             explicit_destination(role, settings) == Some(mailbox.name.as_str())
         });
         // Explicit role choices take precedence over label-folder placement.
-        if !explicitly_mapped && is_label_container(&mailbox.name, settings) {
+        if !native_labels && !explicitly_mapped && is_label_container(&mailbox.name, settings) {
             rest.push(PlanEntry {
                 mailbox: mailbox.name.clone(),
                 role: None,
@@ -333,7 +349,8 @@ pub fn build_plan(
         }
         // A label-container child under label-folder mode: synced (5b-2), a
         // Folder-class window, contributing `lf:<name relative to container>`.
-        if !explicitly_mapped && is_label_folder_child(&mailbox.name, delimiter, settings) {
+        if !explicitly_mapped && is_label_folder_child(&mailbox.name, delimiter, settings)
+            && (!native_labels || mailbox.special_use.is_none()) {
             let container = settings
                 .label_container
                 .as_deref()

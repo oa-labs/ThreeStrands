@@ -51,6 +51,19 @@ fn label_mailbox_name(container: &str, delimiter: &str, name: &str) -> String {
 }
 
 impl ImapProvider {
+    /// Re-check the negotiated server model before any physical folder-label
+    /// operation, including the first command after upgrading or importing.
+    async fn open_label_folder_session(&self) -> ProviderResult<Box<dyn ImapSession>> {
+        let mut session = self.open_session().await?;
+        if session.supports_label_extensions() {
+            let _ = session.logout().await;
+            return Err(ProviderError::InvalidOperation(
+                "This server uses native labels; refresh labels before applying an existing label".into(),
+            ));
+        }
+        Ok(session)
+    }
+
     /// This account's label container, or a permanent `InvalidOperation`
     /// naming the storage mode when label-folder mode is not configured. The
     /// single gate every `lf:` path passes through BEFORE any command, so a
@@ -199,7 +212,7 @@ impl ImapProvider {
             return Ok(());
         }
 
-        let mut session = self.open_session().await?;
+        let mut session = self.open_label_folder_session().await?;
         let result = self
             .apply_label_add_on(session.as_mut(), label_mailbox, by_source)
             .await;
@@ -381,7 +394,7 @@ impl ImapProvider {
         }
         let uidvalidity = by_uidvalidity.expect("non-empty targets carry a UIDVALIDITY");
 
-        let mut session = self.open_session().await?;
+        let mut session = self.open_label_folder_session().await?;
         let result = self
             .apply_label_remove_on(session.as_mut(), label_mailbox, uidvalidity, &targets)
             .await;
@@ -543,7 +556,7 @@ impl ImapProvider {
         let label_mailbox = label_mailbox_name(&container, &delimiter, &wire_name);
         let arg = crate::provider::imap::write::build_wire_mailbox_arg(&label_mailbox)?;
 
-        let mut session = self.open_session().await?;
+        let mut session = self.open_label_folder_session().await?;
         let result = self
             .create_label_folder_on(session.as_mut(), &container, &label_mailbox, &arg)
             .await;
@@ -651,7 +664,7 @@ impl ImapProvider {
 
         // Check both the count and exact UID coordinates on the server;
         // counts alone miss replacements of known mail by unsynced mail.
-        let mut session = self.open_session().await?;
+        let mut session = self.open_label_folder_session().await?;
         let result = self
             .delete_label_folder_on(session.as_mut(), &label_mailbox, &locations)
             .await;

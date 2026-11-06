@@ -11,6 +11,8 @@ Use [Getting Started](getting-started.html#connect-gmail) for Gmail sign-in or [
 
 For IMAP servers that support label-based archiving, archived mail stays in All Mail and keeps its other labels. Setup does not require a separate Archive mailbox for those accounts. Other IMAP accounts continue to use their chosen Archive mailbox.
 
+For IMAP servers with native label support, **Manage Labels** lets you apply or remove existing labels without configuring a label folder container. Create, rename, or delete those labels in another mail client.
+
 ## Gmail Sending Addresses {#gmail-sending-addresses}
 
 Add and verify aliases in Gmail's **Settings → Accounts → Send mail as**. ThreeStrands discovers them when it syncs; after changing them in Gmail, use **Settings → Mail Accounts → Sending Addresses → Refresh from Gmail** to update immediately. If your account only has its primary address, open **Aliases…** to find the instructions and refresh control. Accounts with aliases show the full list automatically, including the default address and any Reply-To destination. A custom Reply-To on the primary address stays visible even when the alias controls are collapsed. ThreeStrands reads these settings using your existing Gmail connection; it does not create or verify aliases for you.

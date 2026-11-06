@@ -434,6 +434,7 @@ fn purge_imap_cache(transaction: &rusqlite::Transaction<'_>, account: &str) -> D
         "imap_locations",
         "imap_message_identities",
         "imap_label_snapshots",
+        "imap_server_capabilities",
         "imap_mailboxes",
         "imap_threads",
         "imap_thread_aliases",
@@ -495,7 +496,8 @@ fn enrich_label_model(connection: &rusqlite::Connection, account: &mut Account) 
         return Ok(());
     }
     if let Some(settings) = super::imap::read_settings_row(connection, &account.email)? {
-        account.label_model = crate::provider::imap::label_model_for(settings.label_storage);
+        account.label_model = super::imap::native_label_model_on(connection, &account.email)?
+            .unwrap_or_else(|| crate::provider::imap::label_model_for(settings.label_storage));
     }
     Ok(())
 }

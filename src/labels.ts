@@ -106,8 +106,10 @@ export function conversationLabelGroups(
  * back, so the UI hides it and, where labels are unavailable entirely, shows
  * `unavailableReason` instead. */
 export type LabelCapabilities = {
-  /** Create, delete and toggle user labels are available. */
+  /** Existing user labels can be applied and removed. */
   canManageLabels: boolean;
+  canCreateLabels: boolean;
+  canDeleteLabels: boolean;
   /** Rename an existing user label is available. */
   canRenameLabels: boolean;
   /** Why labels are unavailable, when `canManageLabels` is false; null when
@@ -123,17 +125,21 @@ export function labelCapabilities(labelModel: LabelModel | undefined): LabelCapa
     case "imapLabelFolders":
       // Create / delete / toggle work; rename is refused permanently because
       // the label-folder id is derived from the name and nothing migrates it.
-      return { canManageLabels: true, canRenameLabels: false, unavailableReason: null };
+      return { canManageLabels: true, canCreateLabels: true, canDeleteLabels: true, canRenameLabels: false, unavailableReason: null };
+    case "imapNativeLabels":
+      return { canManageLabels: true, canCreateLabels: false, canDeleteLabels: false, canRenameLabels: false, unavailableReason: null };
     case "imapKeywords":
     case "imapNoUserLabels":
       // No writable user-label storage: every label action would be refused.
       return {
         canManageLabels: false,
+        canCreateLabels: false,
+        canDeleteLabels: false,
         canRenameLabels: false,
         unavailableReason: "This account does not support labels yet.",
       };
     case "gmailLabels":
     default:
-      return { canManageLabels: true, canRenameLabels: true, unavailableReason: null };
+      return { canManageLabels: true, canCreateLabels: true, canDeleteLabels: true, canRenameLabels: true, unavailableReason: null };
   }
 }

@@ -31,6 +31,7 @@ export function FindOrCreatePicker<T>({
   tokens,
   onRemoveLastToken,
   clearOnPick = false,
+  allowCreate = true,
 }: {
   items: T[];
   getSearchText(item: T): string;
@@ -61,6 +62,8 @@ export function FindOrCreatePicker<T>({
   onRemoveLastToken?: () => void;
   /** Clears the query after an item is chosen or created. */
   clearOnPick?: boolean;
+  /** Hide creation for catalogs that only allow selecting existing items. */
+  allowCreate?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -79,7 +82,7 @@ export function FindOrCreatePicker<T>({
   const filteredItems = itemsFor(query);
   const exactMatchExists = normalizedQuery.length > 0 && items.some(matches);
   const noticeContent = normalizedQuery ? notice?.(query.trim()) : null;
-  const showCreateRow = normalizedQuery.length > 0 && !exactMatchExists && !noticeContent;
+  const showCreateRow = allowCreate && normalizedQuery.length > 0 && !exactMatchExists && !noticeContent;
   const rowCount = filteredItems.length + (showCreateRow ? 1 : 0);
   const activeIndex = rowCount === 0 ? -1 : Math.min(Math.max(highlightedIndex, 0), rowCount - 1);
 
