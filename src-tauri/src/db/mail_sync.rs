@@ -74,13 +74,16 @@ impl Database {
                     .collect::<Result<Vec<_>, _>>()?;
                 failed
             };
+            // One entry per conversation and reason: a long conversation
+            // over a limit sets aside many messages for the same reason.
             let quarantined_messages = {
                 let mut statement = connection
                     .prepare(
-                        "SELECT message_id, provider_thread_id, error, created_at
+                        "SELECT MIN(message_id), provider_thread_id, error, MAX(created_at), COUNT(*)
                          FROM quarantined_messages
                          WHERE account_id = ?1
-                         ORDER BY created_at DESC, message_id
+                         GROUP BY provider_thread_id, error
+                         ORDER BY MAX(created_at) DESC, provider_thread_id
                          LIMIT 100",
                     )?;
                 let quarantined = statement
@@ -90,6 +93,7 @@ impl Database {
                             thread_id: row.get(1)?,
                             error: row.get(2)?,
                             created_at: row.get(3)?,
+                            message_count: row.get(4)?,
                         })
                     })?
                     .collect::<Result<Vec<_>, _>>()?;

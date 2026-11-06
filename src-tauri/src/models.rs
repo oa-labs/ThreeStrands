@@ -1183,11 +1183,15 @@ pub struct FailedMutation {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Messages of one conversation set aside for the same reason.
 pub struct QuarantinedMessage {
+    /// One of the messages, named when it is the only one.
     pub message_id: String,
     pub thread_id: String,
     pub error: String,
+    /// When the most recent of these messages was first set aside.
     pub created_at: String,
+    pub message_count: i64,
 }
 
 #[derive(Debug, Serialize)]

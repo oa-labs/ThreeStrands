@@ -98,6 +98,7 @@ export function DiagnosticsSettings({
   const { pending, error, runFor } = useSettingsOperation();
   const failed = status?.failedMutations ?? [];
   const quarantined = status?.quarantinedMessages ?? [];
+  const quarantinedCount = quarantined.reduce((total, entry) => total + entry.messageCount, 0);
   const syncErrors = independentSyncErrors(status);
   const issueCount = (recovery ? 1 : 0) + (failed.length ? 1 : 0) + (quarantined.length ? 1 : 0) + (syncErrors.length ? 1 : 0);
   const pendingCount = status?.pendingMutations ?? 0;
@@ -167,7 +168,7 @@ export function DiagnosticsSettings({
 
       {quarantined.length ? (
         <DiagnosticsIssue
-          title={`${plural(quarantined.length, "message")} couldn’t be read`}
+          title={`${plural(quarantinedCount, "message")} couldn’t be read`}
           description="These messages were skipped so the rest of their conversations could sync. They are retried whenever their conversation changes."
           actions={actions ? (
             <button className="btn btn-sm" type="button" disabled={pending !== null} onClick={() => runFor("dismiss-quarantine", actions.dismissProblems)}>
@@ -175,15 +176,15 @@ export function DiagnosticsSettings({
             </button>
           ) : null}
         >
-          {quarantined.map((message) => (
-            <li key={`${message.threadId}:${message.messageId}`}>
-              <strong>Message {message.messageId}</strong>
+          {quarantined.map((entry) => (
+            <li key={`${entry.threadId}:${entry.error}`}>
+              <strong>{entry.messageCount === 1 ? `Message ${entry.messageId}` : plural(entry.messageCount, "message")}</strong>
               {" · "}
-              {message.error}
+              {entry.error}
               <small>
-                Thread {message.threadId}
+                Thread {entry.threadId}
                 {" · "}
-                {new Date(message.createdAt).toLocaleString()}
+                {new Date(entry.createdAt).toLocaleString()}
               </small>
             </li>
           ))}

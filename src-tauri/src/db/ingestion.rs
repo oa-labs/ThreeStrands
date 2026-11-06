@@ -281,10 +281,21 @@ impl Database {
                 )?;
             }
             for (provider_thread_id, messages, quarantined) in threads {
+                // Drop only records this sync no longer reports. A message
+                // set aside again for the same reason keeps its first-seen
+                // time, so a re-sync of an unchanged thread is not reported
+                // as a new problem.
+                let still_quarantined: Vec<&str> =
+                    quarantined.iter().map(|(message_id, _)| message_id.as_str()).collect();
                 transaction.execute(
                     "DELETE FROM quarantined_messages
-                         WHERE account_id = ?1 AND provider_thread_id = ?2",
-                    params![account_id, provider_thread_id],
+                         WHERE account_id = ?1 AND provider_thread_id = ?2
+                           AND message_id NOT IN (SELECT value FROM json_each(?3))",
+                    params![
+                        account_id,
+                        provider_thread_id,
+                        serde_json::to_string(&still_quarantined).map_err(serialization_error)?
+                    ],
                 )?;
                 if !messages.is_empty() {
                     Self::apply_thread(transaction, account_id, messages)?;
@@ -295,9 +306,14 @@ impl Database {
                                 account_id, provider_thread_id, message_id, error, created_at
                              ) VALUES (?1, ?2, ?3, ?4, ?5)
                              ON CONFLICT(account_id, message_id) DO UPDATE SET
+                                created_at=CASE
+                                    WHEN quarantined_messages.error = excluded.error
+                                     AND quarantined_messages.provider_thread_id = excluded.provider_thread_id
+                                    THEN quarantined_messages.created_at
+                                    ELSE excluded.created_at
+                                END,
                                 provider_thread_id=excluded.provider_thread_id,
-                                error=excluded.error,
-                                created_at=excluded.created_at",
+                                error=excluded.error",
                         params![
                             account_id,
                             provider_thread_id,

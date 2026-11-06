@@ -1188,17 +1188,32 @@ pub(crate) fn is_draft_message(message: &crate::mime::RawMessage) -> bool {
     message.label_ids.iter().any(|label| label == "DRAFT")
 }
 
+/// Normalizes a thread within the per-thread message and size limits.
+///
+/// When a conversation is over a limit, its newest messages are the ones
+/// kept: the recent part of a conversation is what the reader needs, and a
+/// long reply chain usually quotes its older messages anyway. Messages are
+/// considered newest first by the provider's receive time, falling back to
+/// the provider's order. Kept messages are returned in the provider's order.
 fn normalize_thread(
     messages: &[crate::mime::RawMessage],
 ) -> (Vec<NormalizedMessage>, Vec<(String, String)>) {
-    let mut normalized = Vec::with_capacity(messages.len().min(MAX_THREAD_MESSAGES));
+    let mut newest_first: Vec<usize> = (0..messages.len()).collect();
+    newest_first.sort_by_key(|&index| {
+        let received = messages[index].internal_date.trim().parse::<u64>().ok();
+        std::cmp::Reverse((received, index))
+    });
+    let mut kept = Vec::with_capacity(messages.len().min(MAX_THREAD_MESSAGES));
     let mut quarantined = Vec::new();
     let mut thread_size = 0_usize;
-    for (index, message) in messages.iter().enumerate() {
-        if index >= MAX_THREAD_MESSAGES {
+    for (rank, index) in newest_first.into_iter().enumerate() {
+        let message = &messages[index];
+        if rank >= MAX_THREAD_MESSAGES {
             quarantined.push((
                 message.id.clone(),
-                format!("Thread exceeds the {MAX_THREAD_MESSAGES} message limit"),
+                format!(
+                    "Conversation has more than {MAX_THREAD_MESSAGES} messages, so its oldest aren\u{2019}t shown"
+                ),
             ));
             continue;
         }
@@ -1222,19 +1237,20 @@ fn normalize_thread(
                     quarantined.push((
                         message.id.clone(),
                         format!(
-                            "Normalized thread exceeds the {} MB limit",
+                            "Conversation is larger than {} MB, so its oldest messages aren\u{2019}t shown",
                             MAX_NORMALIZED_THREAD_BYTES / 1024 / 1024
                         ),
                     ));
                     continue;
                 }
                 thread_size = next_size;
-                normalized.push(candidate);
+                kept.push((index, candidate));
             }
             Err(error) => quarantined.push((message.id.clone(), error)),
         }
     }
-    (normalized, quarantined)
+    kept.sort_by_key(|(index, _)| *index);
+    (kept.into_iter().map(|(_, message)| message).collect(), quarantined)
 }
 
 async fn deliver_mutations(
@@ -2310,37 +2326,78 @@ mod tests {
         assert!(conversation(&database).is_none());
     }
 
+    fn dated_message(id: &str, received_millis: u64) -> crate::mime::RawMessage {
+        let mut message = ContractProvider::message();
+        message.id = id.into();
+        message.internal_date = received_millis.to_string();
+        message
+    }
+
     #[test]
-    fn thread_message_limit_accepts_the_boundary_and_quarantines_the_remainder() {
+    fn thread_message_limit_keeps_the_newest_and_sets_aside_the_oldest() {
         let messages: Vec<_> = (0..=MAX_THREAD_MESSAGES)
-            .map(|index| {
-                let mut message = ContractProvider::message();
-                message.id = format!("message-{index}");
-                message
-            })
+            .map(|index| dated_message(&format!("message-{index}"), 1_000 + index as u64))
             .collect();
 
         let (normalized, quarantined) = normalize_thread(&messages);
 
         assert_eq!(normalized.len(), MAX_THREAD_MESSAGES);
+        assert_eq!(normalized.first().unwrap().id, "message-1");
+        assert_eq!(normalized.last().unwrap().id, format!("message-{MAX_THREAD_MESSAGES}"));
         assert_eq!(quarantined.len(), 1);
-        assert_eq!(quarantined[0].0, format!("message-{MAX_THREAD_MESSAGES}"));
-        assert!(quarantined[0].1.contains("message limit"));
+        assert_eq!(quarantined[0].0, "message-0");
+        assert!(quarantined[0].1.contains(&format!("more than {MAX_THREAD_MESSAGES} messages")));
     }
 
     #[test]
-    fn normalized_thread_size_quarantines_only_the_message_over_the_limit() {
-        let mut first = ContractProvider::message();
-        first.snippet = "a".repeat(5 * 1024 * 1024);
-        let mut second = first.clone();
-        second.id = "message-2".into();
+    fn normalized_thread_size_keeps_the_newest_messages_that_fit() {
+        // Three ~10 MB messages, delivered out of order: only the newest fits.
+        let large = |id: &str, received: u64| {
+            let mut message = dated_message(id, received);
+            message.snippet = "a".repeat(5 * 1024 * 1024);
+            message
+        };
+        let messages = [large("middle", 2_000), large("newest", 3_000), large("oldest", 1_000)];
 
-        let (normalized, quarantined) = normalize_thread(&[first, second]);
+        let (normalized, quarantined) = normalize_thread(&messages);
 
-        assert_eq!(normalized.len(), 1);
-        assert_eq!(quarantined.len(), 1);
-        assert_eq!(quarantined[0].0, "message-2");
-        assert!(quarantined[0].1.contains("Normalized thread"));
+        assert_eq!(normalized.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["newest"]);
+        let set_aside: Vec<_> = quarantined.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(set_aside, ["middle", "oldest"]);
+        assert!(quarantined.iter().all(|(_, error)| error.contains("larger than 16 MB")));
+    }
+
+    #[test]
+    fn a_small_older_message_still_fits_after_a_large_one_is_set_aside() {
+        // Two ~9 MB messages and a small one: the newer large one fits, the
+        // older large one does not, and the small oldest one still does.
+        let mut huge = dated_message("huge", 2_000);
+        huge.snippet = "a".repeat(9 * 512 * 1024);
+        let mut newest = huge.clone();
+        newest.id = "newest".into();
+        newest.internal_date = "3000".into();
+        let small = dated_message("small", 1_000);
+
+        let (normalized, quarantined) = normalize_thread(&[small, huge, newest]);
+
+        // Kept messages stay in conversation order.
+        assert_eq!(normalized.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["small", "newest"]);
+        assert_eq!(quarantined.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["huge"]);
+    }
+
+    #[test]
+    fn messages_without_a_receive_time_fall_back_to_provider_order() {
+        let messages: Vec<_> = (0..=MAX_THREAD_MESSAGES)
+            .map(|index| {
+                let mut message = dated_message(&format!("message-{index}"), 0);
+                message.internal_date = String::new();
+                message
+            })
+            .collect();
+
+        let (_, quarantined) = normalize_thread(&messages);
+
+        assert_eq!(quarantined.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["message-0"]);
     }
 
     #[tokio::test]
