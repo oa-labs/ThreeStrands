@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Prepares an Amp orb (Debian 12) to build and test ThreeStrands: Tauri system
+# libraries, the Node, pnpm, and Rust versions CI uses, cargo-vet and
+# cargo-deny, JavaScript dependencies, Playwright's Chromium, and prebuilt
+# Rust test binaries. Must stay idempotent: Amp reruns it on stale snapshots.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+# Keep in step with .devcontainer/Dockerfile and .github/workflows.
+node_version=22.22.0
+node_sha256=9aa8e9d2298ab68c600bd6fb86a6c13bce11a4eca1ba9b39d79fa021755d7c37
+pnpm_version="$(sed -n 's/.*"packageManager": "pnpm@\([^"]*\)".*/\1/p' package.json)"
+rust_version="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+cargo_vet_version=0.10.3
+cargo_vet_sha256=e83878b80913fbe43629c28768e14ab51f4e86a4ba8f9dd08cc25b8dbc503c19
+cargo_deny_version=0.20.2
+cargo_deny_sha256=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+
+node_dir="$HOME/.local/share/threestrands/node-v$node_version"
+tools_dir="$HOME/.local/share/threestrands/bin"
+
+step() {
+  local name="$1"
+  shift
+  local start=$SECONDS
+  echo "==> $name"
+  "$@"
+  echo "<== $name ($((SECONDS - start))s)"
+}
+
+install_system_packages() {
+  # Tauri 2 build prerequisites (see .devcontainer/Dockerfile).
+  local packages=(
+    build-essential pkg-config file patchelf libssl-dev libgtk-3-dev
+    libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev
+    libxdo-dev libdbus-1-dev
+  )
+  local missing=()
+  local package
+  for package in "${packages[@]}"; do
+    dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' \
+      || missing+=("$package")
+  done
+  if ((${#missing[@]})); then
+    sudo apt-get update -qq
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing[@]}"
+  fi
+}
+
+install_node() {
+  if [[ ! -x "$node_dir/bin/node" ]]; then
+    local tmp archive="node-v$node_version-linux-x64.tar.xz"
+    tmp="$(mktemp -d)"
+    curl -fsSL -o "$tmp/$archive" "https://nodejs.org/dist/v$node_version/$archive"
+    echo "$node_sha256  $tmp/$archive" | sha256sum -c --quiet -
+    mkdir -p "$node_dir"
+    tar -xJf "$tmp/$archive" -C "$node_dir" --strip-components=1
+    rm -rf "$tmp"
+  fi
+  if [[ "$("$node_dir/bin/pnpm" --version 2>/dev/null)" != "$pnpm_version" ]]; then
+    # The orb's npm config points the global prefix at /usr/local.
+    "$node_dir/bin/npm" install --global --silent --prefix "$node_dir" "pnpm@$pnpm_version"
+  fi
+}
+
+install_rust() {
+  if [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
+    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+      | sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
+  fi
+  # Reads rust-toolchain.toml; a no-op when the toolchain is already installed.
+  "$HOME/.cargo/bin/rustup" toolchain install "$rust_version" --profile minimal \
+    --component clippy --component rustfmt
+}
+
+install_supply_chain_tools() {
+  # Pinned release binaries, checked like .github/workflows/supply-chain.yml.
+  mkdir -p "$tools_dir"
+  if [[ "$("$tools_dir/cargo-vet" --version 2>/dev/null)" != "cargo-vet $cargo_vet_version" ]]; then
+    local tmp vet="cargo-vet-x86_64-unknown-linux-gnu.tar.xz"
+    tmp="$(mktemp -d)"
+    curl -fsSL -o "$tmp/$vet" "https://github.com/mozilla/cargo-vet/releases/download/v$cargo_vet_version/$vet"
+    echo "$cargo_vet_sha256  $tmp/$vet" | sha256sum -c --quiet -
+    tar -xJf "$tmp/$vet" -C "$tools_dir" --strip-components=1
+    rm -rf "$tmp"
+  fi
+  if [[ "$("$tools_dir/cargo-deny" --version 2>/dev/null)" != "cargo-deny $cargo_deny_version" ]]; then
+    local tmp deny="cargo-deny-$cargo_deny_version-x86_64-unknown-linux-musl.tar.gz"
+    tmp="$(mktemp -d)"
+    curl -fsSL -o "$tmp/$deny" "https://github.com/EmbarkStudios/cargo-deny/releases/download/$cargo_deny_version/$deny"
+    echo "$cargo_deny_sha256  $tmp/$deny" | sha256sum -c --quiet -
+    tar -xzf "$tmp/$deny" -C "$tools_dir" --strip-components=1
+    rm -rf "$tmp"
+  fi
+}
+
+persist_path() {
+  # Amp and orb services start in login shells, which read ~/.bash_profile.
+  local marker="# threestrands orb toolchain"
+  if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
+    cat >>"$HOME/.bash_profile" <<EOF
+
+$marker
+case ":\$PATH:" in
+  *":$node_dir/bin:"*) ;;
+  *) export PATH="$node_dir/bin:\$HOME/.cargo/bin:$tools_dir:\$PATH" ;;
+esac
+EOF
+  fi
+}
+
+install_js_dependencies() {
+  pnpm install --frozen-lockfile
+  pnpm exec playwright install --with-deps chromium
+}
+
+prebuild_rust_tests() {
+  # Warms target/ so the first `cargo test` in a thread only builds changes.
+  cargo test --locked --workspace --no-run
+  cargo test --locked --manifest-path src-tauri/Cargo.toml --no-run
+}
+
+step "System packages" install_system_packages
+step "Node $node_version and pnpm $pnpm_version" install_node
+step "Rust $rust_version" install_rust
+step "cargo-vet and cargo-deny" install_supply_chain_tools
+step "Login shell PATH" persist_path
+
+export PATH="$node_dir/bin:$HOME/.cargo/bin:$tools_dir:$PATH"
+step "JavaScript dependencies and Playwright Chromium" install_js_dependencies
+step "Rust test builds" prebuild_rust_tests
