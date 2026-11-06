@@ -7,10 +7,7 @@ use reqwest::{
     Method, RequestBuilder, StatusCode,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tokio::{
-    sync::Mutex,
-    time::{sleep, Instant},
-};
+use tokio::time::sleep;
 
 use crate::{
     auth::{AccessTokenError, OAuthCredential},
@@ -23,6 +20,8 @@ use crate::{
         SyncCursor, ThreadPage,
     },
 };
+
+mod quota;
 
 const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -44,7 +43,8 @@ struct SendAsList {
 pub struct GmailClient {
     http: reqwest::Client,
     auth: OAuthCredential,
-    next_thread_fetch: Arc<Mutex<Instant>>,
+    /// The account's quota budget, shared with every other client for it.
+    quota: Arc<quota::QuotaGate>,
     /// The Gmail API base every request is built from. Always `API` outside
     /// tests; tests point it at a loopback stand-in.
     api: Arc<str>,
@@ -113,6 +113,7 @@ impl GmailClient {
     }
 
     pub fn new(auth: OAuthCredential) -> Self {
+        let quota = quota::for_account(&auth.key());
         Self {
             http: crate::http_client::builder()
                 .connect_timeout(Duration::from_secs(10))
@@ -120,7 +121,7 @@ impl GmailClient {
                 .build()
                 .expect("valid Gmail HTTP client configuration"),
             auth,
-            next_thread_fetch: Arc::new(Mutex::new(Instant::now())),
+            quota,
             api: API.into(),
             cached_identities: Vec::new(),
         }
@@ -129,20 +130,21 @@ impl GmailClient {
     #[cfg(test)]
     fn with_api_base(mut self, api: &str) -> Self {
         self.api = api.into();
+        // Test credentials share one account key; a quota pause in one test
+        // must not stall another running alongside it.
+        self.quota = Arc::new(quota::QuotaGate::new());
         self
     }
 
-    async fn pace_thread_fetch(&self) {
-        // `threads.get` costs 10 quota units. Four hundred calls per minute
-        // consume 4,000 of Gmail's 6,000 per-user units, leaving headroom for
-        // lists, history, labels, mutations, and another active client.
-        const INTERVAL: Duration = Duration::from_millis(150);
-        let mut next = self.next_thread_fetch.lock().await;
-        let now = Instant::now();
-        if *next > now {
-            sleep(*next - now).await;
-        }
-        *next = Instant::now() + INTERVAL;
+    /// Gmail's quota cost of `request`, from its method and its path below
+    /// the API base.
+    fn quota_cost(&self, request: &RequestBuilder) -> u32 {
+        let Some(Ok(request)) = request.try_clone().map(RequestBuilder::build) else {
+            return quota::cost(&Method::GET, "");
+        };
+        let url = request.url().as_str();
+        let path = url.strip_prefix(&*self.api).unwrap_or(url);
+        quota::cost(request.method(), path)
     }
 
     async fn access_token(&self) -> ProviderResult<String> {
@@ -204,7 +206,10 @@ impl GmailClient {
     ) -> ProviderResult<reqwest::Response> {
         let mut reauthorized = false;
         let mut attempt = 0;
+        let cost = self.quota_cost(&request);
         while attempt <= retries {
+            // Every attempt is charged, including replays: Gmail counts them.
+            self.quota.acquire(cost).await;
             let cloned = request.try_clone().ok_or_else(|| {
                 ProviderError::InvalidOperation("Unable to retry Gmail request".into())
             })?;
@@ -241,15 +246,28 @@ impl GmailClient {
             let body = response.text().await.unwrap_or_default();
             let quota_limited = status == StatusCode::TOO_MANY_REQUESTS
                 || (status == StatusCode::FORBIDDEN && is_quota_error(&body));
-            if quota_limited
-                || status == StatusCode::REQUEST_TIMEOUT
+            if quota_limited {
+                // The limit is per account, so hold back every client for
+                // it, not only this request. A per-minute limit rarely clears
+                // within a shorter Retry-After, so that only lengthens the
+                // backoff.
+                let backoff = retry_delay(attempt, true);
+                let delay = retry_after.map_or(backoff, |after| after.max(backoff));
+                self.quota.pause(delay + jitter());
+                if attempt == retries {
+                    return Err(ProviderError::RetryableServer(format!("{status}: {body}")));
+                }
+                attempt += 1;
+                continue;
+            }
+            if status == StatusCode::REQUEST_TIMEOUT
                 || status == StatusCode::SERVICE_UNAVAILABLE
                 || status.is_server_error()
             {
                 if attempt == retries {
                     return Err(ProviderError::RetryableServer(format!("{status}: {body}")));
                 }
-                let delay = retry_after.unwrap_or_else(|| retry_delay(attempt, quota_limited));
+                let delay = retry_after.unwrap_or_else(|| retry_delay(attempt, false));
                 sleep(delay + jitter()).await;
                 attempt += 1;
                 continue;
@@ -457,7 +475,6 @@ impl MailSync for GmailClient {
     }
 
     async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
-        self.pace_thread_fetch().await;
         let request = self
             .request(Method::GET, format!("{}/threads/{id}?format=full", self.api))
             .await?;
@@ -1304,6 +1321,19 @@ mod tests {
     }
 
     #[test]
+    fn every_client_for_an_account_spends_one_quota_budget() {
+        let credential = || {
+            OAuthCredential::in_memory_for_test(
+                "http://127.0.0.1:9/token",
+                crate::auth::Tokens { access_token: "token".into(), refresh_token: None, expires_at: u64::MAX },
+            )
+        };
+        // Sync, message opens, attachments, and sending each build their own
+        // client; they must not each get a full budget.
+        assert!(Arc::ptr_eq(&GmailClient::new(credential()).quota, &GmailClient::new(credential()).quota));
+    }
+
+    #[test]
     fn quota_retries_wait_for_the_usage_window() {
         assert_eq!(retry_delay(0, true), Duration::from_secs(15));
         assert_eq!(retry_delay(2, true), Duration::from_secs(60));
@@ -1484,6 +1514,29 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_quota_rejection_holds_back_every_request_on_the_account() {
+            let stub = Stub::default();
+            stub.statuses.lock().unwrap().push(429);
+            let gmail = client(&serve(stub.clone()).await);
+            assert!(gmail.quota.paused_for().is_zero());
+            let result = gmail.create_server_draft(b"raw", None).await;
+            assert!(matches!(result, Err(ProviderError::RetryableServer(_))), "{result:?}");
+            // The create is not replayed, but the account still backs off for
+            // Gmail's usage window before its next request of any kind.
+            assert_eq!(stub.seen.lock().unwrap().len(), 1);
+            assert!(gmail.quota.paused_for() >= Duration::from_secs(14), "{:?}", gmail.quota.paused_for());
+        }
+
+        #[tokio::test]
+        async fn other_rejections_do_not_pause_the_account() {
+            let stub = Stub::default();
+            stub.statuses.lock().unwrap().push(503);
+            let gmail = client(&serve(stub.clone()).await);
+            let _ = gmail.create_server_draft(b"raw", None).await;
+            assert!(gmail.quota.paused_for().is_zero());
+        }
+
+        #[tokio::test]
         async fn updates_and_deletes_report_a_draft_deleted_on_the_server() {
             let stub = Stub::default();
             stub.statuses.lock().unwrap().extend([404, 404]);
@@ -1589,7 +1642,10 @@ impl From<SentMessage> for DeliveryReceipt {
 /// A Gmail delivery permit: the `messages/send` request with its bearer token
 /// already attached, so nothing that can fail for authorization reasons
 /// remains between claiming the outbox row and the send itself.
-struct GmailDelivery(RequestBuilder);
+struct GmailDelivery {
+    request: RequestBuilder,
+    quota: Arc<quota::QuotaGate>,
+}
 
 #[async_trait]
 impl Delivery for GmailDelivery {
@@ -1605,7 +1661,8 @@ impl Delivery for GmailDelivery {
         if let Some(thread) = thread {
             body["threadId"] = thread.into();
         }
-        let response = self.0.json(&body).send().await.map_err(|_| {
+        self.quota.acquire(quota::cost(&Method::POST, "/messages/send")).await;
+        let response = self.request.json(&body).send().await.map_err(|_| {
             (
                 false,
                 "Connection ended during delivery. Check sent mail before sending again.".into(),
@@ -1613,6 +1670,9 @@ impl Delivery for GmailDelivery {
         })?;
         if !response.status().is_success() {
             let status = response.status();
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                self.quota.pause(retry_delay(0, true));
+            }
             // A server error or timeout can follow acceptance; only explicit client rejection is definite.
             let definite = status.is_client_error() && status != StatusCode::REQUEST_TIMEOUT;
             return Err((
@@ -1667,11 +1727,13 @@ impl MailSend for GmailClient {
     }
 
     async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
-        Ok(Box::new(GmailDelivery(
-            self.request(Method::POST, format!("{}/messages/send", self.api))
+        Ok(Box::new(GmailDelivery {
+            request: self
+                .request(Method::POST, format!("{}/messages/send", self.api))
                 .await?
                 .timeout(Duration::from_secs(60)),
-        )))
+            quota: self.quota.clone(),
+        }))
     }
 
     async fn find_sent_copy(
