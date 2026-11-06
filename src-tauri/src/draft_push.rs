@@ -122,9 +122,9 @@ fn classify_push_error(error: &ProviderError, account: &str) -> (&'static str, S
 impl Correspondence {
     /// Pushes, deletes, and pulls server drafts as they come due, forever.
     pub async fn run_draft_pushes(self) {
-        let mut last_pulled = HashMap::new();
+        let mut schedules = HashMap::new();
         loop {
-            if let Err(error) = self.run_draft_round(unix_millis(), &mut last_pulled).await {
+            if let Err(error) = self.run_draft_round(unix_millis(), &mut schedules).await {
                 log::warn!(target: "drafts", "server draft push failed: {error}");
             }
             tokio::time::sleep(PUSH_POLL_INTERVAL).await;
@@ -153,7 +153,11 @@ impl Correspondence {
         self.draft_pull_requested.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    async fn run_draft_round(&self, at: i64, last_pulled: &mut HashMap<String, i64>) -> Result<(), String> {
+    async fn run_draft_round(
+        &self,
+        at: i64,
+        schedules: &mut HashMap<String, crate::draft_pull::DraftPullSchedule>,
+    ) -> Result<(), String> {
         let _guard = self.draft_pushes.lock().await;
         let mut accounts: Vec<String> = self.accounts.lock().await.keys().cloned().collect();
         accounts.extend(self.database.due_draft_accounts(at)?);
@@ -162,7 +166,7 @@ impl Correspondence {
         let providers = self.draft_providers(accounts).await;
         let force = self.draft_pull_requested.swap(false, std::sync::atomic::Ordering::SeqCst);
         self.push_due_drafts_with(at, &providers).await?;
-        self.pull_due_accounts(at, &providers, last_pulled, force).await
+        self.pull_due_accounts(at, &providers, schedules, force).await
     }
 
     async fn draft_providers(&self, accounts: Vec<String>) -> HashMap<String, Arc<dyn MailProvider>> {
@@ -413,6 +417,8 @@ pub(crate) mod tests {
         calls: StdMutex<Vec<String>>,
         /// Returned, once, by the next create or update.
         fail_next: StdMutex<Option<ProviderError>>,
+        /// How many of the next listings fail.
+        failing_lists: StdMutex<usize>,
         created: StdMutex<usize>,
     }
 
@@ -435,6 +441,9 @@ pub(crate) mod tests {
         }
         pub(crate) fn calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
+        }
+        pub(crate) fn fail_lists(&self, count: usize) {
+            *self.failing_lists.lock().unwrap() = count;
         }
         fn fail_next(&self, error: ProviderError) {
             *self.fail_next.lock().unwrap() = Some(error);
@@ -503,6 +512,13 @@ pub(crate) mod tests {
         }
         async fn list_server_drafts(&self) -> ProviderResult<Vec<ServerDraft>> {
             self.calls.lock().unwrap().push("list".into());
+            {
+                let mut failing = self.failing_lists.lock().unwrap();
+                if *failing > 0 {
+                    *failing -= 1;
+                    return Err(ProviderError::RetryableServer("403 Forbidden: Quota exceeded".into()));
+                }
+            }
             Ok(self
                 .drafts()
                 .iter()

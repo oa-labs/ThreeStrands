@@ -19,6 +19,12 @@ use crate::{
 
 /// How often each account's server drafts are listed.
 pub(crate) const DRAFT_PULL_INTERVAL_MS: i64 = 60_000;
+/// The least time between pulls the window asks for by coming to the front,
+/// so switching between windows doesn't list drafts every time.
+pub(crate) const FOCUS_PULL_MIN_INTERVAL_MS: i64 = 15_000;
+/// The longest wait between pulls of an account whose listing keeps failing,
+/// matching how far mail sync backs off.
+pub(crate) const MAX_DRAFT_PULL_BACKOFF_MS: i64 = 5 * 60_000;
 /// The largest draft body this device imports; the composer refuses larger.
 const MAX_IMPORTED_BODY_BYTES: usize = 2 * 1024 * 1024;
 
@@ -157,6 +163,36 @@ pub(crate) fn draft_from_server_copy(
     })
 }
 
+/// When an account's server drafts were last listed, and how many listings
+/// in a row have failed since one succeeded.
+#[derive(Debug, Default)]
+pub(crate) struct DraftPullSchedule {
+    last_at: Option<i64>,
+    failures: u32,
+}
+
+impl DraftPullSchedule {
+    /// Whether to list the account's drafts at `at`. `force` is the window
+    /// coming to the front; it never overrides the backoff after a failure,
+    /// because a server refusing requests is not helped by asking sooner.
+    fn due(&self, at: i64, force: bool) -> bool {
+        let Some(last) = self.last_at else {
+            return true;
+        };
+        let elapsed = at - last;
+        if self.failures > 0 {
+            return elapsed >= draft_pull_backoff(self.failures);
+        }
+        elapsed >= DRAFT_PULL_INTERVAL_MS || (force && elapsed >= FOCUS_PULL_MIN_INTERVAL_MS)
+    }
+}
+
+/// The wait after `failures` failed listings in a row: doubling from the
+/// ordinary interval, up to [`MAX_DRAFT_PULL_BACKOFF_MS`].
+fn draft_pull_backoff(failures: u32) -> i64 {
+    (DRAFT_PULL_INTERVAL_MS << failures.min(8)).min(MAX_DRAFT_PULL_BACKOFF_MS)
+}
+
 /// What a pull did to one server draft.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Applied {
@@ -167,7 +203,9 @@ pub(crate) enum Applied {
 
 impl Correspondence {
     /// Lists `account`'s server drafts and brings changes made elsewhere into
-    /// local drafts. Returns whether any local draft changed.
+    /// local drafts. Returns whether any local draft changed. The worker
+    /// pulls through [`Self::pull_due_accounts`], which also schedules.
+    #[cfg(test)]
     pub(crate) async fn pull_server_drafts(
         &self,
         account: &str,
@@ -180,13 +218,24 @@ impl Correspondence {
                 return Ok(false);
             }
         };
+        self.apply_listed_drafts(account, provider, &listed).await
+    }
+
+    /// Brings the server drafts `listed` for `account` into local drafts.
+    /// Returns whether any local draft changed.
+    async fn apply_listed_drafts(
+        &self,
+        account: &str,
+        provider: &dyn MailProvider,
+        listed: &[ServerDraft],
+    ) -> Result<bool, String> {
         let links = self.database.account_draft_links(account)?;
         let by_server: HashMap<&str, &Link> = links
             .iter()
             .filter_map(|link| link.server_id.as_deref().map(|id| (id, link)))
             .collect();
         let mut changed = false;
-        for server in &listed {
+        for server in listed {
             let link = by_server.get(server.id.as_str()).copied();
             if link.is_some_and(|link| link.server_version.is_some() && link.server_version == server.version) {
                 continue;
@@ -281,24 +330,41 @@ impl Correspondence {
     }
 
     /// Pulls every connected account that keeps server drafts and is due.
+    /// An account waiting to be reconnected is skipped: its server would
+    /// refuse every listing until the user signs in again.
     pub(crate) async fn pull_due_accounts(
         &self,
         at: i64,
         providers: &HashMap<String, Arc<dyn MailProvider>>,
-        last_pulled: &mut HashMap<String, i64>,
+        schedules: &mut HashMap<String, DraftPullSchedule>,
         force: bool,
     ) -> Result<(), String> {
         let mut changed = false;
         for (account, provider) in providers {
-            if !provider.server_drafts() {
+            if !provider.server_drafts() || self.database.account_needs_reauth(account)? {
                 continue;
             }
-            let due = last_pulled.get(account).is_none_or(|last| at - last >= DRAFT_PULL_INTERVAL_MS);
-            if !force && !due {
+            let schedule = schedules.entry(account.clone()).or_default();
+            if !schedule.due(at, force) {
                 continue;
             }
-            last_pulled.insert(account.clone(), at);
-            changed |= self.pull_server_drafts(account, provider.as_ref()).await?;
+            schedule.last_at = Some(at);
+            let listed = match provider.list_server_drafts().await {
+                Ok(listed) => {
+                    schedule.failures = 0;
+                    listed
+                }
+                Err(error) => {
+                    schedule.failures = schedule.failures.saturating_add(1);
+                    log::warn!(
+                        target: "drafts",
+                        "listing server drafts failed; next try in {}s: {error}",
+                        draft_pull_backoff(schedule.failures) / 1000
+                    );
+                    continue;
+                }
+            };
+            changed |= self.apply_listed_drafts(account, provider.as_ref(), &listed).await?;
         }
         if changed {
             (self.draft_events)(DraftEvent::ListChanged);
@@ -626,18 +692,64 @@ mod tests {
         assert!(harness.db().drafts().unwrap().is_empty());
     }
 
+    async fn pull_at(harness: &Harness, schedules: &mut HashMap<String, DraftPullSchedule>, at: i64, force: bool) {
+        harness.service.pull_due_accounts(at, &harness.providers(), schedules, force).await.unwrap();
+    }
+
+    fn lists(harness: &Harness) -> usize {
+        harness.server.calls().iter().filter(|call| *call == "list").count()
+    }
+
     #[tokio::test]
     async fn pulls_run_once_per_interval_unless_asked() {
         let harness = Harness::new();
-        let mut last = HashMap::new();
+        let mut schedules = HashMap::new();
         let at = unix_millis();
-        harness.service.pull_due_accounts(at, &harness.providers(), &mut last, false).await.unwrap();
-        harness.service.pull_due_accounts(at + DRAFT_PULL_INTERVAL_MS - 1, &harness.providers(), &mut last, false).await.unwrap();
-        let lists = || harness.server.calls().iter().filter(|call| *call == "list").count();
-        assert_eq!(lists(), 1);
-        harness.service.pull_due_accounts(at + DRAFT_PULL_INTERVAL_MS, &harness.providers(), &mut last, false).await.unwrap();
-        assert_eq!(lists(), 2);
-        harness.service.pull_due_accounts(at + DRAFT_PULL_INTERVAL_MS, &harness.providers(), &mut last, true).await.unwrap();
-        assert_eq!(lists(), 3, "focusing the window pulls right away");
+        pull_at(&harness, &mut schedules, at, false).await;
+        pull_at(&harness, &mut schedules, at + DRAFT_PULL_INTERVAL_MS - 1, false).await;
+        assert_eq!(lists(&harness), 1);
+        let last = at + DRAFT_PULL_INTERVAL_MS;
+        pull_at(&harness, &mut schedules, last, false).await;
+        assert_eq!(lists(&harness), 2);
+        pull_at(&harness, &mut schedules, last + FOCUS_PULL_MIN_INTERVAL_MS - 1, true).await;
+        assert_eq!(lists(&harness), 2, "switching back to the window right after a pull doesn't list again");
+        pull_at(&harness, &mut schedules, last + FOCUS_PULL_MIN_INTERVAL_MS, true).await;
+        assert_eq!(lists(&harness), 3, "focusing the window pulls right away");
+    }
+
+    #[tokio::test]
+    async fn a_failing_listing_backs_off_and_recovers() {
+        let harness = Harness::new();
+        let mut schedules = HashMap::new();
+        harness.server.fail_lists(3);
+        // Forced throughout: the window asking doesn't cut a backoff short.
+        let mut at = unix_millis();
+        pull_at(&harness, &mut schedules, at, true).await;
+        assert_eq!(lists(&harness), 1, "first listing fails");
+        for (wait_minutes, listed) in [(2, 2), (4, 3), (5, 4)] {
+            at += wait_minutes * 60_000;
+            pull_at(&harness, &mut schedules, at - 1, true).await;
+            assert_eq!(lists(&harness), listed - 1, "waits {wait_minutes} minutes");
+            pull_at(&harness, &mut schedules, at, true).await;
+            assert_eq!(lists(&harness), listed);
+        }
+        // The fourth listing succeeded, so the ordinary interval is back.
+        pull_at(&harness, &mut schedules, at + DRAFT_PULL_INTERVAL_MS, false).await;
+        assert_eq!(lists(&harness), 5);
+    }
+
+    #[test]
+    fn the_backoff_doubles_up_to_five_minutes() {
+        let minutes: Vec<_> = (1..=5).map(|failures| draft_pull_backoff(failures) / 60_000).collect();
+        assert_eq!(minutes, [2, 4, 5, 5, 5]);
+        assert_eq!(draft_pull_backoff(u32::MAX), MAX_DRAFT_PULL_BACKOFF_MS);
+    }
+
+    #[tokio::test]
+    async fn an_account_waiting_to_be_reconnected_is_not_pulled() {
+        let harness = Harness::new();
+        harness.db().mark_account_needs_reauth(ACCOUNT, "revoked").unwrap();
+        pull_at(&harness, &mut HashMap::new(), unix_millis(), true).await;
+        assert!(harness.server.calls().is_empty());
     }
 }

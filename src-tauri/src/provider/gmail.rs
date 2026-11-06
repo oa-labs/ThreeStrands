@@ -24,6 +24,8 @@ use crate::{
 mod quota;
 
 const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
+/// Replays of a request Gmail refused for a reason that may pass.
+const RETRIES: u32 = 4;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GmailSignature {
@@ -187,7 +189,7 @@ impl GmailClient {
         request: RequestBuilder,
         history: bool,
     ) -> ProviderResult<reqwest::Response> {
-        self.send_with_retries(request, history, 4).await
+        self.send_with_retries(request, history, RETRIES).await
     }
 
     /// Like [`send`](Self::send), but never replays a request Gmail may
@@ -285,8 +287,17 @@ impl GmailClient {
         request: RequestBuilder,
         history: bool,
     ) -> ProviderResult<T> {
+        self.json_with_retries(request, history, RETRIES).await
+    }
+
+    async fn json_with_retries<T: DeserializeOwned>(
+        &self,
+        request: RequestBuilder,
+        history: bool,
+        retries: u32,
+    ) -> ProviderResult<T> {
         let body = self
-            .send(request, history)
+            .send_with_retries(request, history, retries)
             .await?
             .bytes()
             .await
@@ -1564,6 +1575,16 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_refused_listing_is_not_replayed() {
+            // The draft pull's own schedule retries, with backoff.
+            let stub = Stub::default();
+            stub.statuses.lock().unwrap().push(503);
+            let gmail = client(&serve(stub.clone()).await);
+            assert!(matches!(gmail.list_server_drafts().await, Err(ProviderError::RetryableServer(_))));
+            assert_eq!(stub.seen.lock().unwrap().len(), 1);
+        }
+
+        #[tokio::test]
         async fn an_account_with_no_drafts_lists_none() {
             // Gmail sends 204 and no body when the fields mask leaves nothing.
             let stub = Stub::default();
@@ -1843,7 +1864,10 @@ impl MailSend for GmailClient {
             if let Some(page) = &page {
                 request = request.query(&[("pageToken", page)]);
             }
-            let listed: DraftList = self.json(request, false).await?;
+            // One attempt: listing runs on a schedule that backs off after a
+            // failure, so the next scheduled pull is the retry. Retrying here
+            // would only send Gmail more requests it is refusing.
+            let listed: DraftList = self.json_with_retries(request, false, 0).await?;
             drafts.extend(listed.drafts.into_iter().map(ServerDraft::from));
             match listed.next_page_token {
                 Some(next) => page = Some(next),
