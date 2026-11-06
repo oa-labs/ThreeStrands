@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { Message, ThreadDetail } from "./domain";
 import { READING_POSITION_MAX_AGE_MS, READING_POSITIONS_KEY, readReadingPositions } from "./readingPositions";
+import { READER_PRESENTATION_KEY, saveReaderPresentation } from "./readerPresentation";
 import { useReaderState } from "./useReaderState";
 
 const message = (id: string, unread = false): Message => ({
@@ -57,6 +58,60 @@ describe("useReaderState", () => {
     ]));
     expect(result.current.activeMessageId).toBe("latest");
     expect(result.current.latestDisplayedMessageId).toBe("latest");
+  });
+
+  it.each(["older", "latest"])("restores expansion choices and the focused %s message after a fresh start", (focused) => {
+    const props = { selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false };
+    const first = renderHook(() => useReaderState(props), { reactStrictMode: true });
+    const expanded = new Map([["older", focused === "older"], ["latest", focused === "latest"]]);
+    act(() => {
+      first.result.current.setMessageExpansionOverrides(expanded);
+      first.result.current.setActiveMessageId(focused);
+      first.result.current.activeMessageIdRef.current = focused;
+    });
+    first.unmount();
+    // A real restart initially has no detail; it arrives asynchronously.
+    const restarted = renderHook((input) => useReaderState(input), {
+      reactStrictMode: true,
+      initialProps: { ...props, detail: null as ThreadDetail | null, displayedMessages: [] as Message[] },
+    });
+    restarted.rerender(props);
+    expect(restarted.result.current.messageExpansionOverrides).toEqual(expanded);
+    expect(restarted.result.current.activeMessageId).toBe(focused);
+    expect(restarted.result.current.activeMessageIdRef.current).toBe(focused);
+    expect(restarted.result.current.readingMessageId).toBe(focused);
+  });
+
+  it("restores each conversation independently when switching with detail already loaded", () => {
+    const props = { selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false };
+    const { result, rerender } = renderHook((input) => useReaderState(input), { initialProps: props });
+    act(() => {
+      result.current.setMessageExpansionOverrides(new Map([["older", true], ["latest", false]]));
+      result.current.setActiveMessageId("older");
+    });
+    const other = { ...detail, thread: { ...detail.thread, id: "thread-2" }, messages: [message("other")] };
+    rerender({ ...props, selectedThreadId: "thread-2", detail: other, displayedMessages: other.messages });
+    expect(result.current.activeMessageId).toBe("other");
+    expect(result.current.messageExpansionOverrides).toEqual(new Map([["other", true]]));
+    rerender(props);
+    expect(result.current.activeMessageId).toBe("older");
+    expect(result.current.messageExpansionOverrides).toEqual(new Map([["older", true], ["latest", false]]));
+  });
+
+  it("restores all-collapsed conversations and falls back when the focused message was removed", () => {
+    saveReaderPresentation({ threadId: "thread-1", latestMessageId: "latest", activeMessageId: "deleted",
+      expanded: [["older", false], ["latest", false], ["deleted", true]] });
+    const { result } = renderHook(() => useReaderState({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false }));
+    expect(result.current.messageExpansionOverrides).toEqual(new Map([["older", false], ["latest", false]]));
+    expect(result.current.activeMessageId).toBe("latest");
+  });
+
+  it("opens a newly arrived message while retaining earlier expansion choices", () => {
+    saveReaderPresentation({ threadId: "thread-1", latestMessageId: "previous", activeMessageId: "older",
+      expanded: [["older", true]] });
+    const { result } = renderHook(() => useReaderState({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false }));
+    expect(result.current.messageExpansionOverrides).toEqual(new Map([["older", true], ["latest", true]]));
+    expect(result.current.activeMessageId).toBe("latest");
   });
 
   it("preserves explicit expansion choices while detail messages refresh", () => {
@@ -387,6 +442,7 @@ describe("returning to where the user stopped reading", () => {
     });
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 0; });
     const scrollIntoView = vi.fn();
+    const olderScrollIntoView = vi.fn();
     let reader!: ReturnType<typeof useReaderState>;
     function Reader({ selectedThreadId, visible = true }: { selectedThreadId: string | null; visible?: boolean }) {
       const open = selectedThreadId === "thread-1";
@@ -406,6 +462,7 @@ describe("returning to where the user stopped reading", () => {
             if (!node) return;
             reader.messageRefs.current.set(item.id, node);
             Object.defineProperty(node, "offsetTop", { configurable: true, value: index * 300 });
+            node.scrollIntoView = olderScrollIntoView;
             if (item.id === "latest") {
               node.scrollIntoView = scrollIntoView;
               reader.latestMessageRef.current = node;
@@ -432,6 +489,7 @@ describe("returning to where the user stopped reading", () => {
       stack,
       resize,
       scrollIntoView,
+      olderScrollIntoView,
       scrollTo,
       current: () => reader,
       select: (selectedThreadId: string | null) => view.rerender(createElement(Reader, { selectedThreadId })),
@@ -533,6 +591,35 @@ describe("returning to where the user stopped reading", () => {
       reader.stack.scrollTop = 400;
       reader.resize.notify();
       expect(reader.stack.scrollTop).toBe(2100);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not reopen a collapsed first message from a scroll anchor while the last message is focused", () => {
+    try {
+      saved({ messageId: "older", offset: 0 });
+      localStorage.setItem(READER_PRESENTATION_KEY, JSON.stringify([{
+        threadId: "thread-1", latestMessageId: "latest", activeMessageId: "latest",
+        expanded: [["older", false], ["latest", true]],
+      }]));
+      const reader = mountReader();
+      expect(reader.current().messageExpansionOverrides.get("older")).toBe(false);
+      expect(reader.current().activeMessageId).toBe("latest");
+      expect(reader.scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("scrolls to the restored focused message even without a saved scroll position", () => {
+    try {
+      saveReaderPresentation({ threadId: "thread-1", latestMessageId: "latest", activeMessageId: "older",
+        expanded: [["older", true], ["latest", false]] });
+      const reader = mountReader();
+      expect(reader.current().activeMessageId).toBe("older");
+      expect(reader.olderScrollIntoView).toHaveBeenCalledWith({ block: "start" });
+      expect(reader.scrollIntoView).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

@@ -20,6 +20,7 @@ afterEach(() => {
   localStorage.removeItem("threestrands.workspace.last");
   localStorage.removeItem("threestrands.workspace.sideColumn");
   localStorage.removeItem("threestrands.readingPositions");
+  localStorage.removeItem("threestrands.readerPresentation");
 });
 
 Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {

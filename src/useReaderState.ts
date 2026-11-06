@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { Message, ThreadDetail } from "./domain";
 import { messageAtReadingLine } from "./readingMessage";
 import { readingPositionFor, readReadingPositions, saveReadingPlace, type ReadingPlace } from "./readingPositions";
+import { readReaderPresentation, saveReaderPresentation, type ReaderPresentation } from "./readerPresentation";
 import { captureReaderAnchor } from "./returnNavigation";
 
 /** Input that means the reader is moving through the conversation themselves. */
@@ -31,6 +32,9 @@ export function useReaderState({
   composerOpen: boolean;
 }) {
   const [messageExpansionOverrides, setMessageExpansionOverrides] = useState<Map<string, boolean>>(new Map());
+  const [restoredThreadId, setRestoredThreadId] = useState<string | null>(null);
+  const presentationOnOpenRef = useRef<ReaderPresentation | undefined>(undefined);
+  const initializedThreadRef = useRef<string | null>(null);
   const latestMessageRef = useRef<HTMLElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement>(null);
   // Workspaces unmount the reader while this hook stays alive. Track the DOM
@@ -69,6 +73,8 @@ export function useReaderState({
   // here: a conversation that opens with its detail already loaded has
   // registered its messages before this runs.
   useEffect(() => {
+    initializedThreadRef.current = null;
+    setRestoredThreadId(null);
     setMessageExpansionOverrides(new Map());
     activeMessageIdRef.current = null;
     pendingMessageToggleFocusRef.current = null;
@@ -78,16 +84,22 @@ export function useReaderState({
   }, [selectedThreadId, setReadingMessage]);
 
   useEffect(() => {
-    if (!detail) return;
+    if (!detail || detail.thread.id !== selectedThreadId) return;
+    const opening = initializedThreadRef.current !== detail.thread.id;
+    const saved = opening ? readReaderPresentation(detail.thread.id) : undefined;
+    if (opening) presentationOnOpenRef.current = saved;
+    initializedThreadRef.current = detail.thread.id;
+    setRestoredThreadId(detail.thread.id);
     setMessageExpansionOverrides((current) => {
+      const choices = opening ? new Map(saved?.expanded) : current;
       const next = new Map<string, boolean>();
       for (const [index, message] of detail.messages.entries()) {
         const isLatest = index === detail.messages.length - 1;
-        next.set(message.id, current.get(message.id) ?? (isLatest || message.unread));
+        next.set(message.id, choices.get(message.id) ?? (isLatest || message.unread));
       }
       return next;
     });
-  }, [detail]);
+  }, [detail, selectedThreadId]);
 
   const displayedMessagesRef = useRef(displayedMessages);
   displayedMessagesRef.current = displayedMessages;
@@ -95,10 +107,22 @@ export function useReaderState({
   const detailThreadId = detail?.thread.id;
   useEffect(() => {
     if (!latestDisplayedMessageId) return;
-    activeMessageIdRef.current = latestDisplayedMessageId;
-    setActiveMessageId(latestDisplayedMessageId);
-    setReadingMessage(latestDisplayedMessageId);
+    const saved = detailThreadId ? readReaderPresentation(detailThreadId) : undefined;
+    const active = saved?.latestMessageId === latestDisplayedMessageId
+      && displayedMessagesRef.current.some((message) => message.id === saved.activeMessageId)
+      ? saved.activeMessageId : latestDisplayedMessageId;
+    activeMessageIdRef.current = active;
+    setActiveMessageId(active);
+    setReadingMessage(active);
   }, [detailThreadId, latestDisplayedMessageId, setReadingMessage]);
+
+  // Save settled state as it changes, so closing the native window does not
+  // depend on a final scroll or on the webview delivering pagehide.
+  useEffect(() => {
+    if (!detailThreadId || restoredThreadId !== detailThreadId || selectedThreadId !== detailThreadId || !latestDisplayedMessageId) return;
+    saveReaderPresentation({ threadId: detailThreadId, latestMessageId: latestDisplayedMessageId,
+      activeMessageId, expanded: [...messageExpansionOverrides] });
+  }, [activeMessageId, detailThreadId, latestDisplayedMessageId, messageExpansionOverrides, restoredThreadId, selectedThreadId]);
 
   useEffect(() => {
     const stack = messageStackNode;
@@ -157,7 +181,11 @@ export function useReaderState({
     lastAutoScrollRef.current = { threadId: detailThreadId, messageId: latestDisplayedMessageId, stack };
     // Reopening a conversation goes back to where the user stopped reading,
     // unless that place expired or a newer message arrived since.
-    const resume = previous?.stack === stack ? null : readingPositionFor(readReadingPositions(), detailThreadId, latestDisplayedMessageId, Date.now());
+    const saved = previous ? readReaderPresentation(detailThreadId) : presentationOnOpenRef.current;
+    const anchor = previous?.stack === stack ? null : readingPositionFor(readReadingPositions(), detailThreadId, latestDisplayedMessageId, Date.now());
+    // A scroll anchor may be a collapsed row above the email being read.
+    // Never expand that row over an explicit remembered collapse choice.
+    const resume = anchor && new Map(saved?.expanded).get(anchor.messageId) !== false ? anchor : null;
     const resumeNode = resume ? messageRefs.current.get(resume.messageId) : undefined;
     let target: HTMLElement | null;
     // How far the stack's top sits past the target message's top.
@@ -168,7 +196,7 @@ export function useReaderState({
       offset = () => resume.offset;
       stack.scrollTop = layoutTop(resumeNode) - layoutTop(stack) + resume.offset;
     } else {
-      target = latestMessageRef.current;
+      target = messageRefs.current.get(activeMessageIdRef.current ?? "") ?? latestMessageRef.current;
       target?.scrollIntoView?.({ block: "start" });
       offset = (scroller) => -(parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0);
     }
