@@ -87,6 +87,27 @@ describe("LabelManager picker", () => {
     return props;
   }
 
+  it("applies and removes existing native labels without offering catalog changes", () => {
+    const { onToggle, onCreate, onDelete, onRename } = renderPicker({
+      capabilities: labelCapabilities("imapNativeLabels"),
+      checkedLabelIds: new Set([work.id]),
+    });
+    const input = screen.getByRole("combobox", { name: "Find a Label" });
+    expect(screen.queryByRole("button", { name: /rename|delete/i })).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "Missing" } });
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onCreate).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "Work" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onToggle).toHaveBeenCalledWith(work, false);
+    fireEvent.change(input, { target: { value: "Keyboard" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onToggle).toHaveBeenCalledWith(keyboard, true);
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
   it("orders labels alphabetically and supports search plus keyboard navigation", async () => {
     const { onToggle, onClose } = renderPicker();
     const dialog = screen.getByRole("dialog", { name: "Manage Labels" });

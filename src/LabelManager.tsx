@@ -79,11 +79,12 @@ export function LabelManager({
       <FindOrCreatePicker
         items={orderedLabels}
         getSearchText={(label: Label) => formatLabelName(label)}
-        placeholder="Find or create a label"
-        ariaLabel="Find or Create a Label"
+        placeholder={capabilities.canCreateLabels ? "Find or create a label" : "Find a label"}
+        ariaLabel={capabilities.canCreateLabels ? "Find or Create a Label" : "Find a Label"}
+        allowCreate={capabilities.canCreateLabels}
         listId="label-options"
         listLabel="Labels"
-        emptyMessage="No labels yet. Type a name to create one."
+        emptyMessage={capabilities.canCreateLabels ? "No labels yet. Type a name to create one." : "No matching labels."}
         createLabel={(name) => <>Create label "{name}"</>}
         onSelect={applyLabel}
         onCreate={(name) => { void createAndApply(name); }}
@@ -117,7 +118,7 @@ export function LabelManager({
                     <Pencil size={ICON_SIZE.sm} />
                   </button>
                 ) : null}
-                <button
+                {capabilities.canDeleteLabels ? <button
                   className="btn-icon btn-icon-sm"
                   aria-label={`Delete ${label.name}`}
                   onClick={(event) => {
@@ -126,7 +127,7 @@ export function LabelManager({
                   }}
                 >
                   <Trash size={ICON_SIZE.sm} />
-                </button>
+                </button> : null}
               </span>
             ) : null}
           </div>

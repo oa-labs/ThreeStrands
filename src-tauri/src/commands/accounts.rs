@@ -329,6 +329,7 @@ pub(crate) async fn discover_imap_mailboxes(
         .map_err(|error| AppError::message(imap::plain_language(&error)))?;
     let store = imap::ImapStateStore::new(state.database.clone(), email.clone());
     session.capabilities().await.map_err(|error| AppError::message(imap::plain_language(&error)))?;
+    store.set_native_labels(session.supports_label_extensions())?;
     let mapping = imap::discover_and_persist(&mut session, &store)
         .await
         .map(|mut mapping| {

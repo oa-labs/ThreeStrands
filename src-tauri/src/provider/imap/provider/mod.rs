@@ -59,6 +59,7 @@ mod label_folders;
 mod mail_send;
 mod moves;
 mod label_moves;
+mod native_labels;
 mod mutate;
 mod refresh;
 mod snoozes;
@@ -511,7 +512,9 @@ impl ImapProvider {
 
     /// Open an authenticated session through the configured source.
     async fn open_session(&self) -> ProviderResult<Box<dyn ImapSession>> {
-        self.source.open().await
+        let session = self.source.open().await?;
+        self.store.set_native_labels(session.supports_label_extensions()).map_err(db_err)?;
+        Ok(session)
     }
 }
 
@@ -544,7 +547,7 @@ impl MailProvider for ImapProvider {
             send_supported: true,
             server_search: true,
             provided_threads: false,
-            label_model: self.label_model,
+            label_model: self.store.native_label_model().ok().flatten().unwrap_or(self.label_model),
             // No server-side sent copy to verify an uncertain send against;
             // an uncertain IMAP send resolves to the terminal Unverifiable
             // state via `find_sent_copy` -> Ok(None), not a Gmail-style

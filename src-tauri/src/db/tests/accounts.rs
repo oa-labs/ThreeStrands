@@ -61,7 +61,7 @@ fn account_label_model_reflects_provider_and_imap_label_storage() {
     use crate::models::MailProviderKind;
     use crate::provider::LabelModel;
 
-    let database = database();
+    let database = std::sync::Arc::new(database());
 
     // Gmail accounts carry the many-to-many model, with no IMAP settings row.
     database.adopt_account("gmail@example.com").unwrap();
@@ -122,6 +122,16 @@ fn account_label_model_reflects_provider_and_imap_label_storage() {
         .find(|account| account.email == "folders@example.com")
         .unwrap();
     assert_eq!(folders.label_model, LabelModel::ImapLabelFolders);
+
+    let native = crate::provider::imap::ImapStateStore::new(database.clone(), "folders@example.com");
+    native.set_native_labels(true).unwrap();
+    assert_eq!(database.get_account("folders@example.com").unwrap().unwrap().label_model, LabelModel::ImapNativeLabels);
+    assert!(database.list_accounts().unwrap().iter().any(|account|
+        account.email == "folders@example.com" && account.label_model == LabelModel::ImapNativeLabels));
+    assert_eq!(database.get_account("keywords@example.com").unwrap().unwrap().label_model, LabelModel::ImapKeywords);
+    native.set_native_labels(false).unwrap();
+    assert_eq!(database.get_account("folders@example.com").unwrap().unwrap().label_model, LabelModel::ImapNoUserLabels);
+
 }
 
 #[test]

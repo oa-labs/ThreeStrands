@@ -3,7 +3,9 @@
 This implements stage 1 of [IMAP parity](imap-parity-plan.md), using the
 [persistent message identity mappings](imap-identity-mappings.md). It does not
 implement automatic account conversion, server-provided conversation grouping,
-or general label management.
+or general label management. Subsequent
+[existing native-label apply/remove support](imap-native-labels.md) builds on
+these membership snapshots and system-action safeguards.
 
 ## Aggregate acquisition and state
 

@@ -148,9 +148,20 @@ describe("conversationLabelGroups", () => {
 });
 
 describe("labelCapabilities", () => {
+  it("allows toggling existing native IMAP labels without catalog changes", () => {
+    expect(labelCapabilities("imapNativeLabels")).toEqual({
+      canManageLabels: true,
+      canCreateLabels: false,
+      canDeleteLabels: false,
+      canRenameLabels: false,
+      unavailableReason: null,
+    });
+  });
   it("allows every label action for Gmail's many-to-many model", () => {
     expect(labelCapabilities("gmailLabels")).toEqual({
       canManageLabels: true,
+      canCreateLabels: true,
+      canDeleteLabels: true,
       canRenameLabels: true,
       unavailableReason: null,
     });
@@ -161,6 +172,8 @@ describe("labelCapabilities", () => {
     // from the name), so the UI must not offer it.
     expect(labelCapabilities("imapLabelFolders")).toEqual({
       canManageLabels: true,
+      canCreateLabels: true,
+      canDeleteLabels: true,
       canRenameLabels: false,
       unavailableReason: null,
     });
@@ -180,6 +193,8 @@ describe("labelCapabilities", () => {
   it("defaults to the permissive Gmail model when the model is unknown (data still loading)", () => {
     expect(labelCapabilities(undefined)).toEqual({
       canManageLabels: true,
+      canCreateLabels: true,
+      canDeleteLabels: true,
       canRenameLabels: true,
       unavailableReason: null,
     });

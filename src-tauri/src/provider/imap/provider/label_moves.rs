@@ -24,7 +24,7 @@ fn membership(row: &IdentityRow) -> ProviderResult<&Vec<String>> {
 impl ImapProvider {
     /// Find exactly one live coordinate by the authoritative server ID. A
     /// sender Message-ID or a stale cached UID must never address this write.
-    async fn label_location(
+    pub(super) async fn label_location(
         &self,
         session: &mut dyn ImapSession,
         mailbox: &str,

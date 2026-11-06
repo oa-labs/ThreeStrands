@@ -252,7 +252,7 @@ fn build_response(
         (format!("* SEARCH {}\r\n{tag} OK done\r\n", uids.join(" ")), false)
     } else if upper.starts_with("UID STORE") && upper.contains("X-GM-LABELS") {
         let set = parse_uid_set(rest);
-        let changing = store_flags(rest);
+        let changing = all_mail::label_arguments(rest);
         let is_add = upper.contains("+X-GM-LABELS");
         all_mail::update_membership(state, selected, &set, &changing, is_add);
         if state.reset_label_validity_once {
@@ -494,7 +494,7 @@ async fn reply(server: &mut BufReader<DuplexStream>, text: &str) {
 /// The mailbox name after `SELECT`/`EXAMINE`, unquoted.
 fn select_name(rest: &str, is_select: bool) -> String {
     let verb_len = if is_select { "SELECT".len() } else { "EXAMINE".len() };
-    rest[verb_len.min(rest.len())..].trim().trim_matches('"').to_string()
+    all_mail::parse_astrings(rest[verb_len.min(rest.len())..].trim()).into_iter().next().unwrap_or_default()
 }
 
 /// The parenthesised flag list of a STORE command.
