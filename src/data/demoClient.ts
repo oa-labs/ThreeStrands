@@ -815,8 +815,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       for (const [email, relation] of relations) {
         if (!candidates.has(email)) candidates.set(email, { email, displayName: relation.displayName, pinned: false, sentCount: 0, receivedCount: 0, lastInteractedAt: "" });
       }
+      const savedNames = new Map<string, string | null>();
       for (const profile of savedContactProfiles) {
         for (const email of profile.addresses) {
+          savedNames.set(email.toLowerCase(), profile.displayName);
           const previous = candidates.get(email);
           candidates.set(email, { email, displayName: profile.displayName, pinned: profile.favorite,
             sentCount: previous?.sentCount ?? 0, receivedCount: previous?.receivedCount ?? 0,
@@ -833,7 +835,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
             !needle ||
             email.startsWith(needle) ||
             domain.includes(needle) ||
-            (contact.displayName?.toLocaleLowerCase().includes(needle) ?? false)
+            (contact.displayName?.toLocaleLowerCase().includes(needle) ?? false) ||
+            (savedNames.get(email)?.toLocaleLowerCase().includes(needle) ?? false)
           );
         },
       );
@@ -841,11 +844,21 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         (a, b) =>
           Number(b.pinned) - Number(a.pinned) ||
           compareRelations(relations.get(a.email), relations.get(b.email)) ||
+          // While typing, saved contacts lead people only in mail history.
+          (needle ? Number(savedNames.has(b.email.toLowerCase())) - Number(savedNames.has(a.email.toLowerCase())) : 0) ||
           b.sentCount - a.sentCount ||
           b.receivedCount - a.receivedCount ||
           b.lastInteractedAt.localeCompare(a.lastInteractedAt),
       );
       return structuredClone(matches.slice(0, limit).map((item) => ({ ...item, relatedTo: relations.get(item.email)?.relatedTo.slice(0, 3) })));
+    },
+    async listInviteeSuggestions(calendarAccount, query, limit, invitees) {
+      const accounts = await this.listAccounts();
+      const mailAccount = accounts.find((account) => account.email.toLowerCase() === calendarAccount?.toLowerCase())?.email
+        ?? accounts[0]?.email ?? DEMO_ACCOUNT_ID;
+      return this.listContactSuggestions(mailAccount, query, limit, {
+        seeds: invitees, excluded: calendarAccount ? [...invitees, calendarAccount] : invitees,
+      });
     },
     async listContactProfiles(query = "", limit = 500, accountId) {
       const byEmail = new Map<string, ContactProfile>();

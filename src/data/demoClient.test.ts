@@ -743,4 +743,19 @@ describe("demo co-recipient suggestions", () => {
       expect(await client.listContactSuggestions(account, "unrelated", 8, context)).toEqual([]);
     } finally { vi.useRealTimers(); }
   });
+
+  it("puts saved contacts first while typing and suggests invitees from the calendar's account", async () => {
+    const seed = defaultDemoDataset();
+    const account = seed.accounts[0].email;
+    seed.contacts = [{ email: "sam.busy@example.com", displayName: "Sam Busy", sentCount: 100, receivedCount: 0, lastInteractedAt: "", pinned: false }];
+    const client = createDemoClient(seed);
+    await client.saveContactProfile({ id: null, displayName: "Sam Saved", role: null, company: null, location: null, bio: null, notes: null,
+      links: [], photoData: null, favorite: false, addresses: ["sam.saved@elsewhere.test"], birthday: null });
+    expect((await client.listContactSuggestions(account, "sam", 8)).map((item) => item.email)).toEqual(["sam.saved@elsewhere.test", "sam.busy@example.com"]);
+    expect((await client.listContactSuggestions(account, "", 8)).findIndex((item) => item.email === "sam.busy@example.com")).toBe(0);
+    // A calendar-only account uses the primary mail account; invitees and the organizer are never offered.
+    const invitees = await client.listInviteeSuggestions("calendar-only@example.com", "sam", 8, ["sam.busy@example.com"]);
+    expect(invitees.map((item) => item.email)).toEqual(["sam.saved@elsewhere.test"]);
+    expect(await client.listInviteeSuggestions("sam.saved@elsewhere.test", "sam", 8, ["sam.busy@example.com"])).toEqual([]);
+  });
 });

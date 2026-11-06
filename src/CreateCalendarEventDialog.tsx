@@ -225,7 +225,7 @@ export function CreateCalendarEventDialog({
         {writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === selectedCalendarKey && !calendar.selected)
           ? <p className="modal-form-context">This calendar will be shown in your schedule.</p> : null}
         {writable.length === 0 ? <p className="form-error">Connect or reconnect a Google Calendar account with event access to create meetings.</p> : null}
-        <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
+        <EmailBadgeField label="Invite People" values={invitees} calendarAccount={selectedCalendarKey.split("\n")[0] || null} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
         <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="modal-form-actions">
@@ -407,7 +407,7 @@ export function EditCalendarEventDialog({
             disabled={saving} onSelect={selectTime}
           /> : null}
           <EventLocationField value={location} disabled={saving} onChange={setLocation} />
-          <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
+          <EmailBadgeField label="Invite People" values={invitees} calendarAccount={event.accountId} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
           <label>Description<textarea value={description} onChange={(change) => setDescription(change.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>
           <p className="modal-form-context">Guests are notified of changes.</p>
           {error ? <p className="form-error" role="alert">{error}</p> : null}

@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { Check, Copy, Star, Users, X } from "lucide-react";
 import { matchingGroups, memberCountLabel } from "./contactGroups";
 import { mailClient } from "./data/client";
-import type { ContactGroupRecipients, ContactProfile } from "./domain";
+import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
 import { isEmailAddress, normalizePastedEmailAddresses, splitTypedAddresses } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
@@ -15,24 +15,15 @@ const EMAIL_SEPARATORS = /[\s,;]+/;
 const LINK_SEPARATORS = /\s+/;
 const MAX_ADDRESS_SUGGESTIONS = 8;
 
-type AddressSuggestion = { email: string; name: string | null };
-
-/**
- * One option per address of each matching address-book contact, skipping
- * addresses already in the field.
- */
-export function addressSuggestions(profiles: readonly ContactProfile[], values: readonly string[]): AddressSuggestion[] {
+/** The suggested people not already in the field, at most one option per address. */
+function personSuggestions(people: readonly ContactSuggestion[], values: readonly string[]): ContactSuggestion[] {
   const taken = new Set(values.map((value) => value.toLocaleLowerCase()));
-  const options: AddressSuggestion[] = [];
-  for (const profile of profiles) {
-    for (const email of profile.addresses) {
-      if (taken.has(email.toLocaleLowerCase())) continue;
-      taken.add(email.toLocaleLowerCase());
-      options.push({ email, name: profile.displayName?.trim() || null });
-      if (options.length === MAX_ADDRESS_SUGGESTIONS) return options;
-    }
-  }
-  return options;
+  return people.filter((person) => {
+    const email = person.email.toLocaleLowerCase();
+    if (taken.has(email)) return false;
+    taken.add(email);
+    return true;
+  }).slice(0, MAX_ADDRESS_SUGGESTIONS);
 }
 
 function addAll(values: string[], text: string, kind: "email" | "link"): string[] {
@@ -63,21 +54,26 @@ export function ContactAddressField({ addresses, disabled, onChange }: {
 /**
  * A list of email addresses, such as meeting invitees, as removable badges
  * that commit the same way as a contact's addresses. Typing a name or address
- * suggests contact groups, then address-book contacts; choosing a contact
- * adds a badge with their name, and choosing a group adds one per member.
+ * suggests contact groups, then people: saved contacts and the people the
+ * user emails, ranked as in compose, with those often emailed alongside the
+ * people already listed first (also offered on focus, before typing).
+ * Choosing a person adds a badge with their name, and choosing a group adds
+ * one per member.
  * Spaces separate typed addresses but not names. Only email addresses become
  * badges: anything else stays in the field with a hint, and is reported
  * through `onPendingChange` so the form can refuse to submit with it.
  */
-export function EmailBadgeField({ label, values, disabled, onChange, onPendingChange }: {
+export function EmailBadgeField({ label, values, calendarAccount, disabled, onChange, onPendingChange }: {
   label: string;
+  /** The account whose calendar holds the event; its mail history ranks suggestions. */
+  calendarAccount?: string | null;
   values: string[];
   disabled?: boolean;
   onChange(values: string[]): void;
   /** The text typed but not yet a badge. */
   onPendingChange?(text: string): void;
 }) {
-  return <ContactMultiValueField kind="email" label={label} inputLabel={label} suggestContacts requireAddresses values={values} disabled={disabled} onChange={onChange} onPendingChange={onPendingChange} />;
+  return <ContactMultiValueField kind="email" label={label} inputLabel={label} suggestContacts calendarAccount={calendarAccount} requireAddresses values={values} disabled={disabled} onChange={onChange} onPendingChange={onPendingChange} />;
 }
 
 export function ContactLinksField({ links, disabled, onChange }: {
@@ -88,7 +84,7 @@ export function ContactLinksField({ links, disabled, onChange }: {
   return <ContactMultiValueField kind="link" label="Links" inputLabel="Links" values={links} disabled={disabled} onChange={onChange} />;
 }
 
-function ContactMultiValueField({ kind, label, inputLabel, primary = false, suggestContacts = false, requireAddresses = false, values, disabled, onChange, onPendingChange }: {
+function ContactMultiValueField({ kind, label, inputLabel, primary = false, suggestContacts = false, calendarAccount = null, requireAddresses = false, values, disabled, onChange, onPendingChange }: {
   kind: "email" | "link";
   label: string;
   inputLabel: string;
@@ -96,6 +92,7 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
   primary?: boolean;
   /** Suggest contact groups and address-book contacts as the user types. */
   suggestContacts?: boolean;
+  calendarAccount?: string | null;
   /** Only email addresses become badges; other text stays in the field. */
   requireAddresses?: boolean;
   values: string[];
@@ -117,7 +114,7 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Names of contacts chosen from suggestions, by lowercase address, for their badges.
   const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
-  const [profiles, setProfiles] = useState<ContactProfile[]>([]);
+  const [people, setPeople] = useState<ContactSuggestion[]>([]);
   const [groups, setGroups] = useState<ContactGroupRecipients[]>([]);
   // What choosing a group just added, until the next edit.
   const [groupNote, setGroupNote] = useState<string | null>(null);
@@ -133,7 +130,7 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
 
   // Groups come first: typing a group's name is a deliberate choice.
   const groupOptions = suggestContacts ? matchingGroups(groups, draft) : [];
-  const contactOptions = suggestContacts && draft.trim() ? addressSuggestions(profiles, values) : [];
+  const contactOptions = suggestContacts && (draft.trim() || values.length) ? personSuggestions(people, values) : [];
   const optionCount = groupOptions.length + contactOptions.length;
   const open = !dismissed && optionCount > 0;
   const active = Math.min(activeIndex, optionCount - 1);
@@ -152,13 +149,14 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
     // Invalidate any request in flight, including on clear.
     const thisRequest = ++requestId.current;
     const token = text.trim();
-    if (!token) {
-      setProfiles([]);
+    // With nothing typed, the people already listed still suggest who usually joins them.
+    if (!token && !values.length) {
+      setPeople([]);
       return;
     }
     debounce.current = setTimeout(() => {
-      void mailClient.listContactProfiles(token, MAX_ADDRESS_SUGGESTIONS).then((result) => {
-        if (thisRequest === requestId.current) setProfiles(result);
+      void mailClient.listInviteeSuggestions(calendarAccount, token, MAX_ADDRESS_SUGGESTIONS, values).then((result) => {
+        if (thisRequest === requestId.current) setPeople(result);
       }).catch(logBackgroundFailure("Contact suggestion lookup"));
     }, 150);
   };
@@ -170,6 +168,14 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
       logBackgroundFailure("Contact group lookup")(reason);
     });
   };
+  // Who joins the people already listed changes as they change; refresh
+  // while the field is in use, as compose does.
+  const valuesKey = values.join("\n").toLocaleLowerCase();
+  useEffect(() => {
+    if (suggestContacts && document.activeElement === inputRef.current) lookUp(draft);
+    // lookUp reads the current values; text edits have their own path.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [valuesKey, calendarAccount]);
   const changeDraft = (text: string) => {
     setDraft(text);
     setRejected(false);
@@ -212,8 +218,9 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
     setRejected(Boolean(rest));
     if (next.length !== values.length) onChange(next);
   };
-  const choose = (suggestion: AddressSuggestion) => {
-    if (suggestion.name) setNames((current) => new Map(current).set(suggestion.email.toLocaleLowerCase(), suggestion.name!));
+  const choose = (suggestion: ContactSuggestion) => {
+    const name = suggestion.displayName?.trim();
+    if (name) setNames((current) => new Map(current).set(suggestion.email.toLocaleLowerCase(), name));
     commit(suggestion.email);
     setDismissed(true);
     inputRef.current?.focus();
@@ -324,7 +331,13 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
           disabled={disabled}
           value={draft}
           onChange={(event) => changeDraft(event.target.value)}
-          onFocus={loadGroups}
+          onFocus={() => {
+            loadGroups();
+            if (suggestContacts && !draft.trim() && values.length) {
+              setDismissed(false);
+              lookUp("");
+            }
+          }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           onBlur={() => { setDismissed(true); commit(draft); }}
@@ -364,8 +377,9 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
               onMouseDown={(event) => { event.preventDefault(); choose(suggestion); }}
             >
               <span className="recipient-suggestion-name">
-                {suggestion.name ?? suggestion.email}
-                {suggestion.name ? <small>{suggestion.email}</small> : null}
+                {suggestion.displayName?.trim() || suggestion.email}
+                {suggestion.displayName?.trim() ? <small>{suggestion.email}</small> : null}
+                {suggestion.relatedTo?.length ? <small>Often emailed with {suggestion.relatedTo.join(", ")}</small> : null}
               </span>
             </li>
             );

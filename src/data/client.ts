@@ -219,6 +219,12 @@ export interface MailClient extends CorrespondenceClient {
   discoverSystemContacts(): Promise<SystemContactsStatus>;
   refreshSystemContacts(selectedSources?: string[]): Promise<SystemContactsStatus>;
   listContactProfiles(query?: string, limit?: number, accountId?: string): Promise<ContactProfile[]>;
+  /**
+   * People to invite to an event: saved contacts and correspondents, ranked
+   * as in compose with `invitees` as context. Mail history comes from
+   * `calendarAccount` when it is a mail account, otherwise the primary one.
+   */
+  listInviteeSuggestions(calendarAccount: string | null, query: string, limit: number, invitees: string[]): Promise<ContactSuggestion[]>;
   /** Resolves saved profiles first, then connected Mac contacts; unknown addresses are omitted. */
   resolveContactIds(emails: string[]): Promise<Record<string, string>>;
   getContactProfile(id: string): Promise<ContactProfile | null>;
@@ -476,6 +482,7 @@ const tauriClient: MailClient = {
   discoverSystemContacts: () => complete("discover_system_contacts"),
   refreshSystemContacts: (selectedSources) => complete("refresh_system_contacts", { selectedSources: selectedSources ?? null }),
   listContactProfiles: (query = "", limit = 500, accountId) => read("list_contact_profiles", { query, limit, accountId }),
+  listInviteeSuggestions: (calendarAccount, query, limit, invitees) => read("list_invitee_suggestions", { calendarAccount, query, limit, invitees }),
   resolveContactIds: (emails) => read("resolve_contact_ids", { emails }),
   getContactProfile: (id) => read("get_contact_profile", { id }),
   saveContactProfile: (request) => complete("save_contact_profile", { request }),

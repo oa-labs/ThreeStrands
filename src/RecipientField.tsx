@@ -166,8 +166,8 @@ export function RecipientField({ id, label, value, account, disabled, context, l
   const alreadyKnown = candidateEmail
     ? visibleSuggestions.some((contact) => contact.email.toLowerCase() === candidateEmail.toLowerCase())
     : true;
-  // Someone with zero mail history (a brand-new contact) never turns up from
-  // `listContactSuggestions` on its own — this is the only way to pin them.
+  // An address that is neither saved nor in mail history never turns up from
+  // `listContactSuggestions` on its own — this is the only way to pin it.
   const addCandidate: Chip | null = candidateEmail && !alreadyKnown ? toChip(draftText.trim()) : null;
   // Groups come first: typing a group's name is a deliberate choice, and
   // choosing one adds every member as a chip, so nothing downstream changes.

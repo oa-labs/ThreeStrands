@@ -1449,6 +1449,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::mail::record_triage_event,
         commands::mail::list_triage_sender_stats,
         commands::contacts::list_contact_suggestions,
+        commands::contacts::list_invitee_suggestions,
         commands::contacts::rank_contact_group_candidates,
         commands::contacts::list_contact_profiles,
         system_contacts::system_contacts_status,

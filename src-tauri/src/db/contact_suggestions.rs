@@ -56,6 +56,25 @@ impl Database {
         self.contact_suggestions(account_id, query, limit, true, seeds, excluded)
     }
 
+    /// Suggestions for the people invited to a calendar event. Mail history
+    /// comes from `calendar_account` when it is also a mail account here, and
+    /// otherwise from the primary mail account; saved contacts and selected
+    /// Mac address books are shared by every account. The invitees seed
+    /// "often emailed with" ranking and are never suggested again, and
+    /// neither is the calendar account itself, which organizes the event.
+    pub fn invitee_suggestions(
+        &self, calendar_account: Option<&str>, query: &str, limit: usize, invitees: &[String],
+    ) -> DbResult<Vec<ContactSuggestion>> {
+        let accounts = self.list_accounts()?;
+        let mail_account = calendar_account
+            .and_then(|calendar| accounts.iter().find(|account| account.email.eq_ignore_ascii_case(calendar)))
+            .map(|account| account.email.clone())
+            .unwrap_or_else(|| self.primary_account_id());
+        let mut excluded = invitees.to_vec();
+        excluded.extend(calendar_account.map(str::to_string));
+        self.contact_suggestions(&mail_account, query, limit, true, invitees, &excluded)
+    }
+
     fn contact_suggestions(
         &self,
         account_id: &str,
@@ -74,6 +93,10 @@ impl Database {
                 received_count: i64,
                 last_interacted_at: String,
                 pinned: bool,
+                /// The saved contact's name when this is a saved contact's address.
+                /// Matching it as well finds a contact saved under a name that
+                /// differs from the one their mail uses.
+                saved: Option<Option<String>>,
             }
             let relationships = super::co_recipients::relationships(connection, Some(account_id), seeds, chrono::Utc::now())?;
             let excluded = super::co_recipients::normalize_addresses(excluded);
@@ -82,7 +105,7 @@ impl Database {
             let mut by_email: HashMap<String, Agg> = HashMap::new();
             for (email, relation) in &relationships {
                 by_email.insert(email.clone(), Agg { display_name: relation.display_name.clone(),
-                    sent_count: 0, received_count: 0, last_interacted_at: String::new(), pinned: false });
+                    sent_count: 0, received_count: 0, last_interacted_at: String::new(), pinned: false, saved: None });
             }
 
             let candidate_cte = if needle.is_empty() { "" } else { MATCHING_EMAILS };
@@ -102,7 +125,7 @@ impl Database {
             })?;
             for row in rows {
                 let (email,display_name,sent_count,received_count,last_interacted_at)=row?;
-                by_email.insert(email,Agg{display_name,sent_count,received_count,last_interacted_at,pinned:false});
+                by_email.insert(email,Agg{display_name,sent_count,received_count,last_interacted_at,pinned:false,saved:None});
             }
 
             let mut pinned_statement = connection
@@ -125,6 +148,7 @@ impl Database {
                     received_count: 0,
                     last_interacted_at: pinned_at,
                     pinned: false,
+                    saved: None,
                 });
                 entry.pinned = true;
                 if entry.display_name.is_none() {
@@ -134,7 +158,7 @@ impl Database {
 
             let mut profile_statement=connection.prepare("SELECT a.email,c.display_name,c.favorite,c.updated_at FROM contact_addresses a JOIN contacts c ON c.id=a.contact_id")?;
             let profile_rows=profile_statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,bool>(2)?,row.get::<_,String>(3)?)))?;
-            for row in profile_rows {let(email,name,favorite,updated)=row?;let email=email.to_ascii_lowercase();let entry=by_email.entry(email).or_insert_with(||Agg{display_name:name.clone(),sent_count:0,received_count:0,last_interacted_at:updated,pinned:false});if entry.display_name.is_none(){entry.display_name=name;}entry.pinned|=favorite;}
+            for row in profile_rows {let(email,name,favorite,updated)=row?;let email=email.to_ascii_lowercase();let entry=by_email.entry(email).or_insert_with(||Agg{display_name:name.clone(),sent_count:0,received_count:0,last_interacted_at:updated,pinned:false,saved:None});if entry.display_name.is_none(){entry.display_name=name.clone();}entry.pinned|=favorite;entry.saved=Some(name);}
 
             // Provider-only suggestions rank after established correspondents;
             // a selected address book does not imply favorite/pinned status.
@@ -142,13 +166,19 @@ impl Database {
             let system_rows = system_statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?;
             for row in system_rows {
                 let (email, name) = row?;
-                let entry = by_email.entry(email).or_insert_with(|| Agg { display_name: name.clone(), sent_count: 0, received_count: 0, last_interacted_at: String::new(), pinned: false });
+                let entry = by_email.entry(email).or_insert_with(|| Agg { display_name: name.clone(), sent_count: 0, received_count: 0, last_interacted_at: String::new(), pinned: false, saved: None });
                 if name.is_some() { entry.display_name = name; }
             }
 
             let mut suppressed_statement = connection.prepare("SELECT email FROM contact_suggestion_suppressions")?;
             let suppressed = suppressed_statement.query_map([], |row| row.get::<_, String>(0))?
                 .collect::<Result<std::collections::HashSet<_>, _>>()?;
+            // While the user types, someone they saved as a contact outranks
+            // people only in their mail history, so a contact never emailed
+            // is not crowded out by busier correspondents with the same name.
+            // With nothing typed, the list stays about mail history and context.
+            let saved_first: std::collections::HashSet<String> = if needle.is_empty() { Default::default() }
+                else { by_email.iter().filter(|(_, agg)| agg.saved.is_some()).map(|(email, _)| email.clone()).collect() };
             let mut suggestions: Vec<ContactSuggestion> = by_email
                 .into_iter()
                 .filter(|(email, agg)| {
@@ -163,6 +193,8 @@ impl Database {
                         || agg
                             .display_name
                             .as_deref()
+                            .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
+                        || agg.saved.as_ref().and_then(Option::as_deref)
                             .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                 })
                 .map(|(email, agg)| ContactSuggestion {
@@ -179,6 +211,7 @@ impl Database {
                 b.pinned
                     .cmp(&a.pinned)
                     .then_with(|| super::co_recipients::compare(relationships.get(&a.email), relationships.get(&b.email)))
+                    .then_with(|| saved_first.contains(&b.email).cmp(&saved_first.contains(&a.email)))
                     .then(b.sent_count.cmp(&a.sent_count))
                     .then(b.received_count.cmp(&a.received_count))
                     .then(b.last_interacted_at.cmp(&a.last_interacted_at))

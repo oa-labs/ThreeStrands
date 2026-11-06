@@ -149,7 +149,9 @@ fn autocomplete_candidate_filter_preserves_counts_name_precedence_pins_and_suppr
          INSERT INTO contact_addresses(contact_id,email) VALUES
          ('candidate-profile','person@partner.test'), ('candidate-new','profile@new.test');"
     ).unwrap();
-    for query in ["CURRENT", "person", "partner", "Pinned Only", "Profile Only"] {
+    // A saved contact is found by the name it was saved under, too, while
+    // its mail name stays the one shown.
+    for query in ["CURRENT", "person", "partner", "Pinned Only", "Profile Only", "Profile Override"] {
         let suggestions = database.list_contact_suggestions("you@example.com", query, 10).unwrap();
         assert_eq!(suggestions.len(), 1, "query {query:?}");
         let suggestion = &suggestions[0];
@@ -159,7 +161,7 @@ fn autocomplete_candidate_filter_preserves_counts_name_precedence_pins_and_suppr
             assert_eq!(suggestion.display_name.as_deref(), Some("Current Name"));
         }
     }
-    for query in ["Historical", "Pinned Override", "Profile Override", "unmatched"] {
+    for query in ["Historical", "Pinned Override", "unmatched"] {
         assert!(database.list_contact_suggestions("you@example.com", query, 10).unwrap().is_empty(), "query {query:?}");
     }
     database.set_contact_suppressed("person@partner.test", true).unwrap();
@@ -219,4 +221,90 @@ fn contact_suggestions_exclude_automated_senders_unless_sent_to_or_pinned() {
     assert_eq!(suggestions[0].email, "newsletter@example.com");
     assert_eq!(suggestions[0].sent_count, 1);
     assert_eq!(suggestions[0].received_count, 0);
+}
+
+fn sent_from(database: &crate::db::Database, account: &str, id: &str, recipients: &[&str]) {
+    let mut sent = message(id, id, &(chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339(), "body");
+    sent.labels = vec!["SENT".into()];
+    sent.from = account.into();
+    sent.to = recipients.iter().map(|recipient| recipient.to_string()).collect();
+    database.upsert_thread(account, &[sent]).unwrap();
+}
+
+fn save_contact(database: &crate::db::Database, id: &str, name: &str, email: &str) {
+    database.connection().unwrap().execute(
+        "INSERT INTO contacts(id,display_name,favorite,updated_at) VALUES(?1,?2,0,'2026-01-01')", rusqlite::params![id, name],
+    ).unwrap();
+    database.connection().unwrap().execute(
+        "INSERT INTO contact_addresses(contact_id,email) VALUES(?1,?2)", rusqlite::params![id, email],
+    ).unwrap();
+}
+
+#[test]
+fn saved_contacts_outrank_busier_correspondents_while_typing() {
+    let database = database();
+    for n in 0..10 {
+        for occurrence in 0..3 {
+            sent_from(&database, "you@example.com", &format!("sam{n}-{occurrence}"), &[&format!("Sam Busy{n} <sam{n}@example.com>")]);
+        }
+    }
+    save_contact(&database, "never-emailed", "Sam Saved", "sam.saved@elsewhere.test");
+    // Saved under a different name than the one their mail uses.
+    sent_from(&database, "you@example.com", "robert", &["Bob <rsmith@example.com>"]);
+    save_contact(&database, "robert", "Robert Smith", "rsmith@example.com");
+
+    let typed = database.list_contact_suggestions("you@example.com", "sam", 8).unwrap();
+    assert_eq!(typed.len(), 8);
+    assert_eq!(typed[0].email, "sam.saved@elsewhere.test");
+    assert_eq!(typed[0].sent_count, 0);
+
+    let by_saved_name = database.list_contact_suggestions("you@example.com", "robert", 8).unwrap();
+    assert_eq!(by_saved_name.iter().map(|item| item.email.as_str()).collect::<Vec<_>>(), ["rsmith@example.com"]);
+    assert_eq!(by_saved_name[0].display_name.as_deref(), Some("Bob"));
+
+    // With nothing typed, mail history decides the order.
+    let untyped = database.list_contact_suggestions("you@example.com", "", 8).unwrap();
+    assert!(untyped.iter().all(|item| item.sent_count > 0), "{untyped:?}");
+    assert!(!untyped.iter().any(|item| item.email == "sam.saved@elsewhere.test"));
+}
+
+#[test]
+fn people_often_emailed_with_the_current_recipients_still_lead_saved_contacts() {
+    let database = database();
+    for id in ["pair1", "pair2"] {
+        sent_from(&database, "you@example.com", id, &["alice@example.com", "Sam Partner <sam.partner@example.com>"]);
+    }
+    save_contact(&database, "saved", "Sam Saved", "sam.saved@elsewhere.test");
+    let context = vec!["alice@example.com".to_string()];
+    let ranked = database.contextual_contact_suggestions("you@example.com", "sam", 8, &context, &context).unwrap();
+    assert_eq!(ranked.iter().map(|item| item.email.as_str()).collect::<Vec<_>>(), ["sam.partner@example.com", "sam.saved@elsewhere.test"]);
+    assert_eq!(ranked[0].related_to, ["alice@example.com"]);
+}
+
+#[test]
+fn invitee_suggestions_use_the_calendar_accounts_mail_and_never_suggest_invitees_or_the_organizer() {
+    let database = database();
+    database.adopt_account("primary@example.com").unwrap();
+    database.adopt_account("work@example.com").unwrap();
+    for id in ["work1", "work2"] {
+        sent_from(&database, "work@example.com", id, &["alice@example.com", "bob@example.com"]);
+    }
+    sent_from(&database, "primary@example.com", "home", &["Bob Home <bobby@home.test>"]);
+    save_contact(&database, "saved", "Bob Saved", "bob.saved@elsewhere.test");
+    let invitees = vec!["alice@example.com".to_string()];
+
+    // The calendar account is a mail account: its history, with the invitees as context.
+    let work = database.invitee_suggestions(Some("WORK@example.com"), "", 8, &invitees).unwrap();
+    assert_eq!(work[0].email, "bob@example.com");
+    assert_eq!(work[0].related_to, ["alice@example.com"]);
+    assert!(!work.iter().any(|item| ["alice@example.com", "work@example.com", "bobby@home.test"].contains(&item.email.as_str())), "{work:?}");
+
+    // A calendar-only account falls back to the primary mail account; saved contacts are always there.
+    let calendar_only = database.invitee_suggestions(Some("calendar-only@example.com"), "bob", 8, &[]).unwrap();
+    let emails = calendar_only.iter().map(|item| item.email.as_str()).collect::<Vec<_>>();
+    assert_eq!(emails, ["bob.saved@elsewhere.test", "bobby@home.test"]);
+
+    // The organizer is never offered as an invitee.
+    save_contact(&database, "me", "Organizer", "organizer@example.com");
+    assert!(database.invitee_suggestions(Some("organizer@example.com"), "organizer", 8, &[]).unwrap().is_empty());
 }

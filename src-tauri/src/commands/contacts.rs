@@ -33,6 +33,21 @@ pub(crate) async fn rank_contact_group_candidates(
     run_database_task(move || database.rank_contact_group_candidates(&group_id, &selected_ids, &emails)).await
 }
 
+/// Suggestions for an event's Invite People field; see
+/// `Database::invitee_suggestions`. `calendar_account` is the account whose
+/// calendar holds the event, when one is chosen.
+#[tauri::command]
+pub(crate) async fn list_invitee_suggestions(
+    calendar_account: Option<String>,
+    query: String,
+    limit: Option<usize>,
+    invitees: Vec<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ContactSuggestion>> {
+    let database = state.database.clone();
+    run_database_task(move || database.invitee_suggestions(calendar_account.as_deref(), &query, limit.unwrap_or(8), &invitees)).await
+}
+
 #[tauri::command]
 pub(crate) async fn list_contact_profiles(
     query: String,
