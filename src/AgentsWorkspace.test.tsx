@@ -115,7 +115,7 @@ describe("real research entry",()=> {
     const client=createDemoClient(dataset);
     await client.setAgentRunnerEnabled(true);
     for(const key of ["agentRunnerEnabled","listAgentTasks","listTasks"] as const) vi.spyOn(mailClient,key).mockImplementation(client[key] as never);
-    vi.spyOn(mailClient,"agentResearchSettings").mockResolvedValue({config:{enabled:true,searchEnabled:true,persistenceBasis:"Applicable API agreement",verified:true},modelKeyConfigured:true,searchKeyConfigured:true});
+    vi.spyOn(mailClient,"agentResearchSettings").mockResolvedValue({config:{enabled:true,searchEnabled:true,verified:true},modelKeyConfigured:true,searchKeyConfigured:true});
     const d=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Check the show",workflow:"fixture_research_v1"});
     const create=vi.spyOn(mailClient,"createAgentResearchTask").mockResolvedValue({...d,task:{...d.task,workflow:"web_research_v1"}});
     render(<Harness />);
@@ -133,7 +133,7 @@ describe("real research entry",()=> {
   it("sends research setup to Settings and re-reads it when Settings closes",async()=> {
     const client=createDemoClient(dataset);
     for(const key of ["agentRunnerEnabled","listAgentTasks","listTasks"] as const) vi.spyOn(mailClient,key).mockImplementation(client[key] as never);
-    const read=vi.spyOn(mailClient,"agentResearchSettings").mockResolvedValue({config:{enabled:false,searchEnabled:true,persistenceBasis:"",verified:false},modelKeyConfigured:false,searchKeyConfigured:false});
+    const read=vi.spyOn(mailClient,"agentResearchSettings").mockResolvedValue({config:{enabled:false,searchEnabled:true,verified:false},modelKeyConfigured:false,searchKeyConfigured:false});
     function Workspace({settingsOpen}:{settingsOpen:boolean}) {const c=useAgentTasks();return <AgentsWorkspace controller={c} accounts={dataset.accounts} accountId={null} onOpenThread={openThread} onOpenTask={openTask} onOpenResearchSettings={openResearchSettings} settingsOpen={settingsOpen} />;}
     openResearchSettings.mockReset();
     const view=render(<Workspace settingsOpen={false} />);

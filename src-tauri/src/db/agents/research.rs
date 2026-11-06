@@ -54,7 +54,18 @@ fn config(c: &Connection) -> DbResult<ResearchConfig> {
             |r| r.get(0),
         )
         .optional()?;
-    v.map(decode).transpose().map(|v| v.unwrap_or_default())
+    v.map(decode_config)
+        .transpose()
+        .map(|v| v.unwrap_or_default())
+}
+/// Configs saved before the storage-agreement field was removed still carry
+/// `persistenceBasis`; drop it so `deny_unknown_fields` stays strict for new input.
+fn decode_config(v: String) -> DbResult<ResearchConfig> {
+    let mut value: serde_json::Value = decode(v)?;
+    if let Some(fields) = value.as_object_mut() {
+        fields.remove("persistenceBasis");
+    }
+    serde_json::from_value(value).map_err(|e| DatabaseError::corrupt(e.to_string()))
 }
 fn ready(c: &Connection, search: bool) -> DbResult<()> {
     let cfg = config(c)?;
@@ -78,8 +89,6 @@ fn ready(c: &Connection, search: bool) -> DbResult<()> {
     if !cfg.search_enabled {
         return Err(DatabaseError::invalid("search_not_configured"));
     }
-    text(&cfg.persistence_basis, MAX_PERSISTENCE_BASIS)
-        .map_err(|_| DatabaseError::invalid("persistence_rights_required"))?;
     if !cfg.verified {
         return Err(DatabaseError::invalid("connection_check_required"));
     }
@@ -115,9 +124,6 @@ impl Database {
         verified: bool,
         now: i64,
     ) -> DbResult<()> {
-        if cfg.persistence_basis.chars().count() > MAX_PERSISTENCE_BASIS {
-            return Err(DatabaseError::invalid("Persistence basis is too long"));
-        }
         let mut cfg = cfg.clone();
         cfg.verified = verified;
         self.with_transaction(|c| {
@@ -540,7 +546,6 @@ mod tests {
             &ResearchConfig {
                 enabled: true,
                 search_enabled: true,
-                persistence_basis: "Applicable API agreement".into(),
                 verified: false,
             },
             true,
@@ -649,6 +654,34 @@ mod tests {
         assert_eq!(d.artifacts[0].version, 1);
         assert_eq!(d.artifacts[1].version, 2);
         assert_eq!(d.research.unwrap().usage.model_calls, 4);
+    }
+    #[test]
+    fn configs_saved_with_the_retired_storage_agreement_still_load_and_search_needs_no_agreement() {
+        let db = Database::open_memory();
+        db.with_connection(|c| {
+            c.execute(
+                "INSERT INTO compose_settings(key,value) VALUES ('agent_research_config',?1)",
+                [r#"{"enabled":true,"searchEnabled":true,"persistenceBasis":"","verified":true}"#],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let cfg = db.research_config().unwrap();
+        assert!(cfg.enabled && cfg.search_enabled && cfg.verified);
+        assert!(!serde_json::to_value(&cfg)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("persistenceBasis"));
+        // Before removal, an empty agreement blocked search at preflight.
+        db.set_agent_runner_enabled(true, 0).unwrap();
+        db.set_research_config(&cfg, true, 0).unwrap();
+        assert!(db.with_connection(|c| ready(c, true)).is_ok());
+        // New input stays strict: the retired field is not accepted from the UI.
+        assert!(serde_json::from_str::<ResearchConfig>(
+            r#"{"enabled":true,"searchEnabled":true,"persistenceBasis":"x"}"#
+        )
+        .is_err());
     }
     #[test]
     fn questions_wait_without_dispatch_and_pair_the_answer_before_the_next_model_message() {

@@ -139,7 +139,7 @@ describe("native delegated-work contract", () => {
     await client.interactAgentTask("agent-1", "Focus on sales", "revise");
     await client.linkAgentTask("agent-1", null);
     await client.markAgentTaskRead("agent-1", 2, 4, 1);
-    const config = { enabled:true, searchEnabled:true, persistenceBasis:"API agreement", verified:false };
+    const config = { enabled:true, searchEnabled:true, verified:false };
     const research = { task: {...request, workflow:"web_research_v1" as const}, subjects:["Example Show"], consent:true };
     await client.agentResearchSettings();
     await client.setAgentResearchSettings(config);

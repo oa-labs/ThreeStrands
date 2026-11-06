@@ -49,7 +49,7 @@ function NewAgentTask({ controller, accounts, research, onSetup }: { controller:
       <select id={`${id}-mode`} value={mode} onChange={e => setMode(e.target.value)}><option value="demo">Invitation research demonstration</option><option value="web">Web research</option></select>
     </div>
     {mode === "web" ? <>
-      {!ready ? <p role="status">Web research is not configured. Save separate research keys, record your storage agreement, and check connections.</p> : null}
+      {!ready ? <p role="status">Web research is not configured. Save separate research keys and check connections.</p> : null}
       <button type="button" className="btn" onClick={onSetup}>Research settings</button>
       <div className="agent-field">
         <label className="agent-field-label" htmlFor={`${id}-subjects`}>Public search subjects (one per line)</label>

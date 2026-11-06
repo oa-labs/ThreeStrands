@@ -9,7 +9,6 @@ pub(crate) const SYSTEM: &str = "Research only within the granted read-only tool
 pub(crate) struct ResearchConfig {
     pub enabled: bool,
     pub search_enabled: bool,
-    pub persistence_basis: String,
     #[serde(default)]
     pub verified: bool,
 }

@@ -155,12 +155,13 @@ its pricing lists ZDR as an enterprise capability. Sources:
 Provider storage rights and third-party page rights are not interchangeable.
 Exa's public terms grant documented API use but also restrict copying/derivative
 uses subject to permitted exceptions; this record does not establish blanket
-rights to persist provider output. Before enabling persistent real-service jobs,
-record the applicable API/customer-agreement basis for saved metadata/excerpts
-and reports. If unresolved, preflight must return `persistence_rights_required`,
-not silently retain results. Do not turn a user's API key or successful response
-into proof of those rights. This account-specific eligibility is a live-release
-gate, not a reason to prevent offline scheduler/UI development. Source:
+rights to persist provider output. Phase 3 first enforced this with a free-text
+"storage agreement" field that preflight required to be non-empty
+(`persistence_rights_required`). That was later removed: any text satisfied it,
+so it established nothing and only blocked setup. Whether a provider's terms
+allow saved excerpts is between the user and that provider, as with any other
+API key the user brings. Setup instead states retention plainly: raw evidence
+expires after seven days, and reports and cited excerpts remain until deleted. Source:
 [Exa terms §§1.1, 4.1–4.2](https://exa.ai/assets/Exa_Labs_Terms_of_Service.pdf).
 
 Local raw search/page payloads expire after seven days where persistence is
@@ -252,8 +253,7 @@ provider availability, useful research quality, or commercial entitlement.
 
 Phase 0's deliverables are the selected adapter record, frozen policy, wire
 request/response fixtures, negative cases, and offline conformance tests. Before
-real jobs ship: verify configured account/model availability, confirm the
-agreement basis for persistence, implement all native policy enforcement,
+real jobs ship: verify configured account/model availability, implement all native policy enforcement,
 run content-free live connection checks only through explicit setup, and assess
 event/podcast report quality against the later workflow fixtures. No live-check
 result is claimed here. Optional routing remains deliberately unavailable; a

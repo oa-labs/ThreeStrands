@@ -3158,12 +3158,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .settings-section p.settings-connection-status { margin: 0; }
 .settings-field-detail .settings-hint, p.settings-field-detail { display: block; margin-top: var(--space-1); }
 .ai-key-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
-/* Web Research reuses the AI Provider key rows; the agreement is the one
-   multi-line field, so its label sits at the top of the box. */
-.research-settings .research-agreement-row { align-items: start; }
-.research-settings .research-agreement-row > span { padding-top: var(--space-2); }
-.research-settings .research-agreement-row textarea { max-width: 420px; min-height: 72px; }
-.research-agreement-actions { margin-top: var(--space-2); }
 .research-disclosure-list { margin: 0; padding-left: var(--space-5); color: var(--muted); font-size: var(--text-body); line-height: var(--leading-normal); }
 .research-disclosure-list li + li { margin-top: var(--space-1); }
 .research-limits { display: grid; grid-template-columns: max-content max-content; gap: var(--space-1) var(--space-6); margin: 0; font-size: var(--text-body); }

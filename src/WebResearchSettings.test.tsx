@@ -7,13 +7,13 @@ import type { AgentResearchSettings } from "./domain";
 
 const blank: AgentResearchSettings = {
   policy: { ...frozenPolicy, limits: { ...frozenPolicy.limits, searchCallsPerTask: 7 } },
-  config: { enabled: false, searchEnabled: false, persistenceBasis: "", verified: false },
+  config: { enabled: false, searchEnabled: false, verified: false },
   modelKeyConfigured: false,
   searchKeyConfigured: false,
 };
 const configured = (config: Partial<AgentResearchSettings["config"]> = {}): AgentResearchSettings => ({
   ...blank,
-  config: { ...blank.config, searchEnabled: true, persistenceBasis: "Our API agreement", ...config },
+  config: { ...blank.config, searchEnabled: true, ...config },
   modelKeyConfigured: true,
   searchKeyConfigured: true,
 });
@@ -55,11 +55,11 @@ describe("web research settings", () => {
     await waitFor(() => expect(key).toHaveBeenCalledWith("search", ""));
   });
 
-  it("names what is missing and allows the paid check only once keys and agreement are saved", async () => {
+  it("names what is missing and allows the paid check only once both keys are saved", async () => {
     vi.spyOn(mailClient, "agentResearchSettings").mockResolvedValue({ ...blank, modelKeyConfigured: true });
     const check = vi.spyOn(mailClient, "checkAgentResearchConnection").mockResolvedValue();
     render(<WebResearchSettings />);
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("add an Exa API key and your storage agreement"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("To finish setup, add an Exa API key."));
     const button = screen.getByRole("button", { name: "Check Connections" });
     expect(button).toBeDisabled();
     expect(screen.getByText(/one public test search to Exa, which may cost \$0\.007/)).toBeVisible();
@@ -88,28 +88,17 @@ describe("web research settings", () => {
     const toggle = await screen.findByRole("checkbox", { name: "Web Research" });
     expect(toggle).toHaveAccessibleDescription();
     fireEvent.click(toggle);
-    await waitFor(() => expect(save).toHaveBeenCalledWith({ enabled: true, searchEnabled: true, persistenceBasis: "", verified: false }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ enabled: true, searchEnabled: true, verified: false }));
     expect(screen.queryByRole("checkbox", { name: /Exa/ })).not.toBeInTheDocument();
   });
 
-  it("saves the storage agreement on request and keeps an unsaved draft after a failure", async () => {
+  it("asks for no storage agreement and states how long research evidence is kept", async () => {
     vi.spyOn(mailClient, "agentResearchSettings").mockResolvedValue(blank);
-    const save = vi.spyOn(mailClient, "setAgentResearchSettings").mockRejectedValueOnce(new Error("Save failed"));
     render(<WebResearchSettings />);
-    const agreement = await screen.findByRole("textbox", { name: "Storage Agreement" });
-    expect(agreement).toHaveAccessibleDescription();
-    const saveButton = screen.getByRole("button", { name: "Save Agreement" });
-    expect(saveButton).toBeDisabled();
-    fireEvent.change(agreement, { target: { value: "Our API agreement permits saved excerpts" } });
-    expect(save).not.toHaveBeenCalled();
-    fireEvent.click(saveButton);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
-    expect(agreement).toHaveValue("Our API agreement permits saved excerpts");
-    save.mockResolvedValue();
-    fireEvent.click(saveButton);
-    await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({
-      persistenceBasis: "Our API agreement permits saved excerpts", searchEnabled: true, verified: false,
-    })));
+    await screen.findByLabelText("Exa API Key");
+    expect(screen.queryByRole("textbox", { name: /agreement/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /agreement/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Raw evidence expires after seven days; reports and cited excerpts remain until you delete them.")).toBeVisible();
   });
 
   it("shows the per-task limits from the native policy", async () => {

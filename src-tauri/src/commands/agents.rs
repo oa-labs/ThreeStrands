@@ -172,12 +172,10 @@ pub(crate) async fn check_agent_research_connection(state: State<'_, AppState>) 
             crate::agents::service::keys().await?,
         )
     };
-    if !cfg.search_enabled || cfg.persistence_basis.trim().is_empty() {
-        return Err(
-            "Configure Exa and record a persistence basis before checking connections"
-                .to_string()
-                .into(),
-        );
+    if !cfg.search_enabled {
+        return Err("Configure Exa before checking connections"
+            .to_string()
+            .into());
     }
     crate::agents::service::check_connection(&keys.0,&keys.1).await.map_err(|_|crate::AppError::from("Research connection check failed; verify model availability, keys, credits and account access".to_string()))?;
     // Snapshot comparison and certification cannot interleave with key/setup writes.

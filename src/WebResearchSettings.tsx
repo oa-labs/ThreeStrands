@@ -1,6 +1,6 @@
 import frozenPolicy from "../docs/agent-integrations/contract-v1.json";
 import { CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import { SettingsToggle } from "./AiProviderSettings";
 import { mailClient } from "./data/client";
 import type { AgentResearchConfig, AgentResearchSettings } from "./domain";
@@ -21,8 +21,6 @@ export function WebResearchSettings({ onChange }: { onChange?(): void }) {
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [keys, setKeys] = useState<Record<Provider, string>>({ model: "", search: "" });
-  const [agreement, setAgreement] = useState<string | null>(null);
-  const agreementHelpId = useId();
   const policy = settings?.policy ?? frozenPolicy;
 
   useEffect(() => {
@@ -65,13 +63,9 @@ export function WebResearchSettings({ onChange }: { onChange?(): void }) {
   }
 
   const { config } = settings;
-  const savedAgreement = config.persistenceBasis;
-  const agreementDraft = agreement ?? savedAgreement;
-  const agreementRecorded = savedAgreement.trim().length > 0;
   const missing = [
     settings.modelKeyConfigured ? null : "an Anthropic API key",
     settings.searchKeyConfigured ? null : "an Exa API key",
-    agreementRecorded ? null : "your storage agreement",
   ].filter((item): item is string => item !== null);
   const canCheck = missing.length === 0 && !busy && !checking;
   const status = missing.length > 0
@@ -153,34 +147,6 @@ export function WebResearchSettings({ onChange }: { onChange?(): void }) {
 
       <h3>Exa Search</h3>
       {keyRow("search", "Exa API Key", settings.searchKeyConfigured)}
-      <label className="settings-field settings-field-row research-agreement-row">
-        <span>Storage Agreement</span>
-        <textarea
-          value={agreementDraft}
-          rows={3}
-          placeholder="For example: Exa API Terms of Service, or our customer agreement dated…"
-          aria-describedby={agreementHelpId}
-          onChange={(event) => setAgreement(event.target.value)}
-        />
-      </label>
-      <div className="settings-field-detail">
-        <p className="settings-hint" id={agreementHelpId}>
-          Record the applicable API/customer agreement allowing saved metadata, excerpts and reports.
-          A working API key alone does not establish storage rights. Raw evidence expires after seven days;
-          reports and cited excerpts remain until deletion. Backups and providers may retain copies.
-        </p>
-        <div className="ai-connection-actions research-agreement-actions">
-          <button
-            className="btn"
-            type="button"
-            disabled={busy || agreementDraft === savedAgreement}
-            onClick={() => void saveConfig({ persistenceBasis: agreementDraft }).then((saved) => { if (saved) setAgreement(null); })}
-          >
-            Save Agreement
-          </button>
-          {agreementDraft !== savedAgreement ? <span className="settings-hint">Not saved</span> : null}
-        </div>
-      </div>
 
       <h3>Connections</h3>
       <div className="ai-connection-actions">
@@ -207,6 +173,7 @@ export function WebResearchSettings({ onChange }: { onChange?(): void }) {
         <li>Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic.</li>
         <li>Exa receives only reviewed public subjects with fixed research terms.</li>
         <li>Reading a page contacts its host using your IP address.</li>
+        <li>Raw evidence expires after seven days; reports and cited excerpts remain until you delete them.</li>
         <li>Providers retain data under your account agreement; this is not a zero-retention promise.</li>
       </ul>
 
