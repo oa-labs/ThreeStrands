@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { publishedSections, renderChangelogPage, sectionId } from "../../site/changelog";
-import { DOC_SLUGS, headingId, parseFrontMatter, renderDoc, searchEntries } from "../../site/docs";
+import { DOC_SLUGS, headingId, parseFrontMatter, renderDoc, reviewedNote, searchEntries } from "../../site/docs";
 import { searchDocs } from "../../site/src/docsSearch";
 import { GETTING_STARTED_STEPS } from "../../src/gettingStartedSteps";
 import { SETTINGS_HELP } from "../../src/helpDocs";
@@ -643,6 +643,15 @@ test.describe("docs", () => {
     for (const item of TRANSFERRED_DATA) expect(transfer).toContain(item.label);
     expect(transfer).toContain("It is not a backup of mail, drafts, tasks, goals, or queued sends.");
     expect(transfer).toContain("import replaces");
+  });
+
+  test("a page is reviewed for a version, or for the upcoming release until the release fills in its version", () => {
+    const page = (reviewed: string) => `---\ntitle: T\nnav: T\nsummary: S\nreviewed: ${reviewed}\n---\n## Section`;
+    expect(renderDoc("triage", page("next")).reviewed).toBe("next");
+    expect(renderDoc("triage", page("0.204.0")).reviewed).toBe("0.204.0");
+    for (const invalid of ["upcoming", "v0.204.0", "0.204"]) expect(() => renderDoc("triage", page(invalid))).toThrow(/invalid reviewed version/);
+    expect(reviewedNote("next")).toMatch(/^Content reviewed for the upcoming release\./);
+    expect(reviewedNote("0.204.0")).toMatch(/^Content reviewed for v0\.204\.0\./);
   });
 
   test("stable explicit IDs survive title changes and duplicates fail at every level", () => {

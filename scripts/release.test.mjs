@@ -5,7 +5,7 @@ import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile 
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { describe, it } from "node:test";
-import { prepareReleaseAssets, releaseMetadata, setAppVersion, updaterPublicKey, verifyUpdateSignature } from "./release.mjs";
+import { prepareReleaseAssets, releaseMetadata, setAppVersion, stampReviewed, updaterPublicKey, verifyUpdateSignature } from "./release.mjs";
 
 describe("Linux CI container builds", () => {
   for (const [path, job] of [["release.yml", "linux"], ["linux-build.yml", "linux-amd64"]]) {
@@ -270,6 +270,21 @@ describe("setting the application version", () => {
   });
 });
 
+describe("stamping help pages reviewed for the release", () => {
+  const page = (reviewed) => `---\ntitle: Search\nreviewed: ${reviewed}\n---\n\nreviewed: next is how to mark a page.\n`;
+
+  it("replaces reviewed: next in the front matter with the version, and only there", () => {
+    assert.equal(stampReviewed(page("next"), "0.204.0"), page("0.204.0"));
+    assert.match(stampReviewed(page("next"), "0.204.0"), /\nreviewed: next is how/);
+  });
+
+  it("leaves pages already reviewed for a version, pages without front matter, and betas alone", () => {
+    assert.equal(stampReviewed(page("0.190.0"), "0.204.0"), page("0.190.0"));
+    assert.equal(stampReviewed("reviewed: next\n", "0.204.0"), "reviewed: next\n");
+    assert.equal(stampReviewed(page("next"), "0.204.0-beta.1"), page("next"));
+  });
+});
+
 const EMPTY_CHANGELOG = "# Changelog\n\n## Unreleased\n\n## 0.55.0 — 2026-10-01\n\n### New\n- Earlier feature.\n";
 
 async function releaseCommand(t, {
@@ -284,6 +299,8 @@ async function releaseCommand(t, {
     ["src-tauri/Cargo.toml", fixture.cargoToml], ["src-tauri/Cargo.lock", fixture.cargoLock],
     ["CHANGELOG.md", changelog], ["site/docs/compose.md", "Choose **Documented Name**."], ["site/index.html", "<p>Home Page Name</p>"],
     ["changes/README.md", "How to add an entry."],
+    ["site/docs/search.md", "---\ntitle: Search\nreviewed: next\n---\n\nFind **Home Page Name**.\n"],
+    ["site/docs/files.md", "---\ntitle: Files\nreviewed: 0.50.0\n---\n\nFiles.\n"],
     ...Object.entries(changes).map(([name, content]) => [`changes/${name}`, content]),
   ]) await writeFile(join(directory, path), content);
   for (const script of ["release.mjs", "changelog.mjs"]) {
@@ -416,6 +433,7 @@ describe("release notes", () => {
 
 describe("pnpm release command", () => {
   const VERSION_PATHS = ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"];
+  const DOC = "site/docs/search.md";
   const commands = (version, paths = [...VERSION_PATHS, "CHANGELOG.md"]) => [
     ["branch", "--show-current"], ["status", "--porcelain"], ["tag", "--list", `v${version}`],
     ...(paths.length ? [["add", "-A", "--", ...paths], ["commit", "-m", `Release v${version}`]] : []),
@@ -435,11 +453,13 @@ describe("pnpm release command", () => {
     const fixture = await releaseCommand(t, { changes: fix });
     const result = fixture.run();
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(await fixture.commands(), commands("0.55.1", [...VERSION_PATHS, "CHANGELOG.md", "changes/clearer-fix.md"]));
+    assert.deepEqual(await fixture.commands(), commands("0.55.1", [...VERSION_PATHS, "CHANGELOG.md", DOC, "changes/clearer-fix.md"]));
     await assertVersion(fixture, "0.55.1");
     assert.match(await fixture.read("CHANGELOG.md"), /^## Unreleased\n\n## 0\.55\.1 — \d{4}-\d{2}-\d{2}\n\n### Fixed\n- A clearer fix\.\n\n## 0\.55\.0/m);
     assert.equal(await fixture.exists("changes/clearer-fix.md"), false);
     assert.equal(await fixture.exists("changes/README.md"), true);
+    assert.match(await fixture.read(DOC), /^---\ntitle: Search\nreviewed: 0\.55\.1\n---\n/);
+    assert.match(await fixture.read("site/docs/files.md"), /reviewed: 0\.50\.0\n/);
   });
 
   it("releases the next minor when a change file or Unreleased has something New, in file-name order", async (t) => {
@@ -462,7 +482,7 @@ describe("pnpm release command", () => {
     const fixture = await releaseCommand(t);
     const result = fixture.run();
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(await fixture.commands(), commands("0.55.1", VERSION_PATHS));
+    assert.deepEqual(await fixture.commands(), commands("0.55.1", [...VERSION_PATHS, DOC]));
     assert.equal(await fixture.read("CHANGELOG.md"), EMPTY_CHANGELOG);
   });
 
@@ -473,6 +493,7 @@ describe("pnpm release command", () => {
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual((await fixture.commands()).at(-1), ["push", "primary", `v${version}`]);
       await assertVersion(fixture, version);
+      assert.match(await fixture.read(DOC), version.includes("-beta.") ? /reviewed: next\n/ : new RegExp(`reviewed: ${version.replaceAll(".", "\\.")}\n`));
     });
   }
 
@@ -480,7 +501,7 @@ describe("pnpm release command", () => {
     const fixture = await releaseCommand(t, { changes: fix });
     const result = fixture.run(["0.55.0"]);
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(await fixture.commands(), commands("0.55.0", ["CHANGELOG.md", "changes/clearer-fix.md"]));
+    assert.deepEqual(await fixture.commands(), commands("0.55.0", ["CHANGELOG.md", DOC, "changes/clearer-fix.md"]));
     await assertVersion(fixture, "0.55.0");
     assert.match(await fixture.read("CHANGELOG.md"), /## 0\.55\.0 — 2026-10-01\n\n### New\n- Earlier feature\.\n\n### Fixed\n- A clearer fix\.\n/);
   });
@@ -506,14 +527,14 @@ describe("pnpm release command", () => {
       const result = fixture.run();
       assert.equal(result.status, 1);
       assert.match(result.stderr, /failed \(exit 7\)/);
-      assert.deepEqual(await fixture.commands(), commands("0.55.1", VERSION_PATHS).slice(0, index + 1));
+      assert.deepEqual(await fixture.commands(), commands("0.55.1", [...VERSION_PATHS, DOC]).slice(0, index + 1));
     });
   }
 
   it("does not push when the release commit fails", async (t) => {
     const fixture = await releaseCommand(t, { changes: fix, failAt: "commit" });
     assert.equal(fixture.run().status, 1);
-    assert.deepEqual(await fixture.commands(), commands("0.55.1", [...VERSION_PATHS, "CHANGELOG.md", "changes/clearer-fix.md"]).slice(0, 5));
+    assert.deepEqual(await fixture.commands(), commands("0.55.1", [...VERSION_PATHS, "CHANGELOG.md", DOC, "changes/clearer-fix.md"]).slice(0, 5));
   });
 
   it("requires the master branch, committed changes, and an unused tag before changing anything", async (t) => {

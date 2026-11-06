@@ -204,7 +204,8 @@ folds the `changes/` files into `## Unreleased`, in file-name order after any
 entries already there, and picks the next version: minor when any entry is
 under **New**, otherwise patch, even with no entries at all. It sets that
 version in all four files, stamps the entries with the version and today's
-date, deletes the `changes/` files, and commits all of it as `Release
+date, sets each help page marked `reviewed: next` to the version (a beta
+leaves them for the stable release), deletes the `changes/` files, and commits all of it as `Release
 v<version>`. Then it pushes `master`, creates a signed `v<version>` tag, and
 pushes that tag.
 
@@ -391,4 +392,4 @@ composing another message.
 
 ## Maintaining user help
 
-User instructions live in `site/docs/`. When shipping a user-visible change, check the affected guide, update its `reviewed` version only after reviewing the content, and run `pnpm test:site`. Preserve explicit heading IDs when renaming sections; keep old section links when moving content. The shortcut reference and transferred-settings list are generated from app catalogs. Do not recreate a second feature inventory in repository docs.
+User instructions live in `site/docs/`. When shipping a user-visible change, check the affected guide, set its front matter to `reviewed: next` only after reviewing the content, and run `pnpm test:site`. The page says it was reviewed for the upcoming release until the next stable release replaces `next` with its version. Preserve explicit heading IDs when renaming sections; keep old section links when moving content. The shortcut reference and transferred-settings list are generated from app catalogs. Do not recreate a second feature inventory in repository docs.

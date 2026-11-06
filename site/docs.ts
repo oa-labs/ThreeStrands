@@ -71,6 +71,17 @@ export function renderShortcutTables(): string {
     .join("\n");
 }
 
+/**
+ * `reviewed: next` marks a page reviewed for the release being prepared;
+ * `pnpm release` replaces it with that release's version.
+ */
+export const REVIEWED_NEXT = "next";
+
+export function reviewedNote(reviewed: string): string {
+  const version = reviewed === REVIEWED_NEXT ? "the upcoming release" : `v${escapeHtml(reviewed)}`;
+  return `Content reviewed for ${version}. <a href="../changelog.html">See changes since your version</a>.`;
+}
+
 export function renderDoc(slug: DocSlug, source = readFileSync(path.join(docsRoot, `${slug}.md`), "utf8")): RenderedDoc {
   const { meta, body } = parseFrontMatter(source);
   for (const key of ["title", "nav", "summary", "reviewed"] as const) {
@@ -100,7 +111,7 @@ export function renderDoc(slug: DocSlug, source = readFileSync(path.join(docsRoo
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]!);
   const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
   if (duplicate) throw new Error(`docs/${slug}.md has two sections with the id "${duplicate}"`);
-  if (!/^\d+\.\d+\.\d+$/.test(meta.reviewed!)) throw new Error(`docs/${slug}.md has an invalid reviewed version`);
+  if (meta.reviewed !== REVIEWED_NEXT && !/^\d+\.\d+\.\d+$/.test(meta.reviewed!)) throw new Error(`docs/${slug}.md has an invalid reviewed version`);
   return { slug, title: meta.title!, nav: meta.nav!, summary: meta.summary!, reviewed: meta.reviewed!, html, headings };
 }
 
@@ -234,7 +245,7 @@ export function renderDocPage(slug: DocSlug): string {
               <noscript>Search needs JavaScript. Browse the guide navigation or use your browser’s Find command.</noscript>
             </search>
             <details class="docs-on-page"><summary>On this page</summary><nav aria-label="On this page"><ol>${doc.headings.map((heading) => `<li><a href="#${heading.id}">${heading.text}</a></li>`).join("")}</ol></nav></details>
-            <p class="docs-reviewed">Content reviewed for v${escapeHtml(doc.reviewed)}. <a href="../changelog.html">See changes since your version</a>.</p>
+            <p class="docs-reviewed">${reviewedNote(doc.reviewed)}</p>
 ${doc.html}
             ${related(doc, pages)}
             <aside class="docs-support" aria-label="Article support"><a href="get-help.html">Get help</a> · <a data-docs-issue href="https://github.com/oa-labs/ThreeStrands/issues/new?${escapeHtml(new URLSearchParams({ title: `Docs: ${doc.title}`, body: `Page: https://www.threestrands.app/docs/${slug}.html\n\nWhat is unclear or incorrect?\n\nApp version and platform:\n\nDo not include private mail, credentials, join codes, or recovery phrases.` }).toString())}" rel="noopener">Report a docs issue</a></aside>

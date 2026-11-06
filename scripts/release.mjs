@@ -246,7 +246,8 @@ async function pendingChangelog(directory) {
  * Works out a release without changing anything: the version (next after
  * package.json from the pending entries, the next major with `major`, or an
  * explicit `version`, where the current version re-cuts it), the files to
- * write, and the change files to delete. Throws before any change when the
+ * write (version files, CHANGELOG.md, and help pages marked `reviewed: next`),
+ * and the change files to delete. Throws before any change when the
  * four version files disagree or an entry is malformed.
  */
 export async function planRelease(directory, { date, version, major = false } = {}) {
@@ -267,7 +268,40 @@ export async function planRelease(directory, { date, version, major = false } = 
   }
   const stamped = stampRelease(collected, target, date);
   if (stamped !== source) writes["CHANGELOG.md"] = stamped;
+  Object.assign(writes, await stampedDocs(directory, target));
   return { tag: `v${target}`, writes, deletes: changes.map((change) => change.file) };
+}
+
+const DOCS_DIR = "site/docs";
+
+/**
+ * A help page with its `reviewed: next` front matter set to `version`; the
+ * page is unchanged when it was not reviewed for this release. Betas are not
+ * on the website, so they leave `next` for the stable release.
+ */
+export function stampReviewed(source, version) {
+  if (version.includes("-beta.")) return source;
+  const frontMatter = /^---\n[^]*?\n---\n/.exec(source)?.[0];
+  if (!frontMatter) return source;
+  return frontMatter.replace(/^reviewed:[ \t]*next[ \t]*$/m, `reviewed: ${version}`) + source.slice(frontMatter.length);
+}
+
+async function stampedDocs(directory, version) {
+  let names;
+  try {
+    names = (await readdir(resolve(directory, DOCS_DIR))).filter((name) => name.endsWith(".md")).sort();
+  } catch (error) {
+    if (error.code === "ENOENT") return {};
+    throw error;
+  }
+  const writes = {};
+  for (const name of names) {
+    const path = `${DOCS_DIR}/${name}`;
+    const source = await readFile(resolve(directory, path), "utf8");
+    const stamped = stampReviewed(source, version);
+    if (stamped !== source) writes[path] = stamped;
+  }
+  return writes;
 }
 
 async function writeRelease(directory, { writes, deletes }) {
