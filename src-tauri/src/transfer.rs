@@ -160,6 +160,8 @@ pub struct TransferPreferences {
     // Added in 0.165; preceding exports import with the contrast floor on.
     #[serde(default = "default_email_text_colors", skip_serializing_if = "is_default_email_text_colors")]
     pub email_text_colors: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mark_read_on_archive: bool,
     pub auto_read_delay_seconds: i64,
     pub load_remote_images: bool,
     #[serde(default = "default_show_starred_inbox", skip_serializing_if = "is_default_show_starred_inbox")]
@@ -206,6 +208,10 @@ fn default_show_starred_inbox() -> bool {
 
 fn is_default_show_starred_inbox(value: &bool) -> bool {
     *value
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn default_email_text_colors() -> String {
@@ -1126,6 +1132,7 @@ mod tests {
                 email_minimum_font_size: 18,
                 email_zoom: default_email_zoom(),
                 email_text_colors: default_email_text_colors(),
+                mark_read_on_archive: false,
                 auto_read_delay_seconds: 2,
                 show_starred_inbox: true,
                 load_remote_images: false,
@@ -1742,6 +1749,17 @@ mod tests {
     }
 
     #[test]
+    fn preceding_export_defaults_mark_read_on_archive_off_and_round_trips_opt_in() {
+        let (_, result) = import_fixture(fixtures::V5_CURRENT);
+        assert!(!result.preferences.mark_read_on_archive);
+        assert!(serde_json::to_value(&result.preferences).unwrap().get("markReadOnArchive").is_none());
+        let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
+        payload.preferences.mark_read_on_archive = true;
+        let imported = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+        assert!(imported.preferences.mark_read_on_archive);
+    }
+
+    #[test]
     fn preceding_export_defaults_starred_inbox_on_and_round_trips_opt_out() {
         let (_, result) = import_fixture(fixtures::V5_CURRENT);
         assert!(result.preferences.show_starred_inbox);
@@ -1982,6 +2000,7 @@ mod tests {
                 email_minimum_font_size: 18,
                 email_zoom: default_email_zoom(),
                 email_text_colors: default_email_text_colors(),
+                mark_read_on_archive: false,
                 auto_read_delay_seconds: 15,
                 show_starred_inbox: true,
                 load_remote_images: true,

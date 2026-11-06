@@ -10,6 +10,15 @@ export function saveShowStarredInbox(value: boolean): boolean {
   return value;
 }
 
+const MARK_READ_ON_ARCHIVE_KEY = "threestrands.settings.markReadOnArchive";
+export function readMarkReadOnArchive(): boolean {
+  try { return localStorage.getItem(MARK_READ_ON_ARCHIVE_KEY) === "true"; } catch { return false; }
+}
+export function saveMarkReadOnArchive(value: boolean): boolean {
+  try { localStorage.setItem(MARK_READ_ON_ARCHIVE_KEY, String(value)); } catch { /* session preference still applies */ }
+  return value;
+}
+
 export type FontFamily = string;
 
 const FONT_FAMILY_KEY = "threestrands.settings.fontFamily";

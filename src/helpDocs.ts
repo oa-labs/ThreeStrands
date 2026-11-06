@@ -9,6 +9,7 @@ export const SETTINGS_HELP: Record<SettingsSection, { slug: string; section?: st
   availability: { slug: "calendar", section: "schedule" },
   replicatedSync: { slug: "sync" },
   appearance: { slug: "appearance" },
+  reading: { slug: "triage", section: "mark-as-read" },
   defaultApps: { slug: "getting-started", section: "settings-worth-a-look" },
   splitInboxes: { slug: "triage", section: "split-inboxes" },
   mutedSenders: { slug: "triage", section: "newsletter-controls" },

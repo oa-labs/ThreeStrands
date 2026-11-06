@@ -81,6 +81,7 @@ describe("synced preferences data boundary", () => {
       "availabilityProfiles",
       "calendarColors",
       "loadRemoteImages",
+      "markReadOnArchive",
       "showStarredInbox",
       "writingProfiles",
     ]);
@@ -108,6 +109,7 @@ describe("synced preferences data boundary", () => {
       emailTextColors: "app",
       fontFamily: "Georgia",
       selectedAccountId: "remote@example.com",
+      markReadOnArchive: true,
       autoReadDelaySeconds: 4,
       loadRemoteImages: false,
       aiProvider: "none",
@@ -135,6 +137,7 @@ describe("synced preferences data boundary", () => {
     expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("12");
     expect(localStorage.getItem("threestrands.settings.emailZoom")).toBe("125");
     expect(localStorage.getItem("threestrands.settings.emailTextColors")).toBe("sender");
+    expect(localStorage.getItem("threestrands.settings.markReadOnArchive")).toBe("true");
     expect(localStorage.getItem("threestrands.settings.autoReadDelaySeconds")).toBe("4");
     expect(localStorage.getItem("threestrands.crash-reports")).toBeNull();
   });

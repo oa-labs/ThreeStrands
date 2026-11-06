@@ -33,6 +33,7 @@ describe("useAppPreferences", () => {
     act(() => result.current.setEmailMinimumFontSize(18));
     act(() => result.current.setEmailZoom(125));
     act(() => result.current.setAutoReadDelaySeconds(10));
+    act(() => result.current.setMarkReadOnArchive(true));
     act(() => result.current.setLoadRemoteImages(true));
 
     expect(result.current.theme).toBe("dark");
@@ -44,6 +45,8 @@ describe("useAppPreferences", () => {
     expect(localStorage.getItem("threestrands.settings.emailZoom")).toBe("125");
     expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("18");
     expect(result.current.autoReadDelaySeconds).toBe(10);
+    expect(result.current.markReadOnArchive).toBe(true);
+    expect(localStorage.getItem("threestrands.settings.markReadOnArchive")).toBe("true");
     expect(result.current.loadRemoteImages).toBe(true);
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.dataset.accent).toBe("green");

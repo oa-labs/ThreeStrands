@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- **Settings → Reading & Triage** brings together when conversations are marked read, including a new option to mark them read when archiving, even without opening them. The archive option starts off, and the reading delay has moved here from Appearance.
+
 ### Fixed
 - Logos and other images in emails no longer look squashed or stretched. Small logos keep the size the sender chose, and images that have to shrink to fit the reading pane keep their shape.
 

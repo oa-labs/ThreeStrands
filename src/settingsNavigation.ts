@@ -3,6 +3,7 @@ import type { SettingsSection } from "./settingsPanelTypes";
 const SETTINGS_SECTION_KEY = "threestrands.settings.lastSection";
 const sections: Record<SettingsSection, true> = {
   appearance: true,
+  reading: true,
   defaultApps: true,
   accounts: true,
   calendarAccounts: true,

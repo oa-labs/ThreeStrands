@@ -19,6 +19,7 @@ import { readCalendarColors, saveCalendarColors, type CalendarColorMap } from ".
 import { readFontScale, saveFontScale } from "./fontScale";
 import {
   readShowStarredInbox, saveShowStarredInbox,
+  readMarkReadOnArchive, saveMarkReadOnArchive,
   readAutoReadDelaySeconds,
   readAvailabilityPreferences,
   readAvailabilityProfiles,
@@ -61,6 +62,8 @@ export type ExportablePreferences = {
   emailMinimumFontSize: number;
   /** Absent in exports made before email text colors; defaults to the contrast floor. */
   emailTextColors?: EmailTextColors;
+  /** Earlier exports preserve unread status when archiving. */
+  markReadOnArchive?: boolean;
   autoReadDelaySeconds: number;
   loadRemoteImages: boolean;
   selectedAccountId: string | null;
@@ -99,6 +102,7 @@ export function readExportablePreferences(): ExportablePreferences {
     emailZoom: readEmailZoom(),
     emailMinimumFontSize: readEmailMinimumFontSize(),
     emailTextColors: readEmailTextColors(),
+    markReadOnArchive: readMarkReadOnArchive(),
     autoReadDelaySeconds: readAutoReadDelaySeconds(),
     loadRemoteImages: readLoadRemoteImages(),
     selectedAccountId: readSelectedAccountId(),
@@ -123,6 +127,7 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveEmailZoom(preferences.emailZoom ?? EMAIL_ZOOM.defaultPercent);
   saveEmailMinimumFontSize(preferences.emailMinimumFontSize ?? 0);
   saveEmailTextColors(preferences.emailTextColors ?? EMAIL_TEXT_COLORS.defaultMode);
+  saveMarkReadOnArchive(preferences.markReadOnArchive ?? false);
   saveAutoReadDelaySeconds(preferences.autoReadDelaySeconds);
   saveLoadRemoteImages(preferences.loadRemoteImages);
   saveSelectedAccountId(preferences.selectedAccountId);

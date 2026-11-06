@@ -35,10 +35,10 @@ describe("settings section navigation", () => {
 
   it("opens contextual help for appearance, accounts, privacy, transfer, and delivery diagnostics", async () => {
     const dialog = await openSettings();
-    for (const [section, slug] of [["Appearance", "appearance"], ["Mail Accounts", "mail-accounts"], ["Privacy", "privacy"], ["Data Transfer", "settings-and-sync"], ["Diagnostics", "troubleshooting"]]) {
+    for (const [section, slug] of [["Reading & Triage", "triage#mark-as-read"], ["Appearance", "appearance"], ["Mail Accounts", "mail-accounts"], ["Privacy", "privacy"], ["Data Transfer", "settings-and-sync"], ["Diagnostics", "troubleshooting"]]) {
       fireEvent.click(within(dialog).getByRole("button", { name: section }));
       fireEvent.click(within(dialog).getByRole("button", { name: `Help with ${section}` }));
-      expect(openUrl).toHaveBeenLastCalledWith(`https://www.threestrands.app/docs/${slug}.html`);
+      expect(openUrl).toHaveBeenLastCalledWith(`https://www.threestrands.app/docs/${slug.replace("#", ".html#")}${slug.includes("#") ? "" : ".html"}`);
     }
   });
 
@@ -83,7 +83,7 @@ describe("settings section navigation", () => {
     const dialog = await openSettings();
     const previousControl = focusOrigin === "search"
       ? within(dialog).getByRole("searchbox", { name: "Search Settings" })
-      : within(dialog).getByRole("spinbutton", { name: "Auto-Read Delay" });
+      : within(dialog).getByRole("slider", { name: "Email Zoom" });
     previousControl.focus();
 
     // A click alone does not focus buttons in macOS WebKit. Send subsequent
@@ -104,7 +104,7 @@ describe("settings section navigation", () => {
     const dialog = await openSettings();
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
-    expect(sectionButtons).toHaveLength(15);
+    expect(sectionButtons).toHaveLength(16);
     for (const button of sectionButtons) {
       const icon = button.querySelector("svg");
       expect(icon).not.toBeNull();
@@ -122,9 +122,15 @@ describe("settings section navigation", () => {
     expect(within(dialog).getByText("Accounts")).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
     expect(within(dialog).getByText("Changes save automatically")).toBeInTheDocument();
-    // Mark-read timing lives on the Appearance page rather than its own one.
+    expect(within(dialog).queryByRole("spinbutton", { name: "Auto-Read Delay" })).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reading & Triage" }));
     expect(within(dialog).getByRole("spinbutton", { name: "Auto-Read Delay" })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "Reading" })).not.toBeInTheDocument();
+    const archive = within(dialog).getByRole("checkbox", { name: "When Archiving a Conversation" });
+    expect(archive).not.toBeChecked();
+    expect(archive).toHaveAccessibleDescription();
+    fireEvent.click(archive);
+    expect(archive).toBeChecked();
+    expect(localStorage.getItem("threestrands.settings.markReadOnArchive")).toBe("true");
     // Pages with explicit Save buttons must not claim everything autosaves.
     fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
     expect(within(dialog).queryByText("Changes save automatically")).not.toBeInTheDocument();

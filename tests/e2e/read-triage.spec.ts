@@ -662,7 +662,7 @@ test("marks an unread conversation read after the configured delay", async ({ pa
 
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
-  await settings.getByRole("button", { name: "Appearance", exact: true }).click();
+  await settings.getByRole("button", { name: "Reading & Triage", exact: true }).click();
   await settings.getByRole("spinbutton", { name: "Auto-Read Delay" }).fill("1");
   await page.keyboard.press("Escape");
 
@@ -706,6 +706,30 @@ test("keeps sync diagnostics and crash reports together in Settings", async ({ p
   await expect(settings.getByRole("heading", { name: "Crash Reports" })).toBeVisible();
   await expect(settings.getByRole("checkbox", { name: "Share Sanitized Crash Reports" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sync diagnostics need attention" })).not.toBeVisible();
+});
+
+test("Reading & Triage can mark archives read before the timer and Undo restores unread", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("threestrands.settings.autoReadDelaySeconds", "60"));
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Mark Read (u)" })).toBeVisible();
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Reading & Triage" }).click();
+  const option = settings.getByRole("checkbox", { name: "When Archiving a Conversation" });
+  await expect(option).not.toBeChecked();
+  await option.check();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("e");
+  await expect(page.getByRole("status")).toContainText("Conversation archived");
+  await page.keyboard.press("g");
+  await page.keyboard.press("a");
+  const welcome = page.getByRole("listbox").getByRole("option", { name: /Welcome to ThreeStrands/ });
+  await welcome.click();
+  await expect(page.getByRole("button", { name: "Mark Unread (u)" })).toBeVisible();
+  await page.keyboard.press("z");
+  await expect(page.getByRole("button", { name: "Mark Read (u)" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Archive (e)" })).toBeVisible();
 });
 
 test("archived and trashed threads move between Inbox, All Mail, and Trash", async ({ page }) => {

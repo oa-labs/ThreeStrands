@@ -34,13 +34,14 @@ type Options = ReturnType<typeof useTriageSession> & Pick<ReturnType<typeof useM
   includeArchived: boolean;
   isThreadMailbox: boolean;
   autoReadDelaySeconds: number;
+  markReadOnArchive: boolean;
 };
 
 /** Applies optimistic mail changes, rollback and undo within the originating view. */
 export function useThreadMutations({
   threads, detail, visibleDetail, selectedId, setSelectedId, setDetail, setThreads, setCheckedIds,
   setSyncStatus, setNotice, mailbox, activeAccountId, activeSplitInboxId, includeArchived,
-  isThreadMailbox, autoReadDelaySeconds, triageSessionRef, recordTriageEvent, loadThreadsRef,
+  isThreadMailbox, autoReadDelaySeconds, markReadOnArchive, triageSessionRef, recordTriageEvent, loadThreadsRef,
   queryRef, refreshMailboxUnreadCounts,
 }: Options) {
   const autoReadSuppressedForId = useRef<string | null>(null);
@@ -90,6 +91,12 @@ export function useThreadMutations({
     const previous = new Map(
       threads.filter((thread) => targetIds.includes(thread.id)).map((thread) => [thread.id, thread] as const),
     );
+    const markArchivedRead = template.kind === "archive" && template.value && markReadOnArchive;
+    const applyChange = (thread: Thread) => {
+      const changed = applyMutationTemplate(thread, template);
+      return markArchivedRead ? { ...changed, unread: false } : changed;
+    };
+    const unreadBefore = new Map([...previous].map(([id, thread]) => [id, thread.unread]));
     const previousDetail = detail && targetIds.includes(detail.thread.id) ? detail : null;
     // The list rows captured above belong to this view; they are only put
     // back while it is still the one on screen.
@@ -114,19 +121,19 @@ export function useThreadMutations({
 
     setThreads((current) => {
       const mapped = current.map((thread) =>
-        previous.has(thread.id) ? applyMutationTemplate(thread, template) : thread,
+        previous.has(thread.id) ? applyChange(thread) : thread,
       );
       return removesFromView ? mapped.filter((thread) => !targetIds.includes(thread.id)) : mapped;
     });
     setDetail((current) => {
       if (!current || !targetIds.includes(current.thread.id)) return current;
-      const messages = template.kind === "read"
+      const messages = template.kind === "read" || markArchivedRead
         ? current.messages.map((message, index) => ({
             ...message,
-            unread: template.value ? false : index === current.messages.length - 1,
+            unread: markArchivedRead || template.value ? false : index === current.messages.length - 1,
           }))
         : current.messages;
-      return { ...current, thread: applyMutationTemplate(current.thread, template), messages };
+      return { ...current, thread: applyChange(current.thread), messages };
     });
 
     if (removesFromView && selectedId && targetIds.includes(selectedId)) {
@@ -153,7 +160,16 @@ export function useThreadMutations({
       if (changesLocation && [...previous.values()].some((thread) => thread.snoozedUntil)) {
         snoozesBefore = (await mailClient.listSnoozeRecords()).filter((record) => targetIds.includes(record.id) && record.state === "active");
       }
-      await mailClient.mutateThreads(targetIds.map((id) => buildThreadMutation(id, template)));
+      if (markArchivedRead && options?.includeUnloaded) {
+        await Promise.all(targetIds.filter((id) => !previous.has(id)).map(async (id) => {
+          const snapshot = await mailClient.getThread(id);
+          unreadBefore.set(id, snapshot.thread.unread);
+        }));
+      }
+      await mailClient.mutateThreads(targetIds.flatMap((id) => [
+        ...(markArchivedRead ? [buildThreadMutation(id, { kind: "read", value: true })] : []),
+        buildThreadMutation(id, template),
+      ]));
     } catch {
       failedIds = targetIds;
     }
@@ -218,7 +234,11 @@ export function useThreadMutations({
           });
           if (removesFromView && succeededIds.length === 1) setSelectedId(succeededIds[0]);
         }
-        await mailClient.mutateThreads(succeededIds.map((id) => buildThreadMutation(id, undoTemplate)));
+        await mailClient.mutateThreads(succeededIds.flatMap((id) => [
+          buildThreadMutation(id, undoTemplate),
+          ...(markArchivedRead && unreadBefore.get(id)
+            ? [buildThreadMutation(id, { kind: "read", value: false })] : []),
+        ]));
         const restore = snoozesBefore.filter((record) => succeededIds.includes(record.id));
         if (restore.length) await mailClient.restoreSnoozes(restore, [...previous.values()].filter((thread) => thread.archived).map((thread) => thread.id));
         if (triageEvents) {
@@ -240,7 +260,7 @@ export function useThreadMutations({
   }, [
     selectedId, mailbox, activeSplitInboxId, includeArchived, threads, detail, viewKey, setThreads, setDetail,
     triageSessionRef, setSelectedId, setCheckedIds, recordTriageEvent, loadThreadsRef, queryRef,
-    setSyncStatus, setNotice, refreshMailboxUnreadCounts,
+    setSyncStatus, setNotice, refreshMailboxUnreadCounts, markReadOnArchive,
   ]);
 
   const selected = threads.find((thread) => thread.id === selectedId);

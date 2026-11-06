@@ -7,7 +7,9 @@ reviewed: 0.179.0
 
 ## Appearance and Reading {#appearance-and-reading}
 
-Open **Settings → Appearance** for theme, accent color, font, text size, and when conversations are marked read. Press <kbd>⌘/Ctrl + d</kbd> to switch light and dark mode. Appearance settings stay on each computer.
+Open **Settings → Appearance** for theme, accent color, font, and text size. Press <kbd>⌘/Ctrl + d</kbd> to switch light and dark mode. Appearance settings stay on each computer.
+
+For the mark-read timer and marking read when archiving, see [Reading & Triage](triage.html#mark-as-read).
 
 ## Enlarge Email {#enlarge-email}
 

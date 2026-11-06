@@ -6,8 +6,6 @@ import type { Theme } from "./theme";
 import {
   DEFAULT_FONT_FAMILY,
   fontFamilyStack,
-  MAX_AUTO_READ_DELAY_SECONDS,
-  MIN_AUTO_READ_DELAY_SECONDS,
   type FontFamily,
 } from "./settings";
 import { readLaunchView, writeLaunchView, type LaunchView } from "./lastWorkspace";
@@ -302,42 +300,6 @@ export function StartupSettings() {
         ))}
       </div>
       <p className="settings-hint">Today shows your agenda, unread mail, and tasks due. Press 0 to open it any time.</p>
-    </section>
-  );
-}
-
-export function ReadingSettings({
-  autoReadDelaySeconds,
-  onAutoReadDelayChange,
-}: {
-  autoReadDelaySeconds: number;
-  onAutoReadDelayChange(value: number): void;
-}) {
-  return (
-    <section className="settings-section" aria-label="Reading">
-      <h3>Mark as Read</h3>
-      <label className="settings-field settings-field-inline">
-        <span>After Opening a Conversation</span>
-        <div className="settings-row">
-          <input
-            type="number"
-            min={MIN_AUTO_READ_DELAY_SECONDS}
-            max={MAX_AUTO_READ_DELAY_SECONDS}
-            step="1"
-            value={autoReadDelaySeconds}
-            aria-label="Auto-Read Delay"
-            onChange={(event) => {
-              if (event.target.value === "") return;
-              const next = Number(event.target.value);
-              if (Number.isFinite(next)) onAutoReadDelayChange(next);
-            }}
-          />
-          <span>seconds</span>
-        </div>
-      </label>
-      <p className="settings-hint">
-        Set to 0 to mark conversations read immediately. The timer resets when you open a different conversation.
-      </p>
     </section>
   );
 }

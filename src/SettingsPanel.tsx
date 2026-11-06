@@ -31,7 +31,8 @@ import { ReplicatedSyncSettings } from "./ReplicatedSyncSettings";
 import { PendingRecoveryPhraseDialog } from "./RecoveryPhraseDialog";
 import { ICON_SIZE } from "./iconSizes";
 import { DiagnosticsSettings } from "./DiagnosticsSettings";
-import { AppearanceSettings, ReadingSettings, StartupSettings } from "./AppearanceSettings";
+import { AppearanceSettings, StartupSettings } from "./AppearanceSettings";
+import { ReadingSettings } from "./ReadingSettings";
 import { AccountsSettings } from "./AccountsSettings";
 import { AvailabilitySettings } from "./AvailabilitySettings";
 import { CalendarAccountsSettings } from "./CalendarAccountsSettings";
@@ -71,10 +72,11 @@ type SettingsSectionDefinition = {
 const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Integrations", "System"];
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
-  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks, what it opens to, and when conversations are marked read.", keywords: "theme light dark accent color font size family email zoom magnification minimum email font size accessibility reading mark read delay conversation start startup launch open today", icon: Palette, autosaves: true },
+  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and what it opens to.", keywords: "theme light dark accent color font size family email zoom magnification minimum email font size accessibility start startup launch open today", icon: Palette, autosaves: true },
   { id: "defaultApps", label: "Default Apps", group: "General", description: "Open email links and calendar invitations in ThreeStrands.", keywords: "mailto default email reader mail client ics calendar invitation handler macos windows linux", icon: AppWindow },
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail imap smtp sender name color reconnect disconnect", icon: Mail },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
+  { id: "reading", label: "Reading & Triage", group: "Workflow", description: "Choose when conversations are marked read.", keywords: "mark read unread delay timer archive archiving conversation", icon: Inbox, autosaves: true },
   { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock, autosaves: true },
   { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern", icon: Inbox },
   { id: "mutedSenders", label: "Muted Senders", group: "Workflow", description: "Review senders whose new mail skips the Inbox.", keywords: "mute muted sender newsletter archive automatically skip inbox unmute rule", icon: BellOff },
@@ -257,8 +259,10 @@ export function Settings({
               onFontFamilyChange={preferences.setFontFamily}
             />
           ) : null}
-          {section === "appearance" ? (
+          {section === "reading" ? (
             <ReadingSettings
+              markReadOnArchive={preferences.markReadOnArchive}
+              onMarkReadOnArchiveChange={preferences.setMarkReadOnArchive}
               autoReadDelaySeconds={preferences.autoReadDelaySeconds}
               onAutoReadDelayChange={preferences.setAutoReadDelaySeconds}
             />

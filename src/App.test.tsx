@@ -573,8 +573,8 @@ describe("read state and auto-read", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
     const settings = await screen.findByRole("dialog", { name: "Settings" });
-    // Settings remembers its last section; mark-read timing lives on Appearance.
-    fireEvent.click(within(settings).getByRole("button", { name: "Appearance" }));
+    // Settings remembers its last section; mark-read timing lives on Reading & Triage.
+    fireEvent.click(within(settings).getByRole("button", { name: "Reading & Triage" }));
     fireEvent.change(within(settings).getByRole("spinbutton", { name: "Auto-Read Delay" }), {
       target: { value: "1" },
     });

@@ -3,6 +3,7 @@
   "accent": "teal",
   "fontScale": 120,
   "fontFamily": "Georgia",
+  "markReadOnArchive": true,
   "autoReadDelaySeconds": 8,
   "loadRemoteImages": true,
   "selectedAccountId": "person@example.com",

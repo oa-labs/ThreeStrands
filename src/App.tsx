@@ -173,6 +173,7 @@ export function App() {
     emailZoom,
     emailMinimumFontSize,
     emailTextColors,
+    markReadOnArchive,
     autoReadDelaySeconds,
     loadRemoteImages,
     availabilityPreferences,
@@ -410,7 +411,7 @@ export function App() {
   const mutateIds = useThreadMutations({
     threads, detail, visibleDetail, selectedId, setSelectedId, setDetail, setThreads,
     setCheckedIds, setSyncStatus, setNotice, mailbox, activeAccountId, activeSplitInboxId,
-    includeArchived, isThreadMailbox, autoReadDelaySeconds, triageSessionRef, recordTriageEvent,
+    includeArchived, isThreadMailbox, autoReadDelaySeconds, markReadOnArchive, triageSessionRef, recordTriageEvent,
     loadThreadsRef, queryRef, refreshMailboxUnreadCounts,
   });
 

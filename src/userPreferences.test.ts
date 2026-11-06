@@ -48,6 +48,7 @@ describe("exportable preferences", () => {
       emailMinimumFontSize: 18,
       emailZoom: 125,
       emailTextColors: "app",
+      markReadOnArchive: true,
       autoReadDelaySeconds: 8,
       loadRemoteImages: true,
       showStarredInbox: false,
@@ -114,6 +115,13 @@ describe("exportable preferences", () => {
     expect(readExportablePreferences().availabilityProfiles).toEqual(DEFAULT_AVAILABILITY_PROFILES);
     expect(localStorage.getItem("threestrands.settings.availabilityProfiles")).toBeNull();
     expect(readExportablePreferences().availabilityPreferences).toEqual(previous.availabilityPreferences);
+  });
+
+  it("imports the preceding preference schema with mark-read on archive off", () => {
+    const { markReadOnArchive: _archive, ...previous } = nativeContractFixture;
+    applyExportablePreferences({ ...nativeContractFixture, markReadOnArchive: true });
+    applyExportablePreferences(previous);
+    expect(readExportablePreferences().markReadOnArchive).toBe(false);
   });
 
   it("imports the preceding preference schema at 100% email zoom", () => {

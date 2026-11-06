@@ -6007,7 +6007,7 @@ dependencies = [
 
 [[package]]
 name = "threestrands"
-version = "0.205.1"
+version = "0.206.0"
 dependencies = [
  "argon2",
  "async-imap",

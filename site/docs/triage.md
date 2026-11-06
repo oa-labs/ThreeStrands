@@ -120,3 +120,9 @@ Risky attachments, including programs, macro-enabled Office files, disk images, 
 ## Files {#files}
 
 [Find an attachment in Files](files.html), including filters, local stars, and safe previews on macOS and Windows.
+
+## Mark as Read {#mark-as-read}
+
+Open **Settings → Reading & Triage** to choose how many seconds after opening a conversation it is marked read. Set the delay to 0 for immediate marking.
+
+Turn on **When Archiving a Conversation** to mark conversations read as you archive them, including bulk actions and conversations you have not opened. This option is off by default. Undo restores the conversation's previous read status. These preferences travel with encrypted settings transfer and portable preference sync.
