@@ -14,7 +14,7 @@ The rules below still apply, including no `git stash`, `checkout`, or `reset`.
 
 - Do not run `git stash`, `git checkout`, `git reset`, or other commands that
   rewrite files in the primary checkout.
-- Run tests, the version bump, and changelog edits inside the worktree.
+- Run tests and changelog edits inside the worktree.
 - Merge into the primary checkout only when the developer asks. Before merging,
   check the primary checkout's status and report any files another agent has
   also changed.
@@ -122,40 +122,33 @@ ThreeStrands renders untrusted sender HTML inside a sandboxed, CSP-scoped iframe
 
 ## Application versioning
 
-Every task that changes the shipped application must include an appropriate
-Semantic Versioning bump before completion:
-
-- Patch: bug fixes and small behavior changes.
-- Minor: new backward-compatible functionality.
-- Major: intentionally incompatible changes.
-- Do not bump the version for documentation, tests, CI, or development-only
-  changes that do not affect the shipped application.
-
-Keep the application version identical in:
-
-- `package.json`
-- `src-tauri/tauri.conf.json`
-- `src-tauri/Cargo.toml`
-- the `threestrands` package entry in `src-tauri/Cargo.lock`
-
-Mention the version change in the final summary.
+Do not change the application version. `pnpm release` picks it when the
+developer cuts a release, from the changelog entries waiting in `changes/`, and
+writes it to `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
+and the `threestrands` entry in `src-tauri/Cargo.lock`. If a change is
+intentionally incompatible and needs a major version, say so in the final
+summary so the developer can release it with `--major`.
 
 ## Changelog
 
 `CHANGELOG.md` feeds GitHub release notes and the website's changelog page, so
-users read it. Whenever a version bump ships a change users can notice, add
-an entry under `## Unreleased` in the same task:
+users read it. Whenever a task changes the shipped application in a way users
+can notice, add a new file in `changes/`, named after the task's branch (for
+example `changes/starred-inbox-tab.md`). See `changes/README.md` for the
+format. Do not add entries to `CHANGELOG.md` itself.
 
-- Use `### New`, `### Improved`, or `### Fixed`; create the group if it is
-  missing, in that order. Never write a version heading; `pnpm release` stamps
-  `## Unreleased` with the version and date.
+- Use `### New`, `### Improved`, or `### Fixed`, in that order. The group
+  sets the release's version: any **New** entry makes it a minor release, so
+  use **New** only for new functionality, not for improvements to an existing
+  feature. Never write a `##` heading.
 - Write one or two plain sentences for someone who uses the app, not someone
   who reads the code: what they can now do, or what no longer goes wrong. Name
   features as the UI does (**Settings → Mail Accounts**). No file names,
   components, schema versions, phases, or ticket language.
 - Add to an existing entry about the same feature rather than adding a near
-  duplicate. Skip changes users cannot notice: refactors, tests, internal
-  hardening, and development tooling.
+  duplicate, whether it is in another `changes/` file or under
+  `## Unreleased` in `CHANGELOG.md`. Skip changes users cannot notice:
+  refactors, tests, internal hardening, and development tooling.
 - Run `node --test scripts/changelog.test.mjs` after editing; it rejects any
   other structure.
 

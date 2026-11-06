@@ -9,7 +9,10 @@ export type Changelog = { preamble: string; sections: ChangelogSection[] };
 
 export const CHANGELOG_GROUPS: ChangelogGroupName[];
 export function compareVersions(left: string, right: string): number;
-export function parseChangelog(source: string): Changelog;
+export function parseChangelog(source: string, options?: { file?: string; lineOffset?: number }): Changelog;
+export function parseChangeFile(source: string, file: string): ChangelogGroup[];
+export function collectChanges(source: string, changes: { file: string; source: string }[]): string;
+export function nextVersion(current: string, source: string, options?: { major?: boolean }): string;
 export function formatChangelog(changelog: Changelog): string;
 export function stampRelease(source: string, version: string, date: string): string;
 export function releaseNotes(

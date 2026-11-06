@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { describe, it } from "node:test";
-import { compareVersions, formatChangelog, parseChangelog, releaseNotes, stampRelease, undocumentedTerms } from "./changelog.mjs";
+import {
+  collectChanges, compareVersions, formatChangelog, nextVersion, parseChangeFile, parseChangelog, releaseNotes, stampRelease,
+  undocumentedTerms,
+} from "./changelog.mjs";
 
 const changelog = (...sections) => `# Changelog\n\nWhat changed.\n\n${["## Unreleased", ...sections].join("\n\n")}\n`;
 
@@ -17,6 +20,14 @@ describe("changelog format", () => {
   it("keeps the repository changelog parseable and canonically formatted", async () => {
     const source = await readFile(new URL("../CHANGELOG.md", import.meta.url), "utf8");
     assert.equal(formatChangelog(parseChangelog(source)), source, "Run formatChangelog(parseChangelog(...)) to see the canonical layout");
+  });
+
+  it("keeps every pending change file in changes/ parseable", async () => {
+    const folder = new URL("../changes/", import.meta.url);
+    const names = (await readdir(folder)).filter((name) => name.endsWith(".md") && name !== "README.md");
+    for (const name of names) {
+      assert.ok(parseChangeFile(await readFile(new URL(name, folder), "utf8"), `changes/${name}`).length, name);
+    }
   });
 
   it("parses unreleased, release, and summary sections with joined continuation lines", () => {
@@ -55,6 +66,59 @@ describe("changelog format", () => {
   it("orders stable versions after their betas and compares numerically", () => {
     const sorted = ["0.10.0", "0.9.1", "0.10.0-beta.2", "0.10.0-beta.10", "1.0.0"].sort(compareVersions);
     assert.deepEqual(sorted, ["0.9.1", "0.10.0-beta.2", "0.10.0-beta.10", "0.10.0", "1.0.0"]);
+  });
+});
+
+describe("change files", () => {
+  it("parses groups and entries written as they appear under Unreleased", () => {
+    const groups = parseChangeFile("### Improved\n- Faster search,\n  everywhere.\n\n### Fixed\n- A crash.\n", "changes/search.md");
+    assert.deepEqual(groups.map((group) => [group.name, group.items.map((item) => item.text)]), [
+      ["Improved", ["Faster search, everywhere."]], ["Fixed", ["A crash."]],
+    ]);
+  });
+
+  for (const [problem, source, message] of [
+    ["an empty file", "\n", /changes\/x\.md: add at least one entry/],
+    ["an unknown group, with the file's own line number", "### Fixed\n- A crash.\n\n### Changed\n- x\n", /changes\/x\.md line 4: groups are/],
+    ["an entry outside a group", "- A crash.\n", /changes\/x\.md line 1: entries belong under/],
+    ["a version heading", "### Fixed\n- A crash.\n\n## 1.0.0 — 2026-10-01\n\n### New\n- x\n", /changes\/x\.md: a change file holds only/],
+    ["a group with no entries", "### New\n", /changes\/x\.md: ### New in Unreleased has no entries/],
+  ]) {
+    it(`rejects ${problem}`, () => {
+      assert.throws(() => parseChangeFile(source, "changes/x.md"), message);
+    });
+  }
+
+  it("folds into Unreleased after the entries already there, in the given order and canonical group order", () => {
+    const source = changelog("### Fixed\n- Older fix.", "## 0.1.0 — 2026-10-01\n\n### New\n- First feature.");
+    const collected = collectChanges(source, [
+      { file: "changes/a.md", source: "### Fixed\n- Fix A.\n" },
+      { file: "changes/b.md", source: "### Fixed\n- Fix B.\n\n### New\n- Feature B.\n" },
+    ]);
+    assert.equal(collected, changelog(
+      "### New\n- Feature B.\n\n### Fixed\n- Older fix.\n- Fix A.\n- Fix B.",
+      "## 0.1.0 — 2026-10-01\n\n### New\n- First feature.",
+    ));
+    assert.equal(collectChanges(source, []), source);
+  });
+});
+
+describe("choosing the next version", () => {
+  const pending = (groups) => changelog(groups, "## 0.1.0 — 2026-10-01\n\n### New\n- First feature.");
+
+  it("is a minor release when anything is New", () => {
+    assert.equal(nextVersion("0.9.3", pending("### New\n- Snooze.\n\n### Fixed\n- A crash.")), "0.10.0");
+  });
+
+  it("is a patch release for Improved and Fixed entries, or nothing at all", () => {
+    assert.equal(nextVersion("0.9.3", pending("### Improved\n- Faster.\n\n### Fixed\n- A crash.")), "0.9.4");
+    assert.equal(nextVersion("0.9.3", pending("")), "0.9.4");
+  });
+
+  it("goes to the next major only when asked, and turns a beta into its stable version", () => {
+    assert.equal(nextVersion("0.9.3", pending("### New\n- Snooze."), { major: true }), "1.0.0");
+    assert.equal(nextVersion("0.10.0-beta.2", pending("### New\n- Snooze.")), "0.10.0");
+    assert.throws(() => nextVersion("0.9", pending("")), /Invalid current version/);
   });
 });
 

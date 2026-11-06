@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { appendFile, copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseChangelog, releaseNotes, stampRelease, undocumentedTerms } from "./changelog.mjs";
+import { collectChanges, compareVersions, nextVersion, releaseNotes, stampRelease, undocumentedTerms } from "./changelog.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const number = "(?:0|[1-9][0-9]*)";
@@ -42,6 +42,39 @@ export function releaseMetadata(tag, sources) {
   updaterPublicKey(sources.tauriConfig);
   const prerelease = version.includes("-beta.");
   return { version, channel: prerelease ? "beta" : "stable", prerelease };
+}
+
+/**
+ * `sources` with the application version set to `version` in all four files,
+ * leaving every other field, dependency, and byte of formatting alone.
+ */
+export function setAppVersion(sources, version) {
+  if (!releaseVersion.test(version)) throw new Error(`Invalid application version ${version}`);
+  const once = (text, pattern, file) => {
+    let count = 0;
+    const result = text.replace(pattern, (_, before, after) => {
+      count += 1;
+      return `${before}${version}${after}`;
+    });
+    if (count !== 1) throw new Error(`Expected one application version in ${file}; found ${count}`);
+    return result;
+  };
+  // The top-level "version" is the first key at two-space indentation.
+  const jsonVersion = /^( {2}"version": ")[^"\r\n]*(",?)$/m;
+  // Cargo.toml's [package] table: its lines up to the next table heading.
+  const cargoToml = sources.cargoToml.replace(/^\[package\]\s*\n[^]*?(?=^\[|(?![^]))/m, (section) =>
+    once(section, /^(version\s*=\s*")[^"\r\n]+(")/m, "src-tauri/Cargo.toml [package]"));
+  const cargoLock = once(sources.cargoLock,
+    /^(\[\[package\]\]\s*\nname = "threestrands"\s*\nversion = ")[^"\r\n]+(")/gm, "src-tauri/Cargo.lock");
+  const updated = {
+    ...sources,
+    packageJson: once(sources.packageJson, jsonVersion, "package.json"),
+    tauriConfig: once(sources.tauriConfig, jsonVersion, "src-tauri/tauri.conf.json"),
+    cargoToml,
+    cargoLock,
+  };
+  releaseMetadata(`v${version}`, updated);
+  return updated;
 }
 
 /**
@@ -170,12 +203,77 @@ export async function prepareReleaseAssets(inputDir, outputDir, version, { updat
   return [...selected.map(({ name }) => name), UPDATE_MANIFEST];
 }
 
+const VERSION_FILES = {
+  packageJson: "package.json",
+  tauriConfig: "src-tauri/tauri.conf.json",
+  cargoToml: "src-tauri/Cargo.toml",
+  cargoLock: "src-tauri/Cargo.lock",
+};
+
 async function readReleaseSources(directory) {
-  const paths = ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"];
-  const [packageJson, tauriConfig, cargoToml, cargoLock] = await Promise.all(
-    paths.map((path) => readFile(resolve(directory, path), "utf8")),
-  );
-  return { packageJson, tauriConfig, cargoToml, cargoLock };
+  const entries = await Promise.all(Object.entries(VERSION_FILES)
+    .map(async ([key, path]) => [key, await readFile(resolve(directory, path), "utf8")]));
+  return Object.fromEntries(entries);
+}
+
+/** Where each change adds its changelog entries; see parseChangeFile in changelog.mjs. */
+export const CHANGES_DIR = "changes";
+
+/** The change files in `changes/`, sorted by name; README.md explains the folder. */
+async function readChanges(directory) {
+  let names;
+  try {
+    names = await readdir(resolve(directory, CHANGES_DIR));
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  const files = names.filter((name) => name.endsWith(".md") && name !== "README.md").sort();
+  return Promise.all(files.map(async (name) => ({
+    file: `${CHANGES_DIR}/${name}`,
+    source: await readFile(resolve(directory, CHANGES_DIR, name), "utf8"),
+  })));
+}
+
+/** CHANGELOG.md with every change file folded into `## Unreleased`. */
+async function pendingChangelog(directory) {
+  const source = await readFile(resolve(directory, "CHANGELOG.md"), "utf8");
+  const changes = await readChanges(directory);
+  return { source, changes, collected: collectChanges(source, changes) };
+}
+
+/**
+ * Works out a release without changing anything: the version (next after
+ * package.json from the pending entries, the next major with `major`, or an
+ * explicit `version`, where the current version re-cuts it), the files to
+ * write, and the change files to delete. Throws before any change when the
+ * four version files disagree or an entry is malformed.
+ */
+export async function planRelease(directory, { date, version, major = false } = {}) {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date ?? "")) throw new Error(`Invalid release date ${date}; expected YYYY-MM-DD`);
+  if (version && major) throw new Error("Pass a version or --major, not both");
+  const sources = await readReleaseSources(directory);
+  const current = JSON.parse(sources.packageJson).version;
+  releaseMetadata(`v${current}`, sources);
+
+  const { source, changes, collected } = await pendingChangelog(directory);
+  const target = version ?? nextVersion(current, collected, { major });
+  if (compareVersions(target, current) < 0) throw new Error(`${target} is older than the current version ${current}`);
+
+  const writes = {};
+  if (target !== current) {
+    const updated = setAppVersion(sources, target);
+    for (const [key, path] of Object.entries(VERSION_FILES)) writes[path] = updated[key];
+  }
+  const stamped = stampRelease(collected, target, date);
+  if (stamped !== source) writes["CHANGELOG.md"] = stamped;
+  return { tag: `v${target}`, writes, deletes: changes.map((change) => change.file) };
+}
+
+async function writeRelease(directory, { writes, deletes }) {
+  for (const [path, content] of Object.entries(writes)) await writeFile(resolve(directory, path), content);
+  for (const path of deletes) await rm(resolve(directory, path));
+  return [...Object.keys(writes), ...deletes];
 }
 
 // Bold changelog names the site words differently, so the docs check skips them.
@@ -186,7 +284,7 @@ export async function docsCoverage(directory = root) {
   const docs = resolve(directory, "site/docs");
   const pages = (await readdir(docs)).filter((name) => name.endsWith(".md")).map((name) => resolve(docs, name));
   const site = await Promise.all([...pages, resolve(directory, "site/index.html")].map((path) => readFile(path, "utf8")));
-  return undocumentedTerms(await readFile(resolve(directory, "CHANGELOG.md"), "utf8"), site.join("\n"), DOCS_CHECK_IGNORED);
+  return undocumentedTerms((await pendingChangelog(directory)).collected, site.join("\n"), DOCS_CHECK_IGNORED);
 }
 
 function warnUndocumented(terms) {
@@ -201,25 +299,21 @@ function localDate(now = new Date()) {
 }
 
 /**
- * The release checks and changelog stamping from tagRelease, without Git:
- * scripts/release.sh runs this in the development VM and does the commit,
- * signed tag, and pushes on the host. `date` is the host's YYYY-MM-DD.
+ * The release from tagRelease without Git: scripts/release.sh runs this in
+ * the development VM, then commits, signs the tag, and pushes on the host.
+ * Writes the version files and stamped CHANGELOG.md, deletes the change
+ * files, and returns the tag. `date` is the host's YYYY-MM-DD.
  */
-export async function stampChangelog(directory = root, date = localDate()) {
-  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) throw new Error(`Invalid release date ${date}; expected YYYY-MM-DD`);
-  const sources = await readReleaseSources(directory);
-  const tag = `v${JSON.parse(sources.packageJson).version}`;
-  releaseMetadata(tag, sources);
-  const changelog = await readFile(resolve(directory, "CHANGELOG.md"), "utf8");
-  const stamped = stampRelease(changelog, tag.slice(1), date);
+export async function bumpRelease(directory, options) {
+  const plan = await planRelease(directory, options);
   warnUndocumented(await docsCoverage(directory));
-  return { tag, changelog: stamped };
+  await writeRelease(directory, plan);
+  return plan.tag;
 }
 
-export async function tagRelease(directory = root) {
-  const sources = await readReleaseSources(directory);
-  const tag = `v${JSON.parse(sources.packageJson).version}`;
-  releaseMetadata(tag, sources);
+export async function tagRelease(directory = root, options = {}) {
+  const plan = await planRelease(directory, { date: localDate(), ...options });
+  const { tag } = plan;
 
   const git = (args, capture = false) => {
     const result = spawnSync("git", args, {
@@ -238,19 +332,18 @@ export async function tagRelease(directory = root) {
     throw new Error("Switch to master before releasing; the release tag must point to the branch being pushed");
   }
   if (git(["status", "--porcelain"], true)) {
-    throw new Error("Commit or stash your changes before releasing; the release version must be committed");
+    throw new Error("Commit or stash your changes before releasing; the release starts from what master has");
   }
-
-  const changelogPath = resolve(directory, "CHANGELOG.md");
-  const changelog = await readFile(changelogPath, "utf8");
-  const stamped = stampRelease(changelog, tag.slice(1), localDate());
+  if (git(["tag", "--list", tag], true)) {
+    throw new Error(`Tag ${tag} already exists; to re-cut it, delete it first (see DEVELOPERS.md)`);
+  }
   warnUndocumented(await docsCoverage(directory));
 
   console.log(`Releasing ThreeStrands ${tag}`);
-  if (stamped !== changelog) {
-    await writeFile(changelogPath, stamped);
-    git(["add", "CHANGELOG.md"]);
-    git(["commit", "-m", `Release notes for ${tag}`]);
+  const paths = await writeRelease(directory, plan);
+  if (paths.length) {
+    git(["add", "-A", "--", ...paths]);
+    git(["commit", "-m", `Release ${tag}`]);
   }
   git(["push", "primary", "master"]);
   git(["tag", "-s", tag, "-m", `ThreeStrands ${tag}`]);
@@ -258,11 +351,21 @@ export async function tagRelease(directory = root) {
   return tag;
 }
 
+/** `[--major | VERSION]`, the version choice shared by `tag` and `bump`. */
+function versionOptions(args) {
+  if (args.length > 1) throw new Error("Pass at most one of --major or VERSION");
+  if (args[0] === "--major") return { major: true };
+  if (args[0] === undefined) return {};
+  if (!releaseVersion.test(args[0])) throw new Error(`Invalid version ${args[0]}; expected MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N`);
+  return { version: args[0] };
+}
+
 async function main() {
   const [command, argument, outputDir, version] = process.argv.slice(2);
+  const rest = process.argv.slice(3);
   if (command === "validate") {
     const metadata = releaseMetadata(argument, await readReleaseSources(root));
-    parseChangelog(await readFile(resolve(root, "CHANGELOG.md"), "utf8"));
+    await pendingChangelog(root);
     if (process.env.GITHUB_OUTPUT) {
       await appendFile(process.env.GITHUB_OUTPUT, Object.entries(metadata)
         .map(([name, value]) => `${name}=${value}\n`).join(""));
@@ -282,12 +385,12 @@ async function main() {
   } else if (command === "docs") {
     warnUndocumented(await docsCoverage());
   } else if (command === "tag") {
-    await tagRelease();
-  } else if (command === "stamp") {
-    // Prints the stamped CHANGELOG.md; warnings go to stderr.
-    process.stdout.write((await stampChangelog(root, argument)).changelog);
+    await tagRelease(root, versionOptions(rest));
+  } else if (command === "bump" && argument) {
+    // Changes the working tree and prints only the tag; warnings go to stderr.
+    console.log(await bumpRelease(root, { date: argument, ...versionOptions(rest.slice(1)) }));
   } else {
-    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | docs | tag | stamp [YYYY-MM-DD]");
+    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | docs | tag [--major | VERSION] | bump YYYY-MM-DD [--major | VERSION]");
   }
 }
 

@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 # Release ThreeStrands from the host Mac without running Node on it.
 #
-# The checks and changelog stamping (`node scripts/release.mjs stamp`) run in
-# the tart-vm macOS VM against the committed master, after syncing it there. This script then shows
-# the stamped CHANGELOG.md, and on confirmation commits it, pushes master,
-# creates the signed tag, and pushes the tag, all with the host's Git, signing
-# key, and credentials. `pnpm release` still does the same in one step where
-# Node is available.
+# The checks, version bump, and changelog stamping
+# (`node scripts/release.mjs bump`) run in the tart-vm macOS VM against the
+# committed master, after syncing it there. This script then shows the
+# resulting changes, and on confirmation applies and commits them, pushes
+# master, creates the signed tag, and pushes the tag, all with the host's Git,
+# signing key, and credentials. `pnpm release` still does the same in one step
+# where Node is available.
 #
-# Usage: scripts/release.sh [--yes] [--dry-run]   release the version in package.json
-#        scripts/release.sh docs                  list unreleased names missing from the docs
+# Usage: scripts/release.sh [--yes] [--dry-run] [--major | VERSION]
+#                                         release the next version: minor when
+#                                         a pending entry is New, otherwise patch
+#        scripts/release.sh docs          list unreleased names missing from the docs
 #   --yes      skip the confirmation prompt
-#   --dry-run  stop after showing the stamped changelog; changes nothing
+#   --dry-run  stop after showing the release changes; changes nothing
+#   --major    release the next major version
+#   VERSION    release exactly this version; the current version re-cuts it
 set -Eeuo pipefail
 
 TART_VM="${TART_VM:-tart-vm}"
@@ -25,15 +30,18 @@ git() { command git -C "$repo_root" "$@"; }
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(command git -C "$script_dir" rev-parse --show-toplevel)"
 
-mode=release yes=0 dry_run=0
+mode=release yes=0 dry_run=0 choice=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     docs) mode=docs; shift ;;
     --yes) yes=1; shift ;;
     --dry-run) dry_run=1; shift ;;
+    --major) choice+=(--major); shift ;;
+    [0-9]*.*) choice+=("$1"); shift ;;
     *) sed -n '/^# Usage/,/^set /p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 1 ;;
   esac
 done
+[[ ${#choice[@]} -le 1 ]] || die "pass at most one of --major or VERSION"
 
 command -v "$TART_VM" >/dev/null || die "tart-vm is not on PATH (or set TART_VM to its path)"
 
@@ -59,6 +67,11 @@ git -C "$clone" worktree add --quiet --detach "$work" "$commit"
 trap 'git -C "$clone" worktree remove --force "$work" >/dev/null 2>&1 || true' EXIT
 cd "$work"
 node scripts/release.mjs "${args[@]}"
+# bump changes the worktree; send those changes back after its tag line.
+if [[ "${args[0]}" == bump ]]; then
+  git add -A
+  git diff --cached --binary
+fi
 REMOTE
   } | "$TART_VM" mac ssh 'bash -s'
 }
@@ -66,8 +79,8 @@ REMOTE
 head="$(git rev-parse HEAD)"
 
 if [[ "$mode" == docs ]]; then
-  [[ -z "$(git status --porcelain -- CHANGELOG.md site)" ]] ||
-    echo "warning: uncommitted CHANGELOG.md or site/ changes are not checked; the VM sees only commits" >&2
+  [[ -z "$(git status --porcelain -- CHANGELOG.md changes site)" ]] ||
+    echo "warning: uncommitted CHANGELOG.md, changes/, or site/ changes are not checked; the VM sees only commits" >&2
   in_vm "$head" docs
   exit 0
 fi
@@ -78,7 +91,7 @@ if [[ "$branch" != master ]]; then
   echo "warning: on $branch, not master (allowed only with --dry-run)" >&2
 fi
 [[ -z "$(git status --porcelain)" ]] ||
-  die "commit or stash your changes before releasing; the release version must be committed"
+  die "commit or stash your changes before releasing; the release starts from what master has"
 
 git fetch --quiet "$REMOTE"
 if [[ "$branch" == master ]] && git rev-parse -q --verify "refs/remotes/$REMOTE/master" >/dev/null &&
@@ -86,29 +99,30 @@ if [[ "$branch" == master ]] && git rev-parse -q --verify "refs/remotes/$REMOTE/
   die "master is behind or has diverged from $REMOTE/master; pull first"
 fi
 
-# plutil reads JSON, so no Node is needed for this.
-version="$(plutil -extract version raw -o - "$repo_root/package.json")"
-tag="v$version"
+echo "Checking and preparing the release in the VM (commit ${head:0:8})"
+output="$(mktemp "${TMPDIR:-/tmp}/threestrands-release.XXXXXX")"
+patch="$output.patch"
+trap 'rm -f "$output" "$patch"' EXIT
+in_vm "$head" bump "$(date +%Y-%m-%d)" ${choice[@]+"${choice[@]}"} >"$output"
+tag="$(head -n 1 "$output")"
+[[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || die "the VM did not return a release tag (got: ${tag:-nothing})"
+tail -n +2 "$output" >"$patch"
+
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null ||
   [[ -n "$(git ls-remote --tags "$REMOTE" "refs/tags/$tag")" ]]; then
-  die "tag $tag already exists; bump the version first"
+  die "tag $tag already exists; to re-cut it, delete it first (see DEVELOPERS.md)"
 fi
 
-echo "Checking and stamping $tag in the VM (commit ${head:0:8})"
-stamped="$(mktemp "${TMPDIR:-/tmp}/threestrands-changelog.XXXXXX")"
-trap 'rm -f "$stamped"' EXIT
-in_vm "$head" stamp "$(date +%Y-%m-%d)" >"$stamped"
-[[ -s "$stamped" ]] || die "the VM returned an empty changelog"
-
-notes=0
-if ! cmp -s "$stamped" "$repo_root/CHANGELOG.md"; then
-  notes=1
+changes=0
+if [[ -s "$patch" ]]; then
+  changes=1
+  git apply --check --index "$patch" || die "the VM's release changes don't apply to this checkout"
   echo
-  echo "Release notes from the VM (review them; they become the commit):"
-  diff -u "$repo_root/CHANGELOG.md" "$stamped" | sed '1,2d' || true
+  echo "Release changes for $tag from the VM (review them; they become the commit):"
+  cat "$patch"
   echo
 else
-  echo "No unreleased changelog entries to stamp."
+  echo "Re-cutting $tag: no version or changelog changes."
 fi
 
 if [[ "$dry_run" == 1 ]]; then
@@ -117,8 +131,8 @@ if [[ "$dry_run" == 1 ]]; then
 fi
 
 if [[ "$yes" != 1 ]]; then
-  if [[ "$notes" == 1 ]]; then
-    prompt="Commit these notes, push master to $REMOTE, and push signed tag $tag? [y/N] "
+  if [[ "$changes" == 1 ]]; then
+    prompt="Commit these changes, push master to $REMOTE, and push signed tag $tag? [y/N] "
   else
     prompt="Push master to $REMOTE and push signed tag $tag? [y/N] "
   fi
@@ -126,10 +140,9 @@ if [[ "$yes" != 1 ]]; then
   [[ "$answer" == y || "$answer" == Y ]] || { echo "Cancelled; nothing changed."; exit 1; }
 fi
 
-if [[ "$notes" == 1 ]]; then
-  cp "$stamped" "$repo_root/CHANGELOG.md"
-  git add CHANGELOG.md
-  git commit -m "Release notes for $tag"
+if [[ "$changes" == 1 ]]; then
+  git apply --index "$patch"
+  git commit -m "Release $tag"
 fi
 git push "$REMOTE" master
 git tag -s "$tag" -m "ThreeStrands $tag"

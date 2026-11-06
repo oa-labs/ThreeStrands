@@ -1,7 +1,9 @@
 /**
  * CHANGELOG.md is the single source for GitHub release notes and the
- * marketing site's changelog page. Agents add plain-language entries under
- * `## Unreleased`; `pnpm release` stamps them with the version being tagged.
+ * marketing site's changelog page. Each change adds its plain-language entries
+ * as a file in `changes/` (see parseChangeFile), so parallel branches never
+ * edit the same lines. `pnpm release` folds those files into `## Unreleased`,
+ * picks the next version from them (nextVersion), and stamps the entries with it.
  *
  * Format (anything else is rejected so a typo fails CI, not a release):
  *
@@ -36,11 +38,15 @@ export function compareVersions(left, right) {
   return 0;
 }
 
-export function parseChangelog(source) {
+/**
+ * `file` and `lineOffset` only change how errors name the source, so a change
+ * file parsed inside a synthetic changelog reports its own line numbers.
+ */
+export function parseChangelog(source, { file = "CHANGELOG.md", lineOffset = 0 } = {}) {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
-  if (lines[0] !== "# Changelog") throw new Error("CHANGELOG.md line 1: must be \"# Changelog\"");
+  if (lines[0] !== "# Changelog") throw new Error(`${file} line 1: must be "# Changelog"`);
   const fail = (index, message) => {
-    throw new Error(`CHANGELOG.md line ${index + 1}: ${message}`);
+    throw new Error(`${file} line ${index + 1 + lineOffset}: ${message}`);
   };
 
   let first = lines.findIndex((line) => line.startsWith("## "));
@@ -100,17 +106,66 @@ export function parseChangelog(source) {
   }
 
   if (!sections.length || sections[0].kind !== "unreleased") {
-    throw new Error("CHANGELOG.md needs an ## Unreleased section for upcoming changes");
+    throw new Error(`${file} needs an ## Unreleased section for upcoming changes`);
   }
   for (const each of sections) {
     for (const eachGroup of each.groups) {
-      if (!eachGroup.items.length) throw new Error(`CHANGELOG.md: ### ${eachGroup.name} in ${each.title} has no entries`);
+      if (!eachGroup.items.length) throw new Error(`${file}: ### ${eachGroup.name} in ${each.title} has no entries`);
       for (const eachItem of eachGroup.items) {
         eachItem.text = eachItem.lines.map((text) => text.trim()).join(" ").slice(2);
       }
     }
   }
   return { preamble, sections };
+}
+
+const CHANGE_FILE_HEADER = "# Changelog\n\n## Unreleased\n\n";
+
+/**
+ * One file from `changes/`: `### New | Improved | Fixed` groups with entries,
+ * written exactly as they would appear under `## Unreleased`, and nothing
+ * else. Returns its groups.
+ */
+export function parseChangeFile(source, file) {
+  if (/^\s*$/.test(source)) throw new Error(`${file}: add at least one entry under ### New, ### Improved, or ### Fixed`);
+  const { sections } = parseChangelog(CHANGE_FILE_HEADER + source, {
+    file, lineOffset: -CHANGE_FILE_HEADER.split("\n").length + 1,
+  });
+  if (sections.length !== 1) throw new Error(`${file}: a change file holds only ### groups and entries, no ## headings`);
+  return sections[0].groups;
+}
+
+/**
+ * Folds change files into the `## Unreleased` section, after any entries
+ * already there, in the order given (`pnpm release` sorts by file name).
+ * `changes` is a list of `{ file, source }`.
+ */
+export function collectChanges(source, changes) {
+  const changelog = parseChangelog(source);
+  const [unreleased] = changelog.sections;
+  for (const { file, source: changeSource } of changes) {
+    for (const group of parseChangeFile(changeSource, file)) {
+      const existing = unreleased.groups.find((candidate) => candidate.name === group.name);
+      if (existing) existing.items.push(...group.items);
+      else unreleased.groups.push(group);
+    }
+  }
+  return formatChangelog(changelog);
+}
+
+/**
+ * The version after `current` for the Unreleased entries in `source`: minor
+ * when anything is New, otherwise patch, or the next major when asked. A beta
+ * becomes its stable version.
+ */
+export function nextVersion(current, source, { major = false } = {}) {
+  if (!versionOnly.test(current)) throw new Error(`Invalid current version ${current}`);
+  const [core, beta] = current.split("-beta.");
+  const [x, y, z] = core.split(".").map(Number);
+  if (major) return `${x + 1}.0.0`;
+  if (beta !== undefined) return core;
+  const [unreleased] = parseChangelog(source).sections;
+  return unreleased.groups.some((group) => group.name === "New") ? `${x}.${y + 1}.0` : `${x}.${y}.${z + 1}`;
 }
 
 function formatSection(section) {

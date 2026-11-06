@@ -187,30 +187,45 @@ binaries; keep their versions in step with `CARGO_VET_VERSION` and
 
 ## Releases
 
-Commit the release changes on `master`, then run:
+Changes don't bump the version. Between releases, `package.json` and the
+other version files hold the last released version, and each change adds its
+release notes as a file in [`changes/`](changes/README.md). The release picks
+the version. With everything for the release on `master`, run:
 
 ```sh
 scripts/release.sh          # on a host without Node; uses the macOS VM (see above)
 pnpm release                # where Node is installed
 ```
 
-`scripts/release.sh` runs the checks and changelog stamping below in the
-[macOS VM](#macos-vm-tart) against the committed `master`, shows you the
-stamped release notes, and asks before it commits them and does the pushes
-and the signed tag on the host, with your Git signing key and credentials.
-`--dry-run` stops after showing the notes; `--yes` skips the question.
-`scripts/release.sh docs` lists names missing from the docs, like
-`pnpm release:docs`. It also refuses to release when `master` is behind
-`primary/master` or the tag already exists.
-
-Either way, the release reads the version from `package.json`, checks that it matches the Tauri
+The release checks that the version in `package.json` matches the Tauri
 configuration, Cargo manifest, and application entry in `src-tauri/Cargo.lock`,
-then stamps the `## Unreleased` entries in `CHANGELOG.md` with the version and
-today's date and commits them (skipped when there are none), pushes `master`,
-creates a signed `v<version>` tag, and pushes that tag.
-It requires a clean working tree and your configured Git signing key, and stops
-if any Git command fails. For example, version `0.56.0` produces tag `v0.56.0`;
-version `0.57.0-beta.1` produces a beta prerelease tag.
+and that `CHANGELOG.md` and every file in `changes/` are well formed. It then
+folds the `changes/` files into `## Unreleased`, in file-name order after any
+entries already there, and picks the next version: minor when any entry is
+under **New**, otherwise patch, even with no entries at all. It sets that
+version in all four files, stamps the entries with the version and today's
+date, deletes the `changes/` files, and commits all of it as `Release
+v<version>`. Then it pushes `master`, creates a signed `v<version>` tag, and
+pushes that tag.
+
+Pass `--major` for the next major version, or an exact version, such as
+`0.57.0-beta.1` for a beta prerelease or `0.60.0` to skip ahead; with
+`pnpm`, that's `pnpm release --major` or `pnpm release 0.57.0-beta.1`. Passing
+the current version re-cuts it (see below). A version older than the current
+one is refused.
+
+The release requires `master`, a clean working tree, a tag that doesn't exist
+yet, and your configured Git signing key. It checks everything it can before
+changing any file, and stops if any Git command fails.
+
+`scripts/release.sh` does the checks, version, and changelog work in the
+[macOS VM](#macos-vm-tart) against the committed `master`, shows you the
+resulting changes, and asks before it applies and commits them and does the
+pushes and the signed tag on the host, with your Git signing key and
+credentials. `--dry-run` stops after showing the changes; `--yes` skips the
+question. `scripts/release.sh docs` lists names missing from the docs, like
+`pnpm release:docs`. It also refuses to release when `master` is behind
+`primary/master`.
 
 Before stamping, it warns about bold UI names in the unreleased **New** and
 **Improved** entries that appear nowhere in `site/docs` or `site/index.html`,
@@ -230,20 +245,23 @@ the gap before publishing, re-run the failed job and then the release job.
 
 ### Release notes and the changelog
 
-`CHANGELOG.md` is the only source of release notes. The draft release's notes
+`CHANGELOG.md` is the only source of release notes; `changes/` holds the
+entries waiting for the next release. The draft release's notes
 combine every changelog section newer than the last *published* release (drafts
 never shipped, so they don't count), grouped as New, Improved, and Fixed, with a
 link to the code changes. The marketing site's `changelog.html` shows the same
-released sections; `## Unreleased` entries stay off the site until a release
-stamps them.
+released sections; `## Unreleased` entries and `changes/` files stay off the
+site until a release stamps them.
 
 If a release build fails before its draft is published, fix it on `master`,
-then move the tag instead of bumping the version:
+then move the tag by releasing the same version again:
 
 ```sh
 git tag -d v<version> && git push origin :refs/tags/v<version>
-pnpm release
+pnpm release <version>
 ```
+
+`scripts/release.sh <version>` works the same way.
 
 Entries added since the first attempt merge into that version's section. Once a
 release is published, always ship fixes under a new version.
