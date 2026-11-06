@@ -43,7 +43,7 @@ export function createDemoAgents(context: () => { accounts: Account[]; threads: 
     d.run.state = "completed"; d.run.checkpoint = 3; d.run.dispatches += 1; d.task.unread = true;
   };
   return {
-    async agentResearchSettings() { return {policy:researchPolicy,config: {enabled:false,searchEnabled:false,persistenceBasis:"",verified:false},modelKeyConfigured:false,searchKeyConfigured:false}; },
+    async agentResearchSettings() { return {policy:researchPolicy,config: {enabled:false,searchEnabled:false,verified:false},modelKeyConfigured:false,searchKeyConfigured:false}; },
     async setAgentResearchSettings() { throw new Error("Research setup requires the desktop app. The demonstration makes no external requests."); },
     async setAgentResearchKey() { throw new Error("Research keys require the desktop keychain."); },
     async checkAgentResearchConnection() { throw new Error("Research connection checks require the desktop app."); },

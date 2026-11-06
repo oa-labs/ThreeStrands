@@ -60,7 +60,6 @@ pub(crate) const MAX_QUOTE: usize = 1000;
 pub(crate) const MAX_CALL_ID: usize = 200;
 pub(crate) const MAX_URL: usize = 2048;
 pub(crate) const MAX_TITLE: usize = 500;
-pub(crate) const MAX_PERSISTENCE_BASIS: usize = 1000;
 pub(crate) const SEARCH_RESULTS: usize = 5;
 pub(crate) const MAX_PROTOCOL_BYTES: usize = 100000;
 pub(crate) const MAX_SECRET: usize = 1000;

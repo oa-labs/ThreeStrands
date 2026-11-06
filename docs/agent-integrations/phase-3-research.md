@@ -13,9 +13,8 @@ account names. Existing AI provider settings and credentials remain untouched.
 Research and Exa search default off. Saving setup never queues work. Disconnecting
 a key or editing setup invalidates in-flight generations and pauses affected jobs.
 
-Record the applicable agreement basis permitting saved Exa metadata, excerpts,
-and reports. A working API key is not evidence of persistence rights. **Check
-connections** explicitly performs an Anthropic model-availability request and one
+Setup does not ask for a storage agreement; whether provider terms allow saved
+excerpts is between the user and the provider. **Check connections** explicitly performs an Anthropic model-availability request and one
 public Exa search, disclosed as potentially chargeable. Jobs cannot start until
 that configuration has passed the check. Automated tests do not perform these
 live account checks or spend provider credits.

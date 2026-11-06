@@ -175,7 +175,7 @@ describe("settings section navigation", () => {
   });
 
   it("keeps web research setup in Settings under Integrations", async () => {
-    const research = vi.spyOn(mailClient, "agentResearchSettings").mockResolvedValue({ config: { enabled: false, searchEnabled: true, persistenceBasis: "", verified: false }, modelKeyConfigured: false, searchKeyConfigured: false });
+    const research = vi.spyOn(mailClient, "agentResearchSettings").mockResolvedValue({ config: { enabled: false, searchEnabled: true, verified: false }, modelKeyConfigured: false, searchKeyConfigured: false });
     const dialog = await openSettings();
     fireEvent.change(within(dialog).getByRole("searchbox", { name: "Search Settings" }), { target: { value: "exa" } });
     expect(within(dialog).getByRole("button", { name: "Web Research" })).toHaveAttribute("aria-current", "true");

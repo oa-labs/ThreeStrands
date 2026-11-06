@@ -1299,7 +1299,7 @@ export type AgentTurn = { id: string; role: "user" | "assistant"; text: string; 
 export type AgentArtifact = { id: string; version: number; kind: "fixture_report" | "research_report"; body: string; notResearched: boolean; createdAt: number };
 export type AgentDetail = { task: AgentTask; run: AgentRun; turns: AgentTurn[]; artifacts: AgentArtifact[]; research?: AgentResearchSummary | null };
 
-export type AgentResearchConfig = { enabled: boolean; searchEnabled: boolean; persistenceBasis: string; verified: boolean };
+export type AgentResearchConfig = { enabled: boolean; searchEnabled: boolean; verified: boolean };
 export type AgentResearchSettings = { policy?: typeof import("../docs/agent-integrations/contract-v1.json"); config: AgentResearchConfig; modelKeyConfigured: boolean; searchKeyConfigured: boolean };
 export type AgentResearchRequest = { task: CreateAgentTaskRequest; subjects: string[]; consent: boolean };
 export type AgentResearchSource = { id: string; url: string; title: string; excerpt: string; kind: "page" | "search_snippet"; retrievedAt: number };

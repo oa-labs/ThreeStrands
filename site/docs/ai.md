@@ -80,8 +80,7 @@ Delegated tasks in **Agents** can research the web. Web research is separate fro
 
 1. Open **Settings → Web Research**.
 2. Paste your **Anthropic API Key** and **Exa API Key**, clicking **Save Key** for each.
-3. Under **Storage Agreement**, record the API or customer agreement that allows ThreeStrands to keep search metadata, excerpts, and reports, then click **Save Agreement**.
-4. Click **Check Connections**. This sends one public test search to Exa, which may be billed, and checks that the model is available at Anthropic.
-5. Turn on **Web Research**.
+3. Click **Check Connections**. This sends one public test search to Exa, which may be billed, and checks that the model is available at Anthropic.
+4. Turn on **Web Research**.
 
-Changing any of these settings pauses research that is running and means checking connections again. Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic. Exa receives only the public subjects you review for each task. Each task has fixed limits on model calls, searches, pages, tokens, and time, listed under **Limits and Estimated Cost**.
+Changing any of these settings pauses research that is running and means checking connections again. Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic. Exa receives only the public subjects you review for each task. Each task has fixed limits on model calls, searches, pages, tokens, and time, listed under **Limits and Estimated Cost**. Raw evidence expires after seven days; reports and cited excerpts remain until you delete them.
