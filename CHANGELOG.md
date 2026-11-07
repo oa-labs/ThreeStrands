@@ -4,6 +4,19 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.207.1 — 2026-11-06
+
+### Improved
+- Adding an event from an email's Brief now picks the primary calendar of the account the email arrived on, instead of a calendar from another account. In **New event**, the **Calendar** list shows each account's primary calendar at the top, apart from the rest.
+- As you type a **Location** for a new or edited event, ThreeStrands suggests places from your other calendar events, most-used first. Choose one with the arrow keys and Return, or keep typing your own.
+- IMAP search now includes archived mail in All Mail and messages stored only in user folders. On servers with label-based archiving, archiving preserves other labels and no longer requires a separate Archive mailbox.
+- Gmail IMAP accounts can now apply and remove existing labels while preserving other labels and keeping messages in All Mail.
+- New event and Edit event place **All day** beside the start and end fields, with the checkbox and label together on one line. Dates now open a calendar styled to match the app, with separate time controls.
+- **Invite People** on new and edited events now suggests people the way compose does: ranked by how often you email them, with the people you usually email alongside those already invited shown first, marked **Often emailed with**.
+- Saved contacts now come before people who are only in your mail history when you type a name, whether you're writing an email or inviting people to an event. They're also found by the name you saved them under, even if their emails use a different one.
+- **Settings → Reading & Triage** now lets you choose to mark conversations read **Immediately**, **After a Delay**, or **Never** when you open them. With **Never**, conversations stay unread until you mark them read yourself.
+- **Settings → Reading & Triage** can also mark conversations read when you move them to Trash or snooze them, bring snoozed conversations back as unread, and choose whether archiving opens the next older conversation, the next newer one, or returns to the list.
+
 ## 0.207.0 — 2026-11-06
 
 ### New
