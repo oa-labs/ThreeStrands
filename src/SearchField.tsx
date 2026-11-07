@@ -1,4 +1,4 @@
-import { AtSign, Calendar, Clock, Folder, Inbox, Search, SlidersHorizontal, Tag, User, X } from "lucide-react";
+import { AtSign, BookmarkPlus, Calendar, Clock, Folder, Inbox, Search, SlidersHorizontal, Tag, User, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -19,6 +19,7 @@ export const SEARCH_DEBOUNCE_MS = 180;
 export const CONTACT_SUGGESTION_DEBOUNCE_MS = 120;
 
 type SearchFieldProps = {
+  onSaveSearch?: (query: string) => void;
   inputRef: RefObject<HTMLInputElement | null>;
   /** The committed query that drives the thread list. */
   query: string;
@@ -68,6 +69,7 @@ export function SearchField({
   onToggleInboxOnly,
   labels = NO_LABELS,
   loadContacts,
+  onSaveSearch,
 }: SearchFieldProps) {
   const listId = useId();
   const [draft, setDraft] = useState(query);
@@ -234,6 +236,11 @@ export function SearchField({
             {inboxOnly ? <span>Inbox Only</span> : null}
           </button>
         ) : null}
+        {onSaveSearch && draft.trim() ? <button type="button" className="btn-icon" aria-label="Save Search" title="Save Search" onClick={() => {
+          commitNow(draft);
+          setDismissed(true);
+          onSaveSearch(draft);
+        }}><BookmarkPlus size={ICON_SIZE.sm} /></button> : null}
         {/* One trailing slot: the / hint while idle (Close on hover), Close while searching. */}
         <button
           type="button"

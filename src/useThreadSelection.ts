@@ -109,7 +109,7 @@ export function useThreadSelection({ threads, selectedId, setSelectedId, query, 
   }, [selectedId]);
 
   return {
-    checkedIds, setCheckedIds, selectedThreadRowRef, selectAllRef, activeMessageFilters,
+    checkedIds, setCheckedIds, selectedThreadRowRef, selectAllRef, activeMessageFilters, setActiveMessageFilters,
     toggleMessageFilter, clearMessageFilters, visibleThreads, selected, selectedIndex, selectThread,
     applyThreadSelectionGesture, toggleChecked,
   };

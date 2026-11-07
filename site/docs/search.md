@@ -14,6 +14,14 @@ You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` 
 Your active mail search stays in place when you visit Contacts or another view. Return to Mail to continue searching; the search box regains focus. Click **Close Search** to clear the search and return to your inbox.
 
 
+## Save a Search {#save-a-search}
+
+With a mail search entered, choose **Save Search** beside the search box. Give it a name and choose **All accounts** or one connected account. The saved search also remembers **Inbox Only** and your active quick filters (**Unread**, **Starred**, **Important**, and **No Reply**). Saving does not change your current search or move mail.
+
+Choose **Saved searches** beside the search box to reopen or delete a saved search. Reopening switches to its saved account scope and runs the search again using current mail. **All accounts** includes accounts you connect later. A search for a disconnected account stays listed but cannot be opened until that account is connected again.
+
+Saved searches stay on this computer; they are not included in settings exports or cross-device sync. Local results and server coverage follow the same rules as an ordinary search.
+
 ## Search Examples {#search-examples}
 
 | Find | Search |

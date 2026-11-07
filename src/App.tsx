@@ -89,7 +89,8 @@ import { PanelResizeHandle, useInboxWidth } from "./PanelResizeHandle";
 import { messagesWithQueuedReplies, queuedMessage } from "./queuedReplies";
 import { AvailabilitySection } from "./RecipientSections";
 import { offersFindTimes, planChatAvailability, suggestedSearch } from "./scheduling";
-import { SearchField } from "./SearchField";
+import { MailSearch } from "./MailSearch";
+import type { SavedSearch } from "./savedSearches";
 import { readSelectedAccountId, readSelectedMailboxForAccount } from "./settings";
 import type { SettingsSection } from "./settingsPanelTypes";
 import { readSettingsSection, saveSettingsSection } from "./settingsNavigation";
@@ -227,7 +228,7 @@ export function App() {
   } = mailboxThreads;
   const selection = useThreadSelection({ threads, selectedId, setSelectedId, query, includeArchived, contextOpenedThreadRef });
   const {
-    checkedIds, setCheckedIds, selectedThreadRowRef, selectAllRef, activeMessageFilters,
+    checkedIds, setCheckedIds, selectedThreadRowRef, selectAllRef, activeMessageFilters, setActiveMessageFilters,
     toggleMessageFilter, clearMessageFilters, visibleThreads, selected, selectThread, applyThreadSelectionGesture,
     toggleChecked,
   } = selection;
@@ -338,6 +339,27 @@ export function App() {
     selectedId, setSelectedId, selectedThreadRowRef, setNotice,
   });
   const { accountSplitInboxes, mailboxTitle, returnStep, openTaskThread, jumpToThread } = navigation;
+  const [pendingSavedSearch, setPendingSavedSearch] = useState<SavedSearch | null>(null);
+  const { goToInboxTab, switchAccount } = navigation;
+  const openSavedSearch = useCallback((search: SavedSearch) => {
+    if (search.accountId !== null && !accounts.some((account) => account.email === search.accountId)) {
+      setNotice({ message: "The saved search's account is no longer connected." });
+      return;
+    }
+    switchAccount(search.accountId);
+    setPendingSavedSearch(search);
+  }, [accounts, switchAccount, setNotice]);
+  // Account navigation restores its last tab and clears search first. Apply
+  // the saved query afterward, including when that tab catalog loads late.
+  useEffect(() => {
+    if (!pendingSavedSearch || !splitInboxCatalog.loaded || activeAccountId !== pendingSavedSearch.accountId) return;
+    goToInboxTab();
+    setActiveMessageFilters(new Set(pendingSavedSearch.messageFilters));
+    setInboxOnly(pendingSavedSearch.inboxOnly);
+    setQuery(pendingSavedSearch.query);
+    setSearchOpen(true);
+    setPendingSavedSearch(null);
+  }, [pendingSavedSearch, splitInboxCatalog.loaded, activeAccountId, goToInboxTab, setActiveMessageFilters, setInboxOnly, setQuery, setSearchOpen]);
   // Only a loaded, unfiltered, unsearched Main inbox with no threads is inbox zero;
   // a failed load or an empty split is not.
   const inboxZero = mailbox === "inbox" && !loading && !mailboxError && threads.length === 0 && !query.trim() && accounts.length > 0;
@@ -1023,7 +1045,11 @@ export function App() {
         </header>
         {isTabbedMailbox && searchOpen ? (
           <div className="list-toolbar">
-            <SearchField
+            <MailSearch
+              accounts={accounts}
+              accountId={activeAccountId}
+              activeFilters={activeMessageFilters}
+              onOpenSavedSearch={openSavedSearch}
               inputRef={searchRef}
               query={query}
               onCommit={setQuery}

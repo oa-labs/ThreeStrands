@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { mailClient } from "./data/client";
 import type { SearchReport } from "./domain";
+import { saveSearch, SAVED_SEARCHES_KEY } from "./savedSearches";
 import { REMOTE_SEARCH_DELAY_MS } from "./useMailboxThreads";
 
 // Server search starts only after the query holds still, so waits for it
@@ -20,6 +21,7 @@ describe("split inbox search shortcuts", () => {
     localStorage.removeItem("threestrands.settings.selectedAccountId");
     localStorage.removeItem("threestrands.settings.selectedMailboxByAccount");
     localStorage.removeItem("threestrands.settings.selectedTabByAccount");
+    localStorage.removeItem(SAVED_SEARCHES_KEY);
     vi.restoreAllMocks();
   });
 
@@ -84,6 +86,37 @@ describe("split inbox search shortcuts", () => {
     await waitFor(() => expect(fetchPage).toHaveBeenCalledWith(sourceId, 2, 50));
     await waitFor(() => expect(within(list).getAllByRole("option")).toHaveLength(3));
     expect(screen.queryByRole("button", { name: "Load More Results" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["work@example.com", true],
+    [null, false],
+  ] as const)("reopens a saved search in scope %s after account navigation restores its tab", async (accountId, inboxOnly) => {
+    const [primary] = await mailClient.listAccounts();
+    vi.spyOn(mailClient, "listAccounts").mockResolvedValue([
+      primary!, { ...primary!, email: "work@example.com", displayName: "Work", sortOrder: 1 },
+    ]);
+    vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([{
+      id: "work-split", name: "Work split", matchKind: "pattern", matchValue: "sender@example.com", sortOrder: 0,
+      createdAt: "2026-03-01T00:00:00Z", accountId: "work@example.com",
+    }]);
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    localStorage.setItem("threestrands.settings.selectedTabByAccount", JSON.stringify({ "work@example.com": "work-split" }));
+    saveSearch({ name: "Invoices", query: "subject:invoice", accountId, inboxOnly, messageFilters: ["starred"] });
+    const searchThreads = vi.spyOn(mailClient, "searchThreads");
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+    fireEvent.keyDown(window, { key: "/" });
+    fireEvent.click(await screen.findByRole("button", { name: "Saved searches" }));
+    fireEvent.click(screen.getByRole("button", { name: `Invoices · ${accountId ?? "All accounts"}${inboxOnly ? " · Inbox Only" : ""}` }));
+    await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "subject:invoice", includeArchived: !inboxOnly }), accountId ?? undefined,
+    ));
+    expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("subject:invoice");
+    expect(screen.getByRole("button", { name: "Search only the Inbox" })).toHaveAttribute("aria-pressed", String(inboxOnly));
+    expect(screen.getByRole("button", { name: "Filters, 1 active" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose folder, current folder Inbox" })).toBeInTheDocument();
+    if (accountId) expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true");
   });
 
   it("shows Inbox as the folder and Main as the default tab, with a dismissible folder menu", async () => {
