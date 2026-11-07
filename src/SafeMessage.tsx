@@ -137,7 +137,10 @@ body {
   margin: 0;
   color: var(--body-text);
   font-size: calc(15px * var(--font-scale, 1));
-  line-height: 1.7;
+  /* Sender HTML is designed for mail clients' default line height. A taller
+     inherited value stretches Word and Outlook paragraphs and signatures
+     that never set their own. */
+  line-height: normal;
   overflow-wrap: break-word;
   overflow-x: auto;
 }
