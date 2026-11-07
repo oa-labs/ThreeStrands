@@ -335,13 +335,10 @@ pub enum LabelModel {
 
 /// The provider differences callers genuinely have to branch on.
 ///
-/// Deliberately minimal: every flag here is one that a code path branches on.
-/// `provided_threads` and `label_model` are the exception while the IMAP
-/// provider is being built: `docs/imap-design.md` (phase 1) adds them ahead
-/// of their consumers, local threading (phase 2) and the frontend's label
-/// actions (phases 3 and 6). Until those land they have no reader, so their
-/// dead-code allows are scoped to the two fields and removed with the first
-/// caller.
+/// Deliberately minimal: every flag here is one that a code path branches on,
+/// except `provided_threads` and `label_model`. Each provider reports them,
+/// but no production code reads them yet; their `expect(dead_code)`
+/// attributes start warning once something does.
 #[derive(Clone, Copy, Debug)]
 pub struct ProviderCapabilities {
     /// Whether the provider can find mail the local cache has not ingested.
@@ -356,8 +353,12 @@ pub struct ProviderCapabilities {
     /// when the server does not return `THREADID`.
     #[cfg_attr(not(test), expect(dead_code, reason = "reported by each provider; no production reader yet"))]
     pub provided_threads: bool,
-    /// How this provider models user-visible labels. Drives which label
-    /// actions the frontend offers. See [`LabelModel`].
+    /// How this provider models user-visible labels. See [`LabelModel`].
+    ///
+    /// The frontend does not read this. Its label actions follow the
+    /// account's `label_model` (`models::Account`), which `enrich_label_model`
+    /// in `db/accounts.rs` derives the same way: the negotiated native model,
+    /// else the one the saved label storage implies.
     #[cfg_attr(not(test), expect(dead_code, reason = "reported by each provider; no production reader yet"))]
     pub label_model: LabelModel,
     /// Whether a message's delivery can be *verified* against a server-side
