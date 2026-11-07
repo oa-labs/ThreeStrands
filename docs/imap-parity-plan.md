@@ -14,7 +14,7 @@ their account if necessary, so eager legacy identity backfill is not required.
 [All Mail, archive, and search completeness](imap-all-mail.md) is implemented:
 bounded aggregate acquisition, negotiated label membership/system actions,
 broader server search, and explicit partial coverage. General label management
-remains in progress. Existing native-label apply/remove support is recorded in
+remains in progress. Native-label creation and apply/remove support is recorded in
 [native label membership](imap-native-labels.md).
 
 ## Goal and scope
@@ -87,15 +87,19 @@ and negative cases where a label removal must not delete mail.
 
 Existing labels on servers advertising `X-GM-EXT-1` can now be applied and
 removed without a configured container. Their existing IDs are preserved.
-Remaining gaps: native label create/rename/delete, label-folder rename, and
+Remaining gaps: native label rename/delete, label-folder rename, and
 keyword writes. Ordinary label-folder writes still require a container.
 
 - [x] Read/write advertised `X-GM-LABELS` and expose existing labels directly.
 - [x] Apply/remove existing native labels with verified, additive membership
   writes; preserve unrelated labels and reconcile external membership changes.
-- [ ] Support label create, rename, apply, remove, and delete, including hierarchy
-  and non-ASCII names. Preserve Split Inbox references and other saved label
-  references through rename; refresh changes made in other clients.
+- [x] Create native labels, including hierarchy and non-ASCII names, with live
+  verification and retry-safe publication. Record the
+  [focused reference audit](imap-label-reference-audit.md).
+- [ ] Support native label rename/delete. Preserve Split Inbox references and
+  other saved label references through rename; refresh changes made in other
+  clients. Establish aliases and recovery across the audit's reference owners
+  before enabling these actions.
 - [ ] For plain IMAP, complete folder management and label-folder rename with
   stable references. Implement keyword writes only when permanent flags permit
   them; otherwise describe the available folder behavior clearly.

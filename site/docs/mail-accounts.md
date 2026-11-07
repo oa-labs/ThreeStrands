@@ -11,7 +11,7 @@ Use [Getting Started](getting-started.html#connect-gmail) for Gmail sign-in or [
 
 For IMAP servers that support label-based archiving, archived mail stays in All Mail and keeps its other labels. Setup does not require a separate Archive mailbox for those accounts. Other IMAP accounts continue to use their chosen Archive mailbox.
 
-For IMAP servers with native label support, **Manage Labels** lets you apply or remove existing labels without configuring a label folder container. Create, rename, or delete those labels in another mail client.
+For IMAP servers with native label support, **Manage Labels** lets you create labels and apply or remove them without configuring a label folder container. Enter a full nested path to create a nested label. Rename or delete those labels in another mail client.
 
 ## Gmail Sending Addresses {#gmail-sending-addresses}
 

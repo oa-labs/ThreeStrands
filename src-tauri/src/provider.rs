@@ -328,8 +328,8 @@ pub enum LabelModel {
     /// IMAP folders with no user-label storage available (no `\*` and no
     /// container chosen): the UI hides label actions for the account.
     ImapNoUserLabels,
-    /// Negotiated native membership writes on existing user labels. Label
-    /// creation, rename, and deletion are deliberately separate capabilities.
+    /// Negotiated native user-label membership and creation. Rename and
+    /// deletion remain separate, unsupported capabilities.
     ImapNativeLabels,
 }
 

@@ -71,7 +71,7 @@ pub(super) fn update_membership(
     }
 }
 
-fn fixture(raw: &str) -> (Arc<Mutex<MutServer>>, ImapProvider, ImapStateStore) {
+pub(super) fn fixture(raw: &str) -> (Arc<Mutex<MutServer>>, ImapProvider, ImapStateStore) {
     let mut state = MutServer::new();
     state.capabilities.push("X-GM-EXT-1".into());
     for (name, validity) in [
@@ -98,12 +98,12 @@ fn fixture(raw: &str) -> (Arc<Mutex<MutServer>>, ImapProvider, ImapStateStore) {
     (state, provider, store)
 }
 
-fn structures() -> Vec<String> {
+pub(super) fn structures() -> Vec<String> {
     vec![message("<native-root@example.test>"),
         "From: Other <other@example.test>\r\nTo: me@example.com\r\nDate: Tue, 06 Oct 2026 10:00:00 +0000\r\nSubject: Headerless MIME\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nsecond body\r\n--x\r\nContent-Type: text/html\r\n\r\n<p>second body</p>\r\n--x--\r\n".into()]
 }
 
-async fn sync(provider: &ImapProvider, store: &ImapStateStore) {
+pub(super) async fn sync(provider: &ImapProvider, store: &ImapStateStore) {
     crate::sync::sync_with(store.database().as_ref(), "me@example.com", provider)
         .await
         .unwrap();
@@ -525,7 +525,7 @@ async fn native_label_unknown_ids_mixed_shapes_and_capability_loss_send_no_store
             .await
             .is_err());
     }
-    assert!(provider.create_label("new").await.is_err());
+    assert!(provider.create_label("\\reserved").await.is_err());
     assert!(provider.delete_label("lf:Keep").await.is_err());
     assert!(provider.update_label("lf:Keep", "renamed").await.is_err());
     state
@@ -622,6 +622,7 @@ async fn native_user_label_catalog_excludes_advertised_system_views() {
         ("Starred View", "\\Flagged"),
     ] {
         state.lock().unwrap().folder(name, 9);
+        state.lock().unwrap().list_attributes.insert(name.into(), attribute.into());
         store
             .upsert_mailbox(&crate::provider::imap::ImapMailbox {
                 name: name.into(),
