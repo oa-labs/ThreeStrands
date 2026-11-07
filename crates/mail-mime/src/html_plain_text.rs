@@ -123,7 +123,10 @@ impl TokenSink for TextSink {
 
 /// Elements whose contents are never message text.
 fn is_non_content(name: &str) -> bool {
-    matches!(name, "head" | "style" | "script" | "template" | "noscript" | "title")
+    matches!(
+        name,
+        "head" | "style" | "script" | "template" | "noscript" | "title"
+    )
 }
 
 /// Raw-text states recognize only the matching end tag: markup-like CSS/JS
@@ -162,7 +165,10 @@ pub fn image_only_words(html: &str) -> HashSet<String> {
             .collect()
     };
     let visible = words(&state.text);
-    words(&state.image_text).into_iter().filter(|word| !visible.contains(word)).collect()
+    words(&state.image_text)
+        .into_iter()
+        .filter(|word| !visible.contains(word))
+        .collect()
 }
 
 /// Longest preheader kept, in characters once whitespace and invisible
@@ -176,23 +182,34 @@ pub const MIN_PREHEADER_WORDS: usize = 3;
 
 /// Elements without an end tag.
 const VOID_ELEMENTS: [&str; 14] = [
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track", "wbr",
 ];
 
 /// Characters that draw nothing; senders pad preheaders with them so inbox
 /// previews stop early.
 fn is_invisible(c: char) -> bool {
-    matches!(c, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{034F}' | '\u{00AD}')
+    matches!(
+        c,
+        '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{034F}' | '\u{00AD}'
+    )
 }
 
 /// Whether an inline style keeps an element's text from being seen:
 /// `display: none`, `visibility: hidden`, `opacity: 0`, a font size of at
 /// most 1px, or a zero height or max-height with `overflow: hidden`.
 fn style_hides(style: &str) -> bool {
-    let number = |value: &str| value.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%').parse::<f64>().ok();
+    let number = |value: &str| {
+        value
+            .trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%')
+            .parse::<f64>()
+            .ok()
+    };
     let (mut zero_height, mut clipped) = (false, false);
     for declaration in style.split(';') {
-        let Some((name, value)) = declaration.split_once(':') else { continue };
+        let Some((name, value)) = declaration.split_once(':') else {
+            continue;
+        };
         let name = name.trim().to_ascii_lowercase();
         let value = value.to_ascii_lowercase();
         let value = value.trim().trim_end_matches("!important").trim();
@@ -239,18 +256,22 @@ impl TokenSink for PreheaderSink {
                     if let Some(index) = state.ignored.iter().rposition(|name| *name == tag.name) {
                         state.ignored.truncate(index);
                     }
-                    if let Some(index) = state.open.iter().rposition(|(name, _)| *name == tag.name) {
+                    if let Some(index) = state.open.iter().rposition(|(name, _)| *name == tag.name)
+                    {
                         state.open.truncate(index);
                     }
                 } else {
                     if is_non_content(name) {
                         state.ignored.push(tag.name.clone());
                     } else if !tag.self_closing && !VOID_ELEMENTS.contains(&name) {
-                        let hidden = tag.attrs.iter().any(|attribute| match attribute.name.local.as_ref() {
-                            "hidden" => true,
-                            "style" => style_hides(&attribute.value),
-                            _ => false,
-                        });
+                        let hidden =
+                            tag.attrs
+                                .iter()
+                                .any(|attribute| match attribute.name.local.as_ref() {
+                                    "hidden" => true,
+                                    "style" => style_hides(&attribute.value),
+                                    _ => false,
+                                });
                         state.open.push((tag.name.clone(), hidden));
                     }
                     if let Some(raw) = raw_kind(name) {
@@ -298,7 +319,8 @@ pub fn preheader(html: &str) -> Option<String> {
         .split(' ')
         .filter(|word| word.chars().filter(|c| c.is_alphabetic()).count() >= 2)
         .count();
-    (words >= MIN_PREHEADER_WORDS && collapsed.chars().count() <= MAX_PREHEADER_CHARS).then_some(collapsed)
+    (words >= MIN_PREHEADER_WORDS && collapsed.chars().count() <= MAX_PREHEADER_CHARS)
+        .then_some(collapsed)
 }
 
 /// Some senders generate their text/plain alternative with an HTML-to-text
@@ -343,7 +365,10 @@ fn css_rule_end(text: &str) -> Option<usize> {
     }
     // `<` never appears in a selector; it does in markup ahead of a <style>.
     let open = text.find(['{', '}', ';', '@', '<'])?;
-    if text.as_bytes()[open] != b'{' || text[..open].trim().is_empty() || text[..open].contains("\n\n") {
+    if text.as_bytes()[open] != b'{'
+        || text[..open].trim().is_empty()
+        || text[..open].contains("\n\n")
+    {
         return None;
     }
     declaration_block_end(&text[open + 1..]).map(|end| open + 1 + end)
@@ -355,7 +380,11 @@ fn declaration_block_end(body: &str) -> Option<usize> {
     if body.as_bytes()[close] != b'}' {
         return None;
     }
-    let mut declarations = body[..close].split(';').map(str::trim).filter(|entry| !entry.is_empty()).peekable();
+    let mut declarations = body[..close]
+        .split(';')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .peekable();
     declarations.peek()?;
     declarations.all(is_declaration).then_some(close + 1)
 }
@@ -372,7 +401,10 @@ fn is_declaration(entry: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{after_leading_stylesheet, image_only_words, preheader, MAX_PREHEADER_CHARS, MIN_PREHEADER_WORDS};
+    use super::{
+        after_leading_stylesheet, image_only_words, preheader, MAX_PREHEADER_CHARS,
+        MIN_PREHEADER_WORDS,
+    };
 
     #[test]
     fn finds_text_hidden_ahead_of_the_visible_message() {
@@ -440,12 +472,25 @@ mod tests {
     #[test]
     fn preheader_limits_hold_at_their_exact_values() {
         let words = |count: usize| vec!["word"; count].join(" ");
-        for (count, kept) in [(MIN_PREHEADER_WORDS - 1, false), (MIN_PREHEADER_WORDS, true), (MIN_PREHEADER_WORDS + 1, true)] {
+        for (count, kept) in [
+            (MIN_PREHEADER_WORDS - 1, false),
+            (MIN_PREHEADER_WORDS, true),
+            (MIN_PREHEADER_WORDS + 1, true),
+        ] {
             let html = format!("<div style=\"display:none\">{} x 1</div>", words(count));
             assert_eq!(preheader(&html).is_some(), kept, "{count} words");
         }
-        let sized = |chars: usize| format!("<div style=\"display:none\">abc def {}</div>", "g".repeat(chars - 8));
-        for (chars, kept) in [(MAX_PREHEADER_CHARS - 1, true), (MAX_PREHEADER_CHARS, true), (MAX_PREHEADER_CHARS + 1, false)] {
+        let sized = |chars: usize| {
+            format!(
+                "<div style=\"display:none\">abc def {}</div>",
+                "g".repeat(chars - 8)
+            )
+        };
+        for (chars, kept) in [
+            (MAX_PREHEADER_CHARS - 1, true),
+            (MAX_PREHEADER_CHARS, true),
+            (MAX_PREHEADER_CHARS + 1, false),
+        ] {
             let found = preheader(&sized(chars));
             assert_eq!(found.is_some(), kept, "{chars} chars");
             if let Some(text) = found {

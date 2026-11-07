@@ -95,7 +95,11 @@ impl MailFetch for ImapProvider {
             let resolved = self.store.resolve_thread_alias(&thread).map_err(db_err)?;
             let mut thread_dynamic: Vec<String> = Vec::new();
             for message_id in self.store.messages_in_thread(&resolved).map_err(db_err)? {
-                for location in self.store.locations_for_message(&message_id).map_err(db_err)? {
+                for location in self
+                    .store
+                    .locations_for_message(&message_id)
+                    .map_err(db_err)?
+                {
                     for lid in plan.location_label_ids_for_mailbox(&location.mailbox) {
                         if (lid.starts_with("folder:") || lid.starts_with("lf:"))
                             && !thread_dynamic.contains(&lid)

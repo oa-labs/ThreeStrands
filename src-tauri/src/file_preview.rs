@@ -203,9 +203,7 @@ mod windows_shell {
         DeleteObject, GetDC, GetDIBits, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
         DIB_RGB_COLORS, HBITMAP, HGDIOBJ,
     };
-    use windows::Win32::System::Com::{
-        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::{
         IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_THUMBNAILONLY,
     };
@@ -309,18 +307,7 @@ mod windows_shell {
         let dc = Dc(screen);
 
         // First pass with a null buffer fills in the real width/height.
-        if unsafe {
-            GetDIBits(
-                dc.0,
-                bitmap,
-                0,
-                0,
-                None,
-                &mut info,
-                DIB_RGB_COLORS,
-            )
-        } == 0
-        {
+        if unsafe { GetDIBits(dc.0, bitmap, 0, 0, None, &mut info, DIB_RGB_COLORS) } == 0 {
             return None;
         }
 
@@ -363,8 +350,7 @@ mod windows_shell {
 
         let mut png = Vec::new();
         {
-            let mut encoder =
-                png::Encoder::new(&mut png, width as u32, height as u32);
+            let mut encoder = png::Encoder::new(&mut png, width as u32, height as u32);
             encoder.set_color(png::ColorType::Rgba);
             encoder.set_depth(png::BitDepth::Eight);
             let mut writer = encoder.write_header().ok()?;

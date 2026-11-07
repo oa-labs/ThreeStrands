@@ -9,7 +9,10 @@ use crate::{run_database_task, AppError, AppResult, AppState};
 /// `data:` URI, so the message iframe never contacts the sender's (or a
 /// spoofed) host directly. See `image_proxy` for the validation this does.
 #[tauri::command]
-pub(crate) async fn fetch_remote_image(url: String, state: State<'_, AppState>) -> AppResult<String> {
+pub(crate) async fn fetch_remote_image(
+    url: String,
+    state: State<'_, AppState>,
+) -> AppResult<String> {
     image_proxy::fetch(&url, &state.image_cache)
         .await
         .map_err(AppError::from)
@@ -23,19 +26,20 @@ pub(super) async fn load_attachment(
     let database = state.database.clone();
     let stored_message_id = message_id.to_string();
     let stored_attachment_id = attachment_id.to_string();
-    let (account_id, attachment, payload_bytes, cached_provider_id) = run_database_task(move || {
-        let (account_id, message) = database.attachment_message(&stored_message_id)?;
-        let reference = mime::attachment_part_reference(&message, &stored_attachment_id)?;
-        let attachment = mime::normalize(&message)?
-            .attachments
-            .into_iter()
-            .find(|attachment| attachment.id == reference)
-            .ok_or("Attachment not found")?;
-        let bytes = mime::attachment_bytes_from_payload(&message, &reference)?;
-        let provider_id = mime::provider_attachment_id_from_payload(&message, &reference)?;
-        Ok::<_, String>((account_id, attachment, bytes, provider_id))
-    })
-    .await?;
+    let (account_id, attachment, payload_bytes, cached_provider_id) =
+        run_database_task(move || {
+            let (account_id, message) = database.attachment_message(&stored_message_id)?;
+            let reference = mime::attachment_part_reference(&message, &stored_attachment_id)?;
+            let attachment = mime::normalize(&message)?
+                .attachments
+                .into_iter()
+                .find(|attachment| attachment.id == reference)
+                .ok_or("Attachment not found")?;
+            let bytes = mime::attachment_bytes_from_payload(&message, &reference)?;
+            let provider_id = mime::provider_attachment_id_from_payload(&message, &reference)?;
+            Ok::<_, String>((account_id, attachment, bytes, provider_id))
+        })
+        .await?;
     let bytes = match payload_bytes {
         Some(bytes) => bytes,
         None => {
@@ -148,7 +152,8 @@ pub(crate) async fn open_attachment(
         .attachment_reader
         .write(&filename, &bytes)
         .map_err(|error| format!("Unable to prepare attachment: {error}"))?;
-    open::that(path).map_err(|error| AppError::message(format!("Unable to open attachment: {error}")))
+    open::that(path)
+        .map_err(|error| AppError::message(format!("Unable to open attachment: {error}")))
 }
 
 #[tauri::command]
@@ -181,23 +186,39 @@ pub(crate) async fn save_attachment(
 }
 
 #[tauri::command]
-pub(crate) async fn list_files(query: models::FileQuery, state: State<'_, AppState>) -> AppResult<models::FilePage> {
+pub(crate) async fn list_files(
+    query: models::FileQuery,
+    state: State<'_, AppState>,
+) -> AppResult<models::FilePage> {
     let database = state.database.clone();
     run_database_task(move || database.list_files(&query)).await
 }
 
 #[tauri::command]
-pub(crate) async fn file_stars(message_ids: Vec<String>, state: State<'_, AppState>) -> AppResult<Vec<(String,String)>> {
+pub(crate) async fn file_stars(
+    message_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<(String, String)>> {
     let database = state.database.clone();
     run_database_task(move || database.file_stars(&message_ids)).await
 }
 
 #[tauri::command]
-pub(crate) async fn set_file_star(account_id: Option<String>, message_id: String, attachment_id: String, starred: bool, state: State<'_, AppState>) -> AppResult<()> {
+pub(crate) async fn set_file_star(
+    account_id: Option<String>,
+    message_id: String,
+    attachment_id: String,
+    starred: bool,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
     let database = state.database.clone();
     run_database_task(move || {
         // Surfaces that show one message's attachments name no account; the message's own thread decides.
-        let account_id = match account_id { Some(account_id) => account_id, None => database.message_account(&message_id)? };
+        let account_id = match account_id {
+            Some(account_id) => account_id,
+            None => database.message_account(&message_id)?,
+        };
         database.set_file_star(&account_id, &message_id, &attachment_id, starred)
-    }).await
+    })
+    .await
 }

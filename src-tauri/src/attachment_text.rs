@@ -50,9 +50,13 @@ pub(crate) struct ExtractedText {
 /// The readable format of an attachment, judged by its extension and then
 /// its declared type, or `None` when chat cannot read it.
 pub(crate) fn kind_for(filename: &str, mime_type: &str) -> Option<DocumentKind> {
-    let extension = filename.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase());
+    let extension = filename
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase());
     let by_extension = match extension.as_deref() {
-        Some("txt" | "text" | "csv" | "tsv" | "md" | "markdown" | "log") => Some(DocumentKind::Text),
+        Some("txt" | "text" | "csv" | "tsv" | "md" | "markdown" | "log") => {
+            Some(DocumentKind::Text)
+        }
         Some("pdf") => Some(DocumentKind::Pdf),
         Some("docx") => Some(DocumentKind::Docx),
         Some("xlsx") => Some(DocumentKind::Xlsx),
@@ -60,13 +64,26 @@ pub(crate) fn kind_for(filename: &str, mime_type: &str) -> Option<DocumentKind> 
         _ => None,
     };
     by_extension.or_else(|| {
-        let essence = mime_type.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
+        let essence = mime_type
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
         match essence.as_str() {
-            "text/plain" | "text/csv" | "text/tab-separated-values" | "text/markdown" => Some(DocumentKind::Text),
+            "text/plain" | "text/csv" | "text/tab-separated-values" | "text/markdown" => {
+                Some(DocumentKind::Text)
+            }
             "application/pdf" => Some(DocumentKind::Pdf),
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => Some(DocumentKind::Docx),
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => Some(DocumentKind::Xlsx),
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some(DocumentKind::Pptx),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+                Some(DocumentKind::Docx)
+            }
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
+                Some(DocumentKind::Xlsx)
+            }
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation" => {
+                Some(DocumentKind::Pptx)
+            }
             _ => None,
         }
     })
@@ -95,7 +112,11 @@ pub(crate) fn extract(kind: DocumentKind, bytes: &[u8]) -> Result<ExtractedText,
         .to_string());
     }
     let truncated = text.chars().count() > MAX_ATTACHMENT_TEXT_CHARS;
-    let text = if truncated { text.chars().take(MAX_ATTACHMENT_TEXT_CHARS).collect() } else { text };
+    let text = if truncated {
+        text.chars().take(MAX_ATTACHMENT_TEXT_CHARS).collect()
+    } else {
+        text
+    };
     Ok(ExtractedText { text, truncated })
 }
 
@@ -111,8 +132,14 @@ fn decode_text(bytes: &[u8]) -> String {
 }
 
 fn decode_utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> String {
-    let units = bytes.as_chunks::<2>().0.iter().map(|pair| unit([pair[0], pair[1]]));
-    char::decode_utf16(units).map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER)).collect()
+    let units = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| unit([pair[0], pair[1]]));
+    char::decode_utf16(units)
+        .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()
 }
 
 /// Normalizes line endings, drops control characters other than tab and
@@ -122,7 +149,10 @@ fn tidy(text: &str) -> String {
     let mut out = String::with_capacity(normalized.len());
     let mut blank_run = 0;
     for line in normalized.split('\n') {
-        let line: String = line.chars().filter(|ch| *ch == '\t' || !ch.is_control()).collect();
+        let line: String = line
+            .chars()
+            .filter(|ch| *ch == '\t' || !ch.is_control())
+            .collect();
         let line = line.trim_end();
         if line.is_empty() {
             blank_run += 1;
@@ -172,13 +202,21 @@ struct OfficeArchive {
 
 impl OfficeArchive {
     fn open(bytes: &[u8]) -> Result<Self, String> {
-        let archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).map_err(|_| "it isn't a readable Office file".to_string())?;
-        Ok(Self { archive, remaining: MAX_OFFICE_TOTAL_BYTES })
+        let archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec()))
+            .map_err(|_| "it isn't a readable Office file".to_string())?;
+        Ok(Self {
+            archive,
+            remaining: MAX_OFFICE_TOTAL_BYTES,
+        })
     }
 
     fn names(&self) -> Vec<String> {
         // Names that don't decode can't match the ASCII part prefixes we look for.
-        self.archive.file_names().filter_map(Result::ok).map(|name| name.into_owned()).collect()
+        self.archive
+            .file_names()
+            .filter_map(Result::ok)
+            .map(|name| name.into_owned())
+            .collect()
     }
 
     /// Reads one part as text, or `None` when the archive lacks it.
@@ -202,7 +240,8 @@ impl OfficeArchive {
     }
 
     fn required(&mut self, name: &str) -> Result<String, String> {
-        self.part(name)?.ok_or_else(|| "it isn't a readable Office file".to_string())
+        self.part(name)?
+            .ok_or_else(|| "it isn't a readable Office file".to_string())
     }
 }
 
@@ -211,7 +250,11 @@ fn numbered_parts(names: &[String], prefix: &str) -> Vec<String> {
     let mut parts: Vec<(u32, String)> = names
         .iter()
         .filter_map(|name| {
-            let number = name.strip_prefix(prefix)?.strip_suffix(".xml")?.parse().ok()?;
+            let number = name
+                .strip_prefix(prefix)?
+                .strip_suffix(".xml")?
+                .parse()
+                .ok()?;
             Some((number, name.clone()))
         })
         .collect();
@@ -225,7 +268,10 @@ fn xml_error() -> String {
 
 fn push_reference(out: &mut String, reference: &str) {
     if let Some(number) = reference.strip_prefix('#') {
-        let value = match number.strip_prefix('x').or_else(|| number.strip_prefix('X')) {
+        let value = match number
+            .strip_prefix('x')
+            .or_else(|| number.strip_prefix('X'))
+        {
             Some(hex) => u32::from_str_radix(hex, 16).ok(),
             None => number.parse().ok(),
         };
@@ -300,7 +346,12 @@ fn attribute(element: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<
         .try_get_attribute(name)
         .ok()
         .flatten()
-        .and_then(|value| value.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok().map(|value| value.into_owned()))
+        .and_then(|value| {
+            value
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .ok()
+                .map(|value| value.into_owned())
+        })
 }
 
 /// Shared strings, each the concatenation of its `t` runs.
@@ -325,9 +376,13 @@ fn shared_strings(xml: &str) -> Result<Vec<String>, String> {
                 "rPh" => in_phonetic = false,
                 _ => {}
             },
-            Event::Empty(element) if element.local_name().as_ref() == "si" => strings.push(String::new()),
+            Event::Empty(element) if element.local_name().as_ref() == "si" => {
+                strings.push(String::new())
+            }
             Event::Text(text) if in_text && !in_phonetic => current.push_str(&text),
-            Event::GeneralRef(reference) if in_text && !in_phonetic => push_reference(&mut current, &reference),
+            Event::GeneralRef(reference) if in_text && !in_phonetic => {
+                push_reference(&mut current, &reference)
+            }
             Event::Eof => break,
             _ => {}
         }
@@ -342,8 +397,12 @@ fn worksheets(archive: &mut OfficeArchive) -> Result<Vec<(String, String)>, Stri
         let mut reader = Reader::from_str(&rels);
         loop {
             match reader.read_event().map_err(|_| xml_error())? {
-                Event::Start(element) | Event::Empty(element) if element.local_name().as_ref() == "Relationship" => {
-                    if let (Some(id), Some(target)) = (attribute(&element, "Id"), attribute(&element, "Target")) {
+                Event::Start(element) | Event::Empty(element)
+                    if element.local_name().as_ref() == "Relationship" =>
+                {
+                    if let (Some(id), Some(target)) =
+                        (attribute(&element, "Id"), attribute(&element, "Target"))
+                    {
                         let path = match target.strip_prefix('/') {
                             Some(absolute) => absolute.to_string(),
                             None => format!("xl/{target}"),
@@ -361,7 +420,9 @@ fn worksheets(archive: &mut OfficeArchive) -> Result<Vec<(String, String)>, Stri
     let mut sheets = Vec::new();
     loop {
         match reader.read_event().map_err(|_| xml_error())? {
-            Event::Start(element) | Event::Empty(element) if element.local_name().as_ref() == "sheet" => {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == "sheet" =>
+            {
                 let name = attribute(&element, "name").unwrap_or_default();
                 let path = attribute(&element, "r:id").and_then(|id| targets.get(&id).cloned());
                 if let Some(path) = path {
@@ -410,8 +471,19 @@ fn worksheet_text(xml: &str, strings: &[String]) -> Result<String, String> {
                 "is" => in_inline = false,
                 "c" => {
                     let shown = match cell_type.as_str() {
-                        "s" => value.trim().parse::<usize>().ok().and_then(|index| strings.get(index).cloned()).unwrap_or_default(),
-                        "b" => if value.trim() == "1" { "TRUE".to_string() } else { "FALSE".to_string() },
+                        "s" => value
+                            .trim()
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|index| strings.get(index).cloned())
+                            .unwrap_or_default(),
+                        "b" => {
+                            if value.trim() == "1" {
+                                "TRUE".to_string()
+                            } else {
+                                "FALSE".to_string()
+                            }
+                        }
                         _ => value.clone(),
                     };
                     row.push(shown.replace(['\t', '\n', '\r'], " "));
@@ -451,7 +523,9 @@ fn xlsx_text(bytes: &[u8]) -> Result<String, String> {
     }
     let mut out = String::new();
     for (name, path) in sheets.into_iter().take(MAX_OFFICE_PARTS) {
-        let Some(xml) = archive.part(&path)? else { continue };
+        let Some(xml) = archive.part(&path)? else {
+            continue;
+        };
         out.push_str(&format!("[Sheet: {name}]\n"));
         out.push_str(worksheet_text(&xml, &strings)?.trim_end());
         out.push_str("\n\n");
@@ -483,8 +557,12 @@ impl ExtractCache {
     }
 
     pub(crate) fn insert(&self, message_id: &str, attachment_id: &str, cached: CachedAttachment) {
-        let Ok(mut entries) = self.entries.lock() else { return };
-        entries.retain(|((message, attachment), _)| !(message == message_id && attachment == attachment_id));
+        let Ok(mut entries) = self.entries.lock() else {
+            return;
+        };
+        entries.retain(|((message, attachment), _)| {
+            !(message == message_id && attachment == attachment_id)
+        });
         if entries.len() >= CACHE_ENTRIES {
             entries.remove(0);
         }
@@ -501,7 +579,9 @@ mod tests {
     fn office(parts: &[(&str, &str)]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         for (name, body) in parts {
-            writer.start_file(*name, SimpleFileOptions::default()).unwrap();
+            writer
+                .start_file(*name, SimpleFileOptions::default())
+                .unwrap();
             writer.write_all(body.as_bytes()).unwrap();
         }
         writer.finish().unwrap().into_inner()
@@ -513,18 +593,27 @@ mod tests {
         let page_count = page_streams.len();
         // Objects: 1 catalog, 2 pages, 3 font, then a page and a content
         // stream for each page.
-        let kids: Vec<String> = (0..page_count).map(|index| format!("{} 0 R", 4 + index * 2)).collect();
+        let kids: Vec<String> = (0..page_count)
+            .map(|index| format!("{} 0 R", 4 + index * 2))
+            .collect();
         let mut objects = vec![
             "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-            format!("<< /Type /Pages /Kids [{}] /Count {page_count} >>", kids.join(" ")),
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+            format!(
+                "<< /Type /Pages /Kids [{}] /Count {page_count} >>",
+                kids.join(" ")
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+                .to_string(),
         ];
         for (index, stream) in page_streams.iter().enumerate() {
             objects.push(format!(
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents {} 0 R >>",
                 5 + index * 2
             ));
-            objects.push(format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()));
+            objects.push(format!(
+                "<< /Length {} >>\nstream\n{stream}\nendstream",
+                stream.len()
+            ));
         }
         let mut out = b"%PDF-1.4\n".to_vec();
         let mut offsets = Vec::new();
@@ -533,22 +622,39 @@ mod tests {
             out.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
         }
         let xref = out.len();
-        out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
         for offset in offsets {
             out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
         }
-        out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
         out
     }
 
     #[test]
     fn recognizes_formats_by_extension_before_declared_type() {
-        assert_eq!(kind_for("Q3 Report.PDF", "application/octet-stream"), Some(DocumentKind::Pdf));
-        assert_eq!(kind_for("notes.md", "application/octet-stream"), Some(DocumentKind::Text));
+        assert_eq!(
+            kind_for("Q3 Report.PDF", "application/octet-stream"),
+            Some(DocumentKind::Pdf)
+        );
+        assert_eq!(
+            kind_for("notes.md", "application/octet-stream"),
+            Some(DocumentKind::Text)
+        );
         assert_eq!(kind_for("budget.xlsx", ""), Some(DocumentKind::Xlsx));
         assert_eq!(kind_for("deck.pptx", ""), Some(DocumentKind::Pptx));
         assert_eq!(kind_for("letter.docx", ""), Some(DocumentKind::Docx));
-        assert_eq!(kind_for("attachment", "text/csv; charset=utf-8"), Some(DocumentKind::Text));
+        assert_eq!(
+            kind_for("attachment", "text/csv; charset=utf-8"),
+            Some(DocumentKind::Text)
+        );
         assert_eq!(kind_for("scan", "application/pdf"), Some(DocumentKind::Pdf));
     }
 
@@ -568,7 +674,11 @@ mod tests {
 
     #[test]
     fn decodes_utf8_and_utf16_text_and_tidies_it() {
-        let utf8 = extract(DocumentKind::Text, "\u{FEFF}Line one\r\nLine two  \r\n\r\n\r\n\r\nDone\u{0007}".as_bytes()).unwrap();
+        let utf8 = extract(
+            DocumentKind::Text,
+            "\u{FEFF}Line one\r\nLine two  \r\n\r\n\r\n\r\nDone\u{0007}".as_bytes(),
+        )
+        .unwrap();
         assert_eq!(utf8.text, "Line one\nLine two\n\nDone");
         assert!(!utf8.truncated);
 
@@ -576,7 +686,10 @@ mod tests {
         for unit in "Größe\tok".encode_utf16() {
             utf16.extend_from_slice(&unit.to_le_bytes());
         }
-        assert_eq!(extract(DocumentKind::Text, &utf16).unwrap().text, "Größe\tok");
+        assert_eq!(
+            extract(DocumentKind::Text, &utf16).unwrap().text,
+            "Größe\tok"
+        );
     }
 
     #[test]
@@ -585,11 +698,20 @@ mod tests {
         let exact = "a".repeat(MAX_ATTACHMENT_TEXT_CHARS);
         let above = "a".repeat(MAX_ATTACHMENT_TEXT_CHARS + 1);
         let below = extract(DocumentKind::Text, below.as_bytes()).unwrap();
-        assert_eq!((below.text.chars().count(), below.truncated), (MAX_ATTACHMENT_TEXT_CHARS - 1, false));
+        assert_eq!(
+            (below.text.chars().count(), below.truncated),
+            (MAX_ATTACHMENT_TEXT_CHARS - 1, false)
+        );
         let exact = extract(DocumentKind::Text, exact.as_bytes()).unwrap();
-        assert_eq!((exact.text.chars().count(), exact.truncated), (MAX_ATTACHMENT_TEXT_CHARS, false));
+        assert_eq!(
+            (exact.text.chars().count(), exact.truncated),
+            (MAX_ATTACHMENT_TEXT_CHARS, false)
+        );
         let above = extract(DocumentKind::Text, above.as_bytes()).unwrap();
-        assert_eq!((above.text.chars().count(), above.truncated), (MAX_ATTACHMENT_TEXT_CHARS, true));
+        assert_eq!(
+            (above.text.chars().count(), above.truncated),
+            (MAX_ATTACHMENT_TEXT_CHARS, true)
+        );
     }
 
     #[test]
@@ -597,18 +719,32 @@ mod tests {
         let exact = vec![b'a'; MAX_ATTACHMENT_BYTES];
         assert!(extract(DocumentKind::Text, &exact).is_ok());
         let above = vec![b'a'; MAX_ATTACHMENT_BYTES + 1];
-        assert_eq!(extract(DocumentKind::Text, &above).unwrap_err(), "it is too large to read");
+        assert_eq!(
+            extract(DocumentKind::Text, &above).unwrap_err(),
+            "it is too large to read"
+        );
     }
 
     #[test]
     fn reports_empty_files_instead_of_sharing_nothing() {
-        assert_eq!(extract(DocumentKind::Text, b" \n\r\n ").unwrap_err(), "it has no readable text");
+        assert_eq!(
+            extract(DocumentKind::Text, b" \n\r\n ").unwrap_err(),
+            "it has no readable text"
+        );
     }
 
     #[test]
     fn extracts_pdf_text_from_single_and_multi_page_documents() {
-        let single = extract(DocumentKind::Pdf, &pdf(&["BT /F1 12 Tf 72 700 Td (Invoice total: 1,250 USD) Tj ET"])).unwrap();
-        assert!(single.text.contains("Invoice total: 1,250 USD"), "{}", single.text);
+        let single = extract(
+            DocumentKind::Pdf,
+            &pdf(&["BT /F1 12 Tf 72 700 Td (Invoice total: 1,250 USD) Tj ET"]),
+        )
+        .unwrap();
+        assert!(
+            single.text.contains("Invoice total: 1,250 USD"),
+            "{}",
+            single.text
+        );
         assert!(!single.text.contains("[Page"));
 
         let multi = extract(
@@ -619,8 +755,16 @@ mod tests {
             ]),
         )
         .unwrap();
-        assert!(multi.text.contains("[Page 1]") && multi.text.contains("[Page 2]"), "{}", multi.text);
-        assert!(multi.text.contains("Signed by both parties"), "{}", multi.text);
+        assert!(
+            multi.text.contains("[Page 1]") && multi.text.contains("[Page 2]"),
+            "{}",
+            multi.text
+        );
+        assert!(
+            multi.text.contains("Signed by both parties"),
+            "{}",
+            multi.text
+        );
     }
 
     #[test]
@@ -641,13 +785,22 @@ mod tests {
             <w:p><w:r><w:t xml:space="preserve">Start: </w:t></w:r><w:r><w:t>May 1</w:t><w:tab/><w:t>End: June 30</w:t><w:br/><w:t>Fee &#8364;500</w:t></w:r></w:p>
             <w:p><w:pPr><w:rPr><w:b/></w:rPr></w:pPr></w:p>
         </w:body></w:document>"#;
-        let text = extract(DocumentKind::Docx, &office(&[("word/document.xml", document)])).unwrap().text;
+        let text = extract(
+            DocumentKind::Docx,
+            &office(&[("word/document.xml", document)]),
+        )
+        .unwrap()
+        .text;
         assert_eq!(text, "Scope & terms\nStart: May 1\tEnd: June 30\nFee €500");
     }
 
     #[test]
     fn extracts_slides_in_numeric_order() {
-        let slide = |text: &str| format!(r#"<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p><a:p><a:r><a:t>Owner: Sam</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#);
+        let slide = |text: &str| {
+            format!(
+                r#"<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p><a:p><a:r><a:t>Owner: Sam</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#
+            )
+        };
         let (one, two, ten) = (slide("Roadmap"), slide("Budget"), slide("Questions"));
         let bytes = office(&[
             ("ppt/slides/slide10.xml", ten.as_str()),
@@ -656,7 +809,10 @@ mod tests {
             ("ppt/slides/_rels/slide1.xml.rels", "<Relationships/>"),
         ]);
         let text = extract(DocumentKind::Pptx, &bytes).unwrap().text;
-        let order: Vec<usize> = ["Roadmap", "Budget", "Questions"].iter().map(|word| text.find(word).unwrap()).collect();
+        let order: Vec<usize> = ["Roadmap", "Budget", "Questions"]
+            .iter()
+            .map(|word| text.find(word).unwrap())
+            .collect();
         assert!(order[0] < order[1] && order[1] < order[2], "{text}");
         assert!(text.starts_with("[Slide 1]\nRoadmap\nOwner: Sam"), "{text}");
     }
@@ -687,17 +843,40 @@ mod tests {
     fn finds_worksheets_when_the_workbook_has_no_relationships() {
         let bytes = office(&[
             ("xl/workbook.xml", "<workbook><sheets/></workbook>"),
-            ("xl/worksheets/sheet1.xml", r#"<worksheet><sheetData><row><c t="inlineStr"><is><t>Only sheet</t></is></c></row></sheetData></worksheet>"#),
+            (
+                "xl/worksheets/sheet1.xml",
+                r#"<worksheet><sheetData><row><c t="inlineStr"><is><t>Only sheet</t></is></c></row></sheetData></worksheet>"#,
+            ),
         ]);
-        assert_eq!(extract(DocumentKind::Xlsx, &bytes).unwrap().text, "[Sheet: Sheet1]\nOnly sheet");
+        assert_eq!(
+            extract(DocumentKind::Xlsx, &bytes).unwrap().text,
+            "[Sheet: Sheet1]\nOnly sheet"
+        );
     }
 
     #[test]
     fn rejects_malformed_office_files() {
-        assert_eq!(extract(DocumentKind::Docx, b"PK not a zip").unwrap_err(), "it isn't a readable Office file");
-        assert_eq!(extract(DocumentKind::Docx, &office(&[("other.xml", "<a/>")])).unwrap_err(), "it isn't a readable Office file");
-        assert_eq!(extract(DocumentKind::Pptx, &office(&[("ppt/presentation.xml", "<a/>")])).unwrap_err(), "it isn't a readable Office file");
-        assert!(extract(DocumentKind::Docx, &office(&[("word/document.xml", "<w:p><w:t>unclosed</w:p>")])).is_err());
+        assert_eq!(
+            extract(DocumentKind::Docx, b"PK not a zip").unwrap_err(),
+            "it isn't a readable Office file"
+        );
+        assert_eq!(
+            extract(DocumentKind::Docx, &office(&[("other.xml", "<a/>")])).unwrap_err(),
+            "it isn't a readable Office file"
+        );
+        assert_eq!(
+            extract(
+                DocumentKind::Pptx,
+                &office(&[("ppt/presentation.xml", "<a/>")])
+            )
+            .unwrap_err(),
+            "it isn't a readable Office file"
+        );
+        assert!(extract(
+            DocumentKind::Docx,
+            &office(&[("word/document.xml", "<w:p><w:t>unclosed</w:p>")])
+        )
+        .is_err());
     }
 
     #[test]
@@ -707,34 +886,66 @@ mod tests {
         let part = |count: usize| format!("{open}{}{close}", "a".repeat(count));
 
         let below = part(filler - 1);
-        assert!(extract(DocumentKind::Docx, &office(&[("word/document.xml", &below)])).is_ok());
+        assert!(extract(
+            DocumentKind::Docx,
+            &office(&[("word/document.xml", &below)])
+        )
+        .is_ok());
         let exact = part(filler);
         assert_eq!(exact.len() as u64, MAX_OFFICE_PART_BYTES);
-        assert!(extract(DocumentKind::Docx, &office(&[("word/document.xml", &exact)])).unwrap().truncated);
+        assert!(
+            extract(
+                DocumentKind::Docx,
+                &office(&[("word/document.xml", &exact)])
+            )
+            .unwrap()
+            .truncated
+        );
 
         // Highly compressible, so the archive is small but the part is not.
         let bomb = office(&[("word/document.xml", &part(filler + 1))]);
         assert!(bomb.len() < 1024 * 1024);
-        assert_eq!(extract(DocumentKind::Docx, &bomb).unwrap_err(), "it expands to more data than can be read");
+        assert_eq!(
+            extract(DocumentKind::Docx, &bomb).unwrap_err(),
+            "it expands to more data than can be read"
+        );
     }
 
     #[test]
     fn refuses_office_files_that_expand_past_the_total_limit() {
         let large = "a".repeat((MAX_OFFICE_TOTAL_BYTES / 3) as usize - 1);
-        let bytes = office(&[("one.xml", &large), ("two.xml", &large), ("three.xml", &large), ("small.xml", "ab"), ("fits.xml", "abc")]);
+        let bytes = office(&[
+            ("one.xml", &large),
+            ("two.xml", &large),
+            ("three.xml", &large),
+            ("small.xml", "ab"),
+            ("fits.xml", "abc"),
+        ]);
         let mut archive = OfficeArchive::open(&bytes).unwrap();
         for name in ["one.xml", "two.xml", "three.xml"] {
             assert!(archive.part(name).is_ok(), "{name}");
         }
         // Three bytes of budget remain: two fit, then the rest does not.
         assert_eq!(archive.part("small.xml").unwrap().as_deref(), Some("ab"));
-        assert_eq!(archive.part("fits.xml").unwrap_err(), "it expands to more data than can be read");
+        assert_eq!(
+            archive.part("fits.xml").unwrap_err(),
+            "it expands to more data than can be read"
+        );
     }
 
     #[test]
     fn cache_returns_recent_extractions_and_evicts_the_oldest() {
         let cache = ExtractCache::default();
-        let text = |value: &str| ("file.txt".to_string(), "text/plain".to_string(), ExtractedText { text: value.to_string(), truncated: false });
+        let text = |value: &str| {
+            (
+                "file.txt".to_string(),
+                "text/plain".to_string(),
+                ExtractedText {
+                    text: value.to_string(),
+                    truncated: false,
+                },
+            )
+        };
         for index in 0..CACHE_ENTRIES {
             cache.insert(&format!("m{index}"), "a", text(&index.to_string()));
         }

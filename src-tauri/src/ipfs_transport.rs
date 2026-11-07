@@ -1119,7 +1119,9 @@ mod transport_tests {
             device_id,
             epoch: 1,
             state_sequence: 1,
-            state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
+            state_cid: Some(
+                "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string(),
+            ),
             published_at_ms: 0,
         };
         let signed = sign_device_head(&signing_key, head).unwrap();
@@ -1148,7 +1150,9 @@ mod transport_tests {
                 device_id,
                 epoch: 1,
                 state_sequence: sequence,
-                state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
+                state_cid: Some(
+                    "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string(),
+                ),
                 published_at_ms: 0,
             };
             let signed = sign_device_head(&signing_key, head).unwrap();
@@ -1197,7 +1201,9 @@ mod transport_tests {
                     device_id,
                     epoch: 1,
                     state_sequence: 1,
-                    state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
+                    state_cid: Some(
+                        "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string(),
+                    ),
                     published_at_ms: 0,
                 },
             )

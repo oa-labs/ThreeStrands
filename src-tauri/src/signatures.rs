@@ -143,10 +143,7 @@ type EmbeddedImage = (String, String, Vec<u8>);
 /// Signature editor HTML uses canonical double-quoted raster data URIs. No
 /// remote fetch or local file read is permitted here. Validate decoded pixels
 /// again at the native boundary and send each image as a MIME related part.
-pub fn embed_images(
-    html: &str,
-    message_id: &str,
-) -> Result<(String, Vec<EmbeddedImage>), String> {
+pub fn embed_images(html: &str, message_id: &str) -> Result<(String, Vec<EmbeddedImage>), String> {
     use base64::{engine::general_purpose::STANDARD, Engine};
     let mut output = String::new();
     let mut rest = html;

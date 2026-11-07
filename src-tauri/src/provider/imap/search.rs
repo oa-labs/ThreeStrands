@@ -266,9 +266,8 @@ pub fn render_imap(query: &SearchQuery, ctx: &ImapSearchContext<'_>) -> ImapSear
             QueryTerm::To(value) => {
                 // Gmail's `to:` includes Cc and Bcc, so match all three.
                 match quote_or_note(value, SearchField::To) {
-                    Ok(quoted) => builder.push_criteria(format!(
-                        "(OR OR TO {quoted} CC {quoted} BCC {quoted})"
-                    )),
+                    Ok(quoted) => builder
+                        .push_criteria(format!("(OR OR TO {quoted} CC {quoted} BCC {quoted})")),
                     Err(notice) => builder.skip(notice),
                 }
             }
@@ -289,7 +288,9 @@ pub fn render_imap(query: &SearchQuery, ctx: &ImapSearchContext<'_>) -> ImapSear
             QueryTerm::HasAttachment => builder.local_filters.push(LocalFilter::HasAttachment),
             QueryTerm::Not(_) | QueryTerm::AnyOf(_) => {
                 let criterion = match term {
-                    QueryTerm::Not(inner) => plain_criterion(inner, ctx).map(|criterion| format!("NOT {criterion}")),
+                    QueryTerm::Not(inner) => {
+                        plain_criterion(inner, ctx).map(|criterion| format!("NOT {criterion}"))
+                    }
                     QueryTerm::AnyOf(alternatives) => any_of_criterion(alternatives, ctx),
                     _ => unreachable!("matched Not or AnyOf"),
                 };
@@ -297,9 +298,11 @@ pub fn render_imap(query: &SearchQuery, ctx: &ImapSearchContext<'_>) -> ImapSear
                     Ok(criterion) => builder.push_criteria(criterion),
                     // Name the whole term the user wrote (`-in:trash`), not
                     // the part inside it that the server can't express.
-                    Err(SearchNotice::UnsupportedSyntax { .. }) => builder.skip(SearchNotice::UnsupportedSyntax {
-                        token: render_gmail_term(term),
-                    }),
+                    Err(SearchNotice::UnsupportedSyntax { .. }) => {
+                        builder.skip(SearchNotice::UnsupportedSyntax {
+                            token: render_gmail_term(term),
+                        })
+                    }
                     Err(notice) => builder.skip(notice),
                 }
             }
@@ -323,13 +326,17 @@ fn plain_criterion(term: &QueryTerm, ctx: &ImapSearchContext<'_>) -> Result<Stri
         token: render_gmail_term(term),
     };
     let criterion = match term {
-        QueryTerm::FreeText { text, .. } => format!("TEXT {}", quote_or_note(text, SearchField::FreeText)?),
+        QueryTerm::FreeText { text, .. } => {
+            format!("TEXT {}", quote_or_note(text, SearchField::FreeText)?)
+        }
         QueryTerm::From(value) => format!("FROM {}", quote_or_note(value, SearchField::From)?),
         QueryTerm::To(value) => {
             let quoted = quote_or_note(value, SearchField::To)?;
             format!("OR OR TO {quoted} CC {quoted} BCC {quoted}")
         }
-        QueryTerm::Subject(value) => format!("SUBJECT {}", quote_or_note(value, SearchField::Subject)?),
+        QueryTerm::Subject(value) => {
+            format!("SUBJECT {}", quote_or_note(value, SearchField::Subject)?)
+        }
         QueryTerm::Date { bound, date } => {
             let key = match bound {
                 DateBound::After => "SINCE",
@@ -342,7 +349,9 @@ fn plain_criterion(term: &QueryTerm, ctx: &ImapSearchContext<'_>) -> Result<Stri
         QueryTerm::Label(name) => {
             check_value(name, SearchField::Label)?;
             match (ctx.label_storage, validate_flag(name)) {
-                (LabelStorage::Keywords, Ok(atom)) if !atom.starts_with('\\') => format!("KEYWORD {atom}"),
+                (LabelStorage::Keywords, Ok(atom)) if !atom.starts_with('\\') => {
+                    format!("KEYWORD {atom}")
+                }
                 _ => return Err(unsupported()),
             }
         }
@@ -355,7 +364,10 @@ fn plain_criterion(term: &QueryTerm, ctx: &ImapSearchContext<'_>) -> Result<Stri
 }
 
 /// `a OR b OR c` as IMAP's binary `OR`: `OR (a) (OR (b) (c))`.
-fn any_of_criterion(alternatives: &[QueryTerm], ctx: &ImapSearchContext<'_>) -> Result<String, SearchNotice> {
+fn any_of_criterion(
+    alternatives: &[QueryTerm],
+    ctx: &ImapSearchContext<'_>,
+) -> Result<String, SearchNotice> {
     let mut criteria = alternatives
         .iter()
         .map(|alternative| plain_criterion(alternative, ctx))
@@ -364,7 +376,11 @@ fn any_of_criterion(alternatives: &[QueryTerm], ctx: &ImapSearchContext<'_>) -> 
     // needs wrapping to stay one key.
     let mut combined = criteria.pop().ok_or(SearchNotice::EmptyQuery)?;
     while let Some(previous) = criteria.pop() {
-        let right = if combined.starts_with("OR ") { format!("({combined})") } else { combined };
+        let right = if combined.starts_with("OR ") {
+            format!("({combined})")
+        } else {
+            combined
+        };
         combined = format!("OR {previous} {right}");
     }
     Ok(combined)
@@ -522,7 +538,13 @@ impl PlanBuilder {
             return;
         }
         if location.eq_ignore_ascii_case("anywhere") {
-            self.restrict(ctx.plan.synced().map(|entry| entry.mailbox.clone()).collect(), "in:anywhere".into());
+            self.restrict(
+                ctx.plan
+                    .synced()
+                    .map(|entry| entry.mailbox.clone())
+                    .collect(),
+                "in:anywhere".into(),
+            );
             return;
         }
         match resolve_location(location, ctx.plan) {
@@ -563,7 +585,9 @@ impl PlanBuilder {
                 reasons: vec![SearchNotice::EmptyQuery],
             };
         }
-        if self.criteria.is_empty() { self.criteria.push("UNDELETED".into()); }
+        if self.criteria.is_empty() {
+            self.criteria.push("UNDELETED".into());
+        }
 
         let criteria = format!("CHARSET UTF-8 {}", self.criteria.join(" "));
         // Guard the whole rendered criteria length (the raw query bound).
@@ -603,7 +627,11 @@ fn default_search_mailboxes(plan: &SyncPlan) -> Vec<String> {
         }
     }
     for entry in &plan.entries {
-        if entry.role.is_none() && !entry.is_inbox && entry.synced_now && !out.contains(&entry.mailbox) {
+        if entry.role.is_none()
+            && !entry.is_inbox
+            && entry.synced_now
+            && !out.contains(&entry.mailbox)
+        {
             out.push(entry.mailbox.clone());
         }
     }
@@ -612,30 +640,50 @@ fn default_search_mailboxes(plan: &SyncPlan) -> Vec<String> {
 
 /// Native search is selected only after the session negotiated the extension.
 /// The complete expression is one escaped IMAP string, never command syntax.
-pub(super) fn render_label_search(source: &str, query: &SearchQuery, plan: &SyncPlan) -> ImapSearchOutcome {
-    let skip = |reason| ImapSearchOutcome::Skipped { reasons: vec![reason] };
+pub(super) fn render_label_search(
+    source: &str,
+    query: &SearchQuery,
+    plan: &SyncPlan,
+) -> ImapSearchOutcome {
+    let skip = |reason| ImapSearchOutcome::Skipped {
+        reasons: vec![reason],
+    };
     if source.chars().any(char::is_control) {
-        return skip(SearchNotice::InvalidCharacters { field: SearchField::FreeText });
+        return skip(SearchNotice::InvalidCharacters {
+            field: SearchField::FreeText,
+        });
     }
-    if query.terms.is_empty() { return skip(SearchNotice::EmptyQuery); }
+    if query.terms.is_empty() {
+        return skip(SearchNotice::EmptyQuery);
+    }
     let leaves: Vec<_> = query.terms.iter().flat_map(QueryTerm::leaves).collect();
     if policy::check_search_terms(leaves.len()).is_err() {
-        return skip(SearchNotice::OverLimit { limit: OverLimit::Terms });
+        return skip(SearchNotice::OverLimit {
+            limit: OverLimit::Terms,
+        });
     }
     if leaves.iter().any(|(term, _)| {
         let bytes = match term {
             QueryTerm::FreeText { text, .. } => text.len(),
-            QueryTerm::From(value) | QueryTerm::To(value) | QueryTerm::Subject(value)
-            | QueryTerm::Label(value) | QueryTerm::In(value) | QueryTerm::Raw(value) => value.len(),
+            QueryTerm::From(value)
+            | QueryTerm::To(value)
+            | QueryTerm::Subject(value)
+            | QueryTerm::Label(value)
+            | QueryTerm::In(value)
+            | QueryTerm::Raw(value) => value.len(),
             _ => render_gmail_term(term).len(),
         };
         policy::check_search_term_bytes(bytes).is_err()
     }) {
-        return skip(SearchNotice::OverLimit { limit: OverLimit::TermBytes });
+        return skip(SearchNotice::OverLimit {
+            limit: OverLimit::TermBytes,
+        });
     }
     fn translate(term: &QueryTerm) -> QueryTerm {
         match term {
-            QueryTerm::In(name) if name.eq_ignore_ascii_case("archive") => QueryTerm::Not(Box::new(QueryTerm::In("inbox".into()))),
+            QueryTerm::In(name) if name.eq_ignore_ascii_case("archive") => {
+                QueryTerm::Not(Box::new(QueryTerm::In("inbox".into())))
+            }
             QueryTerm::Not(term) => QueryTerm::Not(Box::new(translate(term))),
             QueryTerm::AnyOf(terms) => QueryTerm::AnyOf(terms.iter().map(translate).collect()),
             _ => term.clone(),
@@ -643,21 +691,48 @@ pub(super) fn render_label_search(source: &str, query: &SearchQuery, plan: &Sync
     }
     let mut translated = query.clone();
     translated.terms = query.terms.iter().map(translate).collect();
-    let allows = |names: &[&str]| leaves.iter().any(|(term, negated)| !negated && matches!(term, QueryTerm::In(name) if names.iter().any(|value| name.eq_ignore_ascii_case(value))));
+    let allows = |names: &[&str]| {
+        leaves.iter().any(|(term, negated)| !negated && matches!(term, QueryTerm::In(name) if names.iter().any(|value| name.eq_ignore_ascii_case(value))))
+    };
     let trash = allows(&["trash", "anywhere"]);
     let spam = allows(&["spam", "junk", "anywhere"]);
     let mut expression = format!("{} in:anywhere", translated.render_gmail());
-    if !trash { expression.push_str(" -in:trash"); }
-    if !spam { expression.push_str(" -in:spam"); }
+    if !trash {
+        expression.push_str(" -in:trash");
+    }
+    if !spam {
+        expression.push_str(" -in:spam");
+    }
     let criteria = format!("X-GM-RAW {}", quote_search_string(&expression));
     if policy::check_search_query_bytes(criteria.len()).is_err() {
-        return skip(SearchNotice::OverLimit { limit: OverLimit::QueryBytes });
+        return skip(SearchNotice::OverLimit {
+            limit: OverLimit::QueryBytes,
+        });
     }
-    let mut mailboxes: Vec<_> = plan.entries.iter().filter(|e| e.role == Some(super::MailboxRole::All)).map(|e| e.mailbox.clone()).collect();
-    for (enabled, role) in [(trash, super::MailboxRole::Trash), (spam, super::MailboxRole::Junk)] {
-        if enabled { mailboxes.extend(plan.entries.iter().filter(|e| e.role == Some(role)).map(|e| e.mailbox.clone())); }
+    let mut mailboxes: Vec<_> = plan
+        .entries
+        .iter()
+        .filter(|e| e.role == Some(super::MailboxRole::All))
+        .map(|e| e.mailbox.clone())
+        .collect();
+    for (enabled, role) in [
+        (trash, super::MailboxRole::Trash),
+        (spam, super::MailboxRole::Junk),
+    ] {
+        if enabled {
+            mailboxes.extend(
+                plan.entries
+                    .iter()
+                    .filter(|e| e.role == Some(role))
+                    .map(|e| e.mailbox.clone()),
+            );
+        }
     }
-    ImapSearchOutcome::Plan(ImapSearchPlan { mailboxes, criteria, local_filters: Vec::new() })
+    ImapSearchOutcome::Plan(ImapSearchPlan {
+        mailboxes,
+        criteria,
+        local_filters: Vec::new(),
+    })
 }
 
 /// Resolve an `in:` location token to the mailbox wire name(s) to search:
@@ -802,8 +877,8 @@ mod tests {
             mb("Archive", Some("\\Archive")),
             mb("Trash", Some("\\Trash")),
             mb("Spam", Some("\\Junk")),
-            mb("Clients/Acme", None),  // a user folder
-            mb("Labels/Work", None),   // a label folder (folder mode)
+            mb("Clients/Acme", None), // a user folder
+            mb("Labels/Work", None),  // a label folder (folder mode)
         ];
         build_plan(&catalog, Some("/"), config)
     }
@@ -865,7 +940,10 @@ mod tests {
 
     #[test]
     fn free_text_renders_text_quoted() {
-        assert_eq!(criteria_of(&render("hello", LabelStorage::Keywords)), "CHARSET UTF-8 TEXT \"hello\"");
+        assert_eq!(
+            criteria_of(&render("hello", LabelStorage::Keywords)),
+            "CHARSET UTF-8 TEXT \"hello\""
+        );
         // A quoted phrase renders the same TEXT key (quoting is a parse detail).
         assert_eq!(
             criteria_of(&render("\"quarterly report\"", LabelStorage::Keywords)),
@@ -925,8 +1003,14 @@ mod tests {
 
     #[test]
     fn state_terms_render_unseen_and_flagged() {
-        assert_eq!(criteria_of(&render("is:unread", LabelStorage::Keywords)), "CHARSET UTF-8 UNSEEN");
-        assert_eq!(criteria_of(&render("is:starred", LabelStorage::Keywords)), "CHARSET UTF-8 FLAGGED");
+        assert_eq!(
+            criteria_of(&render("is:unread", LabelStorage::Keywords)),
+            "CHARSET UTF-8 UNSEEN"
+        );
+        assert_eq!(
+            criteria_of(&render("is:starred", LabelStorage::Keywords)),
+            "CHARSET UTF-8 FLAGGED"
+        );
     }
 
     #[test]
@@ -946,11 +1030,19 @@ mod tests {
         // An unknown operator and mixed grouping are Raw; a negated or OR'd
         // location is modelled but has no server criterion. None is ever sent
         // as TEXT.
-        for input in ["-in:trash", "in:inbox OR in:sent", "(a b OR c)", "category:promotions", "{from:a has:attachment}"] {
+        for input in [
+            "-in:trash",
+            "in:inbox OR in:sent",
+            "(a b OR c)",
+            "category:promotions",
+            "{from:a has:attachment}",
+        ] {
             match render(input, LabelStorage::Keywords) {
                 ImapSearchOutcome::Skipped { reasons } => {
                     assert!(
-                        reasons.iter().any(|r| matches!(r, SearchNotice::UnsupportedSyntax { .. })),
+                        reasons
+                            .iter()
+                            .any(|r| matches!(r, SearchNotice::UnsupportedSyntax { .. })),
                         "{input}: {reasons:?}"
                     );
                 }
@@ -978,7 +1070,10 @@ mod tests {
             "CHARSET UTF-8 OR (FROM \"a\") (FROM \"b\")"
         );
         assert_eq!(
-            criteria_of(&render("{from:a from:b -is:unread}", LabelStorage::Keywords)),
+            criteria_of(&render(
+                "{from:a from:b -is:unread}",
+                LabelStorage::Keywords
+            )),
             "CHARSET UTF-8 OR (FROM \"a\") (OR (FROM \"b\") (NOT (UNSEEN)))"
         );
         // `to:` keeps covering Cc and Bcc inside an alternative.
@@ -993,7 +1088,9 @@ mod tests {
         match render("in:sent -in:trash", LabelStorage::Keywords) {
             ImapSearchOutcome::Skipped { reasons } => assert_eq!(
                 reasons,
-                vec![SearchNotice::UnsupportedSyntax { token: "-in:trash".into() }]
+                vec![SearchNotice::UnsupportedSyntax {
+                    token: "-in:trash".into()
+                }]
             ),
             other => panic!("expected Skipped, got {other:?}"),
         }
@@ -1001,12 +1098,22 @@ mod tests {
 
     #[test]
     fn alternatives_count_toward_the_term_cap() {
-        let at_cap = (0..policy::MAX_SEARCH_TERMS).map(|i| format!("from:a{i}")).collect::<Vec<_>>().join(" OR ");
-        assert!(matches!(render(&at_cap, LabelStorage::Keywords), ImapSearchOutcome::Plan(_)));
+        let at_cap = (0..policy::MAX_SEARCH_TERMS)
+            .map(|i| format!("from:a{i}"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        assert!(matches!(
+            render(&at_cap, LabelStorage::Keywords),
+            ImapSearchOutcome::Plan(_)
+        ));
         let over = format!("{at_cap} OR from:extra");
         assert_eq!(
             render(&over, LabelStorage::Keywords),
-            ImapSearchOutcome::Skipped { reasons: vec![SearchNotice::OverLimit { limit: OverLimit::Terms }] }
+            ImapSearchOutcome::Skipped {
+                reasons: vec![SearchNotice::OverLimit {
+                    limit: OverLimit::Terms
+                }]
+            }
         );
     }
 
@@ -1051,7 +1158,10 @@ mod tests {
         let outcome = render_imap(&SearchQuery::parse("label:Work from:alice"), &context);
         let plan = plan_of(&outcome);
         assert_eq!(plan.mailboxes, vec!["Labels/Work"]);
-        assert_eq!(plan.criteria, "CHARSET UTF-8 FROM \"alice\"", "the label term is dropped");
+        assert_eq!(
+            plan.criteria, "CHARSET UTF-8 FROM \"alice\"",
+            "the label term is dropped"
+        );
     }
 
     #[test]
@@ -1084,7 +1194,10 @@ mod tests {
     #[test]
     fn default_mailboxes_include_user_and_label_folders() {
         let plan = plan_of(&render("from:alice", LabelStorage::Keywords));
-        assert_eq!(plan.mailboxes, vec!["INBOX", "Archive", "Sent", "Clients/Acme", "Labels/Work"]);
+        assert_eq!(
+            plan.mailboxes,
+            vec!["INBOX", "Archive", "Sent", "Clients/Acme", "Labels/Work"]
+        );
     }
 
     #[test]
@@ -1175,9 +1288,13 @@ mod tests {
         let config = settings(LabelStorage::None, None);
         let mut plan = standard_plan(&config);
         plan.entries.push(super::super::plan::PlanEntry {
-            mailbox: "Everything".into(), role: Some(super::super::MailboxRole::All), is_inbox: false,
+            mailbox: "Everything".into(),
+            role: Some(super::super::MailboxRole::All),
+            is_inbox: false,
             window_class: super::super::policy::SyncWindowClass::Folder,
-            label_kind: super::super::plan::LabelKind::SystemRole, location_label_id: None, synced_now: true,
+            label_kind: super::super::plan::LabelKind::SystemRole,
+            location_label_id: None,
+            synced_now: true,
         });
         render_label_search(input, &SearchQuery::parse(input), &plan)
     }
@@ -1186,17 +1303,25 @@ mod tests {
     fn native_search_covers_archive_and_uses_explicit_trash_spam_scopes() {
         let ordinary = plan_of(&native("invoice has:attachment"));
         assert_eq!(ordinary.mailboxes, vec!["Everything"]);
-        assert!(ordinary.local_filters.is_empty(), "the native server evaluates attachment predicates");
+        assert!(
+            ordinary.local_filters.is_empty(),
+            "the native server evaluates attachment predicates"
+        );
         assert!(ordinary.criteria.contains("-in:trash") && ordinary.criteria.contains("-in:spam"));
         let archive = plan_of(&native("in:archive"));
         assert!(archive.criteria.contains("-in:inbox"));
         assert!(!archive.criteria.contains("in:archive"));
         let anywhere = plan_of(&native("in:anywhere invoice"));
         assert_eq!(anywhere.mailboxes, vec!["Everything", "Trash", "Spam"]);
-        assert!(!anywhere.criteria.contains("-in:trash") && !anywhere.criteria.contains("-in:spam"));
+        assert!(
+            !anywhere.criteria.contains("-in:trash") && !anywhere.criteria.contains("-in:spam")
+        );
         let spam = plan_of(&native("in:spam invoice"));
         assert_eq!(spam.mailboxes, vec!["Everything", "Spam"]);
-        assert!(matches!(native("category:promotions"), ImapSearchOutcome::Plan(_)), "advertised native syntax need not be expressible in generic IMAP");
+        assert!(
+            matches!(native("category:promotions"), ImapSearchOutcome::Plan(_)),
+            "advertised native syntax need not be expressible in generic IMAP"
+        );
     }
 
     #[test]
@@ -1207,35 +1332,79 @@ mod tests {
         assert!(plan.criteria.contains("\\\""));
         assert!(!plan.criteria.contains(['\r', '\n', '\0']));
         for control in ['\r', '\n', '\0'] {
-            assert!(matches!(native(&format!("invoice{control}LOGOUT")), ImapSearchOutcome::Skipped { reasons }
-                if reasons == vec![SearchNotice::InvalidCharacters { field: SearchField::FreeText }]));
+            assert!(
+                matches!(native(&format!("invoice{control}LOGOUT")), ImapSearchOutcome::Skipped { reasons }
+                if reasons == vec![SearchNotice::InvalidCharacters { field: SearchField::FreeText }])
+            );
         }
     }
 
     #[test]
     fn native_search_uses_shared_term_and_rendered_query_boundaries() {
-        for size in [policy::MAX_SEARCH_TERM_BYTES - 1, policy::MAX_SEARCH_TERM_BYTES, policy::MAX_SEARCH_TERM_BYTES + 1] {
-            assert_eq!(matches!(native(&format!("from:{}", "x".repeat(size))), ImapSearchOutcome::Plan(_)), size <= policy::MAX_SEARCH_TERM_BYTES);
+        for size in [
+            policy::MAX_SEARCH_TERM_BYTES - 1,
+            policy::MAX_SEARCH_TERM_BYTES,
+            policy::MAX_SEARCH_TERM_BYTES + 1,
+        ] {
+            assert_eq!(
+                matches!(
+                    native(&format!("from:{}", "x".repeat(size))),
+                    ImapSearchOutcome::Plan(_)
+                ),
+                size <= policy::MAX_SEARCH_TERM_BYTES
+            );
         }
-        for count in [policy::MAX_SEARCH_TERMS - 1, policy::MAX_SEARCH_TERMS, policy::MAX_SEARCH_TERMS + 1] {
-            assert_eq!(matches!(native(&vec!["x"; count].join(" ")), ImapSearchOutcome::Plan(_)), count <= policy::MAX_SEARCH_TERMS);
+        for count in [
+            policy::MAX_SEARCH_TERMS - 1,
+            policy::MAX_SEARCH_TERMS,
+            policy::MAX_SEARCH_TERMS + 1,
+        ] {
+            assert_eq!(
+                matches!(
+                    native(&vec!["x"; count].join(" ")),
+                    ImapSearchOutcome::Plan(_)
+                ),
+                count <= policy::MAX_SEARCH_TERMS
+            );
         }
-        let overhead = format!("X-GM-RAW {}", quote_search_string(" in:anywhere -in:trash -in:spam")).len();
-        for bytes in [policy::MAX_SEARCH_QUERY_BYTES - 1, policy::MAX_SEARCH_QUERY_BYTES, policy::MAX_SEARCH_QUERY_BYTES + 1] {
+        let overhead = format!(
+            "X-GM-RAW {}",
+            quote_search_string(" in:anywhere -in:trash -in:spam")
+        )
+        .len();
+        for bytes in [
+            policy::MAX_SEARCH_QUERY_BYTES - 1,
+            policy::MAX_SEARCH_QUERY_BYTES,
+            policy::MAX_SEARCH_QUERY_BYTES + 1,
+        ] {
             let source_length = bytes - overhead;
-            let source = format!("{} {}", vec!["x".repeat(200); 4].join(" "), "x".repeat(source_length - 804));
+            let source = format!(
+                "{} {}",
+                vec!["x".repeat(200); 4].join(" "),
+                "x".repeat(source_length - 804)
+            );
             let outcome = native(&source);
             if bytes <= policy::MAX_SEARCH_QUERY_BYTES {
                 assert_eq!(plan_of(&outcome).criteria.len(), bytes);
-            } else { assert!(matches!(outcome, ImapSearchOutcome::Skipped { reasons } if reasons == vec![SearchNotice::OverLimit { limit: OverLimit::QueryBytes }])); }
+            } else {
+                assert!(
+                    matches!(outcome, ImapSearchOutcome::Skipped { reasons } if reasons == vec![SearchNotice::OverLimit { limit: OverLimit::QueryBytes }])
+                );
+            }
         }
     }
 
     #[test]
     fn generic_location_and_anywhere_queries_have_bounded_server_plans() {
-        assert_eq!(criteria_of(&render("in:archive", LabelStorage::None)), "CHARSET UTF-8 UNDELETED");
+        assert_eq!(
+            criteria_of(&render("in:archive", LabelStorage::None)),
+            "CHARSET UTF-8 UNDELETED"
+        );
         let anywhere = plan_of(&render("in:anywhere invoice", LabelStorage::None));
-        assert!(anywhere.mailboxes.contains(&"Trash".into()) && anywhere.mailboxes.contains(&"Spam".into()));
+        assert!(
+            anywhere.mailboxes.contains(&"Trash".into())
+                && anywhere.mailboxes.contains(&"Spam".into())
+        );
     }
 
     #[test]
@@ -1312,18 +1481,18 @@ mod tests {
         // Each hostile value must appear ONLY as one balanced quoted string,
         // never introducing a new key.
         for hostile in [
-            "a\"b",         // embedded quote
-            "a\\b",         // backslash
-            "a)b(c",        // parens
-            "a{5}b",        // literal-looking
+            "a\"b",  // embedded quote
+            "a\\b",  // backslash
+            "a)b(c", // parens
+            "a{5}b", // literal-looking
             "a}b",
-            "a*b%c",        // wildcards
-            "  leading",    // leading spaces
+            "a*b%c",     // wildcards
+            "  leading", // leading spaces
             "trailing  ",
-            "ALL",          // a value that looks like a search key
+            "ALL", // a value that looks like a search key
             "OR",
             "UNSEEN",
-            "a\"unclosed",  // an unclosed quote in the value
+            "a\"unclosed", // an unclosed quote in the value
         ] {
             // Use a from: term so the key is known (FROM).
             let input = format!("from:{hostile}");
@@ -1449,14 +1618,29 @@ mod tests {
     fn notices_display_as_plain_language() {
         let samples = [
             SearchNotice::EmptyQuery,
-            SearchNotice::UnsupportedSyntax { token: "-in:trash".into() },
-            SearchNotice::InvalidCharacters { field: SearchField::From },
-            SearchNotice::OverLimit { limit: OverLimit::TermBytes },
-            SearchNotice::CannotCombineMailboxes { first: "in:inbox".into(), second: "label:Work".into() },
+            SearchNotice::UnsupportedSyntax {
+                token: "-in:trash".into(),
+            },
+            SearchNotice::InvalidCharacters {
+                field: SearchField::From,
+            },
+            SearchNotice::OverLimit {
+                limit: OverLimit::TermBytes,
+            },
+            SearchNotice::CannotCombineMailboxes {
+                first: "in:inbox".into(),
+                second: "label:Work".into(),
+            },
             SearchNotice::NoLabelStorage,
-            SearchNotice::LabelNotAKeyword { name: "two words".into() },
-            SearchNotice::UnknownLabelFolder { name: "Nope".into() },
-            SearchNotice::UnknownMailbox { name: "nowhere".into() },
+            SearchNotice::LabelNotAKeyword {
+                name: "two words".into(),
+            },
+            SearchNotice::UnknownLabelFolder {
+                name: "Nope".into(),
+            },
+            SearchNotice::UnknownMailbox {
+                name: "nowhere".into(),
+            },
         ];
         for notice in samples {
             assert!(!notice.to_string().is_empty());
@@ -1498,7 +1682,10 @@ mod tests {
                 assert_eq!(quoted, vec![value.to_string()], "{value:?}");
                 for key in &keys {
                     assert!(
-                        matches!(key.as_str(), "CHARSET" | "UTF-8" | "FROM" | "SUBJECT" | "TEXT"),
+                        matches!(
+                            key.as_str(),
+                            "CHARSET" | "UTF-8" | "FROM" | "SUBJECT" | "TEXT"
+                        ),
                         "{value:?} introduced stray key {key:?}"
                     );
                 }
@@ -1591,8 +1778,14 @@ mod live_search {
     fn scratch_plan(config: &ImapAccountSettings) -> SyncPlan {
         build_plan(
             &[
-                CatalogMailbox { name: "INBOX".into(), special_use: None },
-                CatalogMailbox { name: SCRATCH.into(), special_use: None },
+                CatalogMailbox {
+                    name: "INBOX".into(),
+                    special_use: None,
+                },
+                CatalogMailbox {
+                    name: SCRATCH.into(),
+                    special_use: None,
+                },
             ],
             Some("/"),
             config,
@@ -1631,17 +1824,52 @@ mod live_search {
             let arg = super::super::write::build_mailbox_arg(SCRATCH).unwrap();
             let _ = write.delete_mailbox_arg(&arg).await;
         }
-        session.create_mailbox(SCRATCH).await.expect("create scratch");
+        session
+            .create_mailbox(SCRATCH)
+            .await
+            .expect("create scratch");
 
         // Seed a handful of known messages. UID order follows APPEND order
         // (UIDs assigned sequentially from UIDNEXT), so we record them in order
         // and map rendered cases to the expected positions.
         let seeds: &[(&str, &str, &str, &str, &str, &str, &str)] = &[
             // (message-id, from, to, extra headers, subject, date, body)
-            ("<p5r1-a@x>", "alice@example.com", "bob@example.com", "", "ASCII hello", "01 Jan 2024 10:00:00 +0000", "plain ascii body"),
-            ("<p5r1-b@x>", "éve@example.com", "team-b@example.com", "Cc: carol-cc@example.com\r\n", "Éléments", "15 Feb 2024 10:00:00 +0000", "contient des Éléments"),
-            ("<p5r1-c@x>", "someone@example.com", "team-c@example.com", "Bcc: dave-bcc@example.com\r\n", "日本語 word", "20 Mar 2024 10:00:00 +0000", "CJK body"),
-            ("<p5r1-d@x>", "quote@example.com", "team@example.com", "", "has a \" and \\ in it", "10 Apr 2024 10:00:00 +0000", "quote and backslash"),
+            (
+                "<p5r1-a@x>",
+                "alice@example.com",
+                "bob@example.com",
+                "",
+                "ASCII hello",
+                "01 Jan 2024 10:00:00 +0000",
+                "plain ascii body",
+            ),
+            (
+                "<p5r1-b@x>",
+                "éve@example.com",
+                "team-b@example.com",
+                "Cc: carol-cc@example.com\r\n",
+                "Éléments",
+                "15 Feb 2024 10:00:00 +0000",
+                "contient des Éléments",
+            ),
+            (
+                "<p5r1-c@x>",
+                "someone@example.com",
+                "team-c@example.com",
+                "Bcc: dave-bcc@example.com\r\n",
+                "日本語 word",
+                "20 Mar 2024 10:00:00 +0000",
+                "CJK body",
+            ),
+            (
+                "<p5r1-d@x>",
+                "quote@example.com",
+                "team@example.com",
+                "",
+                "has a \" and \\ in it",
+                "10 Apr 2024 10:00:00 +0000",
+                "quote and backslash",
+            ),
         ];
         {
             let write = session.as_write_session().expect("write session");
@@ -1651,7 +1879,10 @@ mod live_search {
                 // list); the per-case flags are set afterwards with UID STORE,
                 // the same path the app uses for read/star.
                 let flags: Vec<String> = vec!["\\Seen".into()];
-                write.append(SCRATCH, &flags, &raw).await.expect("append seed");
+                write
+                    .append(SCRATCH, &flags, &raw)
+                    .await
+                    .expect("append seed");
             }
         }
 
@@ -1679,7 +1910,10 @@ mod live_search {
                 .await
                 .expect("unread a and d");
         }
-        session.examine(SCRATCH).await.expect("re-examine after flags");
+        session
+            .examine(SCRATCH)
+            .await
+            .expect("re-examine after flags");
 
         let config = live_settings();
         let plan = scratch_plan(&config);
@@ -1705,7 +1939,10 @@ mod live_search {
             };
             assert_eq!(plan.mailboxes, vec![SCRATCH.to_string()], "{query:?}");
             session.examine(&plan.mailboxes[0]).await.expect("examine");
-            let mut uids = session.uid_search(&plan.criteria).await.expect("uid_search");
+            let mut uids = session
+                .uid_search(&plan.criteria)
+                .await
+                .expect("uid_search");
             uids.sort_unstable();
             uids
         }
@@ -1722,7 +1959,10 @@ mod live_search {
         // ASCII text in the body/subject of message a.
         assert_eq!(run(&mut session, &context, "ascii").await, vec![uid_of(0)]);
         // Non-ASCII text (accented + CJK) — matches b and c respectively.
-        assert_eq!(run(&mut session, &context, "Éléments").await, vec![uid_of(1)]);
+        assert_eq!(
+            run(&mut session, &context, "Éléments").await,
+            vec![uid_of(1)]
+        );
         assert_eq!(run(&mut session, &context, "日本語").await, vec![uid_of(2)]);
         // A value containing a quote and a backslash (message d). The parser
         // can never produce a `"` inside a term (a quote toggles phrase mode),
@@ -1751,15 +1991,30 @@ mod live_search {
             "a trailing backslash must stay inside its quoted string and match nothing here"
         );
         // FROM.
-        assert_eq!(run(&mut session, &context, "from:alice@example.com").await, vec![uid_of(0)]);
+        assert_eq!(
+            run(&mut session, &context, "from:alice@example.com").await,
+            vec![uid_of(0)]
+        );
         // The TO/CC/BCC OR: message a is a To:, b has a real Cc:, c a real Bcc:.
-        assert_eq!(run(&mut session, &context, "to:bob@example.com").await, vec![uid_of(0)]);
-        assert_eq!(run(&mut session, &context, "to:carol-cc@example.com").await, vec![uid_of(1)]);
-        assert_eq!(run(&mut session, &context, "to:dave-bcc@example.com").await, vec![uid_of(2)]);
+        assert_eq!(
+            run(&mut session, &context, "to:bob@example.com").await,
+            vec![uid_of(0)]
+        );
+        assert_eq!(
+            run(&mut session, &context, "to:carol-cc@example.com").await,
+            vec![uid_of(1)]
+        );
+        assert_eq!(
+            run(&mut session, &context, "to:dave-bcc@example.com").await,
+            vec![uid_of(2)]
+        );
         // IMAP address matching is a SUBSTRING match, unlike Gmail's: a shorter
         // address matches every address that contains it. Pin that behaviour so
         // a later run does not assume otherwise.
-        assert_eq!(run(&mut session, &context, "to:ve-bcc@example.com").await, vec![uid_of(2)]);
+        assert_eq!(
+            run(&mut session, &context, "to:ve-bcc@example.com").await,
+            vec![uid_of(2)]
+        );
         // SINCE/BEFORE compare the server's INTERNALDATE (arrival time), NOT the
         // `Date:` header: APPEND without a date stamps "now", so the seeds'
         // header dates (Jan-Apr 2024) play no part. Assert against days
@@ -1767,12 +2022,28 @@ mod live_search {
         // midnight cannot flip the answer), and pin that SINCE/BEFORE take the
         // rendered `d-Mon-yyyy` form.
         let today = chrono::Utc::now().date_naive();
-        let fmt = |days: i64| (today + chrono::Duration::days(days)).format("%Y-%m-%d").to_string();
+        let fmt = |days: i64| {
+            (today + chrono::Duration::days(days))
+                .format("%Y-%m-%d")
+                .to_string()
+        };
         let everything = vec![uid_of(0), uid_of(1), uid_of(2), uid_of(3)];
-        assert_eq!(run(&mut session, &context, &format!("after:{}", fmt(-2))).await, everything);
-        assert_eq!(run(&mut session, &context, &format!("before:{}", fmt(-2))).await, Vec::<u32>::new());
-        assert_eq!(run(&mut session, &context, &format!("after:{}", fmt(2))).await, Vec::<u32>::new());
-        assert_eq!(run(&mut session, &context, &format!("before:{}", fmt(2))).await, everything);
+        assert_eq!(
+            run(&mut session, &context, &format!("after:{}", fmt(-2))).await,
+            everything
+        );
+        assert_eq!(
+            run(&mut session, &context, &format!("before:{}", fmt(-2))).await,
+            Vec::<u32>::new()
+        );
+        assert_eq!(
+            run(&mut session, &context, &format!("after:{}", fmt(2))).await,
+            Vec::<u32>::new()
+        );
+        assert_eq!(
+            run(&mut session, &context, &format!("before:{}", fmt(2))).await,
+            everything
+        );
         // FLAGGED: nothing in this container can be starred (see the ACL note
         // above), so a positive hit is not testable here. The case proves the
         // rendered `FLAGGED` is valid syntax the server accepts: an empty set,

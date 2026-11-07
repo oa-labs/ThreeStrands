@@ -52,12 +52,28 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
             None,
             None,
             Some(90),
-        None,
+            None,
         )
         .unwrap();
 
-    assert_eq!(database.get_account("new@example.com").unwrap().unwrap().nickname.as_deref(), Some("Personal"));
-    assert_eq!(database.get_account("connected@example.com").unwrap().unwrap().nickname.as_deref(), Some("Work"));
+    assert_eq!(
+        database
+            .get_account("new@example.com")
+            .unwrap()
+            .unwrap()
+            .nickname
+            .as_deref(),
+        Some("Personal")
+    );
+    assert_eq!(
+        database
+            .get_account("connected@example.com")
+            .unwrap()
+            .unwrap()
+            .nickname
+            .as_deref(),
+        Some("Work")
+    );
     assert_eq!(
         database
             .get_account("connected@example.com")
@@ -91,7 +107,15 @@ fn importing_retention_replaces_a_new_installations_default_including_forever() 
         assert_eq!(database.chosen_retention_days().unwrap(), None);
         database
             .import_transfer_data(
-                &[], &Default::default(), &[], &[], &[], None, None, choice, None,
+                &[],
+                &Default::default(),
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                choice,
+                None,
             )
             .unwrap();
         assert_eq!(database.retention_days().unwrap(), choice);
@@ -104,7 +128,9 @@ fn import_sets_up_only_the_chosen_accounts_and_never_disconnects_one() {
     let database = database();
     database.adopt_account("connected@example.com").unwrap();
     database.adopt_account("available@example.com").unwrap();
-    database.disconnect_account_locally("available@example.com").unwrap();
+    database
+        .disconnect_account_locally("available@example.com")
+        .unwrap();
     let account = |email: &str| TransferAccount {
         email: email.to_string(),
         nickname: None,
@@ -134,17 +160,37 @@ fn import_sets_up_only_the_chosen_accounts_and_never_disconnects_one() {
             None,
             None,
             None,
-        None,
+            None,
         )
         .unwrap();
 
     let here = |email: &str| database.get_account(email).unwrap().unwrap().on_this_device;
     assert!(here("chosen@example.com"));
-    assert!(!here("Skipped@example.com"), "an unchosen account is listed as available");
-    assert!(here("connected@example.com"), "leaving out a set-up account does not disconnect it");
-    assert_eq!(database.get_account("connected@example.com").unwrap().unwrap().status, "connected");
-    assert!(here("available@example.com"), "choosing an available account sets it up here");
-    assert_eq!(database.list_accounts().unwrap().len(), 4, "every account stays in the catalog");
+    assert!(
+        !here("Skipped@example.com"),
+        "an unchosen account is listed as available"
+    );
+    assert!(
+        here("connected@example.com"),
+        "leaving out a set-up account does not disconnect it"
+    );
+    assert_eq!(
+        database
+            .get_account("connected@example.com")
+            .unwrap()
+            .unwrap()
+            .status,
+        "connected"
+    );
+    assert!(
+        here("available@example.com"),
+        "choosing an available account sets it up here"
+    );
+    assert_eq!(
+        database.list_accounts().unwrap().len(),
+        4,
+        "every account stays in the catalog"
+    );
 }
 
 #[test]
@@ -255,8 +301,8 @@ fn a_late_settings_failure_rolls_back_every_imported_feature() {
                 Some(&groups),
                 None,
                 retention,
-            None,
-        )
+                None,
+            )
         };
         let error = import().unwrap_err();
         assert!(matches!(error, crate::db::DatabaseError::Sqlite(_)));

@@ -94,7 +94,10 @@ impl QueryTerm {
     /// A term with no boolean structure: anything but `Not`, `AnyOf` and
     /// `Raw`. Only simple terms may be negated or offered as alternatives.
     pub fn is_simple(&self) -> bool {
-        !matches!(self, QueryTerm::Not(_) | QueryTerm::AnyOf(_) | QueryTerm::Raw(_))
+        !matches!(
+            self,
+            QueryTerm::Not(_) | QueryTerm::AnyOf(_) | QueryTerm::Raw(_)
+        )
     }
 
     /// Every simple (or raw) term inside this one, with whether it is
@@ -103,7 +106,9 @@ impl QueryTerm {
     pub fn leaves(&self) -> Vec<(&QueryTerm, bool)> {
         match self {
             QueryTerm::Not(inner) => vec![(inner.as_ref(), true)],
-            QueryTerm::AnyOf(alternatives) => alternatives.iter().flat_map(QueryTerm::leaves).collect(),
+            QueryTerm::AnyOf(alternatives) => {
+                alternatives.iter().flat_map(QueryTerm::leaves).collect()
+            }
             term => vec![(term, false)],
         }
     }
@@ -341,7 +346,10 @@ impl StructuredLocalSearch {
             .iter()
             .filter_map(|term| match term {
                 QueryTerm::FreeText { text, quoted: true } => Some(format!("\"{text}\"")),
-                QueryTerm::FreeText { text, quoted: false } => Some(text.clone()),
+                QueryTerm::FreeText {
+                    text,
+                    quoted: false,
+                } => Some(text.clone()),
                 _ => None,
             })
             .collect();
@@ -474,7 +482,9 @@ pub fn default_archived_trashed_filter(
     // resolution path.
     let names_location = |words: &[&str]| {
         leaves.iter().any(|(term, negated)| match term {
-            QueryTerm::In(value) if !negated => words.iter().any(|word| value.eq_ignore_ascii_case(word)),
+            QueryTerm::In(value) if !negated => {
+                words.iter().any(|word| value.eq_ignore_ascii_case(word))
+            }
             _ => false,
         })
     };
@@ -518,7 +528,11 @@ pub fn render_gmail_term(term: &QueryTerm) -> String {
         QueryTerm::Not(inner) => format!("-{}", render_gmail_term(inner)),
         QueryTerm::AnyOf(alternatives) => format!(
             "{{{}}}",
-            alternatives.iter().map(render_gmail_term).collect::<Vec<_>>().join(" ")
+            alternatives
+                .iter()
+                .map(render_gmail_term)
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         QueryTerm::Raw(token) => token.clone(),
     }
@@ -579,14 +593,20 @@ enum Piece {
     /// `alternative` is set when the piece is exactly one term that may stand
     /// on either side of an `OR` (a simple term, a negated one, or an
     /// `AnyOf`). An AND group flattened into several terms is not.
-    Terms { terms: Vec<QueryTerm>, alternative: bool },
+    Terms {
+        terms: Vec<QueryTerm>,
+        alternative: bool,
+    },
     Or(String),
 }
 
 impl Piece {
     fn single(term: QueryTerm) -> Self {
         let alternative = is_alternative(&term) || matches!(term, QueryTerm::AnyOf(_));
-        Piece::Terms { terms: vec![term], alternative }
+        Piece::Terms {
+            terms: vec![term],
+            alternative,
+        }
     }
 }
 
@@ -679,11 +699,17 @@ fn parse_group(original: &str, negated: bool, field: Option<&str>, text: &str) -
         return raw();
     };
     let tokens = tokenize(inner);
-    if tokens.iter().any(|token| token.contains(['(', ')', '{', '}'])) {
+    if tokens
+        .iter()
+        .any(|token| token.contains(['(', ')', '{', '}']))
+    {
         return raw();
     }
     let ors = tokens.iter().filter(|token| *token == "OR").count();
-    let operands: Vec<&String> = tokens.iter().filter(|token| *token != "OR" && *token != "AND").collect();
+    let operands: Vec<&String> = tokens
+        .iter()
+        .filter(|token| *token != "OR" && *token != "AND")
+        .collect();
     if operands.is_empty() {
         return raw();
     }
@@ -691,7 +717,10 @@ fn parse_group(original: &str, negated: bool, field: Option<&str>, text: &str) -
     let is_or = open == '{' || ors > 0;
     if open == '(' && ors > 0 {
         let alternating = tokens.len() == operands.len() * 2 - 1
-            && tokens.iter().enumerate().all(|(index, token)| (index % 2 == 1) == (token == "OR"));
+            && tokens
+                .iter()
+                .enumerate()
+                .all(|(index, token)| (index % 2 == 1) == (token == "OR"));
         if !alternating {
             return raw();
         }
@@ -714,10 +743,16 @@ fn parse_group(original: &str, negated: bool, field: Option<&str>, text: &str) -
         // a OR b
         (true, false) => Piece::single(any_of(terms)),
         // NOT (a OR b) = NOT a AND NOT b
-        (true, true) => Piece::Terms { terms: terms.into_iter().map(negate).collect(), alternative: false },
+        (true, true) => Piece::Terms {
+            terms: terms.into_iter().map(negate).collect(),
+            alternative: false,
+        },
         // (a b)
         (false, false) if terms.len() == 1 => Piece::single(terms.pop().expect("one term")),
-        (false, false) => Piece::Terms { terms, alternative: false },
+        (false, false) => Piece::Terms {
+            terms,
+            alternative: false,
+        },
         // NOT (a AND b) = NOT a OR NOT b
         (false, true) => Piece::single(any_of(terms.into_iter().map(negate).collect())),
     }
@@ -774,10 +809,16 @@ fn parse_terms(tokens: &[String]) -> Vec<QueryTerm> {
             Piece::Or(token) => {
                 let next_is_alternative = matches!(
                     pieces.peek(),
-                    Some(Piece::Terms { alternative: true, .. })
+                    Some(Piece::Terms {
+                        alternative: true,
+                        ..
+                    })
                 );
                 if last_is_alternative && next_is_alternative {
-                    let Some(Piece::Terms { terms: mut right, .. }) = pieces.next() else {
+                    let Some(Piece::Terms {
+                        terms: mut right, ..
+                    }) = pieces.next()
+                    else {
                         unreachable!("peeked an alternative");
                     };
                     let left = terms.pop().expect("an alternative precedes OR");
@@ -788,7 +829,10 @@ fn parse_terms(tokens: &[String]) -> Vec<QueryTerm> {
                     last_is_alternative = false;
                 }
             }
-            Piece::Terms { terms: piece_terms, alternative } => {
+            Piece::Terms {
+                terms: piece_terms,
+                alternative,
+            } => {
                 terms.extend(piece_terms);
                 last_is_alternative = alternative;
             }
@@ -1075,15 +1119,28 @@ mod tests {
 
     #[test]
     fn or_joins_its_neighbours_and_binds_tighter_than_and() {
-        assert_eq!(parse("from:a OR from:b"), vec![any(vec![from("a"), from("b")])]);
+        assert_eq!(
+            parse("from:a OR from:b"),
+            vec![any(vec![from("a"), from("b")])]
+        );
         assert_eq!(
             parse("budget from:a OR from:b OR -is:unread"),
-            vec![word("budget"), any(vec![from("a"), from("b"), not(QueryTerm::State(MessageState::Unread))])]
+            vec![
+                word("budget"),
+                any(vec![
+                    from("a"),
+                    from("b"),
+                    not(QueryTerm::State(MessageState::Unread))
+                ])
+            ]
         );
         // An OR with a missing side stays raw; the rest still parses.
         assert_eq!(parse("OR budget"), vec![raw("OR"), word("budget")]);
         assert_eq!(parse("budget OR"), vec![word("budget"), raw("OR")]);
-        assert_eq!(parse("a OR OR b"), vec![word("a"), raw("OR"), raw("OR"), word("b")]);
+        assert_eq!(
+            parse("a OR OR b"),
+            vec![word("a"), raw("OR"), raw("OR"), word("b")]
+        );
         // AND is the implicit conjunction spelled out.
         assert_eq!(parse("a AND b"), vec![word("a"), word("b")]);
     }
@@ -1095,25 +1152,46 @@ mod tests {
         assert_eq!(parse("(x y)"), vec![word("x"), word("y")]);
         assert_eq!(parse("(555)"), vec![word("555")]);
         // An AND group can't be one side of an OR.
-        assert_eq!(parse("(x y) OR z"), vec![word("x"), word("y"), raw("OR"), word("z")]);
+        assert_eq!(
+            parse("(x y) OR z"),
+            vec![word("x"), word("y"), raw("OR"), word("z")]
+        );
         // A group joins an OR like any single term.
-        assert_eq!(parse("{x y} OR z"), vec![any(vec![word("x"), word("y"), word("z")])]);
+        assert_eq!(
+            parse("{x y} OR z"),
+            vec![any(vec![word("x"), word("y"), word("z")])]
+        );
     }
 
     #[test]
     fn a_field_group_applies_the_field_to_each_value() {
-        assert_eq!(parse("from:(a OR b)"), vec![any(vec![from("a"), from("b")])]);
+        assert_eq!(
+            parse("from:(a OR b)"),
+            vec![any(vec![from("a"), from("b")])]
+        );
         assert_eq!(parse("from:{a b}"), vec![any(vec![from("a"), from("b")])]);
         assert_eq!(parse("from:(a b)"), vec![from("a"), from("b")]);
         assert_eq!(parse("from:(a -b)"), vec![from("a"), not(from("b"))]);
-        assert_eq!(parse("to:{\"Ana Diaz\" bo}"), vec![any(vec![QueryTerm::To("Ana Diaz".into()), QueryTerm::To("bo".into())])]);
+        assert_eq!(
+            parse("to:{\"Ana Diaz\" bo}"),
+            vec![any(vec![
+                QueryTerm::To("Ana Diaz".into()),
+                QueryTerm::To("bo".into())
+            ])]
+        );
     }
 
     #[test]
     fn a_negated_group_follows_de_morgan() {
         assert_eq!(parse("-{a b}"), vec![not(word("a")), not(word("b"))]);
-        assert_eq!(parse("-from:(a OR b)"), vec![not(from("a")), not(from("b"))]);
-        assert_eq!(parse("-(a b)"), vec![any(vec![not(word("a")), not(word("b"))])]);
+        assert_eq!(
+            parse("-from:(a OR b)"),
+            vec![not(from("a")), not(from("b"))]
+        );
+        assert_eq!(
+            parse("-(a b)"),
+            vec![any(vec![not(word("a")), not(word("b"))])]
+        );
         // Double negation cancels.
         assert_eq!(parse("-{-a b}"), vec![word("a"), not(word("b"))]);
     }
@@ -1360,7 +1438,10 @@ mod tests {
             assert_round_trip(input);
         }
         // Equivalent spellings render to the brace form.
-        assert_eq!(SearchQuery::parse("from:(a OR b)").render_gmail(), "{from:a from:b}");
+        assert_eq!(
+            SearchQuery::parse("from:(a OR b)").render_gmail(),
+            "{from:a from:b}"
+        );
         assert_eq!(SearchQuery::parse("a OR b").render_gmail(), "{a b}");
     }
 
@@ -1415,19 +1496,19 @@ mod tests {
         // term NO LONGER forces legacy, but a Raw term (negation, OR, empty
         // value) still does.
         for input in [
-            "budget",                 // free text only
-            "\"exact phrase\"",       // quoted free text only
-            "foo:bar",                // unknown operator => Raw
-            "10:30",                  // not an operator (field must be letters)
-            "Re: meeting",            // "Re:" empty value => Raw, "meeting" free text
-            "category:promotions",    // unknown operator => Raw
-            "from:alice category:x",  // operator + Raw => legacy
-            "label:",                 // empty value => Raw => legacy
-            "in:",                    // empty value => Raw => legacy
-            "(a b OR c)",             // mixed grouping => Raw
-            "-from:",                 // negated empty value => Raw
-            "from:",                  // empty value => Raw
-            "",                       // nothing => legacy
+            "budget",                // free text only
+            "\"exact phrase\"",      // quoted free text only
+            "foo:bar",               // unknown operator => Raw
+            "10:30",                 // not an operator (field must be letters)
+            "Re: meeting",           // "Re:" empty value => Raw, "meeting" free text
+            "category:promotions",   // unknown operator => Raw
+            "from:alice category:x", // operator + Raw => legacy
+            "label:",                // empty value => Raw => legacy
+            "in:",                   // empty value => Raw => legacy
+            "(a b OR c)",            // mixed grouping => Raw
+            "-from:",                // negated empty value => Raw
+            "from:",                 // empty value => Raw
+            "",                      // nothing => legacy
         ] {
             assert_eq!(
                 plan(input),
@@ -1536,8 +1617,14 @@ mod tests {
 
     #[test]
     fn limit_message_is_the_plain_user_sentence() {
-        assert_eq!(LocalSearchLimit::TooManyTerms.message(), "That search is too long.");
-        assert_eq!(LocalSearchLimit::TermTooLong.message(), "That search is too long.");
+        assert_eq!(
+            LocalSearchLimit::TooManyTerms.message(),
+            "That search is too long."
+        );
+        assert_eq!(
+            LocalSearchLimit::TermTooLong.message(),
+            "That search is too long."
+        );
     }
 
     #[test]
@@ -1555,7 +1642,9 @@ mod tests {
         );
         // A label value over the byte limit is rejected.
         let long_label = StructuredLocalSearch {
-            terms: vec![QueryTerm::Label("a".repeat(MAX_LOCAL_SEARCH_TERM_BYTES + 1))],
+            terms: vec![QueryTerm::Label(
+                "a".repeat(MAX_LOCAL_SEARCH_TERM_BYTES + 1),
+            )],
         };
         assert_eq!(
             check_local_search_limits(&long_label),

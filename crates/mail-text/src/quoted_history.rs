@@ -57,13 +57,20 @@ impl ThreadHistory {
         if top == texts.len() {
             return body.len();
         }
-        let has_words_before = |line: usize| texts[..line].iter().any(|text| !line_words(text).is_empty());
+        let has_words_before = |line: usize| {
+            texts[..line]
+                .iter()
+                .any(|text| !line_words(text).is_empty())
+        };
 
         let mut candidates = Vec::new();
         if let Some((cut, after)) = structural_cut(&texts) {
             // Structure agrees when only the attribution block itself (and
             // blank lines) separate it from the recorded run.
-            let agrees = top < cut || kinds[after.min(top)..top].iter().all(|line| line.kind == LineKind::Neutral);
+            let agrees = top < cut
+                || kinds[after.min(top)..top]
+                    .iter()
+                    .all(|line| line.kind == LineKind::Neutral);
             if agrees && matched >= MIN_CORROBORATING_SHINGLES {
                 if top < cut {
                     candidates.push(top);
@@ -95,7 +102,11 @@ impl ThreadHistory {
         let lines = split_lines(body);
         let texts: Vec<&str> = lines.iter().map(|(_, text)| *text).collect();
         structural_cut(&texts)
-            .filter(|(cut, _)| texts[..*cut].iter().any(|text| !line_words(text).is_empty()))
+            .filter(|(cut, _)| {
+                texts[..*cut]
+                    .iter()
+                    .any(|text| !line_words(text).is_empty())
+            })
             .map_or(new_len, |(cut, _)| new_len.min(lines[cut].0))
     }
 
@@ -129,7 +140,9 @@ impl ThreadHistory {
             .map(|line| Repeated {
                 kind: if totals[line] == 0 {
                     LineKind::Neutral
-                } else if covered_counts[line] as f64 / totals[line] as f64 >= MIN_SEEN_LINE_COVERAGE {
+                } else if covered_counts[line] as f64 / totals[line] as f64
+                    >= MIN_SEEN_LINE_COVERAGE
+                {
                     LineKind::Seen
                 } else {
                     LineKind::New
@@ -188,7 +201,10 @@ pub fn searchable_thread_text_with<'a>(
         history.remember(body);
         used.extend(body.lines().flat_map(line_words));
     }
-    ThreadSearchText { body: out, latest_preview: crate::preview_text::message_preview(&latest, context) }
+    ThreadSearchText {
+        body: out,
+        latest_preview: crate::preview_text::message_preview(&latest, context),
+    }
 }
 
 /// Most lines, and most words on each, the text above a forwarded message
@@ -214,17 +230,30 @@ fn forwarded_text(body: &str, cut: usize) -> Option<String> {
     if lines[separator].0 > cut {
         return None;
     }
-    let above: Vec<&str> = lines[..separator].iter().map(|(_, text)| *text).filter(|text| !text.trim().is_empty()).collect();
+    let above: Vec<&str> = lines[..separator]
+        .iter()
+        .map(|(_, text)| *text)
+        .filter(|text| !text.trim().is_empty())
+        .collect();
     if !is_signature(&above) {
         return None;
     }
     // Past the forwarded header block: its fields up to the first blank line.
     let mut index = separator + 1;
-    while lines.get(index).is_some_and(|(_, text)| text.trim().is_empty()) {
+    while lines
+        .get(index)
+        .is_some_and(|(_, text)| text.trim().is_empty())
+    {
         index += 1;
     }
-    if lines.get(index).is_some_and(|(_, text)| header_field(text).is_some()) {
-        while lines.get(index).is_some_and(|(_, text)| !text.trim().is_empty()) {
+    if lines
+        .get(index)
+        .is_some_and(|(_, text)| header_field(text).is_some())
+    {
+        while lines
+            .get(index)
+            .is_some_and(|(_, text)| !text.trim().is_empty())
+        {
             index += 1;
         }
     }
@@ -237,7 +266,9 @@ fn forwarded_text(body: &str, cut: usize) -> Option<String> {
         rest.lines()
             .map(|line| {
                 let line = line.trim_start();
-                line.strip_prefix('>').map_or(line, |unquoted| unquoted.strip_prefix(' ').unwrap_or(unquoted))
+                line.strip_prefix('>').map_or(line, |unquoted| {
+                    unquoted.strip_prefix(' ').unwrap_or(unquoted)
+                })
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -245,7 +276,10 @@ fn forwarded_text(body: &str, cut: usize) -> Option<String> {
         rest.to_string()
     };
     let forwarded = &rest[..ThreadHistory::default().preview_text_len(&rest)];
-    forwarded.lines().any(|line| !line_words(line).is_empty()).then(|| forwarded.to_string())
+    forwarded
+        .lines()
+        .any(|line| !line_words(line).is_empty())
+        .then(|| forwarded.to_string())
 }
 
 /// Whether `lines` read as a sign-off rather than a comment: few short lines,
@@ -256,11 +290,14 @@ fn is_signature(lines: &[&str]) -> bool {
         return true;
     }
     let contact = |line: &str| {
-        line.contains('@') || line.contains('|') || line.chars().filter(char::is_ascii_digit).count() >= 7
+        line.contains('@')
+            || line.contains('|')
+            || line.chars().filter(char::is_ascii_digit).count() >= 7
     };
     lines.len() <= MAX_SIGNATURE_LINES
         && lines.iter().all(|line| {
-            line_words(line).len() <= MAX_SIGNATURE_LINE_WORDS && !line.trim_end().ends_with(['?', '!'])
+            line_words(line).len() <= MAX_SIGNATURE_LINE_WORDS
+                && !line.trim_end().ends_with(['?', '!'])
         })
         && lines.iter().any(|line| contact(line))
 }
@@ -323,14 +360,22 @@ fn is_separator_marker(line: &str) -> bool {
         .trim_matches(|c: char| matches!(c, '-' | '—' | '_') || c.is_whitespace())
         .trim_end_matches(':')
         .trim_end();
-    matches!(core, "original message" | "forwarded message" | "begin forwarded message")
+    matches!(
+        core,
+        "original message" | "forwarded message" | "begin forwarded message"
+    )
 }
 
 fn opens_attribution(line: &str) -> bool {
     let trimmed = line.trim_start();
     // `get` rather than indexing: a line may start with a multibyte character.
-    trimmed.get(..3).is_some_and(|prefix| prefix.eq_ignore_ascii_case("on "))
-        && trimmed.get(3..).and_then(|rest| rest.chars().next()).is_some_and(|c| !c.is_whitespace())
+    trimmed
+        .get(..3)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("on "))
+        && trimmed
+            .get(3..)
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|c| !c.is_whitespace())
 }
 
 /// When an attribution or separator starts at `index`, the line after it.
@@ -351,7 +396,11 @@ fn attribution_end(lines: &[&str], index: usize) -> Option<usize> {
     }
     // "wrote:" (optionally after the address) hard-wrapped onto a following line.
     let mut joined = line.len();
-    for (offset, next) in lines[index + 1..].iter().take(WRAPPED_ATTRIBUTION_LOOKAHEAD_LINES).enumerate() {
+    for (offset, next) in lines[index + 1..]
+        .iter()
+        .take(WRAPPED_ATTRIBUTION_LOOKAHEAD_LINES)
+        .enumerate()
+    {
         let next = next.trim();
         if next.is_empty() {
             return None;
@@ -375,15 +424,23 @@ fn header_field(line: &str) -> Option<&'static str> {
     let lower = line.trim().to_lowercase();
     ["from", "sent", "date", "to", "cc", "bcc", "subject"]
         .into_iter()
-        .find(|field| lower.strip_prefix(field).is_some_and(|rest| rest.trim_start().starts_with(':')))
+        .find(|field| {
+            lower
+                .strip_prefix(field)
+                .is_some_and(|rest| rest.trim_start().starts_with(':'))
+        })
 }
 
 fn has_address_or_time(text: &str) -> bool {
     let has_address = text.split_whitespace().any(|token| {
-        token.split_once('@').is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.'))
+        token
+            .split_once('@')
+            .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.'))
     });
     let bytes = text.as_bytes();
-    let has_time = bytes.windows(4).any(|w| w[0].is_ascii_digit() && w[1] == b':' && w[2].is_ascii_digit() && w[3].is_ascii_digit());
+    let has_time = bytes.windows(4).any(|w| {
+        w[0].is_ascii_digit() && w[1] == b':' && w[2].is_ascii_digit() && w[3].is_ascii_digit()
+    });
     has_address || has_time
 }
 
@@ -392,7 +449,8 @@ fn has_address_or_time(text: &str) -> bool {
 /// The earliest of an attribution or separator, a `>` run, and a header
 /// block wins.
 fn structural_cut(lines: &[&str]) -> Option<(usize, usize)> {
-    let marker = (0..lines.len()).find_map(|index| attribution_end(lines, index).map(|end| (index, end)));
+    let marker =
+        (0..lines.len()).find_map(|index| attribution_end(lines, index).map(|end| (index, end)));
     let mut run = 0;
     let mut quote_run = None;
     for (index, line) in lines.iter().enumerate() {
@@ -406,7 +464,10 @@ fn structural_cut(lines: &[&str]) -> Option<(usize, usize)> {
             run = 0;
         }
     }
-    [marker, quote_run, header_block(lines)].into_iter().flatten().min_by_key(|(cut, _)| *cut)
+    [marker, quote_run, header_block(lines)]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(cut, _)| *cut)
 }
 
 /// A From/Sent/To/Subject block starting at a header line after other text.
@@ -424,11 +485,14 @@ fn header_block(lines: &[&str]) -> Option<(usize, usize)> {
             .copied()
             .collect();
         let fields: HashSet<&str> = block.iter().filter_map(|line| header_field(line)).collect();
-        if !(fields.len() >= 3 && fields.contains("from") && has_address_or_time(&block.join(" "))) {
+        if !(fields.len() >= 3 && fields.contains("from") && has_address_or_time(&block.join(" ")))
+        {
             return None;
         }
         let end = index + block.len();
-        let previous = (0..index).rev().find(|&line| !lines[line].trim().is_empty())?;
+        let previous = (0..index)
+            .rev()
+            .find(|&line| !lines[line].trim().is_empty())?;
         let line = lines[previous].trim();
         if line.chars().count() >= 2 && line.chars().all(|c| matches!(c, '-' | '—' | '_')) {
             return Some((previous, end));
@@ -456,26 +520,52 @@ mod tests {
     }
 
     fn words(count: usize, prefix: &str) -> String {
-        (0..count).map(|index| format!("{prefix}{index}")).collect::<Vec<_>>().join(" ")
+        (0..count)
+            .map(|index| format!("{prefix}{index}"))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     #[test]
     fn limits_match_the_reader_policy() {
         let policy = include_str!("../../../src/emailRenderingPolicy.ts");
-        let start = policy.find("EMAIL_QUOTE_FOLDING_LIMITS = {").expect("quote folding limits");
+        let start = policy
+            .find("EMAIL_QUOTE_FOLDING_LIMITS = {")
+            .expect("quote folding limits");
         let block = &policy[start..start + policy[start..].find("} as const").unwrap()];
         let value = |name: &str| -> f64 {
-            let line = block.lines().find(|line| line.trim_start().starts_with(&format!("{name}:"))).unwrap_or_else(|| panic!("{name} missing"));
-            line.split(':').nth(1).unwrap().trim().trim_end_matches(',').parse().unwrap()
+            let line = block
+                .lines()
+                .find(|line| line.trim_start().starts_with(&format!("{name}:")))
+                .unwrap_or_else(|| panic!("{name} missing"));
+            line.split(':')
+                .nth(1)
+                .unwrap()
+                .trim()
+                .trim_end_matches(',')
+                .parse()
+                .unwrap()
         };
         assert_eq!(value("shingleWords"), SHINGLE_WORDS as f64);
         assert_eq!(value("minSeenLineCoverage"), MIN_SEEN_LINE_COVERAGE);
-        assert_eq!(value("minRepeatedRegionShingles"), MIN_REPEATED_REGION_SHINGLES as f64);
-        assert_eq!(value("minCorroboratingShingles"), MIN_CORROBORATING_SHINGLES as f64);
+        assert_eq!(
+            value("minRepeatedRegionShingles"),
+            MIN_REPEATED_REGION_SHINGLES as f64
+        );
+        assert_eq!(
+            value("minCorroboratingShingles"),
+            MIN_CORROBORATING_SHINGLES as f64
+        );
         assert_eq!(value("minQuoteRunLines"), MIN_QUOTE_RUN_LINES as f64);
-        assert_eq!(value("wrappedAttributionLookaheadLines"), WRAPPED_ATTRIBUTION_LOOKAHEAD_LINES as f64);
+        assert_eq!(
+            value("wrappedAttributionLookaheadLines"),
+            WRAPPED_ATTRIBUTION_LOOKAHEAD_LINES as f64
+        );
         assert_eq!(value("maxAttributionLength"), MAX_ATTRIBUTION_LENGTH as f64);
-        assert_eq!(value("maxHeaderClusterLines"), MAX_HEADER_CLUSTER_LINES as f64);
+        assert_eq!(
+            value("maxHeaderClusterLines"),
+            MAX_HEADER_CLUSTER_LINES as f64
+        );
     }
 
     #[test]
@@ -488,15 +578,27 @@ mod tests {
     #[test]
     fn keeps_a_quote_with_no_recorded_copy() {
         let body = "Fixed now.\n\nOn Mon, A wrote:\n> Is the feed fixed after the outage last week?\n> We saw errors again this morning around nine.";
-        assert_eq!(new_text(&history(&["An unrelated earlier message about budgets."]), body), body);
+        assert_eq!(
+            new_text(
+                &history(&["An unrelated earlier message about budgets."]),
+                body
+            ),
+            body
+        );
         assert_eq!(new_text(&ThreadHistory::default(), body), body);
     }
 
     #[test]
     fn removes_only_the_recorded_part_of_a_partly_recorded_quote() {
         let recorded = words(12, "old");
-        let body = format!("Reply.\n\nOn Mon, A wrote:\n> {}\n> {recorded}", words(6, "lost"));
-        assert_eq!(new_text(&history(&[&recorded]), &body), format!("Reply.\n\nOn Mon, A wrote:\n> {}\n", words(6, "lost")));
+        let body = format!(
+            "Reply.\n\nOn Mon, A wrote:\n> {}\n> {recorded}",
+            words(6, "lost")
+        );
+        assert_eq!(
+            new_text(&history(&[&recorded]), &body),
+            format!("Reply.\n\nOn Mon, A wrote:\n> {}\n", words(6, "lost"))
+        );
     }
 
     #[test]
@@ -525,7 +627,11 @@ mod tests {
             format!("Reply.\nFrom: A <a@example.com>\nSent: Monday, September 14, 2026 at 10:40 AM\nTo: b@example.com\nSubject: Feed\n{recorded}"),
         ];
         for body in bodies {
-            assert_eq!(new_text(&history(&[&recorded]), &body).trim_end(), "Reply.", "{body}");
+            assert_eq!(
+                new_text(&history(&[&recorded]), &body).trim_end(),
+                "Reply.",
+                "{body}"
+            );
         }
     }
 
@@ -534,8 +640,14 @@ mod tests {
         let recorded = "日本語のメッセージ 本文 です 確認 お願い します 今日 明日 来週";
         for line in ["é", "éé", "日本", "🙂 ok", "Oñ Monday"] {
             let body = format!("{line}\n\nOn Mon, A wrote:\n> {recorded}");
-            assert!(history(&[recorded]).new_text_len(&body) <= body.len(), "{line}");
-            assert!(history(&[recorded]).preview_text_len(&body) <= body.len(), "{line}");
+            assert!(
+                history(&[recorded]).new_text_len(&body) <= body.len(),
+                "{line}"
+            );
+            assert!(
+                history(&[recorded]).preview_text_len(&body) <= body.len(),
+                "{line}"
+            );
         }
     }
 
@@ -555,8 +667,16 @@ mod tests {
         ] {
             let recorded = words(copied, "old");
             let body = format!("Agreed, ship it.\n\n{recorded}");
-            let expected = if removed { "Agreed, ship it.\n\n" } else { body.as_str() };
-            assert_eq!(new_text(&history(&[&recorded]), &body), expected, "{copied} words");
+            let expected = if removed {
+                "Agreed, ship it.\n\n"
+            } else {
+                body.as_str()
+            };
+            assert_eq!(
+                new_text(&history(&[&recorded]), &body),
+                expected,
+                "{copied} words"
+            );
         }
     }
 
@@ -570,22 +690,38 @@ mod tests {
             let recorded = words(quoted, "old");
             let body = format!("Fixed.\n\nOn Mon, A wrote:\n> {recorded}");
             let expected = if removed { "Fixed.\n\n" } else { body.as_str() };
-            assert_eq!(new_text(&history(&[&recorded]), &body), expected, "{quoted} quoted words");
+            assert_eq!(
+                new_text(&history(&[&recorded]), &body),
+                expected,
+                "{quoted} quoted words"
+            );
 
             let signature = words(quoted, "sig");
             let quote = words(8, "old");
             let body = format!("Fixed.\n\n{signature}\n\nOn Mon, A wrote:\n> {quote}");
-            let expected = if removed { "Fixed.\n\n".to_string() } else { format!("Fixed.\n\n{signature}\n\n") };
-            assert_eq!(new_text(&history(&[&format!("{signature}\n{quote}")]), &body), expected, "{quoted} signature words");
+            let expected = if removed {
+                "Fixed.\n\n".to_string()
+            } else {
+                format!("Fixed.\n\n{signature}\n\n")
+            };
+            assert_eq!(
+                new_text(&history(&[&format!("{signature}\n{quote}")]), &body),
+                expected,
+                "{quoted} signature words"
+            );
         }
     }
 
     #[test]
     fn search_text_drops_repeated_quotes_but_keeps_every_word() {
-        let original = "Can you check whether the nightly feed import still fails for the west region?";
+        let original =
+            "Can you check whether the nightly feed import still fails for the west region?";
         let reply = format!("Fixed now.\n\nOn Mon, A wrote:\n> {original}");
         // A quote with one word edited still counts as repeated (at least 80% covered).
-        let edited = format!("Thanks!\n\nOn Tue, B wrote:\n> Fixed now.\n>\n> On Mon, A wrote:\n> > {}", original.replace("nightly", "hourly"));
+        let edited = format!(
+            "Thanks!\n\nOn Tue, B wrote:\n> Fixed now.\n>\n> On Mon, A wrote:\n> > {}",
+            original.replace("nightly", "hourly")
+        );
         let text = searchable_thread_text([original, reply.as_str(), edited.as_str()]).body;
         assert_eq!(text.matches("nightly feed import").count(), 1);
         assert!(text.contains("Fixed now."));
@@ -596,22 +732,31 @@ mod tests {
 
     #[test]
     fn search_text_keeps_quotes_with_no_earlier_copy() {
-        let reply = "Fixed now.\n\nOn Mon, A wrote:\n> The only copy of a message that is not stored here.";
+        let reply =
+            "Fixed now.\n\nOn Mon, A wrote:\n> The only copy of a message that is not stored here.";
         assert_eq!(searchable_thread_text([reply]).body, format!("{reply} "));
     }
 
     #[test]
     fn search_preview_is_the_latest_message_before_any_quote() {
         let original = "Can you check whether the nightly feed import still fails?";
-        let reply = format!("Fixed   now,\nthe hourly retry handles it.\n\nOn Mon, A wrote:\n> {original}");
-        assert_eq!(searchable_thread_text([original, reply.as_str()]).latest_preview, "Fixed now, the hourly retry handles it.");
+        let reply =
+            format!("Fixed   now,\nthe hourly retry handles it.\n\nOn Mon, A wrote:\n> {original}");
+        assert_eq!(
+            searchable_thread_text([original, reply.as_str()]).latest_preview,
+            "Fixed now, the hourly retry handles it."
+        );
         // A quote with no earlier copy stays in `body` but not in the preview.
-        let lone = "Thanks!\n\nOn Mon, A wrote:\n> The only copy of a message that is not stored here.";
+        let lone =
+            "Thanks!\n\nOn Mon, A wrote:\n> The only copy of a message that is not stored here.";
         let text = searchable_thread_text([lone]);
         assert_eq!(text.latest_preview, "Thanks!");
         assert!(text.body.contains("The only copy"));
         // A body that is only a quote keeps it, so the preview is never empty for a message with text.
-        assert_eq!(searchable_thread_text(["On Mon, A wrote:\n> hello"]).latest_preview, "On Mon, A wrote: > hello");
+        assert_eq!(
+            searchable_thread_text(["On Mon, A wrote:\n> hello"]).latest_preview,
+            "On Mon, A wrote: > hello"
+        );
         assert_eq!(searchable_thread_text([original, ""]).latest_preview, "");
     }
 
@@ -619,10 +764,16 @@ mod tests {
     fn search_preview_drops_markdown_and_urls_but_body_keeps_them() {
         let body = "Hey Joel I'm [Amit](https://www.example.com/in/amit/) and **this** is the list:\nhttps://example.com/list?id=1";
         let text = searchable_thread_text([body]);
-        assert_eq!(text.latest_preview, "Hey Joel I'm Amit and this is the list:");
+        assert_eq!(
+            text.latest_preview,
+            "Hey Joel I'm Amit and this is the list:"
+        );
         assert!(text.body.contains("https://example.com/list?id=1"));
         // Nothing but a link still previews as the link.
-        assert_eq!(searchable_thread_text(["https://example.com/x"]).latest_preview, "https://example.com/x");
+        assert_eq!(
+            searchable_thread_text(["https://example.com/x"]).latest_preview,
+            "https://example.com/x"
+        );
     }
 
     #[test]
@@ -633,7 +784,13 @@ mod tests {
             (SEARCH_PREVIEW_CHARS + 1, SEARCH_PREVIEW_CHARS),
         ] {
             let body = "é".repeat(length);
-            assert_eq!(searchable_thread_text([body.as_str()]).latest_preview.chars().count(), kept);
+            assert_eq!(
+                searchable_thread_text([body.as_str()])
+                    .latest_preview
+                    .chars()
+                    .count(),
+                kept
+            );
         }
     }
 
@@ -643,7 +800,10 @@ mod tests {
         let repeated = words(8, "old");
         // 8 recorded words beside 2 new ones is exactly 0.8 coverage.
         for (extra, removed) in [(1, true), (2, true), (3, false)] {
-            let body = format!("Reply.\n\nOn Mon, A wrote:\n> {repeated} {}", words(extra, "new"));
+            let body = format!(
+                "Reply.\n\nOn Mon, A wrote:\n> {repeated} {}",
+                words(extra, "new")
+            );
             let kept = history(&[&repeated]).new_text_len(&body) == body.len();
             assert_eq!(!kept, removed, "{extra} new words");
         }
@@ -659,7 +819,8 @@ mod tests {
         let body = "See you then!\nLisa\n________________________________\nFrom: Joel Reed <joel@example.com>\nSent: Thursday, 17 September 2026 13:25:16\nTo: Lisa <lisa@example.com>\nSubject: Re: See you soon\n\nThank you Lisa.\n\nOn 2026-09-17T17:20:42+00:00, Lisa <lisa@example.com> wrote:\n> Thanks for the treat!";
         assert_eq!(preview(&[body]), "See you then! Lisa");
         // A `>` run above a later separator.
-        let body = "Agreed.\n> one\n> two\n> three\n> four\n> five\n\n-----Original Message-----\nolder";
+        let body =
+            "Agreed.\n> one\n> two\n> three\n> four\n> five\n\n-----Original Message-----\nolder";
         assert_eq!(preview(&[body]), "Agreed.");
         // An attribution wrapped with a bracketed address.
         let body = "Half an hour, I promise.\n\nOn Tue, September 15, 2026 1:00 PM, Colin <c@example.com>\n[c@example.com]> wrote:\n\n> Joel,\n> Interested in coming on as a guest?";
@@ -668,7 +829,9 @@ mod tests {
 
     #[test]
     fn a_header_block_without_a_separator_needs_a_date_and_an_addressee() {
-        let block = |fields: &str| format!("Following up on the below.\n{fields}\n\nJoel, in light of your success I am writing to you.");
+        let block = |fields: &str| {
+            format!("Following up on the below.\n{fields}\n\nJoel, in light of your success I am writing to you.")
+        };
         for (fields, cut) in [
             ("From: A <a@example.com>\nSent: Monday, September 14, 2026 at 10:40 AM\nTo: joel@example.com", true),
             ("From: A <a@example.com>\nDate: Mon, Sep 14, 2026 at 10:40 AM\nSubject: Intro", true),
@@ -703,19 +866,34 @@ mod tests {
             assert!(text.starts_with(&above.split('\n').next().unwrap()[..6]), "{above} → {text}");
         }
         // Signature lines at, and past, their limits.
-        let lines = |count: usize, words: usize| (0..count).map(|_| vec!["w"; words].join(" ")).collect::<Vec<_>>().join("\n") + "\n555-010-0000\n\n";
+        let lines = |count: usize, words: usize| {
+            (0..count)
+                .map(|_| vec!["w"; words].join(" "))
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n555-010-0000\n\n"
+        };
         for (above, forwarded_shown) in [
-            (lines(MAX_SIGNATURE_LINES - 1, MAX_SIGNATURE_LINE_WORDS), true),
+            (
+                lines(MAX_SIGNATURE_LINES - 1, MAX_SIGNATURE_LINE_WORDS),
+                true,
+            ),
             (lines(MAX_SIGNATURE_LINES, MAX_SIGNATURE_LINE_WORDS), false),
             (lines(1, MAX_SIGNATURE_LINE_WORDS + 1), false),
         ] {
-            assert_eq!(preview(&[&format!("{above}{forwarded}")]).starts_with("Team"), forwarded_shown, "{above}");
+            assert_eq!(
+                preview(&[&format!("{above}{forwarded}")]).starts_with("Team"),
+                forwarded_shown,
+                "{above}"
+            );
         }
         // A forwarded message quoted with `>` loses one level, and history it quotes is cut.
         let quoted = "---------- Forwarded message ----------\nFrom: Shop <hello@example.com>\nDate: Mar 11, 2026 at 6:00 PM\n\n>\n> SHOP\n> Pack your bags.\n>\n> On Mon, A <a@example.com> wrote:\n> > older";
         assert_eq!(preview(&[quoted]), "SHOP Pack your bags.");
         // A forward under an earlier quote cut is not reached.
-        let body = format!("Thanks!\n\nOn Mon, A <a@example.com> wrote:\n> Joel Reed\n> 412.212.8417\n{forwarded}");
+        let body = format!(
+            "Thanks!\n\nOn Mon, A <a@example.com> wrote:\n> Joel Reed\n> 412.212.8417\n{forwarded}"
+        );
         assert_eq!(preview(&[&body]), "Thanks!");
     }
 }

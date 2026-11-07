@@ -10,6 +10,8 @@ use crate::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use mail_parser::MessageParser;
+use mail_parser::MimeHeaders;
+use rusqlite::params;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -17,8 +19,6 @@ use std::{
     time::Duration,
 };
 use uuid::Uuid;
-use mail_parser::MimeHeaders;
-use rusqlite::params;
 fn database() -> Database {
     let db = Database::open_memory();
     db.set_compose_identity("you@example.com").unwrap();
@@ -56,13 +56,20 @@ fn imap_database() -> Database {
         label_storage: LabelStorage::None,
         label_container: None,
         identities: vec![
-            Identity { address: "me@proton.me".into(), display_name: None },
-            Identity { address: "work@proton.me".into(), display_name: Some("Work".into()) },
+            Identity {
+                address: "me@proton.me".into(),
+                display_name: None,
+            },
+            Identity {
+                address: "work@proton.me".into(),
+                display_name: Some("Work".into()),
+            },
         ],
         pinned_fingerprints: Default::default(),
         server_saves_sent: false,
     };
-    db.save_imap_account_settings("me@proton.me", &settings).unwrap();
+    db.save_imap_account_settings("me@proton.me", &settings)
+        .unwrap();
     db
 }
 
@@ -88,7 +95,10 @@ fn set_draft_from_accepts_a_secondary_identity_and_bumps_the_revision() {
     let updated = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
     assert_eq!(updated.from.as_deref(), Some("work@proton.me"));
     assert_eq!(updated.revision, d.revision + 1);
-    assert_eq!(db.draft(&d.id).unwrap().from.as_deref(), Some("work@proton.me"));
+    assert_eq!(
+        db.draft(&d.id).unwrap().from.as_deref(),
+        Some("work@proton.me")
+    );
 }
 
 #[test]
@@ -98,7 +108,10 @@ fn set_draft_from_normalizes_the_primary_and_null_to_none() {
     let on_secondary = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
     // The account's own address stores None ("send as the account").
     let back = db.set_draft_from(&d.id, Some("ME@Proton.ME")).unwrap();
-    assert_eq!(back.from, None, "the primary identity (any case) stores None");
+    assert_eq!(
+        back.from, None,
+        "the primary identity (any case) stores None"
+    );
     assert!(on_secondary.revision < back.revision);
     // An explicit null also stores None.
     let on_secondary = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
@@ -136,7 +149,10 @@ fn set_draft_from_is_allowed_for_a_reply_mode_draft() {
     };
     db.test_connection()
         .unwrap()
-        .execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, json(&d).unwrap()])
+        .execute(
+            "INSERT INTO drafts VALUES (?1,?2,?3)",
+            params![d.id, d.revision, json(&d).unwrap()],
+        )
         .unwrap();
     let updated = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
     assert_eq!(updated.from.as_deref(), Some("work@proton.me"));
@@ -146,7 +162,9 @@ fn set_draft_from_is_allowed_for_a_reply_mode_draft() {
 fn set_draft_from_rejects_an_address_not_on_the_account_and_writes_nothing() {
     let db = imap_database();
     let d = db.create_draft("new", None, "me@proton.me", &[]).unwrap();
-    let err = db.set_draft_from(&d.id, Some("stranger@elsewhere.com")).unwrap_err();
+    let err = db
+        .set_draft_from(&d.id, Some("stranger@elsewhere.com"))
+        .unwrap_err();
     assert!(err.contains("stranger@elsewhere.com"));
     // Nothing was written: revision and from unchanged.
     let reread = db.draft(&d.id).unwrap();
@@ -166,7 +184,10 @@ fn set_draft_account_clears_a_stale_from() {
     assert_eq!(with_from.from.as_deref(), Some("work@proton.me"));
     let moved = db.set_draft_account(&d.id, "other@example.com").unwrap();
     assert_eq!(moved.account, "other@example.com");
-    assert_eq!(moved.from, None, "moving the account must clear the stale from");
+    assert_eq!(
+        moved.from, None,
+        "moving the account must clear the stale from"
+    );
     assert_eq!(db.draft(&d.id).unwrap().from, None);
 }
 
@@ -177,13 +198,19 @@ fn permanent_sent_copy_message_is_plain_for_each_class() {
     let no_folder = permanent_sent_copy_message(
         "cannot save the Sent copy: this account has no Sent mailbox configured; refusing permanently",
     );
-    assert!(no_folder.starts_with("Your message was sent, but a copy couldn't be saved to your Sent folder"));
+    assert!(no_folder
+        .starts_with("Your message was sent, but a copy couldn't be saved to your Sent folder"));
     assert!(no_folder.contains("no Sent folder is set up"));
     for jargon in ["refusing permanently", "mailbox", "APPEND"] {
-        assert!(!no_folder.contains(jargon), "leaked jargon {jargon:?}: {no_folder}");
+        assert!(
+            !no_folder.contains(jargon),
+            "leaked jargon {jargon:?}: {no_folder}"
+        );
     }
 
-    let too_large = permanent_sent_copy_message("message is 70000000 bytes, over the 67108865-byte (64 MiB) APPEND limit");
+    let too_large = permanent_sent_copy_message(
+        "message is 70000000 bytes, over the 67108865-byte (64 MiB) APPEND limit",
+    );
     assert!(too_large.contains("too large for the Sent folder"));
     assert!(!too_large.contains("APPEND"));
 
@@ -191,7 +218,10 @@ fn permanent_sent_copy_message_is_plain_for_each_class() {
         "the mail server refused the APPEND of the Sent copy (e.g. over quota or a rejected message); it was not saved. The specific reason was not reported by the IMAP library.",
     );
     assert!(over_quota.contains("refused to store it"), "{over_quota}");
-    assert!(!over_quota.contains("too large"), "a quota refusal must not be called 'too large': {over_quota}");
+    assert!(
+        !over_quota.contains("too large"),
+        "a quota refusal must not be called 'too large': {over_quota}"
+    );
 
     // The EXAMINE-path spelling (a Sent mailbox that no longer exists) is a
     // missing-folder case too, not the generic fallback.
@@ -210,8 +240,11 @@ fn permanent_sent_copy_message_is_plain_for_each_class() {
     assert!(!no_mid.contains("refusing permanently"));
 
     // An unrecognised permanent message still yields a jargon-free sentence.
-    let generic = permanent_sent_copy_message("message contains a NUL byte, which an IMAP4rev1 literal cannot carry; refusing to APPEND");
-    assert!(generic.starts_with("Your message was sent, but a copy couldn't be saved to your Sent folder"));
+    let generic = permanent_sent_copy_message(
+        "message contains a NUL byte, which an IMAP4rev1 literal cannot carry; refusing to APPEND",
+    );
+    assert!(generic
+        .starts_with("Your message was sent, but a copy couldn't be saved to your Sent folder"));
 }
 
 #[test]
@@ -219,7 +252,9 @@ fn sent_copy_error_message_classes_transient_vs_permanent() {
     use crate::provider::ProviderError;
     // Transient auth/transport -> "will retry".
     assert!(sent_copy_error_message(&ProviderError::Authentication("x".into())).contains("retry"));
-    assert!(sent_copy_error_message(&ProviderError::TransientTransport("x".into())).contains("retry"));
+    assert!(
+        sent_copy_error_message(&ProviderError::TransientTransport("x".into())).contains("retry")
+    );
     // Permanent -> plain "was sent, couldn't save a copy" with no retry promise.
     let permanent = sent_copy_error_message(&ProviderError::InvalidOperation(
         "cannot save the Sent copy: this account has no Sent mailbox configured; refusing permanently".into(),
@@ -292,8 +327,7 @@ fn draft_revision_rejects_stale_writes_and_header_injection() {
     assert!(db.save_draft(stale).is_err());
     assert_eq!(db.draft(&d.id).unwrap().body, "New version");
     assert!(addresses("valid@example.com\r\nBcc: victim@example.com").is_err());
-    let parsed =
-        addresses("\"Doe, Jane\" <jane@example.com>, José <jose@example.com>").unwrap();
+    let parsed = addresses("\"Doe, Jane\" <jane@example.com>, José <jose@example.com>").unwrap();
     assert_eq!(parsed.len(), 2);
     assert_eq!(parsed[0].0, "Doe, Jane");
 }
@@ -315,15 +349,37 @@ fn addresses_accept_a_quoted_display_name_holding_a_comma() {
 fn stored_addresses_accept_unquoted_commas_that_strict_parsing_rejects() {
     let raw = "Daniel O'Connor, CFA® <doconnor@wealth.example>";
     assert!(addresses(raw).is_err());
-    assert_eq!(stored_addresses(raw), vec![("Daniel O'Connor, CFA®".to_string(), "doconnor@wealth.example".to_string())]);
-    assert_eq!(stored_addresses("Smith, Pat, PhD <pat@lab.example>"), vec![("Smith, Pat, PhD".to_string(), "pat@lab.example".to_string())]);
-    assert_eq!(stored_addresses("\"Doe, Jane\" <jane@example.com>"), vec![("Doe, Jane".to_string(), "jane@example.com".to_string())]);
-    assert_eq!(stored_addresses("bare@example.com"), vec![(String::new(), "bare@example.com".to_string())]);
+    assert_eq!(
+        stored_addresses(raw),
+        vec![(
+            "Daniel O'Connor, CFA®".to_string(),
+            "doconnor@wealth.example".to_string()
+        )]
+    );
+    assert_eq!(
+        stored_addresses("Smith, Pat, PhD <pat@lab.example>"),
+        vec![("Smith, Pat, PhD".to_string(), "pat@lab.example".to_string())]
+    );
+    assert_eq!(
+        stored_addresses("\"Doe, Jane\" <jane@example.com>"),
+        vec![("Doe, Jane".to_string(), "jane@example.com".to_string())]
+    );
+    assert_eq!(
+        stored_addresses("bare@example.com"),
+        vec![(String::new(), "bare@example.com".to_string())]
+    );
 }
 
 #[test]
 fn stored_addresses_yield_nothing_for_values_without_one_clear_address() {
-    for raw in ["", "Daniel, CFA", "Name <not-an-address>", "Name <a b@example.com>", "Name <@example.com>", "a@example.com\r\nBcc: victim@example.com"] {
+    for raw in [
+        "",
+        "Daniel, CFA",
+        "Name <not-an-address>",
+        "Name <a b@example.com>",
+        "Name <@example.com>",
+        "a@example.com\r\nBcc: victim@example.com",
+    ] {
         assert!(stored_addresses(raw).is_empty(), "{raw}");
     }
 }
@@ -334,7 +390,9 @@ fn queue_is_durable_unique_and_cancel_restores_the_snapshot() {
     db.set_account_display_name("you@example.com", Some("Joel Reed"))
         .unwrap();
     let d = saved(&db);
-    let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
+    let item = db
+        .queue(&d.id, d.revision, false, &[], None, Path::new("/unused"))
+        .unwrap();
     let raw: Vec<u8> = db
         .test_connection()
         .unwrap()
@@ -376,36 +434,56 @@ fn archive_after_queue_keeps_only_matching_sends_archived() {
         ("you@example.com", "other-thread"),
         ("other@example.com", "reply-thread"),
     ] {
-        db.test_connection().unwrap().execute(
-            "INSERT INTO threads SELECT ?1, ?2, subject, snippet, participants_json,
+        db.test_connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO threads SELECT ?1, ?2, subject, snippet, participants_json,
                 last_message_at, unread, starred, archived, labels_json, trashed, ?3,
                 summary, summary_generated_at, has_attachments, last_received_at,
                 summary_revision, summary_focus_from
              FROM threads WHERE id='welcome'",
-            params![format!("{account}:{provider_thread_id}"), provider_thread_id, account],
-        ).unwrap();
+                params![
+                    format!("{account}:{provider_thread_id}"),
+                    provider_thread_id,
+                    account
+                ],
+            )
+            .unwrap();
     }
-    let queue_for = |account: &str, thread_id: &str, archive_on_send: bool| {
-        db.set_compose_identity(account).unwrap();
-        db.adopt_account(account).unwrap();
-        let draft = saved(&db);
-        // Native reply creation owns routing fields; a regular save
-        // deliberately refuses to change them.
-        db.test_connection().unwrap().execute(
+    let queue_for =
+        |account: &str, thread_id: &str, archive_on_send: bool| {
+            db.set_compose_identity(account).unwrap();
+            db.adopt_account(account).unwrap();
+            let draft = saved(&db);
+            // Native reply creation owns routing fields; a regular save
+            // deliberately refuses to change them.
+            db.test_connection().unwrap().execute(
             "UPDATE drafts SET payload=json_set(payload, '$.mode', 'reply', '$.threadId', ?1)
              WHERE id=?2",
             params![thread_id, draft.id],
         ).unwrap();
-        db.queue(&draft.id, draft.revision, archive_on_send, &[], None, Path::new("/unused")).unwrap()
-    };
+            db.queue(
+                &draft.id,
+                draft.revision,
+                archive_on_send,
+                &[],
+                None,
+                Path::new("/unused"),
+            )
+            .unwrap()
+        };
     let target = queue_for("you@example.com", "reply-thread", false);
     let already_archiving = queue_for("you@example.com", "reply-thread", true);
     let other_thread = queue_for("you@example.com", "other-thread", false);
     let other_account = queue_for("other@example.com", "reply-thread", false);
 
-    let archive = |value| db.mutate_thread(&ThreadMutation::Archive {
-        thread_id: "you@example.com:reply-thread".into(), value,
-    }).unwrap();
+    let archive = |value| {
+        db.mutate_thread(&ThreadMutation::Archive {
+            thread_id: "you@example.com:reply-thread".into(),
+            value,
+        })
+        .unwrap()
+    };
     archive(true);
     assert!(db.archive_on_send(&target.id).unwrap());
     assert!(db.archive_on_send(&already_archiving.id).unwrap());
@@ -418,9 +496,13 @@ fn archive_after_queue_keeps_only_matching_sends_archived() {
 
     // A completed send follows the ordinary archive mutation, rather
     // than retaining a stale post-send instruction.
-    db.test_connection().unwrap().execute(
-        "UPDATE outbox_messages SET state='sent' WHERE id=?1", [&target.id],
-    ).unwrap();
+    db.test_connection()
+        .unwrap()
+        .execute(
+            "UPDATE outbox_messages SET state='sent' WHERE id=?1",
+            [&target.id],
+        )
+        .unwrap();
     archive(true);
     assert!(!db.archive_on_send(&target.id).unwrap());
     assert!(db.archive_on_send(&already_archiving.id).unwrap());
@@ -429,11 +511,15 @@ fn archive_after_queue_keeps_only_matching_sends_archived() {
 fn pausing_ready_sends_for_one_account_never_touches_another_accounts_outbox() {
     let db = database();
     let a = saved(&db);
-    let item_a = db.queue(&a.id, a.revision, false, &[], None, Path::new("/unused")).unwrap();
+    let item_a = db
+        .queue(&a.id, a.revision, false, &[], None, Path::new("/unused"))
+        .unwrap();
 
     db.set_compose_identity("other@example.com").unwrap();
     let b = saved(&db);
-    let item_b = db.queue(&b.id, b.revision, false, &[], None, Path::new("/unused")).unwrap();
+    let item_b = db
+        .queue(&b.id, b.revision, false, &[], None, Path::new("/unused"))
+        .unwrap();
 
     db.pause_ready_sends_for("you@example.com").unwrap();
 
@@ -448,7 +534,8 @@ async fn a_tick_fails_sends_whose_account_was_removed_on_another_device() {
     let db = &service.database;
     let queue = |db: &Database| {
         let d = saved(db);
-        db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap()
+        db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused"))
+            .unwrap()
     };
     let kept = queue(db);
     // The catalog stores `you@example.com`; a differently cased sender
@@ -460,10 +547,13 @@ async fn a_tick_fails_sends_whose_account_was_removed_on_another_device() {
     let gone_ready = queue(db);
     let gone_scheduled = queue(db);
     // Due next month: only the removal check, not the send loop, reaches it now.
-    db.test_connection().unwrap().execute(
-        "UPDATE outbox_messages SET state='scheduled', deadline=?2 WHERE id=?1",
-        params![gone_scheduled.id, unix_millis() + 30 * 24 * 60 * 60 * 1000],
-    ).unwrap();
+    db.test_connection()
+        .unwrap()
+        .execute(
+            "UPDATE outbox_messages SET state='scheduled', deadline=?2 WHERE id=?1",
+            params![gone_scheduled.id, unix_millis() + 30 * 24 * 60 * 60 * 1000],
+        )
+        .unwrap();
 
     service.tick().await.unwrap();
 
@@ -478,7 +568,14 @@ async fn a_tick_fails_sends_whose_account_was_removed_on_another_device() {
     db.adopt_account("gone@example.com").unwrap();
     service.tick().await.unwrap();
     let outbox = db.outbox().unwrap();
-    assert_eq!(outbox.iter().find(|o| o.id == gone_scheduled.id).unwrap().state, "failed");
+    assert_eq!(
+        outbox
+            .iter()
+            .find(|o| o.id == gone_scheduled.id)
+            .unwrap()
+            .state,
+        "failed"
+    );
 }
 #[test]
 fn restart_keeps_drafts_and_never_retries_an_interrupted_send() {
@@ -492,7 +589,14 @@ fn restart_keeps_drafts_and_never_retries_an_interrupted_send() {
         id = d.id.clone();
         let queued = saved(&db);
         let item = db
-            .queue(&queued.id, queued.revision, false, &[], None, Path::new("/unused"))
+            .queue(
+                &queued.id,
+                queued.revision,
+                false,
+                &[],
+                None,
+                Path::new("/unused"),
+            )
             .unwrap();
         db.test_connection()
             .unwrap()
@@ -518,7 +622,9 @@ fn an_uncertain_send_resolves_to_terminal_unverifiable_for_a_provider_without_a_
     // being left to re-check forever. `docs/imap-design.md` ("Sending").
     let db = database();
     let d = saved(&db);
-    let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
+    let item = db
+        .queue(&d.id, d.revision, false, &[], None, Path::new("/unused"))
+        .unwrap();
     db.test_connection()
         .unwrap()
         .execute(
@@ -529,7 +635,12 @@ fn an_uncertain_send_resolves_to_terminal_unverifiable_for_a_provider_without_a_
 
     db.mark_unverifiable(&item.id).unwrap();
 
-    let resolved = db.outbox().unwrap().into_iter().find(|o| o.id == item.id).unwrap();
+    let resolved = db
+        .outbox()
+        .unwrap()
+        .into_iter()
+        .find(|o| o.id == item.id)
+        .unwrap();
     assert_eq!(resolved.state, "unverifiable");
     assert!(
         resolved
@@ -546,7 +657,12 @@ fn an_uncertain_send_resolves_to_terminal_unverifiable_for_a_provider_without_a_
     // because the guard requires state='uncertain'.
     db.mark_unverifiable(&item.id).unwrap();
     assert_eq!(
-        db.outbox().unwrap().into_iter().find(|o| o.id == item.id).unwrap().state,
+        db.outbox()
+            .unwrap()
+            .into_iter()
+            .find(|o| o.id == item.id)
+            .unwrap()
+            .state,
         "unverifiable"
     );
 }
@@ -556,7 +672,9 @@ fn mark_unverifiable_only_touches_an_uncertain_row() {
     let db = database();
     for state in ["sent", "failed", "ready", "undo_pending", "sending"] {
         let d = saved(&db);
-        let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
+        let item = db
+            .queue(&d.id, d.revision, false, &[], None, Path::new("/unused"))
+            .unwrap();
         db.test_connection()
             .unwrap()
             .execute(
@@ -566,7 +684,12 @@ fn mark_unverifiable_only_touches_an_uncertain_row() {
             .unwrap();
         db.mark_unverifiable(&item.id).unwrap();
         assert_eq!(
-            db.outbox().unwrap().into_iter().find(|o| o.id == item.id).unwrap().state,
+            db.outbox()
+                .unwrap()
+                .into_iter()
+                .find(|o| o.id == item.id)
+                .unwrap()
+                .state,
             state,
             "mark_unverifiable must not touch a {state} row"
         );
@@ -575,11 +698,24 @@ fn mark_unverifiable_only_touches_an_uncertain_row() {
 
 // A forward's server draft can outlive delivery until draft cleanup runs.
 fn forwarded_thread_with_server_draft() -> Vec<RawMessage> {
-    [("original", vec![], "sender@example.com", "Original email"),
-     ("forward-draft", vec!["DRAFT"], "you@example.com", "Forwarded email"),
-     ("fake-sent", vec!["SENT"], "you@example.com", "Forwarded email")]
-        .into_iter()
-        .map(|(id, labels, sender, body)| serde_json::from_value(serde_json::json!({
+    [
+        ("original", vec![], "sender@example.com", "Original email"),
+        (
+            "forward-draft",
+            vec!["DRAFT"],
+            "you@example.com",
+            "Forwarded email",
+        ),
+        (
+            "fake-sent",
+            vec!["SENT"],
+            "you@example.com",
+            "Forwarded email",
+        ),
+    ]
+    .into_iter()
+    .map(|(id, labels, sender, body)| {
+        serde_json::from_value(serde_json::json!({
             "id": id, "threadId": "forward-thread", "labelIds": labels,
             "internalDate": "1793200000000",
             "payload": {"mimeType": "text/plain", "headers": [
@@ -587,13 +723,18 @@ fn forwarded_thread_with_server_draft() -> Vec<RawMessage> {
                 {"name": "To", "value": "recipient@example.com"},
                 {"name": "Subject", "value": "Forward topic"}
             ], "body": {"data": URL_SAFE_NO_PAD.encode(body)}}
-        })).unwrap())
-        .collect()
+        }))
+        .unwrap()
+    })
+    .collect()
 }
 
 fn assert_forward_has_only_original_and_sent(database: &Database) {
     let threads = database.list_all_mail(Some("you@example.com")).unwrap();
-    let thread = threads.iter().find(|t| t.provider_thread_id == "forward-thread").unwrap();
+    let thread = threads
+        .iter()
+        .find(|t| t.provider_thread_id == "forward-thread")
+        .unwrap();
     assert!(thread.archived);
     let detail = database.get_thread(&thread.id).unwrap();
     let mut ids: Vec<_> = detail.messages.iter().map(|m| m.id.as_str()).collect();
@@ -712,21 +853,38 @@ mod reconciliation {
     async fn reconciled_forward_excludes_server_draft_from_conversation() {
         let service = service();
         let original = crate::mime::normalize(&forwarded_thread_with_server_draft()[0]).unwrap();
-        service.database.upsert_thread("you@example.com", &[original]).unwrap();
+        service
+            .database
+            .upsert_thread("you@example.com", &[original])
+            .unwrap();
         let draft = saved(&service.database);
-        let item = service.database.queue(&draft.id, draft.revision, false, &[], None, &service.root).unwrap();
-        service.database.test_connection().unwrap().execute(
-            "UPDATE outbox_messages SET state='uncertain' WHERE id=?1", [&item.id],
-        ).unwrap();
+        let item = service
+            .database
+            .queue(&draft.id, draft.revision, false, &[], None, &service.root)
+            .unwrap();
+        service
+            .database
+            .test_connection()
+            .unwrap()
+            .execute(
+                "UPDATE outbox_messages SET state='uncertain' WHERE id=?1",
+                [&item.id],
+            )
+            .unwrap();
         let item = service.database.outbox().unwrap().remove(0);
         let provider = ReconcileProvider {
-            operation: item.id.clone(), verifiable_delivery: true,
+            operation: item.id.clone(),
+            verifiable_delivery: true,
             sent_copy: Some(DeliveryReceipt {
-                provider_message_id: "fake-sent".into(), thread_id: Some("forward-thread".into()),
+                provider_message_id: "fake-sent".into(),
+                thread_id: Some("forward-thread".into()),
             }),
             lookups: AtomicUsize::new(0),
         };
-        service.reconcile_with_provider(&item, &provider).await.unwrap();
+        service
+            .reconcile_with_provider(&item, &provider)
+            .await
+            .unwrap();
         assert_forward_has_only_original_and_sent(&service.database);
     }
 
@@ -800,8 +958,7 @@ mod prepare_failures {
         models::Label,
         provider::{
             Delivery, DeliveryReceipt, LabelModel, MailFetch, MailMutate, MailSend, MailSync,
-            ProviderCapabilities, ProviderError, ProviderResult, SyncBatch, SyncCursor,
-            ThreadPage,
+            ProviderCapabilities, ProviderError, ProviderResult, SyncBatch, SyncCursor, ThreadPage,
         },
     };
 
@@ -849,17 +1006,23 @@ mod prepare_failures {
                     false,
                     "may have been delivered; check before resending".into(),
                 )),
-                SendResult::NotDelivered => {
-                    Err((true, "the server refused the message".into()))
-                }
+                SendResult::NotDelivered => Err((true, "the server refused the message".into())),
             }
         }
     }
 
     #[async_trait::async_trait]
     impl MailSend for FakeSender {
-        async fn validate_sending_identity(&self, _account: &str, _sender: &str) -> ProviderResult<()> {
-            if matches!(self.behaviour, PrepareBehaviour::RejectAlias) { return Err(ProviderError::PermanentClientRejection("Gmail alias is no longer verified".into())); }
+        async fn validate_sending_identity(
+            &self,
+            _account: &str,
+            _sender: &str,
+        ) -> ProviderResult<()> {
+            if matches!(self.behaviour, PrepareBehaviour::RejectAlias) {
+                return Err(ProviderError::PermanentClientRejection(
+                    "Gmail alias is no longer verified".into(),
+                ));
+            }
             Ok(())
         }
         async fn sender_identity(&self) -> ProviderResult<String> {
@@ -867,7 +1030,9 @@ mod prepare_failures {
         }
         async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
             match &self.behaviour {
-                PrepareBehaviour::RejectAlias => panic!("a rejected alias must not obtain a delivery permit"),
+                PrepareBehaviour::RejectAlias => {
+                    panic!("a rejected alias must not obtain a delivery permit")
+                }
                 PrepareBehaviour::Succeed(result) => {
                     Ok(Box::new(ScriptedPermit { result: *result }))
                 }
@@ -930,7 +1095,12 @@ mod prepare_failures {
         async fn modify_thread(&self, _: &str, _: &[String], _: &[String]) -> ProviderResult<()> {
             panic!("new-message send has no thread to modify");
         }
-        async fn modify_messages(&self, _: &[String], _: &[String], _: &[String]) -> ProviderResult<()> {
+        async fn modify_messages(
+            &self,
+            _: &[String],
+            _: &[String],
+            _: &[String],
+        ) -> ProviderResult<()> {
             panic!("unused");
         }
         async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
@@ -1001,12 +1171,20 @@ mod prepare_failures {
     async fn sent_forward_excludes_server_draft_from_conversation() {
         let service = service();
         let original = crate::mime::normalize(&forwarded_thread_with_server_draft()[0]).unwrap();
-        service.database.upsert_thread("you@example.com", &[original]).unwrap();
+        service
+            .database
+            .upsert_thread("you@example.com", &[original])
+            .unwrap();
         let mut item = ready_item(&service);
         item.draft.mode = "forward".into();
         item.draft.thread_id = Some("forward-thread".into());
-        let provider = FakeSender { behaviour: PrepareBehaviour::Succeed(SendResult::Accepted) };
-        service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
+        let provider = FakeSender {
+            behaviour: PrepareBehaviour::Succeed(SendResult::Accepted),
+        };
+        service
+            .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
+            .await
+            .unwrap();
         assert_eq!(state_of(&service, &item.id), "sent");
         assert_forward_has_only_original_and_sent(&service.database);
     }
@@ -1016,8 +1194,13 @@ mod prepare_failures {
         let service = service();
         let mut item = ready_item(&service);
         item.draft.from = Some("removed@example.org".into());
-        let provider = FakeSender { behaviour: PrepareBehaviour::RejectAlias };
-        service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
+        let provider = FakeSender {
+            behaviour: PrepareBehaviour::RejectAlias,
+        };
+        service
+            .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
+            .await
+            .unwrap();
         assert_eq!(state_of(&service, &item.id), "failed");
         assert_eq!(attempts_of(&service, &item.id), 0);
     }
@@ -1040,7 +1223,11 @@ mod prepare_failures {
         assert_eq!(state_of(&service, &item.id), "ready");
         assert_eq!(attempts_of(&service, &item.id), 0);
         let row = service.database.outbox().unwrap().remove(0);
-        assert!(row.error.as_deref().unwrap().contains("Will retry"), "{:?}", row.error);
+        assert!(
+            row.error.as_deref().unwrap().contains("Will retry"),
+            "{:?}",
+            row.error
+        );
         // last_attempt_at was stamped so the retry gate can rate-limit.
         assert!(row.last_attempt_at.is_some());
     }
@@ -1048,12 +1235,15 @@ mod prepare_failures {
     #[tokio::test]
     async fn a_permanent_prepare_failure_moves_the_row_to_failed_restorable() {
         for make in [
-            (|| ProviderError::InvalidOperation("no outgoing server configured".into())) as fn() -> ProviderError,
+            (|| ProviderError::InvalidOperation("no outgoing server configured".into()))
+                as fn() -> ProviderError,
             || ProviderError::PermanentClientRejection("refused".into()),
         ] {
             let service = service();
             let item = ready_item(&service);
-            let provider = FakeSender { behaviour: PrepareBehaviour::Fail(make) };
+            let provider = FakeSender {
+                behaviour: PrepareBehaviour::Fail(make),
+            };
             service
                 .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
                 .await
@@ -1071,7 +1261,8 @@ mod prepare_failures {
     #[tokio::test]
     async fn every_non_permanent_prepare_failure_keeps_the_send_queued() {
         for make in [
-            (|| ProviderError::ReauthenticationRequired("token revoked".into())) as fn() -> ProviderError,
+            (|| ProviderError::ReauthenticationRequired("token revoked".into()))
+                as fn() -> ProviderError,
             || ProviderError::CertificateChanged("SMTP server".into()),
             || ProviderError::Authentication("bad token".into()),
             || ProviderError::RetryableServer("429".into()),
@@ -1080,7 +1271,9 @@ mod prepare_failures {
         ] {
             let service = service();
             let item = ready_item(&service);
-            let provider = FakeSender { behaviour: PrepareBehaviour::Fail(make) };
+            let provider = FakeSender {
+                behaviour: PrepareBehaviour::Fail(make),
+            };
             service
                 .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
                 .await
@@ -1101,9 +1294,19 @@ mod prepare_failures {
                 ProviderError::ReauthenticationRequired("creds rejected".into())
             }),
         };
-        service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
+        service
+            .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
+            .await
+            .unwrap();
         let row = service.database.outbox().unwrap().remove(0);
-        assert!(row.error.as_deref().unwrap().contains("Reconnect this account"), "{:?}", row.error);
+        assert!(
+            row.error
+                .as_deref()
+                .unwrap()
+                .contains("Reconnect this account"),
+            "{:?}",
+            row.error
+        );
     }
 
     #[tokio::test]
@@ -1111,9 +1314,14 @@ mod prepare_failures {
         let service = service();
         let item = ready_item(&service);
         let provider = FakeSender {
-            behaviour: PrepareBehaviour::Fail(|| ProviderError::CertificateChanged("SMTP server".into())),
+            behaviour: PrepareBehaviour::Fail(|| {
+                ProviderError::CertificateChanged("SMTP server".into())
+            }),
         };
-        service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
+        service
+            .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
+            .await
+            .unwrap();
         let row = service.database.outbox().unwrap().remove(0);
         let note = row.error.as_deref().unwrap();
         assert!(note.contains("certificate changed"), "{note}");
@@ -1193,11 +1401,11 @@ mod prepare_failures {
         let failing_item = ready_item(&service);
         let sending_item = ready_item(&service);
         let down = FakeSender {
-            behaviour: PrepareBehaviour::Fail(|| {
-                ProviderError::TransientTransport("down".into())
-            }),
+            behaviour: PrepareBehaviour::Fail(|| ProviderError::TransientTransport("down".into())),
         };
-        let up = FakeSender { behaviour: PrepareBehaviour::Succeed(SendResult::Accepted) };
+        let up = FakeSender {
+            behaviour: PrepareBehaviour::Succeed(SendResult::Accepted),
+        };
         service
             .send_due_item(&failing_item, &down, "you@example.com", "", unix_millis())
             .await
@@ -1303,10 +1511,7 @@ mod sent_copy_jobs {
         ) -> ProviderResult<Option<DeliveryReceipt>> {
             Ok(None)
         }
-        async fn save_sent_copy(
-            &self,
-            _request: &SentCopyRequest,
-        ) -> ProviderResult<SentCopyStep> {
+        async fn save_sent_copy(&self, _request: &SentCopyRequest) -> ProviderResult<SentCopyStep> {
             self.save_calls.fetch_add(1, Ordering::SeqCst);
             let mut answers = self.answers.lock().unwrap();
             let answer = if answers.len() > 1 {
@@ -1317,9 +1522,9 @@ mod sent_copy_jobs {
             match answer {
                 JobAnswer::Done => Ok(SentCopyStep::Done),
                 JobAnswer::Recheck(after) => Ok(SentCopyStep::Recheck { after }),
-                JobAnswer::Transient => {
-                    Err(ProviderError::TransientTransport("sent mailbox unreachable".into()))
-                }
+                JobAnswer::Transient => Err(ProviderError::TransientTransport(
+                    "sent mailbox unreachable".into(),
+                )),
                 JobAnswer::Permanent => Err(ProviderError::InvalidOperation(
                     "no Sent mailbox configured".into(),
                 )),
@@ -1370,7 +1575,12 @@ mod sent_copy_jobs {
         async fn modify_thread(&self, _: &str, _: &[String], _: &[String]) -> ProviderResult<()> {
             panic!("unused");
         }
-        async fn modify_messages(&self, _: &[String], _: &[String], _: &[String]) -> ProviderResult<()> {
+        async fn modify_messages(
+            &self,
+            _: &[String],
+            _: &[String],
+            _: &[String],
+        ) -> ProviderResult<()> {
             panic!("unused");
         }
         async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
@@ -1437,7 +1647,15 @@ mod sent_copy_jobs {
     fn job_row(
         service: &Correspondence,
         id: &str,
-    ) -> (String, Option<String>, i64, Option<i64>, i64, String, Option<String>) {
+    ) -> (
+        String,
+        Option<String>,
+        i64,
+        Option<i64>,
+        i64,
+        String,
+        Option<String>,
+    ) {
         service
             .database
             .test_connection()
@@ -1465,7 +1683,15 @@ mod sent_copy_jobs {
     /// Assert the outbox send-state and provider_id are UNTOUCHED by the job
     /// runner, across every scenario.
     fn assert_send_state_untouched(
-        row: &(String, Option<String>, i64, Option<i64>, i64, String, Option<String>),
+        row: &(
+            String,
+            Option<String>,
+            i64,
+            Option<i64>,
+            i64,
+            String,
+            Option<String>,
+        ),
     ) {
         assert_eq!(row.0, "sent", "job runner must never change outbox state");
         assert_eq!(row.5, "pm1", "job runner must never change provider_id");
@@ -1481,7 +1707,10 @@ mod sent_copy_jobs {
             let at = unix_millis();
             service
                 .dispatch_due(&item, at, true, |_, thread| async move {
-                    Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: thread })
+                    Ok(DeliveryReceipt {
+                        provider_message_id: "pm".into(),
+                        thread_id: thread,
+                    })
                 })
                 .await
                 .unwrap();
@@ -1490,7 +1719,11 @@ mod sent_copy_jobs {
             assert_eq!(row.1.as_deref(), Some("pending"));
             assert_eq!(row.2, 0, "attempts start at 0");
             let expected = at + crate::provider::imap::SENT_COPY_SETTLE.as_millis() as i64;
-            assert_eq!(row.3, Some(expected), "first attempt waits the settle window");
+            assert_eq!(
+                row.3,
+                Some(expected),
+                "first attempt waits the settle window"
+            );
             assert_eq!(row.4, 0, "append not yet attempted");
         }
 
@@ -1501,7 +1734,10 @@ mod sent_copy_jobs {
             let item = ready_item(&service);
             service
                 .dispatch_due(&item, unix_millis(), false, |_, thread| async move {
-                    Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: thread })
+                    Ok(DeliveryReceipt {
+                        provider_message_id: "pm".into(),
+                        thread_id: thread,
+                    })
                 })
                 .await
                 .unwrap();
@@ -1523,7 +1759,10 @@ mod sent_copy_jobs {
         let item = ready_item(&service);
         service
             .dispatch_due(&item, unix_millis(), true, |_, _| async {
-                Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: None })
+                Ok(DeliveryReceipt {
+                    provider_message_id: "pm".into(),
+                    thread_id: None,
+                })
             })
             .await
             .unwrap();
@@ -1533,7 +1772,15 @@ mod sent_copy_jobs {
     #[tokio::test]
     async fn done_marks_the_job_done_and_never_resends() {
         let service = service();
-        seed_job(&service, "j1", "you@example.com", "pending", 0, unix_millis() - 1, 0);
+        seed_job(
+            &service,
+            "j1",
+            "you@example.com",
+            "pending",
+            0,
+            unix_millis() - 1,
+            0,
+        );
         let provider = JobProvider::new(vec![JobAnswer::Done]);
         service
             .run_sent_copy_job(&provider, "j1", b"Hi", "pending", 0, false, unix_millis())
@@ -1550,7 +1797,15 @@ mod sent_copy_jobs {
     #[tokio::test]
     async fn recheck_moves_the_job_to_verify_with_the_right_next_at() {
         let service = service();
-        seed_job(&service, "j1", "you@example.com", "pending", 0, unix_millis() - 1, 0);
+        seed_job(
+            &service,
+            "j1",
+            "you@example.com",
+            "pending",
+            0,
+            unix_millis() - 1,
+            0,
+        );
         let at = unix_millis();
         let provider = JobProvider::new(vec![JobAnswer::Recheck(Duration::from_secs(10))]);
         service
@@ -1567,7 +1822,15 @@ mod sent_copy_jobs {
     async fn a_transient_error_bumps_attempts_and_backs_off_never_before_the_settle_window() {
         use crate::provider::imap::{sent_copy_backoff, SENT_COPY_SETTLE};
         let service = service();
-        seed_job(&service, "j1", "you@example.com", "verify", 1, unix_millis() - 1, 1);
+        seed_job(
+            &service,
+            "j1",
+            "you@example.com",
+            "verify",
+            1,
+            unix_millis() - 1,
+            1,
+        );
         let at = unix_millis();
         let provider = JobProvider::new(vec![JobAnswer::Transient]);
         service
@@ -1575,7 +1838,11 @@ mod sent_copy_jobs {
             .await
             .unwrap();
         let row = job_row(&service, "j1");
-        assert_eq!(row.1.as_deref(), Some("verify"), "state is KEPT on a transient error");
+        assert_eq!(
+            row.1.as_deref(),
+            Some("verify"),
+            "state is KEPT on a transient error"
+        );
         assert_eq!(row.2, 2, "attempts+1");
         let scheduled = sent_copy_backoff(1).as_millis() as i64;
         assert_eq!(row.3, Some(at + scheduled));
@@ -1596,14 +1863,26 @@ mod sent_copy_jobs {
         let service = service();
         let at = unix_millis();
         let prior = (SENT_COPY_MAX_ATTEMPTS - 1) as i64;
-        seed_job(&service, "j1", "you@example.com", "verify", prior, at - 1, 1);
+        seed_job(
+            &service,
+            "j1",
+            "you@example.com",
+            "verify",
+            prior,
+            at - 1,
+            1,
+        );
         let provider = JobProvider::new(vec![JobAnswer::Transient]);
         service
             .run_sent_copy_job(&provider, "j1", b"Hi", "verify", prior, true, at)
             .await
             .unwrap();
         let row = job_row(&service, "j1");
-        assert_eq!(row.1.as_deref(), Some("abandoned"), "max attempts -> abandoned");
+        assert_eq!(
+            row.1.as_deref(),
+            Some("abandoned"),
+            "max attempts -> abandoned"
+        );
         assert_eq!(row.2, SENT_COPY_MAX_ATTEMPTS as i64);
         assert_send_state_untouched(&row);
     }
@@ -1620,7 +1899,10 @@ mod sent_copy_jobs {
             .unwrap();
         let row = job_row(&service, "j1");
         assert_eq!(row.1.as_deref(), Some("abandoned"));
-        assert_eq!(row.2, 0, "a permanent failure does not count a retry attempt");
+        assert_eq!(
+            row.2, 0,
+            "a permanent failure does not count a retry attempt"
+        );
         // run 5 rewrites the permanent-class provider message into plain
         // user wording before it is stored in sent_copy_error (the raw
         // "no Sent mailbox configured" developer text no longer reaches
@@ -1644,7 +1926,10 @@ mod sent_copy_jobs {
         let row = job_row(&service, "j1");
         assert_eq!(row.1.as_deref(), Some("pending"), "unchanged");
         assert_eq!(row.2, 0, "no attempt counted");
-        assert_eq!(row.4, 0, "no write-ahead flag set (never reached the provider)");
+        assert_eq!(
+            row.4, 0,
+            "no write-ahead flag set (never reached the provider)"
+        );
     }
 
     #[tokio::test]
@@ -1659,7 +1944,10 @@ mod sent_copy_jobs {
         let at = unix_millis();
         service
             .dispatch_due(&item, at, true, |_, _| async {
-                Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: None })
+                Ok(DeliveryReceipt {
+                    provider_message_id: "pm".into(),
+                    thread_id: None,
+                })
             })
             .await
             .unwrap();
@@ -1754,8 +2042,14 @@ mod sent_copy_jobs {
         seed_job(&service, "ok", "b@example.com", "pending", 0, at - 1, 0);
         let failing = JobProvider::new(vec![JobAnswer::Permanent]);
         let working = JobProvider::new(vec![JobAnswer::Done]);
-        service.run_sent_copy_job(&failing, "fail", b"Hi", "pending", 0, false, at).await.unwrap();
-        service.run_sent_copy_job(&working, "ok", b"Hi", "pending", 0, false, at).await.unwrap();
+        service
+            .run_sent_copy_job(&failing, "fail", b"Hi", "pending", 0, false, at)
+            .await
+            .unwrap();
+        service
+            .run_sent_copy_job(&working, "ok", b"Hi", "pending", 0, false, at)
+            .await
+            .unwrap();
         assert_eq!(job_row(&service, "fail").1.as_deref(), Some("abandoned"));
         assert_eq!(job_row(&service, "ok").1.as_deref(), Some("done"));
         assert_eq!(failing.send_calls.load(Ordering::SeqCst), 0);
@@ -1772,14 +2066,24 @@ mod sent_copy_jobs {
         let at = unix_millis();
         service
             .dispatch_due(&item, at, true, |_, _| async {
-                Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: None })
+                Ok(DeliveryReceipt {
+                    provider_message_id: "pm".into(),
+                    thread_id: None,
+                })
             })
             .await
             .unwrap();
         // A fresh outbox() read (what the next tick does) still sees the job.
         let (_, copy_state, _, next_at, append_attempted, _, _) = job_row(&service, &item.id);
-        assert_eq!(copy_state.as_deref(), Some("pending"), "job survives into the next tick");
-        assert_eq!(next_at, Some(at + crate::provider::imap::SENT_COPY_SETTLE.as_millis() as i64));
+        assert_eq!(
+            copy_state.as_deref(),
+            Some("pending"),
+            "job survives into the next tick"
+        );
+        assert_eq!(
+            next_at,
+            Some(at + crate::provider::imap::SENT_COPY_SETTLE.as_millis() as i64)
+        );
         assert_eq!(append_attempted, 0);
     }
 
@@ -1803,7 +2107,11 @@ mod sent_copy_jobs {
                 .unwrap();
             let row = job_row(&service, "j");
             assert_send_state_untouched(&row);
-            assert_eq!(provider.send_calls.load(Ordering::SeqCst), 0, "NO RESEND, ever");
+            assert_eq!(
+                provider.send_calls.load(Ordering::SeqCst),
+                0,
+                "NO RESEND, ever"
+            );
         }
     }
 }
@@ -1870,9 +2178,15 @@ fn mime_round_trips_recipients_unicode_subject_and_reply_headers() {
             .filter_map(|addr| addr.address().map(str::to_string))
             .collect()
     };
-    assert_eq!(addresses(parsed.to()), ["jane@example.com", "jose@example.com"]);
     assert_eq!(
-        parsed.to().and_then(|to| to.iter().nth(1)).and_then(|addr| addr.name()),
+        addresses(parsed.to()),
+        ["jane@example.com", "jose@example.com"]
+    );
+    assert_eq!(
+        parsed
+            .to()
+            .and_then(|to| to.iter().nth(1))
+            .and_then(|addr| addr.name()),
         Some("José Núñez")
     );
     assert_eq!(addresses(parsed.cc()), ["cc@example.com"]);
@@ -1886,7 +2200,10 @@ fn mime_round_trips_recipients_unicode_subject_and_reply_headers() {
     );
     assert_eq!(
         parsed.references().as_text_list().map(|ids| ids.to_vec()),
-        Some(vec!["ancestor@example.com".into(), "original@example.com".into()])
+        Some(vec![
+            "ancestor@example.com".into(),
+            "original@example.com".into()
+        ])
     );
 }
 
@@ -1895,7 +2212,10 @@ fn a_server_draft_allows_no_recipients_and_keeps_one_message_id_across_pushes() 
     let db = database();
     let mut d = saved(&db);
     d.to.clear();
-    assert!(build_mime(&d, &[], None, None, "op", Path::new("/unused")).is_err(), "sending still needs a recipient");
+    assert!(
+        build_mime(&d, &[], None, None, "op", Path::new("/unused")).is_err(),
+        "sending still needs a recipient"
+    );
     let first = build_draft_mime(&d, &[], None, None, Path::new("/unused")).unwrap();
     d.body = "Edited".into();
     d.revision += 1;
@@ -1906,9 +2226,13 @@ fn a_server_draft_allows_no_recipients_and_keeps_one_message_id_across_pushes() 
         assert_eq!(parsed.message_id(), Some(expected.as_str()));
         assert!(parsed.to().is_none(), "no empty To header");
     }
-    let domain = build_draft_mime(&d, &[], None, Some("example.org"), Path::new("/unused")).unwrap();
+    let domain =
+        build_draft_mime(&d, &[], None, Some("example.org"), Path::new("/unused")).unwrap();
     let parsed = MessageParser::default().parse(&domain).unwrap();
-    assert_eq!(parsed.message_id(), Some(format!("draft-{}@example.org", d.id).as_str()));
+    assert_eq!(
+        parsed.message_id(),
+        Some(format!("draft-{}@example.org", d.id).as_str())
+    );
 }
 
 #[test]
@@ -1920,7 +2244,12 @@ fn a_server_draft_keeps_bcc_and_reply_headers() {
     d.references = vec!["original@example.com".into()];
     let raw = build_draft_mime(&d, &[], None, None, Path::new("/unused")).unwrap();
     let parsed = MessageParser::default().parse(&raw).unwrap();
-    let bcc: Vec<_> = parsed.bcc().into_iter().flat_map(|list| list.iter()).filter_map(|a| a.address()).collect();
+    let bcc: Vec<_> = parsed
+        .bcc()
+        .into_iter()
+        .flat_map(|list| list.iter())
+        .filter_map(|a| a.address())
+        .collect();
     assert_eq!(bcc, ["hidden@example.com"]);
     assert_eq!(
         parsed.in_reply_to().as_text_list().map(|ids| ids.to_vec()),
@@ -1945,7 +2274,9 @@ fn a_server_draft_blocks_header_injection_like_a_send() {
 fn identity(address: &str, display: Option<&str>) -> crate::provider::SendingIdentity {
     crate::provider::SendingIdentity {
         address: address.into(),
-        display_name: display.map(Into::into), ..Default::default() }
+        display_name: display.map(Into::into),
+        ..Default::default()
+    }
 }
 
 #[test]
@@ -1961,8 +2292,15 @@ fn build_mime_sends_from_the_chosen_identity_with_its_display_name_and_domain() 
         identity("work@proton.me", Some("Work Account")),
     ];
     // An IMAP-style provider supplies the sender's domain.
-    let raw = build_mime(&d, &identities, None, Some("proton.me"), "op-1", Path::new("/unused"))
-        .unwrap();
+    let raw = build_mime(
+        &d,
+        &identities,
+        None,
+        Some("proton.me"),
+        "op-1",
+        Path::new("/unused"),
+    )
+    .unwrap();
     let parsed = MessageParser::default().parse(&raw).unwrap();
     let from = parsed.from().and_then(|f| f.first()).unwrap();
     assert_eq!(from.address(), Some("work@proton.me"));
@@ -1978,8 +2316,15 @@ fn build_mime_defaults_to_the_account_address_and_threestrands_domain() {
     let db = database();
     let d = saved(&db);
     let identities = [identity(&d.account, None)];
-    let raw = build_mime(&d, &identities, Some("Joel Reed"), None, "op-2", Path::new("/unused"))
-        .unwrap();
+    let raw = build_mime(
+        &d,
+        &identities,
+        Some("Joel Reed"),
+        None,
+        "op-2",
+        Path::new("/unused"),
+    )
+    .unwrap();
     let parsed = MessageParser::default().parse(&raw).unwrap();
     let from = parsed.from().and_then(|f| f.first()).unwrap();
     assert_eq!(from.address(), Some(d.account.as_str()));
@@ -1994,9 +2339,19 @@ fn build_mime_rejects_a_stale_identity_not_on_the_account() {
     d.account = "me@proton.me".into();
     // `from` names an identity that was removed from the account's list.
     d.from = Some("removed@proton.me".into());
-    let identities = [identity("me@proton.me", None), identity("work@proton.me", None)];
-    let err = build_mime(&d, &identities, None, Some("proton.me"), "op-3", Path::new("/unused"))
-        .unwrap_err();
+    let identities = [
+        identity("me@proton.me", None),
+        identity("work@proton.me", None),
+    ];
+    let err = build_mime(
+        &d,
+        &identities,
+        None,
+        Some("proton.me"),
+        "op-3",
+        Path::new("/unused"),
+    )
+    .unwrap_err();
     assert!(
         err.contains("no longer on this account"),
         "a stale identity must fail clearly, not send as another address: {err}"
@@ -2013,66 +2368,101 @@ fn build_mime_blocks_header_injection_via_display_name_and_address() {
     // error AND, where accepted elsewhere, by the absence of an injected
     // header in the bytes.
     let injected_name = [identity("me@proton.me", Some("Evil\r\nBcc: victim@x.com"))];
-    let err = build_mime(&d, &injected_name, None, Some("proton.me"), "op-4", Path::new("/unused"))
-        .unwrap_err();
+    let err = build_mime(
+        &d,
+        &injected_name,
+        None,
+        Some("proton.me"),
+        "op-4",
+        Path::new("/unused"),
+    )
+    .unwrap_err();
     assert!(err.contains("line breaks"), "{err}");
 
     // A hostile FROM ADDRESS carrying CRLF must be refused too.
     d.from = Some("me@proton.me\r\nBcc: victim@x.com".into());
     let ids = [identity("me@proton.me\r\nBcc: victim@x.com", None)];
-    let err = build_mime(&d, &ids, None, Some("proton.me"), "op-5", Path::new("/unused"))
-        .unwrap_err();
+    let err = build_mime(
+        &d,
+        &ids,
+        None,
+        Some("proton.me"),
+        "op-5",
+        Path::new("/unused"),
+    )
+    .unwrap_err();
     assert!(err.contains("line breaks"), "{err}");
 
     // A clean send with a non-ASCII display name produces bytes with NO
     // injected header: assert on the produced bytes directly.
     d.from = None;
     let clean = [identity("me@proton.me", Some("Zoë O'Brien"))];
-    let raw = build_mime(&d, &clean, None, Some("proton.me"), "op-6", Path::new("/unused"))
-        .unwrap();
+    let raw = build_mime(
+        &d,
+        &clean,
+        None,
+        Some("proton.me"),
+        "op-6",
+        Path::new("/unused"),
+    )
+    .unwrap();
     let text = String::from_utf8_lossy(&raw);
     // The From header line must be a single logical header (no bare CRLF
     // introducing a "Bcc:" or similar), and no stray Bcc appears.
     assert!(!text.to_ascii_lowercase().contains("\nbcc: victim"));
     let parsed = MessageParser::default().parse(&raw).unwrap();
     assert_eq!(
-        parsed.from().and_then(|f| f.first()).and_then(|a| a.address()),
+        parsed
+            .from()
+            .and_then(|f| f.first())
+            .and_then(|a| a.address()),
         Some("me@proton.me")
     );
 }
 
 #[test]
 fn signature_mime_keeps_plain_text_html_images_and_quote_placement_after_template_deletion() {
-    use crate::signatures::tests::{template, defaults};
+    use crate::signatures::tests::{defaults, template};
     let db = database();
     let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=";
     let mut signature = template("work");
     signature.html = format!("<table><tr><td><img src=\"data:image/png;base64,{png}\" alt=\"Logo\" width=\"32\"></td><td>Regards</td></tr></table>");
     signature.text = "Logo Regards".into();
     db.store_signature(&signature).unwrap();
-    db.store_signature_defaults(&defaults("you@example.com", "", Some("work"), Some("work"))).unwrap();
+    db.store_signature_defaults(&defaults("you@example.com", "", Some("work"), Some("work")))
+        .unwrap();
     let mut d = saved(&db);
     d.body = "Hi 😀\n\nOn Monday, Ann wrote:\n> Quote".into();
-    d.body_html = "Hi 😀<br><br>On Monday, Ann wrote:<blockquote type=\"cite\">Quote</blockquote>".into();
+    d.body_html =
+        "Hi 😀<br><br>On Monday, Ann wrote:<blockquote type=\"cite\">Quote</blockquote>".into();
     d.signature.as_mut().unwrap().text_offset = 5;
     d.signature.as_mut().unwrap().html_offset = 5;
     let d = db.save_draft(d).unwrap();
     db.delete_signature("work").unwrap();
     let raw = build_mime(&d, &[], None, None, "signed", Path::new("/unused")).unwrap();
     let parsed = MessageParser::default().parse(&raw).unwrap();
-    assert_eq!(parsed.body_text(0).unwrap().replace("\r\n", "\n"), "Hi 😀\n\nLogo Regards\n\nOn Monday, Ann wrote:\n> Quote");
+    assert_eq!(
+        parsed.body_text(0).unwrap().replace("\r\n", "\n"),
+        "Hi 😀\n\nLogo Regards\n\nOn Monday, Ann wrote:\n> Quote"
+    );
     let html = parsed.body_html(0).unwrap();
     assert!(html.find("Hi 😀").unwrap() < html.find("<table>").unwrap());
     assert!(html.find("Regards").unwrap() < html.find("On Monday").unwrap());
     assert!(!html.contains("data:image"));
     assert!(html.contains("cid:signature-0-signed@threestrands.local"));
-    assert!(parsed.parts.iter().any(|part| part.content_id() == Some("signature-0-signed@threestrands.local")));
-    assert_eq!(db.draft(&d.id).unwrap().signature.unwrap().text, "Logo Regards");
+    assert!(parsed
+        .parts
+        .iter()
+        .any(|part| part.content_id() == Some("signature-0-signed@threestrands.local")));
+    assert_eq!(
+        db.draft(&d.id).unwrap().signature.unwrap().text,
+        "Logo Regards"
+    );
 }
 
 #[test]
 fn signature_mime_keeps_hosted_sources_without_creating_image_parts() {
-    use crate::signatures::tests::{template, defaults};
+    use crate::signatures::tests::{defaults, template};
     for html in [
         "<table><tr><td><img src=\"https://images.example/large.png?version=2&amp;size=large\" alt=\"Logo\"></td><td>Regards</td></tr></table>",
         "<div><img src=\"https://cdn.example/logo.gif\" alt=\"Logo\"><p>Regards</p></div>",
@@ -2094,10 +2484,16 @@ fn signature_mime_keeps_hosted_sources_without_creating_image_parts() {
 
 #[test]
 fn switching_sending_alias_updates_only_an_automatic_signature() {
-    use crate::signatures::tests::{template, defaults};
+    use crate::signatures::tests::{defaults, template};
     let db = imap_database();
     db.store_signature(&template("work")).unwrap();
-    db.store_signature_defaults(&defaults("me@proton.me", "work@proton.me", Some("work"), Some("work"))).unwrap();
+    db.store_signature_defaults(&defaults(
+        "me@proton.me",
+        "work@proton.me",
+        Some("work"),
+        Some("work"),
+    ))
+    .unwrap();
     let d = db.create_draft("new", None, "me@proton.me", &[]).unwrap();
     let mut changed = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
     assert_eq!(changed.signature.as_ref().unwrap().text, "work");
@@ -2225,7 +2621,10 @@ fn forward_extends_the_reference_chain_and_survives_a_missing_message_id() {
             assert_eq!(forward.reply_id, Some("second@example.com".into()));
             assert_eq!(
                 forward.references,
-                vec!["first@example.com".to_string(), "second@example.com".to_string()]
+                vec![
+                    "first@example.com".to_string(),
+                    "second@example.com".to_string()
+                ]
             );
         } else {
             // No Message-ID to point at: it still forwards, as a new conversation.
@@ -2321,39 +2720,81 @@ fn edited_forwards_send_the_edit_and_keep_the_original_to_restore() {
     let db = database();
     let html = "<p>Agenda</p><p>Private note for the team</p>";
     let source = serde_json::json!({"id":"edited-forward","threadId":"thread","payload":{"mimeType":"text/html","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Plans"}],"body":{"data":URL_SAFE_NO_PAD.encode(html)}}});
-    db.test_connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params!["edited-forward", source.to_string()]).unwrap();
-    let mut draft = db.create_draft("forward", Some("edited-forward".into()), "you@example.com", &[]).unwrap();
+    db.test_connection()
+        .unwrap()
+        .execute(
+            "INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)",
+            params!["edited-forward", source.to_string()],
+        )
+        .unwrap();
+    let mut draft = db
+        .create_draft(
+            "forward",
+            Some("edited-forward".into()),
+            "you@example.com",
+            &[],
+        )
+        .unwrap();
     let original = draft.forwarded_content.clone().unwrap();
     draft.to = "friend@example.com".into();
     draft.body = "See below".into();
-    draft.forwarded_edit = Some(ForwardedContent { html: "<p>Agenda</p>".into(), text: "Agenda".into() });
+    draft.forwarded_edit = Some(ForwardedContent {
+        html: "<p>Agenda</p>".into(),
+        text: "Agenda".into(),
+    });
     let saved = db.save_draft(draft).unwrap();
     let reopened = db.draft(&saved.id).unwrap();
-    assert_eq!(reopened.forwarded_content.as_ref().unwrap().html, original.html);
+    assert_eq!(
+        reopened.forwarded_content.as_ref().unwrap().html,
+        original.html
+    );
     let raw = build_mime(&reopened, &[], None, None, "edited", Path::new(".")).unwrap();
     let parsed = MessageParser::default().parse(&raw).unwrap();
-    assert_eq!(parsed.body_html(0).unwrap(), "See below<br><br><p>Agenda</p>");
-    assert_eq!(parsed.body_text(0).unwrap().replace("\r\n", "\n"), "See below\n\nAgenda");
+    assert_eq!(
+        parsed.body_html(0).unwrap(),
+        "See below<br><br><p>Agenda</p>"
+    );
+    assert_eq!(
+        parsed.body_text(0).unwrap().replace("\r\n", "\n"),
+        "See below\n\nAgenda"
+    );
     assert!(!String::from_utf8_lossy(&raw).contains("Private note"));
 
     // Restoring the original clears the edit; the untouched source sends again.
     let mut restored = reopened.clone();
     restored.forwarded_edit = None;
     let restored = db.save_draft(restored).unwrap();
-    let raw = build_mime(&db.draft(&restored.id).unwrap(), &[], None, None, "restored", Path::new(".")).unwrap();
+    let raw = build_mime(
+        &db.draft(&restored.id).unwrap(),
+        &[],
+        None,
+        None,
+        "restored",
+        Path::new("."),
+    )
+    .unwrap();
     let parsed = MessageParser::default().parse(&raw).unwrap();
-    assert_eq!(parsed.body_html(0).unwrap(), format!("See below<br><br>{}", original.html));
+    assert_eq!(
+        parsed.body_html(0).unwrap(),
+        format!("See below<br><br>{}", original.html)
+    );
 }
 
 #[test]
 fn a_forwarded_edit_needs_an_original_to_replace() {
     let db = database();
     let mut draft = saved(&db);
-    draft.forwarded_edit = Some(ForwardedContent { html: "<p>Injected</p>".into(), text: "Injected".into() });
+    draft.forwarded_edit = Some(ForwardedContent {
+        html: "<p>Injected</p>".into(),
+        text: "Injected".into(),
+    });
     let saved = db.save_draft(draft).unwrap();
     assert!(db.draft(&saved.id).unwrap().forwarded_edit.is_none());
     let mut unsaved = saved.clone();
-    unsaved.forwarded_edit = Some(ForwardedContent { html: "<p>Injected</p>".into(), text: "Injected".into() });
+    unsaved.forwarded_edit = Some(ForwardedContent {
+        html: "<p>Injected</p>".into(),
+        text: "Injected".into(),
+    });
     let raw = build_mime(&unsaved, &[], None, None, "no-original", Path::new(".")).unwrap();
     assert!(!String::from_utf8_lossy(&raw).contains("Injected"));
 }
@@ -2362,9 +2803,25 @@ fn a_forwarded_edit_needs_an_original_to_replace() {
 fn a_forwarded_edit_counts_toward_the_draft_size_limit() {
     let db = database();
     let source = serde_json::json!({"id":"large-forward","threadId":"thread","payload":{"mimeType":"text/html","headers":[{"name":"From","value":"other@example.com"},{"name":"Subject","value":"Large"}],"body":{"data":URL_SAFE_NO_PAD.encode("<p>Large</p>")}}});
-    db.test_connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params!["large-forward", source.to_string()]).unwrap();
-    let mut draft = db.create_draft("forward", Some("large-forward".into()), "you@example.com", &[]).unwrap();
-    draft.forwarded_edit = Some(ForwardedContent { html: "x".repeat(2 * 1024 * 1024), text: "x".into() });
+    db.test_connection()
+        .unwrap()
+        .execute(
+            "INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)",
+            params!["large-forward", source.to_string()],
+        )
+        .unwrap();
+    let mut draft = db
+        .create_draft(
+            "forward",
+            Some("large-forward".into()),
+            "you@example.com",
+            &[],
+        )
+        .unwrap();
+    draft.forwarded_edit = Some(ForwardedContent {
+        html: "x".repeat(2 * 1024 * 1024),
+        text: "x".into(),
+    });
     assert_eq!(db.save_draft(draft).unwrap_err(), "Draft is too large");
 }
 
@@ -2389,14 +2846,23 @@ fn edit_as_new_copies_a_sent_message_into_an_unaddressed_new_thread() {
     let html = "<p>Join us <strong>Saturday</strong></p><img src=\"cid:map@example.com\">";
     let rich = serde_json::json!({"id":"sent-rich","threadId":"thread","payload":{"mimeType":"multipart/mixed","headers":[{"name":"From","value":"You <YOU@example.com>"},{"name":"To","value":"guest@example.com"},{"name":"Cc","value":"cohost@example.com"},{"name":"Subject","value":"Dinner on Saturday"},{"name":"Message-ID","value":"<sent-rich@example.com>"}],"parts":[{"mimeType":"multipart/related","parts":[{"mimeType":"text/html","body":{"data":URL_SAFE_NO_PAD.encode(html)}},{"mimeType":"image/png","headers":[{"name":"Content-ID","value":"<map@example.com>"},{"name":"Content-Disposition","value":"inline"}],"body":{"data":URL_SAFE_NO_PAD.encode("png"),"size":3}}]},{"mimeType":"application/pdf","filename":"menu.pdf","body":{"attachmentId":"menu-part","size":4}}]}});
     let plain = serde_json::json!({"id":"sent-plain","threadId":"thread-2","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"you@example.com"},{"name":"To","value":"guest@example.com"},{"name":"Subject","value":"Book club"},{"name":"Message-ID","value":"<sent-plain@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Bring the book.")}}});
-    db.put_message_metadata("sent-rich", &rich.to_string()).unwrap();
-    db.put_message_metadata("sent-plain", &plain.to_string()).unwrap();
+    db.put_message_metadata("sent-rich", &rich.to_string())
+        .unwrap();
+    db.put_message_metadata("sent-plain", &plain.to_string())
+        .unwrap();
 
-    let draft = db.create_draft_from_sent("sent-rich", "you@example.com", &[]).unwrap();
+    let draft = db
+        .create_draft_from_sent("sent-rich", "you@example.com", &[])
+        .unwrap();
     assert_eq!(draft.mode, "new");
     assert_eq!(draft.subject, "Dinner on Saturday");
-    assert!(draft.body_html.contains("Join us <strong>Saturday</strong>"));
-    assert_eq!((draft.to.as_str(), draft.cc.as_str(), draft.bcc.as_str()), ("", "", ""));
+    assert!(draft
+        .body_html
+        .contains("Join us <strong>Saturday</strong>"));
+    assert_eq!(
+        (draft.to.as_str(), draft.cc.as_str(), draft.bcc.as_str()),
+        ("", "", "")
+    );
     assert_eq!(draft.source_id, None);
     assert_eq!(draft.thread_id, None);
     assert_eq!(draft.reply_id, None);
@@ -2404,18 +2870,28 @@ fn edit_as_new_copies_a_sent_message_into_an_unaddressed_new_thread() {
     assert!(draft.forwarded_content.is_none());
     assert_eq!(draft.from, None);
     assert_eq!(draft.attachments.len(), 2);
-    assert!(draft.attachments.iter().all(|a| !a.ready && a.message_id.as_deref() == Some("sent-rich")));
+    assert!(draft
+        .attachments
+        .iter()
+        .all(|a| !a.ready && a.message_id.as_deref() == Some("sent-rich")));
     let inline = draft.attachments.iter().find(|a| a.inline).unwrap();
     assert_eq!(inline.content_id.as_deref(), Some("map@example.com"));
     let menu = draft.attachments.iter().find(|a| !a.inline).unwrap();
-    assert_eq!((menu.name.as_str(), menu.provider_id.as_deref()), ("menu.pdf", Some("menu-part")));
+    assert_eq!(
+        (menu.name.as_str(), menu.provider_id.as_deref()),
+        ("menu.pdf", Some("menu-part"))
+    );
 
     // Each use is its own draft, so a copy can go to several people separately.
-    let again = db.create_draft_from_sent("sent-rich", "you@example.com", &[]).unwrap();
+    let again = db
+        .create_draft_from_sent("sent-rich", "you@example.com", &[])
+        .unwrap();
     assert_ne!(again.id, draft.id);
     assert_ne!(again.attachments[0].id, draft.attachments[0].id);
 
-    let text = db.create_draft_from_sent("sent-plain", "you@example.com", &[]).unwrap();
+    let text = db
+        .create_draft_from_sent("sent-plain", "you@example.com", &[])
+        .unwrap();
     assert_eq!(text.subject, "Book club");
     assert_eq!(text.body.trim_end(), "Bring the book.");
     assert!(text.body_html.trim().is_empty());
@@ -2434,13 +2910,24 @@ fn edit_as_new_copies_a_sent_message_into_an_unaddressed_new_thread() {
 #[test]
 fn edit_as_new_refuses_messages_from_other_senders() {
     let db = database();
-    for (id, from) in [("incoming", "Other <other@example.com>"), ("lookalike", "you@example.com.evil.test")] {
+    for (id, from) in [
+        ("incoming", "Other <other@example.com>"),
+        ("lookalike", "you@example.com.evil.test"),
+    ] {
         let source = serde_json::json!({"id":id,"threadId":"thread","payload":{"mimeType":"text/html","headers":[{"name":"From","value":from},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Invoice"}],"body":{"data":URL_SAFE_NO_PAD.encode("<p>Pay here</p>")}}});
         db.put_message_metadata(id, &source.to_string()).unwrap();
-        let refused = db.create_draft_from_sent(id, "you@example.com", &[]).unwrap_err();
-        assert_eq!(refused, "Edit as New works only on messages you sent", "{id}");
+        let refused = db
+            .create_draft_from_sent(id, "you@example.com", &[])
+            .unwrap_err();
+        assert_eq!(
+            refused, "Edit as New works only on messages you sent",
+            "{id}"
+        );
     }
-    assert!(db.drafts().unwrap().is_empty(), "a refusal must not leave a draft behind");
+    assert!(
+        db.drafts().unwrap().is_empty(),
+        "a refusal must not leave a draft behind"
+    );
 }
 
 #[test]
@@ -2448,12 +2935,18 @@ fn edit_as_new_keeps_the_identity_the_original_was_sent_from() {
     let db = imap_database();
     let identities = db.account_sending_identities("me@proton.me").unwrap();
     for (id, sender, expected) in [
-        ("from-alias", "Work <WORK@proton.me>", Some("work@proton.me")),
+        (
+            "from-alias",
+            "Work <WORK@proton.me>",
+            Some("work@proton.me"),
+        ),
         ("from-primary", "me@proton.me", None),
     ] {
         let source = serde_json::json!({"id":id,"threadId":"thread","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":sender},{"name":"To","value":"friend@example.com"},{"name":"Subject","value":"Topic"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
         db.put_message_metadata(id, &source.to_string()).unwrap();
-        let draft = db.create_draft_from_sent(id, "me@proton.me", &identities).unwrap();
+        let draft = db
+            .create_draft_from_sent(id, "me@proton.me", &identities)
+            .unwrap();
         assert_eq!(draft.from.as_deref(), expected, "{id}");
         assert!(draft.to.is_empty(), "{id}");
     }
@@ -2463,13 +2956,26 @@ fn edit_as_new_keeps_the_identity_the_original_was_sent_from() {
 async fn edit_as_new_opens_from_a_cached_message_while_its_account_is_not_connected() {
     let service = service();
     let source = serde_json::json!({"id":"cached-sent","threadId":"t","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"you@example.com"},{"name":"To","value":"friend@example.com"},{"name":"Subject","value":"Picnic"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
-    service.database.put_message_metadata("cached-sent", &source.to_string()).unwrap();
+    service
+        .database
+        .put_message_metadata("cached-sent", &source.to_string())
+        .unwrap();
     let value = service
-        .request(Request::CreateFromSent { source_id: "cached-sent".into(), account: "you@example.com".into() })
+        .request(Request::CreateFromSent {
+            source_id: "cached-sent".into(),
+            account: "you@example.com".into(),
+        })
         .await
         .expect("a cached sent message must open as a new draft without a connected provider");
     let draft: Draft = serde_json::from_value(value).unwrap();
-    assert_eq!((draft.mode.as_str(), draft.subject.as_str(), draft.to.as_str()), ("new", "Picnic", ""));
+    assert_eq!(
+        (
+            draft.mode.as_str(),
+            draft.subject.as_str(),
+            draft.to.as_str()
+        ),
+        ("new", "Picnic", "")
+    );
 }
 
 #[test]
@@ -2477,11 +2983,30 @@ fn forwarding_keeps_named_and_unnamed_inline_images_and_content_ids() {
     let db = database();
     let html = "<p>Photos</p><img src=\"cid:first@example.com\"><table><tr><td><img src=\"cid:second@example.com\"></td></tr></table>";
     let source = serde_json::json!({"id":"inline-forward","threadId":"thread","payload":{"mimeType":"multipart/related","headers":[{"name":"From","value":"other@example.com"},{"name":"Subject","value":"Photos"}],"parts":[{"mimeType":"text/html","body":{"data":URL_SAFE_NO_PAD.encode(html)}},{"mimeType":"image/png","filename":"photo.png","headers":[{"name":"Content-ID","value":"<first@example.com>"}],"body":{"attachmentId":"remote-part","size":3}},{"mimeType":"image/png","headers":[{"name":"Content-ID","value":"<second@example.com>"},{"name":"Content-Disposition","value":"inline"}],"body":{"data":URL_SAFE_NO_PAD.encode("png"),"size":3}}]}});
-    db.test_connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES ('inline-forward', ?1)", [source.to_string()]).unwrap();
-    let mut draft = db.create_draft("forward", Some("inline-forward".into()), "you@example.com", &[]).unwrap();
+    db.test_connection()
+        .unwrap()
+        .execute(
+            "INSERT INTO message_metadata(id, payload) VALUES ('inline-forward', ?1)",
+            [source.to_string()],
+        )
+        .unwrap();
+    let mut draft = db
+        .create_draft(
+            "forward",
+            Some("inline-forward".into()),
+            "you@example.com",
+            &[],
+        )
+        .unwrap();
     assert_eq!(draft.attachments.len(), 2);
-    assert!(draft.attachments.iter().all(|attachment| attachment.inline && !attachment.ready));
-    assert_eq!(draft.attachments[0].provider_id.as_deref(), Some("remote-part"));
+    assert!(draft
+        .attachments
+        .iter()
+        .all(|attachment| attachment.inline && !attachment.ready));
+    assert_eq!(
+        draft.attachments[0].provider_id.as_deref(),
+        Some("remote-part")
+    );
     assert_eq!(draft.attachments[1].provider_id, None);
     let root = std::env::temp_dir().join(Uuid::new_v4().to_string());
     std::fs::create_dir_all(&root).unwrap();
@@ -2493,7 +3018,10 @@ fn forwarding_keeps_named_and_unnamed_inline_images_and_content_ids() {
     draft.body_html = "<p>Please see below.</p>".into();
     let raw = build_mime(&draft, &[], None, None, "inline-forward", &root).unwrap();
     let parsed = MessageParser::default().parse(&raw).unwrap();
-    assert!(parsed.body_html(0).unwrap().starts_with("<p>Please see below.</p><br><br>"));
+    assert!(parsed
+        .body_html(0)
+        .unwrap()
+        .starts_with("<p>Please see below.</p><br><br>"));
     assert!(parsed.body_html(0).unwrap().ends_with(html));
     let raw = String::from_utf8(raw).unwrap();
     assert!(raw.contains("Content-ID: <first@example.com>"));
@@ -2586,12 +3114,16 @@ fn queuing_a_draft_no_longer_depends_on_which_account_is_currently_active() {
     // account; queuing must still succeed, since replying from a
     // non-active account is exactly what multi-account send-as needs.
     db.set_compose_identity("active@example.com").unwrap();
-    let mut d = db.create_draft("new", None, "you@example.com", &[]).unwrap();
+    let mut d = db
+        .create_draft("new", None, "you@example.com", &[])
+        .unwrap();
     d.to = "Jane <jane@example.com>".into();
     d.subject = "Hello".into();
     d.body = "Body".into();
     let d = db.save_draft(d).unwrap();
-    let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
+    let item = db
+        .queue(&d.id, d.revision, false, &[], None, Path::new("/unused"))
+        .unwrap();
     assert_eq!(item.draft.account, "you@example.com");
 }
 #[test]
@@ -2606,13 +3138,18 @@ fn queuing_rejects_a_draft_whose_account_needs_reauth() {
         )
         .unwrap();
     let d = saved(&db);
-    assert!(db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).is_err());
+    assert!(db
+        .queue(&d.id, d.revision, false, &[], None, Path::new("/unused"))
+        .is_err());
 }
 #[test]
 fn rerunning_migrations_on_a_current_database_keeps_its_threads() {
     let db = database();
     let before = db.list_threads(None).unwrap().len();
-    assert!(before > 0, "the fixture database must hold mail for this check to mean anything");
+    assert!(
+        before > 0,
+        "the fixture database must hold mail for this check to mean anything"
+    );
     crate::schema::migrate(&mut db.test_connection().unwrap()).unwrap();
     assert_eq!(db.list_threads(None).unwrap().len(), before);
 }
@@ -2638,40 +3175,86 @@ async fn confirmed_local_sent_messages_support_responses_without_a_provider_copy
     d.cc = "team@example.com".into();
     // Routing is native-owned, so persist this fixture through the native path.
     let d = service.database.save_attachment_draft(d).unwrap();
-    let item = service.database.queue(&d.id, d.revision, false, &[], None, &service.root).unwrap();
-    service.database.test_connection().unwrap().execute(
-        "UPDATE outbox_messages SET state='sent' WHERE id=?1", [&item.id]
-    ).unwrap();
+    let item = service
+        .database
+        .queue(&d.id, d.revision, false, &[], None, &service.root)
+        .unwrap();
+    service
+        .database
+        .test_connection()
+        .unwrap()
+        .execute(
+            "UPDATE outbox_messages SET state='sent' WHERE id=?1",
+            [&item.id],
+        )
+        .unwrap();
     let source_id = format!("outbox-{}", item.id);
     let raw = service.database.outbox_raw(&item.id).unwrap();
     let parsed = MessageParser::default().parse(&raw).unwrap();
     for mode in ["reply", "replyAll", "forward"] {
-        let value = service.request(Request::Create {
-            mode: mode.into(), source_id: Some(source_id.clone()), account: Some(d.account.clone())
-        }).await.expect("sent MIME is available even with no connected provider");
+        let value = service
+            .request(Request::Create {
+                mode: mode.into(),
+                source_id: Some(source_id.clone()),
+                account: Some(d.account.clone()),
+            })
+            .await
+            .expect("sent MIME is available even with no connected provider");
         let draft: Draft = serde_json::from_value(value).unwrap();
         assert_eq!(draft.thread_id.as_deref(), Some("original-thread"));
         assert_eq!(draft.reply_id.as_deref(), parsed.message_id());
         assert!(draft.references.contains(&draft.reply_id.clone().unwrap()));
-        assert!(draft.body.contains("Saved work") || draft.forwarded_content.as_ref().is_some_and(|c| c.text.contains("Saved work")));
+        assert!(
+            draft.body.contains("Saved work")
+                || draft
+                    .forwarded_content
+                    .as_ref()
+                    .is_some_and(|c| c.text.contains("Saved work"))
+        );
         if mode == "forward" {
             assert!(draft.to.is_empty());
         } else {
             assert_eq!(draft.to, "jane@example.com");
-            assert_eq!(draft.cc, if mode == "replyAll" { "team@example.com" } else { "" });
+            assert_eq!(
+                draft.cc,
+                if mode == "replyAll" {
+                    "team@example.com"
+                } else {
+                    ""
+                }
+            );
         }
     }
     // Cached metadata cannot bypass the account or confirmed-send checks.
-    assert!(service.request(Request::Create {
-        mode: "replyAll".into(), source_id: Some(source_id.clone()), account: Some("other@example.com".into())
-    }).await.is_err());
+    assert!(service
+        .request(Request::Create {
+            mode: "replyAll".into(),
+            source_id: Some(source_id.clone()),
+            account: Some("other@example.com".into())
+        })
+        .await
+        .is_err());
     for state in ["undo_pending", "sending", "failed", "uncertain", "canceled"] {
-        service.database.test_connection().unwrap().execute(
-            "UPDATE outbox_messages SET state=?1 WHERE id=?2", params![state, item.id]
-        ).unwrap();
-        assert!(service.request(Request::Create {
-            mode: "replyAll".into(), source_id: Some(source_id.clone()), account: Some(d.account.clone())
-        }).await.is_err(), "{state} must not be treated as sent");
+        service
+            .database
+            .test_connection()
+            .unwrap()
+            .execute(
+                "UPDATE outbox_messages SET state=?1 WHERE id=?2",
+                params![state, item.id],
+            )
+            .unwrap();
+        assert!(
+            service
+                .request(Request::Create {
+                    mode: "replyAll".into(),
+                    source_id: Some(source_id.clone()),
+                    account: Some(d.account.clone())
+                })
+                .await
+                .is_err(),
+            "{state} must not be treated as sent"
+        );
     }
 }
 
@@ -2682,22 +3265,43 @@ async fn forwarding_a_local_sent_copy_reads_attachments_from_its_mime_offline() 
     std::fs::create_dir_all(&root).unwrap();
     service.root = root.clone();
     let d = saved(&service.database);
-    let item = service.database.queue(&d.id, d.revision, false, &[], None, &service.root).unwrap();
+    let item = service
+        .database
+        .queue(&d.id, d.revision, false, &[], None, &service.root)
+        .unwrap();
     let raw = b"From: you@example.com\r\nTo: jane@example.com\r\nMessage-ID: <local@example.com>\r\nSubject: Files\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=test\r\n\r\n--test\r\nContent-Type: text/plain\r\n\r\nHello\r\n--test\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=report.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\nYWJj\r\n--test--\r\n";
-    service.database.test_connection().unwrap().execute(
-        "UPDATE outbox_messages SET state='sent',raw=?1 WHERE id=?2", params![raw.as_slice(), item.id]
-    ).unwrap();
-    let value = service.request(Request::Create {
-        mode: "forward".into(), source_id: Some(format!("outbox-{}", item.id)), account: Some(d.account)
-    }).await.unwrap();
+    service
+        .database
+        .test_connection()
+        .unwrap()
+        .execute(
+            "UPDATE outbox_messages SET state='sent',raw=?1 WHERE id=?2",
+            params![raw.as_slice(), item.id],
+        )
+        .unwrap();
+    let value = service
+        .request(Request::Create {
+            mode: "forward".into(),
+            source_id: Some(format!("outbox-{}", item.id)),
+            account: Some(d.account),
+        })
+        .await
+        .unwrap();
     let draft: Draft = serde_json::from_value(value).unwrap();
     assert_eq!(draft.attachments.len(), 1);
-    let value = service.request(Request::FetchAttachment {
-        id: draft.id, attachment_id: draft.attachments[0].id.clone()
-    }).await.unwrap();
+    let value = service
+        .request(Request::FetchAttachment {
+            id: draft.id,
+            attachment_id: draft.attachments[0].id.clone(),
+        })
+        .await
+        .unwrap();
     let fetched: Draft = serde_json::from_value(value).unwrap();
     assert!(fetched.attachments[0].ready);
-    assert_eq!(std::fs::read(root.join(&fetched.attachments[0].id)).unwrap(), b"abc");
+    assert_eq!(
+        std::fs::read(root.join(&fetched.attachments[0].id)).unwrap(),
+        b"abc"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -2708,9 +3312,21 @@ async fn reply_to_a_cached_message_opens_while_its_account_is_not_connected() {
     // open a reply to a message that is already cached.
     let service = service();
     let source = serde_json::json!({"id":"cached","threadId":"t","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<cached@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
-    service.database.test_connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES ('cached', ?1)", [source.to_string()]).unwrap();
+    service
+        .database
+        .test_connection()
+        .unwrap()
+        .execute(
+            "INSERT INTO message_metadata(id, payload) VALUES ('cached', ?1)",
+            [source.to_string()],
+        )
+        .unwrap();
     let value = service
-        .request(Request::Create { mode: "reply".into(), source_id: Some("cached".into()), account: Some("you@example.com".into()) })
+        .request(Request::Create {
+            mode: "reply".into(),
+            source_id: Some("cached".into()),
+            account: Some("you@example.com".into()),
+        })
         .await
         .expect("a cached reply must open without a connected provider");
     let draft: Draft = serde_json::from_value(value).unwrap();
@@ -2857,7 +3473,11 @@ fn mime_rejects_header_injection_and_unsafe_attachment_ids() {
     let db = database();
     let base = saved(&db);
 
-    for subject in ["Hello\r\nBcc: attacker@example.net", "Hello\nBcc: attacker@example.net", "Hello\r"] {
+    for subject in [
+        "Hello\r\nBcc: attacker@example.net",
+        "Hello\nBcc: attacker@example.net",
+        "Hello\r",
+    ] {
         let mut d = base.clone();
         d.subject = subject.into();
         assert_eq!(
@@ -2868,12 +3488,21 @@ fn mime_rejects_header_injection_and_unsafe_attachment_ids() {
 
     let mut d = base.clone();
     d.reply_id = Some("original@example.com\r\nBcc: attacker@example.net".into());
-    assert_eq!(build_mime(&d, &[], None, None, "id", Path::new("/unused")).unwrap_err(), "Invalid reply headers");
+    assert_eq!(
+        build_mime(&d, &[], None, None, "id", Path::new("/unused")).unwrap_err(),
+        "Invalid reply headers"
+    );
 
     let mut d = base.clone();
     d.reply_id = Some("original@example.com".into());
-    d.references = vec!["ancestor@example.com".into(), "x@example.com\nBcc: attacker@example.net".into()];
-    assert_eq!(build_mime(&d, &[], None, None, "id", Path::new("/unused")).unwrap_err(), "Invalid reply headers");
+    d.references = vec![
+        "ancestor@example.com".into(),
+        "x@example.com\nBcc: attacker@example.net".into(),
+    ];
+    assert_eq!(
+        build_mime(&d, &[], None, None, "id", Path::new("/unused")).unwrap_err(),
+        "Invalid reply headers"
+    );
 
     // A path-shaped attachment id must never be joined onto the
     // attachment root, even when a file exists at the traversal target.
@@ -2894,13 +3523,33 @@ fn mime_rejects_header_injection_and_unsafe_attachment_ids() {
             inline: false,
             content_id: None,
         });
-        assert_eq!(build_mime(&d, &[], None, None, "id", &inner).unwrap_err(), "Invalid attachment ID", "id {id:?}");
+        assert_eq!(
+            build_mime(&d, &[], None, None, "id", &inner).unwrap_err(),
+            "Invalid attachment ID",
+            "id {id:?}"
+        );
     }
     std::fs::remove_dir_all(root).unwrap();
 }
 fn scheduled(service: &Correspondence) -> OutboxItem {
-    let d=saved(&service.database);
-    service.database.schedule_draft(&d.id,d.revision,&crate::scheduled_send::Selection {local_time:"2030-01-01T09:00".into(),time_zone:"America/New_York".into(),offset_seconds:None},"00000000-0000-4000-8000-000000000001",&[],None,&service.root,1_800_000_000_000).unwrap()
+    let d = saved(&service.database);
+    service
+        .database
+        .schedule_draft(
+            &d.id,
+            d.revision,
+            &crate::scheduled_send::Selection {
+                local_time: "2030-01-01T09:00".into(),
+                time_zone: "America/New_York".into(),
+                offset_seconds: None,
+            },
+            "00000000-0000-4000-8000-000000000001",
+            &[],
+            None,
+            &service.root,
+            1_800_000_000_000,
+        )
+        .unwrap()
 }
 
 #[tokio::test]
@@ -2913,24 +3562,50 @@ async fn blocked_keychain_poll_and_schedule_edit_leave_compose_responsive() {
         let (release, blocked) = std::sync::mpsc::channel();
         let blocked = std::sync::Mutex::new(blocked);
         service.sending_identity = Arc::new(move |_| {
-            if let Some(entered) = entered.lock().unwrap().take() { let _ = entered.send(()); }
-            blocked.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+            if let Some(entered) = entered.lock().unwrap().take() {
+                let _ = entered.send(());
+            }
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
             Ok("00000000-0000-4000-8000-000000000001".into())
         });
         let background = service.clone();
-        let request = if polling { Request::ListOutbox } else { Request::Cancel { id: item.id } };
+        let request = if polling {
+            Request::ListOutbox
+        } else {
+            Request::Cancel { id: item.id }
+        };
         let background = tokio::spawn(async move { background.request(request).await });
-        tokio::time::timeout(Duration::from_secs(2), waiting).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(2), waiting)
+            .await
+            .unwrap()
+            .unwrap();
         let editing = tokio::time::timeout(Duration::from_secs(1), async {
-            let value = service.request(Request::Create { mode: "new".into(), source_id: None, account: None }).await?;
+            let value = service
+                .request(Request::Create {
+                    mode: "new".into(),
+                    source_id: None,
+                    account: None,
+                })
+                .await?;
             let mut draft: Draft = serde_json::from_value(value).map_err(error)?;
             draft.body = "Typed while the keychain was locked".into();
-            service.request(Request::Save { draft: Box::new(draft) }).await
-        }).await;
+            service
+                .request(Request::Save {
+                    draft: Box::new(draft),
+                })
+                .await
+        })
+        .await;
         // Always release the worker before asserting, so failures cannot strand it.
         release.send(()).unwrap();
         background.await.unwrap().unwrap();
-        let saved = editing.expect("keychain must not delay create/save").unwrap();
+        let saved = editing
+            .expect("keychain must not delay create/save")
+            .unwrap();
         assert_eq!(saved["body"], "Typed while the keychain was locked");
     }
 }
@@ -2941,18 +3616,39 @@ async fn schedule_requests_reject_foreign_or_missing_identity_before_any_mutatio
         let mut service = service();
         let item = scheduled(&service);
         let revision = item.schedule.as_ref().unwrap().report.report_revision;
-        service.sending_identity = Arc::new(move |_| if missing {
-            Err("keychain unavailable".into())
-        } else {
-            Ok("00000000-0000-4000-8000-000000000002".into())
+        service.sending_identity = Arc::new(move |_| {
+            if missing {
+                Err("keychain unavailable".into())
+            } else {
+                Ok("00000000-0000-4000-8000-000000000002".into())
+            }
         });
-        let selection = || crate::scheduled_send::Selection { local_time: "2030-01-02T09:00".into(), time_zone: "America/New_York".into(), offset_seconds: None };
+        let selection = || crate::scheduled_send::Selection {
+            local_time: "2030-01-02T09:00".into(),
+            time_zone: "America/New_York".into(),
+            offset_seconds: None,
+        };
         for request in [
-            Request::Cancel { id: item.id.clone() },
-            Request::Recover { id: item.id.clone() },
-            Request::SendScheduledNow { id: item.id.clone(), revision },
-            Request::Reschedule { id: item.id.clone(), revision, selection: selection() },
-            Request::Schedule { id: item.draft.id.clone(), revision: item.draft.revision, selection: selection() },
+            Request::Cancel {
+                id: item.id.clone(),
+            },
+            Request::Recover {
+                id: item.id.clone(),
+            },
+            Request::SendScheduledNow {
+                id: item.id.clone(),
+                revision,
+            },
+            Request::Reschedule {
+                id: item.id.clone(),
+                revision,
+                selection: selection(),
+            },
+            Request::Schedule {
+                id: item.draft.id.clone(),
+                revision: item.draft.revision,
+                selection: selection(),
+            },
         ] {
             assert!(service.request(request).await.is_err());
             let current = service.database.outbox().unwrap().remove(0);
@@ -2967,106 +3663,332 @@ async fn schedule_requests_reject_foreign_or_missing_identity_before_any_mutatio
 
 #[tokio::test]
 async fn scheduled_dispatch_boundaries_and_two_installations_never_duplicate() {
-    use std::sync::atomic::{AtomicUsize,Ordering};
-    for delta in [-1,0,60_000,60_001] {
-        let owner=service(); let item=scheduled(&owner);
-        let mut peer=owner.clone();
-        peer.sending_identity=Arc::new(|_|Ok("00000000-0000-4000-8000-000000000002".into()));
-        let calls=AtomicUsize::new(0);
-        let send=|_,_|async {calls.fetch_add(1,Ordering::SeqCst);Ok(DeliveryReceipt {provider_message_id:"sent".into(),thread_id:None})};
-        assert!(peer.dispatch_due(&item,item.deadline+delta,false,&send).await.is_err());
-        assert_eq!(calls.load(Ordering::SeqCst),0);
-        let result=owner.dispatch_due(&item,item.deadline+delta,false,&send).await.unwrap();
-        let due=(0..=60_000).contains(&delta);
-        assert_eq!(result.is_some(),due);
-        owner.dispatch_due(&item,item.deadline+delta,false,&send).await.unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst),usize::from(due));
-        if due {assert_eq!(owner.database.outbox().unwrap()[0].schedule.as_ref().unwrap().report.state,"sent");}
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for delta in [-1, 0, 60_000, 60_001] {
+        let owner = service();
+        let item = scheduled(&owner);
+        let mut peer = owner.clone();
+        peer.sending_identity = Arc::new(|_| Ok("00000000-0000-4000-8000-000000000002".into()));
+        let calls = AtomicUsize::new(0);
+        let send = |_, _| async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(DeliveryReceipt {
+                provider_message_id: "sent".into(),
+                thread_id: None,
+            })
+        };
+        assert!(peer
+            .dispatch_due(&item, item.deadline + delta, false, &send)
+            .await
+            .is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let result = owner
+            .dispatch_due(&item, item.deadline + delta, false, &send)
+            .await
+            .unwrap();
+        let due = (0..=60_000).contains(&delta);
+        assert_eq!(result.is_some(), due);
+        owner
+            .dispatch_due(&item, item.deadline + delta, false, &send)
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), usize::from(due));
+        if due {
+            assert_eq!(
+                owner.database.outbox().unwrap()[0]
+                    .schedule
+                    .as_ref()
+                    .unwrap()
+                    .report
+                    .state,
+                "sent"
+            );
+        }
     }
 }
 
 #[tokio::test]
 async fn scheduled_reschedule_cancel_and_missing_identity_block_stale_delivery() {
-    let mut owner=service();let item=scheduled(&owner);
-    let revision=item.schedule.as_ref().unwrap().report.report_revision;
-    let selection=crate::scheduled_send::Selection {local_time:"2030-01-02T09:00".into(),time_zone:"America/New_York".into(),offset_seconds:None};
-    assert!(owner.database.manage_schedule(&item.id,revision,Some(&selection),false,"wrong-owner",item.deadline-1).is_err());
-    owner.database.manage_schedule(&item.id,revision,Some(&selection),false,"00000000-0000-4000-8000-000000000001",item.deadline-1).unwrap();
-    assert!(owner.database.manage_schedule(&item.id,revision,Some(&selection),false,"00000000-0000-4000-8000-000000000001",item.deadline-1).is_err());
-    assert!(owner.dispatch_due(&item,item.deadline,false,|_,_|async {panic!("stale schedule sent")}).await.unwrap().is_none());
-    owner.sending_identity=Arc::new(|_|Err("missing identity".into()));
-    assert!(owner.request(Request::Cancel {id:item.id.clone()}).await.is_err());
-    let current=owner.database.outbox().unwrap().remove(0);
-    assert!(owner.dispatch_due(&current,current.deadline,false,|_,_|async {panic!("restored copy sent")}).await.is_err());
-    owner.sending_identity=Arc::new(|_|Ok("00000000-0000-4000-8000-000000000001".into()));
-    owner.request(Request::Cancel {id:item.id.clone()}).await.unwrap();
-    assert_eq!(owner.database.drafts().unwrap()[0].body,item.draft.body);
-    assert!(owner.dispatch_due(&current,current.deadline,false,|_,_|async {panic!("canceled schedule sent")}).await.unwrap().is_none());
+    let mut owner = service();
+    let item = scheduled(&owner);
+    let revision = item.schedule.as_ref().unwrap().report.report_revision;
+    let selection = crate::scheduled_send::Selection {
+        local_time: "2030-01-02T09:00".into(),
+        time_zone: "America/New_York".into(),
+        offset_seconds: None,
+    };
+    assert!(owner
+        .database
+        .manage_schedule(
+            &item.id,
+            revision,
+            Some(&selection),
+            false,
+            "wrong-owner",
+            item.deadline - 1
+        )
+        .is_err());
+    owner
+        .database
+        .manage_schedule(
+            &item.id,
+            revision,
+            Some(&selection),
+            false,
+            "00000000-0000-4000-8000-000000000001",
+            item.deadline - 1,
+        )
+        .unwrap();
+    assert!(owner
+        .database
+        .manage_schedule(
+            &item.id,
+            revision,
+            Some(&selection),
+            false,
+            "00000000-0000-4000-8000-000000000001",
+            item.deadline - 1
+        )
+        .is_err());
+    assert!(owner
+        .dispatch_due(&item, item.deadline, false, |_, _| async {
+            panic!("stale schedule sent")
+        })
+        .await
+        .unwrap()
+        .is_none());
+    owner.sending_identity = Arc::new(|_| Err("missing identity".into()));
+    assert!(owner
+        .request(Request::Cancel {
+            id: item.id.clone()
+        })
+        .await
+        .is_err());
+    let current = owner.database.outbox().unwrap().remove(0);
+    assert!(owner
+        .dispatch_due(&current, current.deadline, false, |_, _| async {
+            panic!("restored copy sent")
+        })
+        .await
+        .is_err());
+    owner.sending_identity = Arc::new(|_| Ok("00000000-0000-4000-8000-000000000001".into()));
+    owner
+        .request(Request::Cancel {
+            id: item.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(owner.database.drafts().unwrap()[0].body, item.draft.body);
+    assert!(owner
+        .dispatch_due(&current, current.deadline, false, |_, _| async {
+            panic!("canceled schedule sent")
+        })
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[test]
 fn scheduled_recovery_and_overdue_policy_preserve_ordinary_undo() {
-    let owner=service();let item=scheduled(&owner);
+    let owner = service();
+    let item = scheduled(&owner);
     assert!(!owner.database.pending_undo().unwrap());
-    owner.database.overdue_schedules_owned(item.deadline+60_000,false,"00000000-0000-4000-8000-000000000001").unwrap();
-    assert_eq!(owner.database.outbox().unwrap()[0].state,"scheduled");
-    owner.database.overdue_schedules_owned(item.deadline+60_001,false,"00000000-0000-4000-8000-000000000001").unwrap();
-    let late=owner.database.outbox().unwrap().remove(0);
-    assert_eq!(late.state,"overdue");assert_eq!(late.schedule.as_ref().unwrap().report.state,"overdue");
-    owner.database.manage_schedule(&item.id,late.schedule.unwrap().report.report_revision,None,true,"00000000-0000-4000-8000-000000000001",item.deadline+60_001).unwrap();
-    let now_send=owner.database.outbox().unwrap().remove(0);assert_eq!(now_send.state,"undo_pending");assert_eq!(now_send.deadline,item.deadline+70_001);
-    let d=saved(&owner.database);let immediate=owner.database.queue(&d.id,d.revision,false,&[],None,&owner.root).unwrap();
+    owner
+        .database
+        .overdue_schedules_owned(
+            item.deadline + 60_000,
+            false,
+            "00000000-0000-4000-8000-000000000001",
+        )
+        .unwrap();
+    assert_eq!(owner.database.outbox().unwrap()[0].state, "scheduled");
+    owner
+        .database
+        .overdue_schedules_owned(
+            item.deadline + 60_001,
+            false,
+            "00000000-0000-4000-8000-000000000001",
+        )
+        .unwrap();
+    let late = owner.database.outbox().unwrap().remove(0);
+    assert_eq!(late.state, "overdue");
+    assert_eq!(late.schedule.as_ref().unwrap().report.state, "overdue");
+    owner
+        .database
+        .manage_schedule(
+            &item.id,
+            late.schedule.unwrap().report.report_revision,
+            None,
+            true,
+            "00000000-0000-4000-8000-000000000001",
+            item.deadline + 60_001,
+        )
+        .unwrap();
+    let now_send = owner.database.outbox().unwrap().remove(0);
+    assert_eq!(now_send.state, "undo_pending");
+    assert_eq!(now_send.deadline, item.deadline + 70_001);
+    let d = saved(&owner.database);
+    let immediate = owner
+        .database
+        .queue(&d.id, d.revision, false, &[], None, &owner.root)
+        .unwrap();
     crate::schema::migrate(&mut owner.database.test_connection().unwrap()).unwrap();
-    let items=owner.database.outbox().unwrap();
-    assert!(items.iter().find(|o|o.id==immediate.id).unwrap().deadline>unix_millis());
-    assert_eq!(items.iter().find(|o|o.id==item.id).unwrap().schedule.as_ref().unwrap().report.scheduled_at,item.deadline);
+    let items = owner.database.outbox().unwrap();
+    assert!(
+        items
+            .iter()
+            .find(|o| o.id == immediate.id)
+            .unwrap()
+            .deadline
+            > unix_millis()
+    );
+    assert_eq!(
+        items
+            .iter()
+            .find(|o| o.id == item.id)
+            .unwrap()
+            .schedule
+            .as_ref()
+            .unwrap()
+            .report
+            .scheduled_at,
+        item.deadline
+    );
 }
 
 #[tokio::test]
 async fn scheduled_send_uncertainty_is_persisted_without_retry_and_report_failure_rolls_back() {
-    let owner=service();let item=scheduled(&owner);
+    let owner = service();
+    let item = scheduled(&owner);
     owner.database.test_connection().unwrap().execute_batch("CREATE TRIGGER fail_report BEFORE UPDATE OF schedule_json ON outbox_messages BEGIN SELECT RAISE(FAIL,'report storage failed'); END;").unwrap();
-    assert!(owner.dispatch_due(&item,item.deadline,false,|_,_|async {panic!("delivery before durable claim")}).await.is_err());
-    assert_eq!(owner.database.outbox().unwrap()[0].state,"scheduled");
-    owner.database.test_connection().unwrap().execute_batch("DROP TRIGGER fail_report;").unwrap();
-    owner.dispatch_due(&item,item.deadline,false,|_,_|async {Err((false,"lost acknowledgement".into()))}).await.unwrap();
-    let uncertain=owner.database.outbox().unwrap().remove(0);
-    assert_eq!(uncertain.state,"uncertain");assert_eq!(uncertain.schedule.as_ref().unwrap().report.state,"uncertain");
-    owner.dispatch_due(&uncertain,item.deadline+1,false,|_,_|async {panic!("uncertain resend")}).await.unwrap();
+    assert!(owner
+        .dispatch_due(&item, item.deadline, false, |_, _| async {
+            panic!("delivery before durable claim")
+        })
+        .await
+        .is_err());
+    assert_eq!(owner.database.outbox().unwrap()[0].state, "scheduled");
+    owner
+        .database
+        .test_connection()
+        .unwrap()
+        .execute_batch("DROP TRIGGER fail_report;")
+        .unwrap();
+    owner
+        .dispatch_due(&item, item.deadline, false, |_, _| async {
+            Err((false, "lost acknowledgement".into()))
+        })
+        .await
+        .unwrap();
+    let uncertain = owner.database.outbox().unwrap().remove(0);
+    assert_eq!(uncertain.state, "uncertain");
+    assert_eq!(
+        uncertain.schedule.as_ref().unwrap().report.state,
+        "uncertain"
+    );
+    owner
+        .dispatch_due(&uncertain, item.deadline + 1, false, |_, _| async {
+            panic!("uncertain resend")
+        })
+        .await
+        .unwrap();
 }
 
 #[test]
 fn gmail_alias_reply_and_mime_keep_the_address_reply_to_and_signature() {
     let db = database();
-    let identities=vec![crate::provider::SendingIdentity { address:"you@example.com".into(), ..Default::default() }, crate::provider::SendingIdentity {address:"alias@example.org".into(),display_name:Some("Alias Name".into()),reply_to:Some("replies@example.org".into()),is_default:true}];
-    db.store_gmail_sending_identities("you@example.com",&identities,unix_millis()).unwrap();
-    let mut source=RawMessage {
-        id: "alias-source".into(), thread_id: "alias-thread".into(), label_ids: vec!["INBOX".into()], snippet: "hello".into(), internal_date: "1770000000000".into(),
+    let identities = vec![
+        crate::provider::SendingIdentity {
+            address: "you@example.com".into(),
+            ..Default::default()
+        },
+        crate::provider::SendingIdentity {
+            address: "alias@example.org".into(),
+            display_name: Some("Alias Name".into()),
+            reply_to: Some("replies@example.org".into()),
+            is_default: true,
+        },
+    ];
+    db.store_gmail_sending_identities("you@example.com", &identities, unix_millis())
+        .unwrap();
+    let mut source = RawMessage {
+        id: "alias-source".into(),
+        thread_id: "alias-thread".into(),
+        label_ids: vec!["INBOX".into()],
+        snippet: "hello".into(),
+        internal_date: "1770000000000".into(),
         payload: crate::mime::MimePart {
             mime_type: "text/plain".into(),
-            headers: vec![crate::mime::MimeHeader {name:"From".into(),value:"sender@example.net".into()},crate::mime::MimeHeader{name:"Subject".into(),value:"Alias thread".into()},crate::mime::MimeHeader{name:"Message-ID".into(),value:"<alias-source@example.net>".into()}],
-            body: crate::mime::MimeBody { data: Some(URL_SAFE_NO_PAD.encode("hello")), ..Default::default() }, ..Default::default()
-        }
+            headers: vec![
+                crate::mime::MimeHeader {
+                    name: "From".into(),
+                    value: "sender@example.net".into(),
+                },
+                crate::mime::MimeHeader {
+                    name: "Subject".into(),
+                    value: "Alias thread".into(),
+                },
+                crate::mime::MimeHeader {
+                    name: "Message-ID".into(),
+                    value: "<alias-source@example.net>".into(),
+                },
+            ],
+            body: crate::mime::MimeBody {
+                data: Some(URL_SAFE_NO_PAD.encode("hello")),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
     };
-    source.payload.headers.retain(|header| !header.name.eq_ignore_ascii_case("To"));
-    source.payload.headers.push(crate::mime::MimeHeader{name:"To".into(),value:"Alias <alias@example.org>".into()});
-    db.put_message_metadata(&source.id,&serde_json::to_string(&source).unwrap()).unwrap();
-    let mut reply=db.create_draft("reply",Some(source.id.clone()),"you@example.com",&identities).unwrap();
-    assert_eq!(reply.from.as_deref(),Some("alias@example.org"));
-    reply.to="recipient@example.net".into();
-    let root=std::env::temp_dir();
-    let bytes=build_mime(&reply,&identities,None,None,"alias-op",&root).unwrap();
-    let message=MessageParser::default().parse(&bytes).unwrap();
-    assert_eq!(message.from().unwrap().first().unwrap().address(),Some("alias@example.org"));
-    assert_eq!(message.reply_to().unwrap().first().unwrap().address(),Some("replies@example.org"));
-    assert!(build_mime(&reply,&identities[..1],None,None,"alias-op",&root).unwrap_err().contains("no longer"));
+    source
+        .payload
+        .headers
+        .retain(|header| !header.name.eq_ignore_ascii_case("To"));
+    source.payload.headers.push(crate::mime::MimeHeader {
+        name: "To".into(),
+        value: "Alias <alias@example.org>".into(),
+    });
+    db.put_message_metadata(&source.id, &serde_json::to_string(&source).unwrap())
+        .unwrap();
+    let mut reply = db
+        .create_draft(
+            "reply",
+            Some(source.id.clone()),
+            "you@example.com",
+            &identities,
+        )
+        .unwrap();
+    assert_eq!(reply.from.as_deref(), Some("alias@example.org"));
+    reply.to = "recipient@example.net".into();
+    let root = std::env::temp_dir();
+    let bytes = build_mime(&reply, &identities, None, None, "alias-op", &root).unwrap();
+    let message = MessageParser::default().parse(&bytes).unwrap();
+    assert_eq!(
+        message.from().unwrap().first().unwrap().address(),
+        Some("alias@example.org")
+    );
+    assert_eq!(
+        message.reply_to().unwrap().first().unwrap().address(),
+        Some("replies@example.org")
+    );
+    assert!(
+        build_mime(&reply, &identities[..1], None, None, "alias-op", &root)
+            .unwrap_err()
+            .contains("no longer")
+    );
     source.id = "alias-sent-source".into();
     for header in &mut source.payload.headers {
-        if header.name == "From" { header.value = "Alias Name <alias@example.org>".into(); }
-        if header.name == "To" { header.value = "recipient@example.net".into(); }
+        if header.name == "From" {
+            header.value = "Alias Name <alias@example.org>".into();
+        }
+        if header.name == "To" {
+            header.value = "recipient@example.net".into();
+        }
     }
-    db.put_message_metadata(&source.id,&serde_json::to_string(&source).unwrap()).unwrap();
-    let continuation=db.create_draft("reply",Some(source.id),"you@example.com",&identities).unwrap();
-    assert_eq!(continuation.from.as_deref(),Some("alias@example.org"));
-
+    db.put_message_metadata(&source.id, &serde_json::to_string(&source).unwrap())
+        .unwrap();
+    let continuation = db
+        .create_draft("reply", Some(source.id), "you@example.com", &identities)
+        .unwrap();
+    assert_eq!(continuation.from.as_deref(), Some("alias@example.org"));
 }

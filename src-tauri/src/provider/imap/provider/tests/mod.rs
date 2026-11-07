@@ -136,7 +136,8 @@ impl FakeMailbox {
     }
     /// Add a message to a named folder (created at `uidvalidity` if new).
     fn add_to(&mut self, mailbox: &str, uidvalidity: u32, flags: &[&str], raw: &str) -> u32 {
-        self.folder(mailbox, uidvalidity).add_sized(flags, raw, None)
+        self.folder(mailbox, uidvalidity)
+            .add_sized(flags, raw, None)
     }
     /// The command counts seen for a mailbox so far.
     fn counts(&self, mailbox: &str) -> (usize, usize, usize) {
@@ -184,8 +185,12 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
             } else if upper == "CAPABILITY" {
                 reply(
                     &mut server,
-                    &format!("* CAPABILITY {}\r\n{tag} OK done\r\n", capabilities.join(" ")),
-                ).await;
+                    &format!(
+                        "* CAPABILITY {}\r\n{tag} OK done\r\n",
+                        capabilities.join(" ")
+                    ),
+                )
+                .await;
             } else if upper.starts_with("LIST") {
                 if list_fails {
                     reply(&mut server, &format!("{tag} NO LIST failed\r\n")).await;
@@ -212,7 +217,11 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                     .trim()
                     .trim_matches('"')
                     .to_string();
-                selected = if name.is_empty() { "INBOX".into() } else { name };
+                selected = if name.is_empty() {
+                    "INBOX".into()
+                } else {
+                    name
+                };
                 let folder = folders.get(&selected).unwrap_or(&empty);
                 if folder.examine_fails {
                     reply(
@@ -230,15 +239,22 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                 );
                 reply(&mut server, &body).await;
             } else if upper.starts_with("UID SEARCH") {
-                search_log.lock().unwrap().push((selected.clone(), rest.to_string()));
+                search_log
+                    .lock()
+                    .unwrap()
+                    .push((selected.clone(), rest.to_string()));
                 let folder = folders.get(&selected).unwrap_or(&empty);
-                counts.lock().unwrap().entry(selected.clone()).or_default().0 += 1;
+                counts
+                    .lock()
+                    .unwrap()
+                    .entry(selected.clone())
+                    .or_default()
+                    .0 += 1;
                 if folder.search_stalls {
                     // Never answer anything again on this connection.
                     std::future::pending::<()>().await;
                 }
-                let uids: Vec<String> =
-                    folder.messages.iter().map(|m| m.uid.to_string()).collect();
+                let uids: Vec<String> = folder.messages.iter().map(|m| m.uid.to_string()).collect();
                 let body = format!("* SEARCH {}\r\n{tag} OK done\r\n", uids.join(" "));
                 reply(&mut server, &body).await;
             } else if upper.starts_with("UID FETCH") {
@@ -257,10 +273,7 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                 if wants_body {
                     if let Some(limit) = folder.fail_after_body_fetches {
                         if body_fetches >= limit {
-                            let uid = parse_uid_set(rest, folder)
-                                .first()
-                                .copied()
-                                .unwrap_or(0);
+                            let uid = parse_uid_set(rest, folder).first().copied().unwrap_or(0);
                             reply(
                                 &mut server,
                                 &format!("* 1 FETCH (UID {uid} BODY[]<0> {{4096}}\r\n"),
@@ -274,7 +287,11 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                 let flags_only = !wants_body && !is_identity;
                 let wants_gmail_id = upper.contains("X-GM-MSGID");
                 if wants_gmail_id && !capabilities.iter().any(|cap| cap == "X-GM-EXT-1") {
-                    reply(&mut server, &format!("{tag} BAD Unsupported identity attribute\r\n")).await;
+                    reply(
+                        &mut server,
+                        &format!("{tag} BAD Unsupported identity attribute\r\n"),
+                    )
+                    .await;
                     continue;
                 }
                 let set = parse_uid_set(rest, folder);
@@ -333,11 +350,34 @@ fn parse_uid_set(command: &str, folder: &FakeFolder) -> Vec<u32> {
 /// Render one FETCH response line for a message. `wants_body` is the whole
 /// `BODY.PEEK[]` pass; `flags_only` is the FLAGS-only sweep; otherwise it
 /// is the identity pass.
-fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only: bool, wants_gmail_id: bool, wants_labels: bool) -> String {
+fn fetch_response(
+    seq: u32,
+    message: &FakeMessage,
+    wants_body: bool,
+    flags_only: bool,
+    wants_gmail_id: bool,
+    wants_labels: bool,
+) -> String {
     let flags = message.flags.join(" ");
-    let labels = message.gmail_labels.as_ref().filter(|_| wants_labels).map(|labels| {
-        format!(" X-GM-LABELS ({})", labels.iter().map(|label| if label.starts_with('\\') { label.clone() } else { super::super::search::quote_search_string(label) }).collect::<Vec<_>>().join(" "))
-    }).unwrap_or_default();
+    let labels = message
+        .gmail_labels
+        .as_ref()
+        .filter(|_| wants_labels)
+        .map(|labels| {
+            format!(
+                " X-GM-LABELS ({})",
+                labels
+                    .iter()
+                    .map(|label| if label.starts_with('\\') {
+                        label.clone()
+                    } else {
+                        super::super::search::quote_search_string(label)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        })
+        .unwrap_or_default();
     if wants_body {
         format!(
             "* {seq} FETCH (UID {} BODY[]<0> {{{}}}\r\n{})\r\n",
@@ -346,7 +386,10 @@ fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only:
             message.raw
         )
     } else if flags_only {
-        format!("* {seq} FETCH (UID {} FLAGS ({}){labels})\r\n", message.uid, flags)
+        format!(
+            "* {seq} FETCH (UID {} FLAGS ({}){labels})\r\n",
+            message.uid, flags
+        )
     } else {
         // Header fields block = the message's header section (up to the
         // blank line). The real server returns only the requested fields,
@@ -358,8 +401,11 @@ fn fetch_response(seq: u32, message: &FakeMessage, wants_body: bool, flags_only:
             .map(|(h, _)| format!("{h}\r\n\r\n"))
             .unwrap_or_else(|| message.raw.clone());
         let size = message.advertised_size.unwrap_or(message.raw.len());
-        let external = message.gmail_message_id.filter(|_| wants_gmail_id)
-            .map(|id| format!("X-GM-MSGID {id} ")).unwrap_or_default();
+        let external = message
+            .gmail_message_id
+            .filter(|_| wants_gmail_id)
+            .map(|id| format!("X-GM-MSGID {id} "))
+            .unwrap_or_default();
         format!(
             "* {seq} FETCH (UID {} {external}FLAGS ({}){labels} RFC822.SIZE {} BODY[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)] {{{}}}\r\n{})\r\n",
             message.uid,
@@ -520,9 +566,13 @@ async fn initial_full_sync_ingests_inbox_threads_through_the_engine() {
 
     // Drive the real engine loop. `sync_with` needs a Database handle; the
     // provider carries its own store over the same in-memory db.
-    let changed = crate::sync::sync_with(provider.store.database().as_ref(), "me@example.com", &provider)
-        .await
-        .unwrap();
+    let changed = crate::sync::sync_with(
+        provider.store.database().as_ref(),
+        "me@example.com",
+        &provider,
+    )
+    .await
+    .unwrap();
     assert!(changed, "a full sync reports a change");
 
     // Two INBOX threads are now listed from the local store.
@@ -549,7 +599,9 @@ async fn a_second_poll_sees_new_mail_a_flag_change_and_a_deletion() {
     let db = provider.store.database().clone();
 
     // First sync establishes the cursor and ingests both.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let cursor_after_first = db.cursor("me@example.com").unwrap().unwrap();
 
     // Mutate the server: new mail, flag change on m1, expunge m2.
@@ -563,9 +615,14 @@ async fn a_second_poll_sees_new_mail_a_flag_change_and_a_deletion() {
     }
 
     // Second sync ingests the delta.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let cursor_after_second = db.cursor("me@example.com").unwrap().unwrap();
-    assert_ne!(cursor_after_first, cursor_after_second, "the generation advanced");
+    assert_ne!(
+        cursor_after_first, cursor_after_second,
+        "the generation advanced"
+    );
 
     // m3 is now present; m2's thread lost its only location.
     let threads = provider.list_inbox(None).await.unwrap();
@@ -696,10 +753,7 @@ async fn fetch_thread_resolves_an_alias_to_the_surviving_thread() {
         )
         .unwrap();
     let round = SyncRoundWrite {
-        thread_assignments: vec![(
-            "imap:me@example.com:m1".into(),
-            "imap:t:survivor".into(),
-        )],
+        thread_assignments: vec![("imap:me@example.com:m1".into(), "imap:t:survivor".into())],
         aliases: vec![("imap:t:old".into(), "imap:t:survivor".into())],
         changed_threads: vec!["imap:t:survivor".into()],
         ..Default::default()
@@ -803,9 +857,18 @@ async fn unsupported_mutations_are_rejected_as_a_permanent_invalid_operation() {
 
 #[test]
 fn label_model_is_chosen_from_the_accounts_label_storage() {
-    assert_eq!(label_model_for(LabelStorage::Keywords), LabelModel::ImapKeywords);
-    assert_eq!(label_model_for(LabelStorage::Folders), LabelModel::ImapLabelFolders);
-    assert_eq!(label_model_for(LabelStorage::None), LabelModel::ImapNoUserLabels);
+    assert_eq!(
+        label_model_for(LabelStorage::Keywords),
+        LabelModel::ImapKeywords
+    );
+    assert_eq!(
+        label_model_for(LabelStorage::Folders),
+        LabelModel::ImapLabelFolders
+    );
+    assert_eq!(
+        label_model_for(LabelStorage::None),
+        LabelModel::ImapNoUserLabels
+    );
 }
 
 // ---- SLICE5A_FIXES item 1: at-least-once across a mid-round failure ----
@@ -845,7 +908,11 @@ async fn a_failure_after_the_first_batch_of_new_mail_leaves_no_partial_state() {
 
     // Durable state is UNCHANGED — no location, thread, journal or
     // generation write survived the partial round.
-    assert_eq!(durable_snapshot(&store), before, "a failed round writes nothing");
+    assert_eq!(
+        durable_snapshot(&store),
+        before,
+        "a failed round writes nothing"
+    );
 
     // Re-run cleanly: both messages are threaded, journaled, ingestible.
     let mut healthy = open_scripted_session(mb).await;
@@ -896,7 +963,10 @@ async fn a_failure_after_a_flag_update_leaves_no_partial_state() {
         .find(|l| l.uid == 1)
         .unwrap();
     let flags: Vec<String> = serde_json::from_str(&m1.flags_json).unwrap();
-    assert!(flags.iter().any(|f| f == "\\Seen"), "flag change applied on re-run");
+    assert!(
+        flags.iter().any(|f| f == "\\Seen"),
+        "flag change applied on re-run"
+    );
     assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 2);
 }
 
@@ -1016,10 +1086,7 @@ async fn the_genuinely_older_thread_survives_a_merge_regardless_of_id_hash_order
     // Older thread created at generation 1, newer at generation 2.
     store
         .commit_sync_round(&SyncRoundWrite {
-            thread_assignments: vec![(
-                "imap:me@example.com:older".into(),
-                older_tid.clone(),
-            )],
+            thread_assignments: vec![("imap:me@example.com:older".into(), older_tid.clone())],
             changed_threads: vec![older_tid.clone()],
             ..Default::default()
         })
@@ -1034,10 +1101,7 @@ async fn the_genuinely_older_thread_survives_a_merge_regardless_of_id_hash_order
         .unwrap();
     store
         .commit_sync_round(&SyncRoundWrite {
-            thread_assignments: vec![(
-                "imap:me@example.com:newer".into(),
-                newer_tid.clone(),
-            )],
+            thread_assignments: vec![("imap:me@example.com:newer".into(), newer_tid.clone())],
             changed_threads: vec![newer_tid.clone()],
             ..Default::default()
         })
@@ -1067,7 +1131,10 @@ async fn the_genuinely_older_thread_survives_a_merge_regardless_of_id_hash_order
         outcome.assignments[0].1, older_tid,
         "the older thread's id survives the merge"
     );
-    assert_eq!(outcome.aliases, vec![(newer_tid.clone(), older_tid.clone())]);
+    assert_eq!(
+        outcome.aliases,
+        vec![(newer_tid.clone(), older_tid.clone())]
+    );
     assert!(outcome.changed_threads.contains(&older_tid));
     assert!(outcome.changed_threads.contains(&newer_tid));
 }
@@ -1090,7 +1157,10 @@ async fn repeated_idle_polls_do_not_bump_the_generation_or_journal() {
     let loads_after_baseline = provider
         .thread_state_loads
         .load(std::sync::atomic::Ordering::Relaxed);
-    assert_eq!(loads_after_baseline, 1, "the baseline threaded one new message");
+    assert_eq!(
+        loads_after_baseline, 1,
+        "the baseline threaded one new message"
+    );
     for _ in 0..3 {
         let batch = provider.poll(&baseline).await.unwrap();
         assert!(
@@ -1098,7 +1168,11 @@ async fn repeated_idle_polls_do_not_bump_the_generation_or_journal() {
             "an idle poll from the current cursor reports no changes"
         );
         // The generation did NOT move, and the journal is unchanged.
-        assert_eq!(store.generation().unwrap(), gen_after_baseline, "idle: no bump");
+        assert_eq!(
+            store.generation().unwrap(),
+            gen_after_baseline,
+            "idle: no bump"
+        );
         assert_eq!(store.journal_since(0).unwrap(), journal_after_baseline);
         // The returned cursor is the (unchanged) current generation.
         assert_eq!(batch.cursor.generation(), Some(gen_after_baseline));
@@ -1283,7 +1357,10 @@ async fn cache_miss_checks_uidvalidity_before_fetching() {
     let new_id = &store.locations_in_mailbox("INBOX").unwrap()[0].message_id;
     assert_ne!(new_id, &id);
     let raw = provider.fetch_message(new_id).await.unwrap();
-    assert_eq!(crate::mime::normalize(&raw).unwrap().body_text, "Different body");
+    assert_eq!(
+        crate::mime::normalize(&raw).unwrap().body_text,
+        "Different body"
+    );
 }
 
 #[tokio::test]
@@ -1393,7 +1470,12 @@ async fn sync_each(provider: &ImapProvider, mailbox: &Arc<Mutex<FakeMailbox>>, m
     }
 }
 
-fn probe(id: &str, msgid: &str, in_reply_to: Option<&str>, references: Option<&str>) -> ThreadingInput {
+fn probe(
+    id: &str,
+    msgid: &str,
+    in_reply_to: Option<&str>,
+    references: Option<&str>,
+) -> ThreadingInput {
     ThreadingInput {
         message_id: id.to_string(),
         message_id_header: Some(msgid.to_string()),
@@ -1436,9 +1518,11 @@ async fn loader_equivalence_absent_parent_siblings_across_rounds() {
         ],
     )
     .await;
-    let outcome =
-        assert_loaders_agree(&provider, probe("imap:p:s4", "<s4@x>", Some("<ghost@x>"), None))
-            .await;
+    let outcome = assert_loaders_agree(
+        &provider,
+        probe("imap:p:s4", "<s4@x>", Some("<ghost@x>"), None),
+    )
+    .await;
     // All siblings share one thread, so the probe joins exactly it.
     assert!(outcome.aliases.is_empty(), "no merge: all share one thread");
 }
@@ -1508,7 +1592,10 @@ async fn loader_equivalence_duplicate_message_id() {
     sync_each(
         &provider,
         &mailbox,
-        &[message("<dup@x>", "First", ""), message("<dup@x>", "Second", "")],
+        &[
+            message("<dup@x>", "First", ""),
+            message("<dup@x>", "Second", ""),
+        ],
     )
     .await;
     assert_loaders_agree(&provider, probe("imap:p:d", "<dup@x>", None, None)).await;
@@ -1553,7 +1640,11 @@ async fn loader_threads_a_reply_to_a_message_with_no_cached_body() {
     let tokens = store
         .seed_state_for_tokens(&["nobody@x".to_string()])
         .unwrap();
-    assert_eq!(tokens.len(), 1, "exactly the no-body message's thread is seeded");
+    assert_eq!(
+        tokens.len(),
+        1,
+        "exactly the no-body message's thread is seeded"
+    );
     let (_, (_, token_set)) = tokens.into_iter().next().unwrap();
     assert!(token_set.contains(&"nobody@x".to_string()));
     assert!(token_set.contains(&nobody_id));
@@ -1601,17 +1692,21 @@ async fn the_round_loader_does_not_read_cached_bodies() {
         })
         .unwrap();
     // A late linker referencing both roots arrives and is synced.
-    mailbox
-        .lock()
-        .unwrap()
-        .add(&[], &message("<c@x>", "Link", "References: <a@x> <b@x>\r\n"));
+    mailbox.lock().unwrap().add(
+        &[],
+        &message("<c@x>", "Link", "References: <a@x> <b@x>\r\n"),
+    );
     let cursor = SyncCursor::from_generation(store.generation().unwrap());
     provider.poll(&cursor).await.unwrap();
     // The two roots merged into one thread using tokens alone.
     let rows = store.all_message_threads().unwrap();
     let survivor = store.resolve_thread_alias(&rows[0].1).unwrap();
     let members = store.messages_in_thread(&survivor).unwrap();
-    assert_eq!(members.len(), 3, "the merge happened from tokens, no body read");
+    assert_eq!(
+        members.len(),
+        3,
+        "the merge happened from tokens, no body read"
+    );
 }
 
 // ---- SLICE5B1 item 4: the upgrade backfill ------------------------------
@@ -1658,19 +1753,31 @@ async fn upgrade_backfill_fills_tokens_then_a_late_linker_threads_like_before() 
             Ok(())
         })
         .unwrap();
-    assert!(!store.tokens_backfilled().unwrap(), "set up as needing backfill");
+    assert!(
+        !store.tokens_backfilled().unwrap(),
+        "set up as needing backfill"
+    );
     assert_eq!(store.messages_missing_tokens(100).unwrap().len(), 2);
 
     // A late message linking <a@x> and <b@x>. Threading it runs the
     // backfill first, then merges from the now-present tokens.
-    let linker = probe("imap:me@example.com:link", "<link@x>", None, Some("<a@x> <b@x>"));
+    let linker = probe(
+        "imap:me@example.com:link",
+        "<link@x>",
+        None,
+        Some("<a@x> <b@x>"),
+    );
     provider.ensure_tokens_backfilled().unwrap();
     assert!(store.tokens_backfilled().unwrap(), "backfill marked done");
     assert!(store.messages_missing_tokens(100).unwrap().is_empty());
 
     // Now the token loader and body oracle agree, and the probe merges.
     let outcome = assert_loaders_agree(&provider, linker).await;
-    assert_eq!(outcome.aliases.len(), 1, "the late linker merged both threads");
+    assert_eq!(
+        outcome.aliases.len(),
+        1,
+        "the late linker merged both threads"
+    );
 }
 
 #[tokio::test]
@@ -1687,7 +1794,11 @@ async fn upgrade_backfill_is_idempotent_and_crash_resumable() {
         .unwrap();
     provider
         .cache
-        .put("imap:me@example.com:m", message("<m@x>", "M", "").as_bytes(), 1)
+        .put(
+            "imap:me@example.com:m",
+            message("<m@x>", "M", "").as_bytes(),
+            1,
+        )
         .unwrap();
     store
         .database()
@@ -1747,8 +1858,11 @@ async fn a_message_with_no_cached_body_backfills_only_its_stable_id() {
             Ok(rows)
         })
         .unwrap();
-    assert_eq!(tokens, vec!["imap:me@example.com:nb".to_string()],
-        "no body => only the stable-id anchor token");
+    assert_eq!(
+        tokens,
+        vec!["imap:me@example.com:nb".to_string()],
+        "no body => only the stable-id anchor token"
+    );
 }
 
 // ---- SLICE5A_FIXES item 6: gated live test against the Dovecot harness --
@@ -1775,11 +1889,16 @@ async fn a_hot_inbox_message_moved_to_trash_becomes_trash_and_is_rejournaled() {
     let db = store.database();
 
     // First sync: m1 is in INBOX, hot, ingested.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let threads = provider.list_inbox(None).await.unwrap();
     assert_eq!(threads.thread_ids.len(), 1);
     let thread_id = threads.thread_ids[0].clone();
-    assert!(store.is_thread_hot(&thread_id).unwrap(), "an INBOX thread is hot");
+    assert!(
+        store.is_thread_hot(&thread_id).unwrap(),
+        "an INBOX thread is hot"
+    );
     assert_eq!(thread_labels(&provider, &thread_id).await, vec!["INBOX"]);
 
     // Another client moves m1 from INBOX to Trash (same Message-ID -> same
@@ -1789,7 +1908,9 @@ async fn a_hot_inbox_message_moved_to_trash_becomes_trash_and_is_rejournaled() {
         mb.inbox().messages.retain(|m| m.uid != 1);
         mb.add_to("Trash", 50, &["\\Seen"], &message("<m1@x>", "Hello", ""));
     }
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
 
     // The INBOX location is gone; the Trash location is present.
     assert!(store.locations_in_mailbox("INBOX").unwrap().is_empty());
@@ -1797,8 +1918,14 @@ async fn a_hot_inbox_message_moved_to_trash_becomes_trash_and_is_rejournaled() {
     // The thread was already hot, so it was journaled and re-ingested; its
     // labels are now TRASH WITHOUT INBOX — never silently "archived".
     let labels = thread_labels(&provider, &thread_id).await;
-    assert!(labels.contains(&"TRASH".to_string()), "has TRASH: {labels:?}");
-    assert!(!labels.contains(&"INBOX".to_string()), "no INBOX: {labels:?}");
+    assert!(
+        labels.contains(&"TRASH".to_string()),
+        "has TRASH: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"INBOX".to_string()),
+        "no INBOX: {labels:?}"
+    );
 }
 
 #[tokio::test]
@@ -1900,20 +2027,28 @@ async fn a_never_hot_trash_only_thread_is_recorded_but_not_journaled() {
     let (provider, store) = provider_with(mailbox);
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
 
     // Recorded: a Trash location + a thread + tokens.
     let trash = store.locations_in_mailbox("Trash").unwrap();
     assert_eq!(trash.len(), 1);
     let message_id = trash[0].message_id.clone();
     let thread_id = store.thread_of_message(&message_id).unwrap().unwrap();
-    assert!(!store.is_thread_hot(&thread_id).unwrap(), "a Trash-only thread is not hot");
+    assert!(
+        !store.is_thread_hot(&thread_id).unwrap(),
+        "a Trash-only thread is not hot"
+    );
 
     // NOT journaled: the engine saw no mail.
     assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 0);
 
     // No body was fetched during index-only sync.
-    assert!(provider.cache.get(&message_id).unwrap().is_none(), "no body cached at ingest");
+    assert!(
+        provider.cache.get(&message_id).unwrap().is_none(),
+        "no body cached at ingest"
+    );
 
     // fetch_thread still works: it fetches the body from Trash on demand.
     let messages = provider.fetch_thread(&thread_id).await.unwrap();
@@ -1930,15 +2065,27 @@ async fn a_never_hot_junk_only_thread_is_recorded_with_the_spam_label() {
     let (provider, store) = provider_with(mailbox);
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let junk = store.locations_in_mailbox("Junk").unwrap();
     assert_eq!(junk.len(), 1);
-    let thread_id = store.thread_of_message(&junk[0].message_id).unwrap().unwrap();
+    let thread_id = store
+        .thread_of_message(&junk[0].message_id)
+        .unwrap()
+        .unwrap();
     assert!(!store.is_thread_hot(&thread_id).unwrap());
-    assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 0, "not journaled");
+    assert_eq!(
+        db.list_all_mail(Some("me@example.com")).unwrap().len(),
+        0,
+        "not journaled"
+    );
 
     let labels = thread_labels(&provider, &thread_id).await;
-    assert!(labels.contains(&"SPAM".to_string()), "SPAM label: {labels:?}");
+    assert!(
+        labels.contains(&"SPAM".to_string()),
+        "SPAM label: {labels:?}"
+    );
 }
 
 /// (d) Cadence gating: an unchanged, not-due folder issues no SEARCH/FETCH
@@ -1960,13 +2107,17 @@ async fn cadence_gating_skips_an_unchanged_folder_until_the_sweep_is_due() {
     let db = store.database();
 
     // First sync sweeps Trash once (counts: 1 search).
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let after_first = mailbox.lock().unwrap().counts("Trash").0;
     assert_eq!(after_first, 1, "Trash swept once on the baseline");
 
     // Second poll, counters unchanged and not sweep-due: NO new Trash
     // SEARCH is issued.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(
         mailbox.lock().unwrap().counts("Trash").0,
         after_first,
@@ -1978,8 +2129,13 @@ async fn cadence_gating_skips_an_unchanged_folder_until_the_sweep_is_due() {
     mailbox.lock().unwrap().folder("Trash", 50).messages[0].flags =
         vec!["\\Seen".into(), "\\Flagged".into()];
     // Advance the clock past the sweep interval.
-    CLOCK.store(1_700_000_000 + super::super::policy::FOLDER_SWEEP_INTERVAL_SECS + 1, Ordering::SeqCst);
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    CLOCK.store(
+        1_700_000_000 + super::super::policy::FOLDER_SWEEP_INTERVAL_SECS + 1,
+        Ordering::SeqCst,
+    );
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert!(
         mailbox.lock().unwrap().counts("Trash").0 > after_first,
         "the due sweep issues a SEARCH again"
@@ -1987,7 +2143,10 @@ async fn cadence_gating_skips_an_unchanged_folder_until_the_sweep_is_due() {
     // The flag change is now reflected locally.
     let trash = store.locations_in_mailbox("Trash").unwrap();
     let flags: Vec<String> = serde_json::from_str(&trash[0].flags_json).unwrap();
-    assert!(flags.iter().any(|f| f == "\\Flagged"), "the sweep caught the flag change");
+    assert!(
+        flags.iter().any(|f| f == "\\Flagged"),
+        "the sweep caught the flag change"
+    );
 }
 
 /// (e) A UIDVALIDITY reset in Trash drops ONLY Trash's locations; INBOX is
@@ -2001,7 +2160,9 @@ async fn a_uidvalidity_reset_in_trash_only_drops_trash_locations() {
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1);
     assert_eq!(store.locations_in_mailbox("Trash").unwrap().len(), 1);
 
@@ -2014,13 +2175,22 @@ async fn a_uidvalidity_reset_in_trash_only_drops_trash_locations() {
         trash.messages.clear();
         trash.add_sized(&["\\Seen"], &message("<t2@x>", "FreshTrash", ""), None);
     }
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
 
     // INBOX is untouched; Trash was dropped and resynced to the new UID.
-    assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1, "INBOX untouched");
+    assert_eq!(
+        store.locations_in_mailbox("INBOX").unwrap().len(),
+        1,
+        "INBOX untouched"
+    );
     let trash = store.locations_in_mailbox("Trash").unwrap();
     assert_eq!(trash.len(), 1);
-    assert_eq!(trash[0].uidvalidity, 999, "Trash resynced under the new UIDVALIDITY");
+    assert_eq!(
+        trash[0].uidvalidity, 999,
+        "Trash resynced under the new UIDVALIDITY"
+    );
 }
 
 /// (f) INBOX, Trash, Junk AND Sent are synced; Drafts, All Mail, Starred
@@ -2036,23 +2206,31 @@ async fn all_mail_is_synced_with_system_folders_while_drafts_stay_separate() {
     mb.add_to("Junk", 60, &["\\Seen"], &message("<j1@x>", "Spam", ""));
     mb.add_to("Sent", 90, &["\\Seen"], &message("<s1@x>", "Sent", "")); // run 3: synced
     mb.add_to("Archive", 95, &["\\Seen"], &message("<ar1@x>", "Arch", "")); // 5b-2: synced
-    // Folders that MUST never be synced:
+                                                                            // Folders that MUST never be synced:
     mb.add_to("Drafts", 70, &["\\Seen"], &message("<d1@x>", "Draft", ""));
     mb.add_to("All Mail", 80, &["\\Seen"], &message("<a1@x>", "All", ""));
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
 
     // Synced mailboxes have locations (Sent and Archive included this run).
     for synced in ["INBOX", "Trash", "Junk", "Sent", "Archive", "All Mail"] {
-        assert!(!store.locations_in_mailbox(synced).unwrap().is_empty(), "{synced} synced");
+        assert!(
+            !store.locations_in_mailbox(synced).unwrap().is_empty(),
+            "{synced} synced"
+        );
     }
     // Never-synced mailboxes have NO locations and were never SEARCHed.
     let counts = mailbox.lock().unwrap();
     for never in ["Drafts"] {
-        assert!(store.locations_in_mailbox(never).unwrap().is_empty(), "{never} not synced");
+        assert!(
+            store.locations_in_mailbox(never).unwrap().is_empty(),
+            "{never} not synced"
+        );
         assert_eq!(counts.counts(never).0, 0, "{never} never SEARCHed");
     }
 }
@@ -2115,20 +2293,27 @@ async fn idle_polls_with_folders_present_do_not_bump_the_generation() {
     let (provider, store) = provider_with(mailbox);
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let generation_after_first = store.generation().unwrap();
-    let loads_after_first =
-        provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed);
+    let loads_after_first = provider
+        .thread_state_loads
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     // An idle re-sync: nothing changed anywhere.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(
         store.generation().unwrap(),
         generation_after_first,
         "an idle multi-mailbox poll does not bump the generation"
     );
     assert_eq!(
-        provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
+        provider
+            .thread_state_loads
+            .load(std::sync::atomic::Ordering::Relaxed),
         loads_after_first,
         "an idle poll does not rebuild threader state"
     );
@@ -2141,14 +2326,21 @@ async fn idle_polls_with_folders_present_do_not_bump_the_generation() {
 /// Seed `n` Sent messages (UIDs 1..=n) with distinct Message-IDs.
 fn seed_sent(mb: &mut FakeMailbox, uidvalidity: u32, n: usize) {
     for i in 1..=n {
-        mb.add_to("Sent", uidvalidity, &["\\Seen"], &message(&format!("<s{i}@x>"), "Sent", ""));
+        mb.add_to(
+            "Sent",
+            uidvalidity,
+            &["\\Seen"],
+            &message(&format!("<s{i}@x>"), "Sent", ""),
+        );
     }
 }
 
 /// Run one baseline + `polls` extra polls through the engine.
 async fn sync_n(provider: &ImapProvider, db: &crate::db::Database, polls: usize) {
     for _ in 0..=polls {
-        crate::sync::sync_with(db, "me@example.com", provider).await.unwrap();
+        crate::sync::sync_with(db, "me@example.com", provider)
+            .await
+            .unwrap();
     }
 }
 
@@ -2176,14 +2368,23 @@ async fn the_same_message_in_inbox_and_sent_is_one_message_with_both_labels() {
     let sent = store.locations_in_mailbox("Sent").unwrap();
     assert_eq!(inbox.len(), 1);
     assert_eq!(sent.len(), 1);
-    assert_eq!(inbox[0].message_id, sent[0].message_id, "one id, two locations");
+    assert_eq!(
+        inbox[0].message_id, sent[0].message_id,
+        "one id, two locations"
+    );
 
     // fetch_thread unions the labels: INBOX and SENT, no duplicate message.
-    let thread_id = store.thread_of_message(&inbox[0].message_id).unwrap().unwrap();
+    let thread_id = store
+        .thread_of_message(&inbox[0].message_id)
+        .unwrap()
+        .unwrap();
     let messages = provider.fetch_thread(&thread_id).await.unwrap();
     assert_eq!(messages.len(), 1, "one message, not two");
     let labels = &messages[0].label_ids;
-    assert!(labels.contains(&"INBOX".to_string()), "has INBOX: {labels:?}");
+    assert!(
+        labels.contains(&"INBOX".to_string()),
+        "has INBOX: {labels:?}"
+    );
     assert!(labels.contains(&"SENT".to_string()), "has SENT: {labels:?}");
 
     // Exactly one body cached for the shared id (bodies dedup by stable id).
@@ -2214,7 +2415,9 @@ async fn sent_is_acquired_in_newest_first_chunks_over_several_polls() {
     // `sync_with` until the backfill marker clears.
     let mut last_len = 0usize;
     for _ in 0..10 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
         let uids = sent_uids(&store);
         // No duplicates (sorted, unique).
         let mut dedup = uids.clone();
@@ -2225,7 +2428,10 @@ async fn sent_is_acquired_in_newest_first_chunks_over_several_polls() {
         if !uids.is_empty() {
             let k = uids.len() as i64;
             let expected: Vec<i64> = ((6 - k)..=5).collect();
-            assert_eq!(uids, expected, "acquired set is the newest contiguous suffix");
+            assert_eq!(
+                uids, expected,
+                "acquired set is the newest contiguous suffix"
+            );
         }
         // Monotonic growth.
         assert!(uids.len() >= last_len, "acquisition never loses ground");
@@ -2234,14 +2440,27 @@ async fn sent_is_acquired_in_newest_first_chunks_over_several_polls() {
             break;
         }
     }
-    assert_eq!(sent_uids(&store), vec![1, 2, 3, 4, 5], "all five eventually acquired");
-    assert!(sent_marker(&store).is_none(), "backfill complete, marker cleared");
+    assert_eq!(
+        sent_uids(&store),
+        vec![1, 2, 3, 4, 5],
+        "all five eventually acquired"
+    );
+    assert!(
+        sent_marker(&store).is_none(),
+        "backfill complete, marker cleared"
+    );
 
     // Every Sent message is now fetchable with the SENT label.
     for location in store.locations_in_mailbox("Sent").unwrap() {
-        let thread = store.thread_of_message(&location.message_id).unwrap().unwrap();
+        let thread = store
+            .thread_of_message(&location.message_id)
+            .unwrap()
+            .unwrap();
         let labels = thread_labels(&provider, &thread).await;
-        assert!(labels.contains(&"SENT".to_string()), "SENT label: {labels:?}");
+        assert!(
+            labels.contains(&"SENT".to_string()),
+            "SENT label: {labels:?}"
+        );
     }
 }
 
@@ -2279,9 +2498,18 @@ async fn a_failure_mid_sent_chunk_loses_nothing_and_acquires_nothing_twice() {
     let db = store.database();
     // The folder failure is swallowed by refresh_all_with (not INBOX), so
     // the poll still succeeds overall.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
-    assert!(sent_uids(&store).is_empty(), "a failed Sent chunk commits no locations");
-    assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1, "INBOX still committed");
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
+    assert!(
+        sent_uids(&store).is_empty(),
+        "a failed Sent chunk commits no locations"
+    );
+    assert_eq!(
+        store.locations_in_mailbox("INBOX").unwrap().len(),
+        1,
+        "INBOX still committed"
+    );
 
     // Heal the server and poll again: all 3 Sent messages acquired, each
     // exactly once (no duplicate UID/message rows).
@@ -2289,9 +2517,18 @@ async fn a_failure_mid_sent_chunk_loses_nothing_and_acquires_nothing_twice() {
         let mut guard = mailbox.lock().unwrap();
         guard.folder("Sent", 90).fail_after_body_fetches = None;
     }
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
-    assert_eq!(sent_uids(&store), vec![1, 2, 3], "resumed cleanly, nothing lost or doubled");
-    assert!(sent_marker(&store).is_none(), "backfill complete after resume");
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
+    assert_eq!(
+        sent_uids(&store),
+        vec![1, 2, 3],
+        "resumed cleanly, nothing lost or doubled"
+    );
+    assert!(
+        sent_marker(&store).is_none(),
+        "backfill complete after resume"
+    );
 }
 
 /// (d) Cadence gating does NOT skip Sent while the backfill is pending even
@@ -2311,8 +2548,13 @@ async fn cadence_does_not_skip_sent_while_backfill_pending_then_resumes() {
 
     // Baseline leaves the backfill pending (not all 4 acquired yet with a
     // budget of 1 across baseline's two internal rounds).
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
-    assert!(sent_marker(&store).is_some(), "backfill still pending after baseline");
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
+    assert!(
+        sent_marker(&store).is_some(),
+        "backfill still pending after baseline"
+    );
 
     // While pending, each sync_with keeps SEARCHing Sent (not skipped),
     // because EXISTS/UIDNEXT unchanged does not mean the window is fully
@@ -2322,7 +2564,9 @@ async fn cadence_does_not_skip_sent_while_backfill_pending_then_resumes() {
         if sent_marker(&store).is_none() {
             break;
         }
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
         let searches = mailbox.lock().unwrap().counts("Sent").0;
         assert!(
             searches > prev_searches,
@@ -2335,7 +2579,9 @@ async fn cadence_does_not_skip_sent_while_backfill_pending_then_resumes() {
 
     // Now complete, counters unchanged, not sweep-due => Sent is SKIPPED.
     let before_skip = mailbox.lock().unwrap().counts("Sent").0;
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(
         mailbox.lock().unwrap().counts("Sent").0,
         before_skip,
@@ -2375,7 +2621,11 @@ async fn sent_does_not_evict_aged_out_messages_but_trash_does() {
     sync_n(&provider, db.as_ref(), 2).await;
 
     // Sent keeps UID 1 (non-evicting acquisition bound): all three held.
-    assert_eq!(sent_uids(&store), vec![1, 2, 3], "Sent never evicts an aged-out message");
+    assert_eq!(
+        sent_uids(&store),
+        vec![1, 2, 3],
+        "Sent never evicts an aged-out message"
+    );
     // Trash evicted UID 1 (sliding window): only the newest two remain.
     let trash_uids: Vec<i64> = {
         let mut u: Vec<i64> = store
@@ -2395,7 +2645,10 @@ async fn sent_does_not_evict_aged_out_messages_but_trash_does() {
         g.folder("Sent", 90).messages.retain(|m| m.uid != 2);
     }
     sync_n(&provider, db.as_ref(), 2).await;
-    assert!(!sent_uids(&store).contains(&2), "an expunged Sent message is deleted");
+    assert!(
+        !sent_uids(&store).contains(&2),
+        "an expunged Sent message is deleted"
+    );
 }
 
 /// (f) A Sent copy never makes the message UNREAD even without \Seen.
@@ -2411,10 +2664,16 @@ async fn a_sent_copy_is_never_unread_even_without_seen() {
     sync_n(&provider, db.as_ref(), 1).await;
     let sent = store.locations_in_mailbox("Sent").unwrap();
     assert_eq!(sent.len(), 1);
-    let thread = store.thread_of_message(&sent[0].message_id).unwrap().unwrap();
+    let thread = store
+        .thread_of_message(&sent[0].message_id)
+        .unwrap()
+        .unwrap();
     let labels = thread_labels(&provider, &thread).await;
     assert!(labels.contains(&"SENT".to_string()), "SENT: {labels:?}");
-    assert!(!labels.contains(&"UNREAD".to_string()), "a Sent copy is never UNREAD: {labels:?}");
+    assert!(
+        !labels.contains(&"UNREAD".to_string()),
+        "a Sent copy is never UNREAD: {labels:?}"
+    );
 }
 
 /// (g) A UIDVALIDITY reset in Sent only: Sent's locations are dropped and
@@ -2434,7 +2693,10 @@ async fn a_uidvalidity_reset_in_sent_only_drops_sent_locations() {
     assert_eq!(sent_uids(&store), vec![1, 2]);
     let inbox_thread = {
         let inbox = store.locations_in_mailbox("INBOX").unwrap();
-        store.thread_of_message(&inbox[0].message_id).unwrap().unwrap()
+        store
+            .thread_of_message(&inbox[0].message_id)
+            .unwrap()
+            .unwrap()
     };
 
     // Reset Sent's UIDVALIDITY and reseed with a fresh message.
@@ -2449,17 +2711,27 @@ async fn a_uidvalidity_reset_in_sent_only_drops_sent_locations() {
     sync_n(&provider, db.as_ref(), 2).await;
 
     // INBOX untouched; its thread mapping preserved.
-    assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1, "INBOX untouched");
+    assert_eq!(
+        store.locations_in_mailbox("INBOX").unwrap().len(),
+        1,
+        "INBOX untouched"
+    );
     let inbox_after = store.locations_in_mailbox("INBOX").unwrap();
     assert_eq!(
-        store.thread_of_message(&inbox_after[0].message_id).unwrap().unwrap(),
+        store
+            .thread_of_message(&inbox_after[0].message_id)
+            .unwrap()
+            .unwrap(),
         inbox_thread,
         "INBOX message->thread mapping kept"
     );
     // Sent dropped and resynced under the new UIDVALIDITY.
     let sent = store.locations_in_mailbox("Sent").unwrap();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].uidvalidity, 999, "Sent resynced under the new UIDVALIDITY");
+    assert_eq!(
+        sent[0].uidvalidity, 999,
+        "Sent resynced under the new UIDVALIDITY"
+    );
 }
 
 /// (h) Catalog refresh adds a mailbox created AFTER setup without
@@ -2479,9 +2751,16 @@ async fn catalog_refresh_notices_a_new_mailbox_without_clobbering_counters() {
     provider.now = || CLOCK_H.load(Ordering::SeqCst);
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     // Only INBOX in the catalog so far.
-    let names: Vec<String> = store.mailboxes().unwrap().into_iter().map(|m| m.name).collect();
+    let names: Vec<String> = store
+        .mailboxes()
+        .unwrap()
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
     assert_eq!(names, vec!["INBOX".to_string()]);
 
     // Record INBOX's learned counters, to prove the refresh never clobbers
@@ -2492,7 +2771,10 @@ async fn catalog_refresh_notices_a_new_mailbox_without_clobbering_counters() {
         .into_iter()
         .find(|m| m.name == "INBOX")
         .unwrap();
-    assert!(inbox_before.uidvalidity != 0, "INBOX learned a real uidvalidity");
+    assert!(
+        inbox_before.uidvalidity != 0,
+        "INBOX learned a real uidvalidity"
+    );
 
     // A Junk folder appears on the server after setup. Advance the clock
     // past the catalog sweep interval so the refresh is due again.
@@ -2506,11 +2788,21 @@ async fn catalog_refresh_notices_a_new_mailbox_without_clobbering_counters() {
     );
 
     // Re-run with a due catalog refresh.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
 
     // Junk is now in the catalog (noticed by the refresh) and gets synced.
-    let names: Vec<String> = store.mailboxes().unwrap().into_iter().map(|m| m.name).collect();
-    assert!(names.contains(&"Junk".to_string()), "new Junk noticed: {names:?}");
+    let names: Vec<String> = store
+        .mailboxes()
+        .unwrap()
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
+    assert!(
+        names.contains(&"Junk".to_string()),
+        "new Junk noticed: {names:?}"
+    );
 
     // INBOX's counters were not clobbered by the catalog-only upsert.
     let inbox_after = store
@@ -2557,9 +2849,19 @@ async fn catalog_refresh_failure_does_not_abort_and_noselect_is_skipped() {
         1_700_000_000 + super::super::policy::FOLDER_SWEEP_INTERVAL_SECS + 1,
         Ordering::SeqCst,
     );
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
-    let names: Vec<String> = store.mailboxes().unwrap().into_iter().map(|m| m.name).collect();
-    assert!(!names.contains(&"Folders".to_string()), "\\Noselect never added: {names:?}");
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
+    let names: Vec<String> = store
+        .mailboxes()
+        .unwrap()
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
+    assert!(
+        !names.contains(&"Folders".to_string()),
+        "\\Noselect never added: {names:?}"
+    );
 }
 
 /// (i) A Sent-first reply whose parent arrives later in INBOX merges into
@@ -2574,7 +2876,11 @@ async fn a_sent_first_reply_merges_with_a_later_inbox_parent_into_one_thread() {
         "Sent",
         90,
         &["\\Seen"],
-        &message("<reply@x>", "Re: Hi", "In-Reply-To: <parent@x>\r\nReferences: <parent@x>\r\n"),
+        &message(
+            "<reply@x>",
+            "Re: Hi",
+            "In-Reply-To: <parent@x>\r\nReferences: <parent@x>\r\n",
+        ),
     );
     let mailbox = Arc::new(Mutex::new(mb));
     let (mut provider, store) = provider_with(mailbox.clone());
@@ -2584,8 +2890,14 @@ async fn a_sent_first_reply_merges_with_a_later_inbox_parent_into_one_thread() {
     sync_n(&provider, db.as_ref(), 1).await;
     // The reply made its thread hot (Sent location) and is one thread.
     let sent = store.locations_in_mailbox("Sent").unwrap();
-    let reply_thread = store.thread_of_message(&sent[0].message_id).unwrap().unwrap();
-    assert!(store.is_thread_hot(&reply_thread).unwrap(), "a Sent reply is hot");
+    let reply_thread = store
+        .thread_of_message(&sent[0].message_id)
+        .unwrap()
+        .unwrap();
+    assert!(
+        store.is_thread_hot(&reply_thread).unwrap(),
+        "a Sent reply is hot"
+    );
 
     // The parent now arrives in INBOX, linking to the Sent reply.
     {
@@ -2600,13 +2912,19 @@ async fn a_sent_first_reply_merges_with_a_later_inbox_parent_into_one_thread() {
         .iter()
         .map(|(_, t, _)| store.resolve_thread_alias(t).unwrap())
         .collect();
-    assert_eq!(survivors.len(), 1, "the Sent reply and INBOX parent are one thread");
+    assert_eq!(
+        survivors.len(),
+        1,
+        "the Sent reply and INBOX parent are one thread"
+    );
     let survivor = survivors.into_iter().next().unwrap();
     assert_eq!(store.messages_in_thread(&survivor).unwrap().len(), 2);
     // The thread carries both INBOX and SENT labels across its copies.
     let labels = thread_labels(&provider, &survivor).await;
-    assert!(labels.contains(&"INBOX".to_string()) && labels.contains(&"SENT".to_string()),
-        "merged thread spans INBOX and SENT: {labels:?}");
+    assert!(
+        labels.contains(&"INBOX".to_string()) && labels.contains(&"SENT".to_string()),
+        "merged thread spans INBOX and SENT: {labels:?}"
+    );
 }
 
 /// (j) A Sent-only thread is hot, journaled, ingestible with a body,
@@ -2629,12 +2947,21 @@ async fn a_sent_only_thread_is_hot_journaled_and_not_treated_as_inbox_drift() {
     let baseline = provider.baseline_cursor().await.unwrap();
     let sent = store.locations_in_mailbox("Sent").unwrap();
     assert_eq!(sent.len(), 1, "the Sent message was acquired");
-    let thread = store.thread_of_message(&sent[0].message_id).unwrap().unwrap();
-    assert!(store.is_thread_hot(&thread).unwrap(), "a Sent-only thread is hot");
+    let thread = store
+        .thread_of_message(&sent[0].message_id)
+        .unwrap()
+        .unwrap();
+    assert!(
+        store.is_thread_hot(&thread).unwrap(),
+        "a Sent-only thread is hot"
+    );
 
     // Journaled: a poll from generation 0 returns the Sent thread (this is
     // how the engine ingests a hot thread).
-    let from_zero = provider.poll(&SyncCursor::from_generation(0)).await.unwrap();
+    let from_zero = provider
+        .poll(&SyncCursor::from_generation(0))
+        .await
+        .unwrap();
     assert!(
         from_zero.changed_threads.iter().any(|t| {
             store.resolve_thread_alias(t).unwrap() == store.resolve_thread_alias(&thread).unwrap()
@@ -2646,9 +2973,18 @@ async fn a_sent_only_thread_is_hot_journaled_and_not_treated_as_inbox_drift() {
     // SENT and no INBOX; a body is fetchable; and it is NOT in list_inbox.
     let labels = thread_labels(&provider, &thread).await;
     assert!(labels.contains(&"SENT".to_string()) && !labels.contains(&"INBOX".to_string()));
-    assert_eq!(provider.fetch_thread(&thread).await.unwrap().len(), 1, "has a body");
+    assert_eq!(
+        provider.fetch_thread(&thread).await.unwrap().len(),
+        1,
+        "has a body"
+    );
     assert!(
-        !provider.list_inbox(None).await.unwrap().thread_ids.contains(&thread),
+        !provider
+            .list_inbox(None)
+            .await
+            .unwrap()
+            .thread_ids
+            .contains(&thread),
         "a Sent-only thread is not in list_inbox"
     );
 
@@ -2665,10 +3001,21 @@ async fn a_sent_only_thread_is_hot_journaled_and_not_treated_as_inbox_drift() {
         }),
         "the pass after the baseline delivers the Sent-only thread"
     );
-    assert_eq!(store.generation().unwrap(), generation, "delivery does not bump");
+    assert_eq!(
+        store.generation().unwrap(),
+        generation,
+        "delivery does not bump"
+    );
     let idle = provider.poll(&delivered.cursor).await.unwrap();
-    assert_eq!(store.generation().unwrap(), generation, "idle reconcile does not bump");
-    assert!(idle.changed_threads.is_empty(), "idle reconcile re-journals nothing");
+    assert_eq!(
+        store.generation().unwrap(),
+        generation,
+        "idle reconcile does not bump"
+    );
+    assert!(
+        idle.changed_threads.is_empty(),
+        "idle reconcile re-journals nothing"
+    );
 }
 
 /// Full recovery ingests both INBOX's snapshot and the replay of hot
@@ -2748,7 +3095,10 @@ async fn baseline_replay_survives_journal_pruning_and_excludes_cold_threads() {
     db.test_with_connection(|connection| {
         connection.execute(
             "UPDATE imap_sync_state SET generation = generation + ?1 WHERE account_id = ?2",
-            rusqlite::params![(policy::JOURNAL_RETENTION_GENERATIONS + 1) as i64, "me@example.com"],
+            rusqlite::params![
+                (policy::JOURNAL_RETENTION_GENERATIONS + 1) as i64,
+                "me@example.com"
+            ],
         )?;
         Ok(())
     })
@@ -2790,13 +3140,18 @@ async fn baseline_replays_deletions_of_previously_hot_sent_threads() {
     db.clear_cursor("me@example.com").unwrap();
     let mut deleted = false;
     for _ in 0..8 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
         if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
             deleted = true;
             break;
         }
     }
-    assert!(deleted, "the long-empty hot thread is deleted once the grace expires");
+    assert!(
+        deleted,
+        "the long-empty hot thread is deleted once the grace expires"
+    );
 }
 
 #[tokio::test]
@@ -2876,12 +3231,22 @@ async fn idle_polls_with_sent_complete_do_not_bump_the_generation() {
     sync_n(&provider, db.as_ref(), 1).await;
     assert!(sent_marker(&store).is_none(), "backfill complete");
     let generation = store.generation().unwrap();
-    let loads = provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed);
+    let loads = provider
+        .thread_state_loads
+        .load(std::sync::atomic::Ordering::Relaxed);
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
-    assert_eq!(store.generation().unwrap(), generation, "idle poll does not bump generation");
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(
-        provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
+        store.generation().unwrap(),
+        generation,
+        "idle poll does not bump generation"
+    );
+    assert_eq!(
+        provider
+            .thread_state_loads
+            .load(std::sync::atomic::Ordering::Relaxed),
         loads,
         "idle poll does not rebuild threader state"
     );
@@ -2938,7 +3303,9 @@ async fn a_hot_inbox_message_moved_to_archive_survives_without_an_inbox_label() 
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let threads = provider.list_inbox(None).await.unwrap();
     assert_eq!(threads.thread_ids.len(), 1);
     let thread_id = threads.thread_ids[0].clone();
@@ -2951,7 +3318,9 @@ async fn a_hot_inbox_message_moved_to_archive_survives_without_an_inbox_label() 
         mb.inbox().messages.retain(|m| m.uid != 1);
         mb.add_to("Archive", 95, &["\\Seen"], &message("<m1@x>", "Hello", ""));
     }
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
 
     // INBOX location gone, Archive location present, ONE engine thread.
     assert!(store.locations_in_mailbox("INBOX").unwrap().is_empty());
@@ -2964,7 +3333,10 @@ async fn a_hot_inbox_message_moved_to_archive_survives_without_an_inbox_label() 
     // The thread carries NO INBOX label — archived has no system location
     // label — and is not NotFound.
     let labels = thread_labels(&provider, &thread_id).await;
-    assert!(!labels.contains(&"INBOX".to_string()), "no INBOX after archiving: {labels:?}");
+    assert!(
+        !labels.contains(&"INBOX".to_string()),
+        "no INBOX after archiving: {labels:?}"
+    );
 }
 
 /// (b) A hot INBOX message moved into a mailbox NOT swept this poll (forced
@@ -2984,7 +3356,9 @@ async fn a_move_into_an_unswept_mailbox_survives_the_grace_then_recovers() {
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let thread_id = provider.list_inbox(None).await.unwrap().thread_ids[0].clone();
     assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
     // Attach a task to the local thread; it must survive the grace.
@@ -2999,25 +3373,44 @@ async fn a_move_into_an_unswept_mailbox_survives_the_grace_then_recovers() {
     }
     // Poll: INBOX location gone, Archive EXAMINE fails so the destination
     // is not seen -> the hot thread has zero locations. The grace keeps it.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert!(store.locations_in_mailbox("INBOX").unwrap().is_empty());
     assert_eq!(
         db.list_all_mail(Some("me@example.com")).unwrap().len(),
         1,
         "the thread survives the grace while its destination is unswept"
     );
-    assert_eq!(task_count_for(&store, &thread_id), 1, "the linked task survived the grace");
+    assert_eq!(
+        task_count_for(&store, &thread_id),
+        1,
+        "the linked task survived the grace"
+    );
 
     // The destination recovers: Archive is examinable again.
     mailbox.lock().unwrap().folder("Archive", 95).examine_fails = false;
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
-    assert_eq!(store.locations_in_mailbox("Archive").unwrap().len(), 1, "Archive location found");
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.locations_in_mailbox("Archive").unwrap().len(),
+        1,
+        "Archive location found"
+    );
     // Still one thread, task intact, and now re-journaled with correct
     // labels (no INBOX; Archive contributes no system label).
     assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
-    assert_eq!(task_count_for(&store, &thread_id), 1, "task preserved after recovery");
+    assert_eq!(
+        task_count_for(&store, &thread_id),
+        1,
+        "task preserved after recovery"
+    );
     let labels = thread_labels(&provider, &thread_id).await;
-    assert!(!labels.contains(&"INBOX".to_string()), "no INBOX after the move: {labels:?}");
+    assert!(
+        !labels.contains(&"INBOX".to_string()),
+        "no INBOX after the move: {labels:?}"
+    );
 }
 
 /// (c) A true server-side expunge of the last copy: the local thread is
@@ -3032,7 +3425,9 @@ async fn a_true_expunge_keeps_the_thread_for_the_grace_then_deletes_it() {
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
 
     // The server expunges the only copy.
@@ -3040,7 +3435,9 @@ async fn a_true_expunge_keeps_the_thread_for_the_grace_then_deletes_it() {
 
     // First poll after the expunge: the thread has zero locations and is
     // hot, so the grace keeps it (NOT deleted yet).
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(
         db.list_all_mail(Some("me@example.com")).unwrap().len(),
         1,
@@ -3050,17 +3447,24 @@ async fn a_true_expunge_keeps_the_thread_for_the_grace_then_deletes_it() {
 
     // An idle poll during the grace (nothing changed) does not bump the
     // generation.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     // Keep polling until the thread is finally deleted once the grace is spent.
     let mut deleted = false;
     for _ in 0..8 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
         if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
             deleted = true;
             break;
         }
     }
-    assert!(deleted, "the thread is deleted after EMPTIED_THREAD_GRACE_WALKS completed coverage epochs");
+    assert!(
+        deleted,
+        "the thread is deleted after EMPTIED_THREAD_GRACE_WALKS completed coverage epochs"
+    );
     // The generation moved only when the grace expired (the deletion was
     // journaled), not on the idle grace polls: it is >= the grace-era value.
     assert!(store.generation().unwrap() >= gen_during_grace);
@@ -3081,7 +3485,9 @@ async fn a_failing_folder_blocks_the_coverage_epoch_and_the_grace() {
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
     let walks_before = store.complete_walks().unwrap();
 
@@ -3091,7 +3497,9 @@ async fn a_failing_folder_blocks_the_coverage_epoch_and_the_grace() {
     // Many polls, but Trash keeps failing so the coverage epoch cannot
     // advance and the grace never progresses: the thread is NOT deleted.
     for _ in 0..6 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
     assert_eq!(
         store.complete_walks().unwrap(),
@@ -3108,13 +3516,18 @@ async fn a_failing_folder_blocks_the_coverage_epoch_and_the_grace() {
     mailbox.lock().unwrap().folder("Trash", 50).examine_fails = false;
     let mut deleted = false;
     for _ in 0..8 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
         if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
             deleted = true;
             break;
         }
     }
-    assert!(deleted, "once walks complete again the grace expires and the thread is deleted");
+    assert!(
+        deleted,
+        "once walks complete again the grace expires and the thread is deleted"
+    );
 }
 
 /// (k) Archive is an EVICTING window (Folder class) at a tiny limit, while
@@ -3125,8 +3538,18 @@ async fn archive_evicts_at_a_tiny_window_while_sent_does_not() {
     mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
     // Archive and Sent each start with 2 messages.
     for i in 1..=2 {
-        mb.add_to("Archive", 95, &["\\Seen"], &message(&format!("<a{i}@x>"), "A", ""));
-        mb.add_to("Sent", 90, &["\\Seen"], &message(&format!("<s{i}@x>"), "S", ""));
+        mb.add_to(
+            "Archive",
+            95,
+            &["\\Seen"],
+            &message(&format!("<a{i}@x>"), "A", ""),
+        );
+        mb.add_to(
+            "Sent",
+            90,
+            &["\\Seen"],
+            &message(&format!("<s{i}@x>"), "S", ""),
+        );
     }
     let mailbox = Arc::new(Mutex::new(mb));
     let (mut provider, store) = provider_with(mailbox.clone());
@@ -3136,7 +3559,12 @@ async fn archive_evicts_at_a_tiny_window_while_sent_does_not() {
 
     sync_n(&provider, db.as_ref(), 2).await;
     let archive_uids = |s: &ImapStateStore| {
-        let mut u: Vec<i64> = s.locations_in_mailbox("Archive").unwrap().into_iter().map(|l| l.uid).collect();
+        let mut u: Vec<i64> = s
+            .locations_in_mailbox("Archive")
+            .unwrap()
+            .into_iter()
+            .map(|l| l.uid)
+            .collect();
         u.sort_unstable();
         u
     };
@@ -3152,8 +3580,16 @@ async fn archive_evicts_at_a_tiny_window_while_sent_does_not() {
     sync_n(&provider, db.as_ref(), 2).await;
 
     // Archive EVICTS the aged-out UID 1 (sliding window); Sent keeps it.
-    assert_eq!(archive_uids(&store), vec![2, 3], "Archive evicts the aged-out UID 1");
-    assert_eq!(sent_uids(&store), vec![1, 2, 3], "Sent never evicts (acquisition bound)");
+    assert_eq!(
+        archive_uids(&store),
+        vec![2, 3],
+        "Archive evicts the aged-out UID 1"
+    );
+    assert_eq!(
+        sent_uids(&store),
+        vec![1, 2, 3],
+        "Sent never evicts (acquisition bound)"
+    );
 }
 
 /// (l) Fairness integration: with 20 synthetic extra `synced_now` entries
@@ -3193,7 +3629,11 @@ async fn fairness_every_injected_folder_is_scheduled_within_ceil_n_over_budget_p
             visited_in_epoch.insert(v.clone(), epoch);
         }
     }
-    assert_eq!(ever.len(), n, "every injected folder visited within ceil(N/budget) polls");
+    assert_eq!(
+        ever.len(),
+        n,
+        "every injected folder visited within ceil(N/budget) polls"
+    );
 
     // And prove the knob is wired into refresh_all_with: an injected
     // candidate is accepted (does not panic / abort the walk) and the walk
@@ -3219,7 +3659,11 @@ async fn fairness_every_injected_folder_is_scheduled_within_ceil_n_over_budget_p
     crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
         .await
         .expect("injected synthetic candidates must not wedge the walk");
-    assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1, "INBOX still synced");
+    assert_eq!(
+        db.list_all_mail(Some("me@example.com")).unwrap().len(),
+        1,
+        "INBOX still synced"
+    );
 }
 
 // ------------------------------------------------------------------
@@ -3246,14 +3690,19 @@ async fn coverage_epoch_advances_across_polls_and_grace_eventually_deletes() {
     mb.add_to("Archive", 95, &["\\Seen"], &message("<a1@x>", "A", ""));
     let mailbox = Arc::new(Mutex::new(mb));
     let (mut provider, store) = provider_with(mailbox.clone());
-    provider.force_user_folders =
-        Some(["Junk".to_string(), "Archive".to_string()].into_iter().collect());
+    provider.force_user_folders = Some(
+        ["Junk".to_string(), "Archive".to_string()]
+            .into_iter()
+            .collect(),
+    );
     provider.folder_rounds_per_poll_override = Some(1); // one user folder per poll
     let db = store.database();
 
     // Baseline + one poll. With a budget of 1 and two user folders, no
     // single poll covers both — the epoch must still advance across polls.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
 
     // Expunge the only INBOX copy: the hot thread goes empty.
@@ -3266,7 +3715,9 @@ async fn coverage_epoch_advances_across_polls_and_grace_eventually_deletes() {
     // linger forever — this loop would never see the deletion.
     let mut deleted = false;
     for _ in 0..12 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
         if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
             deleted = true;
             break;
@@ -3295,12 +3746,17 @@ async fn a_failing_folder_blocks_epoch_advance_until_it_recovers() {
     mb.folder("Archive", 95).examine_fails = true;
     let mailbox = Arc::new(Mutex::new(mb));
     let (mut provider, store) = provider_with(mailbox.clone());
-    provider.force_user_folders =
-        Some(["Junk".to_string(), "Archive".to_string()].into_iter().collect());
+    provider.force_user_folders = Some(
+        ["Junk".to_string(), "Archive".to_string()]
+            .into_iter()
+            .collect(),
+    );
     provider.folder_rounds_per_poll_override = Some(1);
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let epoch_before = store.complete_walks().unwrap();
 
     // Expunge the INBOX copy: the thread goes empty.
@@ -3310,7 +3766,9 @@ async fn a_failing_folder_blocks_epoch_advance_until_it_recovers() {
     // (Archive is never visited in the current epoch) and nothing is
     // deleted early.
     for _ in 0..10 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
     assert_eq!(
         store.complete_walks().unwrap(),
@@ -3327,13 +3785,18 @@ async fn a_failing_folder_blocks_epoch_advance_until_it_recovers() {
     mailbox.lock().unwrap().folder("Archive", 95).examine_fails = false;
     let mut deleted = false;
     for _ in 0..12 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
         if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
             deleted = true;
             break;
         }
     }
-    assert!(deleted, "once the folder recovers the epoch advances and the thread is deleted");
+    assert!(
+        deleted,
+        "once the folder recovers the epoch advances and the thread is deleted"
+    );
 }
 
 /// (3) A poll that records visits but does NOT complete a coverage epoch
@@ -3347,26 +3810,37 @@ async fn partial_coverage_polls_do_not_bump_the_generation() {
     mb.add_to("Archive", 95, &["\\Seen"], &message("<a1@x>", "A", ""));
     let mailbox = Arc::new(Mutex::new(mb));
     let (mut provider, store) = provider_with(mailbox.clone());
-    provider.force_user_folders =
-        Some(["Junk".to_string(), "Archive".to_string()].into_iter().collect());
+    provider.force_user_folders = Some(
+        ["Junk".to_string(), "Archive".to_string()]
+            .into_iter()
+            .collect(),
+    );
     provider.folder_rounds_per_poll_override = Some(1);
     let db = store.database();
 
     // Baseline brings everything in and settles.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     // Let it reach a steady state where nothing content-changes.
     for _ in 0..4 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
     let generation = store.generation().unwrap();
-    let loads = provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed);
+    let loads = provider
+        .thread_state_loads
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     // Several more idle polls. Each records a visit for the one scheduled
     // user folder (partial coverage, budget 1) but nothing content-changed,
     // so the generation must not move and the threader is not rebuilt —
     // whether or not a given poll happens to complete a coverage epoch.
     for _ in 0..4 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
         assert_eq!(
             store.generation().unwrap(),
             generation,
@@ -3374,7 +3848,9 @@ async fn partial_coverage_polls_do_not_bump_the_generation() {
         );
     }
     assert_eq!(
-        provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
+        provider
+            .thread_state_loads
+            .load(std::sync::atomic::Ordering::Relaxed),
         loads,
         "idle polls do not rebuild threader state"
     );
@@ -3426,10 +3902,15 @@ async fn an_inbox_message_moved_into_a_user_folder_keeps_the_thread_with_a_folde
     let db = store.database();
 
     // Baseline: the message is in INBOX, hot.
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let mid = message_id_in(&store, "INBOX");
     let tid = thread_of(&store, &mid);
-    assert!(store.is_thread_hot(&tid).unwrap(), "an INBOX message is hot");
+    assert!(
+        store.is_thread_hot(&tid).unwrap(),
+        "an INBOX message is hot"
+    );
     assert_eq!(thread_label_set(&provider, &tid).await, vec!["INBOX"]);
 
     // Another client moves it: INBOX copy gone, a copy appears in the user
@@ -3437,7 +3918,12 @@ async fn an_inbox_message_moved_into_a_user_folder_keeps_the_thread_with_a_folde
     {
         let mut m = mailbox.lock().unwrap();
         m.inbox().messages.clear();
-        m.add_to("Clients/Acme", 70, &["\\Seen"], &message("<u1@x>", "Hello", ""));
+        m.add_to(
+            "Clients/Acme",
+            70,
+            &["\\Seen"],
+            &message("<u1@x>", "Hello", ""),
+        );
     }
     // The destination folder is brand new on the server, so re-arm the
     // catalog refresh to notice it (the fixed test clock otherwise keeps the
@@ -3446,7 +3932,9 @@ async fn an_inbox_message_moved_into_a_user_folder_keeps_the_thread_with_a_folde
     // Poll enough times to visit INBOX (sees the deletion) and the user
     // folder (sees the new copy) within the emptied-thread grace.
     for _ in 0..4 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
 
     // One local thread survives, labelled folder:Clients/Acme, no INBOX.
@@ -3454,8 +3942,14 @@ async fn an_inbox_message_moved_into_a_user_folder_keeps_the_thread_with_a_folde
     let mid = message_id_in(&store, "Clients/Acme");
     let tid = thread_of(&store, &mid);
     let labels = thread_label_set(&provider, &tid).await;
-    assert!(labels.contains(&"folder:Clients/Acme".to_string()), "{labels:?}");
-    assert!(!labels.contains(&"INBOX".to_string()), "no INBOX after the move: {labels:?}");
+    assert!(
+        labels.contains(&"folder:Clients/Acme".to_string()),
+        "{labels:?}"
+    );
+    assert!(
+        !labels.contains(&"INBOX".to_string()),
+        "no INBOX after the move: {labels:?}"
+    );
 }
 
 /// (b) Proton-style label copy: an INBOX message with an additional copy in
@@ -3467,7 +3961,10 @@ async fn a_label_folder_copy_adds_lf_to_every_message_of_the_thread() {
     // Root in INBOX; a reply in INBOX; the REPLY also copied into the label
     // folder (Proton labels one message of the thread).
     mb.add(&["\\Seen"], &message("<root@x>", "Topic", ""));
-    mb.add(&["\\Seen"], &message("<reply@x>", "Re: Topic", "In-Reply-To: <root@x>\r\n"));
+    mb.add(
+        &["\\Seen"],
+        &message("<reply@x>", "Re: Topic", "In-Reply-To: <root@x>\r\n"),
+    );
     mb.add_to(
         "Labels/Clients",
         70,
@@ -3479,7 +3976,9 @@ async fn a_label_folder_copy_adds_lf_to_every_message_of_the_thread() {
     let db = store.database();
 
     for _ in 0..4 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
 
     let mid = message_id_in(&store, "Labels/Clients");
@@ -3509,14 +4008,26 @@ async fn a_label_folder_copy_adds_lf_to_every_message_of_the_thread() {
 async fn a_message_in_two_label_folders_gets_both_lf_labels() {
     let mut mb = FakeMailbox::new(100);
     mb.add(&["\\Seen"], &message("<m@x>", "Two labels", ""));
-    mb.add_to("Labels/Clients", 70, &["\\Seen"], &message("<m@x>", "Two labels", ""));
-    mb.add_to("Labels/Zoë's: tag", 71, &["\\Seen"], &message("<m@x>", "Two labels", ""));
+    mb.add_to(
+        "Labels/Clients",
+        70,
+        &["\\Seen"],
+        &message("<m@x>", "Two labels", ""),
+    );
+    mb.add_to(
+        "Labels/Zoë's: tag",
+        71,
+        &["\\Seen"],
+        &message("<m@x>", "Two labels", ""),
+    );
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
 
     for _ in 0..5 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
     let mid = message_id_in(&store, "Labels/Clients");
     let tid = thread_of(&store, &mid);
@@ -3533,23 +4044,36 @@ async fn a_message_in_two_label_folders_gets_both_lf_labels() {
 async fn a_user_folder_only_thread_is_recorded_but_never_hot() {
     let mut mb = FakeMailbox::new(100);
     mb.add(&["\\Seen"], &message("<i@x>", "Inbox", "")); // keeps INBOX non-trivial
-    mb.add_to("Clients/Acme", 70, &["\\Seen"], &message("<folder-only@x>", "Folder only", ""));
+    mb.add_to(
+        "Clients/Acme",
+        70,
+        &["\\Seen"],
+        &message("<folder-only@x>", "Folder only", ""),
+    );
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
 
     for _ in 0..4 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
     // The folder-only message is index-synced (its location is recorded).
     assert!(
-        !store.locations_in_mailbox("Clients/Acme").unwrap().is_empty(),
+        !store
+            .locations_in_mailbox("Clients/Acme")
+            .unwrap()
+            .is_empty(),
         "the user folder is index-synced"
     );
     // Its thread exists locally but is NOT hot (never reported).
     let mid = message_id_in(&store, "Clients/Acme");
     let tid = thread_of(&store, &mid);
-    assert!(!store.is_thread_hot(&tid).unwrap(), "a user-folder-only thread is never hot");
+    assert!(
+        !store.is_thread_hot(&tid).unwrap(),
+        "a user-folder-only thread is never hot"
+    );
     // And it still resolves to its folder: label when fetched directly.
     let labels = thread_label_set(&provider, &tid).await;
     assert_eq!(labels, vec!["folder:Clients/Acme"]);
@@ -3570,11 +4094,15 @@ async fn list_labels_publishes_system_then_lf_then_folder_in_order() {
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
 
     let labels = provider.list_labels().await.unwrap();
-    let shape: Vec<(&str, &str)> =
-        labels.iter().map(|l| (l.id.as_str(), l.kind.as_str())).collect();
+    let shape: Vec<(&str, &str)> = labels
+        .iter()
+        .map(|l| (l.id.as_str(), l.kind.as_str()))
+        .collect();
     assert_eq!(
         shape,
         vec![
@@ -3592,7 +4120,10 @@ async fn list_labels_publishes_system_then_lf_then_folder_in_order() {
     // The dynamic labels carry a display name = id without its prefix.
     let empty = labels.iter().find(|l| l.id == "lf:Empty").unwrap();
     assert_eq!(empty.name, "Empty");
-    let acme = labels.iter().find(|l| l.id == "folder:Clients/Acme").unwrap();
+    let acme = labels
+        .iter()
+        .find(|l| l.id == "folder:Clients/Acme")
+        .unwrap();
     assert_eq!(acme.name, "Clients/Acme");
 }
 
@@ -3606,14 +4137,21 @@ async fn many_real_user_folders_are_all_covered_and_the_epoch_advances() {
     mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
     // Three real user folders, budget 1: no single poll covers them all.
     for (i, name) in ["Clients/A", "Clients/B", "Clients/C"].iter().enumerate() {
-        mb.add_to(name, 60 + i as u32, &["\\Seen"], &message(&format!("<f{i}@x>"), "F", ""));
+        mb.add_to(
+            name,
+            60 + i as u32,
+            &["\\Seen"],
+            &message(&format!("<f{i}@x>"), "F", ""),
+        );
     }
     let mailbox = Arc::new(Mutex::new(mb));
     let (mut provider, store) = provider_with(mailbox.clone());
     provider.folder_rounds_per_poll_override = Some(1);
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
 
     // Expunge the INBOX copy: the hot thread goes empty.
@@ -3624,17 +4162,25 @@ async fn many_real_user_folders_are_all_covered_and_the_epoch_advances() {
     // deleted only once the epoch machinery advances across polls.
     let mut deleted = false;
     for _ in 0..20 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
         if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
             deleted = true;
             break;
         }
     }
-    assert!(deleted, "coverage over real user folders advances the epoch and spends the grace");
+    assert!(
+        deleted,
+        "coverage over real user folders advances the epoch and spends the grace"
+    );
     assert!(store.complete_walks().unwrap() >= policy::EMPTIED_THREAD_GRACE_WALKS);
     // Every user folder was index-synced (all visited).
     for name in ["Clients/A", "Clients/B", "Clients/C"] {
-        assert!(!store.locations_in_mailbox(name).unwrap().is_empty(), "{name} visited");
+        assert!(
+            !store.locations_in_mailbox(name).unwrap().is_empty(),
+            "{name} visited"
+        );
     }
 }
 
@@ -3650,13 +4196,23 @@ async fn a_vanished_mailbox_is_retired_and_stops_holding_the_epoch_open() {
     // A user folder holding a HOT thread's only non-INBOX copy, plus an
     // INBOX copy so the thread is hot.
     mb.add(&["\\Seen"], &message("<shared@x>", "Shared", ""));
-    mb.add_to("Clients/Acme", 70, &["\\Seen"], &message("<shared@x>", "Shared", ""));
+    mb.add_to(
+        "Clients/Acme",
+        70,
+        &["\\Seen"],
+        &message("<shared@x>", "Shared", ""),
+    );
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
 
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
-    assert!(!store.locations_in_mailbox("Clients/Acme").unwrap().is_empty());
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
+    assert!(!store
+        .locations_in_mailbox("Clients/Acme")
+        .unwrap()
+        .is_empty());
     // The shared message is the one copied into Clients/Acme; resolve its
     // thread by that unique location (INBOX also holds the unrelated <i@x>).
     let shared_id = message_id_in(&store, "Clients/Acme");
@@ -3670,9 +4226,15 @@ async fn a_vanished_mailbox_is_retired_and_stops_holding_the_epoch_open() {
         m.list_fails = true;
     }
     store.force_catalog_refresh_due_for_test();
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert!(
-        store.mailboxes().unwrap().iter().any(|mb| mb.name == "Clients/Acme"),
+        store
+            .mailboxes()
+            .unwrap()
+            .iter()
+            .any(|mb| mb.name == "Clients/Acme"),
         "a failed LIST retires nothing"
     );
 
@@ -3684,17 +4246,30 @@ async fn a_vanished_mailbox_is_retired_and_stops_holding_the_epoch_open() {
         m.folders.remove("Clients/Acme");
     }
     store.force_catalog_refresh_due_for_test();
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
 
     // Retired: catalog row, sync-state row and locations are gone.
     assert!(
-        !store.mailboxes().unwrap().iter().any(|mb| mb.name == "Clients/Acme"),
+        !store
+            .mailboxes()
+            .unwrap()
+            .iter()
+            .any(|mb| mb.name == "Clients/Acme"),
         "the vanished mailbox's catalog row is retired"
     );
-    assert!(store.locations_in_mailbox("Clients/Acme").unwrap().is_empty());
+    assert!(store
+        .locations_in_mailbox("Clients/Acme")
+        .unwrap()
+        .is_empty());
     assert!(store.mailbox_sync_state("Clients/Acme").unwrap().is_none());
     // INBOX was never retired.
-    assert!(store.mailboxes().unwrap().iter().any(|mb| mb.name == "INBOX"));
+    assert!(store
+        .mailboxes()
+        .unwrap()
+        .iter()
+        .any(|mb| mb.name == "INBOX"));
 
     // The shared thread still has its INBOX copy, so it stays hot and
     // present (the retirement journaled it; it did not delete it).
@@ -3706,7 +4281,9 @@ async fn a_vanished_mailbox_is_retired_and_stops_holding_the_epoch_open() {
     // polls complete coverage over the REMAINING synced set.
     let epoch_before = store.complete_walks().unwrap();
     for _ in 0..3 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
     assert!(
         store.complete_walks().unwrap() > epoch_before,
@@ -3717,17 +4294,31 @@ async fn a_vanished_mailbox_is_retired_and_stops_holding_the_epoch_open() {
     // re-syncs (bodies untouched — threading is intact).
     {
         let mut m = mailbox.lock().unwrap();
-        m.add_to("Clients/Acme", 99, &["\\Seen"], &message("<shared@x>", "Shared", ""));
+        m.add_to(
+            "Clients/Acme",
+            99,
+            &["\\Seen"],
+            &message("<shared@x>", "Shared", ""),
+        );
     }
     store.force_catalog_refresh_due_for_test();
     for _ in 0..4 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
     assert!(
-        store.mailboxes().unwrap().iter().any(|mb| mb.name == "Clients/Acme"),
+        store
+            .mailboxes()
+            .unwrap()
+            .iter()
+            .any(|mb| mb.name == "Clients/Acme"),
         "a re-appearing mailbox is re-added"
     );
-    assert!(!store.locations_in_mailbox("Clients/Acme").unwrap().is_empty());
+    assert!(!store
+        .locations_in_mailbox("Clients/Acme")
+        .unwrap()
+        .is_empty());
 }
 
 /// A retirement that touches NO hot thread is a catalog-only change: it does
@@ -3737,14 +4328,23 @@ async fn retiring_a_cold_only_mailbox_does_not_bump_the_generation() {
     let mut mb = FakeMailbox::new(100);
     mb.add(&["\\Seen"], &message("<i@x>", "Inbox", ""));
     // A user folder with a COLD (never-INBOX, never-hot) thread only.
-    mb.add_to("Clients/Cold", 70, &["\\Seen"], &message("<cold@x>", "Cold", ""));
+    mb.add_to(
+        "Clients/Cold",
+        70,
+        &["\\Seen"],
+        &message("<cold@x>", "Cold", ""),
+    );
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     // Settle.
     for _ in 0..3 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
     let gen_before = store.generation().unwrap();
 
@@ -3754,9 +4354,15 @@ async fn retiring_a_cold_only_mailbox_does_not_bump_the_generation() {
         m.folders.remove("Clients/Cold");
     }
     store.force_catalog_refresh_due_for_test();
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     assert!(
-        !store.mailboxes().unwrap().iter().any(|mb| mb.name == "Clients/Cold"),
+        !store
+            .mailboxes()
+            .unwrap()
+            .iter()
+            .any(|mb| mb.name == "Clients/Cold"),
         "the cold-only folder is retired"
     );
     // No hot thread was affected, so the generation did not move for the
@@ -3779,18 +4385,32 @@ async fn idle_polls_with_user_and_label_folders_are_stable() {
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_with(mailbox.clone());
     let db = store.database();
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     for _ in 0..4 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
     }
     let generation = store.generation().unwrap();
-    let loads = provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed);
+    let loads = provider
+        .thread_state_loads
+        .load(std::sync::atomic::Ordering::Relaxed);
     for _ in 0..4 {
-        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
-        assert_eq!(store.generation().unwrap(), generation, "idle poll must not bump generation");
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.generation().unwrap(),
+            generation,
+            "idle poll must not bump generation"
+        );
     }
     assert_eq!(
-        provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
+        provider
+            .thread_state_loads
+            .load(std::sync::atomic::Ordering::Relaxed),
         loads,
         "idle polls do not rebuild threader state"
     );
@@ -3951,8 +4571,8 @@ mod search_exec;
 
 mod idle;
 
-mod identity_contract;
 mod all_mail;
+mod identity_contract;
 
 #[tokio::test]
 async fn snoozed_archive_locations_survive_the_window_and_release_on_cancellation() {
@@ -3963,28 +4583,58 @@ async fn snoozed_archive_locations_survive_the_window_and_release_on_cancellatio
     let (mut provider, store) = provider_with(mailbox.clone());
     provider.folder_window_override = Some(2);
     let db = store.database();
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let provider_id = provider.list_inbox(None).await.unwrap().thread_ids[0].clone();
     let local = format!("me@example.com:{provider_id}");
-    db.snooze_threads(&[local.clone()], "2099-01-01T09:00:00Z").unwrap();
+    db.snooze_threads(&[local.clone()], "2099-01-01T09:00:00Z")
+        .unwrap();
     // Simulate the already-acknowledged provider archive with this read-only
     // protocol fixture. Native MOVE/COPY delivery has its own contract suite.
-    for mutation in db.claim_mutations("me@example.com", 10).unwrap() { db.complete_mutation(&mutation.id).unwrap(); }
+    for mutation in db.claim_mutations("me@example.com", 10).unwrap() {
+        db.complete_mutation(&mutation.id).unwrap();
+    }
     {
         let mut mb = mailbox.lock().unwrap();
         mb.inbox().messages.clear();
-        mb.add_to("Archive", 95, &[], &message("<snoozed@x>", "Keep this conversation", ""));
+        mb.add_to(
+            "Archive",
+            95,
+            &[],
+            &message("<snoozed@x>", "Keep this conversation", ""),
+        );
     }
     sync_n(&provider, db.as_ref(), 2).await;
     {
         let mut mb = mailbox.lock().unwrap();
-        for index in 0..4 { mb.add_to("Archive", 95, &[], &message(&format!("<new-{index}@x>"), "Newer mail", "")); }
+        for index in 0..4 {
+            mb.add_to(
+                "Archive",
+                95,
+                &[],
+                &message(&format!("<new-{index}@x>"), "Newer mail", ""),
+            );
+        }
     }
     sync_n(&provider, db.as_ref(), 3).await;
     assert_eq!(store.snoozed_uids("Archive", 95).unwrap(), vec![1]);
-    assert!(store.locations_in_mailbox("Archive").unwrap().iter().any(|location| location.uid == 1));
-    assert!(db.get_thread(&local).unwrap().thread.snoozed_until.is_some());
-    db.mutate_thread(&crate::models::ThreadMutation::Archive { thread_id: local, value: true }).unwrap();
+    assert!(store
+        .locations_in_mailbox("Archive")
+        .unwrap()
+        .iter()
+        .any(|location| location.uid == 1));
+    assert!(db
+        .get_thread(&local)
+        .unwrap()
+        .thread
+        .snoozed_until
+        .is_some());
+    db.mutate_thread(&crate::models::ThreadMutation::Archive {
+        thread_id: local,
+        value: true,
+    })
+    .unwrap();
     assert!(store.snoozed_uids("Archive", 95).unwrap().is_empty());
 }
 
@@ -3995,15 +4645,33 @@ async fn snoozed_mail_recovers_by_message_reference_after_locations_are_lost() {
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_with(mailbox);
     let db = store.database();
-    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
     let provider_id = provider.list_inbox(None).await.unwrap().thread_ids[0].clone();
     let local = format!("me@example.com:{provider_id}");
-    let record = db.snooze_threads(&[local], "2099-01-01T09:00:00Z").unwrap().remove(0);
+    let record = db
+        .snooze_threads(&[local], "2099-01-01T09:00:00Z")
+        .unwrap()
+        .remove(0);
     assert!(record.references.contains(&"recover-snooze@x".to_string()));
-    db.test_connection().unwrap().execute("DELETE FROM imap_locations", []).unwrap();
+    db.test_connection()
+        .unwrap()
+        .execute("DELETE FROM imap_locations", [])
+        .unwrap();
     assert!(store.locations_in_mailbox("INBOX").unwrap().is_empty());
-    provider.prepare_snoozed_thread(&provider_id, &record.references).await.unwrap();
+    provider
+        .prepare_snoozed_thread(&provider_id, &record.references)
+        .await
+        .unwrap();
     assert!(!store.locations_in_mailbox("INBOX").unwrap().is_empty());
-    assert!(provider.prepare_snoozed_thread("missing", &[]).await.is_err());
-    assert!(db.list_snooze_records(None).unwrap().iter().all(|item| item.state == "active"));
+    assert!(provider
+        .prepare_snoozed_thread("missing", &[])
+        .await
+        .is_err());
+    assert!(db
+        .list_snooze_records(None)
+        .unwrap()
+        .iter()
+        .all(|item| item.state == "active"));
 }

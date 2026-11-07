@@ -19,8 +19,10 @@ impl Database {
     pub fn draft(&self, id: &str) -> DbResult<Draft> {
         let value: String = self
             .with_connection(|c| {
-                Ok(c.query_row("SELECT payload FROM drafts WHERE id=?1", [id], |r| r.get(0))
-                    .optional()?)
+                Ok(
+                    c.query_row("SELECT payload FROM drafts WHERE id=?1", [id], |r| r.get(0))
+                        .optional()?,
+                )
             })?
             .ok_or_else(|| DatabaseError::invalid("Draft no longer exists"))?;
         serde_json::from_str(&value).map_err(serialization_error)
@@ -79,7 +81,10 @@ impl Database {
     /// Forgets discarded drafts past [`DISCARDED_DRAFT_RETENTION_MS`].
     pub(crate) fn purge_discarded_drafts(&self, at: i64) -> DbResult<()> {
         self.with_connection(|c| {
-            c.execute("DELETE FROM discarded_drafts WHERE discarded_at < ?1", [at - DISCARDED_DRAFT_RETENTION_MS])?;
+            c.execute(
+                "DELETE FROM discarded_drafts WHERE discarded_at < ?1",
+                [at - DISCARDED_DRAFT_RETENTION_MS],
+            )?;
             Ok(())
         })
     }
@@ -98,7 +103,10 @@ impl Database {
     /// Stores a newly created draft. Its server copy waits for the first edit.
     pub(crate) fn insert_draft(&self, d: &mut Draft) -> DbResult<()> {
         self.write_draft(d, false, |tx, d, payload| {
-            tx.execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, payload])
+            tx.execute(
+                "INSERT INTO drafts VALUES (?1,?2,?3)",
+                params![d.id, d.revision, payload],
+            )
         })?;
         Ok(())
     }
@@ -123,7 +131,11 @@ impl Database {
     }
     /// For a change the server copy doesn't carry, such as which local
     /// message a reply answers. A server copy that was current stays current.
-    pub(crate) fn update_draft_without_push(&self, d: &mut Draft, expected: i64) -> DbResult<usize> {
+    pub(crate) fn update_draft_without_push(
+        &self,
+        d: &mut Draft,
+        expected: i64,
+    ) -> DbResult<usize> {
         self.write_draft(d, false, |tx, d, payload| {
             let changed = tx.execute(
                 "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",

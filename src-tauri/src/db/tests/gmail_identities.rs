@@ -167,30 +167,53 @@ fn an_unreadable_metadata_cache_is_rebuildable_and_cannot_block_primary_sending(
 fn a_failed_refresh_backs_off_instead_of_repeating_every_sync() {
     let db = database();
     let at = 1_000_000;
-    assert!(db.gmail_identities_refresh_due(ACCOUNT, at).unwrap(), "nothing cached yet");
+    assert!(
+        db.gmail_identities_refresh_due(ACCOUNT, at).unwrap(),
+        "nothing cached yet"
+    );
 
-    db.record_gmail_identities_refresh_failure(ACCOUNT, at).unwrap();
-    assert!(!db.gmail_identities_refresh_due(ACCOUNT, at + 2 * 60_000 - 1).unwrap());
-    assert!(db.gmail_identities_refresh_due(ACCOUNT, at + 2 * 60_000).unwrap());
+    db.record_gmail_identities_refresh_failure(ACCOUNT, at)
+        .unwrap();
+    assert!(!db
+        .gmail_identities_refresh_due(ACCOUNT, at + 2 * 60_000 - 1)
+        .unwrap());
+    assert!(db
+        .gmail_identities_refresh_due(ACCOUNT, at + 2 * 60_000)
+        .unwrap());
 
     // Each failure in a row doubles the wait, up to the refresh interval.
     let mut failed_at = at;
     for minutes in [4, 8, 15, 15] {
         failed_at += 60 * 60_000;
-        db.record_gmail_identities_refresh_failure(ACCOUNT, failed_at).unwrap();
-        assert!(!db.gmail_identities_refresh_due(ACCOUNT, failed_at + minutes * 60_000 - 1).unwrap());
-        assert!(db.gmail_identities_refresh_due(ACCOUNT, failed_at + minutes * 60_000).unwrap());
+        db.record_gmail_identities_refresh_failure(ACCOUNT, failed_at)
+            .unwrap();
+        assert!(!db
+            .gmail_identities_refresh_due(ACCOUNT, failed_at + minutes * 60_000 - 1)
+            .unwrap());
+        assert!(db
+            .gmail_identities_refresh_due(ACCOUNT, failed_at + minutes * 60_000)
+            .unwrap());
     }
     // A successful refresh ends the backoff and the ordinary interval resumes.
-    db.store_gmail_sending_identities(ACCOUNT, &snapshot(), failed_at + 1).unwrap();
-    assert!(db.gmail_identity_refresh_failures.lock().unwrap().is_empty());
-    assert!(!db.gmail_identities_refresh_due(ACCOUNT, failed_at + 2).unwrap());
+    db.store_gmail_sending_identities(ACCOUNT, &snapshot(), failed_at + 1)
+        .unwrap();
+    assert!(db
+        .gmail_identity_refresh_failures
+        .lock()
+        .unwrap()
+        .is_empty());
+    assert!(!db
+        .gmail_identities_refresh_due(ACCOUNT, failed_at + 2)
+        .unwrap());
 }
 
 #[test]
 fn a_failure_on_one_account_does_not_delay_another() {
     let db = database();
     db.adopt_account("other@example.com").unwrap();
-    db.record_gmail_identities_refresh_failure(ACCOUNT, 1_000).unwrap();
-    assert!(db.gmail_identities_refresh_due("other@example.com", 1_001).unwrap());
+    db.record_gmail_identities_refresh_failure(ACCOUNT, 1_000)
+        .unwrap();
+    assert!(db
+        .gmail_identities_refresh_due("other@example.com", 1_001)
+        .unwrap());
 }

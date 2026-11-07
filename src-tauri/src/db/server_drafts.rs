@@ -35,7 +35,11 @@ impl Database {
     /// Records that `draft` changed and its server copy needs the new
     /// revision. Runs in the transaction that saved the draft. A draft that
     /// moved to another account queues its old account's copy for deletion.
-    pub(crate) fn mark_draft_push_pending(tx: &Transaction, draft: &Draft, at: i64) -> DbResult<()> {
+    pub(crate) fn mark_draft_push_pending(
+        tx: &Transaction,
+        draft: &Draft,
+        at: i64,
+    ) -> DbResult<()> {
         let existing: Option<(String, Option<String>, Option<i64>, String)> = tx
             .query_row(
                 "SELECT account, server_id, pending_since, state FROM draft_server_links WHERE draft_id=?1",
@@ -45,15 +49,27 @@ impl Database {
             .optional()?;
         if let Some((account, server_id, _, _)) = &existing {
             if *account != draft.account {
-                Self::queue_server_draft_deletion(tx, account, server_id.as_deref(), &draft.id, at)?;
-                tx.execute("DELETE FROM draft_server_links WHERE draft_id=?1", [&draft.id])?;
+                Self::queue_server_draft_deletion(
+                    tx,
+                    account,
+                    server_id.as_deref(),
+                    &draft.id,
+                    at,
+                )?;
+                tx.execute(
+                    "DELETE FROM draft_server_links WHERE draft_id=?1",
+                    [&draft.id],
+                )?;
             }
         }
         if !Self::keeps_server_drafts(tx, &draft.account)? {
             return Ok(());
         }
         let existing = existing.filter(|(account, ..)| *account == draft.account);
-        let pending_since = existing.as_ref().and_then(|(_, _, since, _)| *since).unwrap_or(at);
+        let pending_since = existing
+            .as_ref()
+            .and_then(|(_, _, since, _)| *since)
+            .unwrap_or(at);
         let due = (at + DRAFT_PUSH_DELAY_MS).min(pending_since + DRAFT_PUSH_MAX_WAIT_MS);
         match existing {
             // A temporary failure keeps its backoff; editing doesn't hammer the server.
@@ -96,7 +112,10 @@ impl Database {
     /// Makes the worker look at `draft_id`'s server copy now, because the
     /// draft left the drafts table: it was sent, scheduled, or discarded.
     pub(crate) fn draft_left_drafts(tx: &Transaction, draft_id: &str, at: i64) -> DbResult<()> {
-        tx.execute("UPDATE draft_server_links SET due_at=?2 WHERE draft_id=?1", params![draft_id, at])?;
+        tx.execute(
+            "UPDATE draft_server_links SET due_at=?2 WHERE draft_id=?1",
+            params![draft_id, at],
+        )?;
         Ok(())
     }
 
@@ -104,7 +123,10 @@ impl Database {
     /// another device removed: that device deletes the server copy.
     pub(crate) fn forget_server_draft_link(&self, draft_id: &str) -> DbResult<()> {
         self.with_connection(|connection| {
-            connection.execute("DELETE FROM draft_server_links WHERE draft_id=?1", [draft_id])?;
+            connection.execute(
+                "DELETE FROM draft_server_links WHERE draft_id=?1",
+                [draft_id],
+            )?;
             Ok(())
         })
     }
@@ -198,7 +220,9 @@ impl Database {
     pub(crate) fn local_draft(&self, id: &str) -> DbResult<Option<Draft>> {
         self.with_connection(|connection| {
             let payload: Option<String> = connection
-                .query_row("SELECT payload FROM drafts WHERE id=?1", [id], |row| row.get(0))
+                .query_row("SELECT payload FROM drafts WHERE id=?1", [id], |row| {
+                    row.get(0)
+                })
                 .optional()?;
             payload
                 .map(|payload| serde_json::from_str(&payload).map_err(serialization_error))
@@ -216,37 +240,59 @@ impl Database {
             let states = query
                 .query_map([draft_id], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(if states.iter().any(|state| SENT_STATES.contains(&state.as_str())) {
-                RemovedDraft::Delete
-            } else if states.is_empty() {
-                // Discarded.
-                RemovedDraft::Delete
-            } else {
-                // Waiting to send, sending, or failed and restorable: the
-                // server copy stays so Undo and Restore bring the draft back.
-                RemovedDraft::Wait
-            })
+            Ok(
+                if states
+                    .iter()
+                    .any(|state| SENT_STATES.contains(&state.as_str()))
+                {
+                    RemovedDraft::Delete
+                } else if states.is_empty() {
+                    // Discarded.
+                    RemovedDraft::Delete
+                } else {
+                    // Waiting to send, sending, or failed and restorable: the
+                    // server copy stays so Undo and Restore bring the draft back.
+                    RemovedDraft::Wait
+                },
+            )
         })
     }
 
     pub(crate) fn retire_draft_link(&self, link: &Link, at: i64) -> DbResult<()> {
         self.with_transaction(|tx| {
-            Self::queue_server_draft_deletion(tx, &link.account, link.server_id.as_deref(), &link.draft_id, at)?;
-            tx.execute("DELETE FROM draft_server_links WHERE draft_id=?1", [&link.draft_id])?;
+            Self::queue_server_draft_deletion(
+                tx,
+                &link.account,
+                link.server_id.as_deref(),
+                &link.draft_id,
+                at,
+            )?;
+            tx.execute(
+                "DELETE FROM draft_server_links WHERE draft_id=?1",
+                [&link.draft_id],
+            )?;
             Ok(())
         })
     }
 
     pub(crate) fn defer_draft_link(&self, draft_id: &str, due: i64) -> DbResult<()> {
         self.with_connection(|connection| {
-            connection.execute("UPDATE draft_server_links SET due_at=?2 WHERE draft_id=?1", params![draft_id, due])?;
+            connection.execute(
+                "UPDATE draft_server_links SET due_at=?2 WHERE draft_id=?1",
+                params![draft_id, due],
+            )?;
             Ok(())
         })
     }
 
     /// Records a confirmed push of `revision`. The link stays pending when
     /// the draft changed again meanwhile.
-    pub(crate) fn record_draft_pushed(&self, draft_id: &str, server: &ServerDraft, revision: i64) -> DbResult<i64> {
+    pub(crate) fn record_draft_pushed(
+        &self,
+        draft_id: &str,
+        server: &ServerDraft,
+        revision: i64,
+    ) -> DbResult<i64> {
         self.with_transaction(|tx| {
             let current: Option<i64> = tx
                 .query_row("SELECT revision FROM drafts WHERE id=?1", [draft_id], |row| row.get(0))
@@ -315,7 +361,11 @@ impl Database {
     /// device has edits the server hasn't seen: then the server's version is
     /// held back for the user to choose. Checked and written in one
     /// transaction, so a save racing the pull is never overwritten.
-    pub(crate) fn apply_server_draft(&self, imported: &Draft, server: &ServerDraft) -> DbResult<Applied> {
+    pub(crate) fn apply_server_draft(
+        &self,
+        imported: &Draft,
+        server: &ServerDraft,
+    ) -> DbResult<Applied> {
         self.with_transaction(|tx| {
             let local: Option<i64> = tx
                 .query_row("SELECT revision FROM drafts WHERE id=?1", [&imported.id], |row| row.get(0))

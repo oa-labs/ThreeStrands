@@ -65,17 +65,16 @@ impl FlagPlan {
     /// sync sweep sees no difference and does not flap.
     fn apply_to(self, flags: &[String]) -> Vec<String> {
         let mut out: Vec<String> = flags.to_vec();
-        let force = |out: &mut Vec<String>, flag: &str, desired: Option<DesiredFlag>| {
-            match desired {
-                None => {}
-                Some(DesiredFlag::Present) => {
-                    if !out.iter().any(|f| f.eq_ignore_ascii_case(flag)) {
-                        out.push(flag.to_string());
-                    }
+        let force = |out: &mut Vec<String>, flag: &str, desired: Option<DesiredFlag>| match desired
+        {
+            None => {}
+            Some(DesiredFlag::Present) => {
+                if !out.iter().any(|f| f.eq_ignore_ascii_case(flag)) {
+                    out.push(flag.to_string());
                 }
-                Some(DesiredFlag::Absent) => {
-                    out.retain(|f| !f.eq_ignore_ascii_case(flag));
-                }
+            }
+            Some(DesiredFlag::Absent) => {
+                out.retain(|f| !f.eq_ignore_ascii_case(flag));
             }
         };
         force(&mut out, "\\Seen", self.seen);
@@ -236,7 +235,9 @@ impl ImapProvider {
         // Reuse ONE session for the whole mutation (the command slot; the
         // 2-connection cap is respected because we lease exactly one).
         let mut session = self.open_session().await?;
-        let result = self.apply_flag_mutation_on(session.as_mut(), &plan, by_mailbox).await;
+        let result = self
+            .apply_flag_mutation_on(session.as_mut(), &plan, by_mailbox)
+            .await;
         let _ = session.logout().await;
         result
     }
@@ -257,8 +258,13 @@ impl ImapProvider {
             // LeasedSession and the test AsyncImapSession both implement it.
             // Guard UIDVALIDITY (a stale mailbox is transient; nothing sent).
             let write_session = as_write_session(session)?;
-            let ctx = crate::provider::imap::write::select_for_write(write_session, &self.store, &mailbox, uidvalidity as u32)
-                .await?;
+            let ctx = crate::provider::imap::write::select_for_write(
+                write_session,
+                &self.store,
+                &mailbox,
+                uidvalidity as u32,
+            )
+            .await?;
 
             // The UID set for this mailbox (every location that needs a write;
             // one store op applies to all of them).
@@ -447,7 +453,9 @@ impl MailMutate for ImapProvider {
                 } else if id.starts_with("lf:") {
                     self.apply_label_mutation(ids, &id, add).await
                 } else {
-                    Err(ProviderError::InvalidOperation("This account cannot toggle folder membership as labels".into()))
+                    Err(ProviderError::InvalidOperation(
+                        "This account cannot toggle folder membership as labels".into(),
+                    ))
                 }
             }
         }
@@ -497,8 +505,14 @@ impl MailMutate for ImapProvider {
         let native = self.store.uses_native_labels().map_err(db_err)?;
         let catalog = self.store.mailboxes().map_err(db_err)?;
         for (id, kind) in plan.dynamic_labels() {
-            if native && !plan.entries.iter().any(|entry| entry.location_label_id.as_deref() == Some(&id)
-                && catalog.iter().any(|row| row.name == entry.mailbox && row.special_use.is_none())) {
+            if native
+                && !plan.entries.iter().any(|entry| {
+                    entry.location_label_id.as_deref() == Some(&id)
+                        && catalog
+                            .iter()
+                            .any(|row| row.name == entry.mailbox && row.special_use.is_none())
+                })
+            {
                 continue;
             }
             // Display name: the id with its `lf:` / `folder:` prefix stripped
@@ -512,7 +526,11 @@ impl MailMutate for ImapProvider {
             labels.push(Label {
                 id,
                 name,
-                kind: if native { "user".into() } else { kind.to_string() },
+                kind: if native {
+                    "user".into()
+                } else {
+                    kind.to_string()
+                },
             });
         }
         Ok(labels)

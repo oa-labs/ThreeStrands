@@ -20,20 +20,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+#[cfg(test)]
+use crate::db::replicated_sync::ensure_space_and_device;
 use chrono::Utc;
 use keyring::Entry;
-use threestrands_sync_envelope::os_rng;
 use rand::Rng;
 #[cfg(test)]
 use rusqlite::{params, OptionalExtension};
-#[cfg(test)]
-use crate::db::replicated_sync::ensure_space_and_device;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use threestrands_sync_core::{EntityType, ENTITY_EXISTENCE_FIELD};
+use threestrands_sync_envelope::os_rng;
 use threestrands_sync_envelope::{
-    compute_cid, message_key_epoch, open_snapshot, seal_snapshot, sign_device_head, verify_device_head,
-    DeviceHead, DeviceId as EnvelopeDeviceId, ObjectKind, OpenParams, SealParams, SignedDeviceHead, SigningKey, VerifyingKey,
+    compute_cid, message_key_epoch, open_snapshot, seal_snapshot, sign_device_head,
+    verify_device_head, DeviceHead, DeviceId as EnvelopeDeviceId, ObjectKind, OpenParams,
+    SealParams, SignedDeviceHead, SigningKey, VerifyingKey,
 };
 use threestrands_sync_transport::{
     Cid as TransportCid, HeadLocator, SyncTransport, TransportError, TransportHealth,
@@ -42,13 +43,13 @@ use threestrands_sync_transport::{
 
 use crate::{
     backoff::retry_at,
-    error::{AppError, AppResult},
     db::{Database, DbResult},
+    error::{AppError, AppResult},
     error_text::display,
     s3_transport::{S3Config, S3Credentials, S3ProbeReport, S3Transport},
     sync_connectors::{
-        is_known_kind, Connector, ConnectorCredentials, ConnectorProbe, FolderConfig, IpfsRpcConfig, TransportConfig,
-        TransportSecrets,
+        is_known_kind, Connector, ConnectorCredentials, ConnectorProbe, FolderConfig,
+        IpfsRpcConfig, TransportConfig, TransportSecrets,
     },
 };
 
@@ -60,7 +61,11 @@ pub(crate) const SPACE_ID: &str = "default";
 /// entire phase ships inert; set `THREESTRANDS_REPLICATED_SYNC=1` (or any
 /// other non-empty value other than `0`/`false`) to exercise it.
 pub fn enabled() -> bool {
-    parse_flag(std::env::var("THREESTRANDS_REPLICATED_SYNC").ok().as_deref())
+    parse_flag(
+        std::env::var("THREESTRANDS_REPLICATED_SYNC")
+            .ok()
+            .as_deref(),
+    )
 }
 
 fn parse_flag(value: Option<&str>) -> bool {
@@ -79,7 +84,6 @@ impl Database {
     pub fn replicated_sync_active(&self) -> DbResult<bool> {
         Ok(enabled() || self.beta_features_enabled()?)
     }
-
 }
 
 /// The outcome of checking whether a resolved, validated entity is ready to
@@ -125,7 +129,12 @@ impl Database {
     /// "no prior operation" as creation and writes `_entity=true` plus
     /// every field in `payload`, so this is just that call guarded by the
     /// existence check.
-    fn reconcile_one_entity(&self, entity_type: EntityType, entity_id: &str, payload: Value) -> Result<bool, String> {
+    fn reconcile_one_entity(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+        payload: Value,
+    ) -> Result<bool, String> {
         if self.entity_recorded(entity_type, entity_id)? {
             return Ok(false);
         }
@@ -159,57 +168,110 @@ impl Database {
     /// environment variable to fiddle with.
     pub fn reconcile_replicated_sync_backlog(&self) -> Result<usize, String> {
         let mut repaired = 0usize;
-        if self.outbox()?.iter().any(|o|o.schedule.is_some()) {
-            if let Ok(owner)=crate::scheduled_send::keychain_identity(false) {
-                self.refresh_schedule_reports(&owner,chrono::Utc::now().timestamp_millis())?;
+        if self.outbox()?.iter().any(|o| o.schedule.is_some()) {
+            if let Ok(owner) = crate::scheduled_send::keychain_identity(false) {
+                self.refresh_schedule_reports(&owner, chrono::Utc::now().timestamp_millis())?;
             }
         }
         for task in self.list_tasks(None, None)? {
-            if self.reconcile_one_entity(EntityType::Task, &task.id, serde_json::to_value(&task).map_err(display)?)? {
+            if self.reconcile_one_entity(
+                EntityType::Task,
+                &task.id,
+                serde_json::to_value(&task).map_err(display)?,
+            )? {
                 repaired += 1;
             }
         }
         for goal in self.list_goals(None)? {
-            if self.reconcile_one_entity(EntityType::Goal, &goal.id, serde_json::to_value(&goal).map_err(display)?)? {
+            if self.reconcile_one_entity(
+                EntityType::Goal,
+                &goal.id,
+                serde_json::to_value(&goal).map_err(display)?,
+            )? {
                 repaired += 1;
             }
         }
         let library = self.signature_library()?;
         for item in library.signatures {
-            if self.reconcile_one_entity(EntityType::Signature, &item.id, crate::signatures::signature_sync_payload(&item)?)? { repaired += 1; }
+            if self.reconcile_one_entity(
+                EntityType::Signature,
+                &item.id,
+                crate::signatures::signature_sync_payload(&item)?,
+            )? {
+                repaired += 1;
+            }
         }
         for item in library.defaults {
-            if self.reconcile_one_entity(EntityType::SignatureDefaults, &item.id, serde_json::to_value(&item).map_err(display)?)? { repaired += 1; }
+            if self.reconcile_one_entity(
+                EntityType::SignatureDefaults,
+                &item.id,
+                serde_json::to_value(&item).map_err(display)?,
+            )? {
+                repaired += 1;
+            }
         }
         for snippet in self.list_snippets()? {
-            if self.reconcile_one_entity(EntityType::Snippet, &snippet.id, serde_json::to_value(&snippet).map_err(display)?)? {
+            if self.reconcile_one_entity(
+                EntityType::Snippet,
+                &snippet.id,
+                serde_json::to_value(&snippet).map_err(display)?,
+            )? {
                 repaired += 1;
             }
         }
         for contact in self.list_saved_contact_profiles()? {
-            repaired += usize::from(self.reconcile_one_entity(EntityType::Contact, &contact.id, serde_json::to_value(crate::models::ContactRecord::from(&contact)).map_err(display)?)?);
+            repaired += usize::from(
+                self.reconcile_one_entity(
+                    EntityType::Contact,
+                    &contact.id,
+                    serde_json::to_value(crate::models::ContactRecord::from(&contact))
+                        .map_err(display)?,
+                )?,
+            );
         }
         for id in self.list_contact_group_ids()? {
             if let Some(record) = self.contact_group_record(&id)? {
-                repaired += usize::from(self.reconcile_one_entity(EntityType::ContactGroup, &id, record)?);
+                repaired += usize::from(self.reconcile_one_entity(
+                    EntityType::ContactGroup,
+                    &id,
+                    record,
+                )?);
             }
         }
         for split in self.list_split_inboxes()? {
-            if self.reconcile_one_entity(EntityType::SplitInbox, &split.id, serde_json::to_value(&split).map_err(display)?)? {
+            if self.reconcile_one_entity(
+                EntityType::SplitInbox,
+                &split.id,
+                serde_json::to_value(&split).map_err(display)?,
+            )? {
                 repaired += 1;
             }
         }
         self.publish_dirty_snoozes()?;
         for record in self.list_snooze_records(None)? {
-            if self.reconcile_one_entity(EntityType::ConversationSnooze, &record.id, json!({"schedule": record}))? { repaired += 1; }
+            if self.reconcile_one_entity(
+                EntityType::ConversationSnooze,
+                &record.id,
+                json!({"schedule": record}),
+            )? {
+                repaired += 1;
+            }
         }
         for rule in self.list_sender_rules()? {
-            if self.reconcile_one_entity(EntityType::SenderRule, &rule.id, serde_json::to_value(&rule).map_err(display)?)? {
+            if self.reconcile_one_entity(
+                EntityType::SenderRule,
+                &rule.id,
+                serde_json::to_value(&rule).map_err(display)?,
+            )? {
                 repaired += 1;
             }
         }
         for record in self.list_sender_confirmations()? {
-            if self.reconcile_one_entity(EntityType::SenderConfirmation, &record.id, json!({"pattern": record}))? {
+            if self.reconcile_one_entity(
+                EntityType::SenderConfirmation,
+                &record.id,
+                json!({"pattern": record}),
+            )? {
                 repaired += 1;
             }
         }
@@ -222,16 +284,28 @@ impl Database {
                 "provider": account.provider,
                 "sortOrder": account.sort_order,
             });
-            if self.reconcile_one_entity(EntityType::MailAccount, &account.email.to_ascii_lowercase(), payload)? {
+            if self.reconcile_one_entity(
+                EntityType::MailAccount,
+                &account.email.to_ascii_lowercase(),
+                payload,
+            )? {
                 repaired += 1;
             }
         }
         for account in self.list_calendar_accounts()? {
             let email = account.email.to_ascii_lowercase();
-            if self.reconcile_one_entity(EntityType::CalendarAccount, &email, json!({ "email": account.email, "sortOrder": account.sort_order }))? {
+            if self.reconcile_one_entity(
+                EntityType::CalendarAccount,
+                &email,
+                json!({ "email": account.email, "sortOrder": account.sort_order }),
+            )? {
                 repaired += 1;
             }
-            if self.calendar_selection(&account.email)?.is_some() || self.availability_calendar_selection(&account.email)?.is_some() {
+            if self.calendar_selection(&account.email)?.is_some()
+                || self
+                    .availability_calendar_selection(&account.email)?
+                    .is_some()
+            {
                 let payload = self.calendar_selection_payload(&account.email)?;
                 if self.reconcile_one_entity(EntityType::CalendarSelection, &email, payload)? {
                     repaired += 1;
@@ -267,7 +341,10 @@ impl Database {
     /// threads. Always restores the previous state afterward, including
     /// when `work` returns an error or panics.
     /// Wraps `materialize_touched_entities`'s projection of a merged snapshot.
-    pub(crate) fn with_remote_projection<R, E>(&self, work: impl FnOnce() -> Result<R, E>) -> Result<R, E> {
+    pub(crate) fn with_remote_projection<R, E>(
+        &self,
+        work: impl FnOnce() -> Result<R, E>,
+    ) -> Result<R, E> {
         struct Projection<'a> {
             database: &'a Database,
             thread: std::thread::ThreadId,
@@ -285,7 +362,10 @@ impl Database {
         }
         let thread = std::thread::current().id();
         *projecting_threads(self).entry(thread).or_insert(0) += 1;
-        let _projection = Projection { database: self, thread };
+        let _projection = Projection {
+            database: self,
+            thread,
+        };
         work()
     }
 
@@ -301,7 +381,10 @@ impl Database {
     ) -> Result<ProjectionReadiness, String> {
         entity_type.validate_payload(payload)?;
         if entity_type == EntityType::CalendarSelection {
-            let account_id = payload.get("accountId").and_then(Value::as_str).unwrap_or_default();
+            let account_id = payload
+                .get("accountId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let known = self
                 .list_calendar_accounts()?
                 .iter()
@@ -431,8 +514,9 @@ impl Database {
     pub fn local_replicated_keys(&self) -> Result<LocalKeys, String> {
         let identity = self.local_device_identity()?;
         let active_epoch = self.active_epoch()?;
-        let k_epoch = load_epoch_key(active_epoch)?
-            .ok_or_else(|| "This device has not completed replicated-sync enrollment yet".to_string())?;
+        let k_epoch = load_epoch_key(active_epoch)?.ok_or_else(|| {
+            "This device has not completed replicated-sync enrollment yet".to_string()
+        })?;
         let earlier_epochs = self.epochs_before(active_epoch)?;
         let mut earlier_epoch_keys = BTreeMap::new();
         for key_epoch in earlier_epochs {
@@ -449,7 +533,6 @@ impl Database {
             sync_space_id: identity.sync_space_id,
         })
     }
-
 }
 
 fn load_or_create_signing_key() -> Result<SigningKey, String> {
@@ -472,7 +555,10 @@ fn load_or_create_signing_key() -> Result<SigningKey, String> {
 }
 
 pub(crate) fn x25519_public_bytes(secret: &[u8; 32]) -> [u8; 32] {
-    threestrands_sync_envelope::X25519PublicKey::from(&threestrands_sync_envelope::X25519StaticSecret::from(*secret)).to_bytes()
+    threestrands_sync_envelope::X25519PublicKey::from(
+        &threestrands_sync_envelope::X25519StaticSecret::from(*secret),
+    )
+    .to_bytes()
 }
 
 fn load_or_create_device_x25519_secret() -> Result<[u8; 32], String> {
@@ -506,7 +592,10 @@ pub(crate) fn load_epoch_key(key_epoch: u32) -> Result<Option<[u8; 32]>, String>
 }
 
 fn delete_keychain_entry(name: &str) -> Result<(), String> {
-    match Entry::new(KEYCHAIN_SERVICE, name).map_err(display)?.delete_credential() {
+    match Entry::new(KEYCHAIN_SERVICE, name)
+        .map_err(display)?
+        .delete_credential()
+    {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(display(error)),
     }
@@ -559,13 +648,18 @@ impl Database {
     /// index, stores them, schedules delivery to every transport in
     /// `transports`, and retires the previous snapshot's objects. Pure local
     /// bookkeeping — no network I/O. Returns whether it sealed one.
-    pub fn seal_local_state(&self, keys: &LocalKeys, transports: &[TransportInstanceId]) -> Result<bool, String> {
+    pub fn seal_local_state(
+        &self,
+        keys: &LocalKeys,
+        transports: &[TransportInstanceId],
+    ) -> Result<bool, String> {
         let (dirty, sequence, sealed_epoch) = self.local_state_status()?;
         if !dirty && sequence > 0 && sealed_epoch == Some(keys.key_epoch) {
             return Ok(false);
         }
         let next = sequence + 1;
-        let (snapshot, snapshot_generation) = self.take_local_snapshot(keys.device_id, next, crate::sync_policy::now_ms())?;
+        let (snapshot, snapshot_generation) =
+            self.take_local_snapshot(keys.device_id, next, crate::sync_policy::now_ms())?;
         let sealed = match seal_snapshot(
             snapshot,
             &SealParams {
@@ -582,7 +676,13 @@ impl Database {
                 return Err(display(error));
             }
         };
-        let stored = self.store_sealed_snapshot(&sealed.chunks, next, keys.key_epoch, transports, snapshot_generation);
+        let stored = self.store_sealed_snapshot(
+            &sealed.chunks,
+            next,
+            keys.key_epoch,
+            transports,
+            snapshot_generation,
+        );
         if let Err(error) = stored {
             self.mark_replica_changed()?;
             return Err(String::from(error));
@@ -593,7 +693,11 @@ impl Database {
     /// Deletes this device's superseded snapshot objects from a transport
     /// whose head now names `head_sequence`. Best effort: a failed delete is
     /// retried next time; an object already gone counts as deleted.
-    async fn delete_retired_objects(&self, transport: &dyn SyncTransport, head_sequence: u64) -> Result<(), String> {
+    async fn delete_retired_objects(
+        &self,
+        transport: &dyn SyncTransport,
+        head_sequence: u64,
+    ) -> Result<(), String> {
         let instance_id = transport.instance_id().0;
         let retired = self.retired_objects(&instance_id, head_sequence)?;
         for cid in retired {
@@ -601,14 +705,14 @@ impl Database {
                 Ok(()) | Err(TransportError::NotFound) => {
                     self.forget_retired_object(&cid, &instance_id)?;
                 }
-                Err(error) => log::debug!(target: "replicated_sync", "deleting an old snapshot object from {instance_id} failed: {error}"),
+                Err(error) => {
+                    log::debug!(target: "replicated_sync", "deleting an old snapshot object from {instance_id} failed: {error}")
+                }
             }
         }
         Ok(())
     }
-
 }
-
 
 // =============================== Delivery ===================================
 
@@ -631,19 +735,26 @@ impl Database {
         error: &TransportError,
     ) -> DbResult<()> {
         let next_attempts = attempts + 1;
-        let (state, retry_timestamp) = if error.is_retryable() && next_attempts < MAX_DELIVERY_ATTEMPTS {
-            (
-                "pending",
-                Some(retry_at(
-                    next_attempts.max(0).try_into().unwrap_or(u32::MAX),
-                )),
-            )
-        } else {
-            ("failed", None)
-        };
-        self.store_delivery_failure(cid, transport_instance_id, state, next_attempts, retry_timestamp, &error.to_string())
+        let (state, retry_timestamp) =
+            if error.is_retryable() && next_attempts < MAX_DELIVERY_ATTEMPTS {
+                (
+                    "pending",
+                    Some(retry_at(
+                        next_attempts.max(0).try_into().unwrap_or(u32::MAX),
+                    )),
+                )
+            } else {
+                ("failed", None)
+            };
+        self.store_delivery_failure(
+            cid,
+            transport_instance_id,
+            state,
+            next_attempts,
+            retry_timestamp,
+            &error.to_string(),
+        )
     }
-
 }
 
 /// The result of one push cycle.
@@ -664,7 +775,10 @@ pub async fn push_local_state(
     keys: &LocalKeys,
     transports: &[Arc<dyn SyncTransport>],
 ) -> Result<PushOutcome, String> {
-    let instance_ids: Vec<TransportInstanceId> = transports.iter().map(|transport| transport.instance_id()).collect();
+    let instance_ids: Vec<TransportInstanceId> = transports
+        .iter()
+        .map(|transport| transport.instance_id())
+        .collect();
     let sealed_snapshot = database.seal_local_state(keys, &instance_ids)?;
 
     let mut delivered = 0usize;
@@ -688,11 +802,20 @@ pub async fn push_local_state(
         for (item, instance_id, outcome) in outcomes {
             match outcome {
                 Ok(locator) => {
-                    database.record_delivery_success(&item.cid, &instance_id.0, locator.remote_id.as_deref())?;
+                    database.record_delivery_success(
+                        &item.cid,
+                        &instance_id.0,
+                        locator.remote_id.as_deref(),
+                    )?;
                     delivered += 1;
                 }
                 Err(error) => {
-                    database.record_delivery_failure(&item.cid, &instance_id.0, item.attempts, &error)?;
+                    database.record_delivery_failure(
+                        &item.cid,
+                        &instance_id.0,
+                        item.attempts,
+                        &error,
+                    )?;
                     failed += 1;
                 }
             }
@@ -700,7 +823,11 @@ pub async fn push_local_state(
     }
 
     publish_local_head(database, keys, transports).await;
-    Ok(PushOutcome { sealed_snapshot, delivered, failed })
+    Ok(PushOutcome {
+        sealed_snapshot,
+        delivered,
+        failed,
+    })
 }
 
 /// Publishes this device's signed head to every transport where it's due,
@@ -715,11 +842,16 @@ pub async fn push_local_state(
 /// transport. A head is due when its content (everything except the
 /// publication time) changed since it was last published there, or once
 /// the heartbeat interval has passed.
-async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &[Arc<dyn SyncTransport>]) {
+async fn publish_local_head(
+    database: &Database,
+    keys: &LocalKeys,
+    transports: &[Arc<dyn SyncTransport>],
+) {
     let now = crate::sync_policy::now_ms();
     for transport in transports {
         let instance_id = transport.instance_id();
-        let Ok(Some((state_sequence, state_cid))) = database.delivered_state_head(&instance_id.0) else {
+        let Ok(Some((state_sequence, state_cid))) = database.delivered_state_head(&instance_id.0)
+        else {
             continue;
         };
         let head = DeviceHead {
@@ -731,7 +863,10 @@ async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &
             published_at_ms: now,
         };
         let content = json!({ "epoch": head.epoch, "stateSequence": head.state_sequence, "stateCid": head.state_cid }).to_string();
-        if !database.head_publication_due(&instance_id.0, &content, now).unwrap_or(true) {
+        if !database
+            .head_publication_due(&instance_id.0, &content, now)
+            .unwrap_or(true)
+        {
             continue;
         }
         let Ok(signed) = sign_device_head(&keys.signing_key, head) else {
@@ -739,10 +874,14 @@ async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &
         };
         match transport.publish_head(&signed).await {
             Ok(_) => {
-                if let Err(error) = database.record_head_publication(&instance_id.0, &content, now) {
+                if let Err(error) = database.record_head_publication(&instance_id.0, &content, now)
+                {
                     log::debug!(target: "replicated_sync", "recording the head publication to {} failed: {error}", instance_id.0);
                 }
-                if let Err(error) = database.delete_retired_objects(transport.as_ref(), state_sequence).await {
+                if let Err(error) = database
+                    .delete_retired_objects(transport.as_ref(), state_sequence)
+                    .await
+                {
                     log::debug!(target: "replicated_sync", "retiring old snapshot objects on {} failed: {error}", instance_id.0);
                 }
             }
@@ -757,12 +896,20 @@ async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &
 
 /// The per-thread projection depths. The map holds plain counters that are
 /// always left consistent, so a poisoned lock is safe to recover.
-fn projecting_threads(database: &Database) -> std::sync::MutexGuard<'_, std::collections::HashMap<std::thread::ThreadId, usize>> {
-    database.replicated_sync_projecting.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+fn projecting_threads(
+    database: &Database,
+) -> std::sync::MutexGuard<'_, std::collections::HashMap<std::thread::ThreadId, usize>> {
+    database
+        .replicated_sync_projecting
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Database {
-    pub(crate) fn materialize_touched_entities(&self, touched: &[(EntityType, String)]) -> Result<(), String> {
+    pub(crate) fn materialize_touched_entities(
+        &self,
+        touched: &[(EntityType, String)],
+    ) -> Result<(), String> {
         // A merged snapshot is acknowledged even when an individual local
         // projection cannot yet be applied. Keep those entities durable and
         // retry them on every pull cycle, even when the peer has no newer
@@ -779,11 +926,17 @@ impl Database {
         let mut contact_deletions = std::collections::BTreeSet::new();
         for (entity_type, entity_id) in &pending {
             if *entity_type == EntityType::Contact
-                && self.resolve_field_winner(*entity_type, entity_id, ENTITY_EXISTENCE_FIELD)?
-                    .and_then(|value| value.as_bool()) != Some(true)
-            { contact_deletions.insert(entity_id.clone()); }
+                && self
+                    .resolve_field_winner(*entity_type, entity_id, ENTITY_EXISTENCE_FIELD)?
+                    .and_then(|value| value.as_bool())
+                    != Some(true)
+            {
+                contact_deletions.insert(entity_id.clone());
+            }
         }
-        pending.sort_by_key(|(kind, id)| !(*kind == EntityType::Contact && contact_deletions.contains(id)));
+        pending.sort_by_key(|(kind, id)| {
+            !(*kind == EntityType::Contact && contact_deletions.contains(id))
+        });
         self.with_remote_projection(|| {
             // Two passes: a dependency that materializes within this same
             // batch (e.g. a calendar account and its selection arriving
@@ -821,7 +974,11 @@ impl Database {
         })
     }
 
-    fn materialize_one_entity(&self, entity_type: EntityType, entity_id: &str) -> Result<ProjectionReadiness, String> {
+    fn materialize_one_entity(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+    ) -> Result<ProjectionReadiness, String> {
         let exists = self
             .resolve_field_winner(entity_type, entity_id, ENTITY_EXISTENCE_FIELD)?
             .and_then(|value| value.as_bool())
@@ -851,9 +1008,7 @@ impl Database {
         }
         Ok(readiness)
     }
-
 }
-
 
 /// Fetches, verifies, opens, and merges one peer's snapshot named by its
 /// verified head, then materializes whatever it changed. Every fetched
@@ -871,15 +1026,24 @@ async fn pull_device_state(
 ) -> Result<(), String> {
     let head = &signed_head.head;
     let author_hex = encode_id(head.device_id.as_bytes());
-    let index_cid = head.state_cid.clone().ok_or_else(|| format!("Device {author_hex}'s head names no snapshot"))?;
-    let index_bytes = transport.get_object(&TransportCid(index_cid.clone())).await.map_err(display)?;
+    let index_cid = head
+        .state_cid
+        .clone()
+        .ok_or_else(|| format!("Device {author_hex}'s head names no snapshot"))?;
+    let index_bytes = transport
+        .get_object(&TransportCid(index_cid.clone()))
+        .await
+        .map_err(display)?;
     if compute_cid(&index_bytes) != index_cid {
         return Err("Fetched chunk index bytes do not match the requested CID".to_string());
     }
     let index: ChunkIndex = serde_json::from_slice(&index_bytes).map_err(display)?;
     let mut chunks = Vec::with_capacity(index.chunk_cids.len());
     for chunk_cid in &index.chunk_cids {
-        let bytes = transport.get_object(&TransportCid(chunk_cid.clone())).await.map_err(display)?;
+        let bytes = transport
+            .get_object(&TransportCid(chunk_cid.clone()))
+            .await
+            .map_err(display)?;
         if &compute_cid(&bytes) != chunk_cid {
             return Err("Fetched chunk bytes do not match the requested CID".to_string());
         }
@@ -892,10 +1056,20 @@ async fn pull_device_state(
     let k_epoch = keys
         .epoch_key(key_epoch)
         .ok_or_else(|| format!("This device doesn't have the key for sync epoch {key_epoch}"))?;
-    let snapshot = open_snapshot(&chunks, &OpenParams { sync_space_id: &keys.sync_space_id, k_epoch, key_epoch, verifying_key })
-        .map_err(display)?;
+    let snapshot = open_snapshot(
+        &chunks,
+        &OpenParams {
+            sync_space_id: &keys.sync_space_id,
+            k_epoch,
+            key_epoch,
+            verifying_key,
+        },
+    )
+    .map_err(display)?;
     if snapshot.device_id != head.device_id || snapshot.state_sequence != head.state_sequence {
-        return Err(format!("Device {author_hex}'s head and snapshot disagree about which snapshot it is"));
+        return Err(format!(
+            "Device {author_hex}'s head and snapshot disagree about which snapshot it is"
+        ));
     }
     let remote = crate::db::sync_state::snapshot_to_state(&snapshot)?;
     let touched = database.merge_replica_state(&remote)?;
@@ -923,7 +1097,10 @@ pub async fn pull_from_transports(
     let roster = database.known_device_roster()?;
     let locators: Vec<HeadLocator> = roster
         .iter()
-        .map(|(device_id, _)| HeadLocator { device_id: *device_id, remote_id: None })
+        .map(|(device_id, _)| HeadLocator {
+            device_id: *device_id,
+            remote_id: None,
+        })
         .collect();
 
     let mut merged_states = 0usize;
@@ -940,7 +1117,10 @@ pub async fn pull_from_transports(
             if signed_head.head.device_id == keys.device_id {
                 continue;
             }
-            let Some((_, verifying_key)) = roster.iter().find(|(device_id, _)| *device_id == signed_head.head.device_id) else {
+            let Some((_, verifying_key)) = roster
+                .iter()
+                .find(|(device_id, _)| *device_id == signed_head.head.device_id)
+            else {
                 continue;
             };
             if verify_device_head(verifying_key, &signed_head).is_err() {
@@ -954,7 +1134,15 @@ pub async fn pull_from_transports(
             if signed_head.head.state_sequence <= database.merged_state_sequence(&author_hex)? {
                 continue;
             }
-            match pull_device_state(database, transport.as_ref(), verifying_key, keys, &signed_head).await {
+            match pull_device_state(
+                database,
+                transport.as_ref(),
+                verifying_key,
+                keys,
+                &signed_head,
+            )
+            .await
+            {
                 Ok(()) => merged_states += 1,
                 Err(error) => {
                     log::warn!(
@@ -973,9 +1161,15 @@ pub async fn pull_from_transports(
     // after a local ownership conflict is resolved.
     database.materialize_touched_entities(&[])?;
 
-    let instance_ids: Vec<TransportInstanceId> = transports.iter().map(|transport| transport.instance_id()).collect();
+    let instance_ids: Vec<TransportInstanceId> = transports
+        .iter()
+        .map(|transport| transport.instance_id())
+        .collect();
     database.enqueue_repair_deliveries(&instance_ids)?;
-    Ok(PullOutcome { merged_states, failed_transports })
+    Ok(PullOutcome {
+        merged_states,
+        failed_transports,
+    })
 }
 
 // ================================= Health ===================================
@@ -984,7 +1178,9 @@ pub async fn pull_from_transports(
 /// aggregation and the Settings UI. A transport whose `health()` call
 /// itself errors is reported as `Unavailable` rather than propagating the
 /// error — health reporting must never be the thing that fails.
-pub async fn transport_health(transports: &[Arc<dyn SyncTransport>]) -> Vec<(TransportInstanceId, TransportHealth)> {
+pub async fn transport_health(
+    transports: &[Arc<dyn SyncTransport>],
+) -> Vec<(TransportInstanceId, TransportHealth)> {
     let mut results = Vec::with_capacity(transports.len());
     for transport in transports {
         let health = match transport.health().await {
@@ -1033,7 +1229,11 @@ impl Database {
 
     /// Persists (or reconfigures) a folder transport instance. Only the
     /// path is stored — no credential, no content.
-    pub fn add_folder_transport(&self, instance_id: &str, path: &std::path::Path) -> Result<(), String> {
+    pub fn add_folder_transport(
+        &self,
+        instance_id: &str,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
         let config = TransportConfig::Folder(FolderConfig {
             path: path.to_string_lossy().into_owned(),
             label: None,
@@ -1044,7 +1244,12 @@ impl Database {
     /// Persists (or reconfigures) an IPFS RPC transport instance. Only the
     /// base URL is stored in `sync_transports`; the access token (if any)
     /// goes to the OS keychain under this instance's id, never into SQLite.
-    pub fn add_ipfs_rpc_transport(&self, instance_id: &str, base_url: &str, token: Option<&str>) -> Result<(), String> {
+    pub fn add_ipfs_rpc_transport(
+        &self,
+        instance_id: &str,
+        base_url: &str,
+        token: Option<&str>,
+    ) -> Result<(), String> {
         let config = TransportConfig::IpfsRpc(IpfsRpcConfig {
             base_url: base_url.to_string(),
             label: None,
@@ -1084,7 +1289,9 @@ impl Database {
             .find(|row| row.instance_id == instance_id)
             .ok_or_else(|| "That connector no longer exists".to_string())?;
         if existing.kind != config.kind() {
-            return Err("A connector's kind can't be changed; remove it and add a new one".to_string());
+            return Err(
+                "A connector's kind can't be changed; remove it and add a new one".to_string(),
+            );
         }
         let stored;
         let effective_secrets = match secrets {
@@ -1121,7 +1328,6 @@ impl Database {
             _ => TransportSecrets::delete_every_kind(instance_id),
         }
     }
-
 }
 
 impl ConfiguredTransport {
@@ -1135,7 +1341,9 @@ impl ConfiguredTransport {
     /// keychain. `None` if it's misconfigured, of an unknown kind, or its
     /// storage can't be opened.
     pub async fn open_connector(&self) -> Option<Connector> {
-        Connector::open_persisted(&self.instance_id, &self.config()?).await.ok()
+        Connector::open_persisted(&self.instance_id, &self.config()?)
+            .await
+            .ok()
     }
 }
 
@@ -1236,7 +1444,10 @@ impl ReplicatedSync {
         let rows = self.database.configured_transports()?;
         let mut statuses = Vec::with_capacity(rows.len());
         for row in rows {
-            let (pending, delivered, failed) = self.database.delivery_counts(&row.instance_id).unwrap_or((0, 0, 0));
+            let (pending, delivered, failed) = self
+                .database
+                .delivery_counts(&row.instance_id)
+                .unwrap_or((0, 0, 0));
             let config = row.config();
 
             let mut health = "unavailable: not configured".to_string();
@@ -1248,7 +1459,9 @@ impl ReplicatedSync {
                     health = match transport.health().await {
                         Ok(TransportHealth::Healthy) => "healthy".to_string(),
                         Ok(TransportHealth::Degraded(message)) => format!("degraded: {message}"),
-                        Ok(TransportHealth::Unavailable(message)) => format!("unavailable: {message}"),
+                        Ok(TransportHealth::Unavailable(message)) => {
+                            format!("unavailable: {message}")
+                        }
                         Err(error) => format!("unavailable: {error}"),
                     };
                     head_discovery = transport.capabilities().head_discovery;
@@ -1259,9 +1472,17 @@ impl ReplicatedSync {
             statuses.push(ReplicatedSyncTransportStatus {
                 instance_id: row.instance_id,
                 kind: row.kind,
-                label: config.as_ref().and_then(|config| config.label()).map(str::to_string),
-                location: config.as_ref().map(TransportConfig::location).unwrap_or_default(),
-                supports_delete_data: config.as_ref().is_some_and(TransportConfig::supports_delete_data),
+                label: config
+                    .as_ref()
+                    .and_then(|config| config.label())
+                    .map(str::to_string),
+                location: config
+                    .as_ref()
+                    .map(TransportConfig::location)
+                    .unwrap_or_default(),
+                supports_delete_data: config
+                    .as_ref()
+                    .is_some_and(TransportConfig::supports_delete_data),
                 s3_config: match &config {
                     Some(TransportConfig::S3(s3)) => Some(s3.clone()),
                     _ => None,
@@ -1293,7 +1514,11 @@ impl ReplicatedSync {
             label: None,
         });
         let secrets = token.map(|token| TransportSecrets::IpfsRpcToken(token.to_string()));
-        match Connector::open("probe", &config, secrets).await?.probe().await? {
+        match Connector::open("probe", &config, secrets)
+            .await?
+            .probe()
+            .await?
+        {
             ConnectorProbe::IpfsRpc(report) => Ok(report),
             _ => unreachable!("an IPFS RPC connector reports an IPFS RPC probe"),
         }
@@ -1303,7 +1528,11 @@ impl ReplicatedSync {
     /// the permission checklist, plus — when the key can list and read —
     /// whether the bucket and prefix already hold a sync group. `Err` only
     /// when the config or credentials are invalid before any request.
-    pub async fn probe_s3(&self, config: &S3Config, credentials: &S3Credentials) -> AppResult<S3ConnectionTest> {
+    pub async fn probe_s3(
+        &self,
+        config: &S3Config,
+        credentials: &S3Credentials,
+    ) -> AppResult<S3ConnectionTest> {
         let transport = S3Transport::new("probe", config, credentials)?;
         let checks = transport.probe().await;
         let space_presence = if checks.can_list && checks.can_read {
@@ -1312,7 +1541,10 @@ impl ReplicatedSync {
         } else {
             None
         };
-        Ok(S3ConnectionTest { checks, space_presence })
+        Ok(S3ConnectionTest {
+            checks,
+            space_presence,
+        })
     }
 
     /// Renames a connector (`label`: `None` keeps the name, a blank string
@@ -1330,14 +1562,17 @@ impl ReplicatedSync {
             .into_iter()
             .find(|row| row.instance_id == instance_id)
             .ok_or_else(|| "That connector no longer exists".to_string())?;
-        let mut config = row
-            .config()
-            .ok_or_else(|| "This connector's settings can't be read by this version of ThreeStrands".to_string())?;
+        let mut config = row.config().ok_or_else(|| {
+            "This connector's settings can't be read by this version of ThreeStrands".to_string()
+        })?;
         if let Some(label) = label {
             config.set_label(Some(label));
         }
-        let secrets = credentials.map(ConnectorCredentials::into_secrets).transpose()?;
-        self.database.update_transport_config(instance_id, &config, secrets.as_ref())
+        let secrets = credentials
+            .map(ConnectorCredentials::into_secrets)
+            .transpose()?;
+        self.database
+            .update_transport_config(instance_id, &config, secrets.as_ref())
     }
 
     /// Runs one push-then-pull cycle against every configured transport,
@@ -1402,9 +1637,20 @@ impl ReplicatedSync {
         // the rotation fails, the colliding object stays unseen and the next
         // cycle tries again.
         if must_rotate {
-            match crate::enrollment::rotate_epoch(&self.database, &identity, &keys, &crate::enrollment::KeychainEpochKeyStore, &transports, None).await {
+            match crate::enrollment::rotate_epoch(
+                &self.database,
+                &identity,
+                &keys,
+                &crate::enrollment::KeychainEpochKeyStore,
+                &transports,
+                None,
+            )
+            .await
+            {
                 Ok(()) => keys = self.database.local_replicated_keys()?,
-                Err(error) => log::warn!(target: "replicated_sync", "rotating to resolve an epoch collision failed: {error}"),
+                Err(error) => {
+                    log::warn!(target: "replicated_sync", "rotating to resolve an epoch collision failed: {error}")
+                }
             }
         }
         // Admit or refuse join-code redemptions and expire old codes; a
@@ -1421,14 +1667,20 @@ impl ReplicatedSync {
         {
             Ok(true) => keys = self.database.local_replicated_keys()?,
             Ok(false) => {}
-            Err(error) => log::warn!(target: "replicated_sync", "join code processing failed: {error}"),
+            Err(error) => {
+                log::warn!(target: "replicated_sync", "join code processing failed: {error}")
+            }
         }
-        self.database.record_self_device_name_if_missing(&encode_id(identity.device_id.as_bytes()))?;
+        self.database
+            .record_self_device_name_if_missing(&encode_id(identity.device_id.as_bytes()))?;
         self.database.ensure_protocol_marker_object()?;
 
         let push_result = push_local_state(&self.database, &keys, &transports).await;
         let pull_result = pull_from_transports(&self.database, &keys, &transports).await;
-        if let Err(error) = crate::enrollment::share_keys_with_lagging_peers(&self.database, &keys, &transports).await {
+        if let Err(error) =
+            crate::enrollment::share_keys_with_lagging_peers(&self.database, &keys, &transports)
+                .await
+        {
             log::warn!(target: "replicated_sync", "sharing keys with lagging devices failed: {error}");
         }
 
@@ -1461,7 +1713,15 @@ impl ReplicatedSync {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::begin_genesis(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports, allow_existing_space).await.map_err(AppError::from)
+        crate::enrollment::begin_genesis(
+            &self.database,
+            &identity,
+            &crate::enrollment::KeychainEpochKeyStore,
+            &transports,
+            allow_existing_space,
+        )
+        .await
+        .map_err(AppError::from)
     }
 
     /// Whether the configured transports already hold a sync space, so
@@ -1477,7 +1737,9 @@ impl ReplicatedSync {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::publish_enrollment_request(&self.database, &identity, &transports).await.map_err(AppError::from)
+        crate::enrollment::publish_enrollment_request(&self.database, &identity, &transports)
+            .await
+            .map_err(AppError::from)
     }
 
     /// Approves a pending incoming request, publishing a grant.
@@ -1486,7 +1748,15 @@ impl ReplicatedSync {
         let identity = self.database.local_device_identity()?;
         let keys = self.database.local_replicated_keys()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::approve_enrollment_request(&self.database, &identity, &keys, request_id_hex, &transports).await.map_err(AppError::from)
+        crate::enrollment::approve_enrollment_request(
+            &self.database,
+            &identity,
+            &keys,
+            request_id_hex,
+            &transports,
+        )
+        .await
+        .map_err(AppError::from)
     }
 
     /// Rejects an incoming request and publishes the signed group-wide
@@ -1495,14 +1765,28 @@ impl ReplicatedSync {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::reject_enrollment_request(&self.database, &identity, request_id_hex, &transports).await.map_err(AppError::from)
+        crate::enrollment::reject_enrollment_request(
+            &self.database,
+            &identity,
+            request_id_hex,
+            &transports,
+        )
+        .await
+        .map_err(AppError::from)
     }
 
     /// Imports a staged grant after the user confirms its fingerprint.
     pub async fn confirm_enrollment(&self, request_id_hex: &str) -> AppResult<()> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
-        crate::enrollment::confirm_and_import_grant(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, request_id_hex).await.map_err(AppError::from)
+        crate::enrollment::confirm_and_import_grant(
+            &self.database,
+            &identity,
+            &crate::enrollment::KeychainEpochKeyStore,
+            request_id_hex,
+        )
+        .await
+        .map_err(AppError::from)
     }
 
     /// Rotates the active epoch, optionally revoking a device. This and the
@@ -1514,7 +1798,16 @@ impl ReplicatedSync {
         let identity = self.database.local_device_identity()?;
         let keys = self.database.local_replicated_keys()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::rotate_epoch(&self.database, &identity, &keys, &crate::enrollment::KeychainEpochKeyStore, &transports, revoke_device_id_hex).await.map_err(AppError::from)
+        crate::enrollment::rotate_epoch(
+            &self.database,
+            &identity,
+            &keys,
+            &crate::enrollment::KeychainEpochKeyStore,
+            &transports,
+            revoke_device_id_hex,
+        )
+        .await
+        .map_err(AppError::from)
     }
 
     /// Leaves the sync space on this device only; see
@@ -1537,10 +1830,10 @@ impl ReplicatedSync {
     ) -> AppResult<String> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
-        let keys = self
-            .database
-            .local_replicated_keys()
-            .map_err(|_| "This device must belong to a sync group before it can invite another device".to_string())?;
+        let keys = self.database.local_replicated_keys().map_err(|_| {
+            "This device must belong to a sync group before it can invite another device"
+                .to_string()
+        })?;
         let transports = build_configured_transports(&self.database).await;
         crate::enrollment::create_join_code(
             &self.database,
@@ -1602,7 +1895,15 @@ impl ReplicatedSync {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::join_with_recovery_phrase(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, phrase, &transports).await.map_err(AppError::from)
+        crate::enrollment::join_with_recovery_phrase(
+            &self.database,
+            &identity,
+            &crate::enrollment::KeychainEpochKeyStore,
+            phrase,
+            &transports,
+        )
+        .await
+        .map_err(AppError::from)
     }
 
     /// Spawns the periodic push/pull loop. Only ever does real work when
@@ -1632,7 +1933,9 @@ impl ReplicatedSync {
                 was_active = active;
                 match self.sync_once().await {
                     Ok(()) => on_synced(&handle),
-                    Err(error) => log::warn!(target: "replicated_sync", "periodic sync failed: {error}"),
+                    Err(error) => {
+                        log::warn!(target: "replicated_sync", "periodic sync failed: {error}")
+                    }
                 }
                 use tauri::Emitter;
                 let _ = handle.emit("replicated-sync-status", ());
@@ -1684,7 +1987,9 @@ mod tests {
             .prepare("SELECT field, counter, value FROM sync_values WHERE entity_id=?1 ORDER BY field, counter")
             .unwrap();
         let rows = statement
-            .query_map(params![entity_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .query_map(params![entity_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -1705,8 +2010,13 @@ mod tests {
     #[test]
     fn recording_a_creation_writes_every_field_and_existence_as_one_write() {
         let db = Database::open_memory();
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name", "body"]), &json!({"name": "n", "body": "b"}))
-            .unwrap();
+        db.record_replicated_write(
+            EntityType::Snippet,
+            "one",
+            &fields(&["name", "body"]),
+            &json!({"name": "n", "body": "b"}),
+        )
+        .unwrap();
         // _entity=true, name, and body, all the device's first write.
         assert_eq!(
             values(&db, "one"),
@@ -1717,17 +2027,35 @@ mod tests {
             ]
         );
         assert_eq!(own_counter(&db), 1);
-        assert!(db.local_state_status().unwrap().0, "a write marks the replica changed");
+        assert!(
+            db.local_state_status().unwrap().0,
+            "a write marks the replica changed"
+        );
     }
 
     #[test]
     fn a_later_update_replaces_the_value_and_keeps_existence() {
         let db = Database::open_memory();
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"})).unwrap();
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n2"})).unwrap();
+        db.record_replicated_write(
+            EntityType::Snippet,
+            "one",
+            &fields(&["name"]),
+            &json!({"name": "n"}),
+        )
+        .unwrap();
+        db.record_replicated_write(
+            EntityType::Snippet,
+            "one",
+            &fields(&["name"]),
+            &json!({"name": "n2"}),
+        )
+        .unwrap();
         assert_eq!(
             values(&db, "one"),
-            vec![("_entity".to_string(), 1, Some("true".to_string())), ("name".to_string(), 2, Some("\"n2\"".to_string()))]
+            vec![
+                ("_entity".to_string(), 1, Some("true".to_string())),
+                ("name".to_string(), 2, Some("\"n2\"".to_string()))
+            ]
         );
         assert_eq!(own_counter(&db), 2);
     }
@@ -1736,19 +2064,41 @@ mod tests {
     fn every_write_advances_lamport_time() {
         let db = Database::open_memory();
         let lamport = |db: &Database| -> i64 {
-            db.test_connection().unwrap().query_row("SELECT MAX(lamport) FROM sync_values", [], |row| row.get(0)).unwrap()
+            db.test_connection()
+                .unwrap()
+                .query_row("SELECT MAX(lamport) FROM sync_values", [], |row| row.get(0))
+                .unwrap()
         };
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"})).unwrap();
+        db.record_replicated_write(
+            EntityType::Snippet,
+            "one",
+            &fields(&["name"]),
+            &json!({"name": "n"}),
+        )
+        .unwrap();
         let first = lamport(&db);
-        db.record_replicated_write(EntityType::Snippet, "two", &fields(&["name"]), &json!({"name": "n"})).unwrap();
+        db.record_replicated_write(
+            EntityType::Snippet,
+            "two",
+            &fields(&["name"]),
+            &json!({"name": "n"}),
+        )
+        .unwrap();
         assert!(lamport(&db) > first);
     }
 
     #[test]
     fn deletion_removes_every_value_and_leaves_no_tombstone() {
         let db = Database::open_memory();
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"})).unwrap();
-        db.record_replicated_deletion(EntityType::Snippet, "one").unwrap();
+        db.record_replicated_write(
+            EntityType::Snippet,
+            "one",
+            &fields(&["name"]),
+            &json!({"name": "n"}),
+        )
+        .unwrap();
+        db.record_replicated_deletion(EntityType::Snippet, "one")
+            .unwrap();
         assert!(values(&db, "one").is_empty());
         // The context still records the deleted write, which is what keeps
         // a peer's older copy from bringing it back.
@@ -1760,7 +2110,12 @@ mod tests {
     fn remote_projection_suppresses_local_recording() {
         let db = Database::open_memory();
         db.with_remote_projection(|| {
-            db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"}))
+            db.record_replicated_write(
+                EntityType::Snippet,
+                "one",
+                &fields(&["name"]),
+                &json!({"name": "n"}),
+            )
         })
         .unwrap();
         assert!(values(&db, "one").is_empty());
@@ -1770,13 +2125,36 @@ mod tests {
     #[test]
     fn field_winner_and_known_fields_read_the_replica() {
         let db = Database::open_memory();
-        assert_eq!(db.resolve_field_winner(EntityType::Snippet, "one", "name").unwrap(), None);
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "first"})).unwrap();
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "second"})).unwrap();
-        assert_eq!(db.resolve_field_winner(EntityType::Snippet, "one", "name").unwrap(), Some(json!("second")));
+        assert_eq!(
+            db.resolve_field_winner(EntityType::Snippet, "one", "name")
+                .unwrap(),
+            None
+        );
+        db.record_replicated_write(
+            EntityType::Snippet,
+            "one",
+            &fields(&["name"]),
+            &json!({"name": "first"}),
+        )
+        .unwrap();
+        db.record_replicated_write(
+            EntityType::Snippet,
+            "one",
+            &fields(&["name"]),
+            &json!({"name": "second"}),
+        )
+        .unwrap();
+        assert_eq!(
+            db.resolve_field_winner(EntityType::Snippet, "one", "name")
+                .unwrap(),
+            Some(json!("second"))
+        );
         let mut known = db.known_fields(EntityType::Snippet, "one").unwrap();
         known.sort();
-        assert_eq!(known, vec![ENTITY_EXISTENCE_FIELD.to_string(), "name".to_string()]);
+        assert_eq!(
+            known,
+            vec![ENTITY_EXISTENCE_FIELD.to_string(), "name".to_string()]
+        );
         assert!(db.entity_recorded(EntityType::Snippet, "one").unwrap());
         assert!(!db.entity_recorded(EntityType::Snippet, "two").unwrap());
     }
@@ -1792,7 +2170,12 @@ mod tests {
                 db.with_remote_projection(|| {
                     entered_tx.send(()).unwrap();
                     release_rx.recv().unwrap();
-                    db.record_replicated_write(EntityType::Snippet, "remote", &fields(&["name"]), &json!({"name": "r"}))
+                    db.record_replicated_write(
+                        EntityType::Snippet,
+                        "remote",
+                        &fields(&["name"]),
+                        &json!({"name": "r"}),
+                    )
                 })
                 .unwrap();
             })
@@ -1800,7 +2183,13 @@ mod tests {
         entered_rx.recv().unwrap();
         // A local command on another thread, mid-projection.
         assert!(!db.is_projecting_remote_operation());
-        db.record_replicated_write(EntityType::Snippet, "local", &fields(&["name"]), &json!({"name": "l"})).unwrap();
+        db.record_replicated_write(
+            EntityType::Snippet,
+            "local",
+            &fields(&["name"]),
+            &json!({"name": "l"}),
+        )
+        .unwrap();
         release_tx.send(()).unwrap();
         projecting.join().unwrap();
         assert!(!values(&db, "local").is_empty());
@@ -1841,10 +2230,7 @@ mod tests {
     fn projection_readiness_accepts_a_complete_valid_entity() {
         let db = Database::open_memory();
         let readiness = db
-            .check_projection_readiness(
-                EntityType::Snippet,
-                &json!({"name": "n", "body": "b"}),
-            )
+            .check_projection_readiness(EntityType::Snippet, &json!({"name": "n", "body": "b"}))
             .unwrap();
         assert_eq!(readiness, ProjectionReadiness::Ready);
     }
@@ -1853,51 +2239,130 @@ mod tests {
     fn account_nicknames_reconcile_project_and_clear_without_changing_sender_names() {
         let source = Database::open_memory();
         source.adopt_account("you@example.com").unwrap();
-        source.set_account_display_name("you@example.com", Some("Joel Reed")).unwrap();
-        source.set_account_nickname("you@example.com", Some("Work")).unwrap();
+        source
+            .set_account_display_name("you@example.com", Some("Joel Reed"))
+            .unwrap();
+        source
+            .set_account_nickname("you@example.com", Some("Work"))
+            .unwrap();
         source.reconcile_replicated_sync_backlog().unwrap();
-        assert_eq!(source.resolve_field_winner(EntityType::MailAccount, "you@example.com", "nickname").unwrap(), Some(json!("Work")));
+        assert_eq!(
+            source
+                .resolve_field_winner(EntityType::MailAccount, "you@example.com", "nickname")
+                .unwrap(),
+            Some(json!("Work"))
+        );
 
         let destination = Database::open_memory();
         let mut payload = json!({"email":"you@example.com","displayName":"Joel Reed","nickname":"Work","color":"#123456","provider":"gmail","sortOrder":0});
-        destination.materialize_entity(EntityType::MailAccount, "you@example.com", Some(&payload), false).unwrap();
+        destination
+            .materialize_entity(
+                EntityType::MailAccount,
+                "you@example.com",
+                Some(&payload),
+                false,
+            )
+            .unwrap();
         let account = destination.get_account("you@example.com").unwrap().unwrap();
         assert_eq!(account.nickname.as_deref(), Some("Work"));
         assert_eq!(account.display_name.as_deref(), Some("Joel Reed"));
         assert_eq!(account.status, "needs_reauth");
         destination.adopt_account("you@example.com").unwrap();
         payload["nickname"] = Value::Null;
-        destination.materialize_entity(EntityType::MailAccount, "you@example.com", Some(&payload), false).unwrap();
+        destination
+            .materialize_entity(
+                EntityType::MailAccount,
+                "you@example.com",
+                Some(&payload),
+                false,
+            )
+            .unwrap();
         let account = destination.get_account("you@example.com").unwrap().unwrap();
         assert!(account.nickname.is_none());
         assert_eq!(account.display_name.as_deref(), Some("Joel Reed"));
         assert_eq!(account.status, "connected");
         // A payload produced before this field existed remains readable.
         payload.as_object_mut().unwrap().remove("nickname");
-        destination.materialize_entity(EntityType::MailAccount, "you@example.com", Some(&payload), false).unwrap();
-        assert!(destination.get_account("you@example.com").unwrap().unwrap().nickname.is_none());
+        destination
+            .materialize_entity(
+                EntityType::MailAccount,
+                "you@example.com",
+                Some(&payload),
+                false,
+            )
+            .unwrap();
+        assert!(destination
+            .get_account("you@example.com")
+            .unwrap()
+            .unwrap()
+            .nickname
+            .is_none());
     }
 
     #[test]
     fn a_synced_in_account_arrives_available_and_never_publishes_its_device_state() {
         let destination = Database::open_memory();
         let payload = json!({"email":"personal@example.com","color":"#123456","provider":"imap","sortOrder":0});
-        destination.materialize_entity(EntityType::MailAccount, "personal@example.com", Some(&payload), false).unwrap();
-        let account = destination.get_account("personal@example.com").unwrap().unwrap();
-        assert!(!account.on_this_device, "a new account from another device is offered, not set up");
+        destination
+            .materialize_entity(
+                EntityType::MailAccount,
+                "personal@example.com",
+                Some(&payload),
+                false,
+            )
+            .unwrap();
+        let account = destination
+            .get_account("personal@example.com")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !account.on_this_device,
+            "a new account from another device is offered, not set up"
+        );
         assert_eq!(account.status, "needs_reauth");
 
         // Connecting here sets it up; a later catalog update keeps that.
-        destination.adopt_mail_account("personal@example.com", crate::models::MailProviderKind::Imap).unwrap();
-        destination.materialize_entity(EntityType::MailAccount, "personal@example.com", Some(&payload), false).unwrap();
-        assert!(destination.get_account("personal@example.com").unwrap().unwrap().on_this_device);
+        destination
+            .adopt_mail_account(
+                "personal@example.com",
+                crate::models::MailProviderKind::Imap,
+            )
+            .unwrap();
+        destination
+            .materialize_entity(
+                EntityType::MailAccount,
+                "personal@example.com",
+                Some(&payload),
+                false,
+            )
+            .unwrap();
+        assert!(
+            destination
+                .get_account("personal@example.com")
+                .unwrap()
+                .unwrap()
+                .on_this_device
+        );
 
         // Disconnecting locally puts it back to "available" without removing it.
-        destination.disconnect_account_locally("personal@example.com").unwrap();
-        assert!(!destination.get_account("personal@example.com").unwrap().unwrap().on_this_device);
+        destination
+            .disconnect_account_locally("personal@example.com")
+            .unwrap();
+        assert!(
+            !destination
+                .get_account("personal@example.com")
+                .unwrap()
+                .unwrap()
+                .on_this_device
+        );
         destination.reconcile_replicated_sync_backlog().unwrap();
         for field in ["onThisDevice", "on_this_device", "status"] {
-            assert_eq!(destination.resolve_field_winner(EntityType::MailAccount, "personal@example.com", field).unwrap(), None);
+            assert_eq!(
+                destination
+                    .resolve_field_winner(EntityType::MailAccount, "personal@example.com", field)
+                    .unwrap(),
+                None
+            );
         }
     }
 
@@ -1941,70 +2406,139 @@ mod replicator_tests {
 
     #[test]
     fn conflicted_contact_does_not_block_other_entities_and_is_retried_later() {
-        let db=Database::open_memory();
-        let owner=db.save_contact_profile(&crate::models::SaveContactRequest{birthday:None,keep_in_touch:None,
-            id:Some("local-owner".into()),display_name:Some("Local owner".into()),role:None,company:None,
-            location:None,bio:None,notes:Some("Keep local profile".into()),links:vec![],photo_data:None,
-            favorite:false,addresses:vec!["shared@example.com".into()],
-        }).unwrap();
-        let contact=json!({"id":"remote-contact","displayName":"Remote person","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["shared@example.com"]});
+        let db = Database::open_memory();
+        let owner = db
+            .save_contact_profile(&crate::models::SaveContactRequest {
+                birthday: None,
+                keep_in_touch: None,
+                id: Some("local-owner".into()),
+                display_name: Some("Local owner".into()),
+                role: None,
+                company: None,
+                location: None,
+                bio: None,
+                notes: Some("Keep local profile".into()),
+                links: vec![],
+                photo_data: None,
+                favorite: false,
+                addresses: vec!["shared@example.com".into()],
+            })
+            .unwrap();
+        let contact = json!({"id":"remote-contact","displayName":"Remote person","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["shared@example.com"]});
         db.record_replicated_write(
-            EntityType::Contact,"remote-contact",
-            &fields(&["id","displayName","role","company","location","bio","notes","links","photoData","favorite","addresses"]),
+            EntityType::Contact,
+            "remote-contact",
+            &fields(&[
+                "id",
+                "displayName",
+                "role",
+                "company",
+                "location",
+                "bio",
+                "notes",
+                "links",
+                "photoData",
+                "favorite",
+                "addresses",
+            ]),
             &contact,
-        ).unwrap();
+        )
+        .unwrap();
         db.record_replicated_write(
-            EntityType::Snippet,"remote-snippet",
-            &fields(&["id","name","body","createdAt"]),
-            &snippet_payload("remote-snippet","Materialized despite contact conflict"),
-        ).unwrap();
+            EntityType::Snippet,
+            "remote-snippet",
+            &fields(&["id", "name", "body", "createdAt"]),
+            &snippet_payload("remote-snippet", "Materialized despite contact conflict"),
+        )
+        .unwrap();
 
-        db.materialize_touched_entities(&[(EntityType::Contact,"remote-contact".into()),(EntityType::Snippet,"remote-snippet".into())]).unwrap();
-        let snippet:Option<String>=db.test_connection().unwrap().query_row("SELECT name FROM snippets WHERE id='remote-snippet'",[],|row|row.get(0)).unwrap();
-        assert_eq!(snippet.as_deref(),Some("Materialized despite contact conflict"));
+        db.materialize_touched_entities(&[
+            (EntityType::Contact, "remote-contact".into()),
+            (EntityType::Snippet, "remote-snippet".into()),
+        ])
+        .unwrap();
+        let snippet: Option<String> = db
+            .test_connection()
+            .unwrap()
+            .query_row(
+                "SELECT name FROM snippets WHERE id='remote-snippet'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            snippet.as_deref(),
+            Some("Materialized despite contact conflict")
+        );
         let queued:i64=db.test_connection().unwrap().query_row("SELECT COUNT(*) FROM pending_entity_materializations WHERE entity_type='contact' AND entity_id='remote-contact'",[],|row|row.get(0)).unwrap();
-        assert_eq!(queued,1);
+        assert_eq!(queued, 1);
         assert!(db.get_contact_profile("remote-contact").unwrap().is_none());
 
-        db.save_contact_profile(&crate::models::SaveContactRequest{birthday:None,keep_in_touch:None,
-            id:Some(owner.id),display_name:Some("Local owner".into()),role:None,company:None,
-            location:None,bio:None,notes:Some("Keep local profile".into()),links:vec![],photo_data:None,
-            favorite:false,addresses:vec!["owner@example.com".into()],
-        }).unwrap();
+        db.save_contact_profile(&crate::models::SaveContactRequest {
+            birthday: None,
+            keep_in_touch: None,
+            id: Some(owner.id),
+            display_name: Some("Local owner".into()),
+            role: None,
+            company: None,
+            location: None,
+            bio: None,
+            notes: Some("Keep local profile".into()),
+            links: vec![],
+            photo_data: None,
+            favorite: false,
+            addresses: vec!["owner@example.com".into()],
+        })
+        .unwrap();
         // No newer remote snapshot is needed; pending projection state is
         // retried even when this call has no newly touched entities.
         db.materialize_touched_entities(&[]).unwrap();
         let queued:i64=db.test_connection().unwrap().query_row("SELECT COUNT(*) FROM pending_entity_materializations WHERE entity_type='contact' AND entity_id='remote-contact'",[],|row|row.get(0)).unwrap();
-        assert_eq!(queued,0);
-        let remote=db.get_contact_profile("remote-contact").unwrap().unwrap();
-        assert_eq!(remote.addresses,vec!["shared@example.com"]);
+        assert_eq!(queued, 0);
+        let remote = db.get_contact_profile("remote-contact").unwrap().unwrap();
+        assert_eq!(remote.addresses, vec!["shared@example.com"]);
     }
 
     #[test]
     fn a_contact_record_from_an_older_build_keeps_local_birthday_and_keep_in_touch() {
-        let db=Database::open_memory();
-        db.save_contact_profile(&crate::models::SaveContactRequest{birthday:Some("03-14".into()),keep_in_touch:None,
-            id:Some("kit-contact".into()),display_name:Some("Local".into()),role:None,company:None,
-            location:None,bio:None,notes:None,links:vec![],photo_data:None,
-            favorite:false,addresses:vec!["kit@example.com".into()],
-        }).unwrap();
-        let local=db.set_keep_in_touch(&["kit-contact".into()],Some(21)).unwrap().remove(0);
+        let db = Database::open_memory();
+        db.save_contact_profile(&crate::models::SaveContactRequest {
+            birthday: Some("03-14".into()),
+            keep_in_touch: None,
+            id: Some("kit-contact".into()),
+            display_name: Some("Local".into()),
+            role: None,
+            company: None,
+            location: None,
+            bio: None,
+            notes: None,
+            links: vec![],
+            photo_data: None,
+            favorite: false,
+            addresses: vec!["kit@example.com".into()],
+        })
+        .unwrap();
+        let local = db
+            .set_keep_in_touch(&["kit-contact".into()], Some(21))
+            .unwrap()
+            .remove(0);
         // The exact key set every build before 0.67.0 sends.
-        let legacy=json!({"id":"kit-contact","displayName":"Renamed elsewhere","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["kit@example.com"]});
+        let legacy = json!({"id":"kit-contact","displayName":"Renamed elsewhere","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["kit@example.com"]});
         db.upsert_synced_contact(&legacy).unwrap();
-        let merged=db.get_contact_profile("kit-contact").unwrap().unwrap();
-        assert_eq!(merged.display_name.as_deref(),Some("Renamed elsewhere"));
-        assert_eq!(merged.birthday.as_deref(),Some("03-14"));
-        assert_eq!(merged.keep_in_touch,local.keep_in_touch);
+        let merged = db.get_contact_profile("kit-contact").unwrap().unwrap();
+        assert_eq!(merged.display_name.as_deref(), Some("Renamed elsewhere"));
+        assert_eq!(merged.birthday.as_deref(), Some("03-14"));
+        assert_eq!(merged.keep_in_touch, local.keep_in_touch);
 
         // A current build's record carries both keys, so it can clear them.
-        let mut current=serde_json::to_value(crate::models::ContactRecord::from(&merged)).unwrap();
-        current["birthday"]=Value::Null;
-        current["keepInTouch"]=json!({});
+        let mut current =
+            serde_json::to_value(crate::models::ContactRecord::from(&merged)).unwrap();
+        current["birthday"] = Value::Null;
+        current["keepInTouch"] = json!({});
         db.upsert_synced_contact(&current).unwrap();
-        let cleared=db.get_contact_profile("kit-contact").unwrap().unwrap();
-        assert_eq!(cleared.birthday,None);
-        assert_eq!(cleared.keep_in_touch,crate::models::KeepInTouch::default());
+        let cleared = db.get_contact_profile("kit-contact").unwrap().unwrap();
+        assert_eq!(cleared.birthday, None);
+        assert_eq!(cleared.keep_in_touch, crate::models::KeepInTouch::default());
     }
 
     #[test]
@@ -2012,11 +2546,26 @@ mod replicator_tests {
         let database = Database::open_memory();
         let keys = test_keys(&database);
         let contact = json!({"id":"synced-contact","displayName":"Synced person","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["synced@example.com"]});
-        database.record_replicated_write(
-            EntityType::Contact, "synced-contact",
-            &fields(&["id","displayName","role","company","location","bio","notes","links","photoData","favorite","addresses"]),
-            &contact,
-        ).unwrap();
+        database
+            .record_replicated_write(
+                EntityType::Contact,
+                "synced-contact",
+                &fields(&[
+                    "id",
+                    "displayName",
+                    "role",
+                    "company",
+                    "location",
+                    "bio",
+                    "notes",
+                    "links",
+                    "photoData",
+                    "favorite",
+                    "addresses",
+                ]),
+                &contact,
+            )
+            .unwrap();
 
         database.take_local_snapshot(keys.device_id, 1, 1).unwrap();
         let state = database.load_replica_state().unwrap();
@@ -2024,7 +2573,10 @@ mod replicator_tests {
         let other = Database::open_memory();
         let touched = other.merge_replica_state(&state).unwrap();
         other.materialize_touched_entities(&touched).unwrap();
-        let synced = other.get_contact_profile("synced-contact").unwrap().unwrap();
+        let synced = other
+            .get_contact_profile("synced-contact")
+            .unwrap()
+            .unwrap();
         assert_eq!(synced.display_name.as_deref(), Some("Synced person"));
         assert_eq!(synced.addresses, vec!["synced@example.com"]);
     }
@@ -2034,43 +2586,89 @@ mod replicator_tests {
         let save = |database: &Database, email: &str| {
             database
                 .save_contact_profile(&crate::models::SaveContactRequest {
-                    id: None, display_name: Some(email.into()), role: None, company: None, location: None,
-                    bio: None, notes: None, links: Vec::new(), photo_data: None, favorite: false,
-                    addresses: vec![email.into()], birthday: None, keep_in_touch: None,
+                    id: None,
+                    display_name: Some(email.into()),
+                    role: None,
+                    company: None,
+                    location: None,
+                    bio: None,
+                    notes: None,
+                    links: Vec::new(),
+                    photo_data: None,
+                    favorite: false,
+                    addresses: vec![email.into()],
+                    birthday: None,
+                    keep_in_touch: None,
                 })
                 .unwrap()
                 .id
         };
         let record = |database: &Database, write: crate::db::contact_groups::ContactGroupWrite| {
-            let payload = database.contact_group_record(&write.group.id).unwrap().unwrap();
-            database.record_replicated_write(EntityType::ContactGroup, &write.group.id, &write.fields, &payload).unwrap();
+            let payload = database
+                .contact_group_record(&write.group.id)
+                .unwrap()
+                .unwrap();
+            database
+                .record_replicated_write(
+                    EntityType::ContactGroup,
+                    &write.group.id,
+                    &write.fields,
+                    &payload,
+                )
+                .unwrap();
             write.group
         };
         let exchange = |from: &Database, to: &Database| {
-            let touched = to.merge_replica_state(&from.load_replica_state().unwrap()).unwrap();
+            let touched = to
+                .merge_replica_state(&from.load_replica_state().unwrap())
+                .unwrap();
             to.materialize_touched_entities(&touched).unwrap();
         };
         let (a, b) = (Database::open_memory(), Database::open_memory());
-        let [ada, bob, cyd] = ["ada@example.com", "bob@example.com", "cyd@example.com"].map(|email| {
-            let id = save(&a, email);
-            assert_eq!(save(&b, email), id);
-            id
-        });
-        let group = record(&a, a.create_contact_group("Board", &[ada.clone(), bob.clone()], &[]).unwrap());
+        let [ada, bob, cyd] =
+            ["ada@example.com", "bob@example.com", "cyd@example.com"].map(|email| {
+                let id = save(&a, email);
+                assert_eq!(save(&b, email), id);
+                id
+            });
+        let group = record(
+            &a,
+            a.create_contact_group("Board", &[ada.clone(), bob.clone()], &[])
+                .unwrap(),
+        );
         exchange(&a, &b);
-        assert_eq!(b.get_contact_group(&group.id).unwrap().unwrap().member_ids, vec![ada.clone(), bob.clone()]);
+        assert_eq!(
+            b.get_contact_group(&group.id).unwrap().unwrap().member_ids,
+            vec![ada.clone(), bob.clone()]
+        );
 
-        record(&a, a.remove_contact_group_members(&group.id, std::slice::from_ref(&bob)).unwrap());
-        record(&b, b.add_contact_group_members(&group.id, std::slice::from_ref(&cyd), &[]).unwrap());
+        record(
+            &a,
+            a.remove_contact_group_members(&group.id, std::slice::from_ref(&bob))
+                .unwrap(),
+        );
+        record(
+            &b,
+            b.add_contact_group_members(&group.id, std::slice::from_ref(&cyd), &[])
+                .unwrap(),
+        );
         exchange(&a, &b);
         exchange(&b, &a);
         for database in [&a, &b] {
-            assert_eq!(database.get_contact_group(&group.id).unwrap().unwrap().member_ids, vec![ada.clone(), cyd.clone()]);
+            assert_eq!(
+                database
+                    .get_contact_group(&group.id)
+                    .unwrap()
+                    .unwrap()
+                    .member_ids,
+                vec![ada.clone(), cyd.clone()]
+            );
             assert!(database.list_frontier_conflicts().unwrap().is_empty());
         }
 
         a.delete_contact_group(&group.id).unwrap();
-        a.record_replicated_deletion(EntityType::ContactGroup, &group.id).unwrap();
+        a.record_replicated_deletion(EntityType::ContactGroup, &group.id)
+            .unwrap();
         exchange(&a, &b);
         assert!(b.get_contact_group(&group.id).unwrap().is_none());
         assert!(b.get_contact_profile(&ada).unwrap().is_some());
@@ -2089,7 +2687,9 @@ mod replicator_tests {
             device_id
         };
         let signing_key = SigningKey::generate(&mut os_rng());
-        database.trust_device_public_key(&device_id, &signing_key.verifying_key()).unwrap();
+        database
+            .trust_device_public_key(&device_id, &signing_key.verifying_key())
+            .unwrap();
         LocalKeys {
             signing_key,
             k_epoch: [7u8; 32],
@@ -2102,7 +2702,12 @@ mod replicator_tests {
 
     /// The same device's keys, as they would be after its group rotated to
     /// `key_epoch`, holding `earlier` for older epochs.
-    fn at_epoch(keys: &LocalKeys, key_epoch: u32, k_epoch: [u8; 32], earlier: &[(u32, [u8; 32])]) -> LocalKeys {
+    fn at_epoch(
+        keys: &LocalKeys,
+        key_epoch: u32,
+        k_epoch: [u8; 32],
+        earlier: &[(u32, [u8; 32])],
+    ) -> LocalKeys {
         LocalKeys {
             signing_key: keys.signing_key.clone(),
             k_epoch,
@@ -2114,7 +2719,9 @@ mod replicator_tests {
     }
 
     fn trust(database: &Database, keys: &LocalKeys) {
-        database.trust_device_public_key(keys.device_id.as_bytes(), &keys.signing_key.verifying_key()).unwrap();
+        database
+            .trust_device_public_key(keys.device_id.as_bytes(), &keys.signing_key.verifying_key())
+            .unwrap();
     }
 
     fn fake(name: &str) -> Vec<Arc<dyn SyncTransport>> {
@@ -2134,27 +2741,51 @@ mod replicator_tests {
             )
             .unwrap();
         database
-            .record_replicated_write(EntityType::Snippet, id, &fields(&["id", "name", "body", "createdAt"]), &snippet_payload(id, name))
+            .record_replicated_write(
+                EntityType::Snippet,
+                id,
+                &fields(&["id", "name", "body", "createdAt"]),
+                &snippet_payload(id, name),
+            )
             .unwrap();
     }
 
     fn rename_snippet(database: &Database, id: &str, name: &str) {
-        database.test_connection().unwrap().execute("UPDATE snippets SET name=?2 WHERE id=?1", params![id, name]).unwrap();
         database
-            .record_replicated_write(EntityType::Snippet, id, &fields(&["name"]), &snippet_payload(id, name))
+            .test_connection()
+            .unwrap()
+            .execute("UPDATE snippets SET name=?2 WHERE id=?1", params![id, name])
+            .unwrap();
+        database
+            .record_replicated_write(
+                EntityType::Snippet,
+                id,
+                &fields(&["name"]),
+                &snippet_payload(id, name),
+            )
             .unwrap();
     }
 
     fn delete_snippet(database: &Database, id: &str) {
-        database.test_connection().unwrap().execute("DELETE FROM snippets WHERE id=?1", params![id]).unwrap();
-        database.record_replicated_deletion(EntityType::Snippet, id).unwrap();
+        database
+            .test_connection()
+            .unwrap()
+            .execute("DELETE FROM snippets WHERE id=?1", params![id])
+            .unwrap();
+        database
+            .record_replicated_deletion(EntityType::Snippet, id)
+            .unwrap();
     }
 
     fn stored_snippet_name(database: &Database, id: &str) -> Option<String> {
         database
             .test_connection()
             .unwrap()
-            .query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0))
+            .query_row(
+                "SELECT name FROM snippets WHERE id=?1",
+                params![id],
+                |row| row.get(0),
+            )
             .optional()
             .unwrap()
     }
@@ -2164,13 +2795,23 @@ mod replicator_tests {
         let mut statement = connection
             .prepare("SELECT cid, object_kind, state_sequence FROM sync_objects WHERE state_sequence IS NOT NULL ORDER BY object_kind, cid")
             .unwrap();
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
         rows
     }
 
-    async fn published_head(transports: &[Arc<dyn SyncTransport>], keys: &LocalKeys) -> Option<SignedDeviceHead> {
+    async fn published_head(
+        transports: &[Arc<dyn SyncTransport>],
+        keys: &LocalKeys,
+    ) -> Option<SignedDeviceHead> {
         transports[0]
-            .resolve_heads(&[HeadLocator { device_id: keys.device_id, remote_id: None }])
+            .resolve_heads(&[HeadLocator {
+                device_id: keys.device_id,
+                remote_id: None,
+            }])
             .await
             .unwrap()
             .into_iter()
@@ -2184,13 +2825,21 @@ mod replicator_tests {
         write_snippet(&database, "one", "before");
 
         let (_, generation) = database.take_local_snapshot(keys.device_id, 1, 1).unwrap();
-        assert!(database.local_state_status().unwrap().0, "a crash before storage must leave the replica dirty");
+        assert!(
+            database.local_state_status().unwrap().0,
+            "a crash before storage must leave the replica dirty"
+        );
 
         rename_snippet(&database, "one", "after");
         database
-            .test_with_transaction(|tx| crate::db::sync_state::clear_dirty_if_generation(tx, generation))
+            .test_with_transaction(|tx| {
+                crate::db::sync_state::clear_dirty_if_generation(tx, generation)
+            })
             .unwrap();
-        assert!(database.local_state_status().unwrap().0, "storing an older snapshot must not clear a later write");
+        assert!(
+            database.local_state_status().unwrap().0,
+            "storing an older snapshot must not clear a later write"
+        );
     }
 
     #[tokio::test]
@@ -2200,19 +2849,33 @@ mod replicator_tests {
         let transport = TransportInstanceId("folder-a".to_string());
         write_snippet(&database, "one", "n");
 
-        assert!(database.seal_local_state(&keys, std::slice::from_ref(&transport)).unwrap());
+        assert!(database
+            .seal_local_state(&keys, std::slice::from_ref(&transport))
+            .unwrap());
         let first = state_objects(&database);
-        assert!(first.iter().any(|(_, kind, sequence)| kind == "state_index" && *sequence == 1));
+        assert!(first
+            .iter()
+            .any(|(_, kind, sequence)| kind == "state_index" && *sequence == 1));
         assert!(first.iter().any(|(_, kind, _)| kind == "state_chunk"));
         let (pending, _, _) = database.delivery_counts("folder-a").unwrap();
         assert_eq!(pending as usize, first.len());
 
-        assert!(!database.seal_local_state(&keys, std::slice::from_ref(&transport)).unwrap(), "nothing changed");
+        assert!(
+            !database
+                .seal_local_state(&keys, std::slice::from_ref(&transport))
+                .unwrap(),
+            "nothing changed"
+        );
 
         rename_snippet(&database, "one", "n2");
-        assert!(database.seal_local_state(&keys, std::slice::from_ref(&transport)).unwrap());
+        assert!(database
+            .seal_local_state(&keys, std::slice::from_ref(&transport))
+            .unwrap());
         let second = state_objects(&database);
-        assert!(second.iter().all(|(_, _, sequence)| *sequence == 2), "only the current snapshot is kept locally");
+        assert!(
+            second.iter().all(|(_, _, sequence)| *sequence == 2),
+            "only the current snapshot is kept locally"
+        );
     }
 
     #[tokio::test]
@@ -2234,7 +2897,9 @@ mod replicator_tests {
         let transports = fake("folder-a");
         write_snippet(&database, "one", "n");
 
-        let outcome = push_local_state(&database, &keys, &transports).await.unwrap();
+        let outcome = push_local_state(&database, &keys, &transports)
+            .await
+            .unwrap();
         assert!(outcome.sealed_snapshot);
         assert_eq!(outcome.failed, 0);
         assert!(outcome.delivered > 0);
@@ -2244,7 +2909,11 @@ mod replicator_tests {
 
         let head = published_head(&transports, &keys).await.unwrap().head;
         assert_eq!(head.state_sequence, 1);
-        let index_cid = state_objects(&database).into_iter().find(|(_, kind, _)| kind == "state_index").unwrap().0;
+        let index_cid = state_objects(&database)
+            .into_iter()
+            .find(|(_, kind, _)| kind == "state_index")
+            .unwrap()
+            .0;
         assert_eq!(head.state_cid.as_deref(), Some(index_cid.as_str()));
     }
 
@@ -2257,7 +2926,9 @@ mod replicator_tests {
         fake.inject_transient_outage(1000);
         let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(fake)];
 
-        let outcome = push_local_state(&database, &keys, &transports).await.unwrap();
+        let outcome = push_local_state(&database, &keys, &transports)
+            .await
+            .unwrap();
         assert_eq!(outcome.delivered, 0);
         assert!(outcome.failed > 0);
         let (pending, delivered, failed) = database.delivery_counts("folder-a").unwrap();
@@ -2269,30 +2940,73 @@ mod replicator_tests {
     }
 
     #[tokio::test]
-    async fn a_head_keeps_naming_the_old_snapshot_until_the_new_one_has_arrived_then_the_old_one_goes() {
+    async fn a_head_keeps_naming_the_old_snapshot_until_the_new_one_has_arrived_then_the_old_one_goes(
+    ) {
         let database = Database::open_memory();
         let keys = test_keys(&database);
         let flaky = Arc::new(FakeTransport::new("flaky"));
         let transports: Vec<Arc<dyn SyncTransport>> = vec![flaky.clone()];
         write_snippet(&database, "one", "n");
-        push_local_state(&database, &keys, &transports).await.unwrap();
-        let first_objects: Vec<String> = state_objects(&database).into_iter().map(|(cid, _, _)| cid).collect();
+        push_local_state(&database, &keys, &transports)
+            .await
+            .unwrap();
+        let first_objects: Vec<String> = state_objects(&database)
+            .into_iter()
+            .map(|(cid, _, _)| cid)
+            .collect();
 
         rename_snippet(&database, "one", "n2");
         flaky.inject_transient_outage(1);
-        push_local_state(&database, &keys, &transports).await.unwrap();
-        assert_eq!(published_head(&transports, &keys).await.unwrap().head.state_sequence, 1);
+        push_local_state(&database, &keys, &transports)
+            .await
+            .unwrap();
+        assert_eq!(
+            published_head(&transports, &keys)
+                .await
+                .unwrap()
+                .head
+                .state_sequence,
+            1
+        );
         for cid in &first_objects {
-            assert!(transports[0].get_object(&TransportCid(cid.clone())).await.is_ok(), "the snapshot the head names stays");
+            assert!(
+                transports[0]
+                    .get_object(&TransportCid(cid.clone()))
+                    .await
+                    .is_ok(),
+                "the snapshot the head names stays"
+            );
         }
 
-        database.test_connection().unwrap().execute("UPDATE sync_deliveries SET retry_at=NULL", []).unwrap();
-        push_local_state(&database, &keys, &transports).await.unwrap();
-        assert_eq!(published_head(&transports, &keys).await.unwrap().head.state_sequence, 2);
+        database
+            .test_connection()
+            .unwrap()
+            .execute("UPDATE sync_deliveries SET retry_at=NULL", [])
+            .unwrap();
+        push_local_state(&database, &keys, &transports)
+            .await
+            .unwrap();
+        assert_eq!(
+            published_head(&transports, &keys)
+                .await
+                .unwrap()
+                .head
+                .state_sequence,
+            2
+        );
         for cid in &first_objects {
-            assert_eq!(transports[0].get_object(&TransportCid(cid.clone())).await, Err(TransportError::NotFound));
+            assert_eq!(
+                transports[0].get_object(&TransportCid(cid.clone())).await,
+                Err(TransportError::NotFound)
+            );
         }
-        let retired: i64 = database.test_connection().unwrap().query_row("SELECT COUNT(*) FROM sync_retired_objects", [], |row| row.get(0)).unwrap();
+        let retired: i64 = database
+            .test_connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sync_retired_objects", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(retired, 0);
     }
 
@@ -2302,16 +3016,29 @@ mod replicator_tests {
         let transports = fake("shared");
         write_snippet(&database_b, "b-1", "From B");
         let keys_b = test_keys(&database_b);
-        push_local_state(&database_b, &keys_b, &transports).await.unwrap();
+        push_local_state(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
 
         let keys_a = test_keys(&database_a);
         trust(&database_a, &keys_b);
-        let outcome = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
+        let outcome = pull_from_transports(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
         assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 0));
-        assert_eq!(stored_snippet_name(&database_a, "b-1").as_deref(), Some("From B"));
+        assert_eq!(
+            stored_snippet_name(&database_a, "b-1").as_deref(),
+            Some("From B")
+        );
 
         // Nothing new: the same snapshot isn't merged again.
-        assert_eq!(pull_from_transports(&database_a, &keys_a, &transports).await.unwrap().merged_states, 0);
+        assert_eq!(
+            pull_from_transports(&database_a, &keys_a, &transports)
+                .await
+                .unwrap()
+                .merged_states,
+            0
+        );
     }
 
     #[tokio::test]
@@ -2320,11 +3047,19 @@ mod replicator_tests {
         let transports = fake("shared");
         write_snippet(&database_b, "b-1", "From B");
         let keys_b = test_keys(&database_b);
-        push_local_state(&database_b, &keys_b, &transports).await.unwrap();
+        push_local_state(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
 
         // A never trusts B.
         let keys_a = test_keys(&database_a);
-        assert_eq!(pull_from_transports(&database_a, &keys_a, &transports).await.unwrap().merged_states, 0);
+        assert_eq!(
+            pull_from_transports(&database_a, &keys_a, &transports)
+                .await
+                .unwrap()
+                .merged_states,
+            0
+        );
         assert_eq!(stored_snippet_name(&database_a, "b-1"), None);
     }
 
@@ -2344,9 +3079,14 @@ mod replicator_tests {
             published_at_ms: 1_800_000_000_000,
         };
         let signed_foreign_head = sign_device_head(&keys_b.signing_key, foreign_head).unwrap();
-        transports[0].publish_head(&signed_foreign_head).await.unwrap();
+        transports[0]
+            .publish_head(&signed_foreign_head)
+            .await
+            .unwrap();
 
-        let outcome = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
+        let outcome = pull_from_transports(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
         assert_eq!((outcome.merged_states, outcome.failed_transports), (0, 0));
         let observed_foreign_heads: i64 = database_a
             .test_connection()
@@ -2372,7 +3112,8 @@ mod replicator_tests {
     async fn drafts_reach_other_devices_through_server_drafts_not_replicated_sync() {
         let (a, b) = (draft_device(), draft_device());
         let (ka, kb) = (test_keys(&a), test_keys(&b));
-        trust(&a, &kb); trust(&b, &ka);
+        trust(&a, &kb);
+        trust(&b, &ka);
         let transports = fake("draft-shared");
         let mut draft = a.create_draft("new", None, "you@example.com", &[]).unwrap();
         draft.subject = "Plans".into();
@@ -2382,7 +3123,10 @@ mod replicator_tests {
         assert!(!a.entity_recorded(EntityType::Draft, &draft.id).unwrap());
         assert!(b.drafts().unwrap().is_empty());
         a.reconcile_replicated_sync_backlog().unwrap();
-        assert!(!a.entity_recorded(EntityType::Draft, &draft.id).unwrap(), "reconciling never records drafts");
+        assert!(
+            !a.entity_recorded(EntityType::Draft, &draft.id).unwrap(),
+            "reconciling never records drafts"
+        );
         a.discard_draft(&draft.id).unwrap();
         assert!(!a.entity_recorded(EntityType::Draft, &draft.id).unwrap());
     }
@@ -2395,7 +3139,15 @@ mod replicator_tests {
         EntityType::Draft.validate_payload(&payload).unwrap();
         let fields: BTreeSet<String> = payload.as_object().unwrap().keys().cloned().collect();
         database
-            .test_with_transaction(|tx| crate::db::sync_state::record_replicated_write_in_transaction(tx, EntityType::Draft, &draft.id, &fields, &payload))
+            .test_with_transaction(|tx| {
+                crate::db::sync_state::record_replicated_write_in_transaction(
+                    tx,
+                    EntityType::Draft,
+                    &draft.id,
+                    &fields,
+                    &payload,
+                )
+            })
             .unwrap();
     }
 
@@ -2403,43 +3155,85 @@ mod replicator_tests {
     async fn draft_records_from_earlier_versions_are_ignored() {
         let (old, new) = (draft_device(), draft_device());
         let (ko, kn) = (test_keys(&old), test_keys(&new));
-        trust(&old, &kn); trust(&new, &ko);
+        trust(&old, &kn);
+        trust(&new, &ko);
         let transports = fake("draft-legacy");
-        let mut draft = old.create_draft("new", None, "you@example.com", &[]).unwrap();
+        let mut draft = old
+            .create_draft("new", None, "you@example.com", &[])
+            .unwrap();
         draft.subject = "From 0.147".into();
         record_draft_like_0_147(&old, &draft);
         // This device has its own draft with the same id, which a legacy
         // deletion must not remove.
-        let mine = new.create_draft("new", None, "you@example.com", &[]).unwrap();
+        let mine = new
+            .create_draft("new", None, "you@example.com", &[])
+            .unwrap();
         record_draft_like_0_147(&old, &mine);
         push_local_state(&old, &ko, &transports).await.unwrap();
         pull_from_transports(&new, &kn, &transports).await.unwrap();
-        assert_eq!(new.drafts().unwrap().iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), [mine.id.as_str()]);
+        assert_eq!(
+            new.drafts()
+                .unwrap()
+                .iter()
+                .map(|d| d.id.as_str())
+                .collect::<Vec<_>>(),
+            [mine.id.as_str()]
+        );
 
-        old.test_with_transaction(|tx| crate::db::sync_state::record_replicated_deletion_in_transaction(tx, EntityType::Draft, &mine.id)).unwrap();
+        old.test_with_transaction(|tx| {
+            crate::db::sync_state::record_replicated_deletion_in_transaction(
+                tx,
+                EntityType::Draft,
+                &mine.id,
+            )
+        })
+        .unwrap();
         push_local_state(&old, &ko, &transports).await.unwrap();
         pull_from_transports(&new, &kn, &transports).await.unwrap();
-        assert_eq!(new.drafts().unwrap().len(), 1, "a legacy deletion leaves local drafts alone");
+        assert_eq!(
+            new.drafts().unwrap().len(),
+            1,
+            "a legacy deletion leaves local drafts alone"
+        );
         assert!(new.list_frontier_conflicts().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn signatures_and_alias_defaults_replicate_as_encrypted_snapshots_without_echoing() {
-        use crate::signatures::tests::{template, defaults};
+        use crate::signatures::tests::{defaults, template};
         let (a, b) = (Database::open_memory(), Database::open_memory());
-        a.set_beta_features_enabled(true).unwrap(); b.set_beta_features_enabled(true).unwrap();
+        a.set_beta_features_enabled(true).unwrap();
+        b.set_beta_features_enabled(true).unwrap();
         let (ka, kb) = (test_keys(&a), test_keys(&b));
-        trust(&a, &kb); trust(&b, &ka);
+        trust(&a, &kb);
+        trust(&b, &ka);
         let transports = fake("signature-shared");
         let mut original = template("work");
         original.html = format!("<p>{}</p>", "é".repeat(40_000));
         a.store_signature(&original).unwrap();
-        a.store_signature_defaults(&defaults("me@example.com", "alias@example.com", Some("work"), None)).unwrap();
+        a.store_signature_defaults(&defaults(
+            "me@example.com",
+            "alias@example.com",
+            Some("work"),
+            None,
+        ))
+        .unwrap();
         push_local_state(&a, &ka, &transports).await.unwrap();
         pull_from_transports(&b, &kb, &transports).await.unwrap();
-        assert_eq!(b.signature_library().unwrap().signatures[0].html, original.html);
-        assert_eq!(b.default_draft_signature("me@example.com", "alias@example.com", "new").unwrap().unwrap().text, "work");
-        let mut edited = template("work"); edited.html = "<p>Updated</p>".into(); edited.text = "Updated".into();
+        assert_eq!(
+            b.signature_library().unwrap().signatures[0].html,
+            original.html
+        );
+        assert_eq!(
+            b.default_draft_signature("me@example.com", "alias@example.com", "new")
+                .unwrap()
+                .unwrap()
+                .text,
+            "work"
+        );
+        let mut edited = template("work");
+        edited.html = "<p>Updated</p>".into();
+        edited.text = "Updated".into();
         b.store_signature(&edited).unwrap();
         push_local_state(&b, &kb, &transports).await.unwrap();
         pull_from_transports(&a, &ka, &transports).await.unwrap();
@@ -2447,7 +3241,11 @@ mod replicator_tests {
         assert!(a.list_frontier_conflicts().unwrap().is_empty());
         assert!(b.list_frontier_conflicts().unwrap().is_empty());
         a.delete_signature("work").unwrap();
-        a.delete_signature_defaults(&crate::signatures::SignatureDefaults::key("me@example.com", "alias@example.com")).unwrap();
+        a.delete_signature_defaults(&crate::signatures::SignatureDefaults::key(
+            "me@example.com",
+            "alias@example.com",
+        ))
+        .unwrap();
         push_local_state(&a, &ka, &transports).await.unwrap();
         pull_from_transports(&b, &kb, &transports).await.unwrap();
         assert!(b.signature_library().unwrap().signatures.is_empty());
@@ -2462,8 +3260,12 @@ mod replicator_tests {
         trust(&database_a, &keys_b);
         trust(&database_b, &keys_a);
         write_snippet(&database_a, "note", "original");
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
-        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
 
         // Both rename it before hearing from the other.
         rename_snippet(&database_a, "note", "from A");
@@ -2472,7 +3274,9 @@ mod replicator_tests {
             push_local_state(database, keys, &transports).await.unwrap();
         }
         for (database, keys) in [(&database_a, &keys_a), (&database_b, &keys_b)] {
-            pull_from_transports(database, keys, &transports).await.unwrap();
+            pull_from_transports(database, keys, &transports)
+                .await
+                .unwrap();
         }
         let conflicts_a = database_a.list_frontier_conflicts().unwrap();
         let conflicts_b = database_b.list_frontier_conflicts().unwrap();
@@ -2481,47 +3285,96 @@ mod replicator_tests {
         assert_eq!(conflicts_a[0].candidates.len(), 2);
         assert_eq!(conflicts_b.len(), 1);
         // Both show the same working value.
-        assert_eq!(stored_snippet_name(&database_a, "note"), stored_snippet_name(&database_b, "note"));
+        assert_eq!(
+            stored_snippet_name(&database_a, "note"),
+            stored_snippet_name(&database_b, "note")
+        );
 
         // A keeps B's name; the choice settles the field on B too.
-        let from_b = conflicts_a[0].candidates.iter().find(|candidate| candidate.value == Some(serde_json::json!("from B"))).unwrap();
-        database_a.resolve_frontier_conflict(EntityType::Snippet, "note", "name", &from_b.operation_id).unwrap();
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
-        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        let from_b = conflicts_a[0]
+            .candidates
+            .iter()
+            .find(|candidate| candidate.value == Some(serde_json::json!("from B")))
+            .unwrap();
+        database_a
+            .resolve_frontier_conflict(EntityType::Snippet, "note", "name", &from_b.operation_id)
+            .unwrap();
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
         assert!(database_a.list_frontier_conflicts().unwrap().is_empty());
         assert!(database_b.list_frontier_conflicts().unwrap().is_empty());
-        assert_eq!(stored_snippet_name(&database_b, "note").as_deref(), Some("from B"));
+        assert_eq!(
+            stored_snippet_name(&database_b, "note").as_deref(),
+            Some("from B")
+        );
     }
 
     #[tokio::test]
     async fn a_deletion_reaches_peers_and_an_older_copy_never_brings_it_back() {
-        let (database_a, database_b, database_c) = (Database::open_memory(), Database::open_memory(), Database::open_memory());
+        let (database_a, database_b, database_c) = (
+            Database::open_memory(),
+            Database::open_memory(),
+            Database::open_memory(),
+        );
         let transports = fake("shared");
-        let (keys_a, keys_b, keys_c) = (test_keys(&database_a), test_keys(&database_b), test_keys(&database_c));
-        for (database, peers) in [(&database_a, [&keys_b, &keys_c]), (&database_b, [&keys_a, &keys_c]), (&database_c, [&keys_a, &keys_b])] {
+        let (keys_a, keys_b, keys_c) = (
+            test_keys(&database_a),
+            test_keys(&database_b),
+            test_keys(&database_c),
+        );
+        for (database, peers) in [
+            (&database_a, [&keys_b, &keys_c]),
+            (&database_b, [&keys_a, &keys_c]),
+            (&database_c, [&keys_a, &keys_b]),
+        ] {
             for peer in peers {
                 trust(database, peer);
             }
         }
         write_snippet(&database_a, "doomed", "doomed");
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
         // C merges it, then goes quiet with its copy.
-        pull_from_transports(&database_c, &keys_c, &transports).await.unwrap();
-        assert_eq!(stored_snippet_name(&database_c, "doomed").as_deref(), Some("doomed"));
-        push_local_state(&database_c, &keys_c, &transports).await.unwrap();
+        pull_from_transports(&database_c, &keys_c, &transports)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored_snippet_name(&database_c, "doomed").as_deref(),
+            Some("doomed")
+        );
+        push_local_state(&database_c, &keys_c, &transports)
+            .await
+            .unwrap();
 
         delete_snippet(&database_a, "doomed");
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
-        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
         assert_eq!(stored_snippet_name(&database_b, "doomed"), None);
-        let values: i64 = database_b.test_connection().unwrap().query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0)).unwrap();
+        let values: i64 = database_b
+            .test_connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(values, 0, "a deletion leaves no tombstone behind");
 
         // C's older snapshot still holds the snippet; merging it brings
         // nothing back, and C itself drops it once it hears of the deletion.
-        pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
+        pull_from_transports(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
         assert_eq!(stored_snippet_name(&database_a, "doomed"), None);
-        pull_from_transports(&database_c, &keys_c, &transports).await.unwrap();
+        pull_from_transports(&database_c, &keys_c, &transports)
+            .await
+            .unwrap();
         assert_eq!(stored_snippet_name(&database_c, "doomed"), None);
     }
 
@@ -2533,8 +3386,12 @@ mod replicator_tests {
         trust(&database_a, &keys_b);
         trust(&database_b, &keys_a);
         write_snippet(&database_a, "kept", "v1");
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
-        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
 
         // B goes away. A changes and deletes things for a long time.
         write_snippet(&database_b, "written-offline", "offline");
@@ -2542,39 +3399,80 @@ mod replicator_tests {
             rename_snippet(&database_a, "kept", &format!("v{}", round + 2));
             write_snippet(&database_a, &format!("temp-{round}"), "temp");
             delete_snippet(&database_a, &format!("temp-{round}"));
-            push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+            push_local_state(&database_a, &keys_a, &transports)
+                .await
+                .unwrap();
         }
 
         // B returns: one merge of A's current state catches it up, and its
         // own offline write reaches A.
-        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        let outcome = pull_from_transports(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
         assert_eq!(outcome.merged_states, 1);
-        assert_eq!(stored_snippet_name(&database_b, "kept").as_deref(), Some("v51"));
-        push_local_state(&database_b, &keys_b, &transports).await.unwrap();
-        pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
-        assert_eq!(stored_snippet_name(&database_a, "written-offline").as_deref(), Some("offline"));
+        assert_eq!(
+            stored_snippet_name(&database_b, "kept").as_deref(),
+            Some("v51")
+        );
+        push_local_state(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
+        pull_from_transports(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored_snippet_name(&database_a, "written-offline").as_deref(),
+            Some("offline")
+        );
         // The connector holds one snapshot per device, however long the history.
-        let snapshots = transports[0].scan(None).await.unwrap().unwrap().objects.len();
-        assert!(snapshots <= 6, "expected a couple of objects per device, found {snapshots}");
+        let snapshots = transports[0]
+            .scan(None)
+            .await
+            .unwrap()
+            .unwrap()
+            .objects
+            .len();
+        assert!(
+            snapshots <= 6,
+            "expected a couple of objects per device, found {snapshots}"
+        );
     }
 
     #[tokio::test]
     async fn a_device_relays_what_it_merged_to_its_other_connectors() {
-        let (database_a, database_b, database_c) = (Database::open_memory(), Database::open_memory(), Database::open_memory());
+        let (database_a, database_b, database_c) = (
+            Database::open_memory(),
+            Database::open_memory(),
+            Database::open_memory(),
+        );
         let (only_a, only_c) = (fake("a-and-b"), fake("b-and-c"));
-        let both: Vec<Arc<dyn SyncTransport>> = only_a.iter().chain(only_c.iter()).cloned().collect();
-        let (keys_a, keys_b, keys_c) = (test_keys(&database_a), test_keys(&database_b), test_keys(&database_c));
+        let both: Vec<Arc<dyn SyncTransport>> =
+            only_a.iter().chain(only_c.iter()).cloned().collect();
+        let (keys_a, keys_b, keys_c) = (
+            test_keys(&database_a),
+            test_keys(&database_b),
+            test_keys(&database_c),
+        );
         trust(&database_b, &keys_a);
         trust(&database_c, &keys_b);
 
         write_snippet(&database_a, "from-a", "From A");
-        push_local_state(&database_a, &keys_a, &only_a).await.unwrap();
-        pull_from_transports(&database_b, &keys_b, &both).await.unwrap();
+        push_local_state(&database_a, &keys_a, &only_a)
+            .await
+            .unwrap();
+        pull_from_transports(&database_b, &keys_b, &both)
+            .await
+            .unwrap();
         // B's own snapshot now includes A's write, and goes to both of B's
         // connectors, so C gets it without ever reaching A's.
         push_local_state(&database_b, &keys_b, &both).await.unwrap();
-        pull_from_transports(&database_c, &keys_c, &only_c).await.unwrap();
-        assert_eq!(stored_snippet_name(&database_c, "from-a").as_deref(), Some("From A"));
+        pull_from_transports(&database_c, &keys_c, &only_c)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored_snippet_name(&database_c, "from-a").as_deref(),
+            Some("From A")
+        );
     }
 
     #[tokio::test]
@@ -2583,21 +3481,34 @@ mod replicator_tests {
         let transports = fake("shared");
         let keys_a = test_keys(&database_a);
         write_snippet(&database_a, "sealed-at-epoch-0", "old key");
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
 
         let keys_b = test_keys(&database_b);
         trust(&database_b, &keys_a);
         let missing = at_epoch(&keys_b, 1, [9u8; 32], &[]);
-        let outcome = pull_from_transports(&database_b, &missing, &transports).await.unwrap();
+        let outcome = pull_from_transports(&database_b, &missing, &transports)
+            .await
+            .unwrap();
         assert_eq!((outcome.merged_states, outcome.failed_transports), (0, 1));
 
         let complete = at_epoch(&keys_b, 1, [9u8; 32], &[(0, [7u8; 32])]);
-        let outcome = pull_from_transports(&database_b, &complete, &transports).await.unwrap();
+        let outcome = pull_from_transports(&database_b, &complete, &transports)
+            .await
+            .unwrap();
         assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 0));
-        assert_eq!(stored_snippet_name(&database_b, "sealed-at-epoch-0").as_deref(), Some("old key"));
+        assert_eq!(
+            stored_snippet_name(&database_b, "sealed-at-epoch-0").as_deref(),
+            Some("old key")
+        );
     }
 
-    fn signed_head_for(keys: &LocalKeys, state_sequence: u64, state_cid: Option<String>) -> SignedDeviceHead {
+    fn signed_head_for(
+        keys: &LocalKeys,
+        state_sequence: u64,
+        state_cid: Option<String>,
+    ) -> SignedDeviceHead {
         sign_device_head(
             &keys.signing_key,
             DeviceHead {
@@ -2618,14 +3529,25 @@ mod replicator_tests {
         let transports = fake("shared");
         let keys_a = test_keys(&database_a);
         write_snippet(&database_a, "one", "n");
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
-        let index_cid = published_head(&transports, &keys_a).await.unwrap().head.state_cid;
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+        let index_cid = published_head(&transports, &keys_a)
+            .await
+            .unwrap()
+            .head
+            .state_cid;
 
         // A head claiming a later snapshot than the one it names.
-        transports[0].publish_head(&signed_head_for(&keys_a, 7, index_cid)).await.unwrap();
+        transports[0]
+            .publish_head(&signed_head_for(&keys_a, 7, index_cid))
+            .await
+            .unwrap();
         let keys_b = test_keys(&database_b);
         trust(&database_b, &keys_a);
-        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        let outcome = pull_from_transports(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
         assert_eq!((outcome.merged_states, outcome.failed_transports), (0, 1));
         assert_eq!(stored_snippet_name(&database_b, "one"), None);
     }
@@ -2637,30 +3559,50 @@ mod replicator_tests {
         let lagging = fake("lagging");
         let keys_a = test_keys(&database_a);
         write_snippet(&database_a, "one", "first");
-        push_local_state(&database_a, &keys_a, &[transports[0].clone(), lagging[0].clone()]).await.unwrap();
+        push_local_state(
+            &database_a,
+            &keys_a,
+            &[transports[0].clone(), lagging[0].clone()],
+        )
+        .await
+        .unwrap();
         rename_snippet(&database_a, "one", "second");
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
 
         let keys_b = test_keys(&database_b);
         trust(&database_b, &keys_a);
-        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
         // The lagging connector still names A's first snapshot: it's older
         // than what B merged, so it isn't fetched at all.
-        let outcome = pull_from_transports(&database_b, &keys_b, &lagging).await.unwrap();
+        let outcome = pull_from_transports(&database_b, &keys_b, &lagging)
+            .await
+            .unwrap();
         assert_eq!((outcome.merged_states, outcome.failed_transports), (0, 0));
-        assert_eq!(stored_snippet_name(&database_b, "one").as_deref(), Some("second"));
+        assert_eq!(
+            stored_snippet_name(&database_b, "one").as_deref(),
+            Some("second")
+        );
     }
 
     #[tokio::test]
     async fn the_same_snapshot_from_two_connectors_merges_once() {
         let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
-        let both: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(FakeTransport::new("one")), Arc::new(FakeTransport::new("two"))];
+        let both: Vec<Arc<dyn SyncTransport>> = vec![
+            Arc::new(FakeTransport::new("one")),
+            Arc::new(FakeTransport::new("two")),
+        ];
         let keys_a = test_keys(&database_a);
         write_snippet(&database_a, "one", "n");
         push_local_state(&database_a, &keys_a, &both).await.unwrap();
         let keys_b = test_keys(&database_b);
         trust(&database_b, &keys_a);
-        let outcome = pull_from_transports(&database_b, &keys_b, &both).await.unwrap();
+        let outcome = pull_from_transports(&database_b, &keys_b, &both)
+            .await
+            .unwrap();
         assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 0));
     }
 
@@ -2675,9 +3617,15 @@ mod replicator_tests {
         for round in 0..3 {
             write_snippet(&database_a, &format!("s{round}"), "n");
         }
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
-        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
-        push_local_state(&database_b, &keys_b, &transports).await.unwrap();
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
+        push_local_state(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
 
         // A's database is replaced by an empty one with the same identity,
         // as a restore from before any of those writes would leave it.
@@ -2690,16 +3638,28 @@ mod replicator_tests {
                 params![encode_id(keys_a.device_id.as_bytes())],
             )
             .unwrap();
-        let restored_keys = LocalKeys { signing_key: keys_a.signing_key.clone(), ..at_epoch(&keys_a, 0, [7u8; 32], &[]) };
+        let restored_keys = LocalKeys {
+            signing_key: keys_a.signing_key.clone(),
+            ..at_epoch(&keys_a, 0, [7u8; 32], &[])
+        };
         trust(&restored, &keys_b);
-        pull_from_transports(&restored, &restored_keys, &transports).await.unwrap();
+        pull_from_transports(&restored, &restored_keys, &transports)
+            .await
+            .unwrap();
         write_snippet(&restored, "after-restore", "new");
         let counter: i64 = restored
             .test_connection()
             .unwrap()
-            .query_row("SELECT counter FROM sync_values WHERE entity_id='after-restore' AND field='name'", [], |row| row.get(0))
+            .query_row(
+                "SELECT counter FROM sync_values WHERE entity_id='after-restore' AND field='name'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(counter, 4, "the next write continues after what peers already saw");
+        assert_eq!(
+            counter, 4,
+            "the next write continues after what peers already saw"
+        );
     }
 
     #[tokio::test]
@@ -2711,23 +3671,48 @@ mod replicator_tests {
         crate::sync_policy::set_test_clock(Some(start));
 
         // An empty replica still has a snapshot and a head.
-        push_local_state(&database, &keys, &transports).await.unwrap();
+        push_local_state(&database, &keys, &transports)
+            .await
+            .unwrap();
         let head = published_head(&transports, &keys).await.unwrap();
-        assert_eq!((head.head.published_at_ms, head.head.state_sequence), (start, 1));
+        assert_eq!(
+            (head.head.published_at_ms, head.head.state_sequence),
+            (start, 1)
+        );
 
         crate::sync_policy::set_test_clock(Some(start + crate::sync_policy::HEAD_HEARTBEAT_MS - 1));
-        push_local_state(&database, &keys, &transports).await.unwrap();
-        assert_eq!(published_head(&transports, &keys).await.unwrap().head.published_at_ms, start);
+        push_local_state(&database, &keys, &transports)
+            .await
+            .unwrap();
+        assert_eq!(
+            published_head(&transports, &keys)
+                .await
+                .unwrap()
+                .head
+                .published_at_ms,
+            start
+        );
 
         let due = start + crate::sync_policy::HEAD_HEARTBEAT_MS;
         crate::sync_policy::set_test_clock(Some(due));
-        push_local_state(&database, &keys, &transports).await.unwrap();
-        assert_eq!(published_head(&transports, &keys).await.unwrap().head.published_at_ms, due);
+        push_local_state(&database, &keys, &transports)
+            .await
+            .unwrap();
+        assert_eq!(
+            published_head(&transports, &keys)
+                .await
+                .unwrap()
+                .head
+                .published_at_ms,
+            due
+        );
 
         // A change is published at once.
         crate::sync_policy::set_test_clock(Some(due + 1));
         write_snippet(&database, "note", "n");
-        push_local_state(&database, &keys, &transports).await.unwrap();
+        push_local_state(&database, &keys, &transports)
+            .await
+            .unwrap();
         let head = published_head(&transports, &keys).await.unwrap().head;
         assert_eq!((head.published_at_ms, head.state_sequence), (due + 1, 2));
         crate::sync_policy::set_test_clock(None);
@@ -2740,12 +3725,16 @@ mod replicator_tests {
         crate::sync_policy::set_test_clock(Some(1_800_000_000_000));
         let keys_a = test_keys(&database_a);
         write_snippet(&database_a, "note", "n");
-        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        push_local_state(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
 
         crate::sync_policy::set_test_clock(Some(1_800_000_060_000));
         let keys_b = test_keys(&database_b);
         trust(&database_b, &keys_a);
-        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
         let (published, seen, sequence): (i64, i64, i64) = database_b
             .test_connection()
             .unwrap()
@@ -2755,7 +3744,10 @@ mod replicator_tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!((published, seen, sequence), (1_800_000_000_000, 1_800_000_060_000, 1));
+        assert_eq!(
+            (published, seen, sequence),
+            (1_800_000_000_000, 1_800_000_060_000, 1)
+        );
         crate::sync_policy::set_test_clock(None);
     }
 
@@ -2768,11 +3760,15 @@ mod replicator_tests {
         let failing_fake = FakeTransport::new("failing");
         failing_fake.set_authentication_failure(true);
         let failing: Arc<dyn SyncTransport> = Arc::new(failing_fake);
-        push_local_state(&database_b, &keys_b, std::slice::from_ref(&healthy)).await.unwrap();
+        push_local_state(&database_b, &keys_b, std::slice::from_ref(&healthy))
+            .await
+            .unwrap();
 
         let keys_a = test_keys(&database_a);
         trust(&database_a, &keys_b);
-        let outcome = pull_from_transports(&database_a, &keys_a, &[failing, healthy]).await.unwrap();
+        let outcome = pull_from_transports(&database_a, &keys_a, &[failing, healthy])
+            .await
+            .unwrap();
         assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 1));
     }
 
@@ -2782,11 +3778,15 @@ mod replicator_tests {
         let keys = test_keys(&database);
         let peer = random_id();
         let peer_key = SigningKey::generate(&mut os_rng()).verifying_key();
-        database.trust_device_keys(&peer, &peer_key, &[9u8; 32]).unwrap();
+        database
+            .trust_device_keys(&peer, &peer_key, &[9u8; 32])
+            .unwrap();
 
         let roster = database.known_device_roster().unwrap();
         assert_eq!(roster.len(), 2);
-        assert!(roster.iter().any(|(device_id, key)| *device_id.as_bytes() == peer && *key == peer_key));
+        assert!(roster
+            .iter()
+            .any(|(device_id, key)| *device_id.as_bytes() == peer && *key == peer_key));
 
         database.revoke_device(&peer).unwrap();
         let roster = database.known_device_roster().unwrap();
@@ -2816,7 +3816,10 @@ mod config_tests {
 
     impl TempFolder {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("threestrands-replicated-sync-config-test-{}", Uuid::new_v4()));
+            let path = std::env::temp_dir().join(format!(
+                "threestrands-replicated-sync-config-test-{}",
+                Uuid::new_v4()
+            ));
             std::fs::create_dir_all(&path).unwrap();
             Self { path }
         }
@@ -2832,7 +3835,9 @@ mod config_tests {
     fn add_folder_transport_persists_and_lists_it() {
         let database = Database::open_memory();
         let folder = TempFolder::new();
-        database.add_folder_transport("folder-1", &folder.path).unwrap();
+        database
+            .add_folder_transport("folder-1", &folder.path)
+            .unwrap();
 
         let rows = database.configured_transports().unwrap();
         assert_eq!(rows.len(), 1);
@@ -2841,7 +3846,10 @@ mod config_tests {
         assert!(rows[0].enabled);
         assert_eq!(
             rows[0].config(),
-            Some(TransportConfig::Folder(FolderConfig { path: folder.path.to_string_lossy().into_owned(), label: None }))
+            Some(TransportConfig::Folder(FolderConfig {
+                path: folder.path.to_string_lossy().into_owned(),
+                label: None
+            }))
         );
     }
 
@@ -2849,7 +3857,9 @@ mod config_tests {
     fn remove_transport_clears_config_and_deliveries() {
         let database = Database::open_memory();
         let folder = TempFolder::new();
-        database.add_folder_transport("folder-1", &folder.path).unwrap();
+        database
+            .add_folder_transport("folder-1", &folder.path)
+            .unwrap();
         database
             .test_connection()
             .unwrap()
@@ -2865,7 +3875,11 @@ mod config_tests {
         let remaining: i64 = database
             .test_connection()
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM sync_deliveries WHERE transport_instance_id='folder-1'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM sync_deliveries WHERE transport_instance_id='folder-1'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(remaining, 0);
     }
@@ -2874,7 +3888,9 @@ mod config_tests {
     async fn build_configured_transports_skips_a_disabled_or_unopenable_row() {
         let database = Database::open_memory();
         let folder = TempFolder::new();
-        database.add_folder_transport("folder-1", &folder.path).unwrap();
+        database
+            .add_folder_transport("folder-1", &folder.path)
+            .unwrap();
         database
             .test_connection()
             .unwrap()
@@ -2903,29 +3919,44 @@ mod config_tests {
         // Secrets go to an in-memory stand-in for the keychain in tests
         // (see `sync_connectors::secret_store`).
         let id = format!("ipfs-{}", Uuid::new_v4());
-        database.add_ipfs_rpc_transport(&id, crate::ipfs_transport::FILEBASE_RPC_URL, Some("ipfs-token-value")).unwrap();
+        database
+            .add_ipfs_rpc_transport(
+                &id,
+                crate::ipfs_transport::FILEBASE_RPC_URL,
+                Some("ipfs-token-value"),
+            )
+            .unwrap();
 
         let rows = database.configured_transports().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, "ipfs_rpc");
-        assert_eq!(rows[0].config().map(|config| config.location()).as_deref(), Some(crate::ipfs_transport::FILEBASE_RPC_URL));
+        assert_eq!(
+            rows[0].config().map(|config| config.location()).as_deref(),
+            Some(crate::ipfs_transport::FILEBASE_RPC_URL)
+        );
         // No credential ever appears in the stored config.
         assert!(!rows[0].config_json.to_ascii_lowercase().contains("token"));
         assert!(!rows[0].config_json.contains("ipfs-token-value"));
         assert_eq!(
             TransportSecrets::load("ipfs_rpc", &id).unwrap(),
-            Some(TransportSecrets::IpfsRpcToken("ipfs-token-value".to_string()))
+            Some(TransportSecrets::IpfsRpcToken(
+                "ipfs-token-value".to_string()
+            ))
         );
 
         // Re-adding without a token clears the stored one.
-        database.add_ipfs_rpc_transport(&id, crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
+        database
+            .add_ipfs_rpc_transport(&id, crate::ipfs_transport::FILEBASE_RPC_URL, None)
+            .unwrap();
         assert_eq!(TransportSecrets::load("ipfs_rpc", &id).unwrap(), None);
     }
 
     #[tokio::test]
     async fn build_configured_transports_includes_an_ipfs_rpc_row() {
         let database = Database::open_memory();
-        database.add_ipfs_rpc_transport("ipfs-1", crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
+        database
+            .add_ipfs_rpc_transport("ipfs-1", crate::ipfs_transport::FILEBASE_RPC_URL, None)
+            .unwrap();
         let transports = build_configured_transports(&database).await;
         assert_eq!(transports.len(), 1);
         assert_eq!(transports[0].instance_id().0, "ipfs-1");
@@ -2934,7 +3965,9 @@ mod config_tests {
     #[test]
     fn removing_an_ipfs_rpc_transport_clears_its_config_row() {
         let database = Database::open_memory();
-        database.add_ipfs_rpc_transport("ipfs-1", crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
+        database
+            .add_ipfs_rpc_transport("ipfs-1", crate::ipfs_transport::FILEBASE_RPC_URL, None)
+            .unwrap();
         database.remove_transport("ipfs-1").unwrap();
         assert!(database.configured_transports().unwrap().is_empty());
     }
@@ -2963,16 +3996,35 @@ mod config_tests {
         let database = Database::open_memory();
         let id = format!("s3-{}", Uuid::new_v4());
         database
-            .add_s3_transport(&id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
+            .add_s3_transport(
+                &id,
+                &s3_test_config("https://s3.us-east-1.amazonaws.com"),
+                &s3_test_credentials(),
+            )
             .unwrap();
 
         let rows = database.configured_transports().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, "s3");
-        assert_eq!(rows[0].config(), Some(TransportConfig::S3(s3_test_config("https://s3.us-east-1.amazonaws.com"))));
+        assert_eq!(
+            rows[0].config(),
+            Some(TransportConfig::S3(s3_test_config(
+                "https://s3.us-east-1.amazonaws.com"
+            )))
+        );
         let lowered = rows[0].config_json.to_ascii_lowercase();
-        for secret_field in ["secret", "accesskey", "access_key", "token", "credential", "akiaexample"] {
-            assert!(!lowered.contains(secret_field), "{secret_field} in {lowered}");
+        for secret_field in [
+            "secret",
+            "accesskey",
+            "access_key",
+            "token",
+            "credential",
+            "akiaexample",
+        ] {
+            assert!(
+                !lowered.contains(secret_field),
+                "{secret_field} in {lowered}"
+            );
         }
         assert_eq!(
             TransportSecrets::load("s3", &id).unwrap(),
@@ -2987,7 +4039,11 @@ mod config_tests {
         // Plaintext HTTP to a remote host fails validation, which runs
         // before both the SQLite and the keychain writes.
         let error = database
-            .add_s3_transport(&id, &s3_test_config("http://s3.example.com"), &s3_test_credentials())
+            .add_s3_transport(
+                &id,
+                &s3_test_config("http://s3.example.com"),
+                &s3_test_credentials(),
+            )
             .unwrap_err();
         assert!(error.contains("HTTPS"), "{error}");
         assert!(database.configured_transports().unwrap().is_empty());
@@ -2997,7 +4053,9 @@ mod config_tests {
     #[tokio::test]
     async fn an_s3_row_without_stored_credentials_is_skipped_and_reported_unavailable() {
         let database = Database::open_memory();
-        let config_json = TransportConfig::S3(s3_test_config("https://s3.us-east-1.amazonaws.com")).to_config_json().unwrap();
+        let config_json = TransportConfig::S3(s3_test_config("https://s3.us-east-1.amazonaws.com"))
+            .to_config_json()
+            .unwrap();
         database
             .test_connection()
             .unwrap()
@@ -3013,9 +4071,15 @@ mod config_tests {
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].kind, "s3");
         assert_eq!(statuses[0].label.as_deref(), Some("Team bucket"));
-        assert_eq!(statuses[0].location, "https://s3.us-east-1.amazonaws.com · sync-bucket/team");
+        assert_eq!(
+            statuses[0].location,
+            "https://s3.us-east-1.amazonaws.com · sync-bucket/team"
+        );
         assert!(statuses[0].supports_delete_data);
-        assert_eq!(statuses[0].s3_config, Some(s3_test_config("https://s3.us-east-1.amazonaws.com")));
+        assert_eq!(
+            statuses[0].s3_config,
+            Some(s3_test_config("https://s3.us-east-1.amazonaws.com"))
+        );
         let json = serde_json::to_string(&statuses[0]).unwrap();
         assert!(json.contains("\"s3Config\":{\"endpoint\""), "{json}");
         assert!(!json.to_ascii_lowercase().contains("secret"), "{json}");
@@ -3027,16 +4091,28 @@ mod config_tests {
         let database = Database::open_memory();
         let s3_id = format!("s3-{}", Uuid::new_v4());
         database
-            .add_s3_transport(&s3_id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
+            .add_s3_transport(
+                &s3_id,
+                &s3_test_config("https://s3.us-east-1.amazonaws.com"),
+                &s3_test_credentials(),
+            )
             .unwrap();
         let ipfs_id = format!("ipfs-{}", Uuid::new_v4());
-        database.add_ipfs_rpc_transport(&ipfs_id, crate::ipfs_transport::FILEBASE_RPC_URL, Some("token")).unwrap();
+        database
+            .add_ipfs_rpc_transport(
+                &ipfs_id,
+                crate::ipfs_transport::FILEBASE_RPC_URL,
+                Some("token"),
+            )
+            .unwrap();
 
         database.remove_transport(&s3_id).unwrap();
         assert_eq!(TransportSecrets::load("s3", &s3_id).unwrap(), None);
         assert!(crate::sync_connectors::secret_store::values_for(&s3_id).is_empty());
         // The other connector and its secret are untouched.
-        assert!(TransportSecrets::load("ipfs_rpc", &ipfs_id).unwrap().is_some());
+        assert!(TransportSecrets::load("ipfs_rpc", &ipfs_id)
+            .unwrap()
+            .is_some());
 
         database.remove_transport(&ipfs_id).unwrap();
         assert!(database.configured_transports().unwrap().is_empty());
@@ -3055,7 +4131,9 @@ mod config_tests {
                 params![id],
             )
             .unwrap();
-        TransportSecrets::IpfsRpcToken("stale".to_string()).store(&id).unwrap();
+        TransportSecrets::IpfsRpcToken("stale".to_string())
+            .store(&id)
+            .unwrap();
         database.remove_transport(&id).unwrap();
         assert!(crate::sync_connectors::secret_store::values_for(&id).is_empty());
     }
@@ -3072,7 +4150,10 @@ mod config_tests {
             )
             .unwrap();
         assert!(build_configured_transports(&database).await.is_empty());
-        let statuses = ReplicatedSync::new(Arc::new(database)).status().await.unwrap();
+        let statuses = ReplicatedSync::new(Arc::new(database))
+            .status()
+            .await
+            .unwrap();
         assert_eq!(statuses[0].location, "");
         assert_eq!(statuses[0].label, None);
         assert!(!statuses[0].supports_delete_data);
@@ -3084,7 +4165,11 @@ mod config_tests {
         let database = Database::open_memory();
         let id = format!("s3-{}", Uuid::new_v4());
         database
-            .add_s3_transport(&id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
+            .add_s3_transport(
+                &id,
+                &s3_test_config("https://s3.us-east-1.amazonaws.com"),
+                &s3_test_credentials(),
+            )
             .unwrap();
         database
             .test_connection()
@@ -3096,15 +4181,22 @@ mod config_tests {
             .unwrap();
         database.set_transport_success(&id).unwrap();
 
-        let mut renamed = database.configured_transports().unwrap()[0].config().unwrap();
+        let mut renamed = database.configured_transports().unwrap()[0]
+            .config()
+            .unwrap();
         renamed.set_label(Some("Renamed"));
-        database.update_transport_config(&id, &renamed, None).unwrap();
+        database
+            .update_transport_config(&id, &renamed, None)
+            .unwrap();
 
         let row = &database.configured_transports().unwrap()[0];
         assert_eq!(row.config().unwrap().label(), Some("Renamed"));
         assert!(row.last_success_at.is_some());
         assert_eq!(database.delivery_counts(&id).unwrap(), (0, 1, 0));
-        assert_eq!(TransportSecrets::load("s3", &id).unwrap(), Some(TransportSecrets::S3(s3_test_credentials())));
+        assert_eq!(
+            TransportSecrets::load("s3", &id).unwrap(),
+            Some(TransportSecrets::S3(s3_test_credentials()))
+        );
     }
 
     #[test]
@@ -3113,25 +4205,51 @@ mod config_tests {
         let id = format!("s3-{}", Uuid::new_v4());
         let config = TransportConfig::S3(s3_test_config("https://s3.us-east-1.amazonaws.com"));
         database
-            .add_transport(&id, &config, Some(&TransportSecrets::S3(s3_test_credentials())))
+            .add_transport(
+                &id,
+                &config,
+                Some(&TransportSecrets::S3(s3_test_credentials())),
+            )
             .unwrap();
 
         let mut rotated = s3_test_credentials();
         rotated.secret_access_key = "rotated-secret".to_string();
-        database.update_transport_config(&id, &config, Some(&TransportSecrets::S3(rotated.clone()))).unwrap();
-        assert_eq!(TransportSecrets::load("s3", &id).unwrap(), Some(TransportSecrets::S3(rotated.clone())));
+        database
+            .update_transport_config(&id, &config, Some(&TransportSecrets::S3(rotated.clone())))
+            .unwrap();
+        assert_eq!(
+            TransportSecrets::load("s3", &id).unwrap(),
+            Some(TransportSecrets::S3(rotated.clone()))
+        );
 
-        let folder = TransportConfig::Folder(FolderConfig { path: "/tmp".to_string(), label: None });
-        assert!(database.update_transport_config(&id, &folder, None).is_err());
+        let folder = TransportConfig::Folder(FolderConfig {
+            path: "/tmp".to_string(),
+            label: None,
+        });
+        assert!(database
+            .update_transport_config(&id, &folder, None)
+            .is_err());
 
-        let TransportConfig::S3(mut insecure) = config.clone() else { unreachable!() };
+        let TransportConfig::S3(mut insecure) = config.clone() else {
+            unreachable!()
+        };
         insecure.endpoint = "http://s3.example.com".to_string();
-        assert!(database.update_transport_config(&id, &TransportConfig::S3(insecure), None).is_err());
+        assert!(database
+            .update_transport_config(&id, &TransportConfig::S3(insecure), None)
+            .is_err());
         // Nothing changed after the refusals.
-        assert_eq!(database.configured_transports().unwrap()[0].config(), Some(config));
-        assert_eq!(TransportSecrets::load("s3", &id).unwrap(), Some(TransportSecrets::S3(rotated)));
+        assert_eq!(
+            database.configured_transports().unwrap()[0].config(),
+            Some(config)
+        );
+        assert_eq!(
+            TransportSecrets::load("s3", &id).unwrap(),
+            Some(TransportSecrets::S3(rotated))
+        );
 
-        assert!(database.update_transport_config("missing", &folder, None).is_err());
+        assert!(database
+            .update_transport_config("missing", &folder, None)
+            .is_err());
     }
 
     #[tokio::test]
@@ -3141,9 +4259,20 @@ mod config_tests {
         let database = Arc::new(Database::open_memory());
         let engine = ReplicatedSync::new(database.clone());
 
-        let test = engine.probe_s3(&server.config("group"), &FakeS3Server::credentials()).await.unwrap();
-        assert!(test.checks.can_list && test.checks.can_write && test.checks.can_read && test.checks.can_delete);
-        assert_eq!(test.space_presence, Some(crate::enrollment::SyncSpacePresence::None));
+        let test = engine
+            .probe_s3(&server.config("group"), &FakeS3Server::credentials())
+            .await
+            .unwrap();
+        assert!(
+            test.checks.can_list
+                && test.checks.can_write
+                && test.checks.can_read
+                && test.checks.can_delete
+        );
+        assert_eq!(
+            test.space_presence,
+            Some(crate::enrollment::SyncSpacePresence::None)
+        );
         assert!(database.configured_transports().unwrap().is_empty());
         assert!(server.state().objects.is_empty());
     }
@@ -3182,7 +4311,12 @@ mod config_tests {
     #[test]
     fn a_connection_test_serializes_flat_in_camel_case() {
         let test = S3ConnectionTest {
-            checks: S3ProbeReport { reachable: true, can_list: true, versioning_enabled: Some(true), ..Default::default() },
+            checks: S3ProbeReport {
+                reachable: true,
+                can_list: true,
+                versioning_enabled: Some(true),
+                ..Default::default()
+            },
             space_presence: Some(crate::enrollment::SyncSpacePresence::Existing),
         };
         assert_eq!(
@@ -3200,8 +4334,13 @@ mod config_tests {
         let server = FakeS3Server::spawn().await;
         let database = Arc::new(Database::open_memory());
         let id = format!("s3-{}", Uuid::new_v4());
-        database.add_s3_transport(&id, &server.config("group"), &FakeS3Server::credentials()).unwrap();
-        server.state().objects.insert("group/threestrands-sync/objects/ab/x.block".to_string(), vec![0; 10]);
+        database
+            .add_s3_transport(&id, &server.config("group"), &FakeS3Server::credentials())
+            .unwrap();
+        server.state().objects.insert(
+            "group/threestrands-sync/objects/ab/x.block".to_string(),
+            vec![0; 10],
+        );
 
         let statuses = ReplicatedSync::new(database).status().await.unwrap();
         assert_eq!(statuses[0].health, "healthy");
@@ -3215,11 +4354,23 @@ mod config_tests {
         let engine = ReplicatedSync::new(database.clone());
         let id = format!("s3-{}", Uuid::new_v4());
         database
-            .add_s3_transport(&id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
+            .add_s3_transport(
+                &id,
+                &s3_test_config("https://s3.us-east-1.amazonaws.com"),
+                &s3_test_credentials(),
+            )
             .unwrap();
-        let label = || database.configured_transports().unwrap()[0].config().unwrap().label().map(str::to_string);
+        let label = || {
+            database.configured_transports().unwrap()[0]
+                .config()
+                .unwrap()
+                .label()
+                .map(str::to_string)
+        };
 
-        engine.update_connector(&id, Some("  Personal R2 "), None).unwrap();
+        engine
+            .update_connector(&id, Some("  Personal R2 "), None)
+            .unwrap();
         assert_eq!(label().as_deref(), Some("Personal R2"));
 
         // No label argument keeps the name.
@@ -3230,7 +4381,9 @@ mod config_tests {
         engine.update_connector(&id, None, Some(rotated)).unwrap();
         assert_eq!(label().as_deref(), Some("Personal R2"));
         match TransportSecrets::load("s3", &id).unwrap() {
-            Some(TransportSecrets::S3(credentials)) => assert_eq!(credentials.access_key_id, "AKIAROTATED"),
+            Some(TransportSecrets::S3(credentials)) => {
+                assert_eq!(credentials.access_key_id, "AKIAROTATED")
+            }
             other => panic!("unexpected {other:?}"),
         }
 
@@ -3243,21 +4396,43 @@ mod config_tests {
         let database = Arc::new(Database::open_memory());
         let engine = ReplicatedSync::new(database.clone());
         let folder = TempFolder::new();
-        database.add_folder_transport("folder-1", &folder.path).unwrap();
+        database
+            .add_folder_transport("folder-1", &folder.path)
+            .unwrap();
 
-        let token: ConnectorCredentials = serde_json::from_value(json!({ "kind": "ipfs_rpc", "token": "t" })).unwrap();
-        assert!(engine.update_connector("folder-1", None, Some(token)).is_err());
-        assert!(engine.update_connector("folder-1", Some(&"x".repeat(61)), None).is_err());
-        assert_eq!(database.configured_transports().unwrap()[0].config().unwrap().label(), None);
-        assert!(engine.update_connector("missing", Some("name"), None).is_err());
+        let token: ConnectorCredentials =
+            serde_json::from_value(json!({ "kind": "ipfs_rpc", "token": "t" })).unwrap();
+        assert!(engine
+            .update_connector("folder-1", None, Some(token))
+            .is_err());
+        assert!(engine
+            .update_connector("folder-1", Some(&"x".repeat(61)), None)
+            .is_err());
+        assert_eq!(
+            database.configured_transports().unwrap()[0]
+                .config()
+                .unwrap()
+                .label(),
+            None
+        );
+        assert!(engine
+            .update_connector("missing", Some("name"), None)
+            .is_err());
 
         let ipfs_id = format!("ipfs-{}", Uuid::new_v4());
-        database.add_ipfs_rpc_transport(&ipfs_id, crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
-        let s3: ConnectorCredentials =
-            serde_json::from_value(json!({ "kind": "s3", "accessKeyId": "a", "secretAccessKey": "b" })).unwrap();
+        database
+            .add_ipfs_rpc_transport(&ipfs_id, crate::ipfs_transport::FILEBASE_RPC_URL, None)
+            .unwrap();
+        let s3: ConnectorCredentials = serde_json::from_value(
+            json!({ "kind": "s3", "accessKeyId": "a", "secretAccessKey": "b" }),
+        )
+        .unwrap();
         assert!(engine.update_connector(&ipfs_id, None, Some(s3)).is_err());
-        let token: ConnectorCredentials = serde_json::from_value(json!({ "kind": "ipfs_rpc", "token": "new" })).unwrap();
-        engine.update_connector(&ipfs_id, None, Some(token)).unwrap();
+        let token: ConnectorCredentials =
+            serde_json::from_value(json!({ "kind": "ipfs_rpc", "token": "new" })).unwrap();
+        engine
+            .update_connector(&ipfs_id, None, Some(token))
+            .unwrap();
         assert_eq!(
             TransportSecrets::load("ipfs_rpc", &ipfs_id).unwrap(),
             Some(TransportSecrets::IpfsRpcToken("new".to_string()))
@@ -3268,9 +4443,20 @@ mod config_tests {
     async fn status_offers_data_deletion_for_folders_but_not_ipfs() {
         let database = Database::open_memory();
         let folder = TempFolder::new();
-        database.add_folder_transport("folder-1", &folder.path).unwrap();
-        database.add_ipfs_rpc_transport(&format!("ipfs-{}", Uuid::new_v4()), crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
-        let statuses = ReplicatedSync::new(Arc::new(database)).status().await.unwrap();
+        database
+            .add_folder_transport("folder-1", &folder.path)
+            .unwrap();
+        database
+            .add_ipfs_rpc_transport(
+                &format!("ipfs-{}", Uuid::new_v4()),
+                crate::ipfs_transport::FILEBASE_RPC_URL,
+                None,
+            )
+            .unwrap();
+        let statuses = ReplicatedSync::new(Arc::new(database))
+            .status()
+            .await
+            .unwrap();
         let by_kind = |kind: &str| statuses.iter().find(|status| status.kind == kind).unwrap();
         assert!(by_kind("folder").supports_delete_data);
         assert!(!by_kind("ipfs_rpc").supports_delete_data);
@@ -3282,7 +4468,9 @@ mod config_tests {
     async fn status_reports_health_and_a_storage_estimate_for_a_real_folder() {
         let database = Database::open_memory();
         let folder = TempFolder::new();
-        database.add_folder_transport("folder-1", &folder.path).unwrap();
+        database
+            .add_folder_transport("folder-1", &folder.path)
+            .unwrap();
 
         let engine = ReplicatedSync::new(Arc::new(database));
         let statuses = engine.status().await.unwrap();
@@ -3313,7 +4501,11 @@ mod reconciliation_tests {
         database
             .test_connection()
             .unwrap()
-            .query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)", [table], |row| row.get(0))
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [table],
+                |row| row.get(0),
+            )
             .unwrap()
     }
 
@@ -3348,10 +4540,23 @@ mod reconciliation_tests {
     #[test]
     fn a_fresh_database_has_the_replica_tables_and_no_event_log() {
         let database = Database::open_memory();
-        for table in ["sync_values", "sync_context", "sync_local_state", "sync_remote_states", "sync_objects", "sync_retired_objects"] {
+        for table in [
+            "sync_values",
+            "sync_context",
+            "sync_local_state",
+            "sync_remote_states",
+            "sync_objects",
+            "sync_retired_objects",
+        ] {
             assert!(table_exists(&database, table), "{table} should exist");
         }
-        for table in ["sync_events", "sync_operations", "sync_operation_parents", "sync_field_frontier", "sync_device_progress"] {
+        for table in [
+            "sync_events",
+            "sync_operations",
+            "sync_operation_parents",
+            "sync_field_frontier",
+            "sync_device_progress",
+        ] {
             assert!(!table_exists(&database, table), "{table} should not exist");
         }
     }
@@ -3364,7 +4569,11 @@ mod reconciliation_tests {
         let snippet = database.create_snippet("Signature", "Best, Alex").unwrap();
         let connection = database.test_connection().unwrap();
         let before: i64 = connection
-            .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM sync_values WHERE entity_id=?1",
+                [&snippet.id],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(before, 0);
         drop(connection);
@@ -3404,7 +4613,11 @@ mod reconciliation_tests {
 
         let connection = database.test_connection().unwrap();
         let before: i64 = connection
-            .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM sync_values WHERE entity_id=?1",
+                [&snippet.id],
+                |row| row.get(0),
+            )
             .unwrap();
         drop(connection);
 
@@ -3414,9 +4627,16 @@ mod reconciliation_tests {
 
         let connection = database.test_connection().unwrap();
         let after: i64 = connection
-            .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM sync_values WHERE entity_id=?1",
+                [&snippet.id],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(before, after, "reconciling an already-recorded entity must not create duplicate operations");
+        assert_eq!(
+            before, after,
+            "reconciling an already-recorded entity must not create duplicate operations"
+        );
     }
 
     #[test]
@@ -3424,7 +4644,12 @@ mod reconciliation_tests {
         let database = Database::open_memory();
         database.create_snippet("Signature", "Best, Alex").unwrap();
         database
-            .create_split_inbox("Newsletters", "domain", "news.example.com", "you@example.com")
+            .create_split_inbox(
+                "Newsletters",
+                "domain",
+                "news.example.com",
+                "you@example.com",
+            )
             .unwrap();
         database.set_retention_days(Some(90)).unwrap();
         database.adopt_account("you@example.com").unwrap();
@@ -3445,11 +4670,23 @@ mod reconciliation_tests {
                 goal_id: None,
             })
             .unwrap();
-        database.save_contact_profile(&crate::models::SaveContactRequest{birthday:None,keep_in_touch:None,
-            id:None,display_name:Some("Sweep person".into()),role:None,company:None,
-            location:None,bio:None,notes:None,links:vec![],photo_data:None,
-            favorite:false,addresses:vec!["sweep@example.com".into()],
-        }).unwrap();
+        database
+            .save_contact_profile(&crate::models::SaveContactRequest {
+                birthday: None,
+                keep_in_touch: None,
+                id: None,
+                display_name: Some("Sweep person".into()),
+                role: None,
+                company: None,
+                location: None,
+                bio: None,
+                notes: None,
+                links: vec![],
+                photo_data: None,
+                favorite: false,
+                addresses: vec!["sweep@example.com".into()],
+            })
+            .unwrap();
 
         database
             .create_goal(&crate::models::CreateGoalRequest {
@@ -3462,7 +4699,9 @@ mod reconciliation_tests {
             })
             .unwrap();
 
-        database.mute_sender("you@example.com", "address", "news@launch.example", &[]).unwrap();
+        database
+            .mute_sender("you@example.com", "address", "news@launch.example", &[])
+            .unwrap();
 
         let repaired = database.reconcile_replicated_sync_backlog().unwrap();
         // Task, goal, snippet, contact, split inbox, muted sender, mail
@@ -3472,7 +4711,10 @@ mod reconciliation_tests {
         database.load_replica_state().unwrap();
 
         let second_pass = database.reconcile_replicated_sync_backlog().unwrap();
-        assert_eq!(second_pass, 0, "a second sweep over the same state must repair nothing");
+        assert_eq!(
+            second_pass, 0,
+            "a second sweep over the same state must repair nothing"
+        );
     }
 
     fn retention_operation_count(database: &Database) -> i64 {
@@ -3546,11 +4788,23 @@ mod frontier_conflict_tests {
     /// Forces a genuine two-way conflict on `field`: two other devices each
     /// start from this replica, rewrite the field before hearing from the
     /// other, and this replica merges both.
-    fn force_conflict(database: &Database, entity_id: &str, field: &str, value_a: Value, value_b: Value) {
+    fn force_conflict(
+        database: &Database,
+        entity_id: &str,
+        field: &str,
+        value_a: Value,
+        value_b: Value,
+    ) {
         let base = database.load_replica_state().unwrap();
         for value in [value_a, value_b] {
             let mut remote = base.clone();
-            remote.write(random_id(), 10, EntityType::Snippet, entity_id, [(field.to_string(), Some(value))]);
+            remote.write(
+                random_id(),
+                10,
+                EntityType::Snippet,
+                entity_id,
+                [(field.to_string(), Some(value))],
+            );
             database.merge_replica_state(&remote).unwrap();
         }
     }
@@ -3576,7 +4830,11 @@ mod frontier_conflict_tests {
             .expect("the forced conflict should be listed");
         assert_eq!(conflict.entity_type, "snippet");
         assert_eq!(conflict.candidates.len(), 2);
-        let values: std::collections::HashSet<_> = conflict.candidates.iter().map(|c| c.value.clone()).collect();
+        let values: std::collections::HashSet<_> = conflict
+            .candidates
+            .iter()
+            .map(|c| c.value.clone())
+            .collect();
         assert!(values.contains(&Some(json!("From A"))));
         assert!(values.contains(&Some(json!("From B"))));
 
@@ -3703,8 +4961,14 @@ mod frontier_conflict_tests {
             .into_iter()
             .find(|conflict| conflict.entity_id == "s1" && conflict.field == "name")
             .unwrap();
-        let chosen = conflict.candidates.iter().find(|candidate| candidate.value == Some(json!("From B"))).unwrap();
-        database.resolve_frontier_conflict(EntityType::Snippet, "s1", "name", &chosen.operation_id).unwrap();
+        let chosen = conflict
+            .candidates
+            .iter()
+            .find(|candidate| candidate.value == Some(json!("From B")))
+            .unwrap();
+        database
+            .resolve_frontier_conflict(EntityType::Snippet, "s1", "name", &chosen.operation_id)
+            .unwrap();
 
         // One value is left, the chosen one, written by this device (so it
         // supersedes both candidates on every replica that merges it).
@@ -3714,15 +4978,28 @@ mod frontier_conflict_tests {
             let mut statement = connection
                 .prepare("SELECT device_id, value FROM sync_values WHERE entity_type='snippet' AND entity_id='s1' AND field='name'")
                 .unwrap();
-            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap();
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
             rows
         };
         let self_device: String = database
             .test_connection()
             .unwrap()
-            .query_row("SELECT device_id FROM sync_devices WHERE is_self=1", [], |row| row.get(0))
+            .query_row(
+                "SELECT device_id FROM sync_devices WHERE is_self=1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(rows, vec![(self_device, Some("\"From B\"".to_string()))]);
-        assert!(database.resolve_frontier_conflict(EntityType::Snippet, "s1", "name", &chosen.operation_id).is_err(), "a stale choice is refused");
+        assert!(
+            database
+                .resolve_frontier_conflict(EntityType::Snippet, "s1", "name", &chosen.operation_id)
+                .is_err(),
+            "a stale choice is refused"
+        );
     }
 }

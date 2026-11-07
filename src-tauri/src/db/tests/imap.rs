@@ -13,7 +13,9 @@ fn native_label_capabilities_survive_reopen_are_scoped_and_never_downgrade_to_fo
         let database = Arc::new(Database::open(&temp.path).unwrap());
         let mine = ImapStateStore::new(database.clone(), "me@example.com");
         mine.set_native_labels(true).unwrap();
-        ImapStateStore::new(database, "other@example.com").set_native_labels(false).unwrap();
+        ImapStateStore::new(database, "other@example.com")
+            .set_native_labels(false)
+            .unwrap();
     }
     let database = Arc::new(Database::open(&temp.path).unwrap());
     let mine = ImapStateStore::new(database.clone(), "me@example.com");
@@ -32,9 +34,12 @@ fn native_label_capabilities_survive_reopen_are_scoped_and_never_downgrade_to_fo
 
     // A preceding-version snapshot is enough evidence to forbid physical
     // label-folder removal, even before the first new capability handshake.
-    other.commit_sync_round(&SyncRoundWrite {
-        label_snapshots: vec![("message".into(), vec!["Project".into()])], ..Default::default()
-    }).unwrap();
+    other
+        .commit_sync_round(&SyncRoundWrite {
+            label_snapshots: vec![("message".into(), vec!["Project".into()])],
+            ..Default::default()
+        })
+        .unwrap();
     assert!(other.uses_native_labels().unwrap());
     assert!(!other.native_labels().unwrap());
 }
@@ -118,8 +123,13 @@ fn one_message_in_two_mailboxes_resolves_to_both_locations() {
             })
             .unwrap();
     }
-    let locations = store.locations_for_message("imap:me@example.com:abc").unwrap();
-    let mailboxes: Vec<_> = locations.iter().map(|location| location.mailbox.as_str()).collect();
+    let locations = store
+        .locations_for_message("imap:me@example.com:abc")
+        .unwrap();
+    let mailboxes: Vec<_> = locations
+        .iter()
+        .map(|location| location.mailbox.as_str())
+        .collect();
     assert_eq!(mailboxes, vec!["INBOX", "Sent"]);
 }
 
@@ -144,7 +154,10 @@ fn dropping_a_mailboxs_locations_leaves_other_mailboxes_alone() {
         .unwrap()
         .is_empty());
     assert_eq!(
-        store.locations_for_message("imap:me@example.com:Archive").unwrap().len(),
+        store
+            .locations_for_message("imap:me@example.com:Archive")
+            .unwrap()
+            .len(),
         1
     );
 }
@@ -194,7 +207,10 @@ fn an_empty_sync_round_is_a_no_op_and_does_not_bump_the_generation() {
     let unchanged = store.commit_sync_round(&SyncRoundWrite::default()).unwrap();
     assert_eq!(unchanged, 0, "empty round returns the current generation");
     assert_eq!(store.generation().unwrap(), 0, "no bump");
-    assert!(store.journal_since(0).unwrap().is_empty(), "no journal write");
+    assert!(
+        store.journal_since(0).unwrap().is_empty(),
+        "no journal write"
+    );
 }
 
 #[test]
@@ -202,26 +218,53 @@ fn label_snapshots_are_atomic_with_thread_assignments_and_account_scoped() {
     let mine = store();
     let theirs = ImapStateStore::new(mine.database().clone(), "other@example.com");
     let labels = vec!["\\Inbox".into(), "Projects/Keep".into()];
-    mine.commit_sync_round(&SyncRoundWrite { label_snapshots: vec![("message".into(), labels.clone())], ..Default::default() }).unwrap();
-    assert_eq!(mine.message_labels("message").unwrap(), Some(labels.clone()));
+    mine.commit_sync_round(&SyncRoundWrite {
+        label_snapshots: vec![("message".into(), labels.clone())],
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        mine.message_labels("message").unwrap(),
+        Some(labels.clone())
+    );
     assert_eq!(theirs.message_labels("message").unwrap(), None);
     let generation = mine.generation().unwrap();
-    mine.database().test_with_connection(|c| {
-        c.execute_batch("CREATE TEMP TRIGGER fail_labels_round BEFORE INSERT ON imap_threads
-            BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")?;
-        Ok(())
-    }).unwrap();
-    assert!(mine.commit_sync_round(&SyncRoundWrite {
-        label_snapshots: vec![("message".into(), Vec::new())],
-        thread_assignments: vec![("message".into(), "thread".into())], ..Default::default()
-    }).is_err());
+    mine.database()
+        .test_with_connection(|c| {
+            c.execute_batch(
+                "CREATE TEMP TRIGGER fail_labels_round BEFORE INSERT ON imap_threads
+            BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(mine
+        .commit_sync_round(&SyncRoundWrite {
+            label_snapshots: vec![("message".into(), Vec::new())],
+            thread_assignments: vec![("message".into(), "thread".into())],
+            ..Default::default()
+        })
+        .is_err());
     assert_eq!(mine.message_labels("message").unwrap(), Some(labels));
     assert_eq!(mine.generation().unwrap(), generation);
-    mine.database().test_with_connection(|c| { c.execute_batch("DROP TRIGGER fail_labels_round")?; Ok(()) }).unwrap();
-    theirs.commit_sync_round(&SyncRoundWrite { label_snapshots: vec![("message".into(), vec!["Other".into()])], ..Default::default() }).unwrap();
+    mine.database()
+        .test_with_connection(|c| {
+            c.execute_batch("DROP TRIGGER fail_labels_round")?;
+            Ok(())
+        })
+        .unwrap();
+    theirs
+        .commit_sync_round(&SyncRoundWrite {
+            label_snapshots: vec![("message".into(), vec!["Other".into()])],
+            ..Default::default()
+        })
+        .unwrap();
     mine.database().remove_account("me@example.com").unwrap();
     assert_eq!(mine.message_labels("message").unwrap(), None);
-    assert_eq!(theirs.message_labels("message").unwrap(), Some(vec!["Other".into()]));
+    assert_eq!(
+        theirs.message_labels("message").unwrap(),
+        Some(vec!["Other".into()])
+    );
 }
 
 #[test]
@@ -251,10 +294,7 @@ fn a_sync_round_applies_locations_deletions_and_journal_atomically() {
             modseq: None,
         }],
         deletions: vec![("INBOX".into(), 1, 1)],
-        thread_assignments: vec![(
-            "imap:me@example.com:new".into(),
-            "imap:t:new".into(),
-        )],
+        thread_assignments: vec![("imap:me@example.com:new".into(), "imap:t:new".into())],
         changed_threads: vec!["imap:t:new".into()],
         ..Default::default()
     };
@@ -262,7 +302,10 @@ fn a_sync_round_applies_locations_deletions_and_journal_atomically() {
     assert_eq!(generation, 1);
     // The new location exists, the old one is gone.
     assert_eq!(
-        store.locations_for_message("imap:me@example.com:new").unwrap().len(),
+        store
+            .locations_for_message("imap:me@example.com:new")
+            .unwrap()
+            .len(),
         1
     );
     assert!(store
@@ -270,7 +313,10 @@ fn a_sync_round_applies_locations_deletions_and_journal_atomically() {
         .unwrap()
         .is_empty());
     // The thread was journaled under the new generation.
-    assert_eq!(store.journal_since(0).unwrap(), vec!["imap:t:new".to_string()]);
+    assert_eq!(
+        store.journal_since(0).unwrap(),
+        vec!["imap:t:new".to_string()]
+    );
 }
 
 #[test]
@@ -286,7 +332,10 @@ fn a_thread_keeps_its_earliest_creation_generation() {
             ..Default::default()
         })
         .unwrap();
-    assert_eq!(store.thread_created_generation("imap:t:x").unwrap(), Some(1));
+    assert_eq!(
+        store.thread_created_generation("imap:t:x").unwrap(),
+        Some(1)
+    );
     // A later round adds a second message to the same thread.
     store
         .commit_sync_round(&SyncRoundWrite {
@@ -515,11 +564,7 @@ fn token_seeding_work_does_not_grow_with_unrelated_messages_and_aliases() {
                 )?;
                 tx.execute(
                     "INSERT INTO imap_message_tokens VALUES (?1, ?2, ?3)",
-                    rusqlite::params![
-                        store.account_id,
-                        message,
-                        format!("unrelated-token-{n}")
-                    ],
+                    rusqlite::params![store.account_id, message, format!("unrelated-token-{n}")],
                 )?;
                 tx.execute(
                     "INSERT INTO imap_thread_aliases VALUES (?1, ?2, ?3)",
@@ -593,14 +638,17 @@ fn expiry_acknowledgment_is_atomic_durable_and_rearms_for_a_new_empty_period() {
     store.mark_hot_thread_emptied("hot", 0).unwrap();
     let (generation, _) = store.advance_coverage_epoch_if_complete(&[]).unwrap();
     assert_eq!(generation, initial, "one epoch is below the grace boundary");
-    store.database().with_connection(|c| {
-        c.execute_batch(
+    store
+        .database()
+        .with_connection(|c| {
+            c.execute_batch(
             "CREATE TRIGGER reject_expiry_ack BEFORE UPDATE OF expiry_journaled ON imap_hot_threads
              WHEN NEW.expiry_journaled = 1
              BEGIN SELECT RAISE(ABORT, 'injected expiry failure'); END;",
         )?;
-        Ok(())
-    }).unwrap();
+            Ok(())
+        })
+        .unwrap();
     assert!(store.advance_coverage_epoch_if_complete(&[]).is_err());
     assert_eq!(store.complete_walks().unwrap(), 1);
     assert_eq!(store.generation().unwrap(), initial);
@@ -672,11 +720,18 @@ fn retirement_never_touches_inbox_and_an_empty_list_retires_nothing() {
         .retire_vanished_mailboxes(&["INBOX".to_string()])
         .unwrap();
     assert_eq!(retired, vec!["Clients/Acme".to_string()]);
-    let names: Vec<String> = store.mailboxes().unwrap().into_iter().map(|m| m.name).collect();
+    let names: Vec<String> = store
+        .mailboxes()
+        .unwrap()
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
     assert_eq!(names, vec!["INBOX".to_string()], "only INBOX remains");
 
     // A LIST that still omits INBOX never retires it.
-    let retired = store.retire_vanished_mailboxes(&["Something/Else".to_string()]).unwrap();
+    let retired = store
+        .retire_vanished_mailboxes(&["Something/Else".to_string()])
+        .unwrap();
     assert!(retired.is_empty(), "INBOX is never retired");
     assert!(store.mailboxes().unwrap().iter().any(|m| m.name == "INBOX"));
 }
@@ -722,14 +777,27 @@ fn retirement_deletes_locations_and_sync_state_and_journals_hot_threads() {
         .unwrap();
     assert_eq!(retired, vec!["Clients/Acme".to_string()]);
     // Locations, sync-state and catalog row for the folder are gone.
-    assert!(store.locations_in_mailbox("Clients/Acme").unwrap().is_empty());
+    assert!(store
+        .locations_in_mailbox("Clients/Acme")
+        .unwrap()
+        .is_empty());
     assert!(store.mailbox_sync_state("Clients/Acme").unwrap().is_none());
-    assert!(!store.mailboxes().unwrap().iter().any(|m| m.name == "Clients/Acme"));
+    assert!(!store
+        .mailboxes()
+        .unwrap()
+        .iter()
+        .any(|m| m.name == "Clients/Acme"));
     // The INBOX copy survives, so the thread is still hot and present.
     assert!(store.is_thread_hot("imap:t:1").unwrap());
     assert!(!store.locations_in_mailbox("INBOX").unwrap().is_empty());
     // The affected hot thread was journaled under a bumped generation.
     let gen_after = store.generation().unwrap();
-    assert!(gen_after > gen_before, "a hot-thread retirement bumps the generation");
-    assert!(store.journal_since(gen_before).unwrap().contains(&"imap:t:1".to_string()));
+    assert!(
+        gen_after > gen_before,
+        "a hot-thread retirement bumps the generation"
+    );
+    assert!(store
+        .journal_since(gen_before)
+        .unwrap()
+        .contains(&"imap:t:1".to_string()));
 }

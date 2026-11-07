@@ -32,7 +32,9 @@ impl Database {
             return Err(DatabaseError::invalid("Split inbox name cannot be empty"));
         }
         if match_value.is_empty() {
-            return Err(DatabaseError::invalid("Split inbox match value cannot be empty"));
+            return Err(DatabaseError::invalid(
+                "Split inbox match value cannot be empty",
+            ));
         }
         if !matches!(match_kind, "domain" | "label" | "pattern") {
             return Err(DatabaseError::invalid("Unknown split inbox match kind"));
@@ -47,12 +49,11 @@ impl Database {
             match_value.to_ascii_lowercase()
         };
         self.with_transaction(|transaction| {
-            let sort_order: i64 = transaction
-                .query_row(
-                    "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM split_inboxes",
-                    [],
-                    |row| row.get(0),
-                )?;
+            let sort_order: i64 = transaction.query_row(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM split_inboxes",
+                [],
+                |row| row.get(0),
+            )?;
             let id = Uuid::new_v4().to_string();
             let created_at = Utc::now().to_rfc3339();
             insert_split_inbox_row(

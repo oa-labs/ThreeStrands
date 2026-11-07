@@ -180,9 +180,15 @@ impl ImapProvider {
                 // The reserved INBOX always exists even before discovery
                 // persisted its catalog row.
                 .or_else(|| Some(INBOX.to_string())),
-            MoveRole::Archive => self.mailbox_with_role(plan, crate::provider::imap::MailboxRole::Archive),
-            MoveRole::Trash => self.mailbox_with_role(plan, crate::provider::imap::MailboxRole::Trash),
-            MoveRole::Junk => self.mailbox_with_role(plan, crate::provider::imap::MailboxRole::Junk),
+            MoveRole::Archive => {
+                self.mailbox_with_role(plan, crate::provider::imap::MailboxRole::Archive)
+            }
+            MoveRole::Trash => {
+                self.mailbox_with_role(plan, crate::provider::imap::MailboxRole::Trash)
+            }
+            MoveRole::Junk => {
+                self.mailbox_with_role(plan, crate::provider::imap::MailboxRole::Junk)
+            }
         }
     }
 
@@ -241,7 +247,9 @@ impl ImapProvider {
         }
         if native {
             let mut session = self.open_session().await?;
-            let result = self.apply_label_move(session.as_mut(), message_ids, &sync_plan, op).await;
+            let result = self
+                .apply_label_move(session.as_mut(), message_ids, &sync_plan, op)
+                .await;
             let _ = session.logout().await;
             return result;
         }
@@ -365,8 +373,15 @@ impl ImapProvider {
             // location (idempotent retry). The whole source mailbox shares one
             // SELECT/context.
             for planned in &moves {
-                self.move_one_message(write_session, &ctx, op, &source_mailbox, dest_mailbox, planned)
-                    .await?;
+                self.move_one_message(
+                    write_session,
+                    &ctx,
+                    op,
+                    &source_mailbox,
+                    dest_mailbox,
+                    planned,
+                )
+                .await?;
             }
         }
         Ok(())
@@ -429,7 +444,13 @@ impl ImapProvider {
             .await
         {
             Ok(outcome) => {
-                self.commit_moved_location(ctx, source_mailbox, dest_mailbox, planned, &outcome.copyuid)?;
+                self.commit_moved_location(
+                    ctx,
+                    source_mailbox,
+                    dest_mailbox,
+                    planned,
+                    &outcome.copyuid,
+                )?;
                 Ok(())
             }
             Err(failure) => {
@@ -486,9 +507,13 @@ impl ImapProvider {
             .relocate_one_recording(session, ctx, dest_mailbox, planned)
             .await
         {
-            Ok(outcome) => {
-                self.commit_moved_location(ctx, source_mailbox, dest_mailbox, planned, &outcome.copyuid)
-            }
+            Ok(outcome) => self.commit_moved_location(
+                ctx,
+                source_mailbox,
+                dest_mailbox,
+                planned,
+                &outcome.copyuid,
+            ),
             Err(failure) => {
                 if let Some(copyuid) = &failure.copyuid {
                     self.record_dest_only(dest_mailbox, planned, copyuid)?;
@@ -584,9 +609,11 @@ impl ImapProvider {
             )
             .await;
         }
-        crate::provider::imap::write::require_targeted_delete(ctx).map_err(|error| RelocateFailure {
-            copyuid: None,
-            error: error.into(),
+        crate::provider::imap::write::require_targeted_delete(ctx).map_err(|error| {
+            RelocateFailure {
+                copyuid: None,
+                error: error.into(),
+            }
         })?;
         let outcome = self
             .copy_with_recovery(session, ctx, dest, planned)
@@ -596,7 +623,8 @@ impl ImapProvider {
                 error,
             })?;
         if let Err(error) =
-            crate::provider::imap::write::expunge_source_copies(session, ctx, &[planned.uid as u32]).await
+            crate::provider::imap::write::expunge_source_copies(session, ctx, &[planned.uid as u32])
+                .await
         {
             return Err(RelocateFailure {
                 copyuid: outcome.copyuid,
@@ -649,7 +677,10 @@ impl ImapProvider {
                     "COPY source is no longer present; resync before retrying".into(),
                 )
             })?;
-        let identity = crate::provider::imap::identity::derive_message_id(self.store.account_id(), &source.inputs);
+        let identity = crate::provider::imap::identity::derive_message_id(
+            self.store.account_id(),
+            &source.inputs,
+        );
         if pending
             .as_ref()
             .is_some_and(|previous| previous != &identity)
@@ -696,8 +727,10 @@ impl ImapProvider {
         let mut found = None;
         for batch in crate::provider::imap::write::build_uid_set_batches(&uids) {
             for row in fetch_identity(session, &batch).await? {
-                if crate::provider::imap::identity::derive_message_id(self.store.account_id(), &row.inputs)
-                    == identity
+                if crate::provider::imap::identity::derive_message_id(
+                    self.store.account_id(),
+                    &row.inputs,
+                ) == identity
                 {
                     found = Some(crate::provider::imap::write::CopyOutcome {
                         copyuid: Some(crate::provider::imap::write::CopyUid {
@@ -715,7 +748,13 @@ impl ImapProvider {
         }
         // EXAMINE changed the selection. Re-establish and guard the source
         // before the caller can COPY, STORE or EXPUNGE using its old context.
-        crate::provider::imap::write::select_for_write(session, &self.store, &ctx.mailbox, ctx.uidvalidity).await?;
+        crate::provider::imap::write::select_for_write(
+            session,
+            &self.store,
+            &ctx.mailbox,
+            ctx.uidvalidity,
+        )
+        .await?;
         Ok(found)
     }
 }
@@ -740,7 +779,10 @@ impl PlannedMove {
 }
 
 /// The destination UID a source UID mapped to, from a `COPYUID` pairing.
-pub(super) fn dest_uid_for(copyuid: &crate::provider::imap::write::CopyUid, source_uid: u32) -> Option<u32> {
+pub(super) fn dest_uid_for(
+    copyuid: &crate::provider::imap::write::CopyUid,
+    source_uid: u32,
+) -> Option<u32> {
     copyuid
         .pairs()
         .find(|(src, _)| *src == source_uid)

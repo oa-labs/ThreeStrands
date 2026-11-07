@@ -8,8 +8,8 @@ use crate::models::{ContactFieldSuggestion, ContactProfile};
 
 use super::output::strip_markdown_fences;
 use super::provider::{
-    call_provider_reply, describe_reply, AiCall, reply_was_cut_off, AiProvider, CUT_OFF_REPLY_ERROR,
-    OutputSchema, Reasoning, STRUCTURED_OUTPUT_TOKENS,
+    call_provider_reply, describe_reply, reply_was_cut_off, AiCall, AiProvider, OutputSchema,
+    Reasoning, CUT_OFF_REPLY_ERROR, STRUCTURED_OUTPUT_TOKENS,
 };
 
 pub struct ContactMessageInput {
@@ -222,7 +222,8 @@ fn describe_contact_batch(batch: &[ContactMessageInput], allowed: &[&'static str
     )
 }
 
-pub(super) const CONTACT_FIELDS: [&str; 6] = ["displayName", "role", "company", "location", "bio", "link"];
+pub(super) const CONTACT_FIELDS: [&str; 6] =
+    ["displayName", "role", "company", "location", "bio", "link"];
 
 /// The suggestible fields that hold nothing on the stored profile. Links is
 /// empty only while there are no links at all: enhancement never appends to a
@@ -549,7 +550,9 @@ mod tests {
             is_thread_starter: true,
         }];
         let valid = r#"[{"field":"company","value":"Acme","sourceMessageId":"m1","excerpt":"founder of Acme"},{"field":"notes","value":"nice person","sourceMessageId":"m1","excerpt":"I am"},{"field":"role","value":"Founder","sourceMessageId":"unknown","excerpt":"founder"},{"field":"location","value":"Boston","sourceMessageId":"m1","excerpt":"not exact"}]"#;
-        let parsed = parse_contact_suggestions(valid, &messages, &mut ContactSuggestionTally::default()).unwrap();
+        let parsed =
+            parse_contact_suggestions(valid, &messages, &mut ContactSuggestionTally::default())
+                .unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].field, "company");
         assert_eq!(parsed[0].source_message_id, "m1");
@@ -575,20 +578,31 @@ mod tests {
             format!("Here are the suggestions:\n[{item}]"),
             format!(r#"{{"suggestions":[{item}]}}"#),
         ] {
-            let parsed = parse_contact_suggestions(&output, &messages, &mut ContactSuggestionTally::default()).unwrap();
+            let parsed = parse_contact_suggestions(
+                &output,
+                &messages,
+                &mut ContactSuggestionTally::default(),
+            )
+            .unwrap();
             assert_eq!(parsed.len(), 1, "{output}");
             assert_eq!(parsed[0].value, "Acme");
         }
-        assert!(parse_contact_suggestions("[]", &messages, &mut ContactSuggestionTally::default())
-            .unwrap()
-            .is_empty());
+        assert!(
+            parse_contact_suggestions("[]", &messages, &mut ContactSuggestionTally::default())
+                .unwrap()
+                .is_empty()
+        );
         let unsupported_evidence = format!(
             "```json\n[{}]\n```",
             r#"{"field":"company","value":"Acme","sourceMessageId":"m1","excerpt":"not in the body"}"#
         );
-        assert!(parse_contact_suggestions(&unsupported_evidence, &messages, &mut ContactSuggestionTally::default())
-            .unwrap()
-            .is_empty());
+        assert!(parse_contact_suggestions(
+            &unsupported_evidence,
+            &messages,
+            &mut ContactSuggestionTally::default()
+        )
+        .unwrap()
+        .is_empty());
         for invalid in [
             "I could not find anything.",
             r#"{"other":[]}"#,
@@ -596,7 +610,12 @@ mod tests {
             "[{\"field\":",
         ] {
             assert!(
-                parse_contact_suggestions(invalid, &messages, &mut ContactSuggestionTally::default()).is_err(),
+                parse_contact_suggestions(
+                    invalid,
+                    &messages,
+                    &mut ContactSuggestionTally::default()
+                )
+                .is_err(),
                 "{invalid}"
             );
         }
@@ -1006,7 +1025,10 @@ mod tests {
             State(prompts): State<Prompts>,
             Json(payload): Json<serde_json::Value>,
         ) -> Json<serde_json::Value> {
-            let system = payload["messages"][0]["content"].as_str().unwrap().to_string();
+            let system = payload["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .to_string();
             let field_schema = payload["response_format"]["json_schema"]["schema"]["properties"]
                 ["suggestions"]["items"]["properties"]["field"]
                 .clone();
@@ -1066,11 +1088,13 @@ mod tests {
 
         // Name and About are filled in, so the model is only asked about the
         // empty role, location and link, and its answer is filtered to those.
-        let suggestions =
-            enrich_contact(request(profile(Some("Jane Smith"), Some("Acme"))), "test-key")
-                .await
-                .unwrap()
-                .suggestions;
+        let suggestions = enrich_contact(
+            request(profile(Some("Jane Smith"), Some("Acme"))),
+            "test-key",
+        )
+        .await
+        .unwrap()
+        .suggestions;
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].field, "role");
         {
@@ -1087,7 +1111,9 @@ mod tests {
             let definitions = "role: their job title or position; location: the city, region, or country where they are based; link: an https URL of their own website or public profile";
             assert!(system.contains(&format!("Field definitions: {definitions}.")));
             assert_eq!(field_schema["description"], definitions);
-            assert!(system.contains("even when no allowed field fits it; leave that fact out instead."));
+            assert!(
+                system.contains("even when no allowed field fits it; leave that fact out instead.")
+            );
         }
 
         // Nothing left empty: no provider call is made at all.
@@ -1119,14 +1145,18 @@ mod tests {
             is_thread_starter: true,
         }];
         let output = r#"[{"field":"link","value":"https://example.com","sourceMessageId":"m1","excerpt":"https://example.com"},{"field":"link","value":"http://unsafe.test","sourceMessageId":"m1","excerpt":"http://unsafe.test"}]"#;
-        let suggestions = parse_contact_suggestions(output, &messages, &mut ContactSuggestionTally::default()).unwrap();
+        let suggestions =
+            parse_contact_suggestions(output, &messages, &mut ContactSuggestionTally::default())
+                .unwrap();
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].field, "link");
         assert_eq!(suggestions[0].value, "https://example.com/");
         assert_eq!(suggestions[0].excerpt, "https://example.com");
         assert_eq!(suggestions[0].source_message_id, "m1");
         assert_eq!(suggestions[0].source_thread_id, "thread-1");
-        assert!(!suggestions.iter().any(|suggestion| suggestion.value.contains("unsafe.test")));
+        assert!(!suggestions
+            .iter()
+            .any(|suggestion| suggestion.value.contains("unsafe.test")));
         assert!(parse_contact_suggestions(
             &format!(
                 "[{}]",

@@ -113,9 +113,11 @@ impl OAuthProvider {
     /// builds or launches the app.
     pub fn not_configured(self) -> String {
         match self {
-            Self::Google => "Google OAuth is not configured. Set THREESTRANDS_GOOGLE_CLIENT_ID and \
+            Self::Google => {
+                "Google OAuth is not configured. Set THREESTRANDS_GOOGLE_CLIENT_ID and \
                  THREESTRANDS_GOOGLE_CLIENT_SECRET from a Desktop app credential."
-                .into(),
+                    .into()
+            }
         }
     }
 
@@ -222,7 +224,11 @@ impl OAuthApp {
     /// Calendar access is deliberately authorized and stored separately from
     /// mail. Connecting it can never broaden an existing mail refresh token.
     pub fn pending_calendar_account(&self) -> OAuthCredential {
-        self.keyed_for(PENDING_KEY, CALENDAR_SERVICE, self.provider.calendar_endpoints())
+        self.keyed_for(
+            PENDING_KEY,
+            CALENDAR_SERVICE,
+            self.provider.calendar_endpoints(),
+        )
     }
 
     pub fn calendar_account(&self, email: &str) -> OAuthCredential {
@@ -230,12 +236,9 @@ impl OAuthApp {
     }
 
     fn keyed_for(&self, key: &str, service: &str, endpoints: OAuthEndpoints) -> OAuthCredential {
-        let oauth_client = build_oauth_client(
-            &self.client_id,
-            self.client_secret.as_deref(),
-            &endpoints,
-        )
-        .expect("static OAuth endpoints must be valid URLs");
+        let oauth_client =
+            build_oauth_client(&self.client_id, self.client_secret.as_deref(), &endpoints)
+                .expect("static OAuth endpoints must be valid URLs");
         OAuthCredential {
             provider: self.provider,
             client: self.client.clone(),
@@ -338,7 +341,11 @@ impl AuthConfig {
 
     /// The credential for a mail account stored under `key` — its real
     /// address, or the `LEGACY_KEY` placeholder.
-    pub fn mail_account(&self, provider: MailProviderKind, key: &str) -> Result<AccountAuth, String> {
+    pub fn mail_account(
+        &self,
+        provider: MailProviderKind,
+        key: &str,
+    ) -> Result<AccountAuth, String> {
         Ok(match provider {
             MailProviderKind::Gmail => {
                 AccountAuth::Gmail(self.mail_app(provider)?.mail_credential(key))
@@ -527,7 +534,10 @@ impl OAuthCredential {
             .request_async(&OAuthHttp(self.client.clone()))
             .await
             .map_err(|error| {
-                format!("{} OAuth code exchange failed: {error}", self.provider.label())
+                format!(
+                    "{} OAuth code exchange failed: {error}",
+                    self.provider.label()
+                )
             })?;
         tokens_from_response(&token, self.provider)
     }
@@ -551,8 +561,8 @@ impl OAuthCredential {
             .request_async(&OAuthHttp(self.client.clone()))
             .await
             .map_err(|error| map_refresh_error(error, self.provider))?;
-        let refreshed = tokens_from_response(&refreshed, self.provider)
-            .map_err(AccessTokenError::Transient)?;
+        let refreshed =
+            tokens_from_response(&refreshed, self.provider).map_err(AccessTokenError::Transient)?;
         tokens.access_token = refreshed.access_token;
         if refreshed.refresh_token.is_some() {
             tokens.refresh_token = refreshed.refresh_token;
@@ -747,7 +757,10 @@ async fn checked(
     } else {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        Err(format!("{} OAuth returned {status}: {body}", provider.label()))
+        Err(format!(
+            "{} OAuth returned {status}: {body}",
+            provider.label()
+        ))
     }
 }
 
@@ -832,7 +845,10 @@ fn callback_code(
         return Err("OAuth state did not match; sign-in was rejected".to_string());
     }
     if let Some(error) = values.get("error") {
-        return Err(format!("{} authorization failed: {error}", provider.label()));
+        return Err(format!(
+            "{} authorization failed: {error}",
+            provider.label()
+        ));
     }
     values
         .get("code")
@@ -1030,7 +1046,12 @@ mod tests {
         let expected = CsrfToken::new("expected-state".into());
         let google = OAuthProvider::Google;
         assert_eq!(
-            callback_code("/oauth/callback?state=expected-state&code=abc", &expected, google).unwrap(),
+            callback_code(
+                "/oauth/callback?state=expected-state&code=abc",
+                &expected,
+                google
+            )
+            .unwrap(),
             "abc"
         );
         assert!(
@@ -1235,7 +1256,12 @@ mod tests {
         assert_eq!(auth.mail_provider(), MailProviderKind::Gmail);
         // Gmail ignores the handle but the signature now requires one.
         let database = std::sync::Arc::new(crate::db::Database::open_memory());
-        assert!(auth.provider(&database).unwrap().capabilities().server_search);
+        assert!(
+            auth.provider(&database)
+                .unwrap()
+                .capabilities()
+                .server_search
+        );
     }
 
     #[test]
@@ -1321,7 +1347,11 @@ mod tests {
         Form(form): Form<HashMap<String, String>>,
     ) -> (axum::http::StatusCode, Json<Value>) {
         requests.lock().unwrap().push(form);
-        let body = if code.is_empty() { json!({}) } else { json!({ "error": code }) };
+        let body = if code.is_empty() {
+            json!({})
+        } else {
+            json!({ "error": code })
+        };
         (status, Json(body))
     }
 
@@ -1362,19 +1392,33 @@ mod tests {
     #[test]
     fn mail_and_calendar_revoke_at_googles_revocation_endpoint() {
         let app = google_app();
-        assert_eq!(app.mail_credential("work@example.com").endpoints.revoke_url, GOOGLE_REVOKE_URL);
-        assert_eq!(app.calendar_account("work@example.com").endpoints.revoke_url, GOOGLE_REVOKE_URL);
+        assert_eq!(
+            app.mail_credential("work@example.com").endpoints.revoke_url,
+            GOOGLE_REVOKE_URL
+        );
+        assert_eq!(
+            app.calendar_account("work@example.com")
+                .endpoints
+                .revoke_url,
+            GOOGLE_REVOKE_URL
+        );
     }
 
     #[tokio::test]
     async fn revoke_sends_the_refresh_token_so_its_access_tokens_die_with_it() {
         let (url, requests, server) = start_revoke_server(axum::http::StatusCode::OK, "").await;
 
-        revocable(MAIL_SERVICE, &url, Some("refresh-secret")).revoke().await.unwrap();
+        revocable(MAIL_SERVICE, &url, Some("refresh-secret"))
+            .revoke()
+            .await
+            .unwrap();
 
         let requests = requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].get("token").map(String::as_str), Some("refresh-secret"));
+        assert_eq!(
+            requests[0].get("token").map(String::as_str),
+            Some("refresh-secret")
+        );
         server.abort();
     }
 
@@ -1396,7 +1440,13 @@ mod tests {
         for code in ["invalid_token", "invalid_grant"] {
             let (url, _, server) =
                 start_revoke_server(axum::http::StatusCode::BAD_REQUEST, code).await;
-            assert!(revocable(MAIL_SERVICE, &url, Some("refresh-secret")).revoke().await.is_ok(), "{code}");
+            assert!(
+                revocable(MAIL_SERVICE, &url, Some("refresh-secret"))
+                    .revoke()
+                    .await
+                    .is_ok(),
+                "{code}"
+            );
             server.abort();
         }
     }
@@ -1606,16 +1656,22 @@ impl AccountAuth {
     pub fn provider(
         &self,
         database: &std::sync::Arc<crate::db::Database>,
-    ) -> Result<std::sync::Arc<dyn crate::provider::MailProvider>, crate::provider::ProviderError> {
+    ) -> Result<std::sync::Arc<dyn crate::provider::MailProvider>, crate::provider::ProviderError>
+    {
         match self {
             Self::Gmail(credential) => Ok(std::sync::Arc::new(
-                crate::provider::gmail::GmailClient::new(credential.clone()).with_cached_identities(
-                    database.account_sending_identities(&credential.key()).map_err(|error| crate::provider::ProviderError::InvalidOperation(error.to_string()))?
-                ),
+                crate::provider::gmail::GmailClient::new(credential.clone())
+                    .with_cached_identities(
+                        database
+                            .account_sending_identities(&credential.key())
+                            .map_err(|error| {
+                                crate::provider::ProviderError::InvalidOperation(error.to_string())
+                            })?,
+                    ),
             )),
-            Self::Imap(credential) => {
-                Ok(std::sync::Arc::new(build_imap_provider(database, credential)?))
-            }
+            Self::Imap(credential) => Ok(std::sync::Arc::new(build_imap_provider(
+                database, credential,
+            )?)),
         }
     }
 }
@@ -1642,9 +1698,7 @@ fn build_imap_provider(
     let settings = database
         .imap_account_settings(account_id)
         .map_err(|error| ProviderError::Other(error.to_string()))?
-        .ok_or_else(|| {
-            ProviderError::Other(format!("{account_id} has no saved IMAP settings"))
-        })?;
+        .ok_or_else(|| ProviderError::Other(format!("{account_id} has no saved IMAP settings")))?;
     // The password lives only in the OS keychain, never in settings or logs.
     // A keychain READ failure here is NOT an authentication failure: the
     // polling loop already skips an account whose credential is unavailable
@@ -1715,9 +1769,16 @@ impl ImapCredential {
         }
     }
 
-    fn connection_manager(&self, config: crate::provider::imap::ConnectionConfig) -> crate::provider::imap::ImapConnectionManager {
+    fn connection_manager(
+        &self,
+        config: crate::provider::imap::ConnectionConfig,
+    ) -> crate::provider::imap::ImapConnectionManager {
         let mut manager = self.manager.lock().unwrap();
-        manager.get_or_insert_with(|| crate::provider::imap::ImapConnectionManager::new(config.clone())).with_config(config)
+        manager
+            .get_or_insert_with(|| {
+                crate::provider::imap::ImapConnectionManager::new(config.clone())
+            })
+            .with_config(config)
     }
 
     /// The address this account is stored under.
@@ -1766,23 +1827,42 @@ impl ImapCredential {
 #[cfg(test)]
 mod imap_connection_pool_tests {
     use super::*;
-    use crate::provider::imap::{ConnectionConfig, ImapConnectionManager, ConnectionRole, SecurityMode};
+    use crate::provider::imap::{
+        ConnectionConfig, ConnectionRole, ImapConnectionManager, SecurityMode,
+    };
 
     #[tokio::test]
-    async fn credential_clones_share_connection_slots_across_provider_instances_and_settings_changes() {
+    async fn credential_clones_share_connection_slots_across_provider_instances_and_settings_changes(
+    ) {
         let auth = ImapCredential::for_account("pool@example.com");
         let cloned = auth.clone();
-        let config = ConnectionConfig { host: "mail.example.com".into(), port: 993, tls_mode: SecurityMode::ImplicitTls.tls_mode(), pinned_fingerprint: None };
+        let config = ConnectionConfig {
+            host: "mail.example.com".into(),
+            port: 993,
+            tls_mode: SecurityMode::ImplicitTls.tls_mode(),
+            pinned_fingerprint: None,
+        };
         let idle_manager = auth.connection_manager(config.clone());
-        let command_manager = cloned.connection_manager(ConnectionConfig { host: "updated.example.com".into(), ..config });
+        let command_manager = cloned.connection_manager(ConnectionConfig {
+            host: "updated.example.com".into(),
+            ..config
+        });
         let idle = idle_manager.reserve(ConnectionRole::Idle).await;
         let command = command_manager.reserve(ConnectionRole::Command).await;
         assert_eq!(idle_manager.available_slots(), 0);
         assert_eq!(command_manager.available_slots(), 0);
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), command_manager.reserve(ConnectionRole::Idle)).await.is_err());
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            command_manager.reserve(ConnectionRole::Idle)
+        )
+        .await
+        .is_err());
         drop(idle);
         assert_eq!(command_manager.available_slots(), 1);
         drop(command);
-        assert_eq!(command_manager.available_slots(), ImapConnectionManager::MAX_CONNECTIONS);
+        assert_eq!(
+            command_manager.available_slots(),
+            ImapConnectionManager::MAX_CONNECTIONS
+        );
     }
 }

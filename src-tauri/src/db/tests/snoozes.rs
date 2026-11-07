@@ -83,13 +83,25 @@ fn returns_unread_only_when_this_device_chose_it() {
         assert!(!db.snooze_returns_unread().unwrap());
         db.set_snooze_returns_unread(returns_unread).unwrap();
         assert_eq!(db.snooze_returns_unread().unwrap(), returns_unread);
-        db.with_transaction(|tx| Database::apply_mutation(tx, &ThreadMutation::Read { thread_id: id(), value: true })).unwrap();
+        db.with_transaction(|tx| {
+            Database::apply_mutation(
+                tx,
+                &ThreadMutation::Read {
+                    thread_id: id(),
+                    value: true,
+                },
+            )
+        })
+        .unwrap();
         snooze(&db);
         assert!(db.wake_due_snoozes(ACCOUNT, due()).unwrap());
         let thread = db.get_thread(&id()).unwrap();
         assert!(!thread.thread.archived);
         assert_eq!(thread.thread.unread, returns_unread);
-        assert_eq!(thread.messages.iter().any(|message| message.unread), returns_unread);
+        assert_eq!(
+            thread.messages.iter().any(|message| message.unread),
+            returns_unread
+        );
     }
 }
 
@@ -354,12 +366,17 @@ fn retention_keeps_active_snoozed_mail_until_return_and_aliases_keep_the_schedul
     mail.labels = vec![];
     // Alias cleanup happens before ingestion. A later failure must restore
     // both the original schedule and its message references atomically.
-    assert!(db.apply_ingested_threads_with_aliases(
-        ACCOUNT,
-        &[("survivor".into(), vec![mail.clone(), mail.clone()], vec![])],
-        &[("conversation".into(), "survivor".into())],
-    ).is_err());
-    assert_eq!(db.list_snooze_records(None).unwrap(), vec![original.clone()]);
+    assert!(db
+        .apply_ingested_threads_with_aliases(
+            ACCOUNT,
+            &[("survivor".into(), vec![mail.clone(), mail.clone()], vec![])],
+            &[("conversation".into(), "survivor".into())],
+        )
+        .is_err());
+    assert_eq!(
+        db.list_snooze_records(None).unwrap(),
+        vec![original.clone()]
+    );
     assert!(db.get_thread(&id()).is_ok());
     db.apply_ingested_threads_with_aliases(
         ACCOUNT,

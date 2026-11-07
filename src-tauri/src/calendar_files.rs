@@ -31,7 +31,10 @@ pub struct CalendarFileInbox(Mutex<Vec<OpenedCalendarFile>>);
 
 impl CalendarFileInbox {
     fn push(&self, file: OpenedCalendarFile) -> bool {
-        let mut pending = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut pending = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if pending.len() >= MAX_PENDING_CALENDAR_FILES {
             return false;
         }
@@ -40,7 +43,12 @@ impl CalendarFileInbox {
     }
 
     fn take(&self) -> Vec<OpenedCalendarFile> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
     }
 }
 
@@ -70,8 +78,16 @@ fn read(path: &Path) -> OpenedCalendarFile {
         })
         .and_then(|bytes| calendar::parse(&bytes));
     match result {
-        Ok(preview) => OpenedCalendarFile { name, preview: Some(preview), error: None },
-        Err(error) => OpenedCalendarFile { name, preview: None, error: Some(error) },
+        Ok(preview) => OpenedCalendarFile {
+            name,
+            preview: Some(preview),
+            error: None,
+        },
+        Err(error) => OpenedCalendarFile {
+            name,
+            preview: None,
+            error: Some(error),
+        },
     }
 }
 
@@ -105,7 +121,10 @@ mod tests {
     const INVITE: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:launch-review@example.com\r\nSUMMARY:Launch review\r\nDTSTART:20261012T150000Z\r\nDTEND:20261012T160000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("threestrands-calendar-files-{name}-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!(
+            "threestrands-calendar-files-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -114,7 +133,12 @@ mod tests {
     fn recognizes_only_ics_files() {
         assert!(is_calendar_file(Path::new("/tmp/invite.ics")));
         assert!(is_calendar_file(Path::new("/tmp/INVITE.ICS")));
-        for other in ["/tmp/invite.ics.exe", "/tmp/invite.vcs", "/tmp/invite", "/tmp/ics"] {
+        for other in [
+            "/tmp/invite.ics.exe",
+            "/tmp/invite.vcs",
+            "/tmp/invite",
+            "/tmp/ics",
+        ] {
             assert!(!is_calendar_file(Path::new(other)), "{other}");
         }
     }
@@ -128,7 +152,10 @@ mod tests {
         assert_eq!(opened.name, "Launch review.ics");
         assert_eq!(opened.error, None);
         let preview = opened.preview.unwrap();
-        assert_eq!(preview.events[0].uid.as_deref(), Some("launch-review@example.com"));
+        assert_eq!(
+            preview.events[0].uid.as_deref(),
+            Some("launch-review@example.com")
+        );
         assert_eq!(preview.events[0].title, "Launch review");
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -137,12 +164,18 @@ mod tests {
     fn reports_files_it_cannot_show() {
         let dir = temp_dir("errors");
         let missing = read(&dir.join("gone.ics"));
-        assert_eq!(missing.error.as_deref(), Some("The file could not be read."));
+        assert_eq!(
+            missing.error.as_deref(),
+            Some("The file could not be read.")
+        );
         assert!(missing.preview.is_none());
 
         let folder = dir.join("folder.ics");
         std::fs::create_dir(&folder).unwrap();
-        assert_eq!(read(&folder).error.as_deref(), Some("This is not a calendar file."));
+        assert_eq!(
+            read(&folder).error.as_deref(),
+            Some("This is not a calendar file.")
+        );
 
         let garbage = dir.join("garbage.ics");
         std::fs::write(&garbage, "not a calendar").unwrap();
@@ -154,22 +187,37 @@ mod tests {
     fn enforces_the_calendar_file_size_limit() {
         let dir = temp_dir("size");
         // Pad the description so the file lands exactly on, then just over, the limit.
-        let template = |padding: usize| INVITE.replace("SUMMARY:", &format!("DESCRIPTION:{}\r\nSUMMARY:", "x".repeat(padding)));
+        let template = |padding: usize| {
+            INVITE.replace(
+                "SUMMARY:",
+                &format!("DESCRIPTION:{}\r\nSUMMARY:", "x".repeat(padding)),
+            )
+        };
         let base = template(0).len();
         let exact = dir.join("exact.ics");
         std::fs::write(&exact, template(MAX_CALENDAR_BYTES - base)).unwrap();
-        assert_eq!(std::fs::metadata(&exact).unwrap().len(), MAX_CALENDAR_BYTES as u64);
+        assert_eq!(
+            std::fs::metadata(&exact).unwrap().len(),
+            MAX_CALENDAR_BYTES as u64
+        );
         assert_eq!(read(&exact).error, None);
         let over = dir.join("over.ics");
         std::fs::write(&over, template(MAX_CALENDAR_BYTES - base + 1)).unwrap();
-        assert_eq!(read(&over).error.as_deref(), Some("This calendar file is too large to preview."));
+        assert_eq!(
+            read(&over).error.as_deref(),
+            Some("This calendar file is too large to preview.")
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn enforces_the_pending_queue_limit() {
         let inbox = CalendarFileInbox::default();
-        let file = || OpenedCalendarFile { name: "invite.ics".into(), preview: None, error: Some("x".into()) };
+        let file = || OpenedCalendarFile {
+            name: "invite.ics".into(),
+            preview: None,
+            error: Some("x".into()),
+        };
         for _ in 0..MAX_PENDING_CALENDAR_FILES {
             assert!(inbox.push(file()));
         }

@@ -26,7 +26,12 @@ pub(crate) const MAX_KNOWN_DOMAINS: usize = 5000;
 /// fold to None: "Jane" or "Admin" is shared by too many people to suggest
 /// impersonation.
 fn comparable_name(name: &str) -> Option<String> {
-    let folded = name.replace(['"', '\''], " ").split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let folded = name
+        .replace(['"', '\''], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
     (folded.split(' ').count() >= 2 && folded.chars().count() >= 5).then_some(folded)
 }
 
@@ -35,7 +40,12 @@ impl Database {
     /// how many are read, when the first came, the user's latest message to
     /// the address, the conversations still in the Inbox, and the newest
     /// conversations outside Trash.
-    pub fn sender_history(&self, account_id: &str, email: &str, limit: usize) -> DbResult<SenderHistory> {
+    pub fn sender_history(
+        &self,
+        account_id: &str,
+        email: &str,
+        limit: usize,
+    ) -> DbResult<SenderHistory> {
         let email = email.trim().to_ascii_lowercase();
         let empty = SenderHistory {
             received_count: 0,
@@ -108,7 +118,12 @@ impl Database {
     /// contact, other known addresses that go by `name`, and the domains the
     /// user corresponds with. Every account counts, since a person writes to
     /// one inbox from the same address they write to another.
-    pub fn sender_familiarity(&self, message_id: &str, email: &str, name: &str) -> DbResult<SenderFamiliarity> {
+    pub fn sender_familiarity(
+        &self,
+        message_id: &str,
+        email: &str,
+        name: &str,
+    ) -> DbResult<SenderFamiliarity> {
         let email = email.trim().to_ascii_lowercase();
         let name = comparable_name(name);
         let delivery_patterns = self.sender_delivery_patterns(message_id)?;

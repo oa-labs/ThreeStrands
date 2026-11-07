@@ -271,7 +271,10 @@ pub enum ConnectionRole {
 /// permits is taken; dropping it frees the slot. Each reservation also holds
 /// its role's exclusive lock for its lifetime.
 pub struct ConnectionLease {
-    #[cfg_attr(not(test), expect(dead_code, reason = "read only by tests through `role()`"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read only by tests through `role()`")
+    )]
     role: ConnectionRole,
     _permit: OwnedSemaphorePermit,
     _role_guard: tokio::sync::OwnedMutexGuard<()>,
@@ -299,7 +302,10 @@ impl ImapConnectionManager {
 
     /// Use current server settings while retaining this account's shared connection limits.
     pub fn with_config(&self, config: ConnectionConfig) -> Self {
-        Self { config, ..self.clone() }
+        Self {
+            config,
+            ..self.clone()
+        }
     }
 
     /// Reserve the single slot for `role`. Await the role lock before taking
@@ -620,8 +626,14 @@ mod tests {
             }
             other => panic!("expected CertificateChanged, got {other:?}"),
         }
-        assert!(err.requires_reauthentication(), "the account pauses for review");
-        assert!(!err.retry_mutation(), "a changed certificate is never retried blindly");
+        assert!(
+            err.requires_reauthentication(),
+            "the account pauses for review"
+        );
+        assert!(
+            !err.retry_mutation(),
+            "a changed certificate is never retried blindly"
+        );
         assert!(!server.await.unwrap(), "no LOGIN bytes reached the server");
     }
 }

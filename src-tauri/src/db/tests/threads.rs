@@ -199,7 +199,10 @@ fn thread_summary_round_trips_through_get_thread() {
         after.summary_revision.as_deref(),
         Some(before.last_message_at.as_str())
     );
-    assert_eq!(after.summary_focus_from.as_deref(), Some("2026-03-04T09:00:00Z"));
+    assert_eq!(
+        after.summary_focus_from.as_deref(),
+        Some("2026-03-04T09:00:00Z")
+    );
 }
 
 #[test]
@@ -638,8 +641,27 @@ fn starred_pages_and_totals_include_read_and_archived_but_exclude_spam_and_trash
     let second = database.list_starred_page(Some("work"), 1, 1).unwrap();
     assert_eq!(second.threads[0].id, "archived");
     assert!(!second.has_more);
-    assert_eq!(database.mailbox_unread_counts(Some("work")).unwrap().starred, 2);
-    assert_eq!(database.list_starred_page(None, 0, 50).unwrap().threads.len(), 3);
+    assert_eq!(
+        database
+            .mailbox_unread_counts(Some("work"))
+            .unwrap()
+            .starred,
+        2
+    );
+    assert_eq!(
+        database
+            .list_starred_page(None, 0, 50)
+            .unwrap()
+            .threads
+            .len(),
+        3
+    );
     assert_eq!(database.mailbox_unread_counts(None).unwrap().starred, 3);
-    assert_eq!(database.mailbox_unread_counts(Some("missing")).unwrap().starred, 0);
+    assert_eq!(
+        database
+            .mailbox_unread_counts(Some("missing"))
+            .unwrap()
+            .starred,
+        0
+    );
 }

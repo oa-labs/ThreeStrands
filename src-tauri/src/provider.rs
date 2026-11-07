@@ -351,7 +351,13 @@ pub struct ProviderCapabilities {
     /// is computed locally from message references (`false`). Gmail returns
     /// conversation ids, so it is `true`; the IMAP provider sets it `false`
     /// when the server does not return `THREADID`.
-    #[cfg_attr(not(test), expect(dead_code, reason = "reported by each provider; no production reader yet"))]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "reported by each provider; no production reader yet"
+        )
+    )]
     pub provided_threads: bool,
     /// How this provider models user-visible labels. See [`LabelModel`].
     ///
@@ -359,7 +365,13 @@ pub struct ProviderCapabilities {
     /// account's `label_model` (`models::Account`), which `enrich_label_model`
     /// in `db/accounts.rs` derives the same way: the negotiated native model,
     /// else the one the saved label storage implies.
-    #[cfg_attr(not(test), expect(dead_code, reason = "reported by each provider; no production reader yet"))]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "reported by each provider; no production reader yet"
+        )
+    )]
     pub label_model: LabelModel,
     /// Whether a message's delivery can be *verified* against a server-side
     /// sent copy. Gmail stores the sent message itself, so an uncertain send
@@ -506,7 +518,10 @@ pub trait MailSync: Send + Sync {
     /// Watch INBOX for server notifications. Notifications are hints: the sync engine
     /// still fetches and commits changes through its ordinary serialized sync path.
     /// Dropping this future must close the watch connection and release its lease.
-    async fn watch_inbox(&self, _changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> ProviderResult<()> {
+    async fn watch_inbox(
+        &self,
+        _changed: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) -> ProviderResult<()> {
         std::future::pending().await
     }
 
@@ -517,11 +532,22 @@ pub trait MailSync: Send + Sync {
     /// device joins or its provider location cache was rebuilt. References
     /// contain Message-ID tokens only; providers with globally fetchable IDs
     /// need no preparation.
-    async fn prepare_snoozed_thread(&self, _id: &str, _references: &[String]) -> ProviderResult<()> { Ok(()) }
+    async fn prepare_snoozed_thread(
+        &self,
+        _id: &str,
+        _references: &[String],
+    ) -> ProviderResult<()> {
+        Ok(())
+    }
 
     /// Optional provider-owned sending-address metadata. Cached separately
     /// from mail so drafting remains local and offline-safe.
-    async fn refresh_sending_identities(&self, _account: &str) -> ProviderResult<Option<Vec<SendingIdentity>>> { Ok(None) }
+    async fn refresh_sending_identities(
+        &self,
+        _account: &str,
+    ) -> ProviderResult<Option<Vec<SendingIdentity>>> {
+        Ok(None)
+    }
 
     /// Every message in a thread.
     async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>>;
@@ -577,8 +603,12 @@ pub trait MailFetch: Send + Sync {
 /// single translation point; a folder-model provider turns them into moves.
 #[async_trait]
 pub trait MailMutate: Send + Sync {
-    async fn modify_thread(&self, id: &str, add: &[String], remove: &[String])
-        -> ProviderResult<()>;
+    async fn modify_thread(
+        &self,
+        id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> ProviderResult<()>;
     async fn modify_messages(
         &self,
         ids: &[String],
@@ -634,13 +664,17 @@ pub trait MailSend: Send + Sync {
     async fn identities(&self, account: &str) -> ProviderResult<Vec<SendingIdentity>> {
         Ok(vec![SendingIdentity {
             address: account.trim().to_string(),
-            display_name: None, ..Default::default() }])
+            display_name: None,
+            ..Default::default()
+        }])
     }
 
     /// Validate an explicit From immediately before delivery is claimed.
     /// Providers may recheck server-owned aliases; the primary account's
     /// existing offline queue behavior does not change.
-    async fn validate_sending_identity(&self, _account: &str, _sender: &str) -> ProviderResult<()> { Ok(()) }
+    async fn validate_sending_identity(&self, _account: &str, _sender: &str) -> ProviderResult<()> {
+        Ok(())
+    }
 
     /// The domain to put in a generated `Message-ID` for a send from
     /// `from_address`, or `None` to keep the app's reserved
@@ -698,7 +732,9 @@ pub trait MailSend: Send + Sync {
     /// draft another device already created, or one created just before a
     /// crash lost its id, so a push updates it instead of duplicating it.
     async fn find_server_draft(&self, _message_id: &str) -> ProviderResult<Option<ServerDraft>> {
-        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+        Err(ProviderError::InvalidOperation(
+            "Server drafts are not supported".into(),
+        ))
     }
 
     /// Stores `raw` as a new server draft, inside `thread` when given.
@@ -707,7 +743,9 @@ pub trait MailSend: Send + Sync {
         _raw: &[u8],
         _thread: Option<&str>,
     ) -> ProviderResult<ServerDraft> {
-        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+        Err(ProviderError::InvalidOperation(
+            "Server drafts are not supported".into(),
+        ))
     }
 
     /// Replaces draft `id` with `raw`. [`ProviderError::NotFound`] means the
@@ -718,29 +756,39 @@ pub trait MailSend: Send + Sync {
         _raw: &[u8],
         _thread: Option<&str>,
     ) -> ProviderResult<ServerDraft> {
-        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+        Err(ProviderError::InvalidOperation(
+            "Server drafts are not supported".into(),
+        ))
     }
 
     /// Deletes draft `id`. [`ProviderError::NotFound`] means it is already gone.
     async fn delete_server_draft(&self, _id: &str) -> ProviderResult<()> {
-        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+        Err(ProviderError::InvalidOperation(
+            "Server drafts are not supported".into(),
+        ))
     }
 
     /// Every server draft, with its current version.
     async fn list_server_drafts(&self) -> ProviderResult<Vec<ServerDraft>> {
-        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+        Err(ProviderError::InvalidOperation(
+            "Server drafts are not supported".into(),
+        ))
     }
 
     /// Draft `id`'s current content. [`ProviderError::NotFound`] means it was
     /// deleted on the server.
     async fn fetch_server_draft(&self, _id: &str) -> ProviderResult<FetchedServerDraft> {
-        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+        Err(ProviderError::InvalidOperation(
+            "Server drafts are not supported".into(),
+        ))
     }
 
     /// Draft `id`'s current version without its content, or `None` when it
     /// was deleted on the server. Checked before a push overwrites the draft.
     async fn server_draft_version(&self, _id: &str) -> ProviderResult<Option<String>> {
-        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+        Err(ProviderError::InvalidOperation(
+            "Server drafts are not supported".into(),
+        ))
     }
 }
 
@@ -760,12 +808,18 @@ mod sending_identity_default_tests {
     #[async_trait]
     impl MailSend for OfflineProvider {
         async fn sender_identity(&self) -> ProviderResult<String> {
-            panic!("identities() must not call sender_identity(): that is a network request for Gmail");
+            panic!(
+                "identities() must not call sender_identity(): that is a network request for Gmail"
+            );
         }
         async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
             unreachable!()
         }
-        async fn find_sent_copy(&self, _: &str, _: &str) -> ProviderResult<Option<DeliveryReceipt>> {
+        async fn find_sent_copy(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> ProviderResult<Option<DeliveryReceipt>> {
             unreachable!()
         }
     }
@@ -775,11 +829,14 @@ mod sending_identity_default_tests {
         let got = OfflineProvider.identities("me@example.com").await.unwrap();
         assert_eq!(
             got,
-            vec![SendingIdentity { address: "me@example.com".into(), display_name: None, ..Default::default() }]
+            vec![SendingIdentity {
+                address: "me@example.com".into(),
+                display_name: None,
+                ..Default::default()
+            }]
         );
     }
 }
-
 
 /// Phase 5 run 5: the provider-neutral `SearchReport` combining rule for a
 /// unified search over several accounts, and the `search_with_report` DEFAULT

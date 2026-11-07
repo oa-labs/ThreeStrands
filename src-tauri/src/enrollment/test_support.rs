@@ -26,7 +26,9 @@ pub(crate) fn test_identity(database: &Database) -> DeviceIdentity {
     let mut x25519_secret = [0u8; 32];
     threestrands_sync_envelope::os_rng().fill_bytes(&mut x25519_secret);
     let x25519_public = x25519_public_bytes(&x25519_secret);
-    database.trust_device_keys(&device_id, &verifying_key, &x25519_public).unwrap();
+    database
+        .trust_device_keys(&device_id, &verifying_key, &x25519_public)
+        .unwrap();
     DeviceIdentity {
         signing_key,
         verifying_key,
@@ -42,7 +44,9 @@ pub(crate) fn test_identity(database: &Database) -> DeviceIdentity {
 /// simulated device gets its own instance, exactly like separate
 /// physical machines each having their own keychain.
 #[derive(Default)]
-pub(crate) struct FakeEpochKeyStore(pub(crate) std::sync::Mutex<std::collections::HashMap<u32, [u8; 32]>>);
+pub(crate) struct FakeEpochKeyStore(
+    pub(crate) std::sync::Mutex<std::collections::HashMap<u32, [u8; 32]>>,
+);
 
 impl EpochKeyStore for FakeEpochKeyStore {
     fn store(&self, key_epoch: u32, key: &[u8; 32]) -> EnrollmentResult<()> {
@@ -65,14 +69,31 @@ impl FakeEpochKeyStore {
 /// synthetic identity and fake epoch-key store — the test equivalent of
 /// `Database::local_replicated_keys`, which touches the real keychain
 /// and so is never called from a test.
-pub(crate) fn local_keys_for(database: &Database, identity: &DeviceIdentity, epoch_keys: &FakeEpochKeyStore) -> LocalKeys {
+pub(crate) fn local_keys_for(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &FakeEpochKeyStore,
+) -> LocalKeys {
     let active_epoch: u32 = database
         .test_connection()
         .unwrap()
-        .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
+        .query_row(
+            "SELECT active_epoch FROM sync_spaces WHERE id=?1",
+            params![SPACE_ID],
+            |row| row.get(0),
+        )
         .unwrap();
-    let k_epoch = epoch_keys.get(active_epoch).expect("epoch key must already be stored for this test");
-    let earlier_epoch_keys = epoch_keys.0.lock().unwrap().iter().filter(|(epoch, _)| **epoch < active_epoch).map(|(epoch, key)| (*epoch, *key)).collect();
+    let k_epoch = epoch_keys
+        .get(active_epoch)
+        .expect("epoch key must already be stored for this test");
+    let earlier_epoch_keys = epoch_keys
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(epoch, _)| **epoch < active_epoch)
+        .map(|(epoch, key)| (*epoch, *key))
+        .collect();
     LocalKeys {
         signing_key: identity.signing_key.clone(),
         k_epoch,

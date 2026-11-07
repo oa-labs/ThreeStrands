@@ -287,7 +287,10 @@ fn raster_data_uri(content_type: &str, bytes: &[u8]) -> Result<String, String> {
             format!("Refusing unrecognized image data labelled as content-type: {content_type}")
         })?
     };
-    crate::image_format::validate_raster_with_limit(bytes, crate::image_format::MAX_REMOTE_IMAGE_BYTES)?;
+    crate::image_format::validate_raster_with_limit(
+        bytes,
+        crate::image_format::MAX_REMOTE_IMAGE_BYTES,
+    )?;
 
     Ok(format!(
         "data:{mime_type};base64,{}",

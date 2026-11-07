@@ -22,9 +22,9 @@
 //!   by an older build must stay openable by every later build.
 
 use threestrands_sync_envelope::{
-    check_recovery_phrase, recovery_ed25519_signing_key, recovery_phrase_from_seed, recovery_seed_from_phrase,
-    recovery_x25519_secret, seal_to_x25519, try_open_sealed_box, X25519PublicKey, X25519StaticSecret,
-    RECOVERY_PHRASE_WORDS, RECOVERY_SEED_LEN,
+    check_recovery_phrase, recovery_ed25519_signing_key, recovery_phrase_from_seed,
+    recovery_seed_from_phrase, recovery_x25519_secret, seal_to_x25519, try_open_sealed_box,
+    X25519PublicKey, X25519StaticSecret, RECOVERY_PHRASE_WORDS, RECOVERY_SEED_LEN,
 };
 
 const GOLDEN_PHRASE: &str = include_str!("vectors/recovery_phrase_v1.txt");
@@ -49,7 +49,10 @@ const SEALED_BOX_HEADER_LEN: usize = 32 + 24;
 
 fn hex_decode(hex: &str) -> Vec<u8> {
     let hex = hex.trim();
-    (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect()
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -58,7 +61,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 fn derived_public_keys_hex(seed: &[u8; RECOVERY_SEED_LEN]) -> String {
     let x25519 = X25519PublicKey::from(&recovery_x25519_secret(seed)).to_bytes();
-    let ed25519 = recovery_ed25519_signing_key(seed).verifying_key().to_bytes();
+    let ed25519 = recovery_ed25519_signing_key(seed)
+        .verifying_key()
+        .to_bytes();
     format!("{}{}", hex_encode(&x25519), hex_encode(&ed25519))
 }
 
@@ -72,8 +77,14 @@ fn the_frozen_phrase_is_a_valid_recovery_phrase() {
 
 #[test]
 fn the_frozen_phrase_parses_to_the_frozen_seed_and_back() {
-    assert_eq!(recovery_seed_from_phrase(GOLDEN_PHRASE).unwrap(), RECOVERY_SEED);
-    assert_eq!(recovery_phrase_from_seed(&RECOVERY_SEED), GOLDEN_PHRASE.trim());
+    assert_eq!(
+        recovery_seed_from_phrase(GOLDEN_PHRASE).unwrap(),
+        RECOVERY_SEED
+    );
+    assert_eq!(
+        recovery_phrase_from_seed(&RECOVERY_SEED),
+        GOLDEN_PHRASE.trim()
+    );
     // The whitespace normalization users rely on when retyping a phrase.
     let retyped = format!("  {}  ", GOLDEN_PHRASE.trim().replace(' ', "   "));
     assert_eq!(recovery_seed_from_phrase(&retyped).unwrap(), RECOVERY_SEED);
@@ -82,14 +93,24 @@ fn the_frozen_phrase_parses_to_the_frozen_seed_and_back() {
 #[test]
 fn the_frozen_phrase_derives_the_frozen_recovery_public_keys() {
     let seed = recovery_seed_from_phrase(GOLDEN_PHRASE).unwrap();
-    assert_eq!(derived_public_keys_hex(&seed), GOLDEN_RECOVERY_KEYS_HEX.trim());
+    assert_eq!(
+        derived_public_keys_hex(&seed),
+        GOLDEN_RECOVERY_KEYS_HEX.trim()
+    );
 }
 
 #[test]
 fn the_frozen_sealed_box_opens_to_the_frozen_plaintext() {
     let sealed = hex_decode(GOLDEN_SEALED_BOX_HEX);
-    assert_eq!(sealed.len(), SEALED_BOX_HEADER_LEN + SEALED_PLAINTEXT.len() + 16, "layout: epk || nonce || ct || tag");
-    assert_eq!(try_open_sealed_box(&RECIPIENT_SECRET, &sealed).as_deref(), Some(SEALED_PLAINTEXT));
+    assert_eq!(
+        sealed.len(),
+        SEALED_BOX_HEADER_LEN + SEALED_PLAINTEXT.len() + 16,
+        "layout: epk || nonce || ct || tag"
+    );
+    assert_eq!(
+        try_open_sealed_box(&RECIPIENT_SECRET, &sealed).as_deref(),
+        Some(SEALED_PLAINTEXT)
+    );
 }
 
 /// `try_open_sealed_box` deliberately has no error variant — "tampered" and
@@ -102,9 +123,16 @@ fn the_frozen_sealed_box_refuses_tampering_and_the_wrong_recipient() {
     for index in [0, 32, SEALED_BOX_HEADER_LEN, sealed.len() - 1] {
         let mut tampered = sealed.clone();
         tampered[index] ^= 0x01;
-        assert_eq!(try_open_sealed_box(&RECIPIENT_SECRET, &tampered), None, "byte {index} was tampered");
+        assert_eq!(
+            try_open_sealed_box(&RECIPIENT_SECRET, &tampered),
+            None,
+            "byte {index} was tampered"
+        );
     }
-    assert_eq!(try_open_sealed_box(&RECIPIENT_SECRET, &sealed[..sealed.len() - 1]), None);
+    assert_eq!(
+        try_open_sealed_box(&RECIPIENT_SECRET, &sealed[..sealed.len() - 1]),
+        None
+    );
 
     // Not byte 0: X25519 clamping clears its low three bits, so flipping bit
     // 0 there yields the same scalar.
@@ -118,11 +146,15 @@ fn the_frozen_sealed_box_refuses_tampering_and_the_wrong_recipient() {
 /// frozen bytes because sealing is randomized.
 #[test]
 fn a_fresh_seal_opens_but_never_reproduces_the_frozen_bytes() {
-    let recipient_public = X25519PublicKey::from(&X25519StaticSecret::from(RECIPIENT_SECRET)).to_bytes();
+    let recipient_public =
+        X25519PublicKey::from(&X25519StaticSecret::from(RECIPIENT_SECRET)).to_bytes();
     let fresh = seal_to_x25519(&recipient_public, SEALED_PLAINTEXT);
     assert_eq!(fresh.len(), hex_decode(GOLDEN_SEALED_BOX_HEX).len());
     assert_ne!(hex_encode(&fresh), GOLDEN_SEALED_BOX_HEX.trim());
-    assert_eq!(try_open_sealed_box(&RECIPIENT_SECRET, &fresh).as_deref(), Some(SEALED_PLAINTEXT));
+    assert_eq!(
+        try_open_sealed_box(&RECIPIENT_SECRET, &fresh).as_deref(),
+        Some(SEALED_PLAINTEXT)
+    );
 }
 
 /// Regenerates the deterministic recovery files only (never the sealed
@@ -133,6 +165,14 @@ fn a_fresh_seal_opens_but_never_reproduces_the_frozen_bytes() {
 #[ignore]
 fn regenerate() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors");
-    std::fs::write(dir.join("recovery_phrase_v1.txt"), format!("{}\n", recovery_phrase_from_seed(&RECOVERY_SEED))).unwrap();
-    std::fs::write(dir.join("recovery_keys_v1.hex"), format!("{}\n", derived_public_keys_hex(&RECOVERY_SEED))).unwrap();
+    std::fs::write(
+        dir.join("recovery_phrase_v1.txt"),
+        format!("{}\n", recovery_phrase_from_seed(&RECOVERY_SEED)),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("recovery_keys_v1.hex"),
+        format!("{}\n", derived_public_keys_hex(&RECOVERY_SEED)),
+    )
+    .unwrap();
 }

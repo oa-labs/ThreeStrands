@@ -58,7 +58,8 @@ impl ImapProvider {
         if session.supports_label_extensions() {
             let _ = session.logout().await;
             return Err(ProviderError::InvalidOperation(
-                "This server uses native labels; refresh labels before applying an existing label".into(),
+                "This server uses native labels; refresh labels before applying an existing label"
+                    .into(),
             ));
         }
         Ok(session)
@@ -141,9 +142,11 @@ impl ImapProvider {
             })?;
 
         if add {
-            self.apply_label_add(message_ids, label_id, &label_mailbox).await
+            self.apply_label_add(message_ids, label_id, &label_mailbox)
+                .await
         } else {
-            self.apply_label_remove(message_ids, label_id, &label_mailbox).await
+            self.apply_label_remove(message_ids, label_id, &label_mailbox)
+                .await
         }
     }
 
@@ -180,7 +183,10 @@ impl ImapProvider {
         let mut by_source: std::collections::BTreeMap<String, (i64, Vec<PlannedMove>)> =
             std::collections::BTreeMap::new();
         for message_id in message_ids {
-            let locations = self.store.locations_for_message(message_id).map_err(db_err)?;
+            let locations = self
+                .store
+                .locations_for_message(message_id)
+                .map_err(db_err)?;
             if locations.iter().any(|l| l.mailbox == *label_mailbox) {
                 self.store
                     .complete_copy(message_id, label_mailbox)
@@ -241,9 +247,11 @@ impl ImapProvider {
             match entry.role {
                 Some(crate::provider::imap::MailboxRole::Archive) => Some(1),
                 Some(crate::provider::imap::MailboxRole::Sent) => Some(3),
-                Some(crate::provider::imap::MailboxRole::Trash) | Some(crate::provider::imap::MailboxRole::Junk) => None,
+                Some(crate::provider::imap::MailboxRole::Trash)
+                | Some(crate::provider::imap::MailboxRole::Junk) => None,
                 // Aggregates / Drafts carry no usable source either.
-                Some(crate::provider::imap::MailboxRole::All) | Some(crate::provider::imap::MailboxRole::Drafts) => None,
+                Some(crate::provider::imap::MailboxRole::All)
+                | Some(crate::provider::imap::MailboxRole::Drafts) => None,
                 None => match entry.label_kind {
                     // A real user folder is a source; a label folder is not.
                     plan::LabelKind::UserFolder => Some(2),
@@ -277,7 +285,8 @@ impl ImapProvider {
             )
             .await?;
             for planned in &copies {
-                self.copy_one_label(write_session, &ctx, label_mailbox, planned).await?;
+                self.copy_one_label(write_session, &ctx, label_mailbox, planned)
+                    .await?;
             }
         }
         Ok(())
@@ -363,9 +372,14 @@ impl ImapProvider {
         let mut by_uidvalidity: Option<i64> = None;
         let mut targets: Vec<PlannedMove> = Vec::new();
         for message_id in message_ids {
-            let locations = self.store.locations_for_message(message_id).map_err(db_err)?;
-            let in_label: Vec<&ImapLocation> =
-                locations.iter().filter(|l| l.mailbox == *label_mailbox).collect();
+            let locations = self
+                .store
+                .locations_for_message(message_id)
+                .map_err(db_err)?;
+            let in_label: Vec<&ImapLocation> = locations
+                .iter()
+                .filter(|l| l.mailbox == *label_mailbox)
+                .collect();
             if in_label.is_empty() {
                 continue; // No copy in the label mailbox: satisfied.
             }
@@ -443,7 +457,12 @@ impl ImapProvider {
             // UID; a half-applied state (expunge failed after \Deleted) keeps
             // the copy and its retry re-runs the same step. Delete the local
             // row only after the server delete confirms.
-            crate::provider::imap::write::expunge_source_copies(write_session, &ctx, &[planned.uid as u32]).await?;
+            crate::provider::imap::write::expunge_source_copies(
+                write_session,
+                &ctx,
+                &[planned.uid as u32],
+            )
+            .await?;
             self.store
                 .delete_location(label_mailbox, ctx.uidvalidity as i64, planned.uid)
                 .map_err(db_err)?;
@@ -593,7 +612,8 @@ impl ImapProvider {
             Ok(()) => Ok(()),
             Err(crate::provider::imap::write::WriteError::TryCreate(_)) => {
                 // The container does not exist yet: create it, then retry once.
-                let container_arg = crate::provider::imap::write::build_wire_mailbox_arg(container)?;
+                let container_arg =
+                    crate::provider::imap::write::build_wire_mailbox_arg(container)?;
                 if let Err(error) = write_session.create_mailbox_arg(&container_arg).await {
                     return Err(error.into_provider_error());
                 }
@@ -641,7 +661,10 @@ impl ImapProvider {
 
         // Safety: every location in the label mailbox must belong to a message
         // with at least one OTHER synced location.
-        let locations = self.store.locations_in_mailbox(&label_mailbox).map_err(db_err)?;
+        let locations = self
+            .store
+            .locations_in_mailbox(&label_mailbox)
+            .map_err(db_err)?;
         let mut would_lose = 0usize;
         for location in &locations {
             let others = self
@@ -679,7 +702,9 @@ impl ImapProvider {
             .into_iter()
             .filter(|name| name != &label_mailbox)
             .collect();
-        self.store.retire_vanished_mailboxes(&present).map_err(db_err)?;
+        self.store
+            .retire_vanished_mailboxes(&present)
+            .map_err(db_err)?;
         Ok(())
     }
 

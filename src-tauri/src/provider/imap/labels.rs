@@ -44,7 +44,9 @@ fn is_seen(flags: &[String]) -> bool {
 
 /// Whether a wire flag list marks the message `\Flagged`.
 fn is_flagged(flags: &[String]) -> bool {
-    flags.iter().any(|flag| flag.eq_ignore_ascii_case("\\Flagged"))
+    flags
+        .iter()
+        .any(|flag| flag.eq_ignore_ascii_case("\\Flagged"))
 }
 
 /// The union of labels across every copy of a message, so a message with
@@ -90,7 +92,11 @@ pub fn labels_for_location_ids(location_ids: &[String], flags: &[String]) -> Vec
     if is_flagged(flags) && !labels.iter().any(|l| l == "STARRED") {
         labels.push("STARRED".to_string());
     }
-    if flags.iter().any(|flag| flag.eq_ignore_ascii_case("\\Draft")) && !labels.iter().any(|label| label == "DRAFT") {
+    if flags
+        .iter()
+        .any(|flag| flag.eq_ignore_ascii_case("\\Draft"))
+        && !labels.iter().any(|label| label == "DRAFT")
+    {
         labels.push("DRAFT".into());
     }
     labels
@@ -99,20 +105,29 @@ pub fn labels_for_location_ids(location_ids: &[String], flags: &[String]) -> Vec
 /// Full membership from a negotiated label extension outranks locally cached
 /// folder copies. Empty is meaningful: archived mail can have no labels at all.
 pub(super) fn labels_for_server_membership(
-    plan: &super::plan::SyncPlan, membership: &[String], flags: &[String],
+    plan: &super::plan::SyncPlan,
+    membership: &[String],
+    flags: &[String],
 ) -> Vec<String> {
     let mut ids = Vec::new();
     for label in membership {
         let system = match label.to_ascii_lowercase().as_str() {
-            "\\inbox" => Some("INBOX"), "\\sent" => Some("SENT"),
-            "\\trash" => Some("TRASH"), "\\spam" | "\\junk" => Some("SPAM"),
-            "\\draft" | "\\drafts" => Some("DRAFT"), _ => None,
+            "\\inbox" => Some("INBOX"),
+            "\\sent" => Some("SENT"),
+            "\\trash" => Some("TRASH"),
+            "\\spam" | "\\junk" => Some("SPAM"),
+            "\\draft" | "\\drafts" => Some("DRAFT"),
+            _ => None,
         };
-        if let Some(id) = system { ids.push(id.to_string()); }
-        else if !label.starts_with('\\') {
+        if let Some(id) = system {
+            ids.push(id.to_string());
+        } else if !label.starts_with('\\') {
             let mapped = plan.location_label_ids_for_mailbox(label);
-            if mapped.is_empty() { ids.push(format!("folder:{label}")); }
-            else { ids.extend(mapped); }
+            if mapped.is_empty() {
+                ids.push(format!("folder:{label}"));
+            } else {
+                ids.extend(mapped);
+            }
         }
     }
     labels_for_location_ids(&ids, flags)
@@ -161,7 +176,10 @@ mod tests {
     #[test]
     fn a_sent_location_id_suppresses_unread_but_not_starred() {
         // SENT, unseen -> no UNREAD (your own sent mail is not unread).
-        assert_eq!(labels_for_location_ids(&ids(&["SENT"]), &flags(&[])), vec!["SENT"]);
+        assert_eq!(
+            labels_for_location_ids(&ids(&["SENT"]), &flags(&[])),
+            vec!["SENT"]
+        );
         // \Flagged still STARRED.
         assert_eq!(
             labels_for_location_ids(&ids(&["SENT"]), &flags(&["\\Flagged"])),
@@ -204,7 +222,10 @@ mod tests {
     #[test]
     fn flag_matching_is_case_insensitive_and_ignores_unrelated_flags() {
         assert_eq!(
-            labels_for_location_ids(&ids(&["INBOX"]), &flags(&["\\seen", "$Forwarded", "Project"])),
+            labels_for_location_ids(
+                &ids(&["INBOX"]),
+                &flags(&["\\seen", "$Forwarded", "Project"])
+            ),
             vec!["INBOX"]
         );
     }
@@ -213,8 +234,10 @@ mod tests {
     fn a_trash_copy_without_an_inbox_copy_yields_trash_not_inbox() {
         // The INBOX->Trash move: once the INBOX location is gone the only copy
         // is in Trash, so the union is TRASH, never INBOX.
-        let trash_only =
-            merge_label_sets(&[labels_for_location_ids(&ids(&["TRASH"]), &flags(&["\\Seen"]))]);
+        let trash_only = merge_label_sets(&[labels_for_location_ids(
+            &ids(&["TRASH"]),
+            &flags(&["\\Seen"]),
+        )]);
         assert_eq!(trash_only, vec!["TRASH"]);
     }
 }

@@ -206,12 +206,14 @@ impl ServerCertVerifier for PinnedCertVerifier {
                 if pin.ct_eq(&got) {
                     Ok(ServerCertVerified::assertion())
                 } else {
-                    Err(TlsError::InvalidCertificate(rustls::CertificateError::Other(
-                        rustls::OtherError(Arc::new(CertificateChanged {
-                            pinned: pin,
-                            presented: got,
-                        })),
-                    )))
+                    Err(TlsError::InvalidCertificate(
+                        rustls::CertificateError::Other(rustls::OtherError(Arc::new(
+                            CertificateChanged {
+                                pinned: pin,
+                                presented: got,
+                            },
+                        ))),
+                    ))
                 }
             }
             None => self.webpki.verify_server_cert(

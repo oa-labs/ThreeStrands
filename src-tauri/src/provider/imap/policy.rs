@@ -393,10 +393,7 @@ pub fn schedule_visits(
 /// rather than silently truncating. Below/exact at the cap keeps everything;
 /// above the cap drops the by-name tail of the non-system folders. Returns
 /// `(kept_in_a_stable_order, dropped_count)`.
-pub fn cap_synced_mailboxes(
-    candidates: &[ScheduleCandidate],
-    cap: usize,
-) -> (Vec<String>, usize) {
+pub fn cap_synced_mailboxes(candidates: &[ScheduleCandidate], cap: usize) -> (Vec<String>, usize) {
     if candidates.len() <= cap {
         // Still return a deterministic order (system roles by name, then the
         // rest by name) so the caller's accounting is stable.
@@ -429,7 +426,11 @@ pub fn cap_synced_mailboxes(
     let kept: Vec<String> = system
         .into_iter()
         .map(|c| c.mailbox.clone())
-        .chain(rest.into_iter().take(kept_folders).map(|c| c.mailbox.clone()))
+        .chain(
+            rest.into_iter()
+                .take(kept_folders)
+                .map(|c| c.mailbox.clone()),
+        )
         .collect();
     (kept, dropped)
 }
@@ -1362,7 +1363,10 @@ mod tests {
 
     #[test]
     fn mime_depth_accepts_up_to_the_limit_and_rejects_above_it() {
-        assert_eq!(check_mime_depth(MAX_MIME_DEPTH - 1).unwrap(), MAX_MIME_DEPTH - 1);
+        assert_eq!(
+            check_mime_depth(MAX_MIME_DEPTH - 1).unwrap(),
+            MAX_MIME_DEPTH - 1
+        );
         assert_eq!(check_mime_depth(MAX_MIME_DEPTH).unwrap(), MAX_MIME_DEPTH);
         assert!(matches!(
             check_mime_depth(MAX_MIME_DEPTH + 1).unwrap_err(),
@@ -1414,12 +1418,20 @@ mod tests {
         let exact = select_window(uids(limit), limit);
         assert_eq!(exact.in_window.len(), limit);
         assert_eq!(exact.beyond_window, 0);
-        assert_eq!(exact.in_window.first(), Some(&1), "boundary keeps the oldest too");
+        assert_eq!(
+            exact.in_window.first(),
+            Some(&1),
+            "boundary keeps the oldest too"
+        );
 
         let above = select_window(uids(limit + 1), limit);
         assert_eq!(above.in_window.len(), limit);
         assert_eq!(above.beyond_window, 1);
-        assert_eq!(above.in_window.first(), Some(&2), "UID 1, the oldest, fell out");
+        assert_eq!(
+            above.in_window.first(),
+            Some(&2),
+            "UID 1, the oldest, fell out"
+        );
         assert_eq!(above.in_window.last(), Some(&(limit as u32 + 1)));
     }
 
@@ -1459,7 +1471,10 @@ mod tests {
 
     #[test]
     fn sync_limits_constructors_match_their_classes() {
-        assert_eq!(SyncLimits::inbox(), SyncLimits::for_class(SyncWindowClass::Inbox));
+        assert_eq!(
+            SyncLimits::inbox(),
+            SyncLimits::for_class(SyncWindowClass::Inbox)
+        );
         assert_eq!(SyncLimits::inbox().mailbox_window, MAX_INBOX_SYNC_MESSAGES);
         assert!(SyncLimits::inbox().evicts);
         let folder = SyncLimits::for_class(SyncWindowClass::Folder);
@@ -1474,11 +1489,17 @@ mod tests {
     fn folder_sweep_due_below_at_and_above_the_interval() {
         let now = 1_000_000i64;
         // Just inside the interval: not yet due.
-        assert!(!folder_sweep_due(now - (FOLDER_SWEEP_INTERVAL_SECS - 1), now));
+        assert!(!folder_sweep_due(
+            now - (FOLDER_SWEEP_INTERVAL_SECS - 1),
+            now
+        ));
         // Exactly at the interval: due.
         assert!(folder_sweep_due(now - FOLDER_SWEEP_INTERVAL_SECS, now));
         // Past the interval: due.
-        assert!(folder_sweep_due(now - (FOLDER_SWEEP_INTERVAL_SECS + 1), now));
+        assert!(folder_sweep_due(
+            now - (FOLDER_SWEEP_INTERVAL_SECS + 1),
+            now
+        ));
         // Never swept (0): always due.
         assert!(folder_sweep_due(0, now));
     }
@@ -1537,7 +1558,11 @@ mod tests {
         let candidates = vec![sys("Archive"), sys("Sent"), sys("Trash"), folder("A", 0)];
         // Budget 0: every system role still visited, no user folder.
         let visits = schedule_visits(&candidates, 1, 0);
-        assert_eq!(visits, vec!["Archive", "Sent", "Trash"], "roles sorted by name, no folders");
+        assert_eq!(
+            visits,
+            vec!["Archive", "Sent", "Trash"],
+            "roles sorted by name, no folders"
+        );
         // Budget 1: the roles plus one folder.
         let visits = schedule_visits(&candidates, 1, 1);
         assert_eq!(visits, vec!["Archive", "Sent", "Trash", "A"]);
@@ -1573,14 +1598,22 @@ mod tests {
             folder("D", 0),
         ];
         let visits = schedule_visits(&candidates, 1, 10);
-        assert_eq!(visits, vec!["A", "D", "B", "C"], "never-visited first (by name), then LRV");
+        assert_eq!(
+            visits,
+            vec!["A", "D", "B", "C"],
+            "never-visited first (by name), then LRV"
+        );
     }
 
     #[test]
     fn ties_in_visit_time_break_deterministically_by_name() {
         let candidates = vec![folder("Z", 50), folder("A", 50), folder("M", 50)];
         let visits = schedule_visits(&candidates, 1, 10);
-        assert_eq!(visits, vec!["A", "M", "Z"], "equal visit times tie-break by name");
+        assert_eq!(
+            visits,
+            vec!["A", "M", "Z"],
+            "equal visit times tie-break by name"
+        );
     }
 
     #[test]
@@ -1674,11 +1707,13 @@ mod tests {
             (0..n).map(|i| folder(&format!("f{i:04}"), 0)).collect()
         };
         // Below the cap: nothing dropped.
-        let (kept, dropped) = cap_synced_mailboxes(&make(MAX_SYNCED_MAILBOXES - 1), MAX_SYNCED_MAILBOXES);
+        let (kept, dropped) =
+            cap_synced_mailboxes(&make(MAX_SYNCED_MAILBOXES - 1), MAX_SYNCED_MAILBOXES);
         assert_eq!(kept.len(), MAX_SYNCED_MAILBOXES - 1);
         assert_eq!(dropped, 0);
         // Exactly at the cap: nothing dropped.
-        let (kept, dropped) = cap_synced_mailboxes(&make(MAX_SYNCED_MAILBOXES), MAX_SYNCED_MAILBOXES);
+        let (kept, dropped) =
+            cap_synced_mailboxes(&make(MAX_SYNCED_MAILBOXES), MAX_SYNCED_MAILBOXES);
         assert_eq!(kept.len(), MAX_SYNCED_MAILBOXES);
         assert_eq!(dropped, 0);
     }
@@ -1704,7 +1739,10 @@ mod tests {
         let candidates = vec![sys("Archive"), sys("Sent"), sys("Trash")];
         let (kept, dropped) = cap_synced_mailboxes(&candidates, 2);
         assert_eq!(kept, vec!["Archive", "Sent", "Trash"]);
-        assert_eq!(dropped, 0, "no user folders to drop; roles are never dropped");
+        assert_eq!(
+            dropped, 0,
+            "no user folders to drop; roles are never dropped"
+        );
     }
 
     #[test]
@@ -1717,11 +1755,20 @@ mod tests {
     fn emptied_grace_expiry_below_at_and_above_the_bound() {
         let emptied_at = 10u64;
         // Below the bound (1 of 2 completed coverage epochs elapsed): not expired.
-        assert!(!emptied_grace_expired(emptied_at, emptied_at + (EMPTIED_THREAD_GRACE_WALKS - 1)));
+        assert!(!emptied_grace_expired(
+            emptied_at,
+            emptied_at + (EMPTIED_THREAD_GRACE_WALKS - 1)
+        ));
         // Exactly at the bound: expired (grace spent).
-        assert!(emptied_grace_expired(emptied_at, emptied_at + EMPTIED_THREAD_GRACE_WALKS));
+        assert!(emptied_grace_expired(
+            emptied_at,
+            emptied_at + EMPTIED_THREAD_GRACE_WALKS
+        ));
         // Past the bound: expired.
-        assert!(emptied_grace_expired(emptied_at, emptied_at + EMPTIED_THREAD_GRACE_WALKS + 5));
+        assert!(emptied_grace_expired(
+            emptied_at,
+            emptied_at + EMPTIED_THREAD_GRACE_WALKS + 5
+        ));
         // Observed empty on the SAME walk it is checked: zero elapsed, not expired.
         assert!(!emptied_grace_expired(emptied_at, emptied_at));
     }
@@ -1785,7 +1832,10 @@ mod tests {
     // The owner chose to hold the INBOX ceiling at the same figure.
     #[test]
     fn inbox_ceiling_matches_the_gmail_sent_backfill_limit() {
-        assert_eq!(MAX_INBOX_SYNC_MESSAGES, crate::sync::MAX_SENT_BACKFILL_THREADS);
+        assert_eq!(
+            MAX_INBOX_SYNC_MESSAGES,
+            crate::sync::MAX_SENT_BACKFILL_THREADS
+        );
     }
 
     // --- Slice 5a limits -----------------------------------------------
@@ -1870,7 +1920,10 @@ mod tests {
     #[test]
     fn sync_limits_default_to_the_inbox_ceiling() {
         assert_eq!(SyncLimits::default(), SyncLimits::inbox());
-        assert_eq!(SyncLimits::default().mailbox_window, MAX_INBOX_SYNC_MESSAGES);
+        assert_eq!(
+            SyncLimits::default().mailbox_window,
+            MAX_INBOX_SYNC_MESSAGES
+        );
     }
 
     // --- Phase 3 run 1: write-command limits ---------------------------
@@ -1931,7 +1984,10 @@ mod tests {
             check_identity_count(IMAP_MAX_IDENTITIES - 1).unwrap(),
             IMAP_MAX_IDENTITIES - 1
         );
-        assert_eq!(check_identity_count(IMAP_MAX_IDENTITIES).unwrap(), IMAP_MAX_IDENTITIES);
+        assert_eq!(
+            check_identity_count(IMAP_MAX_IDENTITIES).unwrap(),
+            IMAP_MAX_IDENTITIES
+        );
         assert!(matches!(
             check_identity_count(IMAP_MAX_IDENTITIES + 1).unwrap_err(),
             ProviderError::PermanentClientRejection(_)
@@ -1962,7 +2018,10 @@ mod tests {
             check_append_bytes(APPEND_MAX_BYTES - 1).unwrap(),
             APPEND_MAX_BYTES - 1
         );
-        assert_eq!(check_append_bytes(APPEND_MAX_BYTES).unwrap(), APPEND_MAX_BYTES);
+        assert_eq!(
+            check_append_bytes(APPEND_MAX_BYTES).unwrap(),
+            APPEND_MAX_BYTES
+        );
         // One over is a PERMANENT rejection, never a silent clamp.
         assert!(matches!(
             check_append_bytes(APPEND_MAX_BYTES + 1).unwrap_err(),
@@ -2158,16 +2217,16 @@ mod tests {
     #[test]
     fn message_id_domain_rejects_malformed_syntax() {
         for bad in [
-            "",                 // empty
-            ".me",              // leading dot => empty label
-            "me.",              // trailing dot => empty label
-            "a..b",             // empty inner label
-            "-lead.me",         // label begins with hyphen
-            "trail-.me",        // label ends with hyphen
-            "under_score.me",   // underscore is not a letter/digit/hyphen
-            "spa ce.me",        // whitespace
-            "pröton.me",        // non-ASCII (caller refuses first; guarded here too)
-            "a@b.me",           // '@' is not a legal label character
+            "",               // empty
+            ".me",            // leading dot => empty label
+            "me.",            // trailing dot => empty label
+            "a..b",           // empty inner label
+            "-lead.me",       // label begins with hyphen
+            "trail-.me",      // label ends with hyphen
+            "under_score.me", // underscore is not a letter/digit/hyphen
+            "spa ce.me",      // whitespace
+            "pröton.me",      // non-ASCII (caller refuses first; guarded here too)
+            "a@b.me",         // '@' is not a legal label character
         ] {
             assert!(
                 matches!(
@@ -2196,8 +2255,14 @@ mod tests {
     #[test]
     fn search_terms_gate_below_at_and_above_the_limit() {
         assert_eq!(check_search_terms(0).unwrap(), 0);
-        assert_eq!(check_search_terms(MAX_SEARCH_TERMS - 1).unwrap(), MAX_SEARCH_TERMS - 1);
-        assert_eq!(check_search_terms(MAX_SEARCH_TERMS).unwrap(), MAX_SEARCH_TERMS);
+        assert_eq!(
+            check_search_terms(MAX_SEARCH_TERMS - 1).unwrap(),
+            MAX_SEARCH_TERMS - 1
+        );
+        assert_eq!(
+            check_search_terms(MAX_SEARCH_TERMS).unwrap(),
+            MAX_SEARCH_TERMS
+        );
         assert!(matches!(
             check_search_terms(MAX_SEARCH_TERMS + 1).unwrap_err(),
             ProviderError::InvalidOperation(_)
@@ -2320,7 +2385,10 @@ mod tests {
         // An account already at the cap accepts nothing new and refuses all.
         let full = cap_search_pins(MAX_SEARCH_PINS, 5);
         assert_eq!(full.accepted, 0);
-        assert_eq!(full.refused, 5, "existing pins are never evicted to make room");
+        assert_eq!(
+            full.refused, 5,
+            "existing pins are never evicted to make room"
+        );
 
         // One slot left: exactly one new pin fits, the rest are refused.
         let one_left = cap_search_pins(MAX_SEARCH_PINS - 1, 3);

@@ -64,9 +64,24 @@ async fn an_acquired_old_uid_survives_sweeps_window_shifts_and_flag_changes() {
     // Archive with 3 messages; window 1, so only the newest (uid 3) is
     // in-window. We acquire the OLD uid 1 and pin it.
     let mut mb = FakeMailbox::new(100);
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old one", ""));
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "Old two", ""));
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<a3@x>", "New three", ""));
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<a1@x>", "Old one", ""),
+    );
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<a2@x>", "Old two", ""),
+    );
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<a3@x>", "New three", ""),
+    );
     let mailbox = Arc::new(Mutex::new(mb));
     let (mut provider, store) = provider_window(mailbox.clone(), 1);
     provider.now = clock;
@@ -362,7 +377,9 @@ async fn acquire_refuses_a_uidvalidity_mismatch() {
         .await;
     let _ = session.logout().await;
     match result {
-        Err(AcquireError::UidValidityMismatch { expected, found, .. }) => {
+        Err(AcquireError::UidValidityMismatch {
+            expected, found, ..
+        }) => {
             assert_eq!((expected, found), (999, 50));
         }
         other => panic!("expected a UIDVALIDITY mismatch, got {other:?}"),
@@ -435,7 +452,12 @@ async fn acquire_pins_only_uids_that_ended_up_located() {
 async fn removing_a_pinned_location_by_any_path_drops_its_pin() {
     let mut mb = FakeMailbox::new(100);
     for uid in 1..=3u32 {
-        mb.add_to("Archive", 50, &["\\Seen"], &message(&format!("<a{uid}@x>"), "m", ""));
+        mb.add_to(
+            "Archive",
+            50,
+            &["\\Seen"],
+            &message(&format!("<a{uid}@x>"), "m", ""),
+        );
     }
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_window(mailbox.clone(), 1);
@@ -469,7 +491,12 @@ async fn acquire_honours_the_pin_cap_and_reports_over_cap_uids() {
     // then acquire into Archive and watch the cap bite.
     let mut mb = FakeMailbox::new(100);
     for uid in 1..=5u32 {
-        mb.add_to("Archive", 50, &["\\Seen"], &message(&format!("<a{uid}@x>"), "m", ""));
+        mb.add_to(
+            "Archive",
+            50,
+            &["\\Seen"],
+            &message(&format!("<a{uid}@x>"), "m", ""),
+        );
     }
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_window(mailbox.clone(), 1);
@@ -510,7 +537,12 @@ async fn acquire_honours_the_pin_cap_and_reports_over_cap_uids() {
 async fn acquire_cap_below_exact_and_above() {
     let mut mb = FakeMailbox::new(100);
     for uid in 1..=3u32 {
-        mb.add_to("Archive", 50, &["\\Seen"], &message(&format!("<a{uid}@x>"), "m", ""));
+        mb.add_to(
+            "Archive",
+            50,
+            &["\\Seen"],
+            &message(&format!("<a{uid}@x>"), "m", ""),
+        );
     }
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store) = provider_window(mailbox.clone(), 1);
@@ -530,7 +562,9 @@ async fn acquire_cap_below_exact_and_above() {
     let room_used = store.search_pin_count().unwrap();
     let fill = crate::provider::imap::policy::MAX_SEARCH_PINS - room_used - 1;
     for i in 0..fill as u32 {
-        store.upsert_pin("Sentinel", 1, i as i64 + 1, 1_700_000_000).unwrap();
+        store
+            .upsert_pin("Sentinel", 1, i as i64 + 1, 1_700_000_000)
+            .unwrap();
     }
     let mut session = session_for(&mailbox).await;
     let exact = provider
@@ -538,21 +572,32 @@ async fn acquire_cap_below_exact_and_above() {
         .await
         .expect("acquire");
     let _ = session.logout().await;
-    assert_eq!(exact.skipped_over_cap, 0, "exactly at the cap accepts the last pin");
-    assert_eq!(store.search_pin_count().unwrap(), crate::provider::imap::policy::MAX_SEARCH_PINS);
+    assert_eq!(
+        exact.skipped_over_cap, 0,
+        "exactly at the cap accepts the last pin"
+    );
+    assert_eq!(
+        store.search_pin_count().unwrap(),
+        crate::provider::imap::policy::MAX_SEARCH_PINS
+    );
 
     // ABOVE: now full; a fresh new UID is refused.
-    mailbox
-        .lock()
-        .unwrap()
-        .add_to("Archive", 50, &["\\Seen"], &message("<a9@x>", "overflow", ""));
+    mailbox.lock().unwrap().add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<a9@x>", "overflow", ""),
+    );
     let mut session = session_for(&mailbox).await;
     let above = provider
         .acquire_uids(session.as_mut(), &archive, &[4], 50)
         .await
         .expect("acquire");
     let _ = session.logout().await;
-    assert_eq!(above.skipped_over_cap, 1, "over the cap refuses the overflow");
+    assert_eq!(
+        above.skipped_over_cap, 1,
+        "over the cap refuses the overflow"
+    );
     assert!(
         !store.pinned_uids("Archive", 50).unwrap().contains(&4),
         "the over-cap UID is not pinned"
@@ -591,7 +636,10 @@ async fn pin_ttl_releases_at_the_boundary_and_reacquire_refreshes_it() {
     assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![1]);
 
     // JUST BEFORE the TTL: sync keeps the pin and the location.
-    CLOCK.store(1_700_000_000 + crate::provider::imap::policy::SEARCH_PIN_TTL - 1, Ordering::Relaxed);
+    CLOCK.store(
+        1_700_000_000 + crate::provider::imap::policy::SEARCH_PIN_TTL - 1,
+        Ordering::Relaxed,
+    );
     crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
         .await
         .unwrap();
@@ -600,11 +648,18 @@ async fn pin_ttl_releases_at_the_boundary_and_reacquire_refreshes_it() {
         vec![1],
         "a pin one second short of the TTL survives"
     );
-    assert!(store.locations_in_mailbox("Archive").unwrap().iter().any(|l| l.uid == 1));
+    assert!(store
+        .locations_in_mailbox("Archive")
+        .unwrap()
+        .iter()
+        .any(|l| l.uid == 1));
 
     // AT the TTL: the pin is released and the (out-of-window) location
     // ages out under normal window rules.
-    CLOCK.store(1_700_000_000 + crate::provider::imap::policy::SEARCH_PIN_TTL, Ordering::Relaxed);
+    CLOCK.store(
+        1_700_000_000 + crate::provider::imap::policy::SEARCH_PIN_TTL,
+        Ordering::Relaxed,
+    );
     crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
         .await
         .unwrap();
@@ -613,7 +668,11 @@ async fn pin_ttl_releases_at_the_boundary_and_reacquire_refreshes_it() {
         "a pin at the TTL boundary is released"
     );
     assert!(
-        !store.locations_in_mailbox("Archive").unwrap().iter().any(|l| l.uid == 1),
+        !store
+            .locations_in_mailbox("Archive")
+            .unwrap()
+            .iter()
+            .any(|l| l.uid == 1),
         "after release the out-of-window location ages out"
     );
 
@@ -628,9 +687,16 @@ async fn pin_ttl_releases_at_the_boundary_and_reacquire_refreshes_it() {
         .await
         .expect("re-acquire");
     let _ = session.logout().await;
-    assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![1], "re-acquired");
+    assert_eq!(
+        store.pinned_uids("Archive", 50).unwrap(),
+        vec![1],
+        "re-acquired"
+    );
     // Just before the refreshed TTL: still pinned.
-    CLOCK.store(t2 + crate::provider::imap::policy::SEARCH_PIN_TTL - 1, Ordering::Relaxed);
+    CLOCK.store(
+        t2 + crate::provider::imap::policy::SEARCH_PIN_TTL - 1,
+        Ordering::Relaxed,
+    );
     crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
         .await
         .unwrap();
@@ -650,9 +716,7 @@ async fn pin_ttl_releases_at_the_boundary_and_reacquire_refreshes_it() {
 // written and gated but not executed.
 mod live {
     use super::*;
-    use crate::provider::imap::connection::{
-        ConnectionConfig, ImapConnectionManager, TlsMode,
-    };
+    use crate::provider::imap::connection::{ConnectionConfig, ImapConnectionManager, TlsMode};
     use crate::provider::imap::tls::parse_sha256_fingerprint;
 
     const HOST: &str = "127.0.0.1";
@@ -749,7 +813,9 @@ mod live {
         // forever for a slot.
         drop(session);
         assert_eq!(outcome.skipped_over_cap, 0);
-        assert!(store.is_pinned(&target.mailbox, uidvalidity, uid as i64).unwrap());
+        assert!(store
+            .is_pinned(&target.mailbox, uidvalidity, uid as i64)
+            .unwrap());
 
         // Two syncs: the pinned out-of-window hit must survive both,
         // as a LOCATION (not just a pin row).
@@ -766,7 +832,9 @@ mod live {
                 "the acquired out-of-window location survives sync"
             );
             assert!(
-                store.is_pinned(&target.mailbox, uidvalidity, uid as i64).unwrap(),
+                store
+                    .is_pinned(&target.mailbox, uidvalidity, uid as i64)
+                    .unwrap(),
                 "the acquired pin survives sync"
             );
         }
@@ -792,8 +860,7 @@ mod live {
         provider.folder_window_override = Some(1);
         // Keyword labels so `label:` would render a KEYWORD; not used
         // here but keeps the context consistent with production.
-        provider.settings.label_storage =
-            crate::provider::imap::LabelStorage::Keywords;
+        provider.settings.label_storage = crate::provider::imap::LabelStorage::Keywords;
         let db = store.database();
 
         // Baseline so the catalog + plan know Archive.
@@ -811,7 +878,10 @@ mod live {
             "the old Archive hit comes back from server search"
         );
         let hit = page.thread_ids[0].clone();
-        assert!(page.next.is_none(), "one bounded page, no server paging token");
+        assert!(
+            page.next.is_none(),
+            "one bounded page, no server paging token"
+        );
 
         // The hit is pinned + located in Archive.
         assert!(

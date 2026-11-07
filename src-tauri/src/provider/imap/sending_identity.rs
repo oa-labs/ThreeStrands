@@ -64,7 +64,9 @@ pub fn account_identities(login: &str, stored: &[Identity]) -> Vec<SendingIdenti
     seen.insert(login_norm);
     out.push(SendingIdentity {
         address: login.trim().to_string(),
-        display_name: None, ..Default::default() });
+        display_name: None,
+        ..Default::default()
+    });
 
     for identity in stored {
         let normalized = normalize_identity_address(&identity.address);
@@ -75,7 +77,10 @@ pub fn account_identities(login: &str, stored: &[Identity]) -> Vec<SendingIdenti
             // one, adopt that display name for the login entry so a configured
             // "Me <me@proton.me>" is not lost just because the login was
             // implicitly first.
-            if let Some(existing) = out.iter_mut().find(|i| identity_normalized(i) == normalized) {
+            if let Some(existing) = out
+                .iter_mut()
+                .find(|i| identity_normalized(i) == normalized)
+            {
                 if existing.display_name.is_none() {
                     existing.display_name = sanitize_display_name(identity.display_name.as_deref());
                 }
@@ -89,7 +94,9 @@ pub fn account_identities(login: &str, stored: &[Identity]) -> Vec<SendingIdenti
         seen.insert(normalized);
         out.push(SendingIdentity {
             address: identity.address.trim().to_string(),
-            display_name: sanitize_display_name(identity.display_name.as_deref()), ..Default::default() });
+            display_name: sanitize_display_name(identity.display_name.as_deref()),
+            ..Default::default()
+        });
     }
     out
 }
@@ -300,11 +307,14 @@ pub fn message_id_domain_for_address(from_address: &str) -> Result<String, Provi
              internationalised domains are not supported in this build"
         )));
     }
-    let domain = address.rsplit_once('@').map(|(_, domain)| domain).ok_or_else(|| {
-        ProviderError::InvalidOperation(format!(
-            "From address {address:?} has no '@', so it has no Message-ID domain"
-        ))
-    })?;
+    let domain = address
+        .rsplit_once('@')
+        .map(|(_, domain)| domain)
+        .ok_or_else(|| {
+            ProviderError::InvalidOperation(format!(
+                "From address {address:?} has no '@', so it has no Message-ID domain"
+            ))
+        })?;
     policy::check_message_id_domain(domain)
 }
 
@@ -322,7 +332,9 @@ mod tests {
     fn si(address: &str, display: Option<&str>) -> SendingIdentity {
         SendingIdentity {
             address: address.to_string(),
-            display_name: display.map(ToString::to_string), ..Default::default() }
+            display_name: display.map(ToString::to_string),
+            ..Default::default()
+        }
     }
 
     // ---- A. account_identities edge cases -----------------------------
@@ -335,10 +347,7 @@ mod tests {
 
     #[test]
     fn login_is_prepended_when_the_stored_list_omits_it() {
-        let got = account_identities(
-            "me@proton.me",
-            &[id("work@proton.me", Some("Work"))],
-        );
+        let got = account_identities("me@proton.me", &[id("work@proton.me", Some("Work"))]);
         assert_eq!(
             got,
             vec![si("me@proton.me", None), si("work@proton.me", Some("Work"))]
@@ -414,7 +423,10 @@ mod tests {
     // ---- C. choose_reply_identity table -------------------------------
 
     fn two_identities() -> Vec<SendingIdentity> {
-        vec![si("me@proton.me", Some("Me")), si("work@proton.me", Some("Work"))]
+        vec![
+            si("me@proton.me", Some("Me")),
+            si("work@proton.me", Some("Work")),
+        ]
     }
 
     fn headers(to: &str, cc: &str, delivered_to: &str, x_original_to: &str) -> ReplyHeaders {
@@ -547,10 +559,7 @@ mod tests {
             validate_identity_edit("me@proton.me", &[id("work@proton.me", Some("Work"))]).unwrap();
         assert_eq!(
             got,
-            vec![
-                id("me@proton.me", None),
-                id("work@proton.me", Some("Work")),
-            ]
+            vec![id("me@proton.me", None), id("work@proton.me", Some("Work")),]
         );
     }
 
@@ -591,16 +600,17 @@ mod tests {
             &[id("inject@proton.me\r\nRCPT TO:<evil@x>", None)],
         )
         .unwrap_err();
-        assert!(err.to_lowercase().contains("line break") || err.to_lowercase().contains("invalid"), "{err}");
+        assert!(
+            err.to_lowercase().contains("line break") || err.to_lowercase().contains("invalid"),
+            "{err}"
+        );
     }
 
     #[test]
     fn edit_rejects_a_display_name_with_crlf() {
-        let err = validate_identity_edit(
-            "me@proton.me",
-            &[id("work@proton.me", Some("Bad\r\nName"))],
-        )
-        .unwrap_err();
+        let err =
+            validate_identity_edit("me@proton.me", &[id("work@proton.me", Some("Bad\r\nName"))])
+                .unwrap_err();
         assert!(err.to_lowercase().contains("line break"), "{err}");
     }
 
@@ -608,8 +618,13 @@ mod tests {
     fn edit_rejects_an_over_long_display_name_but_accepts_at_the_limit() {
         let at_limit = "x".repeat(policy::MAX_IDENTITY_DISPLAY_NAME_CHARS);
         let over = "x".repeat(policy::MAX_IDENTITY_DISPLAY_NAME_CHARS + 1);
-        assert!(validate_identity_edit("me@proton.me", &[id("work@proton.me", Some(&at_limit))]).is_ok());
-        assert!(validate_identity_edit("me@proton.me", &[id("work@proton.me", Some(&over))]).is_err());
+        assert!(
+            validate_identity_edit("me@proton.me", &[id("work@proton.me", Some(&at_limit))])
+                .is_ok()
+        );
+        assert!(
+            validate_identity_edit("me@proton.me", &[id("work@proton.me", Some(&over))]).is_err()
+        );
     }
 
     #[test]
@@ -618,14 +633,25 @@ mod tests {
         // always first and counts toward the total, so a submitted list of
         // (LIMIT - 1) secondaries is exactly AT the limit, and LIMIT is over.
         let secondaries = |n: usize| -> Vec<Identity> {
-            (0..n).map(|i| id(&format!("a{i}@proton.me"), None)).collect()
+            (0..n)
+                .map(|i| id(&format!("a{i}@proton.me"), None))
+                .collect()
         };
         // Below: LIMIT-2 secondaries + login = LIMIT-1 total.
-        assert!(validate_identity_edit("me@proton.me", &secondaries(policy::IMAP_MAX_IDENTITIES - 2)).is_ok());
+        assert!(validate_identity_edit(
+            "me@proton.me",
+            &secondaries(policy::IMAP_MAX_IDENTITIES - 2)
+        )
+        .is_ok());
         // Exactly at: LIMIT-1 secondaries + login = LIMIT total.
-        assert!(validate_identity_edit("me@proton.me", &secondaries(policy::IMAP_MAX_IDENTITIES - 1)).is_ok());
+        assert!(validate_identity_edit(
+            "me@proton.me",
+            &secondaries(policy::IMAP_MAX_IDENTITIES - 1)
+        )
+        .is_ok());
         // Above: LIMIT secondaries + login = LIMIT+1 total -> rejected.
-        let err = validate_identity_edit("me@proton.me", &secondaries(policy::IMAP_MAX_IDENTITIES)).unwrap_err();
+        let err = validate_identity_edit("me@proton.me", &secondaries(policy::IMAP_MAX_IDENTITIES))
+            .unwrap_err();
         assert!(err.to_lowercase().contains("over the"), "{err}");
     }
 

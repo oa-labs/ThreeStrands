@@ -19,13 +19,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde_json::Value;
-use threestrands_sync_core::{Dot, EntityType, FieldKey, ReplicaState, StateValue, ENTITY_EXISTENCE_FIELD};
+use threestrands_sync_core::{
+    Dot, EntityType, FieldKey, ReplicaState, StateValue, ENTITY_EXISTENCE_FIELD,
+};
 use threestrands_sync_envelope::{
-    DeviceId as EnvelopeDeviceId, ReplicaSnapshot, SequenceEntry, SnapshotField, SnapshotValue, PROTOCOL_VERSION,
+    DeviceId as EnvelopeDeviceId, ReplicaSnapshot, SequenceEntry, SnapshotField, SnapshotValue,
+    PROTOCOL_VERSION,
 };
 
-use super::{serialization_error, Database, DatabaseError, DbResult};
 use super::replicated_sync::ensure_space_and_device;
+use super::{serialization_error, Database, DatabaseError, DbResult};
 use crate::replicated_sync::{decode_id, encode_id, FrontierConflict, FrontierConflictCandidate};
 
 /// Records that the replica changed, so the next push seals a new snapshot.
@@ -33,9 +36,15 @@ use crate::replicated_sync::{decode_id, encode_id, FrontierConflict, FrontierCon
 /// device list shows as this device's latest change.
 fn mark_changed(tx: &Transaction, local: bool) -> DbResult<()> {
     tx.execute("INSERT OR IGNORE INTO sync_local_state(id) VALUES (1)", [])?;
-    tx.execute("UPDATE sync_local_state SET dirty=1, generation=generation+1 WHERE id=1", [])?;
+    tx.execute(
+        "UPDATE sync_local_state SET dirty=1, generation=generation+1 WHERE id=1",
+        [],
+    )?;
     if local {
-        tx.execute("UPDATE sync_local_state SET last_change_at=?1 WHERE id=1", params![Utc::now().to_rfc3339()])?;
+        tx.execute(
+            "UPDATE sync_local_state SET last_change_at=?1 WHERE id=1",
+            params![Utc::now().to_rfc3339()],
+        )?;
     }
     Ok(())
 }
@@ -90,10 +99,17 @@ fn load_state(tx: &Transaction) -> DbResult<ReplicaState> {
     let context: BTreeMap<[u8; 16], u64> = {
         let mut statement = tx.prepare("SELECT device_id, counter FROM sync_context")?;
         let rows = statement
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         rows.into_iter()
-            .map(|(device, counter)| Ok((decode_id(&device).map_err(DatabaseError::Corrupt)?, counter as u64)))
+            .map(|(device, counter)| {
+                Ok((
+                    decode_id(&device).map_err(DatabaseError::Corrupt)?,
+                    counter as u64,
+                ))
+            })
             .collect::<DbResult<_>>()?
     };
     let mut fields: BTreeMap<FieldKey, Vec<StateValue>> = BTreeMap::new();
@@ -101,39 +117,75 @@ fn load_state(tx: &Transaction) -> DbResult<ReplicaState> {
         let mut statement =
             tx.prepare("SELECT entity_type, entity_id, field, device_id, counter, lamport, value FROM sync_values")?;
         let rows = statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)))?
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         rows
     };
     for (entity_type, entity_id, field, device, counter, lamport, value) in rows {
-        let key = FieldKey { entity_type: entity_type.parse::<EntityType>().map_err(|e| DatabaseError::corrupt(e.to_string()))?, entity_id, field };
+        let key = FieldKey {
+            entity_type: entity_type
+                .parse::<EntityType>()
+                .map_err(|e| DatabaseError::corrupt(e.to_string()))?,
+            entity_id,
+            field,
+        };
         fields.entry(key).or_default().push(StateValue {
-            dot: Dot { device_id: decode_id(&device).map_err(DatabaseError::Corrupt)?, counter: counter as u64 },
+            dot: Dot {
+                device_id: decode_id(&device).map_err(DatabaseError::Corrupt)?,
+                counter: counter as u64,
+            },
             lamport: lamport as u64,
-            value: value.map(|json| serde_json::from_str(&json)).transpose().map_err(serialization_error)?,
+            value: value
+                .map(|json| serde_json::from_str(&json))
+                .transpose()
+                .map_err(serialization_error)?,
         });
     }
-    ReplicaState::from_parts(context, fields).map_err(|error| DatabaseError::corrupt(format!("The local sync state is inconsistent: {error:?}")))
+    ReplicaState::from_parts(context, fields).map_err(|error| {
+        DatabaseError::corrupt(format!("The local sync state is inconsistent: {error:?}"))
+    })
 }
 
 /// Turns a peer's opened snapshot into a mergeable state, refusing one that
 /// isn't well formed.
 pub(crate) fn snapshot_to_state(snapshot: &ReplicaSnapshot) -> Result<ReplicaState, String> {
-    let context = snapshot.context.iter().map(|entry| (*entry.device_id.as_bytes(), entry.sequence)).collect();
+    let context = snapshot
+        .context
+        .iter()
+        .map(|entry| (*entry.device_id.as_bytes(), entry.sequence))
+        .collect();
     let fields = snapshot.fields.iter().map(|field| {
-        let key = FieldKey { entity_type: field.entity_type, entity_id: field.entity_id.clone(), field: field.field.clone() };
+        let key = FieldKey {
+            entity_type: field.entity_type,
+            entity_id: field.entity_id.clone(),
+            field: field.field.clone(),
+        };
         let values = field
             .values
             .iter()
             .map(|value| StateValue {
-                dot: Dot { device_id: *value.device_id.as_bytes(), counter: value.counter },
+                dot: Dot {
+                    device_id: *value.device_id.as_bytes(),
+                    counter: value.counter,
+                },
                 lamport: value.lamport,
                 value: value.value.clone(),
             })
             .collect();
         (key, values)
     });
-    ReplicaState::from_parts(context, fields).map_err(|error| format!("A peer's snapshot is malformed: {error:?}"))
+    ReplicaState::from_parts(context, fields)
+        .map_err(|error| format!("A peer's snapshot is malformed: {error:?}"))
 }
 
 /// Records a local write within the caller's transaction, allowing a native
@@ -148,7 +200,10 @@ pub(crate) fn record_replicated_write_in_transaction(
     let device_id = ensure_space_and_device(tx)?;
     let device_hex = encode_id(&device_id);
     let creating = !entity_has_values(tx, entity_type, entity_id)?;
-    tx.execute("INSERT OR IGNORE INTO sync_context(device_id, counter) VALUES (?1, 0)", params![device_hex])?;
+    tx.execute(
+        "INSERT OR IGNORE INTO sync_context(device_id, counter) VALUES (?1, 0)",
+        params![device_hex],
+    )?;
     let counter: i64 = tx.query_row(
         "UPDATE sync_context SET counter = counter + 1 WHERE device_id=?1 RETURNING counter",
         params![device_hex],
@@ -159,7 +214,10 @@ pub(crate) fn record_replicated_write_in_transaction(
         params![crate::replicated_sync::SPACE_ID],
         |row| row.get(0),
     )?;
-    let dot = Dot { device_id, counter: counter as u64 };
+    let dot = Dot {
+        device_id,
+        counter: counter as u64,
+    };
     let mut values: Vec<(String, Option<Value>)> = Vec::new();
     if creating {
         values.push((ENTITY_EXISTENCE_FIELD.to_string(), Some(Value::Bool(true))));
@@ -168,17 +226,36 @@ pub(crate) fn record_replicated_write_in_transaction(
         values.push((field.clone(), payload.get(field).cloned()));
     }
     for (field, value) in values {
-        let key = FieldKey { entity_type, entity_id: entity_id.to_string(), field };
+        let key = FieldKey {
+            entity_type,
+            entity_id: entity_id.to_string(),
+            field,
+        };
         clear_field(tx, &key)?;
-        store_value(tx, &key, &StateValue { dot, lamport: lamport as u64, value })?;
+        store_value(
+            tx,
+            &key,
+            &StateValue {
+                dot,
+                lamport: lamport as u64,
+                value,
+            },
+        )?;
     }
     mark_changed(tx, true)
 }
 
 /// Records deletion atomically with the corresponding application-table mutation.
-pub(crate) fn record_replicated_deletion_in_transaction(tx: &Transaction, entity_type: EntityType, entity_id: &str) -> DbResult<()> {
+pub(crate) fn record_replicated_deletion_in_transaction(
+    tx: &Transaction,
+    entity_type: EntityType,
+    entity_id: &str,
+) -> DbResult<()> {
     ensure_space_and_device(tx)?;
-    tx.execute("DELETE FROM sync_values WHERE entity_type=?1 AND entity_id=?2", params![entity_type.as_str(), entity_id])?;
+    tx.execute(
+        "DELETE FROM sync_values WHERE entity_type=?1 AND entity_id=?2",
+        params![entity_type.as_str(), entity_id],
+    )?;
     mark_changed(tx, true)
 }
 
@@ -210,7 +287,11 @@ impl Database {
     /// Records a local deletion: every value of the entity is removed. No
     /// tombstone is kept; the causal context is what stops a peer's older
     /// copy from bringing it back.
-    pub fn record_replicated_deletion(&self, entity_type: EntityType, entity_id: &str) -> DbResult<()> {
+    pub fn record_replicated_deletion(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+    ) -> DbResult<()> {
         if self.is_projecting_remote_operation() {
             return Ok(());
         }
@@ -220,7 +301,11 @@ impl Database {
     }
 
     /// True once the replica holds any value for this entity.
-    pub(crate) fn entity_recorded(&self, entity_type: EntityType, entity_id: &str) -> DbResult<bool> {
+    pub(crate) fn entity_recorded(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+    ) -> DbResult<bool> {
         self.with_transaction(|tx| entity_has_values(tx, entity_type, entity_id))
     }
 
@@ -234,7 +319,10 @@ impl Database {
     /// whose values changed, for materializing. Lamport time moves past
     /// every merged value, so this device's next write outranks what it has
     /// seen.
-    pub(crate) fn merge_replica_state(&self, remote: &ReplicaState) -> DbResult<Vec<(EntityType, String)>> {
+    pub(crate) fn merge_replica_state(
+        &self,
+        remote: &ReplicaState,
+    ) -> DbResult<Vec<(EntityType, String)>> {
         self.with_transaction(|tx| {
             let mut local = load_state(tx)?;
             let context_before = local.context().clone();
@@ -281,8 +369,15 @@ impl Database {
         self.with_transaction(|tx| {
             tx.execute("INSERT OR IGNORE INTO sync_local_state(id) VALUES (1)", [])?;
             let state = load_state(tx)?;
-            let generation = tx.query_row("SELECT generation FROM sync_local_state WHERE id=1", [], |row| row.get(0))?;
-            Ok((snapshot_of(&state, device_id, state_sequence, created_at_ms), generation))
+            let generation = tx.query_row(
+                "SELECT generation FROM sync_local_state WHERE id=1",
+                [],
+                |row| row.get(0),
+            )?;
+            Ok((
+                snapshot_of(&state, device_id, state_sequence, created_at_ms),
+                generation,
+            ))
         })
     }
 
@@ -291,45 +386,58 @@ impl Database {
     }
 }
 
-fn snapshot_of(state: &ReplicaState, device_id: EnvelopeDeviceId, state_sequence: u64, created_at_ms: i64) -> ReplicaSnapshot {
-        ReplicaSnapshot {
-            protocol_version: PROTOCOL_VERSION,
-            device_id,
-            state_sequence,
-            created_at_ms,
-            context: state
-                .context()
-                .iter()
-                .filter(|(_, counter)| **counter > 0)
-                .map(|(device, counter)| SequenceEntry { device_id: EnvelopeDeviceId::from_bytes(*device), sequence: *counter })
-                .collect(),
-            fields: state
-                .fields()
-                .iter()
-                .map(|(key, values)| SnapshotField {
-                    entity_type: key.entity_type,
-                    entity_id: key.entity_id.clone(),
-                    field: key.field.clone(),
-                    values: values
-                        .iter()
-                        .map(|value| SnapshotValue {
-                            device_id: EnvelopeDeviceId::from_bytes(value.dot.device_id),
-                            counter: value.dot.counter,
-                            lamport: value.lamport,
-                            value: value.value.clone(),
-                        })
-                        .collect(),
-                })
-                .collect(),
-        }
+fn snapshot_of(
+    state: &ReplicaState,
+    device_id: EnvelopeDeviceId,
+    state_sequence: u64,
+    created_at_ms: i64,
+) -> ReplicaSnapshot {
+    ReplicaSnapshot {
+        protocol_version: PROTOCOL_VERSION,
+        device_id,
+        state_sequence,
+        created_at_ms,
+        context: state
+            .context()
+            .iter()
+            .filter(|(_, counter)| **counter > 0)
+            .map(|(device, counter)| SequenceEntry {
+                device_id: EnvelopeDeviceId::from_bytes(*device),
+                sequence: *counter,
+            })
+            .collect(),
+        fields: state
+            .fields()
+            .iter()
+            .map(|(key, values)| SnapshotField {
+                entity_type: key.entity_type,
+                entity_id: key.entity_id.clone(),
+                field: key.field.clone(),
+                values: values
+                    .iter()
+                    .map(|value| SnapshotValue {
+                        device_id: EnvelopeDeviceId::from_bytes(value.dot.device_id),
+                        counter: value.dot.counter,
+                        lamport: value.lamport,
+                        value: value.value.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
 }
 
 impl Database {
     /// The fields that currently hold any value for an entity.
-    pub(crate) fn known_fields(&self, entity_type: EntityType, entity_id: &str) -> DbResult<Vec<String>> {
+    pub(crate) fn known_fields(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+    ) -> DbResult<Vec<String>> {
         self.with_connection(|connection| {
-            let mut statement =
-                connection.prepare("SELECT DISTINCT field FROM sync_values WHERE entity_type=?1 AND entity_id=?2")?;
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT field FROM sync_values WHERE entity_type=?1 AND entity_id=?2",
+            )?;
             let rows = statement
                 .query_map(params![entity_type.as_str(), entity_id], |row| row.get(0))?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -340,7 +448,12 @@ impl Database {
     /// A field's working value: the surviving value with the greatest
     /// `(lamport, device, counter)`. Lowercase hex of equal-length device
     /// ids orders exactly like the bytes, so SQL can rank them directly.
-    pub(crate) fn resolve_field_winner(&self, entity_type: EntityType, entity_id: &str, field: &str) -> DbResult<Option<Value>> {
+    pub(crate) fn resolve_field_winner(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+        field: &str,
+    ) -> DbResult<Option<Value>> {
         let winner: Option<Option<String>> = self.with_connection(|connection| {
             Ok(connection
                 .query_row(
@@ -351,7 +464,11 @@ impl Database {
                 )
                 .optional()?)
         })?;
-        winner.flatten().map(|json| serde_json::from_str(&json)).transpose().map_err(serialization_error)
+        winner
+            .flatten()
+            .map(|json| serde_json::from_str(&json))
+            .transpose()
+            .map_err(serialization_error)
     }
 
     /// Every field currently in conflict: more than one surviving value, and
@@ -434,9 +551,17 @@ impl Database {
             .map_err(|_| DatabaseError::invalid("That conflict was already resolved elsewhere"))?;
         let mut payload = serde_json::Map::new();
         if let Some(json) = stored {
-            payload.insert(field.to_string(), serde_json::from_str(&json).map_err(serialization_error)?);
+            payload.insert(
+                field.to_string(),
+                serde_json::from_str(&json).map_err(serialization_error)?,
+            );
         }
-        self.record_replicated_write(entity_type, entity_id, &BTreeSet::from([field.to_string()]), &Value::Object(payload))
+        self.record_replicated_write(
+            entity_type,
+            entity_id,
+            &BTreeSet::from([field.to_string()]),
+            &Value::Object(payload),
+        )
     }
 
     /// Whether the replica changed since the last sealed snapshot, that
@@ -444,9 +569,17 @@ impl Database {
     pub(crate) fn local_state_status(&self) -> DbResult<(bool, u64, Option<u32>)> {
         self.with_transaction(|tx| {
             tx.execute("INSERT OR IGNORE INTO sync_local_state(id) VALUES (1)", [])?;
-            Ok(tx.query_row("SELECT dirty, state_sequence, sealed_epoch FROM sync_local_state WHERE id=1", [], |row| {
-                Ok((row.get::<_, bool>(0)?, row.get::<_, i64>(1)? as u64, row.get(2)?))
-            })?)
+            Ok(tx.query_row(
+                "SELECT dirty, state_sequence, sealed_epoch FROM sync_local_state WHERE id=1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, bool>(0)?,
+                        row.get::<_, i64>(1)? as u64,
+                        row.get(2)?,
+                    ))
+                },
+            )?)
         })
     }
 }
@@ -479,7 +612,8 @@ fn same_frontier_value(
                 | "completedAt"
                 | "goalId"
         )
-        || entity_type == EntityType::Goal.as_str() && matches!(field, "notes" | "parentGoalId" | "closedAt")
+        || entity_type == EntityType::Goal.as_str()
+            && matches!(field, "notes" | "parentGoalId" | "closedAt")
         || entity_type == EntityType::ContactGroup.as_str()
             && field.starts_with(threestrands_sync_protocol::CONTACT_GROUP_MEMBER_PREFIX))
         && left.as_ref().is_none_or(Value::is_null)

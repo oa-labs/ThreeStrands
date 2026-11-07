@@ -22,7 +22,9 @@ fn validate_task_fields(
 ) -> DbResult<()> {
     let title = title.trim();
     if title.is_empty() || title.chars().count() > MAX_TITLE {
-        return Err(DatabaseError::invalid(format!("Task title must be between 1 and {MAX_TITLE} characters")));
+        return Err(DatabaseError::invalid(format!(
+            "Task title must be between 1 and {MAX_TITLE} characters"
+        )));
     }
     if !matches!(kind, "action" | "follow_up" | "waiting_for") {
         return Err(DatabaseError::invalid("Unknown task kind"));
@@ -31,13 +33,17 @@ fn validate_task_fields(
         return Err(DatabaseError::invalid("Unknown task due kind"));
     }
     if due_kind == "none" && due_value.is_some_and(|value| !value.trim().is_empty()) {
-        return Err(DatabaseError::invalid("A task without a due date cannot have a due value"));
+        return Err(DatabaseError::invalid(
+            "A task without a due date cannot have a due value",
+        ));
     }
     if due_kind != "none" && due_value.is_none_or(|value| value.trim().is_empty()) {
         return Err(DatabaseError::invalid("A dated task must have a due value"));
     }
     if repeat_interval_days.is_some_and(|value| !(1..=365).contains(&value)) {
-        return Err(DatabaseError::invalid("Repeat interval must be between 1 and 365 days"));
+        return Err(DatabaseError::invalid(
+            "Repeat interval must be between 1 and 365 days",
+        ));
     }
     Ok(())
 }
@@ -101,14 +107,22 @@ impl Database {
                 sql.push_str(" AND account_id = ?1");
             }
             if status.is_some() {
-                sql.push_str(if account_id.is_some() { " AND status = ?2" } else { " AND status = ?1" });
+                sql.push_str(if account_id.is_some() {
+                    " AND status = ?2"
+                } else {
+                    " AND status = ?1"
+                });
             }
-            sql.push_str(" ORDER BY CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END,
+            sql.push_str(
+                " ORDER BY CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END,
                           CASE WHEN due_value IS NULL THEN 1 ELSE 0 END,
-                          due_value ASC, updated_at DESC");
+                          due_value ASC, updated_at DESC",
+            );
             let mut statement = connection.prepare(&sql)?;
             let rows = match (account_id, status) {
-                (Some(account), Some(status)) => statement.query_map(params![account, status], task_from_row),
+                (Some(account), Some(status)) => {
+                    statement.query_map(params![account, status], task_from_row)
+                }
                 (Some(account), None) => statement.query_map(params![account], task_from_row),
                 (None, Some(status)) => statement.query_map(params![status], task_from_row),
                 (None, None) => statement.query_map([], task_from_row),
@@ -152,22 +166,42 @@ impl Database {
         )?;
         match (&request.thread_id, &request.subject_snapshot) {
             (Some(_), Some(subject)) if !subject.trim().is_empty() => {}
-            (Some(_), _) => return Err(DatabaseError::invalid("Task subject snapshot cannot be empty")),
+            (Some(_), _) => {
+                return Err(DatabaseError::invalid(
+                    "Task subject snapshot cannot be empty",
+                ))
+            }
             (None, None) => {}
             (None, Some(_)) => {
-                return Err(DatabaseError::invalid("A standalone task cannot have a subject snapshot"))
+                return Err(DatabaseError::invalid(
+                    "A standalone task cannot have a subject snapshot",
+                ))
             }
         }
         if request.thread_id.is_none()
             && (request.source_message_id.is_some() || request.evidence_text.is_some())
         {
-            return Err(DatabaseError::invalid("A standalone task cannot have conversation context"));
+            return Err(DatabaseError::invalid(
+                "A standalone task cannot have conversation context",
+            ));
         }
-        if request.notes.as_deref().is_some_and(|value| value.chars().count() > MAX_NOTES) {
-            return Err(DatabaseError::invalid(format!("Task notes exceed {MAX_NOTES} characters")));
+        if request
+            .notes
+            .as_deref()
+            .is_some_and(|value| value.chars().count() > MAX_NOTES)
+        {
+            return Err(DatabaseError::invalid(format!(
+                "Task notes exceed {MAX_NOTES} characters"
+            )));
         }
-        if request.evidence_text.as_deref().is_some_and(|value| value.chars().count() > MAX_EVIDENCE) {
-            return Err(DatabaseError::invalid(format!("Task evidence exceeds {MAX_EVIDENCE} characters")));
+        if request
+            .evidence_text
+            .as_deref()
+            .is_some_and(|value| value.chars().count() > MAX_EVIDENCE)
+        {
+            return Err(DatabaseError::invalid(format!(
+                "Task evidence exceeds {MAX_EVIDENCE} characters"
+            )));
         }
         self.with_connection(|connection| {
             ensure_goal_link(connection, &request.account_id, request.goal_id.as_deref())?;
@@ -184,35 +218,38 @@ impl Database {
             };
             let now = Utc::now().to_rfc3339();
             let id = Uuid::new_v4().to_string();
-            connection
-                .execute(
-                    "INSERT INTO tasks(
+            connection.execute(
+                "INSERT INTO tasks(
                         id, account_id, thread_id, source_message_id, subject_snapshot,
                         title, notes, kind, due_kind, due_value, time_zone,
                         repeat_interval_days, status, evidence_text, wait_after,
                         created_at, updated_at, goal_id
                      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
                                'open', ?13, ?14, ?15, ?15, ?16)",
-                    params![
-                        id,
-                        request.account_id,
-                        request.thread_id,
-                        request.source_message_id,
-                        request.subject_snapshot.as_deref().map(str::trim),
-                        request.title.trim(),
-                        request.notes.as_deref().map(str::trim),
-                        request.kind,
-                        request.due_kind,
-                        request.due_value,
-                        request.time_zone,
-                        request.repeat_interval_days,
-                        request.evidence_text.as_deref().map(str::trim),
-                        wait_after,
-                        now,
-                        request.goal_id,
-                    ],
-                )?;
-            Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?)
+                params![
+                    id,
+                    request.account_id,
+                    request.thread_id,
+                    request.source_message_id,
+                    request.subject_snapshot.as_deref().map(str::trim),
+                    request.title.trim(),
+                    request.notes.as_deref().map(str::trim),
+                    request.kind,
+                    request.due_kind,
+                    request.due_value,
+                    request.time_zone,
+                    request.repeat_interval_days,
+                    request.evidence_text.as_deref().map(str::trim),
+                    wait_after,
+                    now,
+                    request.goal_id,
+                ],
+            )?;
+            Ok(connection.query_row(
+                &format!("{} WHERE id = ?1", select_sql()),
+                [id],
+                task_from_row,
+            )?)
         })
     }
 
@@ -272,7 +309,11 @@ impl Database {
         }
         let now = Utc::now().to_rfc3339();
         let completed_at = (status == "completed").then_some(now.as_str());
-        let completion_source = if is_active_status(status) { None } else { Some(source) };
+        let completion_source = if is_active_status(status) {
+            None
+        } else {
+            Some(source)
+        };
         self.with_connection(|connection| {
             connection
                 .execute(
@@ -284,7 +325,7 @@ impl Database {
     }
 
     pub fn record_follow_up(&self, id: &str) -> DbResult<ThreadTask> {
-        self.with_connection(|connection| Self::record_follow_up_on(connection,id))
+        self.with_connection(|connection| Self::record_follow_up_on(connection, id))
     }
 
     pub(crate) fn record_follow_up_on(
@@ -464,7 +505,13 @@ mod tests {
             .unwrap();
         assert_eq!(task.status, "open");
         assert_eq!(task.wait_after.as_deref(), Some("2026-09-19T10:00:00Z"));
-        assert_eq!(database.list_tasks(Some("account@example.com"), Some("open")).unwrap().len(), 1);
+        assert_eq!(
+            database
+                .list_tasks(Some("account@example.com"), Some("open"))
+                .unwrap()
+                .len(),
+            1
+        );
 
         database
             .connection()
@@ -500,11 +547,15 @@ mod tests {
             })
             .unwrap();
 
-        let started = database.set_task_status(&task.id, "in_progress", "user").unwrap();
+        let started = database
+            .set_task_status(&task.id, "in_progress", "user")
+            .unwrap();
         assert_eq!(started.status, "in_progress");
         assert_eq!(started.completion_source, None);
         assert_eq!(started.completed_at, None);
-        assert!(database.set_task_status(&task.id, "blocked", "user").is_err());
+        assert!(database
+            .set_task_status(&task.id, "blocked", "user")
+            .is_err());
 
         database
             .connection()

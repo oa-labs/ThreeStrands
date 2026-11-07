@@ -41,12 +41,22 @@ fn database_combinators_keep_sqlite_errors_typed_and_roll_back() {
 #[test]
 fn rejected_input_and_missing_records_keep_distinct_categories() {
     let database = database();
-    let missing = database.update_split_inbox("no-such-split", "Renamed").unwrap_err();
-    assert!(matches!(missing, DatabaseError::NotFound("Split inbox")), "{missing}");
+    let missing = database
+        .update_split_inbox("no-such-split", "Renamed")
+        .unwrap_err();
+    assert!(
+        matches!(missing, DatabaseError::NotFound("Split inbox")),
+        "{missing}"
+    );
     assert_eq!(missing.to_string(), "Split inbox not found");
 
-    let rejected = database.update_split_inbox("no-such-split", "  ").unwrap_err();
-    assert!(matches!(rejected, DatabaseError::Validation(_)), "{rejected}");
+    let rejected = database
+        .update_split_inbox("no-such-split", "  ")
+        .unwrap_err();
+    assert!(
+        matches!(rejected, DatabaseError::Validation(_)),
+        "{rejected}"
+    );
     assert_eq!(rejected.to_string(), "Split inbox name cannot be empty");
 
     // The frontend still receives the user-facing sentence, unprefixed.

@@ -40,7 +40,10 @@ fn replace_account_labels_replaces_the_whole_catalog() {
         .replace_account_labels("a@x", &[label("l1", "Work renamed")])
         .unwrap();
     let rows = catalog(&database, "a@x");
-    assert_eq!(rows, vec![("l1".into(), "Work renamed".into(), "user".into())]);
+    assert_eq!(
+        rows,
+        vec![("l1".into(), "Work renamed".into(), "user".into())]
+    );
 }
 
 #[test]
@@ -53,8 +56,14 @@ fn replace_account_labels_is_per_account() {
     database
         .replace_account_labels("b@x", &[label("shared", "B name")])
         .unwrap();
-    assert_eq!(catalog(&database, "a@x"), vec![("shared".into(), "A name".into(), "user".into())]);
-    assert_eq!(catalog(&database, "b@x"), vec![("shared".into(), "B name".into(), "user".into())]);
+    assert_eq!(
+        catalog(&database, "a@x"),
+        vec![("shared".into(), "A name".into(), "user".into())]
+    );
+    assert_eq!(
+        catalog(&database, "b@x"),
+        vec![("shared".into(), "B name".into(), "user".into())]
+    );
 
     // Replacing one account's catalog leaves the other's untouched.
     database.replace_account_labels("a@x", &[]).unwrap();
@@ -65,11 +74,21 @@ fn replace_account_labels_is_per_account() {
 #[test]
 fn upsert_and_delete_single_labels() {
     let database = Database::open_memory();
-    database.upsert_account_label("a@x", &label("l1", "Work")).unwrap();
-    assert_eq!(catalog(&database, "a@x"), vec![("l1".into(), "Work".into(), "user".into())]);
+    database
+        .upsert_account_label("a@x", &label("l1", "Work"))
+        .unwrap();
+    assert_eq!(
+        catalog(&database, "a@x"),
+        vec![("l1".into(), "Work".into(), "user".into())]
+    );
     // Upsert on the same id updates in place rather than duplicating.
-    database.upsert_account_label("a@x", &label("l1", "Work (renamed)")).unwrap();
-    assert_eq!(catalog(&database, "a@x"), vec![("l1".into(), "Work (renamed)".into(), "user".into())]);
+    database
+        .upsert_account_label("a@x", &label("l1", "Work (renamed)"))
+        .unwrap();
+    assert_eq!(
+        catalog(&database, "a@x"),
+        vec![("l1".into(), "Work (renamed)".into(), "user".into())]
+    );
     database.delete_account_label("a@x", "l1").unwrap();
     assert!(catalog(&database, "a@x").is_empty());
     // Deleting an id that is not cached is a harmless no-op.
@@ -82,7 +101,11 @@ fn label_ids_named_is_case_insensitive_and_can_return_several_ids() {
     database
         .replace_account_labels(
             "a@x",
-            &[label("l1", "Work"), label("l2", "work"), label("l3", "Other")],
+            &[
+                label("l1", "Work"),
+                label("l2", "work"),
+                label("l3", "Other"),
+            ],
         )
         .unwrap();
     // Case-insensitive (ASCII NOCASE), and several ids when several labels
@@ -91,7 +114,10 @@ fn label_ids_named_is_case_insensitive_and_can_return_several_ids() {
         database.label_ids_named("a@x", "WORK").unwrap(),
         vec!["l1".to_string(), "l2".to_string()]
     );
-    assert_eq!(database.label_ids_named("a@x", "other").unwrap(), vec!["l3".to_string()]);
+    assert_eq!(
+        database.label_ids_named("a@x", "other").unwrap(),
+        vec!["l3".to_string()]
+    );
     // An unknown name returns nothing.
     assert!(database.label_ids_named("a@x", "nope").unwrap().is_empty());
     // Scoped per account.
@@ -117,20 +143,37 @@ fn label_ids_named_matches_special_characters_literally_not_as_patterns() {
         )
         .unwrap();
     // `%` and `_` are literal, not wildcards: each matches only its own name.
-    assert_eq!(database.label_ids_named("a@x", "a%b").unwrap(), vec!["pct".to_string()]);
-    assert_eq!(database.label_ids_named("a@x", "a_b").unwrap(), vec!["usc".to_string()]);
+    assert_eq!(
+        database.label_ids_named("a@x", "a%b").unwrap(),
+        vec!["pct".to_string()]
+    );
+    assert_eq!(
+        database.label_ids_named("a@x", "a_b").unwrap(),
+        vec!["usc".to_string()]
+    );
     // A literal single-char wildcard would match "aXb"; `=` does not.
     assert!(database.label_ids_named("a@x", "a%").unwrap().is_empty());
     assert!(database.label_ids_named("a@x", "a_").unwrap().is_empty());
-    assert_eq!(database.label_ids_named("a@x", "a'b").unwrap(), vec!["sq".to_string()]);
-    assert_eq!(database.label_ids_named("a@x", "a\"b").unwrap(), vec!["dq".to_string()]);
-    assert_eq!(database.label_ids_named("a@x", "a\\b").unwrap(), vec!["bs".to_string()]);
+    assert_eq!(
+        database.label_ids_named("a@x", "a'b").unwrap(),
+        vec!["sq".to_string()]
+    );
+    assert_eq!(
+        database.label_ids_named("a@x", "a\"b").unwrap(),
+        vec!["dq".to_string()]
+    );
+    assert_eq!(
+        database.label_ids_named("a@x", "a\\b").unwrap(),
+        vec!["bs".to_string()]
+    );
 }
 
 #[test]
 fn label_ids_named_treats_a_huge_name_as_a_non_match_not_a_panic() {
     let database = Database::open_memory();
-    database.replace_account_labels("a@x", &[label("l1", "Work")]).unwrap();
+    database
+        .replace_account_labels("a@x", &[label("l1", "Work")])
+        .unwrap();
     let huge = "z".repeat(100_000);
     assert!(database.label_ids_named("a@x", &huge).unwrap().is_empty());
 }
@@ -171,7 +214,10 @@ fn cache_label_listing_caches_on_success_and_an_over_limit_listing_keeps_the_pre
     let database = Database::open_memory();
     // Successful listing: cached.
     cache_label_listing(&database, "a@x", &[label("l1", "Work")]);
-    assert_eq!(catalog(&database, "a@x"), vec![("l1".into(), "Work".into(), "user".into())]);
+    assert_eq!(
+        catalog(&database, "a@x"),
+        vec![("l1".into(), "Work".into(), "user".into())]
+    );
 
     // An over-limit listing is logged and swallowed, leaving the previous
     // cache in place (write-through never fails the user's action).
@@ -202,11 +248,22 @@ fn account_removal_purges_only_that_accounts_cached_labels() {
     let database = Database::open_memory();
     database.adopt_account("remove@x").unwrap();
     database.adopt_account("keep@x").unwrap();
-    database.replace_account_labels("remove@x", &[label("l1", "Work")]).unwrap();
-    database.replace_account_labels("keep@x", &[label("l2", "Keep")]).unwrap();
+    database
+        .replace_account_labels("remove@x", &[label("l1", "Work")])
+        .unwrap();
+    database
+        .replace_account_labels("keep@x", &[label("l2", "Keep")])
+        .unwrap();
 
     database.remove_account("remove@x").unwrap();
 
-    assert!(catalog(&database, "remove@x").is_empty(), "the removed account's cache is purged");
-    assert_eq!(catalog(&database, "keep@x").len(), 1, "another account's cache is untouched");
+    assert!(
+        catalog(&database, "remove@x").is_empty(),
+        "the removed account's cache is purged"
+    );
+    assert_eq!(
+        catalog(&database, "keep@x").len(),
+        1,
+        "another account's cache is untouched"
+    );
 }

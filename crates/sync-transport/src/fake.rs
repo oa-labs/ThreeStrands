@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use threestrands_sync_envelope::SignedDeviceHead;
 
 use crate::{
-    Cid, HeadLocator, ObjectLocator, ScanPage, SyncTransport, TransportCapabilities, TransportError,
-    TransportHealth, TransportInstanceId,
+    Cid, HeadLocator, ObjectLocator, ScanPage, SyncTransport, TransportCapabilities,
+    TransportError, TransportHealth, TransportInstanceId,
 };
 
 #[derive(Default)]
@@ -190,7 +190,11 @@ impl SyncTransport for FakeTransport {
         }
         let bytes = {
             let state = self.state.lock().unwrap();
-            state.objects.get(cid).cloned().ok_or(TransportError::NotFound)?
+            state
+                .objects
+                .get(cid)
+                .cloned()
+                .ok_or(TransportError::NotFound)?
         };
         let mut faults = self.faults.lock().unwrap();
         if faults.corrupt_gets_remaining > 0 {
@@ -217,7 +221,10 @@ impl SyncTransport for FakeTransport {
         })
     }
 
-    async fn resolve_heads(&self, known: &[HeadLocator]) -> Result<Vec<SignedDeviceHead>, TransportError> {
+    async fn resolve_heads(
+        &self,
+        known: &[HeadLocator],
+    ) -> Result<Vec<SignedDeviceHead>, TransportError> {
         self.take_fault()?;
         let state = self.state.lock().unwrap();
         Ok(known
@@ -301,7 +308,9 @@ impl SyncTransport for FakeTransport {
             ));
         }
         if faults.transient_outages_remaining > 0 {
-            return Ok(TransportHealth::Degraded("recent transient failures".to_string()));
+            return Ok(TransportHealth::Degraded(
+                "recent transient failures".to_string(),
+            ));
         }
         Ok(TransportHealth::Healthy)
     }
@@ -376,8 +385,14 @@ mod tests {
         let target = cid("x");
         transport.put_object(&target, b"hello").await.unwrap();
         transport.inject_delayed_visibility(&target, 2);
-        assert_eq!(transport.get_object(&target).await, Err(TransportError::NotFound));
-        assert_eq!(transport.get_object(&target).await, Err(TransportError::NotFound));
+        assert_eq!(
+            transport.get_object(&target).await,
+            Err(TransportError::NotFound)
+        );
+        assert_eq!(
+            transport.get_object(&target).await,
+            Err(TransportError::NotFound)
+        );
         assert_eq!(transport.get_object(&target).await.unwrap(), b"hello");
     }
 

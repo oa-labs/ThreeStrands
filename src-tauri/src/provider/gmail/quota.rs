@@ -118,9 +118,14 @@ impl QuotaGate {
     pub(super) fn pause(&self, delay: Duration) {
         let mut state = self.state.lock().unwrap();
         let now = Instant::now();
-        if state.cut.is_none_or(|(_, at)| now.duration_since(at) >= CUT_WINDOW) {
+        if state
+            .cut
+            .is_none_or(|(_, at)| now.duration_since(at) >= CUT_WINDOW)
+        {
             let budget = (state.units_per_minute(now) / 2.0).max(f64::from(MIN_UNITS_PER_MINUTE));
-            log::info!("Gmail quota exceeded; this account now spends at most {budget:.0} units a minute");
+            log::info!(
+                "Gmail quota exceeded; this account now spends at most {budget:.0} units a minute"
+            );
             state.cut = Some((budget, now));
         }
         let until = now + delay;
@@ -140,7 +145,11 @@ impl QuotaGate {
     /// How much longer requests are held back by a quota pause.
     #[cfg(test)]
     pub(super) fn paused_for(&self) -> Duration {
-        self.state.lock().unwrap().paused_until.saturating_duration_since(Instant::now())
+        self.state
+            .lock()
+            .unwrap()
+            .paused_until
+            .saturating_duration_since(Instant::now())
     }
 }
 
@@ -154,7 +163,9 @@ impl State {
         let Some((cut, at)) = self.cut else {
             return full;
         };
-        let recovering = now.saturating_duration_since(at).saturating_sub(RECOVERY_QUIET);
+        let recovering = now
+            .saturating_duration_since(at)
+            .saturating_sub(RECOVERY_QUIET);
         (cut + f64::from(RECOVERY_UNITS_PER_MINUTE) * recovering.as_secs_f64() / 60.0).min(full)
     }
 
@@ -172,8 +183,7 @@ impl State {
     }
 }
 
-static GATES: LazyLock<StdMutex<HashMap<String, Arc<QuotaGate>>>> =
-    LazyLock::new(Default::default);
+static GATES: LazyLock<StdMutex<HashMap<String, Arc<QuotaGate>>>> = LazyLock::new(Default::default);
 
 /// The gate every Gmail client for `account` shares. Kept for the life of
 /// the process: a pause must outlive the short-lived client that saw it.
@@ -189,7 +199,11 @@ pub(super) fn for_account(account: &str) -> Arc<QuotaGate> {
 /// Gmail's documented quota cost of a request, from its method and its path
 /// below `users/me` (query string allowed).
 pub(super) fn cost(method: &Method, path: &str) -> u32 {
-    let path = path.split(['?', '#']).next().unwrap_or_default().trim_matches('/');
+    let path = path
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_matches('/');
     let segments: Vec<&str> = path.split('/').collect();
     let get = method == Method::GET;
     let delete = method == Method::DELETE;
@@ -222,7 +236,10 @@ mod tests {
 
     fn assert_near(actual: Duration, expected: Duration) {
         let gap = actual.abs_diff(expected);
-        assert!(gap < Duration::from_millis(1), "{actual:?} is not {expected:?}");
+        assert!(
+            gap < Duration::from_millis(1),
+            "{actual:?} is not {expected:?}"
+        );
     }
 
     #[test]
@@ -260,7 +277,10 @@ mod tests {
     fn clients_for_one_account_share_a_gate_and_other_accounts_do_not() {
         let first = for_account("quota-share@example.com");
         assert!(Arc::ptr_eq(&first, &for_account("Quota-Share@Example.com")));
-        assert!(!Arc::ptr_eq(&first, &for_account("quota-other@example.com")));
+        assert!(!Arc::ptr_eq(
+            &first,
+            &for_account("quota-other@example.com")
+        ));
     }
 
     #[tokio::test(start_paused = true)]
@@ -288,7 +308,10 @@ mod tests {
         }
         // Whatever finished inside the first minute fits the burst plus a
         // minute of sustained spend.
-        assert!(spent <= BURST_UNITS + UNITS_PER_MINUTE + 10, "spent {spent}");
+        assert!(
+            spent <= BURST_UNITS + UNITS_PER_MINUTE + 10,
+            "spent {spent}"
+        );
         assert!(spent >= UNITS_PER_MINUTE, "spent {spent}");
     }
 

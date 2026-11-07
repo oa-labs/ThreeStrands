@@ -25,13 +25,17 @@ fn group(tx: &Transaction) -> DbResult<Option<String>> {
 
 /// Called in the same transaction as a local state change. Reports survive a
 /// disabled connector; backlog reconciliation later replays them to the graph.
-pub(crate) fn record_schedule_report(tx: &Transaction, id: &str, owner: &str, at: i64) -> DbResult<()> {
+pub(crate) fn record_schedule_report(
+    tx: &Transaction,
+    id: &str,
+    owner: &str,
+    at: i64,
+) -> DbResult<()> {
     let row: Option<(String, String)> = tx.query_row("SELECT schedule_json,state FROM outbox_messages WHERE id=?1 AND schedule_json IS NOT NULL", [id], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
     let Some((json, state)) = row else {
         return Ok(());
     };
-    let mut schedule: Schedule =
-        serde_json::from_str(&json).map_err(serialization_error)?;
+    let mut schedule: Schedule = serde_json::from_str(&json).map_err(serialization_error)?;
     if schedule.report.owner_installation_id != owner {
         return Ok(());
     }
@@ -42,8 +46,7 @@ pub(crate) fn record_schedule_report(tx: &Transaction, id: &str, owner: &str, at
                 [id],
                 |r| r.get(0),
             )?;
-            let draft: Draft =
-                serde_json::from_str(&payload).map_err(serialization_error)?;
+            let draft: Draft = serde_json::from_str(&payload).map_err(serialization_error)?;
             if let Some(task_id) = draft.follow_up_task_id {
                 match Database::record_follow_up_on(tx, &task_id) {
                     Ok(task) => {
@@ -59,8 +62,7 @@ pub(crate) fn record_schedule_report(tx: &Transaction, id: &str, owner: &str, at
                                     "completedAt".into(),
                                     "updatedAt".into(),
                                 ]),
-                                &serde_json::to_value(&task)
-                                    .map_err(serialization_error)?,
+                                &serde_json::to_value(&task).map_err(serialization_error)?,
                             )?;
                         }
                     }
@@ -241,12 +243,7 @@ impl Database {
         self.overdue_schedules_owned(at, resumed, "")
     }
 
-    pub fn overdue_schedules_owned(
-        &self,
-        at: i64,
-        resumed: bool,
-        owner: &str,
-    ) -> DbResult<()> {
+    pub fn overdue_schedules_owned(&self, at: i64, resumed: bool, owner: &str) -> DbResult<()> {
         self.with_transaction(|tx| {
             let threshold = if resumed {
                 at
@@ -282,8 +279,7 @@ impl Database {
                 |r| r.get(0),
             )?;
             let Some(json) = json else { return Ok(()) };
-            let mut s: Schedule =
-                serde_json::from_str(&json).map_err(serialization_error)?;
+            let mut s: Schedule = serde_json::from_str(&json).map_err(serialization_error)?;
             if s.report.owner_installation_id != owner
                 || s.report.blocked_reason.as_deref() == reason
             {
@@ -294,10 +290,7 @@ impl Database {
             s.report.status_changed_at = at;
             tx.execute(
                 "UPDATE outbox_messages SET schedule_json=?2 WHERE id=?1",
-                params![
-                    id,
-                    serde_json::to_string(&s).map_err(serialization_error)?
-                ],
+                params![id, serde_json::to_string(&s).map_err(serialization_error)?],
             )?;
             record_schedule_report(tx, id, owner, at)
         })

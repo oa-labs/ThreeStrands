@@ -362,7 +362,10 @@ fn ingesting_a_merge_reparents_tasks_and_rolls_back_on_failure() {
             .unwrap()
     };
     assert_eq!(task_thread(), local_thread_id(account, "old"));
-    assert_eq!(database.get_thread_for_message("b").unwrap().thread.id, local_thread_id(account, "old"));
+    assert_eq!(
+        database.get_thread_for_message("b").unwrap().thread.id,
+        local_thread_id(account, "old")
+    );
     database
         .apply_ingested_threads_with_aliases(
             account,
@@ -380,11 +383,23 @@ fn ingesting_a_merge_reparents_tasks_and_rolls_back_on_failure() {
         2
     );
     assert_eq!(task_thread(), local_thread_id(account, "survivor"));
-    let source: String = database.with_connection(|c| {
-        Ok(c.query_row("SELECT source_message_id FROM tasks WHERE id='task'", [], |row| row.get(0))?)
-    }).unwrap();
-    assert_eq!(source, "b", "thread aliases must not replace stable source message IDs");
-    assert_eq!(database.get_thread_for_message(&source).unwrap().thread.id, local_thread_id(account, "survivor"));
+    let source: String = database
+        .with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT source_message_id FROM tasks WHERE id='task'",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(
+        source, "b",
+        "thread aliases must not replace stable source message IDs"
+    );
+    assert_eq!(
+        database.get_thread_for_message(&source).unwrap().thread.id,
+        local_thread_id(account, "survivor")
+    );
 }
 
 mod quarantine_reports {
@@ -394,7 +409,12 @@ mod quarantine_reports {
     const OVER: &str = "Conversation is larger than 16 MB";
 
     fn ingest(database: &Database, thread: &str, set_aside: &[(&str, &str)]) {
-        let kept = message(&format!("{thread}-kept"), thread, "2026-01-05T00:00:00Z", "newest");
+        let kept = message(
+            &format!("{thread}-kept"),
+            thread,
+            "2026-01-05T00:00:00Z",
+            "newest",
+        );
         let set_aside = set_aside
             .iter()
             .map(|(id, error)| (id.to_string(), error.to_string()))
@@ -408,7 +428,10 @@ mod quarantine_reports {
         database
             .connection()
             .unwrap()
-            .execute("UPDATE quarantined_messages SET created_at = '2026-01-01T00:00:00+00:00'", [])
+            .execute(
+                "UPDATE quarantined_messages SET created_at = '2026-01-01T00:00:00+00:00'",
+                [],
+            )
             .unwrap();
     }
 
@@ -416,14 +439,28 @@ mod quarantine_reports {
     fn a_conversation_reports_its_set_aside_messages_as_one_entry() {
         let database = database();
         database.adopt_account(ACCOUNT).unwrap();
-        ingest(&database, "long", &[("old-1", OVER), ("old-2", OVER), ("old-3", OVER)]);
-        ingest(&database, "other", &[("broken", "Invalid Gmail base64url body")]);
+        ingest(
+            &database,
+            "long",
+            &[("old-1", OVER), ("old-2", OVER), ("old-3", OVER)],
+        );
+        ingest(
+            &database,
+            "other",
+            &[("broken", "Invalid Gmail base64url body")],
+        );
 
         let mut entries = database.sync_status(ACCOUNT).unwrap().quarantined_messages;
         entries.sort_by(|a, b| a.thread_id.cmp(&b.thread_id));
         let summary: Vec<_> = entries
             .iter()
-            .map(|entry| (entry.thread_id.as_str(), entry.message_count, entry.message_id.as_str()))
+            .map(|entry| {
+                (
+                    entry.thread_id.as_str(),
+                    entry.message_count,
+                    entry.message_id.as_str(),
+                )
+            })
             .collect();
         assert_eq!(summary, [("long", 3, "old-1"), ("other", 1, "broken")]);
     }
@@ -461,14 +498,22 @@ mod quarantine_reports {
         assert_ne!(entries[0].created_at, "2026-01-01T00:00:00+00:00");
 
         ingest(&database, "long", &[]);
-        assert!(database.sync_status(ACCOUNT).unwrap().quarantined_messages.is_empty());
+        assert!(database
+            .sync_status(ACCOUNT)
+            .unwrap()
+            .quarantined_messages
+            .is_empty());
     }
 
     #[test]
     fn a_changed_reason_is_reported_as_new() {
         let database = database();
         database.adopt_account(ACCOUNT).unwrap();
-        ingest(&database, "long", &[("old-1", "Invalid Gmail base64url body")]);
+        ingest(
+            &database,
+            "long",
+            &[("old-1", "Invalid Gmail base64url body")],
+        );
         backdate(&database);
 
         ingest(&database, "long", &[("old-1", OVER)]);

@@ -27,7 +27,12 @@ pub fn add_bulk_fields(snapshot: &mut ReplicaSnapshot, field_count: u8, bytes_pe
 /// Like [`add_bulk_fields`], but with a caller-chosen seed so two
 /// otherwise-identically-shaped snapshots (same field count and size, so
 /// the same chunk count) can be given different content.
-pub fn add_bulk_fields_seeded(snapshot: &mut ReplicaSnapshot, field_count: u8, bytes_per_value: usize, seed: u64) {
+pub fn add_bulk_fields_seeded(
+    snapshot: &mut ReplicaSnapshot,
+    field_count: u8,
+    bytes_per_value: usize,
+    seed: u64,
+) {
     for index in 0..field_count {
         snapshot.fields.push(SnapshotField {
             entity_type: EntityType::Task,

@@ -103,7 +103,10 @@ impl TransportConfig {
 
     /// Sets (or, with `None` or a blank string, clears) the name.
     pub fn set_label(&mut self, label: Option<&str>) {
-        let label = label.map(str::trim).filter(|label| !label.is_empty()).map(str::to_string);
+        let label = label
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_string);
         match self {
             Self::Folder(config) => config.label = label,
             Self::IpfsRpc(config) => config.label = label,
@@ -143,13 +146,23 @@ impl TransportConfig {
     /// at construction) before anything is persisted. The folder and IPFS
     /// kinds are checked when the live adapter opens, as they always have
     /// been; only S3 is rejected up front.
-    pub fn validate(&self, instance_id: &str, secrets: Option<&TransportSecrets>) -> Result<(), String> {
+    pub fn validate(
+        &self,
+        instance_id: &str,
+        secrets: Option<&TransportSecrets>,
+    ) -> Result<(), String> {
         self.check_secrets(secrets)?;
-        if self.label().is_some_and(|label| label.chars().count() > MAX_CONNECTOR_LABEL_CHARS) {
-            return Err(format!("Connector names can be at most {MAX_CONNECTOR_LABEL_CHARS} characters"));
+        if self
+            .label()
+            .is_some_and(|label| label.chars().count() > MAX_CONNECTOR_LABEL_CHARS)
+        {
+            return Err(format!(
+                "Connector names can be at most {MAX_CONNECTOR_LABEL_CHARS} characters"
+            ));
         }
         if let (Self::S3(config), Some(TransportSecrets::S3(credentials))) = (self, secrets) {
-            S3Transport::new(instance_id, config, credentials).map_err(|error| error.to_string())?;
+            S3Transport::new(instance_id, config, credentials)
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
@@ -188,9 +201,10 @@ pub enum ConnectorCredentials {
 impl ConnectorCredentials {
     pub fn into_secrets(self) -> Result<TransportSecrets, String> {
         match self {
-            Self::IpfsRpc { token } if token.trim().is_empty() => {
-                Err("Enter the new access token, or remove the connector and add it again without one".to_string())
-            }
+            Self::IpfsRpc { token } if token.trim().is_empty() => Err(
+                "Enter the new access token, or remove the connector and add it again without one"
+                    .to_string(),
+            ),
             Self::IpfsRpc { token } => Ok(TransportSecrets::IpfsRpcToken(token)),
             Self::S3(credentials) => Ok(TransportSecrets::S3(credentials)),
         }
@@ -222,7 +236,9 @@ impl TransportSecrets {
     pub fn to_portable_json(&self) -> Result<String, String> {
         match self {
             Self::IpfsRpcToken(token) => Ok(serde_json::json!({ "token": token }).to_string()),
-            Self::S3(credentials) => serde_json::to_string(credentials).map_err(|error| error.to_string()),
+            Self::S3(credentials) => {
+                serde_json::to_string(credentials).map_err(|error| error.to_string())
+            }
         }
     }
 
@@ -236,18 +252,25 @@ impl TransportSecrets {
                 struct Token {
                     token: String,
                 }
-                serde_json::from_str::<Token>(json).map(|token| Self::IpfsRpcToken(token.token)).map_err(|_| unreadable())
+                serde_json::from_str::<Token>(json)
+                    .map(|token| Self::IpfsRpcToken(token.token))
+                    .map_err(|_| unreadable())
             }
-            S3_KIND => serde_json::from_str(json).map(Self::S3).map_err(|_| unreadable()),
+            S3_KIND => serde_json::from_str(json)
+                .map(Self::S3)
+                .map_err(|_| unreadable()),
             _ => Err(unreadable()),
         }
     }
 
     pub fn store(&self, instance_id: &str) -> Result<(), String> {
-        let service = secret_service(self.kind()).expect("every secret kind has a keychain service");
+        let service =
+            secret_service(self.kind()).expect("every secret kind has a keychain service");
         let value = match self {
             Self::IpfsRpcToken(token) => token.clone(),
-            Self::S3(credentials) => serde_json::to_string(credentials).map_err(|error| error.to_string())?,
+            Self::S3(credentials) => {
+                serde_json::to_string(credentials).map_err(|error| error.to_string())?
+            }
         };
         secret_store::set(service, instance_id, &value)
     }
@@ -255,14 +278,20 @@ impl TransportSecrets {
     /// Loads the stored secret for a connector of `kind`. `Ok(None)` when
     /// nothing is stored or the kind has no secret.
     pub fn load(kind: &str, instance_id: &str) -> Result<Option<Self>, String> {
-        let Some(service) = secret_service(kind) else { return Ok(None) };
-        let Some(value) = secret_store::get(service, instance_id)? else { return Ok(None) };
+        let Some(service) = secret_service(kind) else {
+            return Ok(None);
+        };
+        let Some(value) = secret_store::get(service, instance_id)? else {
+            return Ok(None);
+        };
         match kind {
             IPFS_RPC_KIND => Ok(Some(Self::IpfsRpcToken(value))),
             // A malformed keychain value is reported without echoing it.
             S3_KIND => serde_json::from_str(&value)
                 .map(|credentials| Some(Self::S3(credentials)))
-                .map_err(|_| "The stored S3 credentials are unreadable; replace them in Settings".to_string()),
+                .map_err(|_| {
+                    "The stored S3 credentials are unreadable; replace them in Settings".to_string()
+                }),
             _ => Ok(None),
         }
     }
@@ -297,7 +326,10 @@ mod secret_store {
     }
 
     pub fn get(service: &str, account: &str) -> Result<Option<String>, String> {
-        match Entry::new(service, account).map_err(display)?.get_password() {
+        match Entry::new(service, account)
+            .map_err(display)?
+            .get_password()
+        {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(display(error)),
@@ -305,11 +337,17 @@ mod secret_store {
     }
 
     pub fn set(service: &str, account: &str, value: &str) -> Result<(), String> {
-        Entry::new(service, account).map_err(display)?.set_password(value).map_err(display)
+        Entry::new(service, account)
+            .map_err(display)?
+            .set_password(value)
+            .map_err(display)
     }
 
     pub fn delete(service: &str, account: &str) -> Result<(), String> {
-        match Entry::new(service, account).map_err(display)?.delete_credential() {
+        match Entry::new(service, account)
+            .map_err(display)?
+            .delete_credential()
+        {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(display(error)),
         }
@@ -327,16 +365,26 @@ pub(crate) mod secret_store {
     }
 
     pub fn get(service: &str, account: &str) -> Result<Option<String>, String> {
-        Ok(map().lock().unwrap().get(&(service.to_string(), account.to_string())).cloned())
+        Ok(map()
+            .lock()
+            .unwrap()
+            .get(&(service.to_string(), account.to_string()))
+            .cloned())
     }
 
     pub fn set(service: &str, account: &str, value: &str) -> Result<(), String> {
-        map().lock().unwrap().insert((service.to_string(), account.to_string()), value.to_string());
+        map().lock().unwrap().insert(
+            (service.to_string(), account.to_string()),
+            value.to_string(),
+        );
         Ok(())
     }
 
     pub fn delete(service: &str, account: &str) -> Result<(), String> {
-        map().lock().unwrap().remove(&(service.to_string(), account.to_string()));
+        map()
+            .lock()
+            .unwrap()
+            .remove(&(service.to_string(), account.to_string()));
         Ok(())
     }
 
@@ -385,22 +433,31 @@ impl Connector {
         secrets: Option<TransportSecrets>,
     ) -> Result<Self, String> {
         match config {
-            TransportConfig::Folder(folder) => SyncFolderTransport::open(instance_id, std::path::Path::new(&folder.path))
-                .await
-                .map(Self::Folder)
-                .map_err(|error| error.to_string()),
+            TransportConfig::Folder(folder) => {
+                SyncFolderTransport::open(instance_id, std::path::Path::new(&folder.path))
+                    .await
+                    .map(Self::Folder)
+                    .map_err(|error| error.to_string())
+            }
             TransportConfig::IpfsRpc(ipfs) => {
                 let token = match secrets {
                     Some(TransportSecrets::IpfsRpcToken(token)) => Some(token),
                     _ => None,
                 };
-                IpfsRpcTransport::new(instance_id, &ipfs.base_url, token, crate::replicated_sync::SPACE_ID.as_bytes())
-                    .map(Self::IpfsRpc)
-                    .map_err(|error| error.to_string())
+                IpfsRpcTransport::new(
+                    instance_id,
+                    &ipfs.base_url,
+                    token,
+                    crate::replicated_sync::SPACE_ID.as_bytes(),
+                )
+                .map(Self::IpfsRpc)
+                .map_err(|error| error.to_string())
             }
             TransportConfig::S3(s3) => match secrets {
                 Some(TransportSecrets::S3(credentials)) => {
-                    S3Transport::new(instance_id, s3, &credentials).map(Self::S3).map_err(|error| error.to_string())
+                    S3Transport::new(instance_id, s3, &credentials)
+                        .map(Self::S3)
+                        .map_err(|error| error.to_string())
                 }
                 _ => Err("No S3 credentials are stored for this connector".to_string()),
             },
@@ -410,7 +467,10 @@ impl Connector {
     /// Opens a persisted connector, loading its secrets from the keychain.
     /// An unreadable IPFS token is treated as absent, as it always has
     /// been; missing S3 credentials fail the open.
-    pub async fn open_persisted(instance_id: &str, config: &TransportConfig) -> Result<Self, String> {
+    pub async fn open_persisted(
+        instance_id: &str,
+        config: &TransportConfig,
+    ) -> Result<Self, String> {
         let secrets = TransportSecrets::load(config.kind(), instance_id);
         let secrets = match config {
             TransportConfig::IpfsRpc(_) => secrets.ok().flatten(),
@@ -448,9 +508,17 @@ impl Connector {
     /// the kinds [`TransportConfig::supports_delete_data`] names support it.
     pub async fn delete_all_corpus_data(&self) -> Result<(), String> {
         match self {
-            Self::Folder(folder) => folder.delete_all_corpus_data().await.map_err(|error| error.to_string()),
-            Self::S3(s3) => s3.delete_all_corpus_data().await.map_err(|error| error.to_string()),
-            Self::IpfsRpc(_) => Err("Pinned IPFS data stays with the provider; remove it there".to_string()),
+            Self::Folder(folder) => folder
+                .delete_all_corpus_data()
+                .await
+                .map_err(|error| error.to_string()),
+            Self::S3(s3) => s3
+                .delete_all_corpus_data()
+                .await
+                .map_err(|error| error.to_string()),
+            Self::IpfsRpc(_) => {
+                Err("Pinned IPFS data stays with the provider; remove it there".to_string())
+            }
         }
     }
 
@@ -493,9 +561,20 @@ mod tests {
     #[test]
     fn rows_written_before_typed_configs_still_parse() {
         // The exact JSON the pre-refactor `add_*_transport` functions wrote.
-        let folder = TransportConfig::from_row("folder", r#"{"path":"/Users/me/Dropbox/Sync"}"#).unwrap();
-        assert_eq!(folder, TransportConfig::Folder(FolderConfig { path: "/Users/me/Dropbox/Sync".to_string(), label: None }));
-        let ipfs = TransportConfig::from_row("ipfs_rpc", &serde_json::json!({"baseUrl": crate::ipfs_transport::FILEBASE_RPC_URL}).to_string()).unwrap();
+        let folder =
+            TransportConfig::from_row("folder", r#"{"path":"/Users/me/Dropbox/Sync"}"#).unwrap();
+        assert_eq!(
+            folder,
+            TransportConfig::Folder(FolderConfig {
+                path: "/Users/me/Dropbox/Sync".to_string(),
+                label: None
+            })
+        );
+        let ipfs = TransportConfig::from_row(
+            "ipfs_rpc",
+            &serde_json::json!({"baseUrl": crate::ipfs_transport::FILEBASE_RPC_URL}).to_string(),
+        )
+        .unwrap();
         assert_eq!(ipfs.location(), crate::ipfs_transport::FILEBASE_RPC_URL);
         let s3 = TransportConfig::from_row(
             "s3",
@@ -508,24 +587,42 @@ mod tests {
 
     #[test]
     fn unknown_kinds_and_malformed_json_yield_none() {
-        assert_eq!(TransportConfig::from_row("carrier-pigeon", r#"{"path":"/x"}"#), None);
+        assert_eq!(
+            TransportConfig::from_row("carrier-pigeon", r#"{"path":"/x"}"#),
+            None
+        );
         assert_eq!(TransportConfig::from_row("folder", "not json"), None);
-        assert_eq!(TransportConfig::from_row("folder", r#"{"baseUrl":"https://x"}"#), None);
-        assert_eq!(TransportConfig::from_row("s3", r#"{"endpoint":"https://x"}"#), None);
+        assert_eq!(
+            TransportConfig::from_row("folder", r#"{"baseUrl":"https://x"}"#),
+            None
+        );
+        assert_eq!(
+            TransportConfig::from_row("s3", r#"{"endpoint":"https://x"}"#),
+            None
+        );
     }
 
     #[test]
     fn every_kind_round_trips_through_its_row_with_a_label() {
         let mut configs = vec![
-            TransportConfig::Folder(FolderConfig { path: "/tmp/sync".to_string(), label: None }),
-            TransportConfig::IpfsRpc(IpfsRpcConfig { base_url: crate::ipfs_transport::FILEBASE_RPC_URL.to_string(), label: None }),
+            TransportConfig::Folder(FolderConfig {
+                path: "/tmp/sync".to_string(),
+                label: None,
+            }),
+            TransportConfig::IpfsRpc(IpfsRpcConfig {
+                base_url: crate::ipfs_transport::FILEBASE_RPC_URL.to_string(),
+                label: None,
+            }),
             TransportConfig::S3(s3_config()),
         ];
         for config in &mut configs {
             config.set_label(Some("  Work  "));
             assert_eq!(config.label(), Some("Work"));
             let json = config.to_config_json().unwrap();
-            assert_eq!(TransportConfig::from_row(config.kind(), &json).as_ref(), Some(&*config));
+            assert_eq!(
+                TransportConfig::from_row(config.kind(), &json).as_ref(),
+                Some(&*config)
+            );
             config.set_label(Some("   "));
             assert_eq!(config.label(), None);
             assert!(!config.to_config_json().unwrap().contains("label"));
@@ -536,9 +633,13 @@ mod tests {
     fn a_labelled_folder_row_stays_readable_by_the_old_path_lookup() {
         // Older app versions read only `path`; the added `label` must not
         // move or rename it.
-        let mut config = TransportConfig::Folder(FolderConfig { path: "/tmp/sync".to_string(), label: None });
+        let mut config = TransportConfig::Folder(FolderConfig {
+            path: "/tmp/sync".to_string(),
+            label: None,
+        });
         config.set_label(Some("Laptop"));
-        let value: serde_json::Value = serde_json::from_str(&config.to_config_json().unwrap()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&config.to_config_json().unwrap()).unwrap();
         assert_eq!(value["path"], "/tmp/sync");
     }
 
@@ -546,9 +647,17 @@ mod tests {
     fn connector_names_are_limited_below_at_and_above_the_limit() {
         let credentials = TransportSecrets::S3(s3_credentials());
         let mut config = TransportConfig::S3(s3_config());
-        for (length, ok) in [(MAX_CONNECTOR_LABEL_CHARS - 1, true), (MAX_CONNECTOR_LABEL_CHARS, true), (MAX_CONNECTOR_LABEL_CHARS + 1, false)] {
+        for (length, ok) in [
+            (MAX_CONNECTOR_LABEL_CHARS - 1, true),
+            (MAX_CONNECTOR_LABEL_CHARS, true),
+            (MAX_CONNECTOR_LABEL_CHARS + 1, false),
+        ] {
             config.set_label(Some(&"é".repeat(length)));
-            assert_eq!(config.validate("s3", Some(&credentials)).is_ok(), ok, "length {length}");
+            assert_eq!(
+                config.validate("s3", Some(&credentials)).is_ok(),
+                ok,
+                "length {length}"
+            );
         }
     }
 
@@ -558,57 +667,97 @@ mod tests {
             r#"{"kind":"s3","accessKeyId":"AKIAEXAMPLE","secretAccessKey":"s3-secret-value","sessionToken":null}"#,
         )
         .unwrap();
-        assert_eq!(s3.into_secrets().unwrap(), TransportSecrets::S3(s3_credentials()));
+        assert_eq!(
+            s3.into_secrets().unwrap(),
+            TransportSecrets::S3(s3_credentials())
+        );
 
-        let ipfs: ConnectorCredentials = serde_json::from_str(r#"{"kind":"ipfs_rpc","token":"t"}"#).unwrap();
-        assert_eq!(ipfs.into_secrets().unwrap(), TransportSecrets::IpfsRpcToken("t".to_string()));
+        let ipfs: ConnectorCredentials =
+            serde_json::from_str(r#"{"kind":"ipfs_rpc","token":"t"}"#).unwrap();
+        assert_eq!(
+            ipfs.into_secrets().unwrap(),
+            TransportSecrets::IpfsRpcToken("t".to_string())
+        );
 
-        let blank: ConnectorCredentials = serde_json::from_str(r#"{"kind":"ipfs_rpc","token":"  "}"#).unwrap();
+        let blank: ConnectorCredentials =
+            serde_json::from_str(r#"{"kind":"ipfs_rpc","token":"  "}"#).unwrap();
         assert!(blank.into_secrets().is_err());
 
         assert!(serde_json::from_str::<ConnectorCredentials>(r#"{"kind":"folder"}"#).is_err());
-        assert!(serde_json::from_str::<ConnectorCredentials>(r#"{"kind":"s3","accessKeyId":"a"}"#).is_err());
+        assert!(
+            serde_json::from_str::<ConnectorCredentials>(r#"{"kind":"s3","accessKeyId":"a"}"#)
+                .is_err()
+        );
     }
 
     #[test]
     fn only_folder_and_s3_support_deleting_data() {
-        assert!(TransportConfig::Folder(FolderConfig { path: "/x".to_string(), label: None }).supports_delete_data());
+        assert!(TransportConfig::Folder(FolderConfig {
+            path: "/x".to_string(),
+            label: None
+        })
+        .supports_delete_data());
         assert!(TransportConfig::S3(s3_config()).supports_delete_data());
-        assert!(!TransportConfig::IpfsRpc(IpfsRpcConfig { base_url: "https://x".to_string(), label: None }).supports_delete_data());
+        assert!(!TransportConfig::IpfsRpc(IpfsRpcConfig {
+            base_url: "https://x".to_string(),
+            label: None
+        })
+        .supports_delete_data());
     }
 
     #[test]
     fn validation_matches_secrets_to_their_kind() {
         let s3 = TransportConfig::S3(s3_config());
-        assert!(s3.validate("s3", Some(&TransportSecrets::S3(s3_credentials()))).is_ok());
+        assert!(s3
+            .validate("s3", Some(&TransportSecrets::S3(s3_credentials())))
+            .is_ok());
         assert!(s3.validate("s3", None).is_err());
-        assert!(s3.validate("s3", Some(&TransportSecrets::IpfsRpcToken("t".to_string()))).is_err());
+        assert!(s3
+            .validate("s3", Some(&TransportSecrets::IpfsRpcToken("t".to_string())))
+            .is_err());
 
-        let folder = TransportConfig::Folder(FolderConfig { path: "/x".to_string(), label: None });
+        let folder = TransportConfig::Folder(FolderConfig {
+            path: "/x".to_string(),
+            label: None,
+        });
         assert!(folder.validate("f", None).is_ok());
-        assert!(folder.validate("f", Some(&TransportSecrets::S3(s3_credentials()))).is_err());
+        assert!(folder
+            .validate("f", Some(&TransportSecrets::S3(s3_credentials())))
+            .is_err());
 
-        let ipfs = TransportConfig::IpfsRpc(IpfsRpcConfig { base_url: "https://x".to_string(), label: None });
+        let ipfs = TransportConfig::IpfsRpc(IpfsRpcConfig {
+            base_url: "https://x".to_string(),
+            label: None,
+        });
         assert!(ipfs.validate("i", None).is_ok());
-        assert!(ipfs.validate("i", Some(&TransportSecrets::IpfsRpcToken("t".to_string()))).is_ok());
+        assert!(ipfs
+            .validate("i", Some(&TransportSecrets::IpfsRpcToken("t".to_string())))
+            .is_ok());
 
         let mut bad = s3_config();
         bad.endpoint = "http://s3.example.com".to_string();
-        assert!(TransportConfig::S3(bad).validate("s3", Some(&TransportSecrets::S3(s3_credentials()))).is_err());
+        assert!(TransportConfig::S3(bad)
+            .validate("s3", Some(&TransportSecrets::S3(s3_credentials())))
+            .is_err());
     }
 
     #[test]
     fn secrets_round_trip_per_kind_and_delete_cleanly() {
         let id = format!("secrets-{}", uuid::Uuid::new_v4());
         TransportSecrets::S3(s3_credentials()).store(&id).unwrap();
-        assert_eq!(TransportSecrets::load("s3", &id).unwrap(), Some(TransportSecrets::S3(s3_credentials())));
+        assert_eq!(
+            TransportSecrets::load("s3", &id).unwrap(),
+            Some(TransportSecrets::S3(s3_credentials()))
+        );
         assert_eq!(TransportSecrets::load("ipfs_rpc", &id).unwrap(), None);
         assert_eq!(TransportSecrets::load("folder", &id).unwrap(), None);
 
         TransportSecrets::delete("s3", &id).unwrap();
         assert_eq!(TransportSecrets::load("s3", &id).unwrap(), None);
 
-        TransportSecrets::IpfsRpcToken("tok".to_string()).store(&id).unwrap();
+        TransportSecrets::IpfsRpcToken("tok".to_string())
+            .store(&id)
+            .unwrap();
         TransportSecrets::S3(s3_credentials()).store(&id).unwrap();
         TransportSecrets::delete_every_kind(&id).unwrap();
         assert!(secret_store::values_for(&id).is_empty());
@@ -616,11 +765,18 @@ mod tests {
 
     #[test]
     fn secrets_round_trip_through_their_portable_json() {
-        for secrets in [TransportSecrets::S3(s3_credentials()), TransportSecrets::IpfsRpcToken("tok".to_string())] {
+        for secrets in [
+            TransportSecrets::S3(s3_credentials()),
+            TransportSecrets::IpfsRpcToken("tok".to_string()),
+        ] {
             let json = secrets.to_portable_json().unwrap();
-            assert_eq!(TransportSecrets::from_portable_json(secrets.kind(), &json).unwrap(), secrets);
+            assert_eq!(
+                TransportSecrets::from_portable_json(secrets.kind(), &json).unwrap(),
+                secrets
+            );
         }
-        let error = TransportSecrets::from_portable_json("s3", "{\"secret\":\"leak-me\"}").unwrap_err();
+        let error =
+            TransportSecrets::from_portable_json("s3", "{\"secret\":\"leak-me\"}").unwrap_err();
         assert!(!error.contains("leak-me"));
         assert!(TransportSecrets::from_portable_json("folder", "{}").is_err());
     }
@@ -628,7 +784,12 @@ mod tests {
     #[test]
     fn unreadable_s3_credentials_are_reported_without_echoing_them() {
         let id = format!("garbled-{}", uuid::Uuid::new_v4());
-        secret_store::set(S3_CREDENTIALS_KEYCHAIN_SERVICE, &id, "garbled-secret-material").unwrap();
+        secret_store::set(
+            S3_CREDENTIALS_KEYCHAIN_SERVICE,
+            &id,
+            "garbled-secret-material",
+        )
+        .unwrap();
         let error = TransportSecrets::load("s3", &id).unwrap_err();
         assert!(!error.contains("garbled-secret-material"));
     }
@@ -654,12 +815,22 @@ mod tests {
 
     #[tokio::test]
     async fn connector_operations_dispatch_to_the_folder_adapter() {
-        let path = std::env::temp_dir().join(format!("threestrands-connector-ops-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!(
+            "threestrands-connector-ops-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&path).unwrap();
-        let config = TransportConfig::Folder(FolderConfig { path: path.to_string_lossy().into_owned(), label: None });
+        let config = TransportConfig::Folder(FolderConfig {
+            path: path.to_string_lossy().into_owned(),
+            label: None,
+        });
         let connector = Connector::open_persisted("folder", &config).await.unwrap();
         let cid = threestrands_sync_transport::Cid::for_bytes(b"ops");
-        connector.transport().put_object(&cid, b"ops").await.unwrap();
+        connector
+            .transport()
+            .put_object(&cid, b"ops")
+            .await
+            .unwrap();
         assert!(connector.corpus_size_bytes().await.unwrap() > 0);
         assert_eq!(connector.probe().await.unwrap(), ConnectorProbe::Folder);
         connector.delete_all_corpus_data().await.unwrap();
@@ -675,11 +846,19 @@ mod tests {
         use crate::s3_transport::fake_server::FakeS3Server;
         let server = FakeS3Server::spawn().await;
         let config = TransportConfig::S3(server.config(""));
-        let connector = Connector::open("s3", &config, Some(TransportSecrets::S3(FakeS3Server::credentials())))
+        let connector = Connector::open(
+            "s3",
+            &config,
+            Some(TransportSecrets::S3(FakeS3Server::credentials())),
+        )
+        .await
+        .unwrap();
+        let cid = threestrands_sync_transport::Cid::for_bytes(b"ops");
+        connector
+            .transport()
+            .put_object(&cid, b"ops")
             .await
             .unwrap();
-        let cid = threestrands_sync_transport::Cid::for_bytes(b"ops");
-        connector.transport().put_object(&cid, b"ops").await.unwrap();
         assert_eq!(connector.corpus_size_bytes().await, Some(3));
         match connector.probe().await.unwrap() {
             ConnectorProbe::S3(report) => assert!(report.can_delete),
@@ -691,7 +870,10 @@ mod tests {
 
     #[tokio::test]
     async fn an_ipfs_connector_refuses_to_delete_data() {
-        let config = TransportConfig::IpfsRpc(IpfsRpcConfig { base_url: crate::ipfs_transport::FILEBASE_RPC_URL.to_string(), label: None });
+        let config = TransportConfig::IpfsRpc(IpfsRpcConfig {
+            base_url: crate::ipfs_transport::FILEBASE_RPC_URL.to_string(),
+            label: None,
+        });
         let connector = Connector::open("ipfs", &config, None).await.unwrap();
         assert!(connector.delete_all_corpus_data().await.is_err());
         assert_eq!(connector.corpus_size_bytes().await, None);

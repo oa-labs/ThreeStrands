@@ -14,8 +14,8 @@ use crate::provider::imap::ImapSession as _;
 use crate::auth;
 use crate::{
     authorize_interactively, catalogued_mail_provider, log_failure, record_synced_value,
-    resolve_account, run_database_task, spawn_synced_account, AccountRegistry, AppError, AppResult, AppState,
-    ConnectedAccount,
+    resolve_account, run_database_task, spawn_synced_account, AccountRegistry, AppError, AppResult,
+    AppState, ConnectedAccount,
 };
 
 fn record_mail_account(state: &State<'_, AppState>, account: &Account) -> AppResult<()> {
@@ -60,12 +60,14 @@ pub(crate) async fn connect_google(state: State<'_, AppState>) -> AppResult<Sync
         "refreshing account identity",
         state.correspondence.refresh_identity().await,
     );
-    service.sync().await
-        .map_err(AppError::from)
+    service.sync().await.map_err(AppError::from)
 }
 
 #[tauri::command]
-pub(crate) async fn disconnect_google(state: State<'_, AppState>, app: tauri::AppHandle) -> AppResult<()> {
+pub(crate) async fn disconnect_google(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> AppResult<()> {
     let primary = state.database.primary_account_id();
     remove_account(primary, state, app).await
 }
@@ -105,9 +107,7 @@ pub(crate) async fn add_account(
 pub(crate) async fn discover_imap_settings(
     email: String,
 ) -> AppResult<Option<imap::DiscoveryResult>> {
-    imap::discover(&email)
-        .await
-        .map_err(AppError::from)
+    imap::discover(&email).await.map_err(AppError::from)
 }
 
 /// Probe a user-entered IMAP server's certificate WITHOUT logging in, for the
@@ -241,7 +241,8 @@ pub(crate) async fn test_and_save_imap_account(
 
     // Adopt the account row and persist the settings. If the settings write
     // fails, roll back the credential so a retry starts clean.
-    let adopt_result = save_tested_imap_settings(&state.database, &request, imap_pinned, smtp_pinned);
+    let adopt_result =
+        save_tested_imap_settings(&state.database, &request, imap_pinned, smtp_pinned);
     let account = match adopt_result {
         Ok(account) => account,
         Err(error) => {
@@ -328,13 +329,19 @@ pub(crate) async fn discover_imap_mailboxes(
         .await
         .map_err(|error| AppError::message(imap::plain_language(&error)))?;
     let store = imap::ImapStateStore::new(state.database.clone(), email.clone());
-    session.capabilities().await.map_err(|error| AppError::message(imap::plain_language(&error)))?;
+    session
+        .capabilities()
+        .await
+        .map_err(|error| AppError::message(imap::plain_language(&error)))?;
     store.set_native_labels(session.supports_label_extensions())?;
     let mapping = imap::discover_and_persist(&mut session, &store)
         .await
         .map(|mut mapping| {
             mapping.label_archive = session.supports_label_extensions()
-                && mapping.selectable.iter().any(|entry| entry.special_use.as_deref() == Some("\\All"));
+                && mapping
+                    .selectable
+                    .iter()
+                    .any(|entry| entry.special_use.as_deref() == Some("\\All"));
             mapping
         })
         .map_err(|error| AppError::message(imap::plain_language(&error)));
@@ -418,13 +425,19 @@ pub(crate) async fn commit_imap_mailbox_mapping(
     if commit.archive_choice().is_err() {
         // Never trust a frontend discovery hint to relax the mapping contract.
         // Re-check the live capability and the catalog's standard \All role.
-        let password = crate::auth::ImapCredential::for_account(&commit.email).load()?.imap;
-        let mut session = imap::connect_with_settings(&settings, &password).await
+        let password = crate::auth::ImapCredential::for_account(&commit.email)
+            .load()?
+            .imap;
+        let mut session = imap::connect_with_settings(&settings, &password)
+            .await
             .map_err(|error| AppError::message(imap::plain_language(&error)))?;
         let checked = session.capabilities().await;
-        let label_archive = checked.is_ok() && session.supports_label_extensions()
-            && imap::ImapStateStore::new(state.database.clone(), &commit.email).mailboxes()?
-                .iter().any(|mailbox| mailbox.special_use.as_deref() == Some("\\All"));
+        let label_archive = checked.is_ok()
+            && session.supports_label_extensions()
+            && imap::ImapStateStore::new(state.database.clone(), &commit.email)
+                .mailboxes()?
+                .iter()
+                .any(|mailbox| mailbox.special_use.as_deref() == Some("\\All"));
         let _ = session.logout().await;
         checked.map_err(|error| AppError::message(imap::plain_language(&error)))?;
         return save_imap_mailbox_mapping(&state.database, settings, commit, label_archive);
@@ -520,13 +533,11 @@ fn imap_settings_or_reject(
     database: &Database,
     account: &str,
 ) -> AppResult<imap::ImapAccountSettings> {
-    database
-        .imap_account_settings(account)?
-        .ok_or_else(|| {
-            AppError::message(format!(
-                "{account} is not an IMAP account, so it has no sending settings."
-            ))
-        })
+    database.imap_account_settings(account)?.ok_or_else(|| {
+        AppError::message(format!(
+            "{account} is not an IMAP account, so it has no sending settings."
+        ))
+    })
 }
 
 /// Read an IMAP account's sending options for the Settings panel. Refuses a
@@ -573,7 +584,9 @@ pub(crate) fn set_imap_identities(
     // account address anchors the list and cannot be removed or renamed away.
     let validated = imap::validate_identity_edit(&account, &submitted)?;
     settings.identities = validated;
-    state.database.save_imap_account_settings(&account, &settings)?;
+    state
+        .database
+        .save_imap_account_settings(&account, &settings)?;
     Ok(state.database.account_sending_identities(&account)?)
 }
 
@@ -588,7 +601,9 @@ pub(crate) fn set_imap_server_saves_sent(
 ) -> AppResult<()> {
     let mut settings = imap_settings_or_reject(&state.database, &account)?;
     settings.server_saves_sent = enabled;
-    state.database.save_imap_account_settings(&account, &settings)?;
+    state
+        .database
+        .save_imap_account_settings(&account, &settings)?;
     Ok(())
 }
 
@@ -692,18 +707,24 @@ pub(crate) async fn check_imap_certificate_changes(
     let settings = imap_settings_or_reject(&state.database, &account)?;
     let imap = match settings.pinned_for(&settings.imap_host, settings.imap_port) {
         Some(_) => {
-            let probe =
-                imap::probe_imap_certificate(&settings.imap_host, settings.imap_port, settings.imap_security)
-                    .await;
+            let probe = imap::probe_imap_certificate(
+                &settings.imap_host,
+                settings.imap_port,
+                settings.imap_security,
+            )
+            .await;
             changed_certificate(&settings, &settings.imap_host, settings.imap_port, probe)
         }
         None => None,
     };
     let smtp = match settings.pinned_for(&settings.smtp_host, settings.smtp_port) {
         Some(_) => {
-            let probe =
-                imap::probe_smtp_certificate(&settings.smtp_host, settings.smtp_port, settings.smtp_security)
-                    .await;
+            let probe = imap::probe_smtp_certificate(
+                &settings.smtp_host,
+                settings.smtp_port,
+                settings.smtp_security,
+            )
+            .await;
             changed_certificate(&settings, &settings.smtp_host, settings.smtp_port, probe)
         }
         None => None,
@@ -807,7 +828,10 @@ pub(crate) async fn update_imap_connection(
         update.smtp_port,
         update.smtp_pinned_fingerprint.as_deref(),
     )?;
-    let new_password = update.password.clone().filter(|password| !password.is_empty());
+    let new_password = update
+        .password
+        .clone()
+        .filter(|password| !password.is_empty());
     let credential = crate::auth::ImapCredential::for_account(&email);
     let saved_password = credential.load().ok();
     let password = match &new_password {
@@ -819,7 +843,10 @@ pub(crate) async fn update_imap_connection(
             .clone()
             .ok_or_else(|| "Enter your password to reconnect this account.".to_string())?,
     };
-    let smtp_password = password.smtp.clone().unwrap_or_else(|| password.imap.clone());
+    let smtp_password = password
+        .smtp
+        .clone()
+        .unwrap_or_else(|| password.imap.clone());
 
     imap::test_imap(
         &update.imap_host,
@@ -935,7 +962,12 @@ async fn remove_account_internal(
     // started outside the polling loop (foreground, backfill, manual
     // refresh): a run still waiting on the provider would otherwise write
     // the account's threads and cursor back after the purge.
-    let service = state.accounts.lock().await.get(&email).map(|connected| connected.sync.clone());
+    let service = state
+        .accounts
+        .lock()
+        .await
+        .get(&email)
+        .map(|connected| connected.sync.clone());
     if let Some(service) = &service {
         service.retire().await;
     }
@@ -985,20 +1017,48 @@ pub(crate) async fn remove_synced_mail_account(
     if !state.database.cross_device_sync_enrolled()? {
         return Err(NOT_SYNC_ENROLLED.into());
     }
-    state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase())?;
+    state.database.record_local_entity_deletion(
+        threestrands_sync_protocol::EntityType::MailAccount,
+        &email.to_ascii_lowercase(),
+    )?;
     for task in state.database.list_tasks(Some(&email), None)? {
-        state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::Task, &task.id)?;
+        state
+            .database
+            .record_local_entity_deletion(threestrands_sync_protocol::EntityType::Task, &task.id)?;
     }
     for goal in state.database.list_goals(Some(&email))? {
-        state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::Goal, &goal.id)?;
+        state
+            .database
+            .record_local_entity_deletion(threestrands_sync_protocol::EntityType::Goal, &goal.id)?;
     }
-    for split in state.database.list_split_inboxes()?.into_iter().filter(|split| split.account_id == email) {
-        state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::SplitInbox, &split.id)?;
+    for split in state
+        .database
+        .list_split_inboxes()?
+        .into_iter()
+        .filter(|split| split.account_id == email)
+    {
+        state.database.record_local_entity_deletion(
+            threestrands_sync_protocol::EntityType::SplitInbox,
+            &split.id,
+        )?;
     }
-    for rule in state.database.list_sender_rules()?.into_iter().filter(|rule| rule.account_id.eq_ignore_ascii_case(&email)) {
-        state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::SenderRule, &rule.id)?;
+    for rule in state
+        .database
+        .list_sender_rules()?
+        .into_iter()
+        .filter(|rule| rule.account_id.eq_ignore_ascii_case(&email))
+    {
+        state.database.record_local_entity_deletion(
+            threestrands_sync_protocol::EntityType::SenderRule,
+            &rule.id,
+        )?;
     }
-    for record in state.database.list_sender_confirmations()?.into_iter().filter(|record| record.account_id.eq_ignore_ascii_case(&email)) {
+    for record in state
+        .database
+        .list_sender_confirmations()?
+        .into_iter()
+        .filter(|record| record.account_id.eq_ignore_ascii_case(&email))
+    {
         // Remove the readable row too, so the backfill in sync_once cannot
         // publish it again while removing the account everywhere.
         state.database.forget_sender_delivery(&record.id)?;
@@ -1044,7 +1104,9 @@ pub(crate) async fn reconnect_account(
     // Make the persisted status authoritative before any newly spawned
     // service checks it. Previously the service could observe needs_reauth,
     // skip its initial sync, and sleep until the first polling interval.
-    let account = state.database.adopt_mail_account(&email, auth.mail_provider())?;
+    let account = state
+        .database
+        .adopt_mail_account(&email, auth.mail_provider())?;
     state.database.ensure_compose_identity(&email)?;
     let service = {
         // Self-heal: an account already in the `accounts` table should
@@ -1077,10 +1139,17 @@ pub(crate) fn set_account_color(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     state.database.set_account_color(&email, &color)?;
-    let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
-    record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
+    let account = state
+        .database
+        .get_account(&email)?
+        .ok_or_else(|| "Account not found".to_string())?;
+    record_synced_value(
+        &state,
+        threestrands_sync_protocol::EntityType::MailAccount,
+        &email.to_ascii_lowercase(),
         &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
-        Some(std::collections::BTreeSet::from(["color".to_string()])))
+        Some(std::collections::BTreeSet::from(["color".to_string()])),
+    )
 }
 
 #[tauri::command(async)]
@@ -1092,10 +1161,19 @@ pub(crate) fn set_account_display_name(
     state
         .database
         .set_account_display_name(&email, display_name.as_deref())?;
-    let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
-    record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
+    let account = state
+        .database
+        .get_account(&email)?
+        .ok_or_else(|| "Account not found".to_string())?;
+    record_synced_value(
+        &state,
+        threestrands_sync_protocol::EntityType::MailAccount,
+        &email.to_ascii_lowercase(),
         &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
-        Some(std::collections::BTreeSet::from(["displayName".to_string()])))
+        Some(std::collections::BTreeSet::from(
+            ["displayName".to_string()],
+        )),
+    )
 }
 
 #[tauri::command(async)]
@@ -1104,27 +1182,42 @@ pub(crate) fn set_account_nickname(
     nickname: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    state.database.set_account_nickname(&email, nickname.as_deref())?;
-    let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
-    record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
+    state
+        .database
+        .set_account_nickname(&email, nickname.as_deref())?;
+    let account = state
+        .database
+        .get_account(&email)?
+        .ok_or_else(|| "Account not found".to_string())?;
+    record_synced_value(
+        &state,
+        threestrands_sync_protocol::EntityType::MailAccount,
+        &email.to_ascii_lowercase(),
         &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
-        Some(std::collections::BTreeSet::from(["nickname".to_string()])))
+        Some(std::collections::BTreeSet::from(["nickname".to_string()])),
+    )
 }
 
 #[tauri::command(async)]
 pub(crate) fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> AppResult<()> {
     state.database.reorder_accounts(&emails)?;
     for account in state.database.list_accounts()? {
-        record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &account.email.to_ascii_lowercase(),
+        record_synced_value(
+            &state,
+            threestrands_sync_protocol::EntityType::MailAccount,
+            &account.email.to_ascii_lowercase(),
             &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
-            Some(std::collections::BTreeSet::from(["sortOrder".to_string()])))?;
+            Some(std::collections::BTreeSet::from(["sortOrder".to_string()])),
+        )?;
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod imap_setup_tests {
-    use crate::{auth::AuthConfig, db::Database, models::MailProviderKind, startup_account_credentials};
+    use crate::{
+        auth::AuthConfig, db::Database, models::MailProviderKind, startup_account_credentials,
+    };
 
     fn imap_setup_request() -> super::ImapSetupRequest {
         serde_json::from_value(serde_json::json!({
@@ -1212,8 +1305,7 @@ mod imap_setup_tests {
         // set-up IMAP account now ENTERS the startup registry (it has a real
         // provider and syncs), rather than being skipped. Its password is in
         // the keychain from "test and save", so it starts ready to sync.
-        let credentials =
-            startup_account_credentials(&database, &AuthConfig::google_for_test());
+        let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
         let keys: Vec<_> = credentials.iter().map(|(key, _)| key.as_str()).collect();
         assert_eq!(keys, ["imap@example.com"]);
         assert_eq!(credentials[0].1.mail_provider(), MailProviderKind::Imap);
@@ -1281,7 +1373,9 @@ mod imap_setup_tests {
             "smtpHost": "outgoing.example.com", "smtpPort": 587, "smtpSecurity": "start_tls",
             "smtpUsername": "outgoing"
         });
-        base.as_object_mut().unwrap().extend(json.as_object().unwrap().clone());
+        base.as_object_mut()
+            .unwrap()
+            .extend(json.as_object().unwrap().clone());
         serde_json::from_value(base).unwrap()
     }
 
@@ -1291,7 +1385,10 @@ mod imap_setup_tests {
         let request = imap_setup_request();
         let incoming = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
         super::save_tested_imap_settings(&database, &request, Some(incoming), None).unwrap();
-        let mut before = database.imap_account_settings(&request.email).unwrap().unwrap();
+        let mut before = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
         before.archive_mailbox = Some("Archive".into());
         before.server_saves_sent = true;
         before.identities.push(super::imap::Identity {
@@ -1303,13 +1400,18 @@ mod imap_setup_tests {
             "smtpHost": "relay.example.com", "smtpPort": 465, "smtpSecurity": "implicit_tls",
             "smtpUsername": "relay", "password": null
         }));
-        let imap_pin = super::resolve_connection_pin(&before, &update.imap_host, update.imap_port, None).unwrap();
-        let smtp_pin = super::resolve_connection_pin(&before, &update.smtp_host, update.smtp_port, None).unwrap();
+        let imap_pin =
+            super::resolve_connection_pin(&before, &update.imap_host, update.imap_port, None)
+                .unwrap();
+        let smtp_pin =
+            super::resolve_connection_pin(&before, &update.smtp_host, update.smtp_port, None)
+                .unwrap();
         // The unchanged incoming endpoint keeps its pin; the new SMTP host has none.
         assert_eq!(imap_pin, Some(incoming));
         assert_eq!(smtp_pin, None);
 
-        let merged = super::merge_imap_connection_update(before.clone(), &update, imap_pin, smtp_pin);
+        let merged =
+            super::merge_imap_connection_update(before.clone(), &update, imap_pin, smtp_pin);
         assert_eq!(merged.smtp_host, "relay.example.com");
         assert_eq!(merged.smtp_port, 465);
         assert_eq!(merged.smtp_username, "relay");
@@ -1320,7 +1422,10 @@ mod imap_setup_tests {
         assert_eq!(merged.label_container, before.label_container);
         assert!(merged.server_saves_sent);
         assert_eq!(merged.pinned_fingerprints.len(), 1);
-        assert_eq!(merged.pinned_fingerprints["incoming.example.com:993"], incoming.to_hex());
+        assert_eq!(
+            merged.pinned_fingerprints["incoming.example.com:993"],
+            incoming.to_hex()
+        );
     }
 
     #[test]
@@ -1330,17 +1435,39 @@ mod imap_setup_tests {
         let old = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
         let new = super::imap::Sha256Fingerprint::from_bytes([3; 32]);
         super::save_tested_imap_settings(&database, &request, Some(old), None).unwrap();
-        let settings = database.imap_account_settings(&request.email).unwrap().unwrap();
+        let settings = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
 
-        let trusted = super::resolve_connection_pin(&settings, "incoming.example.com", 993, Some(&new.to_hex())).unwrap();
+        let trusted = super::resolve_connection_pin(
+            &settings,
+            "incoming.example.com",
+            993,
+            Some(&new.to_hex()),
+        )
+        .unwrap();
         assert_eq!(trusted, Some(new));
         // An empty value is "nothing newly trusted", not a cleared pin.
-        let kept = super::resolve_connection_pin(&settings, "incoming.example.com", 993, Some("")).unwrap();
+        let kept = super::resolve_connection_pin(&settings, "incoming.example.com", 993, Some(""))
+            .unwrap();
         assert_eq!(kept, Some(old));
         // A pin never follows the user to a different port or host.
-        assert_eq!(super::resolve_connection_pin(&settings, "incoming.example.com", 143, None).unwrap(), None);
-        assert_eq!(super::resolve_connection_pin(&settings, "other.example.com", 993, None).unwrap(), None);
-        assert!(super::resolve_connection_pin(&settings, "incoming.example.com", 993, Some("not hex")).is_err());
+        assert_eq!(
+            super::resolve_connection_pin(&settings, "incoming.example.com", 143, None).unwrap(),
+            None
+        );
+        assert_eq!(
+            super::resolve_connection_pin(&settings, "other.example.com", 993, None).unwrap(),
+            None
+        );
+        assert!(super::resolve_connection_pin(
+            &settings,
+            "incoming.example.com",
+            993,
+            Some("not hex")
+        )
+        .is_err());
 
         // Moving the incoming port drops the pin for the old endpoint.
         let update = connection_update(serde_json::json!({ "imapPort": 1143 }));
@@ -1355,7 +1482,10 @@ mod imap_setup_tests {
         let pinned = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
         let rotated = super::imap::Sha256Fingerprint::from_bytes([3; 32]);
         super::save_tested_imap_settings(&database, &request, Some(pinned), None).unwrap();
-        let settings = database.imap_account_settings(&request.email).unwrap().unwrap();
+        let settings = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
         let probe = |fingerprint: super::imap::Sha256Fingerprint| {
             Ok(super::imap::CertificateProbe {
                 certificate: super::imap::CertificateInfo {
@@ -1377,7 +1507,9 @@ mod imap_setup_tests {
         assert!(!changed(
             "incoming.example.com",
             993,
-            Err(crate::provider::ProviderError::TransientTransport("refused".into()))
+            Err(crate::provider::ProviderError::TransientTransport(
+                "refused".into()
+            ))
         ));
     }
 
@@ -1387,7 +1519,10 @@ mod imap_setup_tests {
         let request = imap_setup_request();
         let incoming = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
         super::save_tested_imap_settings(&database, &request, Some(incoming), None).unwrap();
-        let settings = database.imap_account_settings(&request.email).unwrap().unwrap();
+        let settings = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
         let json = serde_json::to_value(super::ImapConnectionSettings::from(&settings)).unwrap();
         assert_eq!(json["imapHost"], "incoming.example.com");
         assert_eq!(json["imapSecurity"], "implicit_tls");
@@ -1416,7 +1551,9 @@ mod imap_setup_tests {
                 mailbox_overrides: Default::default(),
                 label_container: None,
             };
-            assert!(super::save_imap_mailbox_mapping(&database, before.clone(), commit, false).is_err());
+            assert!(
+                super::save_imap_mailbox_mapping(&database, before.clone(), commit, false).is_err()
+            );
             assert_eq!(
                 database
                     .imap_account_settings(&request.email)
@@ -1432,14 +1569,25 @@ mod imap_setup_tests {
         let database = Database::open_memory();
         let request = imap_setup_request();
         super::save_tested_imap_settings(&database, &request, None, None).unwrap();
-        let settings = database.imap_account_settings(&request.email).unwrap().unwrap();
+        let settings = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
         let commit = super::ImapMailboxMappingCommit {
-            email: request.email.clone(), archive: None, create_archive: None,
-            mailbox_overrides: std::collections::BTreeMap::from([("all".into(), "Everything".into())]),
+            email: request.email.clone(),
+            archive: None,
+            create_archive: None,
+            mailbox_overrides: std::collections::BTreeMap::from([(
+                "all".into(),
+                "Everything".into(),
+            )]),
             label_container: None,
         };
         super::save_imap_mailbox_mapping(&database, settings, commit, true).unwrap();
-        let saved = database.imap_account_settings(&request.email).unwrap().unwrap();
+        let saved = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
         assert_eq!(saved.archive_mailbox, None);
         assert_eq!(saved.mailbox_overrides["all"], "Everything");
     }
@@ -1448,11 +1596,28 @@ mod imap_setup_tests {
 /// Gmail owns alias verification. This only refreshes the local allowlist;
 /// it cannot create addresses or modify the provider's settings.
 #[tauri::command]
-pub(crate) async fn refresh_gmail_aliases(account: String, state: State<'_, AppState>) -> Result<Vec<crate::provider::SendingIdentity>, String> {
-    state.database.require_local_gmail_account(&account).map_err(|error| error.to_string())?;
-    let auth = resolve_account(&state, Some(&account), |connected| connected.auth.clone()).await.map_err(|error| error.to_string())?;
-    let provider = auth.provider(&state.database).map_err(|error| error.to_string())?;
-    let identities = provider.refresh_sending_identities(&account).await.map_err(|error| error.to_string())?.ok_or("Gmail sending addresses are unavailable")?;
-    state.database.store_gmail_sending_identities(&account, &identities, crate::clock::unix_millis()).map_err(|error| error.to_string())?;
+pub(crate) async fn refresh_gmail_aliases(
+    account: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::provider::SendingIdentity>, String> {
+    state
+        .database
+        .require_local_gmail_account(&account)
+        .map_err(|error| error.to_string())?;
+    let auth = resolve_account(&state, Some(&account), |connected| connected.auth.clone())
+        .await
+        .map_err(|error| error.to_string())?;
+    let provider = auth
+        .provider(&state.database)
+        .map_err(|error| error.to_string())?;
+    let identities = provider
+        .refresh_sending_identities(&account)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("Gmail sending addresses are unavailable")?;
+    state
+        .database
+        .store_gmail_sending_identities(&account, &identities, crate::clock::unix_millis())
+        .map_err(|error| error.to_string())?;
     Ok(identities)
 }

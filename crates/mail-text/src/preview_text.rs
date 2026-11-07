@@ -70,12 +70,18 @@ pub fn readable_preview(text: &str, context: &PreviewContext) -> String {
         .iter()
         .map(|(line, _)| {
             let words = words(line);
-            !line.trim().is_empty() && (words.is_empty() || !words.iter().all(|word| context.image_only_words.contains(word)))
+            !line.trim().is_empty()
+                && (words.is_empty()
+                    || !words
+                        .iter()
+                        .all(|word| context.image_only_words.contains(word)))
         })
         .collect();
     let subject = words(subject_text(&context.subject));
     if subject.len() >= MIN_REPEATED_SUBJECT_WORDS {
-        if let Some(first) = (0..lines.len()).find(|&index| kept[index] && !words(&lines[index].0).is_empty()) {
+        if let Some(first) =
+            (0..lines.len()).find(|&index| kept[index] && !words(&lines[index].0).is_empty())
+        {
             if words(&lines[first].0) == subject && kept[first + 1..].contains(&true) {
                 kept[first] = false;
             }
@@ -114,7 +120,9 @@ fn is_list_item(line: &str) -> bool {
     let marker = line.split_whitespace().next().unwrap_or("");
     marker.len() > 1
         && marker.ends_with(['.', ')'])
-        && (marker[..marker.len() - 1].chars().all(|c| c.is_ascii_digit())
+        && (marker[..marker.len() - 1]
+            .chars()
+            .all(|c| c.is_ascii_digit())
             || (marker.len() == 2 && marker.starts_with(|c: char| c.is_ascii_alphabetic())))
 }
 
@@ -132,7 +140,10 @@ fn subject_text(subject: &str) -> &str {
     let mut rest = subject.trim_start();
     loop {
         let lower = rest.to_ascii_lowercase();
-        let Some(prefix) = ["re", "fwd", "fw"].into_iter().find(|prefix| lower.starts_with(prefix)) else {
+        let Some(prefix) = ["re", "fwd", "fw"]
+            .into_iter()
+            .find(|prefix| lower.starts_with(prefix))
+        else {
             return rest;
         };
         let after = &rest[prefix.len()..];
@@ -221,7 +232,11 @@ pub fn decode_entity_references(text: &str) -> String {
             .map(|end| end + 2);
         match reference_len {
             Some(len) => {
-                mail_parser::decoders::html::add_html_token(&mut decoded, &rest.as_bytes()[..len], false);
+                mail_parser::decoders::html::add_html_token(
+                    &mut decoded,
+                    &rest.as_bytes()[..len],
+                    false,
+                );
                 rest = &rest[len..];
             }
             None => {
@@ -237,7 +252,10 @@ pub fn decode_entity_references(text: &str) -> String {
 /// Characters that draw nothing on their own. Senders repeat them between
 /// spaces as preheader padding so inbox previews stop early.
 fn is_invisible(c: char) -> bool {
-    matches!(c, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{034F}' | '\u{00AD}')
+    matches!(
+        c,
+        '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{034F}' | '\u{00AD}'
+    )
 }
 
 /// `text` on one line: whitespace runs (non-breaking spaces included) become
@@ -263,7 +281,10 @@ pub const PREHEADER_OPENING_WORDS: usize = 5;
 /// `SEARCH_PREVIEW_CHARS` like the preview itself.
 pub fn with_preheader(preview: &str, preheader: &str) -> String {
     let preheader = collapse_preview(preheader);
-    let shown: String = preview.chars().take(crate::quoted_history::SEARCH_PREVIEW_CHARS).collect();
+    let shown: String = preview
+        .chars()
+        .take(crate::quoted_history::SEARCH_PREVIEW_CHARS)
+        .collect();
     let words = |text: &str| -> Vec<String> {
         text.split(|c: char| !c.is_alphanumeric())
             .filter(|word| !word.is_empty())
@@ -299,7 +320,10 @@ fn strip_heading(line: &str) -> &str {
 fn is_url_start(chars: &[char]) -> bool {
     let starts = |prefix: &str| {
         prefix.len() <= chars.len()
-            && prefix.chars().zip(chars).all(|(a, b)| a.eq_ignore_ascii_case(b))
+            && prefix
+                .chars()
+                .zip(chars)
+                .all(|(a, b)| a.eq_ignore_ascii_case(b))
     };
     starts("https://") || starts("http://") || starts("www.")
 }
@@ -311,7 +335,12 @@ fn url_end(chars: &[char], start: usize) -> usize {
     while end < chars.len() && !chars[end].is_whitespace() && !matches!(chars[end], '<' | '>') {
         end += 1;
     }
-    while end > start && matches!(chars[end - 1], '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '\'' | '"') {
+    while end > start
+        && matches!(
+            chars[end - 1],
+            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '\'' | '"'
+        )
+    {
         end -= 1;
     }
     end
@@ -330,7 +359,13 @@ fn strip_links(line: &str) -> (String, bool) {
     let mut i = 0;
     while i < chars.len() {
         let at_word_start = i == 0 || !chars[i - 1].is_alphanumeric();
-        let bracket = if chars[i] == '[' { Some(i) } else if chars[i] == '!' && chars.get(i + 1) == Some(&'[') { Some(i + 1) } else { None };
+        let bracket = if chars[i] == '[' {
+            Some(i)
+        } else if chars[i] == '!' && chars.get(i + 1) == Some(&'[') {
+            Some(i + 1)
+        } else {
+            None
+        };
         if let Some(open) = bracket {
             if let Some((label, next)) = markdown_link(&chars, open) {
                 if is_url_start(&label.chars().collect::<Vec<_>>()) {
@@ -361,12 +396,21 @@ fn strip_links(line: &str) -> (String, bool) {
 /// The index past `]` for a converter's image placeholder at `open`:
 /// `[image]`, `[image: alt]`, or `[cid:…]`.
 fn image_placeholder(chars: &[char], open: usize) -> Option<usize> {
-    let close = open + 1 + chars[open + 1..].iter().position(|&c| c == ']' || c == '[')?;
+    let close = open
+        + 1
+        + chars[open + 1..]
+            .iter()
+            .position(|&c| c == ']' || c == '[')?;
     if chars[close] != ']' {
         return None;
     }
-    let inner: String = chars[open + 1..close].iter().collect::<String>().trim().to_lowercase();
-    (inner == "image" || inner.starts_with("image:") || inner.starts_with("cid:")).then_some(close + 1)
+    let inner: String = chars[open + 1..close]
+        .iter()
+        .collect::<String>()
+        .trim()
+        .to_lowercase();
+    (inner == "image" || inner.starts_with("image:") || inner.starts_with("cid:"))
+        .then_some(close + 1)
 }
 
 /// The label and the index past `)` for a `[label](target)` at `open`. The
@@ -378,7 +422,11 @@ fn markdown_link(chars: &[char], open: usize) -> Option<(String, usize)> {
     }
     let target_start = close + 2;
     let target_end = target_start + chars[target_start..].iter().position(|&c| c == ')')?;
-    if target_end == target_start || chars[target_start..target_end].iter().any(|c| c.is_whitespace()) {
+    if target_end == target_start
+        || chars[target_start..target_end]
+            .iter()
+            .any(|c| c.is_whitespace())
+    {
         return None;
     }
     Some((chars[open + 1..close].iter().collect(), target_end + 1))
@@ -439,18 +487,25 @@ fn tidy(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        collapse_preview, decode_entity_references, message_preview, readable_preview, with_preheader, PreviewContext,
-        MAX_LINK_LEAD_IN_WORDS, MIN_REPEATED_SUBJECT_WORDS, MIN_RULE_RUN,
+        collapse_preview, decode_entity_references, message_preview, readable_preview,
+        with_preheader, PreviewContext, MAX_LINK_LEAD_IN_WORDS, MIN_REPEATED_SUBJECT_WORDS,
+        MIN_RULE_RUN,
     };
     use crate::quoted_history::SEARCH_PREVIEW_CHARS;
 
     #[test]
     fn a_preheader_leads_a_preview_that_does_not_show_it() {
         assert_eq!(
-            with_preheader("Your Play Points \u{2022} Gold 146", "Available through\u{00A0}Thursday. \u{200C} \u{034F}"),
+            with_preheader(
+                "Your Play Points \u{2022} Gold 146",
+                "Available through\u{00A0}Thursday. \u{200C} \u{034F}"
+            ),
             "Available through Thursday. Your Play Points \u{2022} Gold 146"
         );
-        assert_eq!(with_preheader("", "Delivered 1 item: Drinkware"), "Delivered 1 item: Drinkware");
+        assert_eq!(
+            with_preheader("", "Delivered 1 item: Drinkware"),
+            "Delivered 1 item: Drinkware"
+        );
         let long = "x".repeat(SEARCH_PREVIEW_CHARS);
         let led = with_preheader(&long, "Delivered 1 item");
         assert!(led.starts_with("Delivered 1 item x"));
@@ -461,11 +516,20 @@ mod tests {
     fn a_preview_already_showing_the_preheader_is_unchanged() {
         for (preview, preheader) in [
             // The preheader is the first line of the text, as converters write it.
-            ("Available through Thursday. Your Play Points", "Available through Thursday."),
+            (
+                "Available through Thursday. Your Play Points",
+                "Available through Thursday.",
+            ),
             // Same words, different punctuation and case.
-            ("AVAILABLE through thursday \u{2014} your points", "Available through Thursday."),
+            (
+                "AVAILABLE through thursday \u{2014} your points",
+                "Available through Thursday.",
+            ),
             // A copy that differs by a joined word, behind a brand name.
-            ("Senja Capital for small businesses within 48 hours.Visit our site", "Capital for small businesses within 48 hours. Visit our site"),
+            (
+                "Senja Capital for small businesses within 48 hours.Visit our site",
+                "Capital for small businesses within 48 hours. Visit our site",
+            ),
             ("Anything at all", ""),
         ] {
             assert_eq!(with_preheader(preview, preheader), preview);
@@ -478,11 +542,21 @@ mod tests {
             ("Brand alpha bravo charlie delta echo zulu", true),
             ("Brand alpha bravo charlie delta echo foxtrot zulu", true),
         ] {
-            assert_eq!(with_preheader(preview, preheader) == preview, kept, "{preview}");
+            assert_eq!(
+                with_preheader(preview, preheader) == preview,
+                kept,
+                "{preview}"
+            );
         }
         // A copy interrupted by an extra line is still the same preheader.
         let preview = "Join our live Demo Day on October 21. Tomorrow: see it in action. Discover a smarter approach.";
-        assert_eq!(with_preheader(preview, "Join our live Demo Day on October 21. Discover a smarter approach. Join us live."), preview);
+        assert_eq!(
+            with_preheader(
+                preview,
+                "Join our live Demo Day on October 21. Discover a smarter approach. Join us live."
+            ),
+            preview
+        );
         // Shared words later in the preview still lead with the preheader.
         assert!(with_preheader("Wealthfront Funds arrive tomorrow from your Cash account to Checking. Transfer complete.", "Transfer from Cash to Checking (account ending 42)").starts_with("Transfer from Cash"));
         // Words past what the preview shows do not count as shown.
@@ -491,7 +565,10 @@ mod tests {
     }
 
     fn preview(text: &str) -> String {
-        readable_preview(text, &PreviewContext::default()).split_whitespace().collect::<Vec<_>>().join(" ")
+        readable_preview(text, &PreviewContext::default())
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     #[test]
@@ -501,7 +578,10 @@ mod tests {
             "Hey Joel I'm Amit from Acme."
         );
         assert_eq!(preview("See ![chart](https://example.com/c.png) and [https://example.com](https://example.com)"), "See chart and");
-        assert_eq!(preview("# Weekly update\n## Agenda\n- `deploy` at _noon_"), "Weekly update Agenda - deploy at noon");
+        assert_eq!(
+            preview("# Weekly update\n## Agenda\n- `deploy` at _noon_"),
+            "Weekly update Agenda - deploy at noon"
+        );
     }
 
     #[test]
@@ -510,8 +590,14 @@ mod tests {
             preview("Track your order ( https://track.example.com/?n=123 ) today."),
             "Track your order today."
         );
-        assert_eq!(preview("Read more: <https://example.com/a?b=c>"), "Read more:");
-        assert_eq!(preview("Details at www.example.org/page, then reply."), "Details at, then reply.");
+        assert_eq!(
+            preview("Read more: <https://example.com/a?b=c>"),
+            "Read more:"
+        );
+        assert_eq!(
+            preview("Details at www.example.org/page, then reply."),
+            "Details at, then reply."
+        );
         assert_eq!(preview("Join [https://meet.example.com/x] now"), "Join now");
     }
 
@@ -544,7 +630,10 @@ mod tests {
             "Shutterstock Free images"
         );
         assert_eq!(collapse_preview("\u{200C}Hello\u{2060}"), "Hello");
-        for text in ["family \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} photo", "\u{645}\u{6CC}\u{200C}\u{62E}\u{648}\u{627}\u{647}\u{645}"] {
+        for text in [
+            "family \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} photo",
+            "\u{645}\u{6CC}\u{200C}\u{62E}\u{648}\u{627}\u{647}\u{645}",
+        ] {
             assert_eq!(collapse_preview(text), text);
         }
     }
@@ -559,7 +648,10 @@ mod tests {
             preview_of("Keep track of your account\n<!--[if !mso]><!-->\n<!--[if false]><!-->\nYou signed in to Muse.\n<![endif]-->Done <![if mso]>here"),
             "Keep track of your account You signed in to Muse. Done here"
         );
-        assert_eq!(preview_of("bot left a comment <!-- review --> Summary: 3 issues"), "bot left a comment Summary: 3 issues");
+        assert_eq!(
+            preview_of("bot left a comment <!-- review --> Summary: 3 issues"),
+            "bot left a comment Summary: 3 issues"
+        );
         // An unterminated comment, and markup that only looks like one, stay.
         assert_eq!(preview_of("Use <!-- for comments"), "Use <!-- for comments");
         assert_eq!(preview_of("a <!b> c <![x"), "a <!b> c <![x");
@@ -572,11 +664,26 @@ mod tests {
     #[test]
     fn divider_rules_are_removed_at_their_minimum_run() {
         assert_eq!(MIN_RULE_RUN, 3);
-        assert_eq!(preview("Go to LinkedIn\n----------------------------------------\nThis email was sent"), "Go to LinkedIn This email was sent");
-        assert_eq!(preview("**** Supabase Update ****\nHey there"), "Supabase Update Hey there");
-        assert_eq!(preview("Review here: ____ You received this ===== ~~~ ——— done"), "Review here: You received this done");
+        assert_eq!(
+            preview(
+                "Go to LinkedIn\n----------------------------------------\nThis email was sent"
+            ),
+            "Go to LinkedIn This email was sent"
+        );
+        assert_eq!(
+            preview("**** Supabase Update ****\nHey there"),
+            "Supabase Update Hey there"
+        );
+        assert_eq!(
+            preview("Review here: ____ You received this ===== ~~~ ——— done"),
+            "Review here: You received this done"
+        );
         for (rule, kept) in [("--", true), ("---", false), ("----", false)] {
-            assert_eq!(preview(&format!("a {rule} b")) == format!("a {rule} b"), kept, "{rule}");
+            assert_eq!(
+                preview(&format!("a {rule} b")) == format!("a {rule} b"),
+                kept,
+                "{rule}"
+            );
         }
         // Runs of mixed characters, and other repeated punctuation, are prose.
         assert_eq!(preview("Wait... what?! -_- ok"), "Wait... what?! -_- ok");
@@ -588,53 +695,118 @@ mod tests {
             preview("Approved. [image: Logo] Frank Jackson [image: Icon] [cid:image001.png@01DD3AB9.CE674CA0] [IMAGE]"),
             "Approved. Frank Jackson"
         );
-        assert_eq!(preview("Photos [image: image0.jpeg][image: image1.jpeg] attached"), "Photos attached");
+        assert_eq!(
+            preview("Photos [image: image0.jpeg][image: image1.jpeg] attached"),
+            "Photos attached"
+        );
         // Prose that mentions images in brackets stays.
-        assert_eq!(preview("See [images of the site] and [image of plan] [image"), "See [images of the site] and [image of plan] [image");
+        assert_eq!(
+            preview("See [images of the site] and [image of plan] [image"),
+            "See [images of the site] and [image of plan] [image"
+        );
     }
 
     #[test]
     fn lines_of_only_image_text_are_dropped() {
         let context = PreviewContext {
-            image_only_words: ["logo", "facebook", "linkedin", "icon"].map(String::from).into(),
+            image_only_words: ["logo", "facebook", "linkedin", "icon"]
+                .map(String::from)
+                .into(),
             ..Default::default()
         };
         // A wordmark line, and an icon row in a signature.
-        assert_eq!(with_context("Nextdoor logo\nLOGO\nSee what your neighbors are saying", &context), "Nextdoor logo See what your neighbors are saying");
-        assert_eq!(with_context("Thanks, Ann\nfacebook | linkedin\nIcon", &context), "Thanks, Ann");
+        assert_eq!(
+            with_context(
+                "Nextdoor logo\nLOGO\nSee what your neighbors are saying",
+                &context
+            ),
+            "Nextdoor logo See what your neighbors are saying"
+        );
+        assert_eq!(
+            with_context("Thanks, Ann\nfacebook | linkedin\nIcon", &context),
+            "Thanks, Ann"
+        );
         // Visible words on the same line keep it.
-        assert_eq!(with_context("Follow us on facebook", &context), "Follow us on facebook");
+        assert_eq!(
+            with_context("Follow us on facebook", &context),
+            "Follow us on facebook"
+        );
         assert_eq!(with_context("Logo", &context), "Logo");
     }
 
     #[test]
     fn an_opening_line_that_repeats_the_subject_is_dropped() {
         assert_eq!(MIN_REPEATED_SUBJECT_WORDS, 3);
-        let context = |subject: &str| PreviewContext { subject: subject.into(), ..Default::default() };
+        let context = |subject: &str| PreviewContext {
+            subject: subject.into(),
+            ..Default::default()
+        };
         let body = "WordPress upgrades were successful!\nDear customer, we upgraded your sites.";
-        for subject in ["WordPress upgrades were successful", "Re: RE[2]: Fwd: wordpress upgrades — were successful", "FW:WordPress upgrades were successful"] {
-            assert_eq!(with_context(body, &context(subject)), "Dear customer, we upgraded your sites.", "{subject}");
+        for subject in [
+            "WordPress upgrades were successful",
+            "Re: RE[2]: Fwd: wordpress upgrades — were successful",
+            "FW:WordPress upgrades were successful",
+        ] {
+            assert_eq!(
+                with_context(body, &context(subject)),
+                "Dear customer, we upgraded your sites.",
+                "{subject}"
+            );
         }
         // Below, at, and past the subject minimum.
-        for (subject, dropped) in [("Thanks Ann", false), ("Thanks Ann Lee", true), ("Thanks Ann Lee Smith", true)] {
+        for (subject, dropped) in [
+            ("Thanks Ann", false),
+            ("Thanks Ann Lee", true),
+            ("Thanks Ann Lee Smith", true),
+        ] {
             let preview = with_context(&format!("{subject}\nSee you Monday."), &context(subject));
             assert_eq!(preview == "See you Monday.", dropped, "{subject}");
         }
         // Lines without words are not dropped: an amount split across lines, or an emoji.
-        assert_eq!(with_context("Thanks\n\u{1F642}", &context("Thanks so much")), "Thanks \u{1F642}");
-        assert_eq!(with_context("Sue paid you\n$\n250\n.\n00", &context("Sue paid you")), "$ 250 . 00");
+        assert_eq!(
+            with_context("Thanks\n\u{1F642}", &context("Thanks so much")),
+            "Thanks \u{1F642}"
+        );
+        assert_eq!(
+            with_context("Sue paid you\n$\n250\n.\n00", &context("Sue paid you")),
+            "$ 250 . 00"
+        );
         // Not when it is the only text, not when the line says more, and only the first line.
-        assert_eq!(with_context("Sue paid you $250.00", &context("Sue paid you $250.00")), "Sue paid you $250.00");
-        assert_eq!(with_context("Sue paid you $250.00 for dinner\nThanks", &context("Sue paid you $250.00")), "Sue paid you $250.00 for dinner Thanks");
-        assert_eq!(with_context("Hi Joel\nSue paid you $250.00\nThanks", &context("Sue paid you $250.00")), "Hi Joel Sue paid you $250.00 Thanks");
-        assert_eq!(with_context("Rebate offer ends soon\nok", &context("Rebate offer ends soon")), "ok");
+        assert_eq!(
+            with_context("Sue paid you $250.00", &context("Sue paid you $250.00")),
+            "Sue paid you $250.00"
+        );
+        assert_eq!(
+            with_context(
+                "Sue paid you $250.00 for dinner\nThanks",
+                &context("Sue paid you $250.00")
+            ),
+            "Sue paid you $250.00 for dinner Thanks"
+        );
+        assert_eq!(
+            with_context(
+                "Hi Joel\nSue paid you $250.00\nThanks",
+                &context("Sue paid you $250.00")
+            ),
+            "Hi Joel Sue paid you $250.00 Thanks"
+        );
+        assert_eq!(
+            with_context(
+                "Rebate offer ends soon\nok",
+                &context("Rebate offer ends soon")
+            ),
+            "ok"
+        );
     }
 
     #[test]
     fn link_lead_ins_are_dropped_when_the_rest_fills_the_preview() {
         assert_eq!(MAX_LINK_LEAD_IN_WORDS, 8);
-        let story = "The unintended consequences of policy, and why voters keep supporting it. ".repeat(3);
-        let full = |lead_in: &str| with_context(&format!("{lead_in}\n{story}"), &PreviewContext::default());
+        let story =
+            "The unintended consequences of policy, and why voters keep supporting it. ".repeat(3);
+        let full = |lead_in: &str| {
+            with_context(&format!("{lead_in}\n{story}"), &PreviewContext::default())
+        };
         for lead_in in [
             "View this post on the web at https://example.substack.com/p/post",
             "View in Browser [ https://example.com/redirect/5d0e ]",
@@ -644,18 +816,42 @@ mod tests {
             assert!(full(lead_in).starts_with("The unintended"), "{lead_in}");
         }
         // Seven and eight words before the link are a lead-in; nine are a sentence.
-        assert!(full("one two three four five six seven https://example.com/x").starts_with("The unintended"));
-        assert!(full("one two three four five six seven eight https://example.com/x").starts_with("The unintended"));
-        assert!(full("one two three four five six seven eight nine https://example.com/x").starts_with("one two"));
+        assert!(
+            full("one two three four five six seven https://example.com/x")
+                .starts_with("The unintended")
+        );
+        assert!(
+            full("one two three four five six seven eight https://example.com/x")
+                .starts_with("The unintended")
+        );
+        assert!(
+            full("one two three four five six seven eight nine https://example.com/x")
+                .starts_with("one two")
+        );
         // A link inside the line, a short note sharing a link, and a Markdown label mid-sentence stay.
-        assert!(full("Details at https://example.com/page, then reply.").starts_with("Details at, then reply."));
-        assert_eq!(preview_of("Here's the doc: https://docs.example.com/d/1\n\nJoel"), "Here's the doc: Joel");
-        assert!(full("Hey Joel I'm [Amit](https://example.com/amit) from Acme.").starts_with("Hey Joel I'm Amit"));
+        assert!(full("Details at https://example.com/page, then reply.")
+            .starts_with("Details at, then reply."));
+        assert_eq!(
+            preview_of("Here's the doc: https://docs.example.com/d/1\n\nJoel"),
+            "Here's the doc: Joel"
+        );
+        assert!(
+            full("Hey Joel I'm [Amit](https://example.com/amit) from Acme.")
+                .starts_with("Hey Joel I'm Amit")
+        );
         // A list item's words are content.
-        for item in ["1. Consider OrbStack for fast containers - https://orbstack.dev", "2) Docs https://example.com/d", "- Slides: https://example.com/s", "a. Notes https://example.com/n"] {
+        for item in [
+            "1. Consider OrbStack for fast containers - https://orbstack.dev",
+            "2) Docs https://example.com/d",
+            "- Slides: https://example.com/s",
+            "a. Notes https://example.com/n",
+        ] {
             assert!(full(item).starts_with(&item[..5]), "{item}");
         }
         // A Markdown label is the link's own text, often a headline.
-        assert!(full("[Don't Let Your Funds Go To Waste](https://example.com/fsa)").starts_with("Don't Let Your Funds"));
+        assert!(
+            full("[Don't Let Your Funds Go To Waste](https://example.com/fsa)")
+                .starts_with("Don't Let Your Funds")
+        );
     }
 }

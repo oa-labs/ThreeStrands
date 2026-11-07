@@ -9,12 +9,15 @@ use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use serde_bytes::ByteBuf;
 use threestrands_sync_envelope::limits::MAX_EARLIER_EPOCH_KEYS;
-use threestrands_sync_envelope::{decode_signed_enrollment_grant, enrollment_fingerprint, DeviceId as EnvelopeDeviceId, RosterEntry};
+use threestrands_sync_envelope::{
+    decode_signed_enrollment_grant, enrollment_fingerprint, DeviceId as EnvelopeDeviceId,
+    RosterEntry,
+};
 
 use super::{Database, DatabaseError, DbResult};
 use crate::enrollment::{
-    roster_entry_x25519, DeviceRosterEntry, EnrollmentStatus, HistoryHandoffWarning, IncomingEnrollmentRequest,
-    MAX_DEVICE_LABEL_CHARS,
+    roster_entry_x25519, DeviceRosterEntry, EnrollmentStatus, HistoryHandoffWarning,
+    IncomingEnrollmentRequest, MAX_DEVICE_LABEL_CHARS,
 };
 use crate::replicated_sync::{decode_id, SPACE_ID};
 
@@ -23,9 +26,19 @@ type RawRecoveryPublicKeyRow = (Option<Vec<u8>>, Option<Vec<u8>>);
 type UnresolvedRequest = (String, Vec<u8>, Vec<u8>);
 
 pub(crate) fn default_device_name() -> String {
-    let hostname = gethostname::gethostname().to_string_lossy().trim().to_string();
-    let hostname = hostname.chars().take(MAX_DEVICE_LABEL_CHARS).collect::<String>();
-    if hostname.is_empty() { "This device".to_string() } else { hostname }
+    let hostname = gethostname::gethostname()
+        .to_string_lossy()
+        .trim()
+        .to_string();
+    let hostname = hostname
+        .chars()
+        .take(MAX_DEVICE_LABEL_CHARS)
+        .collect::<String>();
+    if hostname.is_empty() {
+        "This device".to_string()
+    } else {
+        hostname
+    }
 }
 
 impl Database {
@@ -37,30 +50,37 @@ impl Database {
     pub fn enrollment_status(&self) -> DbResult<EnrollmentStatus> {
         let connection = self.connection()?;
         let active_epoch: Option<i64> = connection
-            .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
-            .optional()
-            ?;
+            .query_row(
+                "SELECT active_epoch FROM sync_spaces WHERE id=?1",
+                params![SPACE_ID],
+                |row| row.get(0),
+            )
+            .optional()?;
         let Some(active_epoch) = active_epoch else {
             return Ok(EnrollmentStatus::NotStarted);
         };
         let adopted: bool = connection
-            .query_row("SELECT 1 FROM sync_epoch_history WHERE key_epoch=?1", params![active_epoch], |_| Ok(true))
-            .optional()
-            ?
+            .query_row(
+                "SELECT 1 FROM sync_epoch_history WHERE key_epoch=?1",
+                params![active_epoch],
+                |_| Ok(true),
+            )
+            .optional()?
             .unwrap_or(false);
         if adopted {
-            let device_count: i64 = connection
-                .query_row("SELECT COUNT(*) FROM sync_devices WHERE status='active'", [], |row| row.get(0))
-                ?;
-            let history_handoff_keys_used: i64 = connection
-                .query_row(
-                    "SELECT COUNT(*) FROM sync_epoch_history WHERE key_epoch < ?1",
-                    [active_epoch],
-                    |row| row.get(0),
-                )
-                ?;
+            let device_count: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM sync_devices WHERE status='active'",
+                [],
+                |row| row.get(0),
+            )?;
+            let history_handoff_keys_used: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM sync_epoch_history WHERE key_epoch < ?1",
+                [active_epoch],
+                |row| row.get(0),
+            )?;
             let history_handoff_keys_used = history_handoff_keys_used as usize;
-            let history_handoff_warning = (history_handoff_keys_used >= MAX_EARLIER_EPOCH_KEYS - MAX_EARLIER_EPOCH_KEYS / 5)
+            let history_handoff_warning = (history_handoff_keys_used
+                >= MAX_EARLIER_EPOCH_KEYS - MAX_EARLIER_EPOCH_KEYS / 5)
                 .then_some(HistoryHandoffWarning {
                     used: history_handoff_keys_used,
                     limit: MAX_EARLIER_EPOCH_KEYS,
@@ -85,10 +105,26 @@ impl Database {
         if let Some((request_id, fingerprint, grant_cbor)) = staged {
             let approver_fingerprint = decode_signed_enrollment_grant(&grant_cbor)
                 .ok()
-                .and_then(|signed| signed.grant.roster.iter().find(|entry| entry.device_id == signed.grant.approver_device_id).cloned())
-                .and_then(|entry| Some(enrollment_fingerprint(&entry.ed25519_public, roster_entry_x25519(&entry).ok()?.as_slice())))
+                .and_then(|signed| {
+                    signed
+                        .grant
+                        .roster
+                        .iter()
+                        .find(|entry| entry.device_id == signed.grant.approver_device_id)
+                        .cloned()
+                })
+                .and_then(|entry| {
+                    Some(enrollment_fingerprint(
+                        &entry.ed25519_public,
+                        roster_entry_x25519(&entry).ok()?.as_slice(),
+                    ))
+                })
                 .unwrap_or_else(|| "(unavailable)".to_string());
-            return Ok(EnrollmentStatus::AwaitingConfirmation { request_id, fingerprint, approver_fingerprint });
+            return Ok(EnrollmentStatus::AwaitingConfirmation {
+                request_id,
+                fingerprint,
+                approver_fingerprint,
+            });
         }
 
         let pending: Option<(String, String, String)> = connection
@@ -107,12 +143,18 @@ impl Database {
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .optional()
-            ?;
+            .optional()?;
         match pending {
-            Some((request_id, fingerprint, created_at)) => Ok(EnrollmentStatus::AwaitingGrant { request_id, fingerprint, created_at }),
+            Some((request_id, fingerprint, created_at)) => Ok(EnrollmentStatus::AwaitingGrant {
+                request_id,
+                fingerprint,
+                created_at,
+            }),
             None => match rejected {
-                Some((request_id, fingerprint)) => Ok(EnrollmentStatus::Rejected { request_id, fingerprint }),
+                Some((request_id, fingerprint)) => Ok(EnrollmentStatus::Rejected {
+                    request_id,
+                    fingerprint,
+                }),
                 None => Ok(EnrollmentStatus::NotStarted),
             },
         }
@@ -134,20 +176,21 @@ impl Database {
                     fingerprint: row.get(2)?,
                     created_at: row.get(3)?,
                 })
-            })
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
     /// This device first, then active peers, then revoked ones.
     pub fn device_roster(&self) -> DbResult<Vec<DeviceRosterEntry>> {
-        let self_device_id: Option<String> = self.connection()?.query_row(
-            "SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).optional()?;
+        let self_device_id: Option<String> = self
+            .connection()?
+            .query_row(
+                "SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
         if let Some(device_id) = self_device_id {
             self.ensure_self_device_name(&device_id)?;
         }
@@ -174,23 +217,19 @@ impl Database {
                     last_change_at: row.get(4)?,
                     joined_with_join_code: row.get(5)?,
                 })
-            })
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
     /// Gives this device its hostname the first time it appears in the roster.
     /// The sync loop records it once the portable preference entity exists.
     pub(crate) fn ensure_self_device_name(&self, device_id_hex: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "INSERT OR IGNORE INTO sync_device_labels(device_id,label) SELECT ?1,?2
+        self.connection()?.execute(
+            "INSERT OR IGNORE INTO sync_device_labels(device_id,label) SELECT ?1,?2
                  WHERE EXISTS (SELECT 1 FROM sync_devices WHERE device_id=?1 AND is_self=1)",
-                params![device_id_hex, default_device_name()],
-            )
-            ?;
+            params![device_id_hex, default_device_name()],
+        )?;
         Ok(())
     }
 
@@ -208,14 +247,23 @@ impl Database {
             if let Some(label) = label {
                 let fields = BTreeSet::from([field.clone()]);
                 let payload = serde_json::json!({ (field): label });
-                self.record_local_entity_write(threestrands_sync_protocol::EntityType::Preferences, "portable", payload, Some(fields))?;
+                self.record_local_entity_write(
+                    threestrands_sync_protocol::EntityType::Preferences,
+                    "portable",
+                    payload,
+                    Some(fields),
+                )?;
             }
         }
         Ok(())
     }
 
     /// Applies a resolved shared device-name field to this device's roster cache.
-    pub(crate) fn materialize_device_name(&self, device_id_hex: &str, name: Option<&str>) -> DbResult<()> {
+    pub(crate) fn materialize_device_name(
+        &self,
+        device_id_hex: &str,
+        name: Option<&str>,
+    ) -> DbResult<()> {
         let connection = self.connection()?;
         match name {
             Some(name) => {
@@ -226,7 +274,10 @@ impl Database {
                 )?;
             }
             None => {
-                connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex])?;
+                connection.execute(
+                    "DELETE FROM sync_device_labels WHERE device_id=?1",
+                    params![device_id_hex],
+                )?;
             }
         }
         Ok(())
@@ -241,24 +292,31 @@ impl Database {
                 params![device_id_hex],
                 |row| row.get(0),
             )?;
-            if is_self { default_device_name() } else { String::new() }
+            if is_self {
+                default_device_name()
+            } else {
+                String::new()
+            }
         } else {
             label.trim().to_string()
         };
         if label.chars().count() > MAX_DEVICE_LABEL_CHARS {
-            return Err(DatabaseError::invalid(format!("Device names can be at most {MAX_DEVICE_LABEL_CHARS} characters.")));
+            return Err(DatabaseError::invalid(format!(
+                "Device names can be at most {MAX_DEVICE_LABEL_CHARS} characters."
+            )));
         }
         let connection = self.connection()?;
         if label.is_empty() {
-            connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex])?;
+            connection.execute(
+                "DELETE FROM sync_device_labels WHERE device_id=?1",
+                params![device_id_hex],
+            )?;
         } else {
-            connection
-                .execute(
-                    "INSERT INTO sync_device_labels(device_id,label) VALUES (?1,?2)
+            connection.execute(
+                "INSERT INTO sync_device_labels(device_id,label) VALUES (?1,?2)
                      ON CONFLICT(device_id) DO UPDATE SET label=excluded.label",
-                    params![device_id_hex, label],
-                )
-                ?;
+                params![device_id_hex, label],
+            )?;
         }
         drop(connection);
 
@@ -271,7 +329,12 @@ impl Database {
             |row| row.get(0),
         )?;
         if preferences_exist {
-            self.record_local_entity_write(threestrands_sync_protocol::EntityType::Preferences, "portable", payload, Some(fields))?;
+            self.record_local_entity_write(
+                threestrands_sync_protocol::EntityType::Preferences,
+                "portable",
+                payload,
+                Some(fields),
+            )?;
         }
         Ok(())
     }
@@ -289,14 +352,12 @@ impl Database {
     pub fn leave_sync_space(&self) -> DbResult<u32> {
         let mut connection = self.connection()?;
         let tx = connection.transaction()?;
-        let highest_epoch: u32 = tx
-            .query_row(
-                "SELECT MAX(COALESCE((SELECT MAX(key_epoch) FROM sync_epoch_history), 0),
+        let highest_epoch: u32 = tx.query_row(
+            "SELECT MAX(COALESCE((SELECT MAX(key_epoch) FROM sync_epoch_history), 0),
                             COALESCE((SELECT active_epoch FROM sync_spaces WHERE id=?1), 0))",
-                params![SPACE_ID],
-                |row| row.get(0),
-            )
-            ?;
+            params![SPACE_ID],
+            |row| row.get(0),
+        )?;
         tx.execute_batch(
             "DELETE FROM scheduled_send_summaries;
              DELETE FROM sync_deliveries;
@@ -314,8 +375,7 @@ impl Database {
              DELETE FROM sync_local_state;
              DELETE FROM sync_retired_objects;
              DELETE FROM sync_head_publications;",
-        )
-        ?;
+        )?;
         tx.execute(
             "UPDATE sync_spaces SET active_epoch=0, lamport=0, recovery_public_key=NULL, recovery_x25519_public=NULL, last_error=NULL WHERE id=?1",
             params![SPACE_ID],
@@ -327,19 +387,21 @@ impl Database {
 
     pub(crate) fn seen_control_object(&self, cid: &str) -> DbResult<bool> {
         self.connection()?
-            .query_row("SELECT 1 FROM sync_control_objects_seen WHERE cid=?1", params![cid], |_| Ok(true))
+            .query_row(
+                "SELECT 1 FROM sync_control_objects_seen WHERE cid=?1",
+                params![cid],
+                |_| Ok(true),
+            )
             .optional()
             .map(|found| found.unwrap_or(false))
             .map_err(DatabaseError::from)
     }
 
     pub(crate) fn mark_control_object_seen(&self, cid: &str, kind: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "INSERT OR IGNORE INTO sync_control_objects_seen(cid, object_kind) VALUES (?1,?2)",
-                params![cid, kind],
-            )
-            ?;
+        self.connection()?.execute(
+            "INSERT OR IGNORE INTO sync_control_objects_seen(cid, object_kind) VALUES (?1,?2)",
+            params![cid, kind],
+        )?;
         Ok(())
     }
 
@@ -354,44 +416,54 @@ impl Database {
     }
 
     pub(crate) fn set_active_epoch(&self, key_epoch: u32) -> DbResult<()> {
-        self.connection()?
-            .execute("UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1", params![SPACE_ID, key_epoch])
-            ?;
+        self.connection()?.execute(
+            "UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1",
+            params![SPACE_ID, key_epoch],
+        )?;
         Ok(())
     }
 
     pub(crate) fn advance_active_epoch(&self, key_epoch: u32) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1 AND active_epoch < ?2",
-                params![SPACE_ID, key_epoch],
-            )
-            ?;
+        self.connection()?.execute(
+            "UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1 AND active_epoch < ?2",
+            params![SPACE_ID, key_epoch],
+        )?;
         Ok(())
     }
 
-    pub(crate) fn set_recovery_public_keys(&self, ed25519_public: &[u8; 32], x25519_public: &[u8; 32]) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE sync_spaces SET recovery_public_key=?2, recovery_x25519_public=?3 WHERE id=?1",
-                params![SPACE_ID, ed25519_public.to_vec(), x25519_public.to_vec()],
-            )
-            ?;
+    pub(crate) fn set_recovery_public_keys(
+        &self,
+        ed25519_public: &[u8; 32],
+        x25519_public: &[u8; 32],
+    ) -> DbResult<()> {
+        self.connection()?.execute(
+            "UPDATE sync_spaces SET recovery_public_key=?2, recovery_x25519_public=?3 WHERE id=?1",
+            params![SPACE_ID, ed25519_public.to_vec(), x25519_public.to_vec()],
+        )?;
         Ok(())
     }
 
     pub(crate) fn recovery_public_keys(&self) -> DbResult<Option<RecoveryPublicKeys>> {
         let row: Option<RawRecoveryPublicKeyRow> = self
             .connection()?
-            .query_row("SELECT recovery_public_key, recovery_x25519_public FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
-            .optional()
-            ?;
-        let Some((ed25519, x25519)) = row else { return Ok(None) };
-        let (Some(ed25519), Some(x25519)) = (ed25519, x25519) else { return Ok(None) };
-        let ed25519: [u8; 32] = ed25519.try_into().map_err(|_| DatabaseError::corrupt("Invalid stored recovery Ed25519 key"))?;
-        let x25519: [u8; 32] = x25519.try_into().map_err(|_| DatabaseError::corrupt("Invalid stored recovery X25519 key"))?;
+            .query_row(
+                "SELECT recovery_public_key, recovery_x25519_public FROM sync_spaces WHERE id=?1",
+                params![SPACE_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((ed25519, x25519)) = row else {
+            return Ok(None);
+        };
+        let (Some(ed25519), Some(x25519)) = (ed25519, x25519) else {
+            return Ok(None);
+        };
+        let ed25519: [u8; 32] = ed25519
+            .try_into()
+            .map_err(|_| DatabaseError::corrupt("Invalid stored recovery Ed25519 key"))?;
+        let x25519: [u8; 32] = x25519
+            .try_into()
+            .map_err(|_| DatabaseError::corrupt("Invalid stored recovery X25519 key"))?;
         Ok(Some((ed25519, x25519)))
     }
 
@@ -406,14 +478,16 @@ impl Database {
             .prepare("SELECT device_id, public_key, x25519_public, status FROM sync_devices WHERE public_key IS NOT NULL AND x25519_public IS NOT NULL")
             ?;
         let rows: Vec<(String, Vec<u8>, Vec<u8>, String)> = statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         rows.into_iter()
             .map(|(device_id_hex, ed25519, x25519, status)| {
                 Ok(RosterEntry {
-                    device_id: EnvelopeDeviceId::from_bytes(decode_id(&device_id_hex).map_err(DatabaseError::Corrupt)?),
+                    device_id: EnvelopeDeviceId::from_bytes(
+                        decode_id(&device_id_hex).map_err(DatabaseError::Corrupt)?,
+                    ),
                     ed25519_public: ByteBuf::from(ed25519),
                     x25519_public: ByteBuf::from(x25519),
                     status,
@@ -445,7 +519,10 @@ impl Database {
     }
 
     /// The requester of an incoming request not yet approved.
-    pub(crate) fn unresolved_incoming_request(&self, request_id: &str) -> DbResult<Option<UnresolvedRequest>> {
+    pub(crate) fn unresolved_incoming_request(
+        &self,
+        request_id: &str,
+    ) -> DbResult<Option<UnresolvedRequest>> {
         Ok(self
             .connection()?
             .query_row(
@@ -458,7 +535,10 @@ impl Database {
     }
 
     /// The requester of an incoming request still pending.
-    pub(crate) fn pending_incoming_request(&self, request_id: &str) -> DbResult<(String, Vec<u8>, Vec<u8>)> {
+    pub(crate) fn pending_incoming_request(
+        &self,
+        request_id: &str,
+    ) -> DbResult<(String, Vec<u8>, Vec<u8>)> {
         Ok(self.connection()?.query_row(
             "SELECT device_id, ed25519_public, x25519_public FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='incoming' AND status='pending'",
             params![request_id],
@@ -514,7 +594,11 @@ impl Database {
     }
 
     /// Holds a received grant for the user to confirm by fingerprint.
-    pub(crate) fn stage_enrollment_grant(&self, request_id: &str, grant_cbor: &[u8]) -> DbResult<()> {
+    pub(crate) fn stage_enrollment_grant(
+        &self,
+        request_id: &str,
+        grant_cbor: &[u8],
+    ) -> DbResult<()> {
         self.connection()?.execute(
             "UPDATE replicated_sync_enrollment_requests SET status='staged', pending_grant_cbor=?2 WHERE request_id=?1 AND direction='outgoing' AND status IN ('pending','rejected')",
             params![request_id, grant_cbor],
@@ -530,7 +614,10 @@ impl Database {
         )?)
     }
 
-    pub(crate) fn enrollment_request_direction(&self, request_id: &str) -> DbResult<Option<String>> {
+    pub(crate) fn enrollment_request_direction(
+        &self,
+        request_id: &str,
+    ) -> DbResult<Option<String>> {
         Ok(self
             .connection()?
             .query_row(
@@ -567,7 +654,11 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn set_enrollment_request_status(&self, request_id: &str, status: &str) -> DbResult<()> {
+    pub(crate) fn set_enrollment_request_status(
+        &self,
+        request_id: &str,
+        status: &str,
+    ) -> DbResult<()> {
         self.connection()?.execute(
             "UPDATE replicated_sync_enrollment_requests SET status=?2 WHERE request_id=?1",
             params![request_id, status],
@@ -590,7 +681,10 @@ impl Database {
     }
 
     /// A device's roster status and public key, if the roster has it.
-    pub(crate) fn device_status_and_key(&self, device_id: &str) -> DbResult<Option<(String, Option<Vec<u8>>)>> {
+    pub(crate) fn device_status_and_key(
+        &self,
+        device_id: &str,
+    ) -> DbResult<Option<(String, Option<Vec<u8>>)>> {
         Ok(self
             .connection()?
             .query_row(
@@ -612,11 +706,18 @@ impl Database {
 
     /// Whether this device has adopted any epoch key.
     pub(crate) fn has_epoch_history(&self) -> DbResult<bool> {
-        Ok(self.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM sync_epoch_history)", [], |row| row.get(0))?)
+        Ok(self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sync_epoch_history)",
+            [],
+            |row| row.get(0),
+        )?)
     }
 
     /// The control object (a rotation) that activated `key_epoch` here.
-    pub(crate) fn epoch_source_control_object(&self, key_epoch: u32) -> DbResult<Option<(String, Vec<u8>)>> {
+    pub(crate) fn epoch_source_control_object(
+        &self,
+        key_epoch: u32,
+    ) -> DbResult<Option<(String, Vec<u8>)>> {
         Ok(self
             .connection()?
             .query_row(
@@ -646,8 +747,10 @@ impl Database {
     }
 
     pub(crate) fn record_keys_shared(&self, device_id: &str, key_epoch: u32) -> DbResult<()> {
-        self.connection()?
-            .execute("UPDATE sync_remote_states SET keys_shared_epoch=?2 WHERE device_id=?1", params![device_id, key_epoch])?;
+        self.connection()?.execute(
+            "UPDATE sync_remote_states SET keys_shared_epoch=?2 WHERE device_id=?1",
+            params![device_id, key_epoch],
+        )?;
         Ok(())
     }
 

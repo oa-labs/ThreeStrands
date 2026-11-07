@@ -13,9 +13,9 @@
 use ed25519_dalek::SigningKey;
 use serde_json::json;
 use threestrands_sync_envelope::{
-    decode_signed_head, encode_signed_head, open_snapshot, seal_snapshot_with_nonces, sign_device_head, verify_device_head,
-    DeviceHead, DeviceId, EntityType, ObjectKind, OpenParams, ReplicaSnapshot, SealParams, SequenceEntry, SnapshotField,
-    SnapshotValue, PROTOCOL_VERSION,
+    decode_signed_head, encode_signed_head, open_snapshot, seal_snapshot_with_nonces,
+    sign_device_head, verify_device_head, DeviceHead, DeviceId, EntityType, ObjectKind, OpenParams,
+    ReplicaSnapshot, SealParams, SequenceEntry, SnapshotField, SnapshotValue, PROTOCOL_VERSION,
 };
 
 const SYNC_SPACE_ID: &[u8] = b"golden-vector-sync-space";
@@ -59,8 +59,14 @@ fn golden_snapshot() -> ReplicaSnapshot {
         state_sequence: 5,
         created_at_ms: 1_700_000_000_000,
         context: vec![
-            SequenceEntry { device_id: DeviceId::from_bytes(PEER), sequence: 3 },
-            SequenceEntry { device_id: DeviceId::from_bytes(AUTHOR), sequence: 12 },
+            SequenceEntry {
+                device_id: DeviceId::from_bytes(PEER),
+                sequence: 3,
+            },
+            SequenceEntry {
+                device_id: DeviceId::from_bytes(AUTHOR),
+                sequence: 12,
+            },
         ],
         fields: vec![
             SnapshotField {
@@ -73,7 +79,10 @@ fn golden_snapshot() -> ReplicaSnapshot {
                 entity_type: EntityType::Task,
                 entity_id: "task-golden".to_string(),
                 field: "title".to_string(),
-                values: vec![value(PEER, 3, json!("Golden from peer")), value(AUTHOR, 12, json!("Golden vector fixture"))],
+                values: vec![
+                    value(PEER, 3, json!("Golden from peer")),
+                    value(AUTHOR, 12, json!("Golden vector fixture")),
+                ],
             },
         ],
     }
@@ -91,12 +100,21 @@ fn golden_head(state_cid: &str) -> DeviceHead {
 }
 
 fn seal_params(signing_key: &SigningKey) -> SealParams<'_> {
-    SealParams { sync_space_id: SYNC_SPACE_ID, k_epoch: &K_EPOCH, key_epoch: KEY_EPOCH, object_kind: ObjectKind::Snapshot, signing_key }
+    SealParams {
+        sync_space_id: SYNC_SPACE_ID,
+        k_epoch: &K_EPOCH,
+        key_epoch: KEY_EPOCH,
+        object_kind: ObjectKind::Snapshot,
+        signing_key,
+    }
 }
 
 fn hex_decode(hex: &str) -> Vec<u8> {
     let hex = hex.trim();
-    (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect()
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -106,7 +124,10 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[test]
 fn seals_to_the_exact_frozen_bytes() {
     let signing_key = SigningKey::from_bytes(&SIGNING_SEED);
-    let sealed = seal_snapshot_with_nonces(golden_snapshot(), &seal_params(&signing_key), || CHUNK_NONCE).unwrap();
+    let sealed = seal_snapshot_with_nonces(golden_snapshot(), &seal_params(&signing_key), || {
+        CHUNK_NONCE
+    })
+    .unwrap();
     assert_eq!(sealed.chunks.len(), 1);
     assert_eq!(hex_encode(&sealed.chunks[0]), GOLDEN_SNAPSHOT_HEX.trim());
     assert_eq!(sealed.head_cid().unwrap(), GOLDEN_SNAPSHOT_CID.trim());
@@ -118,11 +139,19 @@ fn opens_the_frozen_bytes_back_to_the_golden_snapshot() {
     let verifying_key = signing_key.verifying_key();
     let snapshot = open_snapshot(
         &[hex_decode(GOLDEN_SNAPSHOT_HEX)],
-        &OpenParams { sync_space_id: SYNC_SPACE_ID, k_epoch: &K_EPOCH, key_epoch: KEY_EPOCH, verifying_key: &verifying_key },
+        &OpenParams {
+            sync_space_id: SYNC_SPACE_ID,
+            k_epoch: &K_EPOCH,
+            key_epoch: KEY_EPOCH,
+            verifying_key: &verifying_key,
+        },
     )
     .unwrap();
     assert_eq!(snapshot, golden_snapshot());
-    assert_eq!(snapshot.fields[0].values[0].value, Some(json!({"aa": 1, "b": 2, "zebra": 3})));
+    assert_eq!(
+        snapshot.fields[0].values[0].value,
+        Some(json!({"aa": 1, "b": 2, "zebra": 3}))
+    );
 }
 
 /// The golden signed device head: the public, unencrypted discovery
@@ -161,7 +190,10 @@ fn a_snapshot_of_an_earlier_protocol_version_is_never_sealed() {
     let mut snapshot = golden_snapshot();
     snapshot.protocol_version = 2;
     let result = seal_snapshot_with_nonces(snapshot, &seal_params(&signing_key), || CHUNK_NONCE);
-    assert!(matches!(result, Err(threestrands_sync_envelope::EnvelopeError::UnsupportedProtocolVersion)));
+    assert!(matches!(
+        result,
+        Err(threestrands_sync_envelope::EnvelopeError::UnsupportedProtocolVersion)
+    ));
 }
 
 /// Regenerates the frozen v3 files. Run deliberately, only for an
@@ -172,10 +204,21 @@ fn a_snapshot_of_an_earlier_protocol_version_is_never_sealed() {
 fn regenerate() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors");
     let signing_key = SigningKey::from_bytes(&SIGNING_SEED);
-    let sealed = seal_snapshot_with_nonces(golden_snapshot(), &seal_params(&signing_key), || CHUNK_NONCE).unwrap();
+    let sealed = seal_snapshot_with_nonces(golden_snapshot(), &seal_params(&signing_key), || {
+        CHUNK_NONCE
+    })
+    .unwrap();
     let cid = sealed.head_cid().unwrap();
-    std::fs::write(dir.join("snapshot_v3.hex"), format!("{}\n", hex_encode(&sealed.chunks[0]))).unwrap();
+    std::fs::write(
+        dir.join("snapshot_v3.hex"),
+        format!("{}\n", hex_encode(&sealed.chunks[0])),
+    )
+    .unwrap();
     std::fs::write(dir.join("snapshot_v3.cid"), format!("{cid}\n")).unwrap();
     let signed = sign_device_head(&signing_key, golden_head(&cid)).unwrap();
-    std::fs::write(dir.join("device_head_v3.hex"), format!("{}\n", hex_encode(&encode_signed_head(&signed).unwrap()))).unwrap();
+    std::fs::write(
+        dir.join("device_head_v3.hex"),
+        format!("{}\n", hex_encode(&encode_signed_head(&signed).unwrap())),
+    )
+    .unwrap();
 }

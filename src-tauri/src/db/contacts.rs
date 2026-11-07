@@ -3,17 +3,17 @@
 use super::DatabaseError;
 use super::{Database, DbResult};
 use crate::mime::NormalizedMessage;
-use chrono::Utc;
-use rusqlite::params;
-use std::collections::HashMap;
-use uuid::Uuid;
 use crate::models::{
     ContactActivity, ContactFile, ContactFiles, ContactProfile, ContactTimelineItem, KeepInTouch,
     SaveContactRequest,
 };
+use chrono::Utc;
 use chrono::{DateTime, Duration, NaiveDate};
+use rusqlite::params;
 use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use uuid::Uuid;
 
 const MAX_CONTACTS: usize = 5_000;
 /// Arrivals kept for estimating how often someone writes.
@@ -242,8 +242,16 @@ impl Database {
             rows.collect::<Result<Vec<_>,_>>().map_err(Into::into)
         })?;
         let mut mail_history = Vec::new();
-        for account in self.list_accounts()?.into_iter().filter(|account| account_id.is_none_or(|selected| selected == account.email)) {
-            mail_history.extend(self.contact_suggestions_including_suppressed(&account.email, "", MAX_CONTACTS)?);
+        for account in self
+            .list_accounts()?
+            .into_iter()
+            .filter(|account| account_id.is_none_or(|selected| selected == account.email))
+        {
+            mail_history.extend(self.contact_suggestions_including_suppressed(
+                &account.email,
+                "",
+                MAX_CONTACTS,
+            )?);
         }
         let mut stats = HashMap::<String, (i64, i64, Option<String>)>::new();
         for item in &mail_history {
@@ -261,7 +269,20 @@ impl Database {
             }
         }
         let mut profiles = Vec::new();
-        for (id, name, role, company, location, bio, notes, links, photo, favorite, (birthday, keep_in_touch)) in saved {
+        for (
+            id,
+            name,
+            role,
+            company,
+            location,
+            bio,
+            notes,
+            links,
+            photo,
+            favorite,
+            (birthday, keep_in_touch),
+        ) in saved
+        {
             let addresses = self.contact_addresses(&id)?;
             let query_text = format!(
                 "{} {} {} {} {} {} {} {}",
@@ -379,8 +400,14 @@ impl Database {
                 || profile.addresses[0].contains(&needle)
         }));
         let system = self.system_contact_profiles_for_account(query, account_id)?;
-        let system_addresses: std::collections::HashSet<_> = system.iter().flat_map(|p| p.addresses.iter().cloned()).collect();
-        profiles.retain(|p| !p.id.starts_with("derived:") || !p.addresses.iter().any(|a| system_addresses.contains(a)));
+        let system_addresses: std::collections::HashSet<_> = system
+            .iter()
+            .flat_map(|p| p.addresses.iter().cloned())
+            .collect();
+        profiles.retain(|p| {
+            !p.id.starts_with("derived:")
+                || !p.addresses.iter().any(|a| system_addresses.contains(a))
+        });
         profiles.extend(system);
         profiles.sort_by(|a, b| {
             b.favorite
@@ -394,7 +421,10 @@ impl Database {
 
     pub fn get_contact_profile(&self, id: &str) -> DbResult<Option<ContactProfile>> {
         if id.starts_with("derived:mac:") {
-            return Ok(self.system_contact_profiles("")?.into_iter().find(|p| p.id == id));
+            return Ok(self
+                .system_contact_profiles("")?
+                .into_iter()
+                .find(|p| p.id == id));
         }
         if let Some(email) = id.strip_prefix("derived:") {
             let mut suggestions = Vec::new();
@@ -457,10 +487,17 @@ impl Database {
         let mut profiles = self
             .list_saved_contact_profiles()?
             .into_iter()
-            .filter(|profile| profile.keep_in_touch.interval_days.is_some() || profile.birthday.is_some())
+            .filter(|profile| {
+                profile.keep_in_touch.interval_days.is_some() || profile.birthday.is_some()
+            })
             .collect::<Vec<_>>();
         profiles.sort_by(|a, b| {
-            let due = |profile: &ContactProfile| profile.keep_in_touch_due_at.as_deref().and_then(parse_instant);
+            let due = |profile: &ContactProfile| {
+                profile
+                    .keep_in_touch_due_at
+                    .as_deref()
+                    .and_then(parse_instant)
+            };
             match (due(a), due(b)) {
                 (Some(a), Some(b)) => a.cmp(&b),
                 (Some(_), None) => std::cmp::Ordering::Less,
@@ -475,9 +512,15 @@ impl Database {
     /// Turns reminders on (or changes the interval) for every contact in
     /// `ids`, or off when `interval_days` is `None`. Mail-derived contacts
     /// are saved first, so the returned profiles carry their saved ids.
-    pub fn set_keep_in_touch(&self, ids: &[String], interval_days: Option<i64>) -> DbResult<Vec<ContactProfile>> {
+    pub fn set_keep_in_touch(
+        &self,
+        ids: &[String],
+        interval_days: Option<i64>,
+    ) -> DbResult<Vec<ContactProfile>> {
         if ids.is_empty() || ids.len() > MAX_CONTACTS {
-            return Err(DatabaseError::invalid(format!("Choose between 1 and {MAX_CONTACTS} contacts")));
+            return Err(DatabaseError::invalid(format!(
+                "Choose between 1 and {MAX_CONTACTS} contacts"
+            )));
         }
         if let Some(days) = interval_days {
             validate_keep_in_touch_days(days)?;
@@ -511,7 +554,10 @@ impl Database {
         })?;
         saved_ids
             .iter()
-            .map(|id| self.get_contact_profile(id)?.ok_or(DatabaseError::NotFound("Saved contact")))
+            .map(|id| {
+                self.get_contact_profile(id)?
+                    .ok_or(DatabaseError::NotFound("Saved contact"))
+            })
             .collect()
     }
 
@@ -521,9 +567,12 @@ impl Database {
         let now = Utc::now();
         let until = match until {
             Some(value) => {
-                let instant = parse_instant(value).ok_or_else(|| DatabaseError::invalid("Choose a valid snooze date"))?;
+                let instant = parse_instant(value)
+                    .ok_or_else(|| DatabaseError::invalid("Choose a valid snooze date"))?;
                 if instant <= now || instant > now + Duration::days(MAX_KEEP_IN_TOUCH_SNOOZE_DAYS) {
-                    return Err(DatabaseError::invalid("Choose a snooze date within the next two years"));
+                    return Err(DatabaseError::invalid(
+                        "Choose a snooze date within the next two years",
+                    ));
                 }
                 Some(instant.to_rfc3339())
             }
@@ -536,9 +585,12 @@ impl Database {
             )?)
         })?;
         if changed == 0 {
-            return Err(DatabaseError::invalid("Turn on keep in touch for this contact before snoozing"));
+            return Err(DatabaseError::invalid(
+                "Turn on keep in touch for this contact before snoozing",
+            ));
         }
-        self.get_contact_profile(id)?.ok_or(DatabaseError::NotFound("Saved contact"))
+        self.get_contact_profile(id)?
+            .ok_or(DatabaseError::NotFound("Saved contact"))
     }
 
     /// Logs a touch outside email (a call, a coffee) at the current time,
@@ -553,12 +605,15 @@ impl Database {
             )?;
             Ok(())
         })?;
-        self.get_contact_profile(&id)?.ok_or(DatabaseError::NotFound("Saved contact"))
+        self.get_contact_profile(&id)?
+            .ok_or(DatabaseError::NotFound("Saved contact"))
     }
 
     /// Returns a saved contact id, saving a `derived:<email>` contact first.
     pub(super) fn ensure_saved_contact(&self, id: &str) -> DbResult<String> {
-        let profile = self.get_contact_profile(id)?.ok_or(DatabaseError::NotFound("Contact"))?;
+        let profile = self
+            .get_contact_profile(id)?
+            .ok_or(DatabaseError::NotFound("Contact"))?;
         if !profile.id.starts_with("derived:") {
             return Ok(profile.id);
         }
@@ -588,7 +643,10 @@ impl Database {
             let addresses = rows.collect::<Result<Vec<_>, _>>()?;
             drop(statement);
             tx.execute("DELETE FROM contacts WHERE id=?1", [id])?;
-            tx.execute("DELETE FROM contact_group_members WHERE contact_id=?1", [id])?;
+            tx.execute(
+                "DELETE FROM contact_group_members WHERE contact_id=?1",
+                [id],
+            )?;
             for email in addresses {
                 tx.execute("DELETE FROM pinned_contacts WHERE email=?1", [email])?;
             }
@@ -617,15 +675,26 @@ impl Database {
         if addresses.is_empty() {
             return Ok(Vec::new());
         }
-        let marks = std::iter::repeat_n("?", addresses.len()).collect::<Vec<_>>().join(",");
+        let marks = std::iter::repeat_n("?", addresses.len())
+            .collect::<Vec<_>>()
+            .join(",");
         let mut values = addresses
             .iter()
             .map(|email| rusqlite::types::Value::Text(email.to_ascii_lowercase()))
             .collect::<Vec<_>>();
         for _ in 0..2 {
-            values.push(account_id.map(|id| rusqlite::types::Value::Text(id.to_string())).unwrap_or(rusqlite::types::Value::Null));
+            values.push(
+                account_id
+                    .map(|id| rusqlite::types::Value::Text(id.to_string()))
+                    .unwrap_or(rusqlite::types::Value::Null),
+            );
         }
-        self.interaction_threads(&format!("ci.email IN ({marks}) AND (? IS NULL OR ci.account_id=?)"), values, offset, limit)
+        self.interaction_threads(
+            &format!("ci.email IN ({marks}) AND (? IS NULL OR ci.account_id=?)"),
+            values,
+            offset,
+            limit,
+        )
     }
 
     /// History follows the group's current members, across every saved address.
@@ -637,7 +706,8 @@ impl Database {
         limit: usize,
         account_id: Option<&str>,
     ) -> DbResult<Vec<ContactTimelineItem>> {
-        let account = account_id.map(|id| rusqlite::types::Value::Text(id.to_string()))
+        let account = account_id
+            .map(|id| rusqlite::types::Value::Text(id.to_string()))
             .unwrap_or(rusqlite::types::Value::Null);
         self.interaction_threads(
             "EXISTS (SELECT 1 FROM contact_group_members gm JOIN contact_addresses ca ON ca.contact_id=gm.contact_id WHERE gm.group_id=? AND ca.email=ci.email) AND (? IS NULL OR ci.account_id=?)",
@@ -670,7 +740,14 @@ impl Database {
     /// times for a saved contact id or a `derived:<email>` id.
     pub fn contact_activity(&self, id: &str) -> DbResult<ContactActivity> {
         let addresses = self.contact_address_list(id)?;
-        let empty = ContactActivity { sent_count: 0, received_count: 0, thread_count: 0, first_at: None, last_sent_at: None, recent_received_at: Vec::new() };
+        let empty = ContactActivity {
+            sent_count: 0,
+            received_count: 0,
+            thread_count: 0,
+            first_at: None,
+            last_sent_at: None,
+            recent_received_at: Vec::new(),
+        };
         if addresses.is_empty() {
             return Ok(empty);
         }
@@ -696,7 +773,10 @@ impl Database {
     pub fn contact_files(&self, id: &str, limit: usize) -> DbResult<ContactFiles> {
         let addresses = self.contact_address_list(id)?;
         if addresses.is_empty() {
-            return Ok(ContactFiles { files: Vec::new(), total: 0 });
+            return Ok(ContactFiles {
+                files: Vec::new(),
+                total: 0,
+            });
         }
         self.with_connection(|connection|{
             let marks=std::iter::repeat_n("?", addresses.len()).collect::<Vec<_>>().join(",");
@@ -746,7 +826,10 @@ impl Database {
     /// Resolves a saved contact id or a `derived:<email>` id to its addresses.
     pub(crate) fn contact_address_list(&self, id: &str) -> DbResult<Vec<String>> {
         if id.starts_with("derived:mac:") {
-            return Ok(self.get_contact_profile(id)?.map(|p| p.addresses).unwrap_or_default());
+            return Ok(self
+                .get_contact_profile(id)?
+                .map(|p| p.addresses)
+                .unwrap_or_default());
         }
         if let Some(email) = id.strip_prefix("derived:") {
             return Ok(vec![email.to_string()]);
@@ -790,7 +873,10 @@ fn clean_contact_text(value: Option<&str>, max: usize) -> DbResult<Option<String
     Ok(Some(value.to_string()))
 }
 
-fn contact_extras(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<(Option<String>, KeepInTouch)> {
+fn contact_extras(
+    row: &rusqlite::Row<'_>,
+    start: usize,
+) -> rusqlite::Result<(Option<String>, KeepInTouch)> {
     Ok((
         row.get(start)?,
         KeepInTouch {
@@ -804,14 +890,18 @@ fn contact_extras(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<(Op
 }
 
 fn parse_instant(value: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value).ok().map(|value| value.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|value| value.with_timezone(&Utc))
 }
 
 pub(crate) fn validate_keep_in_touch_days(days: i64) -> DbResult<()> {
     if (1..=MAX_KEEP_IN_TOUCH_DAYS).contains(&days) {
         Ok(())
     } else {
-        Err(DatabaseError::invalid(format!("Keep in touch every 1 to {MAX_KEEP_IN_TOUCH_DAYS} days")))
+        Err(DatabaseError::invalid(format!(
+            "Keep in touch every 1 to {MAX_KEEP_IN_TOUCH_DAYS} days"
+        )))
     }
 }
 
@@ -820,9 +910,19 @@ pub(crate) fn validate_keep_in_touch(value: &KeepInTouch) -> DbResult<()> {
     if let Some(days) = value.interval_days {
         validate_keep_in_touch_days(days)?;
     }
-    for instant in [&value.started_at, &value.snoozed_until, &value.snoozed_at, &value.last_touch_at].into_iter().flatten() {
+    for instant in [
+        &value.started_at,
+        &value.snoozed_until,
+        &value.snoozed_at,
+        &value.last_touch_at,
+    ]
+    .into_iter()
+    .flatten()
+    {
         if parse_instant(instant).is_none() {
-            return Err(DatabaseError::invalid("Keep-in-touch dates must be RFC 3339 timestamps"));
+            return Err(DatabaseError::invalid(
+                "Keep-in-touch dates must be RFC 3339 timestamps",
+            ));
         }
     }
     Ok(())
@@ -845,7 +945,9 @@ pub(crate) fn normalize_birthday(value: Option<&str>) -> DbResult<Option<String>
     if valid {
         Ok(Some(value.to_string()))
     } else {
-        Err(DatabaseError::invalid("Enter a birthday as MM-DD or YYYY-MM-DD"))
+        Err(DatabaseError::invalid(
+            "Enter a birthday as MM-DD or YYYY-MM-DD",
+        ))
     }
 }
 
@@ -853,7 +955,10 @@ pub(crate) fn normalize_birthday(value: Option<&str>) -> DbResult<Option<String>
 /// are off. A touch is the newest of any mail either way (`last_mail_at`)
 /// and a hand-logged touch. Without any touch the interval counts from when
 /// reminders were turned on. A snooze wins until a touch newer than it.
-pub(crate) fn keep_in_touch_due_at(value: &KeepInTouch, last_mail_at: Option<&str>) -> Option<String> {
+pub(crate) fn keep_in_touch_due_at(
+    value: &KeepInTouch,
+    last_mail_at: Option<&str>,
+) -> Option<String> {
     let days = value.interval_days?;
     let last_touch = [last_mail_at, value.last_touch_at.as_deref()]
         .into_iter()
@@ -925,17 +1030,24 @@ pub(super) fn save_contact_on(
         }
     }
     if addresses.is_empty() {
-        return Err(DatabaseError::invalid("A contact needs at least one email address"));
+        return Err(DatabaseError::invalid(
+            "A contact needs at least one email address",
+        ));
     }
     if request.links.len() > 20 {
-        return Err(DatabaseError::invalid("A contact can have at most 20 links"));
+        return Err(DatabaseError::invalid(
+            "A contact can have at most 20 links",
+        ));
     }
     let mut links = Vec::new();
     for link in &request.links {
         let value = link.trim();
-        let parsed = url::Url::parse(value).map_err(|_| DatabaseError::invalid("Enter a valid https link"))?;
+        let parsed = url::Url::parse(value)
+            .map_err(|_| DatabaseError::invalid("Enter a valid https link"))?;
         if parsed.scheme() != "https" || parsed.host_str().is_none() || value.len() > 2048 {
-            return Err(DatabaseError::invalid("Contact links must be valid https URLs"));
+            return Err(DatabaseError::invalid(
+                "Contact links must be valid https URLs",
+            ));
         }
         links.push(value.to_string());
     }
@@ -1019,17 +1131,53 @@ mod tests {
     fn addresses_keep_their_saved_order_with_the_primary_first() {
         let database = Database::open_memory();
         let request = |id: Option<String>, addresses: &[&str]| SaveContactRequest {
-            id, display_name: Some("Zed".into()), role: None, company: None, location: None, bio: None, notes: None,
-            links: Vec::new(), photo_data: None, favorite: false, addresses: addresses.iter().map(|value| value.to_string()).collect(),
-            birthday: None, keep_in_touch: None,
+            id,
+            display_name: Some("Zed".into()),
+            role: None,
+            company: None,
+            location: None,
+            bio: None,
+            notes: None,
+            links: Vec::new(),
+            photo_data: None,
+            favorite: false,
+            addresses: addresses.iter().map(|value| value.to_string()).collect(),
+            birthday: None,
+            keep_in_touch: None,
         };
-        let saved = database.save_contact_profile(&request(None, &["zed@work.example", "Zed@Home.example"])).unwrap();
-        assert_eq!(saved.addresses, vec!["zed@work.example", "zed@home.example"]);
-        let saved = database.save_contact_profile(&request(Some(saved.id), &["zed@home.example", "zed@work.example"])).unwrap();
-        assert_eq!(saved.addresses, vec!["zed@home.example", "zed@work.example"]);
-        assert_eq!(database.get_contact_profile(&saved.id).unwrap().unwrap().addresses, saved.addresses);
-        assert_eq!(database.list_saved_contact_profiles().unwrap()[0].addresses, saved.addresses);
-        assert_eq!(database.list_contact_profiles("", 10).unwrap()[0].addresses, saved.addresses);
+        let saved = database
+            .save_contact_profile(&request(None, &["zed@work.example", "Zed@Home.example"]))
+            .unwrap();
+        assert_eq!(
+            saved.addresses,
+            vec!["zed@work.example", "zed@home.example"]
+        );
+        let saved = database
+            .save_contact_profile(&request(
+                Some(saved.id),
+                &["zed@home.example", "zed@work.example"],
+            ))
+            .unwrap();
+        assert_eq!(
+            saved.addresses,
+            vec!["zed@home.example", "zed@work.example"]
+        );
+        assert_eq!(
+            database
+                .get_contact_profile(&saved.id)
+                .unwrap()
+                .unwrap()
+                .addresses,
+            saved.addresses
+        );
+        assert_eq!(
+            database.list_saved_contact_profiles().unwrap()[0].addresses,
+            saved.addresses
+        );
+        assert_eq!(
+            database.list_contact_profiles("", 10).unwrap()[0].addresses,
+            saved.addresses
+        );
     }
 
     // New saved-contact ids are persisted and synced between devices, so the
@@ -1037,23 +1185,47 @@ mod tests {
     #[test]
     fn a_new_contact_id_is_the_sha256_of_its_normalized_primary_address() {
         let database = Database::open_memory();
-        let saved = database.save_contact_profile(&SaveContactRequest {
-            id: None, display_name: Some("Jane".into()), role: None, company: None, location: None, bio: None, notes: None,
-            links: Vec::new(), photo_data: None, favorite: false, addresses: vec!["  Jane@Example.com ".into()],
-            birthday: None, keep_in_touch: None,
-        }).unwrap();
-        assert_eq!(saved.id, "contact:8c87b489ce35cf2e2f39f80e282cb2e804932a56a213983eeeb428407d43b52d");
+        let saved = database
+            .save_contact_profile(&SaveContactRequest {
+                id: None,
+                display_name: Some("Jane".into()),
+                role: None,
+                company: None,
+                location: None,
+                bio: None,
+                notes: None,
+                links: Vec::new(),
+                photo_data: None,
+                favorite: false,
+                addresses: vec!["  Jane@Example.com ".into()],
+                birthday: None,
+                keep_in_touch: None,
+            })
+            .unwrap();
+        assert_eq!(
+            saved.id,
+            "contact:8c87b489ce35cf2e2f39f80e282cb2e804932a56a213983eeeb428407d43b52d"
+        );
     }
 
     #[test]
     fn due_date_is_off_without_an_interval() {
-        let value = KeepInTouch { interval_days: None, ..kit(7) };
-        assert_eq!(keep_in_touch_due_at(&value, Some("2026-09-20T00:00:00Z")), None);
+        let value = KeepInTouch {
+            interval_days: None,
+            ..kit(7)
+        };
+        assert_eq!(
+            keep_in_touch_due_at(&value, Some("2026-09-20T00:00:00Z")),
+            None
+        );
     }
 
     #[test]
     fn due_date_counts_from_the_start_without_any_touch() {
-        assert_eq!(keep_in_touch_due_at(&kit(14), None).as_deref(), Some("2026-09-15T00:00:00+00:00"));
+        assert_eq!(
+            keep_in_touch_due_at(&kit(14), None).as_deref(),
+            Some("2026-09-15T00:00:00+00:00")
+        );
     }
 
     #[test]
@@ -1116,12 +1288,29 @@ mod tests {
 
     #[test]
     fn birthdays_accept_month_day_with_or_without_a_year() {
-        assert_eq!(normalize_birthday(Some(" 12-09 ")).unwrap().as_deref(), Some("12-09"));
-        assert_eq!(normalize_birthday(Some("1984-12-09")).unwrap().as_deref(), Some("1984-12-09"));
-        assert_eq!(normalize_birthday(Some("02-29")).unwrap().as_deref(), Some("02-29"));
+        assert_eq!(
+            normalize_birthday(Some(" 12-09 ")).unwrap().as_deref(),
+            Some("12-09")
+        );
+        assert_eq!(
+            normalize_birthday(Some("1984-12-09")).unwrap().as_deref(),
+            Some("1984-12-09")
+        );
+        assert_eq!(
+            normalize_birthday(Some("02-29")).unwrap().as_deref(),
+            Some("02-29")
+        );
         assert_eq!(normalize_birthday(Some("")).unwrap(), None);
         assert_eq!(normalize_birthday(None).unwrap(), None);
-        for invalid in ["13-01", "02-30", "2023-02-29", "1899-12-31", "9999-01-01", "Dec 9", "12/09"] {
+        for invalid in [
+            "13-01",
+            "02-30",
+            "2023-02-29",
+            "1899-12-31",
+            "9999-01-01",
+            "Dec 9",
+            "12/09",
+        ] {
             assert!(normalize_birthday(Some(invalid)).is_err(), "{invalid}");
         }
     }
@@ -1153,7 +1342,7 @@ pub(super) fn insert_imported_contact(
     connection: &rusqlite::Connection,
     contact: &crate::transfer::TransferContact,
 ) -> DbResult<()> {
-    let kit=&contact.keep_in_touch;
+    let kit = &contact.keep_in_touch;
     connection.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(super::serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339(),contact.birthday,kit.interval_days,kit.started_at,kit.snoozed_until,kit.snoozed_at,kit.last_touch_at])?;
     Ok(())
 }

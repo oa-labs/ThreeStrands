@@ -121,7 +121,10 @@ impl Database {
         self.connection()
     }
 
-    pub(crate) fn test_with_connection<R>(&self, work: impl FnOnce(&Connection) -> DbResult<R>) -> DbResult<R> {
+    pub(crate) fn test_with_connection<R>(
+        &self,
+        work: impl FnOnce(&Connection) -> DbResult<R>,
+    ) -> DbResult<R> {
         self.with_connection(work)
     }
 

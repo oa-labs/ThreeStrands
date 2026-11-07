@@ -338,7 +338,10 @@ fn describe_reasoning(reasoning: Reasoning) -> &'static str {
 }
 
 fn describe_schema(schema: Option<&OutputSchema>) -> String {
-    schema.map_or_else(|| "no schema".to_string(), |schema| format!("schema {}", schema.name))
+    schema.map_or_else(
+        || "no schema".to_string(),
+        |schema| format!("schema {}", schema.name),
+    )
 }
 
 pub(super) struct ProviderRequest<'a> {
@@ -370,7 +373,9 @@ fn parse_stop_reason(protocol: ApiProtocol, body: &str) -> Option<String> {
             .and_then(|choice| choice.get("finish_reason")),
         ApiProtocol::Disabled => None,
     };
-    reason.and_then(|reason| reason.as_str()).map(str::to_string)
+    reason
+        .and_then(|reason| reason.as_str())
+        .map(str::to_string)
 }
 
 /// Attaches a provider's credentials: Anthropic takes an `x-api-key` header
@@ -397,11 +402,15 @@ async fn send_provider_request(
     match request.provider.descriptor().protocol {
         ApiProtocol::Anthropic => {
             let client = ai_client()?;
-            let response = authorize(client.post(format!("{base_url}/messages")), ApiProtocol::Anthropic, api_key)
-                .json(&anthropic_body(request, schema))
-                .send()
-                .await
-                .map_err(display)?;
+            let response = authorize(
+                client.post(format!("{base_url}/messages")),
+                ApiProtocol::Anthropic,
+                api_key,
+            )
+            .json(&anthropic_body(request, schema))
+            .send()
+            .await
+            .map_err(display)?;
             let text = checked(response).await?.text().await.map_err(display)?;
             record_usage(request, &text);
             Ok(ProviderReply {
@@ -417,9 +426,9 @@ async fn send_provider_request(
                 api_key,
             )
             .json(&openai_body(request, schema))
-                .send()
-                .await
-                .map_err(display)?;
+            .send()
+            .await
+            .map_err(display)?;
             let text = checked(response).await?.text().await.map_err(display)?;
             record_usage(request, &text);
             Ok(ProviderReply {
@@ -503,19 +512,17 @@ pub async fn test_connection(
     if model.trim().is_empty() {
         return Err("Set a model name in AI settings".to_string());
     }
-    call_provider(
-        AiCall {
-            provider,
-            model: model.trim(),
-            endpoint,
-            system_prompt: "You are a connection test. Reply with exactly OK.",
-            prompt: "Reply with exactly OK.",
-            max_tokens: 1,
-            temperature: 0.0,
-            schema: None,
-            api_key,
-        },
-    )
+    call_provider(AiCall {
+        provider,
+        model: model.trim(),
+        endpoint,
+        system_prompt: "You are a connection test. Reply with exactly OK.",
+        prompt: "Reply with exactly OK.",
+        max_tokens: 1,
+        temperature: 0.0,
+        schema: None,
+        api_key,
+    })
     .await
     .map(|_| ())
 }
@@ -704,7 +711,11 @@ mod tests {
         let models = parse_models(body).expect("parses");
         assert_eq!(
             models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            vec!["gpt-4o", "anthropic/claude-3.5-sonnet", "text-embedding-3-small"]
+            vec![
+                "gpt-4o",
+                "anthropic/claude-3.5-sonnet",
+                "text-embedding-3-small"
+            ]
         );
         assert_eq!(models[0].label, None);
         assert_eq!(models[1].label.as_deref(), Some("Claude 3.5 Sonnet"));
@@ -778,7 +789,10 @@ mod tests {
         assert_eq!(headers.len(), 3);
         assert!(headers[0].get("authorization").is_none());
         assert!(headers[0].get("x-api-key").is_none());
-        assert_eq!(headers[1].get("authorization").unwrap(), "Bearer secret-key");
+        assert_eq!(
+            headers[1].get("authorization").unwrap(),
+            "Bearer secret-key"
+        );
         assert_eq!(headers[2].get("x-api-key").unwrap(), "secret-key");
         assert!(headers[2].get("anthropic-version").is_some());
         server.abort();
@@ -888,7 +902,11 @@ mod tests {
             r#"{"choices":[{"message":{"content":"x"},"finish_reason":null}]}"#,
             "not json",
         ] {
-            assert_eq!(parse_stop_reason(ApiProtocol::OpenAiCompatible, body), None, "{body}");
+            assert_eq!(
+                parse_stop_reason(ApiProtocol::OpenAiCompatible, body),
+                None,
+                "{body}"
+            );
         }
     }
 
@@ -1024,19 +1042,17 @@ mod tests {
             let server = tokio::spawn(async move {
                 axum::serve(listener, app).await.unwrap();
             });
-            let result = call_provider(
-                AiCall {
-                    provider: AiProvider::Custom,
-                    model: "model",
-                    endpoint: Some(&endpoint),
-                    system_prompt: "system",
-                    prompt: "prompt",
-                    max_tokens: 100,
-                    temperature: 0.1,
-                    schema: Some(&contact_output_schema(&CONTACT_FIELDS)),
-                    api_key: "key",
-                },
-            )
+            let result = call_provider(AiCall {
+                provider: AiProvider::Custom,
+                model: "model",
+                endpoint: Some(&endpoint),
+                system_prompt: "system",
+                prompt: "prompt",
+                max_tokens: 100,
+                temperature: 0.1,
+                schema: Some(&contact_output_schema(&CONTACT_FIELDS)),
+                api_key: "key",
+            })
             .await;
             assert_eq!(result.is_ok(), succeeds, "{status}: {result:?}");
             if let Ok(content) = result {
@@ -1068,12 +1084,18 @@ mod tests {
         );
         assert_eq!(structured["reasoning_effort"], json!("none"));
         assert!(structured.get("response_format").is_some());
-        assert!(openai_body(&request(AiProvider::Fireworks, Reasoning::Default), None)
-            .get("reasoning_effort")
-            .is_none());
+        assert!(
+            openai_body(&request(AiProvider::Fireworks, Reasoning::Default), None)
+                .get("reasoning_effort")
+                .is_none()
+        );
         // Providers without a documented, verified switch keep the model's
         // default rather than receiving a parameter they may reject.
-        for provider in [AiProvider::OpenAi, AiProvider::OpenRouter, AiProvider::Custom] {
+        for provider in [
+            AiProvider::OpenAi,
+            AiProvider::OpenRouter,
+            AiProvider::Custom,
+        ] {
             let body = openai_body(&request(provider, Reasoning::Off), None);
             assert!(body.get("reasoning_effort").is_none(), "{provider:?}");
             assert!(body.get("reasoning").is_none(), "{provider:?}");
@@ -1085,8 +1107,14 @@ mod tests {
 
     #[test]
     fn reasoning_mode_reads_the_webview_values_and_defaults_to_the_model() {
-        assert_eq!(serde_json::from_value::<Reasoning>(json!("off")).unwrap(), Reasoning::Off);
-        assert_eq!(serde_json::from_value::<Reasoning>(json!("default")).unwrap(), Reasoning::Default);
+        assert_eq!(
+            serde_json::from_value::<Reasoning>(json!("off")).unwrap(),
+            Reasoning::Off
+        );
+        assert_eq!(
+            serde_json::from_value::<Reasoning>(json!("default")).unwrap(),
+            Reasoning::Default
+        );
         assert!(serde_json::from_value::<Reasoning>(json!("none")).is_err());
         assert_eq!(Reasoning::default(), Reasoning::Default);
     }
@@ -1104,7 +1132,10 @@ mod tests {
                 || (rejects_schema && payload.get("response_format").is_some());
             requests.lock().unwrap().push(payload);
             if rejected {
-                return (StatusCode::BAD_REQUEST, Json(json!({"error": "unsupported"})));
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": "unsupported"})),
+                );
             }
             (
                 StatusCode::OK,
@@ -1116,10 +1147,18 @@ mod tests {
         for (rejects_reasoning, rejects_schema, expected) in [
             (false, false, vec![(true, true)]),
             (true, false, vec![(true, true), (false, true)]),
-            (true, true, vec![(true, true), (false, true), (true, false), (false, false)]),
+            (
+                true,
+                true,
+                vec![(true, true), (false, true), (true, false), (false, false)],
+            ),
             // A rejection does not name the parameter, so the reasoning
             // switch is dropped first, then restored once the schema goes.
-            (false, true, vec![(true, true), (false, true), (true, false)]),
+            (
+                false,
+                true,
+                vec![(true, true), (false, true), (true, false)],
+            ),
         ] {
             let requests: RequestLog = Arc::new(Mutex::new(Vec::new()));
             let app = Router::new()
@@ -1170,7 +1209,9 @@ mod tests {
             reasoning: Reasoning::Off,
             ..provider_request(AiProvider::Fireworks)
         };
-        assert!(send_with_fallbacks(&base_url, request, None, "key").await.is_err());
+        assert!(send_with_fallbacks(&base_url, request, None, "key")
+            .await
+            .is_err());
         assert_eq!(*calls.lock().unwrap(), 1);
         server.abort();
     }

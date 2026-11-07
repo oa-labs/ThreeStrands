@@ -1,4 +1,6 @@
-use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+};
 use chrono_tz::Tz;
 
 use crate::models::{AvailabilityCandidate, AvailabilityPreferences, BusyInterval};
@@ -28,20 +30,32 @@ pub(crate) const MAX_AVAILABILITY_ACCOUNT_DEFAULTS: usize = 200;
 
 pub(crate) fn validate_drive_time_buffer(minutes: u32) -> Result<(), String> {
     if minutes > MAX_DRIVE_TIME_BUFFER_MINUTES {
-        return Err(format!("Drive time buffer must be between 0 and {MAX_DRIVE_TIME_BUFFER_MINUTES} minutes"));
+        return Err(format!(
+            "Drive time buffer must be between 0 and {MAX_DRIVE_TIME_BUFFER_MINUTES} minutes"
+        ));
     }
     Ok(())
 }
 
 /// Include events outside the requested range whose drive time reaches it.
-pub(crate) fn buffered_range(start: &str, end: &str, minutes: u32) -> Result<(String, String), String> {
+pub(crate) fn buffered_range(
+    start: &str,
+    end: &str,
+    minutes: u32,
+) -> Result<(String, String), String> {
     validate_drive_time_buffer(minutes)?;
     let start = parse_range(start)?;
     let end = parse_range(end)?;
-    if end <= start { return Err("Availability range must end after it starts".into()); }
+    if end <= start {
+        return Err("Availability range must end after it starts".into());
+    }
     let buffer = Duration::minutes(i64::from(minutes));
-    let start = start.checked_sub_signed(buffer).ok_or("Availability range is out of bounds")?;
-    let end = end.checked_add_signed(buffer).ok_or("Availability range is out of bounds")?;
+    let start = start
+        .checked_sub_signed(buffer)
+        .ok_or("Availability range is out of bounds")?;
+    let end = end
+        .checked_add_signed(buffer)
+        .ok_or("Availability range is out of bounds")?;
     Ok((start.to_rfc3339(), end.to_rfc3339()))
 }
 
@@ -75,7 +89,10 @@ pub(crate) fn validate_preferences(preferences: &AvailabilityPreferences) -> Res
 
 /// One weekday's windows sorted by start, with overlapping or touching
 /// windows merged so a slot is never offered twice.
-fn merged_windows(preferences: &AvailabilityPreferences, weekday: u8) -> Result<Vec<(NaiveTime, NaiveTime)>, String> {
+fn merged_windows(
+    preferences: &AvailabilityPreferences,
+    weekday: u8,
+) -> Result<Vec<(NaiveTime, NaiveTime)>, String> {
     let mut windows = preferences
         .working_windows
         .iter()
@@ -95,8 +112,12 @@ fn merged_windows(preferences: &AvailabilityPreferences, weekday: u8) -> Result<
 
 fn busy_overlaps(start: DateTime<Utc>, end: DateTime<Utc>, busy: &[BusyInterval]) -> bool {
     busy.iter().any(|interval| {
-        let Ok(interval_start) = parse_range(&interval.start) else { return false; };
-        let Ok(interval_end) = parse_range(&interval.end) else { return false; };
+        let Ok(interval_start) = parse_range(&interval.start) else {
+            return false;
+        };
+        let Ok(interval_end) = parse_range(&interval.end) else {
+            return false;
+        };
         interval_start < end && interval_end > start
     })
 }
@@ -127,7 +148,9 @@ pub fn find_candidates(
     max_per_day: Option<usize>,
 ) -> Result<Vec<AvailabilityCandidate>, String> {
     if max_per_day.is_some_and(|limit| !(1..=MAX_CANDIDATES).contains(&limit)) {
-        return Err(format!("Slots per day must be between 1 and {MAX_CANDIDATES}"));
+        return Err(format!(
+            "Slots per day must be between 1 and {MAX_CANDIDATES}"
+        ));
     }
     let per_day = max_per_day.unwrap_or(MAX_CANDIDATES);
     let range_start = parse_range(range_start)?;
@@ -149,7 +172,10 @@ pub fn find_candidates(
         let day_start = candidates.len();
         for (start, end) in merged_windows(preferences, weekday)? {
             let mut cursor = start;
-            while cursor + duration <= end && candidates.len() < MAX_CANDIDATES && candidates.len() - day_start < per_day {
+            while cursor + duration <= end
+                && candidates.len() < MAX_CANDIDATES
+                && candidates.len() - day_start < per_day
+            {
                 let Some(slot_start) = local_datetime(zone, date, cursor) else {
                     cursor += increment;
                     continue;
@@ -158,7 +184,11 @@ pub fn find_candidates(
                     cursor += increment;
                     continue;
                 };
-                if slot_start >= range_start && slot_end <= range_end && slot_start > now && !busy_overlaps(slot_start, slot_end, busy) {
+                if slot_start >= range_start
+                    && slot_end <= range_end
+                    && slot_start > now
+                    && !busy_overlaps(slot_start, slot_end, busy)
+                {
                     let status = if total_calendar_count == 0 {
                         "unverified"
                     } else if checked_calendar_count == total_calendar_count {
@@ -212,7 +242,11 @@ mod tests {
     fn preferences() -> AvailabilityPreferences {
         AvailabilityPreferences {
             time_zone: "America/New_York".to_string(),
-            working_windows: vec![AvailabilityWindow { weekday: 1, start: "09:00".to_string(), end: "12:00".to_string() }],
+            working_windows: vec![AvailabilityWindow {
+                weekday: 1,
+                start: "09:00".to_string(),
+                end: "12:00".to_string(),
+            }],
             default_duration_minutes: 30,
             slot_increment_minutes: 30,
             drive_time_buffer_minutes: 0,
@@ -221,7 +255,11 @@ mod tests {
 
     #[test]
     fn drive_time_limits_and_cross_day_search_ranges() {
-        for minutes in [0, MAX_DRIVE_TIME_BUFFER_MINUTES - 1, MAX_DRIVE_TIME_BUFFER_MINUTES] {
+        for minutes in [
+            0,
+            MAX_DRIVE_TIME_BUFFER_MINUTES - 1,
+            MAX_DRIVE_TIME_BUFFER_MINUTES,
+        ] {
             let mut prefs = preferences();
             prefs.drive_time_buffer_minutes = minutes;
             assert!(validate_preferences(&prefs).is_ok());
@@ -231,8 +269,13 @@ mod tests {
         assert!(validate_preferences(&prefs).is_err());
         assert!(buffered_range("invalid", "2099-09-21T00:00:00Z", 30).is_err());
         assert!(buffered_range("2099-09-21T01:00:00Z", "2099-09-21T00:00:00Z", 30).is_err());
-        assert_eq!(buffered_range("2099-09-21T00:00:00Z", "2099-09-21T23:45:00Z", 30).unwrap(),
-            ("2099-09-20T23:30:00+00:00".into(), "2099-09-22T00:15:00+00:00".into()));
+        assert_eq!(
+            buffered_range("2099-09-21T00:00:00Z", "2099-09-21T23:45:00Z", 30).unwrap(),
+            (
+                "2099-09-20T23:30:00+00:00".into(),
+                "2099-09-22T00:15:00+00:00".into()
+            )
+        );
     }
 
     #[test]
@@ -241,20 +284,32 @@ mod tests {
             "2099-09-21T00:00:00Z",
             "2099-09-22T00:00:00Z",
             &preferences(),
-            &[BusyInterval { start: "2099-09-21T13:30:00Z".to_string(), end: "2099-09-21T14:30:00Z".to_string() }],
+            &[BusyInterval {
+                start: "2099-09-21T13:30:00Z".to_string(),
+                end: "2099-09-21T14:30:00Z".to_string(),
+            }],
             1,
             1,
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(candidates[0].start, "2099-09-21T13:00:00+00:00");
-        assert!(candidates.iter().all(|candidate| candidate.status == "verified"));
-        assert!(!candidates.iter().any(|candidate| candidate.start == "2099-09-21T13:30:00+00:00"));
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.status == "verified"));
+        assert!(!candidates
+            .iter()
+            .any(|candidate| candidate.start == "2099-09-21T13:30:00+00:00"));
     }
 
     #[test]
     fn handles_dst_transition_without_creating_invalid_local_times() {
         let mut preferences = preferences();
-        preferences.working_windows = vec![AvailabilityWindow { weekday: 0, start: "01:00".to_string(), end: "04:00".to_string() }];
+        preferences.working_windows = vec![AvailabilityWindow {
+            weekday: 0,
+            start: "01:00".to_string(),
+            end: "04:00".to_string(),
+        }];
         // Sunday 2099-03-08 is the US spring-forward day: New York local
         // time jumps from 02:00 EST straight to 03:00 EDT.
         let candidates = find_candidates(
@@ -265,84 +320,156 @@ mod tests {
             0,
             0,
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(!candidates.is_empty());
-        assert!(candidates.iter().all(|candidate| candidate.status == "unverified"));
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.status == "unverified"));
         let slots = candidates
             .iter()
             .map(|candidate| (candidate.start.as_str(), candidate.end.as_str()))
             .collect::<Vec<_>>();
         // 01:00 EST is 06:00Z and 03:00 EDT is 07:00Z. Slots that start or
         // end inside the nonexistent 02:00 local hour are skipped.
-        assert_eq!(slots, vec![
-            ("2099-03-08T06:00:00+00:00", "2099-03-08T06:30:00+00:00"),
-            ("2099-03-08T07:00:00+00:00", "2099-03-08T07:30:00+00:00"),
-            ("2099-03-08T07:30:00+00:00", "2099-03-08T08:00:00+00:00"),
-        ]);
+        assert_eq!(
+            slots,
+            vec![
+                ("2099-03-08T06:00:00+00:00", "2099-03-08T06:30:00+00:00"),
+                ("2099-03-08T07:00:00+00:00", "2099-03-08T07:30:00+00:00"),
+                ("2099-03-08T07:30:00+00:00", "2099-03-08T08:00:00+00:00"),
+            ]
+        );
     }
 
     #[test]
     fn a_per_day_limit_spreads_candidates_across_days() {
         let mut preferences = preferences();
         preferences.working_windows = (1..=5)
-            .map(|weekday| AvailabilityWindow { weekday, start: "09:00".to_string(), end: "17:00".to_string() })
+            .map(|weekday| AvailabilityWindow {
+                weekday,
+                start: "09:00".to_string(),
+                end: "17:00".to_string(),
+            })
             .collect();
         // Monday 2099-09-21 through Friday 2099-09-25, New York time.
         let range = ("2099-09-21T04:00:00Z", "2099-09-26T04:00:00Z");
-        let busy = [BusyInterval { start: "2099-09-22T13:00:00Z".to_string(), end: "2099-09-22T15:00:00Z".to_string() }];
+        let busy = [BusyInterval {
+            start: "2099-09-22T13:00:00Z".to_string(),
+            end: "2099-09-22T15:00:00Z".to_string(),
+        }];
         let unlimited = find_candidates(range.0, range.1, &preferences, &busy, 1, 1, None).unwrap();
         assert_eq!(unlimited.len(), MAX_CANDIDATES);
         // Without a limit, Monday's sixteen half-hour slots come first.
-        assert_eq!(unlimited.iter().filter(|candidate| candidate.start.starts_with("2099-09-21")).count(), 16);
+        assert_eq!(
+            unlimited
+                .iter()
+                .filter(|candidate| candidate.start.starts_with("2099-09-21"))
+                .count(),
+            16
+        );
         assert_eq!(unlimited[1].start, "2099-09-21T13:30:00+00:00");
 
         let spread = find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(1)).unwrap();
-        let starts = spread.iter().map(|candidate| candidate.start.as_str()).collect::<Vec<_>>();
-        assert_eq!(starts, vec![
-            "2099-09-21T13:00:00+00:00",
-            "2099-09-22T15:00:00+00:00",
-            "2099-09-23T13:00:00+00:00",
-            "2099-09-24T13:00:00+00:00",
-            "2099-09-25T13:00:00+00:00",
-        ]);
-        assert_eq!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(2)).unwrap().len(), 10);
-        assert_eq!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(MAX_CANDIDATES)).unwrap().len(), MAX_CANDIDATES);
+        let starts = spread
+            .iter()
+            .map(|candidate| candidate.start.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            starts,
+            vec![
+                "2099-09-21T13:00:00+00:00",
+                "2099-09-22T15:00:00+00:00",
+                "2099-09-23T13:00:00+00:00",
+                "2099-09-24T13:00:00+00:00",
+                "2099-09-25T13:00:00+00:00",
+            ]
+        );
+        assert_eq!(
+            find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(2))
+                .unwrap()
+                .len(),
+            10
+        );
+        assert_eq!(
+            find_candidates(
+                range.0,
+                range.1,
+                &preferences,
+                &busy,
+                1,
+                1,
+                Some(MAX_CANDIDATES)
+            )
+            .unwrap()
+            .len(),
+            MAX_CANDIDATES
+        );
         assert!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(0)).is_err());
-        assert!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(MAX_CANDIDATES + 1)).is_err());
+        assert!(find_candidates(
+            range.0,
+            range.1,
+            &preferences,
+            &busy,
+            1,
+            1,
+            Some(MAX_CANDIDATES + 1)
+        )
+        .is_err());
     }
 
     fn window(weekday: u8, start: &str, end: &str) -> AvailabilityWindow {
-        AvailabilityWindow { weekday, start: start.to_string(), end: end.to_string() }
+        AvailabilityWindow {
+            weekday,
+            start: start.to_string(),
+            end: end.to_string(),
+        }
     }
 
     fn slot_starts(preferences: &AvailabilityPreferences) -> Vec<String> {
         // Monday 2099-09-21, New York time (UTC-4).
-        find_candidates("2099-09-21T04:00:00Z", "2099-09-22T04:00:00Z", preferences, &[], 1, 1, None)
-            .unwrap()
-            .into_iter()
-            .map(|candidate| candidate.start)
-            .collect()
+        find_candidates(
+            "2099-09-21T04:00:00Z",
+            "2099-09-22T04:00:00Z",
+            preferences,
+            &[],
+            1,
+            1,
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|candidate| candidate.start)
+        .collect()
     }
 
     #[test]
     fn several_windows_on_one_day_leave_the_gaps_unavailable() {
         let mut preferences = preferences();
         preferences.slot_increment_minutes = 60;
-        preferences.working_windows = vec![window(1, "13:00", "15:00"), window(1, "09:00", "12:00")];
-        assert_eq!(slot_starts(&preferences), vec![
-            "2099-09-21T13:00:00+00:00",
-            "2099-09-21T14:00:00+00:00",
-            "2099-09-21T15:00:00+00:00",
-            "2099-09-21T17:00:00+00:00",
-            "2099-09-21T18:00:00+00:00",
-        ]);
+        preferences.working_windows =
+            vec![window(1, "13:00", "15:00"), window(1, "09:00", "12:00")];
+        assert_eq!(
+            slot_starts(&preferences),
+            vec![
+                "2099-09-21T13:00:00+00:00",
+                "2099-09-21T14:00:00+00:00",
+                "2099-09-21T15:00:00+00:00",
+                "2099-09-21T17:00:00+00:00",
+                "2099-09-21T18:00:00+00:00",
+            ]
+        );
     }
 
     #[test]
     fn overlapping_or_touching_windows_merge_without_duplicate_slots() {
         let mut preferences = preferences();
         preferences.slot_increment_minutes = 60;
-        preferences.working_windows = vec![window(1, "09:00", "11:00"), window(1, "10:00", "12:00"), window(1, "12:00", "13:00")];
+        preferences.working_windows = vec![
+            window(1, "09:00", "11:00"),
+            window(1, "10:00", "12:00"),
+            window(1, "12:00", "13:00"),
+        ];
         let starts = slot_starts(&preferences);
         assert_eq!(starts.len(), 4);
         assert_eq!(starts.first().unwrap(), "2099-09-21T13:00:00+00:00");
@@ -353,16 +480,30 @@ mod tests {
     fn working_window_count_is_limited() {
         let mut preferences = preferences();
         preferences.working_windows = (0..MAX_WORKING_WINDOWS)
-            .map(|index| window((index % 7) as u8, &format!("{:02}:00", index / 7 * 2 + 8), &format!("{:02}:00", index / 7 * 2 + 9)))
+            .map(|index| {
+                window(
+                    (index % 7) as u8,
+                    &format!("{:02}:00", index / 7 * 2 + 8),
+                    &format!("{:02}:00", index / 7 * 2 + 9),
+                )
+            })
             .collect();
         assert!(validate_preferences(&preferences).is_ok());
-        preferences.working_windows.push(window(0, "20:00", "21:00"));
+        preferences
+            .working_windows
+            .push(window(0, "20:00", "21:00"));
         assert!(validate_preferences(&preferences).is_err());
     }
 
     #[test]
     fn proposed_time_reports_coverage_state() {
-        assert_eq!(check_time("2026-09-21T13:00:00Z", "2026-09-21T13:30:00Z", &[], 0, 0).unwrap(), "unverified");
-        assert_eq!(check_time("2026-09-21T13:00:00Z", "2026-09-21T13:30:00Z", &[], 1, 2).unwrap(), "partiallyChecked");
+        assert_eq!(
+            check_time("2026-09-21T13:00:00Z", "2026-09-21T13:30:00Z", &[], 0, 0).unwrap(),
+            "unverified"
+        );
+        assert_eq!(
+            check_time("2026-09-21T13:00:00Z", "2026-09-21T13:30:00Z", &[], 1, 2).unwrap(),
+            "partiallyChecked"
+        );
     }
 }

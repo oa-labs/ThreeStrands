@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::error_text::display;
 use crate::models::{ReplyAssistContext, ReplyAssistMessage};
 
-use super::context::{bounded_bodies, MAX_BODY_CHARS, MAX_MESSAGES, ThreadMessageInput};
+use super::context::{bounded_bodies, ThreadMessageInput, MAX_BODY_CHARS, MAX_MESSAGES};
 use super::output::{contains_quoted_history, strip_markdown_fences, MAX_ACTION_OUTPUT_CHARS};
 use super::provider::{
     call_provider, call_provider_reply, AiCall, AiProvider, OutputSchema, Reasoning,
@@ -19,7 +19,10 @@ const REPLY_SYSTEM_PROMPT: &str = "You draft concise email replies for a mail cl
 /// preview and later sent to the configured provider.
 pub fn reply_context(subject: String, messages: Vec<ThreadMessageInput>) -> ReplyAssistContext {
     let window = &messages[messages.len().saturating_sub(MAX_MESSAGES)..];
-    let bodies = bounded_bodies(window.iter().map(|message| message.body_text.as_str()), MAX_BODY_CHARS);
+    let bodies = bounded_bodies(
+        window.iter().map(|message| message.body_text.as_str()),
+        MAX_BODY_CHARS,
+    );
     ReplyAssistContext {
         subject,
         messages: window
@@ -136,7 +139,10 @@ fn validate_review_request(request: &DraftReviewRequest) -> Result<(), String> {
     if request.about_you.chars().count() > MAX_WRITING_PROFILE_ABOUT_CHARS
         || request.review_instructions.chars().count() > MAX_WRITING_PROFILE_INSTRUCTIONS_CHARS
     {
-        return Err("Your writing profile is too long to send; shorten it in AI settings and try again".into());
+        return Err(
+            "Your writing profile is too long to send; shorten it in AI settings and try again"
+                .into(),
+        );
     }
     Ok(())
 }
@@ -219,19 +225,17 @@ pub async fn review_draft(
 ) -> Result<DraftReviewResult, String> {
     validate_review_request(&request)?;
     let prompt = serde_json::to_string(&request).map_err(display)?;
-    let content = call_provider(
-        AiCall {
-            provider,
-            model,
-            endpoint,
-            system_prompt: DRAFT_REVIEW_SYSTEM_PROMPT,
-            prompt: &prompt,
-            max_tokens: STRUCTURED_OUTPUT_TOKENS,
-            temperature: 0.2,
-            schema: Some(&draft_review_schema()),
-            api_key,
-        },
-    )
+    let content = call_provider(AiCall {
+        provider,
+        model,
+        endpoint,
+        system_prompt: DRAFT_REVIEW_SYSTEM_PROMPT,
+        prompt: &prompt,
+        max_tokens: STRUCTURED_OUTPUT_TOKENS,
+        temperature: 0.2,
+        schema: Some(&draft_review_schema()),
+        api_key,
+    })
     .await?;
     parse_draft_review(&content, &request)
 }
@@ -456,7 +460,10 @@ mod tests {
         request.review_instructions = "Push for a specific next step".into();
         let prompt = serde_json::to_value(&request).unwrap();
         assert_eq!(prompt["aboutYou"], "CEO of a consulting firm");
-        assert_eq!(prompt["reviewInstructions"], "Push for a specific next step");
+        assert_eq!(
+            prompt["reviewInstructions"],
+            "Push for a specific next step"
+        );
         assert!(DRAFT_REVIEW_SYSTEM_PROMPT.contains("aboutYou"));
         assert!(DRAFT_REVIEW_SYSTEM_PROMPT.contains("reviewInstructions"));
         // Profile facts reach the revision only through a visible suggestion.

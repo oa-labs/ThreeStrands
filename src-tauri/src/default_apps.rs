@@ -100,7 +100,10 @@ mod platform {
         let bundle = NSBundle::mainBundle();
         let identifier = bundle.bundleIdentifier()?;
         let url = bundle.bundleURL();
-        url.path()?.to_string().ends_with(".app").then_some((url, identifier))
+        url.path()?
+            .to_string()
+            .ends_with(".app")
+            .then_some((url, identifier))
     }
 
     /// Compares by bundle identifier so a second copy of ThreeStrands (for
@@ -120,7 +123,8 @@ mod platform {
         let workspace = NSWorkspace::sharedWorkspace();
         let mail = NSURL::URLWithString(&NSString::from_str("mailto:"))
             .and_then(|probe| workspace.URLForApplicationToOpenURL(&probe));
-        let calendar = ics_type().and_then(|ics| workspace.URLForApplicationToOpenContentType(&ics));
+        let calendar =
+            ics_type().and_then(|ics| workspace.URLForApplicationToOpenContentType(&ics));
         Some(DefaultAppStatus {
             supported: true,
             mail: is_own(mail, &identifier),
@@ -190,7 +194,10 @@ mod platform {
     };
 
     fn wide(text: &str) -> Vec<u16> {
-        std::ffi::OsStr::new(text).encode_wide().chain(std::iter::once(0)).collect()
+        std::ffi::OsStr::new(text)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
     }
 
     /// Where the installer registered ThreeStrands, as the `ms-settings`
@@ -204,7 +211,15 @@ mod platform {
             // SAFETY: both strings are null-terminated and outlive the call,
             // and no data is requested back.
             let result = unsafe {
-                RegGetValueW(root, PCWSTR(key.as_ptr()), PCWSTR(value.as_ptr()), RRF_RT_REG_SZ, None, None, None)
+                RegGetValueW(
+                    root,
+                    PCWSTR(key.as_ptr()),
+                    PCWSTR(value.as_ptr()),
+                    RRF_RT_REG_SZ,
+                    None,
+                    None,
+                    None,
+                )
             };
             result == ERROR_SUCCESS
         };
@@ -238,12 +253,16 @@ mod platform {
         if result.is_err() {
             return None;
         }
-        let end = buffer.iter().position(|&unit| unit == 0).unwrap_or(buffer.len());
+        let end = buffer
+            .iter()
+            .position(|&unit| unit == 0)
+            .unwrap_or(buffer.len());
         Some(String::from_utf16_lossy(&buffer[..end]))
     }
 
     fn is_own(association: &str, flags: ASSOCF, prog_id: &str) -> bool {
-        current_prog_id(association, flags).is_some_and(|current| current.eq_ignore_ascii_case(prog_id))
+        current_prog_id(association, flags)
+            .is_some_and(|current| current.eq_ignore_ascii_case(prog_id))
     }
 
     pub fn status() -> Option<DefaultAppStatus> {
@@ -260,8 +279,10 @@ mod platform {
     /// where the user picks ThreeStrands for each role.
     pub async fn request(_role: DefaultAppRole) -> Result<(), String> {
         let parameter = registration().ok_or(NOT_INSTALLED)?;
-        open::that(format!("ms-settings:defaultapps?{parameter}={WINDOWS_REGISTERED_APP}"))
-            .map_err(|_| "Windows Settings could not be opened.".to_string())
+        open::that(format!(
+            "ms-settings:defaultapps?{parameter}={WINDOWS_REGISTERED_APP}"
+        ))
+        .map_err(|_| "Windows Settings could not be opened.".to_string())
     }
 }
 
@@ -282,7 +303,9 @@ mod platform {
         std::env::var_os("XDG_DATA_HOME")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+            })
     }
 
     /// Where desktop entries live, most important first.
@@ -293,7 +316,12 @@ mod platform {
             .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
         data_home()
             .into_iter()
-            .chain(system.split(':').filter(|dir| !dir.is_empty()).map(PathBuf::from))
+            .chain(
+                system
+                    .split(':')
+                    .filter(|dir| !dir.is_empty())
+                    .map(PathBuf::from),
+            )
             .map(|dir| dir.join("applications"))
             .collect()
     }
@@ -313,7 +341,9 @@ mod platform {
             PathBuf::from(program)
         } else {
             let path = std::env::var_os("PATH")?;
-            std::env::split_paths(&path).map(|dir| dir.join(program)).find(|candidate| candidate.is_file())?
+            std::env::split_paths(&path)
+                .map(|dir| dir.join(program))
+                .find(|candidate| candidate.is_file())?
         };
         found.canonicalize().ok()
     }
@@ -331,14 +361,19 @@ mod platform {
                 let contents = std::fs::read_to_string(entry.path()).ok()?;
                 let exec = desktop_entry_exec(&contents)?;
                 let launches_this_copy = exec_passes_targets(&exec)
-                    && exec_program(&exec).and_then(|program| resolve(&program)).is_some_and(|program| program == own);
+                    && exec_program(&exec)
+                        .and_then(|program| resolve(&program))
+                        .is_some_and(|program| program == own);
                 launches_this_copy.then_some(id)
             })
         })
     }
 
     fn current_default(mime_type: &str) -> Option<String> {
-        let output = Command::new("xdg-mime").args(["query", "default", mime_type]).output().ok()?;
+        let output = Command::new("xdg-mime")
+            .args(["query", "default", mime_type])
+            .output()
+            .ok()?;
         output
             .status
             .success()
@@ -390,7 +425,9 @@ mod platform {
             let status = Command::new("xdg-mime")
                 .args(["default", &entry, mime_type])
                 .status()
-                .map_err(|_| "Changing default apps needs xdg-utils, which is not installed.".to_string())?;
+                .map_err(|_| {
+                    "Changing default apps needs xdg-utils, which is not installed.".to_string()
+                })?;
             if status.success() {
                 Ok(())
             } else {
@@ -527,8 +564,14 @@ mod tests {
 
     #[test]
     fn roles_use_the_webview_names() {
-        assert_eq!(serde_json::from_str::<DefaultAppRole>("\"mail\"").unwrap(), DefaultAppRole::Mail);
-        assert_eq!(serde_json::from_str::<DefaultAppRole>("\"calendar\"").unwrap(), DefaultAppRole::Calendar);
+        assert_eq!(
+            serde_json::from_str::<DefaultAppRole>("\"mail\"").unwrap(),
+            DefaultAppRole::Mail
+        );
+        assert_eq!(
+            serde_json::from_str::<DefaultAppRole>("\"calendar\"").unwrap(),
+            DefaultAppRole::Calendar
+        );
         assert!(serde_json::from_str::<DefaultAppRole>("\"browser\"").is_err());
     }
 
@@ -551,43 +594,71 @@ mod tests {
         let hooks = include_str!("../windows/hooks.nsh");
         assert!(hooks.contains(&format!(r#""mailto" "{WINDOWS_MAIL_PROG_ID}""#)));
         assert!(hooks.contains(&format!(r#"".ics" "{WINDOWS_CALENDAR_PROG_ID}""#)));
-        assert!(hooks.contains(&format!(r#""Software\RegisteredApplications" "{WINDOWS_REGISTERED_APP}""#)));
+        assert!(hooks.contains(&format!(
+            r#""Software\RegisteredApplications" "{WINDOWS_REGISTERED_APP}""#
+        )));
         for prog_id in [WINDOWS_MAIL_PROG_ID, WINDOWS_CALENDAR_PROG_ID] {
-            assert!(hooks.contains(&format!(r#"{prog_id}\shell\open\command" "" '"$INSTDIR\${{MAINBINARYNAME}}.exe" "%1"'"#)));
-            assert!(hooks.contains(&format!(r#"DeleteRegKey SHCTX "Software\Classes\{prog_id}""#)));
+            assert!(hooks.contains(&format!(
+                r#"{prog_id}\shell\open\command" "" '"$INSTDIR\${{MAINBINARYNAME}}.exe" "%1"'"#
+            )));
+            assert!(hooks.contains(&format!(
+                r#"DeleteRegKey SHCTX "Software\Classes\{prog_id}""#
+            )));
         }
         // Only the user picks a default: never the extension's default value
         // or the user's choice.
         assert!(!hooks.contains(r#""Software\Classes\.ics" """#));
         assert!(!hooks.contains("UserChoice"));
-        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.windows.conf.json")).unwrap();
-        assert_eq!(config["bundle"]["windows"]["nsis"]["installerHooks"], "windows/hooks.nsh");
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.windows.conf.json")).unwrap();
+        assert_eq!(
+            config["bundle"]["windows"]["nsis"]["installerHooks"],
+            "windows/hooks.nsh"
+        );
     }
 
     #[test]
     fn linux_packages_declare_both_roles_and_pass_the_target() {
         let template = include_str!("../linux/threestrands.desktop");
-        assert!(template.contains(&format!("MimeType={LINUX_MAIL_TYPE};{LINUX_CALENDAR_TYPE};")));
+        assert!(template.contains(&format!(
+            "MimeType={LINUX_MAIL_TYPE};{LINUX_CALENDAR_TYPE};"
+        )));
         let exec = desktop_entry_exec(template).unwrap();
         assert!(exec_passes_targets(&exec));
         assert_eq!(exec_program(&exec).as_deref(), Some("{{exec}}"));
-        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.linux.conf.json")).unwrap();
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.linux.conf.json")).unwrap();
         for package in ["deb", "rpm"] {
-            assert_eq!(config["bundle"]["linux"][package]["desktopTemplate"], "linux/threestrands.desktop");
+            assert_eq!(
+                config["bundle"]["linux"][package]["desktopTemplate"],
+                "linux/threestrands.desktop"
+            );
         }
     }
 
     #[test]
     fn reads_exec_from_the_desktop_entry_group_only() {
         let entry = "[Desktop Action compose]\nExec=other --compose\n\n[Desktop Entry]\nName=ThreeStrands\nExec = threestrands %U\n";
-        assert_eq!(desktop_entry_exec(entry).as_deref(), Some("threestrands %U"));
-        assert_eq!(desktop_entry_exec("[Desktop Entry]\nName=ThreeStrands\n"), None);
+        assert_eq!(
+            desktop_entry_exec(entry).as_deref(),
+            Some("threestrands %U")
+        );
+        assert_eq!(
+            desktop_entry_exec("[Desktop Entry]\nName=ThreeStrands\n"),
+            None
+        );
     }
 
     #[test]
     fn finds_the_program_an_exec_value_runs() {
-        assert_eq!(exec_program("threestrands %U").as_deref(), Some("threestrands"));
-        assert_eq!(exec_program("/usr/bin/threestrands").as_deref(), Some("/usr/bin/threestrands"));
+        assert_eq!(
+            exec_program("threestrands %U").as_deref(),
+            Some("threestrands")
+        );
+        assert_eq!(
+            exec_program("/usr/bin/threestrands").as_deref(),
+            Some("/usr/bin/threestrands")
+        );
         assert_eq!(
             exec_program(r#""/home/sam/My Apps/ThreeStrands.AppImage" %U"#).as_deref(),
             Some("/home/sam/My Apps/ThreeStrands.AppImage")
@@ -617,9 +688,14 @@ mod tests {
             assert_eq!(exec_program(&exec).as_deref(), Some(path), "{entry}");
             assert!(exec_passes_targets(&exec));
             assert!(entry.contains("NoDisplay=true\n"));
-            assert!(entry.contains(&format!("MimeType={LINUX_MAIL_TYPE};{LINUX_CALENDAR_TYPE};\n")));
+            assert!(entry.contains(&format!(
+                "MimeType={LINUX_MAIL_TYPE};{LINUX_CALENDAR_TYPE};\n"
+            )));
         }
-        assert_eq!(appimage_entry(std::path::Path::new("/tmp/evil\nExec=rm.AppImage")), None);
+        assert_eq!(
+            appimage_entry(std::path::Path::new("/tmp/evil\nExec=rm.AppImage")),
+            None
+        );
         assert_eq!(appimage_entry(std::path::Path::new("")), None);
     }
 }

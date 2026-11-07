@@ -2,8 +2,8 @@
 //! `lib.rs` registers each one by its path here.
 
 pub(crate) mod accounts;
-pub(crate) mod ai;
 pub(crate) mod agents;
+pub(crate) mod ai;
 pub(crate) mod attachments;
 pub(crate) mod calendar;
 pub(crate) mod contacts;

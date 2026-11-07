@@ -71,25 +71,37 @@ impl ImapProvider {
         };
         let parsed = crate::search_query::SearchQuery::parse(query);
         let deadline = tokio::time::Instant::now()
-            + self.search_deadline_override.unwrap_or(policy::SEARCH_DEADLINE);
+            + self
+                .search_deadline_override
+                .unwrap_or(policy::SEARCH_DEADLINE);
         let mut outcome = render_imap(&parsed, &context);
         let mut prepared = None;
-        if plan.entries.iter().any(|e| e.role == Some(crate::provider::imap::MailboxRole::All)) {
+        if plan
+            .entries
+            .iter()
+            .any(|e| e.role == Some(crate::provider::imap::MailboxRole::All))
+        {
             // One negotiated session for rendering and execution; capability
             // discovery and cleanup share the same overall search deadline.
             let mut session = match tokio::time::timeout_at(deadline, self.open_session()).await {
                 Ok(result) => result?,
                 Err(_) => {
                     let mut result = empty_search_result(None, None);
-                    result.partial = Some(PartialReason::DeadlineExpired { mailboxes_searched: 0, mailboxes_planned: plan.synced().count() });
+                    result.partial = Some(PartialReason::DeadlineExpired {
+                        mailboxes_searched: 0,
+                        mailboxes_planned: plan.synced().count(),
+                    });
                     return Ok(result);
                 }
             };
             if session.supports_label_extensions() {
                 outcome = search::render_label_search(query, &parsed, &plan);
             }
-            if matches!(outcome, ImapSearchOutcome::Plan(_)) { prepared = Some(session); }
-            else { let _ = tokio::time::timeout_at(deadline, session.logout()).await; }
+            if matches!(outcome, ImapSearchOutcome::Plan(_)) {
+                prepared = Some(session);
+            } else {
+                let _ = tokio::time::timeout_at(deadline, session.logout()).await;
+            }
         }
         match outcome {
             ImapSearchOutcome::Skipped { reasons } => {
@@ -109,7 +121,8 @@ impl ImapProvider {
                 Ok(empty_search_result(None, Some(reason)))
             }
             ImapSearchOutcome::Plan(search_plan) => {
-                self.execute_search_plan(&plan, search_plan, prepared, deadline).await
+                self.execute_search_plan(&plan, search_plan, prepared, deadline)
+                    .await
             }
         }
     }
@@ -124,32 +137,42 @@ impl ImapProvider {
         search_plan: search::ImapSearchPlan,
     ) -> ProviderResult<ImapSearchResult> {
         let deadline = tokio::time::Instant::now()
-            + self.search_deadline_override.unwrap_or(policy::SEARCH_DEADLINE);
-        self.execute_search_plan(plan, search_plan, None, deadline).await
+            + self
+                .search_deadline_override
+                .unwrap_or(policy::SEARCH_DEADLINE);
+        self.execute_search_plan(plan, search_plan, None, deadline)
+            .await
     }
 
     async fn execute_search_plan(
-        &self, plan: &SyncPlan, search_plan: search::ImapSearchPlan,
+        &self,
+        plan: &SyncPlan,
+        search_plan: search::ImapSearchPlan,
         prepared: Option<Box<dyn crate::provider::imap::session::ImapSession>>,
         deadline: tokio::time::Instant,
     ) -> ProviderResult<ImapSearchResult> {
         let mailboxes_planned = search_plan.mailboxes.len();
-        let per_mailbox = policy::search_acquire_share(policy::MAX_SEARCH_ACQUIRE, mailboxes_planned);
+        let per_mailbox =
+            policy::search_acquire_share(policy::MAX_SEARCH_ACQUIRE, mailboxes_planned);
         let want_attachment = search_plan
             .local_filters
             .contains(&LocalFilter::HasAttachment);
 
-        let mut session = if let Some(session) = prepared { session } else { match tokio::time::timeout_at(deadline, self.open_session()).await {
-            Ok(result) => result?,
-            Err(_) => {
-                let mut result = empty_search_result(None, None);
-                result.partial = Some(PartialReason::DeadlineExpired {
-                    mailboxes_searched: 0,
-                    mailboxes_planned,
-                });
-                return Ok(result);
+        let mut session = if let Some(session) = prepared {
+            session
+        } else {
+            match tokio::time::timeout_at(deadline, self.open_session()).await {
+                Ok(result) => result?,
+                Err(_) => {
+                    let mut result = empty_search_result(None, None);
+                    result.partial = Some(PartialReason::DeadlineExpired {
+                        mailboxes_searched: 0,
+                        mailboxes_planned,
+                    });
+                    return Ok(result);
+                }
             }
-        }};
+        };
 
         // Ordered (thread_id, deciding-uid) pairs, newest-UID-first within a
         // mailbox and mailboxes in plan order, deduplicated globally.
@@ -273,7 +296,9 @@ impl ImapProvider {
                     });
                     break;
                 }
-                Ok(Err(AcquireError::UidValidityMismatch { expected, found, .. })) => {
+                Ok(Err(AcquireError::UidValidityMismatch {
+                    expected, found, ..
+                })) => {
                     log::warn!(
                         "imap search: {wire:?} UIDVALIDITY changed ({expected} -> {found}) between \
                          EXAMINE and acquire; skipping this mailbox cleanly"
@@ -310,7 +335,10 @@ impl ImapProvider {
                 else {
                     continue;
                 };
-                let resolved = self.store.resolve_thread_alias(&thread_id).map_err(db_err)?;
+                let resolved = self
+                    .store
+                    .resolve_thread_alias(&thread_id)
+                    .map_err(db_err)?;
                 if seen_threads.insert(resolved.clone()) {
                     ordered_threads.push(resolved);
                 }

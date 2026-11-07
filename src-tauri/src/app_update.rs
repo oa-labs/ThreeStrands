@@ -111,7 +111,10 @@ pub async fn install_app_update(
     pending: State<'_, PendingUpdate>,
 ) -> Result<(), String> {
     if current_install_mode() != InstallMode::InPlace {
-        return Err("This copy of ThreeStrands cannot update itself. Download the new version instead.".into());
+        return Err(
+            "This copy of ThreeStrands cannot update itself. Download the new version instead."
+                .into(),
+        );
     }
     let update = pending
         .0
@@ -141,8 +144,13 @@ async fn relaunch(app: &AppHandle) -> Result<(), String> {
         Ok(()) => {
             use tauri::Manager;
             if let Some(state) = app.try_state::<crate::AppState>() {
-                crate::log_failure("stopping delegated work before relaunch", state.agent_runner.shutdown().await);
-                state.exiting.store(true, std::sync::atomic::Ordering::SeqCst);
+                crate::log_failure(
+                    "stopping delegated work before relaunch",
+                    state.agent_runner.shutdown().await,
+                );
+                state
+                    .exiting
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
             }
             app.exit(0);
             // The frontend treats a resolved install as a failure, and the
@@ -172,7 +180,10 @@ mod macos {
         // block and are released before awaiting the launch.
         {
             let bundle = NSBundle::mainBundle().bundleURL();
-            if !bundle.path().is_some_and(|path| path.to_string().ends_with(".app")) {
+            if !bundle
+                .path()
+                .is_some_and(|path| path.to_string().ends_with(".app"))
+            {
                 return Err("not running from an app bundle".into());
             }
             let configuration = NSWorkspaceOpenConfiguration::configuration();
@@ -181,17 +192,18 @@ mod macos {
             configuration.setCreatesNewApplicationInstance(true);
             configuration.setActivates(true);
             let sender = Mutex::new(Some(sender));
-            let completion = RcBlock::new(move |_: *mut NSRunningApplication, error: *mut NSError| {
-                // SAFETY: AppKit passes either null or a valid NSError that
-                // lives for the duration of the completion handler.
-                let result = match unsafe { error.as_ref() } {
-                    None => Ok(()),
-                    Some(error) => Err(error.localizedDescription().to_string()),
-                };
-                if let Some(sender) = sender.lock().ok().and_then(|mut sender| sender.take()) {
-                    let _ = sender.send(result);
-                }
-            });
+            let completion =
+                RcBlock::new(move |_: *mut NSRunningApplication, error: *mut NSError| {
+                    // SAFETY: AppKit passes either null or a valid NSError that
+                    // lives for the duration of the completion handler.
+                    let result = match unsafe { error.as_ref() } {
+                        None => Ok(()),
+                        Some(error) => Err(error.localizedDescription().to_string()),
+                    };
+                    if let Some(sender) = sender.lock().ok().and_then(|mut sender| sender.take()) {
+                        let _ = sender.send(result);
+                    }
+                });
             NSWorkspace::sharedWorkspace().openApplicationAtURL_configuration_completionHandler(
                 &bundle,
                 &configuration,
@@ -242,9 +254,18 @@ mod tests {
     #[test]
     fn linux_installs_only_appimages_in_place() {
         let path = Path::new("/home/someone/ThreeStrands.AppImage");
-        assert_eq!(install_mode(Some(BundleType::AppImage), path), InstallMode::InPlace);
-        assert_eq!(install_mode(Some(BundleType::Deb), path), InstallMode::Download);
-        assert_eq!(install_mode(Some(BundleType::Rpm), path), InstallMode::Download);
+        assert_eq!(
+            install_mode(Some(BundleType::AppImage), path),
+            InstallMode::InPlace
+        );
+        assert_eq!(
+            install_mode(Some(BundleType::Deb), path),
+            InstallMode::Download
+        );
+        assert_eq!(
+            install_mode(Some(BundleType::Rpm), path),
+            InstallMode::Download
+        );
         assert_eq!(install_mode(None, path), InstallMode::Download);
     }
 
@@ -252,8 +273,14 @@ mod tests {
     #[test]
     fn windows_installs_nsis_and_msi_in_place_but_not_portable() {
         let path = Path::new(r"C:\Program Files\ThreeStrands\threestrands.exe");
-        assert_eq!(install_mode(Some(BundleType::Nsis), path), InstallMode::InPlace);
-        assert_eq!(install_mode(Some(BundleType::Msi), path), InstallMode::InPlace);
+        assert_eq!(
+            install_mode(Some(BundleType::Nsis), path),
+            InstallMode::InPlace
+        );
+        assert_eq!(
+            install_mode(Some(BundleType::Msi), path),
+            InstallMode::InPlace
+        );
         // A portable .exe has no bundle type and cannot replace itself.
         assert_eq!(install_mode(None, path), InstallMode::Download);
     }

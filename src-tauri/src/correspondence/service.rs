@@ -98,26 +98,39 @@ pub struct Correspondence {
     pub draft_pull_requested: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Correspondence {
-    pub fn resume_schedules(&self) -> Result<(),String> {
-        let owner=self.schedule_owner(false).unwrap_or_default();
-        Ok(self.database.overdue_schedules_owned(unix_millis(),true,&owner)?)
+    pub fn resume_schedules(&self) -> Result<(), String> {
+        let owner = self.schedule_owner(false).unwrap_or_default();
+        Ok(self
+            .database
+            .overdue_schedules_owned(unix_millis(), true, &owner)?)
     }
-    pub fn pause_account_schedules(&self,account:&str) -> Result<(),String> {
-        let owner=self.schedule_owner(false).unwrap_or_default();
-        Ok(self.database.pause_ready_sends_for_owned(account,&owner)?)
+    pub fn pause_account_schedules(&self, account: &str) -> Result<(), String> {
+        let owner = self.schedule_owner(false).unwrap_or_default();
+        Ok(self.database.pause_ready_sends_for_owned(account, &owner)?)
     }
-    fn schedule_owner(&self, create: bool) -> Result<String,String> {
+    fn schedule_owner(&self, create: bool) -> Result<String, String> {
         let has_schedules = self.database.has_scheduled_sends()?;
-        if !create && !has_schedules { return Err("No scheduled messages".into()); }
+        if !create && !has_schedules {
+            return Err("No scheduled messages".into());
+        }
         (self.sending_identity)(create && !has_schedules)
     }
-    fn authorize_schedule(&self, id: &str) -> Result<String,String> {
-        let item=self.database.outbox()?.into_iter().find(|o|o.id==id).ok_or("Outbox item not found")?;
-        if let Some(schedule)=item.schedule {
-            let owner=self.schedule_owner(false)?;
-            if schedule.report.owner_installation_id != owner { return Err("This message belongs to another sending computer".into()); }
+    fn authorize_schedule(&self, id: &str) -> Result<String, String> {
+        let item = self
+            .database
+            .outbox()?
+            .into_iter()
+            .find(|o| o.id == id)
+            .ok_or("Outbox item not found")?;
+        if let Some(schedule) = item.schedule {
+            let owner = self.schedule_owner(false)?;
+            if schedule.report.owner_installation_id != owner {
+                return Err("This message belongs to another sending computer".into());
+            }
             Ok(owner)
-        } else { Ok(String::new()) }
+        } else {
+            Ok(String::new())
+        }
     }
     async fn authorize_schedule_async(&self, id: &str) -> Result<String, String> {
         let service = self.clone();
@@ -128,12 +141,18 @@ impl Correspondence {
     }
     fn listed_outbox(&self) -> Result<serde_json::Value, String> {
         let owner = self.schedule_owner(false).ok();
-        if let Some(owner) = &owner { self.database.refresh_schedule_reports(owner, unix_millis())?; }
+        if let Some(owner) = &owner {
+            self.database
+                .refresh_schedule_reports(owner, unix_millis())?;
+        }
         let mut items = self.database.outbox()?;
         for item in &mut items {
             if let Some(schedule) = &mut item.schedule {
-                schedule.can_manage = owner.as_deref() == Some(&schedule.report.owner_installation_id);
-                if !schedule.can_manage { schedule.report.blocked_reason = Some("owner_unavailable".into()); }
+                schedule.can_manage =
+                    owner.as_deref() == Some(&schedule.report.owner_installation_id);
+                if !schedule.can_manage {
+                    schedule.report.blocked_reason = Some("owner_unavailable".into());
+                }
                 schedule.visibility = self.database.schedule_visibility(schedule)?;
             }
         }
@@ -160,11 +179,18 @@ impl Correspondence {
     /// Caches a draft's source message so drafting from it works offline later.
     async fn ensure_source_metadata(&self, id: &str, account: &str) -> Result<(), String> {
         if let Some(outbox_id) = id.strip_prefix("outbox-") {
-            let item = self.database.outbox()?.into_iter()
-                .find(|item| item.id == outbox_id && item.draft.account == account && item.state == "sent")
+            let item = self
+                .database
+                .outbox()?
+                .into_iter()
+                .find(|item| {
+                    item.id == outbox_id && item.draft.account == account && item.state == "sent"
+                })
                 .ok_or("Only a confirmed sent message from this account can be used")?;
             let bytes = self.database.outbox_raw(outbox_id)?;
-            let mut source = crate::provider::imap::rfc822::to_raw_message(&bytes, id, vec!["SENT".into()]).map_err(error)?;
+            let mut source =
+                crate::provider::imap::rfc822::to_raw_message(&bytes, id, vec!["SENT".into()])
+                    .map_err(error)?;
             source.thread_id = item.draft.thread_id.unwrap_or_else(|| id.to_string());
             self.database.put_message_metadata(id, &json(&source)?)?;
             return Ok(());
@@ -185,7 +211,9 @@ impl Correspondence {
     /// Gmail discovers these during sync or an explicit settings refresh;
     /// delivery rechecks explicit Gmail aliases before claiming a send.
     async fn source_identities(&self, account: &str) -> Vec<crate::provider::SendingIdentity> {
-        self.database.account_sending_identities(account).unwrap_or_default()
+        self.database
+            .account_sending_identities(account)
+            .unwrap_or_default()
     }
     /// The account the compose identity bootstrap runs against. Not the only
     /// account drafts can send from — see `auth_for`.
@@ -223,7 +251,8 @@ impl Correspondence {
             .map_err(error)?;
         self.database.set_compose_identity(&identity)?;
         auth.accept_identity(&identity)?;
-        self.database.adopt_mail_account(&identity, auth.mail_provider())?;
+        self.database
+            .adopt_mail_account(&identity, auth.mail_provider())?;
         // `accept_identity` rekeyed `auth` onto the real address; move its
         // registry entry so the map is keyed by that address too. Doing it
         // here covers every caller — startup, `connect_google`, and each
@@ -265,9 +294,11 @@ impl Correspondence {
             PushDraft { id } => {
                 let database = self.database.clone();
                 let id = id.clone();
-                crate::run_database_task(move || database.push_drafts_now(Some(&id), unix_millis()))
-                    .await
-                    .map_err(String::from)?;
+                crate::run_database_task(move || {
+                    database.push_drafts_now(Some(&id), unix_millis())
+                })
+                .await
+                .map_err(String::from)?;
                 return Ok(serde_json::Value::Null);
             }
             _ => {}
@@ -283,26 +314,41 @@ impl Correspondence {
         };
         let schedule_target = match &request {
             Schedule { id, revision, .. } => Some((id.clone(), Some(*revision))),
-            Reschedule { id, .. } | SendScheduledNow { id, .. } | Cancel { id } | Recover { id } => Some((id.clone(), None)),
+            Reschedule { id, .. }
+            | SendScheduledNow { id, .. }
+            | Cancel { id }
+            | Recover { id } => Some((id.clone(), None)),
             _ => None,
         };
         // Keep first-time identity creation serialized through the schedule commit.
         // Never cache this authority: a missing/replaced keychain entry must still
         // pause persisted jobs rather than authorize them as a new installation.
-        let _scheduling = if schedule_target.is_some() { Some(self.scheduling.lock().await) } else { None };
+        let _scheduling = if schedule_target.is_some() {
+            Some(self.scheduling.lock().await)
+        } else {
+            None
+        };
         let schedule_owner = if let Some((id, revision)) = schedule_target {
             let service = self.clone();
             crate::run_database_task(move || {
                 if let Some(revision) = revision {
-                    if let Some(item) = service.database.outbox()?.into_iter().find(|o| o.draft.id == id && o.draft.revision == revision) {
+                    if let Some(item) = service
+                        .database
+                        .outbox()?
+                        .into_iter()
+                        .find(|o| o.draft.id == id && o.draft.revision == revision)
+                    {
                         return service.authorize_schedule(&item.id);
                     }
                     service.schedule_owner(true)
                 } else {
                     service.authorize_schedule(&id)
                 }
-            }).await?
-        } else { String::new() };
+            })
+            .await?
+        } else {
+            String::new()
+        };
         let _edits = self.edits.lock().await;
         match request {
             Identity => {
@@ -311,32 +357,92 @@ impl Correspondence {
                 });
                 Ok(serde_json::to_value(identity?).map_err(error)?)
             }
-            ListDrafts | ListOutbox | ListScheduledSummaries | Reconcile { .. } | PushDraft { .. } => unreachable!("handled before the compose lock"),
+            ListDrafts
+            | ListOutbox
+            | ListScheduledSummaries
+            | Reconcile { .. }
+            | PushDraft { .. } => unreachable!("handled before the compose lock"),
             SchedulingInfo => {
-                let label=self.database.device_roster().map_err(error)?.into_iter().find(|d|d.is_self).and_then(|d|d.label).unwrap_or_else(||gethostname::gethostname().to_string_lossy().chars().take(60).collect());
-                Ok(serde_json::json!({"deviceName":label,"sharing":self.database.cross_device_sync_enrolled().map_err(error)?}))
+                let label = self
+                    .database
+                    .device_roster()
+                    .map_err(error)?
+                    .into_iter()
+                    .find(|d| d.is_self)
+                    .and_then(|d| d.label)
+                    .unwrap_or_else(|| {
+                        gethostname::gethostname()
+                            .to_string_lossy()
+                            .chars()
+                            .take(60)
+                            .collect()
+                    });
+                Ok(
+                    serde_json::json!({"deviceName":label,"sharing":self.database.cross_device_sync_enrolled().map_err(error)?}),
+                )
             }
-            ScheduleChoices {local_time,time_zone} => Ok(serde_json::to_value(crate::scheduled_send::choices(&local_time,&time_zone)?).map_err(error)?),
-            Schedule {id,revision,selection} => {
-                if let Some(item)=self.database.outbox()?.into_iter().find(|o|o.draft.id==id && o.draft.revision==revision) {
+            ScheduleChoices {
+                local_time,
+                time_zone,
+            } => Ok(
+                serde_json::to_value(crate::scheduled_send::choices(&local_time, &time_zone)?)
+                    .map_err(error)?,
+            ),
+            Schedule {
+                id,
+                revision,
+                selection,
+            } => {
+                if let Some(item) = self
+                    .database
+                    .outbox()?
+                    .into_iter()
+                    .find(|o| o.draft.id == id && o.draft.revision == revision)
+                {
                     return serde_json::to_value(item).map_err(error);
                 }
-                let draft=self.database.draft(&id)?;
+                let draft = self.database.draft(&id)?;
                 let provider = self.provider_for(&draft.account).await?;
-                if !provider.capabilities().send_supported { return Err("Scheduled sending is not supported for this account yet".into()); }
+                if !provider.capabilities().send_supported {
+                    return Err("Scheduled sending is not supported for this account yet".into());
+                }
                 let identities = provider.identities(&draft.account).await.map_err(error)?;
-                let message_id_domain = provider.message_id_domain(draft.sender_address()).map_err(error)?;
-                let owner=schedule_owner;
-                Ok(serde_json::to_value(self.database.schedule_draft(&id,revision,&selection,&owner,&identities,message_id_domain.as_deref(),&self.root,unix_millis())?).map_err(error)?)
+                let message_id_domain = provider
+                    .message_id_domain(draft.sender_address())
+                    .map_err(error)?;
+                let owner = schedule_owner;
+                Ok(serde_json::to_value(self.database.schedule_draft(
+                    &id,
+                    revision,
+                    &selection,
+                    &owner,
+                    &identities,
+                    message_id_domain.as_deref(),
+                    &self.root,
+                    unix_millis(),
+                )?)
+                .map_err(error)?)
             }
-            Reschedule {id,revision,selection} => {
-                let owner=schedule_owner;
-                self.database.manage_schedule(&id,revision,Some(&selection),false,&owner,unix_millis())?;
+            Reschedule {
+                id,
+                revision,
+                selection,
+            } => {
+                let owner = schedule_owner;
+                self.database.manage_schedule(
+                    &id,
+                    revision,
+                    Some(&selection),
+                    false,
+                    &owner,
+                    unix_millis(),
+                )?;
                 Ok(serde_json::Value::Null)
             }
-            SendScheduledNow {id,revision} => {
-                let owner=schedule_owner;
-                self.database.manage_schedule(&id,revision,None,true,&owner,unix_millis())?;
+            SendScheduledNow { id, revision } => {
+                let owner = schedule_owner;
+                self.database
+                    .manage_schedule(&id, revision, None, true, &owner, unix_millis())?;
                 Ok(serde_json::Value::Null)
             }
             Create {
@@ -360,9 +466,9 @@ impl Correspondence {
                 // Keep new-message defaults and addressed-alias replies local,
                 // including while the provider or keychain is unavailable.
                 let identities = self.source_identities(&resolved_account).await;
-                let draft = self
-                    .database
-                    .create_draft(&mode, source_id, &resolved_account, &identities)?;
+                let draft =
+                    self.database
+                        .create_draft(&mode, source_id, &resolved_account, &identities)?;
                 if mode == "new" {
                     let _ = self.database.set_compose_identity(&resolved_account);
                 }
@@ -371,9 +477,9 @@ impl Correspondence {
             CreateFromSent { source_id, account } => {
                 self.ensure_source_metadata(&source_id, &account).await?;
                 let identities = self.source_identities(&account).await;
-                let draft = self
-                    .database
-                    .create_draft_from_sent(&source_id, &account, &identities)?;
+                let draft =
+                    self.database
+                        .create_draft_from_sent(&source_id, &account, &identities)?;
                 Ok(serde_json::to_value(draft).map_err(error)?)
             }
             SetAccount { id, account } => Ok(serde_json::to_value(
@@ -393,9 +499,10 @@ impl Correspondence {
                 saved.server_draft = self.database.server_draft_status(&saved)?;
                 Ok(serde_json::to_value(saved).map_err(error)?)
             }
-            ResolveConflict { id, keep_server } => {
-                Ok(serde_json::to_value(self.database.resolve_draft_conflict(&id, keep_server)?).map_err(error)?)
-            }
+            ResolveConflict { id, keep_server } => Ok(serde_json::to_value(
+                self.database.resolve_draft_conflict(&id, keep_server)?,
+            )
+            .map_err(error)?),
             RestoreDraft { id } => {
                 let mut restored = self.database.restore_discarded_draft(&id)?;
                 restored.server_draft = self.database.server_draft_status(&restored)?;
@@ -614,18 +721,29 @@ impl Correspondence {
                 // It must never be fetched using its synthetic ID at the provider.
                 let local_source = if message.starts_with("outbox-") {
                     self.ensure_source_metadata(message, &d.account).await?;
-                    Some(serde_json::from_str::<crate::mime::RawMessage>(
-                        &self.database.message_metadata(message)?.ok_or("Attachment source unavailable")?
-                    ).map_err(error)?)
-                } else { None };
+                    Some(
+                        serde_json::from_str::<crate::mime::RawMessage>(
+                            &self
+                                .database
+                                .message_metadata(message)?
+                                .ok_or("Attachment source unavailable")?,
+                        )
+                        .map_err(error)?,
+                    )
+                } else {
+                    None
+                };
                 let provider = if local_source.is_none() {
                     let provider = self.provider_for(&d.account).await?;
                     if provider.sender_identity().await.map_err(error)? != d.account {
                         return Err("Reconnect the draft's account".into());
                     }
                     Some(provider)
-                } else { None };
-                let data = if let (Some(provider), Some(provider_id)) = (&provider, &a.provider_id) {
+                } else {
+                    None
+                };
+                let data = if let (Some(provider), Some(provider_id)) = (&provider, &a.provider_id)
+                {
                     provider
                         .attachment_bytes(message, provider_id)
                         .await
@@ -633,13 +751,22 @@ impl Correspondence {
                 } else {
                     let source = match local_source {
                         Some(source) => source,
-                        None => provider.as_ref().ok_or("Attachment source unavailable")?.fetch_message(message).await.map_err(error)?,
+                        None => provider
+                            .as_ref()
+                            .ok_or("Attachment source unavailable")?
+                            .fetch_message(message)
+                            .await
+                            .map_err(error)?,
                     };
                     fn find(part: &MimePart, attachment: &Attachment) -> Option<String> {
                         let matches = if let Some(content_id) = &attachment.content_id {
-                            header(part, "Content-ID").trim().trim_matches(['<', '>']).eq_ignore_ascii_case(content_id)
+                            header(part, "Content-ID")
+                                .trim()
+                                .trim_matches(['<', '>'])
+                                .eq_ignore_ascii_case(content_id)
                         } else {
-                            crate::attachment_security::normalize_filename(&part.filename) == attachment.name
+                            crate::attachment_security::normalize_filename(&part.filename)
+                                == attachment.name
                         };
                         if matches {
                             return part.body.data.clone();
@@ -718,7 +845,12 @@ impl Correspondence {
             .map_err(error)?
         {
             let owner = self.authorize_schedule_async(id).await?;
-            self.database.mark_uncertain_send_sent(id, &message.provider_message_id, &owner, unix_millis())?;
+            self.database.mark_uncertain_send_sent(
+                id,
+                &message.provider_message_id,
+                &owner,
+                unix_millis(),
+            )?;
             if let Some(thread_id) = message.thread_id.as_deref() {
                 if self.database.archive_on_send(&item.id)? {
                     let _ = provider
@@ -751,10 +883,20 @@ impl Correspondence {
     pub async fn tick(&self) -> Result<(), String> {
         let _guard = self.gate.lock().await;
         let service = self.clone();
-        let owner=crate::run_database_task(move || service.schedule_owner(false)).await.ok();
-        self.database.overdue_schedules_owned(unix_millis(),false,owner.as_deref().unwrap_or(""))?;
-        if let Some(owner)=&owner { self.database.refresh_schedule_reports(owner,unix_millis())?; }
-        self.database.fail_sends_for_removed_accounts(owner.as_deref().unwrap_or(""))?;
+        let owner = crate::run_database_task(move || service.schedule_owner(false))
+            .await
+            .ok();
+        self.database.overdue_schedules_owned(
+            unix_millis(),
+            false,
+            owner.as_deref().unwrap_or(""),
+        )?;
+        if let Some(owner) = &owner {
+            self.database
+                .refresh_schedule_reports(owner, unix_millis())?;
+        }
+        self.database
+            .fail_sends_for_removed_accounts(owner.as_deref().unwrap_or(""))?;
         let items = self.database.outbox()?;
         // Process due Sent-copy jobs FIRST, every tick — before the
         // no-sendable-items early return below. A job is created when a send is
@@ -764,10 +906,9 @@ impl Correspondence {
         // gives per-message serialisation for free; the processor caps its own
         // per-tick work.
         self.process_sent_copy_jobs(unix_millis()).await?;
-        if !items
-            .iter()
-            .any(|o| ["undo_pending", "ready", "scheduled", "uncertain"].contains(&o.state.as_str()))
-        {
+        if !items.iter().any(|o| {
+            ["undo_pending", "ready", "scheduled", "uncertain"].contains(&o.state.as_str())
+        }) {
             return Ok(());
         }
         // Grouped by account and processed independently: one account's
@@ -775,7 +916,11 @@ impl Correspondence {
         // account's queued sends.
         let mut by_account: HashMap<String, Vec<OutboxItem>> = HashMap::new();
         for item in items {
-            if !["scheduled","undo_pending","ready","uncertain"].contains(&item.state.as_str()) || item.deadline>unix_millis() {continue;}
+            if !["scheduled", "undo_pending", "ready", "uncertain"].contains(&item.state.as_str())
+                || item.deadline > unix_millis()
+            {
+                continue;
+            }
             // Rate-limit prepare re-attempts for a NON-scheduled queued item
             // whose last transient prepare failure stamped `last_attempt_at`
             // within SMTP_PREPARE_RETRY_INTERVAL: skip it this tick so a down
@@ -783,10 +928,13 @@ impl Correspondence {
             // item (`last_attempt_at` None) is always eligible, so this never
             // delays the first attempt. Scheduled items keep their own
             // deadline/block cadence and are not gated here.
-            let send_candidate = ["undo_pending", "ready"].contains(&item.state.as_str())
-                && item.schedule.is_none();
+            let send_candidate =
+                ["undo_pending", "ready"].contains(&item.state.as_str()) && item.schedule.is_none();
             if send_candidate
-                && !crate::provider::imap::smtp_prepare_retry_due(item.last_attempt_at, unix_millis())
+                && !crate::provider::imap::smtp_prepare_retry_due(
+                    item.last_attempt_at,
+                    unix_millis(),
+                )
             {
                 continue;
             }
@@ -797,22 +945,45 @@ impl Correspondence {
         }
         for (account, items) in by_account {
             let Ok(provider) = self.provider_for(&account).await else {
-                for item in &items { if item.schedule.is_some() {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("account_disconnected"),unix_millis())?;} }
+                for item in &items {
+                    if item.schedule.is_some() {
+                        self.database.block_schedule(
+                            &item.id,
+                            owner.as_deref().unwrap_or(""),
+                            Some("account_disconnected"),
+                            unix_millis(),
+                        )?;
+                    }
+                }
                 continue;
             };
             let Ok(identity) = provider.sender_identity().await else {
-                for item in &items { if item.schedule.is_some() {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("authorization"),unix_millis())?;} }
+                for item in &items {
+                    if item.schedule.is_some() {
+                        self.database.block_schedule(
+                            &item.id,
+                            owner.as_deref().unwrap_or(""),
+                            Some("authorization"),
+                            unix_millis(),
+                        )?;
+                    }
+                }
                 continue;
             };
             for item in items {
-                if item.schedule.as_ref().is_some_and(|s|Some(s.report.owner_installation_id.as_str())!=owner.as_deref()) { continue; }
+                if item.schedule.as_ref().is_some_and(|s| {
+                    Some(s.report.owner_installation_id.as_str()) != owner.as_deref()
+                }) {
+                    continue;
+                }
                 if item.draft.account != identity {
                     self.database.pause_send_for_other_sender(&item.id)?;
                     continue;
                 }
                 if item.state == "uncertain" {
                     if item.deadline <= unix_millis() {
-                        self.database.defer_uncertain_send(&item.id, unix_millis() + 60_000)?;
+                        self.database
+                            .defer_uncertain_send(&item.id, unix_millis() + 60_000)?;
                         let _ = self.reconcile(&item.id).await;
                     }
                     continue;
@@ -822,8 +993,14 @@ impl Correspondence {
                 {
                     continue;
                 }
-                self.send_due_item(&item, provider.as_ref(), &identity, owner.as_deref().unwrap_or(""), unix_millis())
-                    .await?;
+                self.send_due_item(
+                    &item,
+                    provider.as_ref(),
+                    &identity,
+                    owner.as_deref().unwrap_or(""),
+                    unix_millis(),
+                )
+                .await?;
             }
         }
         Ok(())
@@ -871,9 +1048,13 @@ impl Correspondence {
         // Obtain authorization before claiming delivery; transport errors
         // after the claim are uncertain.
         let permit = match async {
-            provider.validate_sending_identity(&item.draft.account, item.draft.sender_address()).await?;
+            provider
+                .validate_sending_identity(&item.draft.account, item.draft.sender_address())
+                .await?;
             provider.prepare_delivery().await
-        }.await {
+        }
+        .await
+        {
             Ok(permit) => permit,
             Err(_) if item.schedule.is_some() => {
                 self.database
@@ -898,9 +1079,12 @@ impl Correspondence {
                 .ok_or("Outbox item missing")?;
         }
         let sent = self
-            .dispatch_due(&item, at, provider.capabilities().client_saves_sent_copy, |raw, thread| async move {
-                permit.send_once(&raw, thread.as_deref()).await
-            })
+            .dispatch_due(
+                &item,
+                at,
+                provider.capabilities().client_saves_sent_copy,
+                |raw, thread| async move { permit.send_once(&raw, thread.as_deref()).await },
+            )
             .await?;
         if let Some(sent) = sent {
             if let Some(thread_id) = sent.thread_id.as_deref() {
@@ -988,7 +1172,8 @@ impl Correspondence {
         at: i64,
         message: &str,
     ) -> Result<(), String> {
-        self.database.note_send_prepare_retry(&item.id, message, owner, at)?;
+        self.database
+            .note_send_prepare_retry(&item.id, message, owner, at)?;
         Ok(())
     }
 
@@ -1003,7 +1188,8 @@ impl Correspondence {
         at: i64,
         message: &str,
     ) -> Result<(), String> {
-        self.database.fail_queued_send(&item.id, message, owner, at)?;
+        self.database
+            .fail_queued_send(&item.id, message, owner, at)?;
         Ok(())
     }
     /// Drive every DUE Sent-copy job this tick (fact 4: NOT skipped by the
@@ -1125,8 +1311,7 @@ impl Correspondence {
             Err(err) => {
                 let permanent = matches!(
                     err,
-                    ProviderError::InvalidOperation(_)
-                        | ProviderError::PermanentClientRejection(_)
+                    ProviderError::InvalidOperation(_) | ProviderError::PermanentClientRejection(_)
                 );
                 let message = sent_copy_error_message(&err);
                 if permanent {
@@ -1137,12 +1322,23 @@ impl Correspondence {
                     // cap. The state is KEPT (a verify stays verify).
                     let new_attempts = attempts + 1;
                     if new_attempts as u32 >= crate::provider::imap::SENT_COPY_MAX_ATTEMPTS {
-                        self.database.abandon_sent_copy_job_after_attempts(id, new_attempts, &message, at)?;
+                        self.database.abandon_sent_copy_job_after_attempts(
+                            id,
+                            new_attempts,
+                            &message,
+                            at,
+                        )?;
                     } else {
                         let next_at = at
                             + crate::provider::imap::sent_copy_backoff(attempts as u32).as_millis()
                                 as i64;
-                        self.database.retry_sent_copy_job(id, new_attempts, next_at, &message, at)?;
+                        self.database.retry_sent_copy_job(
+                            id,
+                            new_attempts,
+                            next_at,
+                            &message,
+                            at,
+                        )?;
                     }
                 }
             }
@@ -1162,8 +1358,18 @@ impl Correspondence {
         Fut: std::future::Future<Output = Result<DeliveryReceipt, (bool, String)>>,
     {
         let raw = self.database.outbox_raw(&item.id)?;
-        let owner=if item.schedule.is_some() { self.authorize_schedule_async(&item.id).await? } else {String::new()};
-        let claimed=self.database.claim_due_send(&item.id,at,at.saturating_sub(crate::scheduled_send::DISPATCH_GRACE_MS),item.schedule.as_ref().map(|s|s.report.report_revision),&owner)?;
+        let owner = if item.schedule.is_some() {
+            self.authorize_schedule_async(&item.id).await?
+        } else {
+            String::new()
+        };
+        let claimed = self.database.claim_due_send(
+            &item.id,
+            at,
+            at.saturating_sub(crate::scheduled_send::DISPATCH_GRACE_MS),
+            item.schedule.as_ref().map(|s| s.report.report_revision),
+            &owner,
+        )?;
         if claimed != 1 {
             return Ok(None);
         }
@@ -1181,11 +1387,18 @@ impl Correspondence {
                 // NULL/default.
                 let sent_copy_next_at = seed_sent_copy
                     .then(|| at + crate::provider::imap::SENT_COPY_SETTLE.as_millis() as i64);
-                self.database.record_send_accepted(&item.id, &sent.provider_message_id, sent_copy_next_at, &owner, at)?;
+                self.database.record_send_accepted(
+                    &item.id,
+                    &sent.provider_message_id,
+                    sent_copy_next_at,
+                    &owner,
+                    at,
+                )?;
                 Ok(Some(sent))
             }
             Err((definite, message)) => {
-                self.database.record_send_failed(&item.id, definite, &message, &owner, at)?;
+                self.database
+                    .record_send_failed(&item.id, definite, &message, &owner, at)?;
                 Ok(None)
             }
         }
@@ -1212,7 +1425,13 @@ mod identity_refresh_tests {
     fn the_address_is_learned_only_while_unknown() {
         assert!(identity_known("you@example.com", true));
         assert!(!identity_known("default", true), "a pre-upgrade install");
-        assert!(!identity_known("pending", true), "a connect that never finished");
-        assert!(!identity_known("you@example.com", false), "no sending identity yet");
+        assert!(
+            !identity_known("pending", true),
+            "a connect that never finished"
+        );
+        assert!(
+            !identity_known("you@example.com", false),
+            "no sending identity yet"
+        );
     }
 }

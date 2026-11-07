@@ -148,8 +148,14 @@ fn a_sent_only_thread_from_a_secondary_identity_teaches_nothing() {
         label_storage: LabelStorage::None,
         label_container: None,
         identities: vec![
-            Identity { address: "me@proton.me".into(), display_name: None },
-            Identity { address: "work@proton.me".into(), display_name: Some("Work".into()) },
+            Identity {
+                address: "me@proton.me".into(),
+                display_name: None,
+            },
+            Identity {
+                address: "work@proton.me".into(),
+                display_name: Some("Work".into()),
+            },
         ],
         pinned_fingerprints: Default::default(),
         server_saves_sent: false,
@@ -214,7 +220,9 @@ fn a_sent_only_thread_from_a_secondary_identity_teaches_nothing() {
             batch: false,
         })
         .unwrap();
-    let stats = database.list_triage_sender_stats("me@proton.me", 100).unwrap();
+    let stats = database
+        .list_triage_sender_stats("me@proton.me", 100)
+        .unwrap();
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].sender_email, "someone@else.com");
 }
@@ -226,12 +234,7 @@ fn a_sent_only_thread_from_a_secondary_identity_teaches_nothing() {
 #[test]
 fn a_gmail_single_identity_sent_only_thread_is_unchanged() {
     let database = database();
-    let mut sent = message(
-        "g-sent",
-        "g-thread",
-        "2026-01-01T00:00:00Z",
-        "sent body",
-    );
+    let mut sent = message("g-sent", "g-thread", "2026-01-01T00:00:00Z", "sent body");
     sent.from = "Me <you@example.com>".into();
     database.upsert_thread("you@example.com", &[sent]).unwrap();
     database
@@ -251,5 +254,8 @@ fn a_gmail_single_identity_sent_only_thread_is_unchanged() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM triage_events", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(count, 0, "a single-identity sent-only thread teaches nothing, as before");
+    assert_eq!(
+        count, 0,
+        "a single-identity sent-only thread teaches nothing, as before"
+    );
 }

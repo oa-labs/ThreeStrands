@@ -52,9 +52,7 @@ impl Database {
                 .optional()?
                 .ok_or(DatabaseError::NotFound("Message"))?;
             let metadata = metadata_json
-                .ok_or_else(|| {
-                    DatabaseError::invalid("This message has no unsubscribe option")
-                })
+                .ok_or_else(|| DatabaseError::invalid("This message has no unsubscribe option"))
                 .and_then(|value| {
                     serde_json::from_str::<UnsubscribeMetadata>(&value).map_err(serialization_error)
                 })?;
@@ -65,7 +63,9 @@ impl Database {
             } else if let Some(url) = metadata.web_url {
                 (UnsubscribeMethod::Web, url)
             } else {
-                return Err(DatabaseError::invalid("This message has no usable unsubscribe option"));
+                return Err(DatabaseError::invalid(
+                    "This message has no usable unsubscribe option",
+                ));
             };
             let request_id = Uuid::new_v4().to_string();
             transaction.execute(
@@ -113,7 +113,9 @@ impl Database {
             )?)
         })?;
         if changed == 0 {
-            return Err(DatabaseError::invalid("Unsubscribe request was not pending"));
+            return Err(DatabaseError::invalid(
+                "Unsubscribe request was not pending",
+            ));
         }
         Ok(())
     }

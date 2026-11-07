@@ -21,7 +21,10 @@ pub mod fake;
 pub mod types;
 
 pub use error::TransportError;
-pub use types::{Cid, HeadLocator, ObjectLocator, ScanPage, TransportCapabilities, TransportHealth, TransportInstanceId};
+pub use types::{
+    Cid, HeadLocator, ObjectLocator, ScanPage, TransportCapabilities, TransportHealth,
+    TransportInstanceId,
+};
 
 use async_trait::async_trait;
 use threestrands_sync_envelope::SignedDeviceHead;
@@ -49,7 +52,10 @@ pub trait SyncTransport: Send + Sync {
     /// using any `remote_id` hint present as an optimization only. Devices
     /// with no published head on this instance are omitted from the
     /// result, not an error.
-    async fn resolve_heads(&self, known: &[HeadLocator]) -> Result<Vec<SignedDeviceHead>, TransportError>;
+    async fn resolve_heads(
+        &self,
+        known: &[HeadLocator],
+    ) -> Result<Vec<SignedDeviceHead>, TransportError>;
 
     /// One page of this transport's optional enumeration, or `Ok(None)` if
     /// this instance does not support scanning

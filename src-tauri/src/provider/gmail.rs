@@ -14,10 +14,9 @@ use crate::{
     mime::RawMessage,
     models::Label,
     provider::{
-        Delivery, DeliveryReceipt, LabelModel, MailFetch, MailMutate, MailProvider, MailSend,
-        FetchedServerDraft, MailSync, ProviderCapabilities, ProviderError, ProviderResult,
-        ServerDraft, SyncBatch,
-        SyncCursor, ThreadPage,
+        Delivery, DeliveryReceipt, FetchedServerDraft, LabelModel, MailFetch, MailMutate,
+        MailProvider, MailSend, MailSync, ProviderCapabilities, ProviderError, ProviderResult,
+        ServerDraft, SyncBatch, SyncCursor, ThreadPage,
     },
 };
 
@@ -57,61 +56,120 @@ pub struct GmailClient {
 #[serde(rename_all = "camelCase")]
 struct GmailSendAs {
     send_as_email: String,
-    #[serde(default)] display_name: String,
-    #[serde(default)] reply_to_address: String,
-    #[serde(default)] is_primary: bool,
-    #[serde(default)] is_default: bool,
-    #[serde(default)] verification_status: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    reply_to_address: String,
+    #[serde(default)]
+    is_primary: bool,
+    #[serde(default)]
+    is_default: bool,
+    #[serde(default)]
+    verification_status: String,
 }
 
 impl GmailClient {
-    pub(crate) fn with_cached_identities(mut self, identities: Vec<crate::provider::SendingIdentity>) -> Self {
+    pub(crate) fn with_cached_identities(
+        mut self,
+        identities: Vec<crate::provider::SendingIdentity>,
+    ) -> Self {
         self.cached_identities = identities;
         self
     }
 
-    pub(crate) async fn sending_identities(&self, account: &str) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
+    pub(crate) async fn sending_identities(
+        &self,
+        account: &str,
+    ) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
         #[derive(Deserialize)]
-        struct Response { #[serde(default, rename="sendAs")] addresses: Vec<GmailSendAs> }
+        struct Response {
+            #[serde(default, rename = "sendAs")]
+            addresses: Vec<GmailSendAs>,
+        }
         let request = self.request(Method::GET, format!("{}/settings/sendAs", self.api)).await?
             .query(&[("fields", "sendAs(sendAsEmail,displayName,replyToAddress,isPrimary,isDefault,verificationStatus)")]);
         let response: Response = self.json(request, false).await?;
         Self::accepted_identities(account, response.addresses)
     }
 
-    fn accepted_identities(account: &str, addresses: Vec<GmailSendAs>) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
-        let primary = addresses.iter().find(|identity| identity.is_primary && identity.send_as_email.eq_ignore_ascii_case(account))
-            .ok_or_else(|| ProviderError::Authentication("Gmail sending addresses do not match this account. Reconnect it.".into()))?;
+    fn accepted_identities(
+        account: &str,
+        addresses: Vec<GmailSendAs>,
+    ) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
+        let primary = addresses
+            .iter()
+            .find(|identity| {
+                identity.is_primary && identity.send_as_email.eq_ignore_ascii_case(account)
+            })
+            .ok_or_else(|| {
+                ProviderError::Authentication(
+                    "Gmail sending addresses do not match this account. Reconnect it.".into(),
+                )
+            })?;
         let primary_name = primary.display_name.clone();
         let primary_reply = primary.reply_to_address.trim();
-        if !primary_reply.is_empty() { crate::provider::imap::validate_envelope_address(primary_reply)?; }
+        if !primary_reply.is_empty() {
+            crate::provider::imap::validate_envelope_address(primary_reply)?;
+        }
         let mut identities = vec![crate::provider::SendingIdentity {
-            address: account.to_string(), display_name: None,
-            reply_to: (!primary_reply.is_empty()).then(|| primary_reply.to_string()), is_default: primary.is_default,
+            address: account.to_string(),
+            display_name: None,
+            reply_to: (!primary_reply.is_empty()).then(|| primary_reply.to_string()),
+            is_default: primary.is_default,
         }];
         let mut seen = std::collections::BTreeSet::from([account.to_ascii_lowercase()]);
         for identity in addresses {
-            if identity.is_primary || identity.verification_status != "accepted" { continue; }
+            if identity.is_primary || identity.verification_status != "accepted" {
+                continue;
+            }
             let address = identity.send_as_email.trim();
-            if crate::provider::imap::validate_envelope_address(address).is_err() || !seen.insert(address.to_ascii_lowercase()) { continue; }
+            if crate::provider::imap::validate_envelope_address(address).is_err()
+                || !seen.insert(address.to_ascii_lowercase())
+            {
+                continue;
+            }
             let reply_to = identity.reply_to_address.trim();
-            if !reply_to.is_empty() { crate::provider::imap::validate_envelope_address(reply_to)?; }
-            let name = if identity.display_name.trim().is_empty() { primary_name.trim() } else { identity.display_name.trim() };
+            if !reply_to.is_empty() {
+                crate::provider::imap::validate_envelope_address(reply_to)?;
+            }
+            let name = if identity.display_name.trim().is_empty() {
+                primary_name.trim()
+            } else {
+                identity.display_name.trim()
+            };
             identities.push(crate::provider::SendingIdentity {
-                address: address.to_string(), display_name: (!name.is_empty() && !name.contains(['\r','\n','\0'])).then(|| name.to_string()),
-                reply_to: (!reply_to.is_empty()).then(|| reply_to.to_string()), is_default: identity.is_default,
+                address: address.to_string(),
+                display_name: (!name.is_empty() && !name.contains(['\r', '\n', '\0']))
+                    .then(|| name.to_string()),
+                reply_to: (!reply_to.is_empty()).then(|| reply_to.to_string()),
+                is_default: identity.is_default,
             });
         }
-        if identities.iter().filter(|identity| identity.is_default).count()>1 { return Err(ProviderError::InvalidOperation("Gmail returned multiple default sending addresses".into())); }
+        if identities
+            .iter()
+            .filter(|identity| identity.is_default)
+            .count()
+            > 1
+        {
+            return Err(ProviderError::InvalidOperation(
+                "Gmail returned multiple default sending addresses".into(),
+            ));
+        }
         Ok(identities)
     }
 
     /// Read only: the existing gmail.modify grant authorizes this endpoint.
     pub async fn list_signatures(&self) -> ProviderResult<Vec<GmailSignature>> {
-        let request = self.request(Method::GET, format!("{}/settings/sendAs", self.api)).await?
+        let request = self
+            .request(Method::GET, format!("{}/settings/sendAs", self.api))
+            .await?
             .query(&[("fields", "sendAs(sendAsEmail,signature)")]);
         let response: SendAsList = self.json(request, false).await?;
-        Ok(response.addresses.into_iter().filter(|item| !item.html.trim().is_empty()).collect())
+        Ok(response
+            .addresses
+            .into_iter()
+            .filter(|item| !item.html.trim().is_empty())
+            .collect())
     }
 
     pub fn new(auth: OAuthCredential) -> Self {
@@ -177,8 +235,9 @@ impl GmailClient {
         {
             self.auth.expire_access_token(rejected);
         }
-        let mut authorization = HeaderValue::from_str(&format!("Bearer {}", self.access_token().await?))
-            .map_err(|error| ProviderError::Authentication(error.to_string()))?;
+        let mut authorization =
+            HeaderValue::from_str(&format!("Bearer {}", self.access_token().await?))
+                .map_err(|error| ProviderError::Authentication(error.to_string()))?;
         authorization.set_sensitive(true);
         request.headers_mut().insert(AUTHORIZATION, authorization);
         Ok(RequestBuilder::from_parts(client, request))
@@ -196,7 +255,10 @@ impl GmailClient {
     /// already have applied. A rejected token is still replayed once, because
     /// Gmail refuses those before doing anything. For creates, which would
     /// otherwise be duplicated.
-    async fn send_without_replay(&self, request: RequestBuilder) -> ProviderResult<reqwest::Response> {
+    async fn send_without_replay(
+        &self,
+        request: RequestBuilder,
+    ) -> ProviderResult<reqwest::Response> {
         self.send_with_retries(request, false, 0).await
     }
 
@@ -257,7 +319,9 @@ impl GmailClient {
                 let delay = retry_after.map_or(backoff, |after| after.max(backoff));
                 self.quota.pause(delay + jitter());
                 if attempt == retries {
-                    return Err(ProviderError::RetryableServer(gmail_error_detail(status, &body)));
+                    return Err(ProviderError::RetryableServer(gmail_error_detail(
+                        status, &body,
+                    )));
                 }
                 attempt += 1;
                 continue;
@@ -267,7 +331,9 @@ impl GmailClient {
                 || status.is_server_error()
             {
                 if attempt == retries {
-                    return Err(ProviderError::RetryableServer(gmail_error_detail(status, &body)));
+                    return Err(ProviderError::RetryableServer(gmail_error_detail(
+                        status, &body,
+                    )));
                 }
                 let delay = retry_after.unwrap_or_else(|| retry_delay(attempt, false));
                 sleep(delay + jitter()).await;
@@ -301,14 +367,18 @@ impl GmailClient {
             .await?
             .bytes()
             .await
-            .map_err(|error| ProviderError::RetryableServer(format!("reading Gmail's response failed: {error}")))?;
+            .map_err(|error| {
+                ProviderError::RetryableServer(format!("reading Gmail's response failed: {error}"))
+            })?;
         // Gmail answers 204 with no body when a `fields` mask leaves nothing
         // to return, such as listing drafts for an account that has none.
         let body: &[u8] = if body.is_empty() { b"{}" } else { &body };
         // Keep serde's reason (missing field, line and column); reqwest's
         // own decode error drops it.
         serde_json::from_slice(body).map_err(|error| {
-            ProviderError::RetryableServer(format!("Gmail returned an unreadable response: {error}"))
+            ProviderError::RetryableServer(format!(
+                "Gmail returned an unreadable response: {error}"
+            ))
         })
     }
 }
@@ -438,12 +508,17 @@ impl From<GmailLabel> for Label {
 
 #[async_trait]
 impl MailSync for GmailClient {
-    async fn refresh_sending_identities(&self, account: &str) -> ProviderResult<Option<Vec<crate::provider::SendingIdentity>>> {
+    async fn refresh_sending_identities(
+        &self,
+        account: &str,
+    ) -> ProviderResult<Option<Vec<crate::provider::SendingIdentity>>> {
         self.sending_identities(account).await.map(Some)
     }
 
     async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
-        let request = self.request(Method::GET, format!("{}/profile", self.api)).await?;
+        let request = self
+            .request(Method::GET, format!("{}/profile", self.api))
+            .await?;
         Ok(SyncCursor::new(
             self.json::<Profile>(request, false).await?.history_id,
         ))
@@ -487,7 +562,10 @@ impl MailSync for GmailClient {
 
     async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
         let request = self
-            .request(Method::GET, format!("{}/threads/{id}?format=full", self.api))
+            .request(
+                Method::GET,
+                format!("{}/threads/{id}?format=full", self.api),
+            )
             .await?;
         Ok(self.json::<GmailThread>(request, false).await?.messages)
     }
@@ -531,14 +609,16 @@ impl MailSync for GmailClient {
             more,
         })
     }
-
 }
 
 #[async_trait]
 impl MailFetch for GmailClient {
     async fn fetch_message(&self, id: &str) -> ProviderResult<RawMessage> {
         let request = self
-            .request(Method::GET, format!("{}/messages/{id}?format=full", self.api))
+            .request(
+                Method::GET,
+                format!("{}/messages/{id}?format=full", self.api),
+            )
             .await?;
         self.json(request, false).await
     }
@@ -635,9 +715,8 @@ impl MailMutate for GmailClient {
         add: &[String],
         remove: &[String],
     ) -> ProviderResult<()> {
-        let url = message_modify_url(&self.api, ids).ok_or_else(|| {
-            ProviderError::InvalidOperation("No Gmail messages to modify".into())
-        })?;
+        let url = message_modify_url(&self.api, ids)
+            .ok_or_else(|| ProviderError::InvalidOperation("No Gmail messages to modify".into()))?;
         let request = self.request(Method::POST, url).await?;
         let request = if ids.len() == 1 {
             request.json(&ModifyRequest {
@@ -656,7 +735,9 @@ impl MailMutate for GmailClient {
     }
 
     async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
-        let request = self.request(Method::GET, format!("{}/labels", self.api)).await?;
+        let request = self
+            .request(Method::GET, format!("{}/labels", self.api))
+            .await?;
         Ok(self
             .json::<LabelList>(request, false)
             .await?
@@ -883,21 +964,23 @@ mod tests {
             let router = Router::new()
                 .route(
                     "/api",
-                    get(move |State(seen): State<Seen>, headers: HeaderMap| async move {
-                        let values = headers
-                            .get_all(AUTHORIZATION)
-                            .iter()
-                            .map(|value| value.to_str().unwrap().to_string())
-                            .collect::<Vec<_>>();
-                        let ok = accepted
-                            .is_some_and(|token| values == [format!("Bearer {token}")]);
-                        seen.api.lock().unwrap().push(values);
-                        if ok {
-                            (HttpStatus::OK, "{}")
-                        } else {
-                            (HttpStatus::UNAUTHORIZED, r#"{"error":{"code":401}}"#)
-                        }
-                    }),
+                    get(
+                        move |State(seen): State<Seen>, headers: HeaderMap| async move {
+                            let values = headers
+                                .get_all(AUTHORIZATION)
+                                .iter()
+                                .map(|value| value.to_str().unwrap().to_string())
+                                .collect::<Vec<_>>();
+                            let ok =
+                                accepted.is_some_and(|token| values == [format!("Bearer {token}")]);
+                            seen.api.lock().unwrap().push(values);
+                            if ok {
+                                (HttpStatus::OK, "{}")
+                            } else {
+                                (HttpStatus::UNAUTHORIZED, r#"{"error":{"code":401}}"#)
+                            }
+                        },
+                    ),
                 )
                 .route(
                     "/token",
@@ -907,7 +990,9 @@ mod tests {
                     }),
                 )
                 .with_state(seen.clone());
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
             let address = listener.local_addr().unwrap();
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
             (format!("http://{address}"), seen)
@@ -936,7 +1021,10 @@ mod tests {
 
             assert_eq!(
                 *seen.api.lock().unwrap(),
-                vec![vec!["Bearer stale".to_string()], vec!["Bearer fresh".to_string()]],
+                vec![
+                    vec!["Bearer stale".to_string()],
+                    vec!["Bearer fresh".to_string()]
+                ],
                 "the replay must replace, not append, the Authorization header"
             );
             assert_eq!(*seen.token_refreshes.lock().unwrap(), 0);
@@ -946,11 +1034,17 @@ mod tests {
         async fn a_401_refreshes_before_asking_for_reconnection() {
             let (base, seen) = serve(None).await;
             let client = client(&base, "revoked");
-            let request = client.request(Method::GET, format!("{base}/api")).await.unwrap();
+            let request = client
+                .request(Method::GET, format!("{base}/api"))
+                .await
+                .unwrap();
 
             let error = client.send(request, false).await.unwrap_err();
 
-            assert!(error.requires_reauthentication(), "unexpected error: {error}");
+            assert!(
+                error.requires_reauthentication(),
+                "unexpected error: {error}"
+            );
             assert_eq!(*seen.token_refreshes.lock().unwrap(), 1);
             assert_eq!(seen.api.lock().unwrap().len(), 1);
         }
@@ -963,7 +1057,10 @@ mod tests {
 
             let error = client.send(request, false).await.unwrap_err();
 
-            assert!(error.requires_reauthentication(), "unexpected error: {error}");
+            assert!(
+                error.requires_reauthentication(),
+                "unexpected error: {error}"
+            );
             assert_eq!(seen.api.lock().unwrap().len(), 2, "replays at most once");
         }
     }
@@ -973,7 +1070,11 @@ mod tests {
     mod api_base {
         use std::sync::{Arc, Mutex as StdMutex};
 
-        use axum::{extract::{RawQuery, State}, routing::get, Json, Router};
+        use axum::{
+            extract::{RawQuery, State},
+            routing::get,
+            Json, Router,
+        };
         use serde_json::json;
 
         use super::*;
@@ -997,7 +1098,9 @@ mod tests {
                     }),
                 )
                 .with_state(seen.clone());
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
             let address = listener.local_addr().unwrap();
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
             (format!("http://{address}"), seen)
@@ -1028,25 +1131,41 @@ mod tests {
                     {"sendAsEmail": "unset@example.com"}
                 ]}))
             }));
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
             let base = format!("http://{}", listener.local_addr().unwrap());
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
             let signatures = client(&base).list_signatures().await.unwrap();
             assert_eq!(signatures.len(), 2);
             assert_eq!(signatures[0].address, "me@example.com");
             assert_eq!(signatures[1].html, "<table><tr><td>Team</td></tr></table>");
-            assert_eq!(serde_json::to_value(&signatures[0]).unwrap(), json!({"address": "me@example.com", "html": "<p><b>Alex</b></p>"}));
+            assert_eq!(
+                serde_json::to_value(&signatures[0]).unwrap(),
+                json!({"address": "me@example.com", "html": "<p><b>Alex</b></p>"})
+            );
         }
 
         #[tokio::test]
         async fn signatures_report_missing_permissions_instead_of_an_empty_library() {
-            let router = Router::new().route("/settings/sendAs", get(|| async {
-                (StatusCode::FORBIDDEN, Json(json!({"error": {"message": "Insufficient permission"}})))
-            }));
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let router = Router::new().route(
+                "/settings/sendAs",
+                get(|| async {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({"error": {"message": "Insufficient permission"}})),
+                    )
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
             let base = format!("http://{}", listener.local_addr().unwrap());
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-            assert!(matches!(client(&base).list_signatures().await.unwrap_err(), ProviderError::PermanentClientRejection(_)));
+            assert!(matches!(
+                client(&base).list_signatures().await.unwrap_err(),
+                ProviderError::PermanentClientRejection(_)
+            ));
         }
 
         #[tokio::test]
@@ -1136,7 +1255,9 @@ mod tests {
                     }),
                 )
                 .with_state(stub);
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
             let address = listener.local_addr().unwrap();
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
             format!("http://{address}")
@@ -1193,7 +1314,10 @@ mod tests {
             let (definite, message) = send_with(400, r#"{"error":{"code":400}}"#)
                 .await
                 .unwrap_err();
-            assert!(definite, "an explicit client rejection proves nothing was sent");
+            assert!(
+                definite,
+                "an explicit client rejection proves nothing was sent"
+            );
             assert!(message.contains("HTTP 400"), "{message}");
             assert!(message.contains("Restore the draft"), "{message}");
         }
@@ -1217,7 +1341,10 @@ mod tests {
         #[tokio::test]
         async fn a_malformed_success_body_is_uncertain() {
             let (definite, message) = send_with(200, "not json").await.unwrap_err();
-            assert!(!definite, "Gmail answered 2xx, so the message may have been sent");
+            assert!(
+                !definite,
+                "Gmail answered 2xx, so the message may have been sent"
+            );
             assert!(message.contains("could not be read"), "{message}");
 
             let (definite, _) = send_with(200, r#"{"id":"m-1"}"#).await.unwrap_err();
@@ -1227,14 +1354,19 @@ mod tests {
         #[tokio::test]
         async fn a_transport_failure_is_uncertain() {
             // Reserve a loopback port, then close it so the connection is refused.
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
             let base = format!("http://{}", listener.local_addr().unwrap());
             drop(listener);
             let delivery = client(&base).prepare_delivery().await.unwrap();
 
             let (definite, message) = delivery.send_once(b"raw", None).await.unwrap_err();
 
-            assert!(!definite, "a transport failure cannot prove the send did not land");
+            assert!(
+                !definite,
+                "a transport failure cannot prove the send did not land"
+            );
             assert!(message.contains("Check sent mail"), "{message}");
         }
 
@@ -1365,12 +1497,8 @@ mod tests {
 
         #[tokio::test]
         async fn a_candidate_that_cannot_be_fetched_is_an_error_not_absence() {
-            let (result, _) = find_with(&[(
-                "vanished",
-                404,
-                serde_json::json!({"error": {"code": 404}}),
-            )])
-            .await;
+            let (result, _) =
+                find_with(&[("vanished", 404, serde_json::json!({"error": {"code": 404}}))]).await;
             assert!(
                 matches!(result, Err(ProviderError::NotFound)),
                 "unexpected result: {:?}",
@@ -1401,27 +1529,45 @@ mod tests {
         );
         // Only the item carries a message, or only a reason.
         assert_eq!(
-            gmail_error_detail(StatusCode::BAD_REQUEST, r#"{"error":{"errors":[{"message":"Invalid id value","reason":"invalidArgument"}]}}"#),
+            gmail_error_detail(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":{"errors":[{"message":"Invalid id value","reason":"invalidArgument"}]}}"#
+            ),
             "400 Bad Request: Invalid id value (invalidArgument)"
         );
         assert_eq!(
-            gmail_error_detail(StatusCode::FORBIDDEN, r#"{"error":{"errors":[{"reason":"insufficientPermissions"}]}}"#),
+            gmail_error_detail(
+                StatusCode::FORBIDDEN,
+                r#"{"error":{"errors":[{"reason":"insufficientPermissions"}]}}"#
+            ),
             "403 Forbidden: insufficientPermissions"
         );
     }
 
     #[test]
     fn a_reply_that_is_not_gmail_error_json_stays_on_one_short_line() {
-        assert_eq!(gmail_error_detail(StatusCode::BAD_GATEWAY, ""), "502 Bad Gateway");
         assert_eq!(
-            gmail_error_detail(StatusCode::SERVICE_UNAVAILABLE, "<html>\n  <body>Down</body>\n</html>"),
+            gmail_error_detail(StatusCode::BAD_GATEWAY, ""),
+            "502 Bad Gateway"
+        );
+        assert_eq!(
+            gmail_error_detail(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "<html>\n  <body>Down</body>\n</html>"
+            ),
             "503 Service Unavailable: <html> <body>Down</body> </html>"
         );
         let long = "é".repeat(MAX_RAW_ERROR_CHARS + 50);
         let detail = gmail_error_detail(StatusCode::INTERNAL_SERVER_ERROR, &long);
         assert!(detail.ends_with('…'));
-        assert_eq!(detail.chars().filter(|c| *c == 'é').count(), MAX_RAW_ERROR_CHARS);
-        assert!(!gmail_error_detail(StatusCode::FORBIDDEN, r#"{"error":{"message":"a\nb"}}"#).contains('\n'));
+        assert_eq!(
+            detail.chars().filter(|c| *c == 'é').count(),
+            MAX_RAW_ERROR_CHARS
+        );
+        assert!(
+            !gmail_error_detail(StatusCode::FORBIDDEN, r#"{"error":{"message":"a\nb"}}"#)
+                .contains('\n')
+        );
     }
 
     #[test]
@@ -1442,12 +1588,19 @@ mod tests {
         let credential = || {
             OAuthCredential::in_memory_for_test(
                 "http://127.0.0.1:9/token",
-                crate::auth::Tokens { access_token: "token".into(), refresh_token: None, expires_at: u64::MAX },
+                crate::auth::Tokens {
+                    access_token: "token".into(),
+                    refresh_token: None,
+                    expires_at: u64::MAX,
+                },
             )
         };
         // Sync, message opens, attachments, and sending each build their own
         // client; they must not each get a full budget.
-        assert!(Arc::ptr_eq(&GmailClient::new(credential()).quota, &GmailClient::new(credential()).quota));
+        assert!(Arc::ptr_eq(
+            &GmailClient::new(credential()).quota,
+            &GmailClient::new(credential()).quota
+        ));
     }
 
     #[test]
@@ -1541,7 +1694,11 @@ mod tests {
         impl Stub {
             fn next_status(&self) -> HttpStatus {
                 let mut statuses = self.statuses.lock().unwrap();
-                let status = if statuses.is_empty() { 200 } else { statuses.remove(0) };
+                let status = if statuses.is_empty() {
+                    200
+                } else {
+                    statuses.remove(0)
+                };
                 HttpStatus::from_u16(status).unwrap()
             }
         }
@@ -1575,7 +1732,9 @@ mod tests {
                     }),
                 )
                 .with_state(stub);
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
             let address = listener.local_addr().unwrap();
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
             format!("http://{address}")
@@ -1584,7 +1743,11 @@ mod tests {
         fn client(base: &str) -> GmailClient {
             GmailClient::new(OAuthCredential::in_memory_for_test(
                 &format!("{base}/token"),
-                Tokens { access_token: "token".into(), refresh_token: Some("refresh".into()), expires_at: u64::MAX },
+                Tokens {
+                    access_token: "token".into(),
+                    refresh_token: Some("refresh".into()),
+                    expires_at: u64::MAX,
+                },
             ))
             .with_api_base(base)
         }
@@ -1605,16 +1768,40 @@ mod tests {
         async fn create_and_update_send_the_raw_message_in_its_thread() {
             let stub = Stub::default();
             let gmail = client(&serve(stub.clone()).await);
-            let created = gmail.create_server_draft(b"Subject: Hi\r\n\r\nBody", Some("t-9")).await.unwrap();
-            assert_eq!(created, ServerDraft { id: "d-1".into(), version: Some("m-1".into()) });
-            let updated = gmail.update_server_draft("d-1", b"Subject: Hi\r\n\r\nEdited", None).await.unwrap();
-            assert_eq!(updated, ServerDraft { id: "d-1".into(), version: Some("m-2".into()) });
+            let created = gmail
+                .create_server_draft(b"Subject: Hi\r\n\r\nBody", Some("t-9"))
+                .await
+                .unwrap();
+            assert_eq!(
+                created,
+                ServerDraft {
+                    id: "d-1".into(),
+                    version: Some("m-1".into())
+                }
+            );
+            let updated = gmail
+                .update_server_draft("d-1", b"Subject: Hi\r\n\r\nEdited", None)
+                .await
+                .unwrap();
+            assert_eq!(
+                updated,
+                ServerDraft {
+                    id: "d-1".into(),
+                    version: Some("m-2".into())
+                }
+            );
 
             let seen = stub.seen.lock().unwrap().clone();
-            assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("POST", "/drafts"));
+            assert_eq!(
+                (seen[0].0.as_str(), seen[0].1.as_str()),
+                ("POST", "/drafts")
+            );
             assert_eq!(raw_of(&seen[0].2), b"Subject: Hi\r\n\r\nBody");
             assert_eq!(seen[0].2["message"]["threadId"], "t-9");
-            assert_eq!((seen[1].0.as_str(), seen[1].1.as_str()), ("PUT", "/drafts/d-1"));
+            assert_eq!(
+                (seen[1].0.as_str(), seen[1].1.as_str()),
+                ("PUT", "/drafts/d-1")
+            );
             assert_eq!(seen[1].2["id"], "d-1");
             assert_eq!(raw_of(&seen[1].2), b"Subject: Hi\r\n\r\nEdited");
             assert!(seen[1].2["message"].get("threadId").is_none());
@@ -1626,8 +1813,15 @@ mod tests {
             stub.statuses.lock().unwrap().push(503);
             let gmail = client(&serve(stub.clone()).await);
             let result = gmail.create_server_draft(b"raw", None).await;
-            assert!(matches!(result, Err(ProviderError::RetryableServer(_))), "{result:?}");
-            assert_eq!(stub.seen.lock().unwrap().len(), 1, "a replayed create could leave two drafts");
+            assert!(
+                matches!(result, Err(ProviderError::RetryableServer(_))),
+                "{result:?}"
+            );
+            assert_eq!(
+                stub.seen.lock().unwrap().len(),
+                1,
+                "a replayed create could leave two drafts"
+            );
         }
 
         #[tokio::test]
@@ -1637,11 +1831,18 @@ mod tests {
             let gmail = client(&serve(stub.clone()).await);
             assert!(gmail.quota.paused_for().is_zero());
             let result = gmail.create_server_draft(b"raw", None).await;
-            assert!(matches!(result, Err(ProviderError::RetryableServer(_))), "{result:?}");
+            assert!(
+                matches!(result, Err(ProviderError::RetryableServer(_))),
+                "{result:?}"
+            );
             // The create is not replayed, but the account still backs off for
             // Gmail's usage window before its next request of any kind.
             assert_eq!(stub.seen.lock().unwrap().len(), 1);
-            assert!(gmail.quota.paused_for() >= Duration::from_secs(14), "{:?}", gmail.quota.paused_for());
+            assert!(
+                gmail.quota.paused_for() >= Duration::from_secs(14),
+                "{:?}",
+                gmail.quota.paused_for()
+            );
         }
 
         #[tokio::test]
@@ -1658,10 +1859,19 @@ mod tests {
             let stub = Stub::default();
             stub.statuses.lock().unwrap().extend([404, 404]);
             let gmail = client(&serve(stub.clone()).await);
-            assert!(matches!(gmail.update_server_draft("gone", b"raw", None).await, Err(ProviderError::NotFound)));
-            assert!(matches!(gmail.delete_server_draft("gone").await, Err(ProviderError::NotFound)));
+            assert!(matches!(
+                gmail.update_server_draft("gone", b"raw", None).await,
+                Err(ProviderError::NotFound)
+            ));
+            assert!(matches!(
+                gmail.delete_server_draft("gone").await,
+                Err(ProviderError::NotFound)
+            ));
             let seen = stub.seen.lock().unwrap().clone();
-            assert_eq!((seen[1].0.as_str(), seen[1].1.as_str()), ("DELETE", "/drafts/gone"));
+            assert_eq!(
+                (seen[1].0.as_str(), seen[1].1.as_str()),
+                ("DELETE", "/drafts/gone")
+            );
         }
 
         #[tokio::test]
@@ -1672,8 +1882,14 @@ mod tests {
             assert_eq!(
                 listed,
                 [
-                    ServerDraft { id: "d-7".into(), version: Some("m-7".into()) },
-                    ServerDraft { id: "d-8".into(), version: Some("m-8".into()) },
+                    ServerDraft {
+                        id: "d-7".into(),
+                        version: Some("m-7".into())
+                    },
+                    ServerDraft {
+                        id: "d-8".into(),
+                        version: Some("m-8".into())
+                    },
                 ]
             );
             let seen = stub.seen.lock().unwrap().clone();
@@ -1686,7 +1902,10 @@ mod tests {
             let stub = Stub::default();
             stub.statuses.lock().unwrap().push(503);
             let gmail = client(&serve(stub.clone()).await);
-            assert!(matches!(gmail.list_server_drafts().await, Err(ProviderError::RetryableServer(_))));
+            assert!(matches!(
+                gmail.list_server_drafts().await,
+                Err(ProviderError::RetryableServer(_))
+            ));
             assert_eq!(stub.seen.lock().unwrap().len(), 1);
         }
 
@@ -1705,7 +1924,10 @@ mod tests {
             let stub = Stub::default();
             stub.statuses.lock().unwrap().push(204);
             let gmail = client(&serve(stub.clone()).await);
-            let error = gmail.update_server_draft("d-1", b"raw", None).await.unwrap_err();
+            let error = gmail
+                .update_server_draft("d-1", b"raw", None)
+                .await
+                .unwrap_err();
             assert!(
                 matches!(&error, ProviderError::RetryableServer(detail) if detail.contains("missing field `id`")),
                 "{error:?}"
@@ -1719,7 +1941,13 @@ mod tests {
             let fetched = gmail.fetch_server_draft("d-1").await.unwrap();
             assert_eq!(fetched.raw, b"Subject: Hi\r\n\r\nBody");
             assert_eq!(fetched.thread_id.as_deref(), Some("t-3"));
-            assert_eq!(fetched.draft, ServerDraft { id: "d-1".into(), version: Some("m-2".into()) });
+            assert_eq!(
+                fetched.draft,
+                ServerDraft {
+                    id: "d-1".into(),
+                    version: Some("m-2".into())
+                }
+            );
             assert_eq!(stub.seen.lock().unwrap()[0].2["format"], "raw");
         }
 
@@ -1727,7 +1955,10 @@ mod tests {
         async fn the_version_check_reads_no_content_and_reports_a_deleted_draft() {
             let stub = Stub::default();
             let gmail = client(&serve(stub.clone()).await);
-            assert_eq!(gmail.server_draft_version("d-1").await.unwrap().as_deref(), Some("m-2"));
+            assert_eq!(
+                gmail.server_draft_version("d-1").await.unwrap().as_deref(),
+                Some("m-2")
+            );
             assert_eq!(stub.seen.lock().unwrap()[0].2["format"], "minimal");
             stub.statuses.lock().unwrap().push(404);
             assert_eq!(gmail.server_draft_version("gone").await.unwrap(), None);
@@ -1737,8 +1968,17 @@ mod tests {
         async fn find_searches_drafts_by_exact_message_id() {
             let stub = Stub::default();
             let gmail = client(&serve(stub.clone()).await);
-            let found = gmail.find_server_draft("draft-1@threestrands.local").await.unwrap();
-            assert_eq!(found, Some(ServerDraft { id: "d-7".into(), version: Some("m-7".into()) }));
+            let found = gmail
+                .find_server_draft("draft-1@threestrands.local")
+                .await
+                .unwrap();
+            assert_eq!(
+                found,
+                Some(ServerDraft {
+                    id: "d-7".into(),
+                    version: Some("m-7".into())
+                })
+            );
             let seen = stub.seen.lock().unwrap().clone();
             assert_eq!(seen[0].2["q"], "rfc822msgid:draft-1@threestrands.local");
         }
@@ -1788,7 +2028,9 @@ impl Delivery for GmailDelivery {
         if let Some(thread) = thread {
             body["threadId"] = thread.into();
         }
-        self.quota.acquire(quota::cost(&Method::POST, "/messages/send")).await;
+        self.quota
+            .acquire(quota::cost(&Method::POST, "/messages/send"))
+            .await;
         let response = self.request.json(&body).send().await.map_err(|_| {
             (
                 false,
@@ -1831,15 +2073,34 @@ impl Delivery for GmailDelivery {
 
 #[async_trait]
 impl MailSend for GmailClient {
-    async fn identities(&self, account: &str) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
-        if self.cached_identities.first().is_some_and(|primary| primary.address.eq_ignore_ascii_case(account)) { return Ok(self.cached_identities.clone()); }
-        Ok(vec![crate::provider::SendingIdentity { address: account.to_string(), ..Default::default() }])
+    async fn identities(
+        &self,
+        account: &str,
+    ) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
+        if self
+            .cached_identities
+            .first()
+            .is_some_and(|primary| primary.address.eq_ignore_ascii_case(account))
+        {
+            return Ok(self.cached_identities.clone());
+        }
+        Ok(vec![crate::provider::SendingIdentity {
+            address: account.to_string(),
+            ..Default::default()
+        }])
     }
 
     async fn validate_sending_identity(&self, account: &str, sender: &str) -> ProviderResult<()> {
-        if sender.eq_ignore_ascii_case(account) { return Ok(()); }
+        if sender.eq_ignore_ascii_case(account) {
+            return Ok(());
+        }
         let identities = self.sending_identities(account).await?;
-        if identities.iter().any(|identity| identity.address.eq_ignore_ascii_case(sender)) { return Ok(()); }
+        if identities
+            .iter()
+            .any(|identity| identity.address.eq_ignore_ascii_case(sender))
+        {
+            return Ok(());
+        }
         Err(ProviderError::PermanentClientRejection(format!("{sender} is no longer a verified Gmail sending address. Return this message to Drafts and choose a current sending address.")))
     }
 
@@ -1849,7 +2110,9 @@ impl MailSend for GmailClient {
         struct Identity {
             email_address: String,
         }
-        let request = self.request(Method::GET, format!("{}/profile", self.api)).await?;
+        let request = self
+            .request(Method::GET, format!("{}/profile", self.api))
+            .await?;
         Ok(self.json::<Identity>(request, false).await?.email_address)
     }
 
@@ -1914,7 +2177,10 @@ impl MailSend for GmailClient {
         let request = self
             .request(Method::GET, format!("{}/drafts", self.api))
             .await?
-            .query(&[("q", format!("rfc822msgid:{message_id}")), ("maxResults", "1".into())]);
+            .query(&[
+                ("q", format!("rfc822msgid:{message_id}")),
+                ("maxResults", "1".into()),
+            ]);
         let found: DraftList = self.json(request, false).await?;
         Ok(found.drafts.into_iter().next().map(Into::into))
     }
@@ -1966,7 +2232,10 @@ impl MailSend for GmailClient {
             let mut request = self
                 .request(Method::GET, format!("{}/drafts", self.api))
                 .await?
-                .query(&[("maxResults", "500"), ("fields", "drafts(id,message(id)),nextPageToken")]);
+                .query(&[
+                    ("maxResults", "500"),
+                    ("fields", "drafts(id,message(id)),nextPageToken"),
+                ]);
             if let Some(page) = &page {
                 request = request.query(&[("pageToken", page)]);
             }
@@ -1992,10 +2261,19 @@ impl MailSend for GmailClient {
             .message
             .as_ref()
             .and_then(|message| message.raw.as_deref())
-            .ok_or_else(|| ProviderError::RetryableServer("Gmail returned a draft without its content".into()))?;
+            .ok_or_else(|| {
+                ProviderError::RetryableServer("Gmail returned a draft without its content".into())
+            })?;
         let raw = crate::mime::decode_attachment_data(raw).map_err(ProviderError::Other)?;
-        let thread_id = fetched.message.as_ref().and_then(|message| message.thread_id.clone());
-        Ok(FetchedServerDraft { draft: fetched.into(), thread_id, raw })
+        let thread_id = fetched
+            .message
+            .as_ref()
+            .and_then(|message| message.thread_id.clone());
+        Ok(FetchedServerDraft {
+            draft: fetched.into(),
+            thread_id,
+            raw,
+        })
     }
 
     async fn server_draft_version(&self, id: &str) -> ProviderResult<Option<String>> {
@@ -2038,7 +2316,10 @@ struct DraftMessage {
 
 impl From<DraftRef> for ServerDraft {
     fn from(value: DraftRef) -> Self {
-        Self { id: value.id, version: value.message.map(|message| message.id) }
+        Self {
+            id: value.id,
+            version: value.message.map(|message| message.id),
+        }
     }
 }
 
@@ -2059,7 +2340,7 @@ fn draft_body(id: Option<&str>, raw: &[u8], thread: Option<&str>) -> serde_json:
 impl MailProvider for GmailClient {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
-                    send_supported: true,
+            send_supported: true,
             server_search: true,
             // Gmail returns conversation ids, so threading is not computed
             // locally.
@@ -2080,10 +2361,12 @@ mod alias_tests {
     use super::*;
     use crate::auth::Tokens;
     use serde_json::json;
-    fn aliases(value: serde_json::Value) -> Vec<GmailSendAs> { serde_json::from_value(value).unwrap() }
+    fn aliases(value: serde_json::Value) -> Vec<GmailSendAs> {
+        serde_json::from_value(value).unwrap()
+    }
     #[test]
     fn aliases_require_verification_preserve_plus_addresses_and_reject_wrong_account() {
-        let response=json!([
+        let response = json!([
             {"sendAsEmail":"you@example.com","isPrimary":true,"displayName":"Primary"},
             {"sendAsEmail":"waiting@example.org","verificationStatus":"pending","isDefault":true},
             {"sendAsEmail":"work@example.org","verificationStatus":"accepted","displayName":"Work","isDefault":true,"replyToAddress":"replies@example.org"},
@@ -2091,31 +2374,70 @@ mod alias_tests {
             {"sendAsEmail":"WORK@example.org","verificationStatus":"accepted"},
             {"sendAsEmail":"bad\r\nBcc: x@example.com","verificationStatus":"accepted"}
         ]);
-        let list=GmailClient::accepted_identities("you@example.com",aliases(response.clone())).unwrap();
-        assert_eq!(list.iter().map(|item| item.address.as_str()).collect::<Vec<_>>(),vec!["you@example.com","work@example.org","you+tag@example.com"]);
+        let list =
+            GmailClient::accepted_identities("you@example.com", aliases(response.clone())).unwrap();
+        assert_eq!(
+            list.iter()
+                .map(|item| item.address.as_str())
+                .collect::<Vec<_>>(),
+            vec!["you@example.com", "work@example.org", "you+tag@example.com"]
+        );
         assert!(list[1].is_default);
-        assert_eq!(list[1].reply_to.as_deref(),Some("replies@example.org"));
-        assert_eq!(list[2].display_name.as_deref(),Some("Primary"));
-        assert!(GmailClient::accepted_identities("other@example.com",aliases(response)).is_err());
+        assert_eq!(list[1].reply_to.as_deref(), Some("replies@example.org"));
+        assert_eq!(list[2].display_name.as_deref(), Some("Primary"));
+        assert!(GmailClient::accepted_identities("other@example.com", aliases(response)).is_err());
     }
 
     #[tokio::test]
     async fn discovery_uses_existing_grant_and_revoked_alias_fails_before_delivery() {
-        use axum::{Router,routing::get,Json,http::HeaderMap,extract::RawQuery};
+        use axum::{extract::RawQuery, http::HeaderMap, routing::get, Json, Router};
         let app=Router::new().route("/settings/sendAs",get(|headers:HeaderMap,RawQuery(query):RawQuery|async move {
             assert_eq!(headers.get("authorization").unwrap(),"Bearer token");
             let query=query.unwrap(); assert!(query.contains("verificationStatus")); assert!(!query.contains("smtpMsa"));
             Json(json!({"sendAs":[{"sendAsEmail":"you@example.com","isPrimary":true,"isDefault":true},{"sendAsEmail":"work@example.org","verificationStatus":"pending"}]}))
         }));
-        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base=format!("http://{}",listener.local_addr().unwrap());
-        let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
-        let client=GmailClient::new(OAuthCredential::in_memory_for_test(&format!("{base}/token"),Tokens {access_token:"token".into(),refresh_token:None,expires_at:u64::MAX})).with_api_base(&base);
-        assert_eq!(client.sending_identities("you@example.com").await.unwrap().len(),1);
-        assert!(matches!(client.validate_sending_identity("you@example.com","work@example.org").await,Err(ProviderError::PermanentClientRejection(_))));
-        let offline=GmailClient::new(OAuthCredential::in_memory_for_test("http://127.0.0.1:9/token",Tokens{access_token:"token".into(),refresh_token:None,expires_at:u64::MAX}));
-        assert!(offline.validate_sending_identity("you@example.com","you@example.com").await.is_ok());
-        assert_eq!(offline.identities("you@example.com").await.unwrap().len(),1);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = GmailClient::new(OAuthCredential::in_memory_for_test(
+            &format!("{base}/token"),
+            Tokens {
+                access_token: "token".into(),
+                refresh_token: None,
+                expires_at: u64::MAX,
+            },
+        ))
+        .with_api_base(&base);
+        assert_eq!(
+            client
+                .sending_identities("you@example.com")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(matches!(
+            client
+                .validate_sending_identity("you@example.com", "work@example.org")
+                .await,
+            Err(ProviderError::PermanentClientRejection(_))
+        ));
+        let offline = GmailClient::new(OAuthCredential::in_memory_for_test(
+            "http://127.0.0.1:9/token",
+            Tokens {
+                access_token: "token".into(),
+                refresh_token: None,
+                expires_at: u64::MAX,
+            },
+        ));
+        assert!(offline
+            .validate_sending_identity("you@example.com", "you@example.com")
+            .await
+            .is_ok());
+        assert_eq!(
+            offline.identities("you@example.com").await.unwrap().len(),
+            1
+        );
         server.abort();
     }
 }

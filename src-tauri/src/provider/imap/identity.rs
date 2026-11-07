@@ -159,7 +159,12 @@ pub struct IdentityInputs {
 /// not re-key messages we already know"]) is handled by the caller, which
 /// looks the location up first and only calls this when no id is on record.
 pub fn derive_message_id(account: &str, inputs: &IdentityInputs) -> String {
-    if let Some(email_id) = inputs.email_id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
+    if let Some(email_id) = inputs
+        .email_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
         return assemble(account, email_id);
     }
     if let Some(message_id) = inputs.message_id.as_deref() {
@@ -182,11 +187,14 @@ pub fn derive_message_id(account: &str, inputs: &IdentityInputs) -> String {
 /// identities. Several distinct messages may share it; conversion must not use
 /// it as proof of identity.
 pub(crate) fn header_identity(account: &str, inputs: &IdentityInputs) -> String {
-    derive_message_id(account, &IdentityInputs {
-        email_id: None,
-        gmail_message_id: None,
-        ..inputs.clone()
-    })
+    derive_message_id(
+        account,
+        &IdentityInputs {
+            email_id: None,
+            gmail_message_id: None,
+            ..inputs.clone()
+        },
+    )
 }
 
 /// A deterministic internal ID for a newly observed authoritative server ID.
@@ -474,9 +482,12 @@ mod tests {
         let id = derive_message_id("", &IdentityInputs::default());
         assert!(id.starts_with("imap::"));
         // A hostile account and Message-ID do not panic.
-        let _ = derive_message_id("\u{0}:\u{0}", &IdentityInputs {
-            message_id: Some("<\u{0}>".into()),
-            ..Default::default()
-        });
+        let _ = derive_message_id(
+            "\u{0}:\u{0}",
+            &IdentityInputs {
+                message_id: Some("<\u{0}>".into()),
+                ..Default::default()
+            },
+        );
     }
 }

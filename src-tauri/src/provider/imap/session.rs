@@ -48,11 +48,7 @@ impl MailboxStatus {
             .permanent_flags
             .iter()
             .any(|flag| matches!(flag, async_imap::types::Flag::MayCreate));
-        let permanent_flags = mailbox
-            .permanent_flags
-            .iter()
-            .map(flag_to_wire)
-            .collect();
+        let permanent_flags = mailbox.permanent_flags.iter().map(flag_to_wire).collect();
         Self {
             exists: mailbox.exists,
             uid_next: mailbox.uid_next,
@@ -105,7 +101,9 @@ pub struct MailboxEntry {
 #[async_trait]
 pub trait ImapSession: Send {
     /// Cached post-login capability; never infer label semantics from a host.
-    fn supports_label_extensions(&self) -> bool { false }
+    fn supports_label_extensions(&self) -> bool {
+        false
+    }
     /// SELECT a mailbox for read/write and return its status.
     async fn select(&mut self, mailbox: &str) -> Result<MailboxStatus, ProviderError>;
 
@@ -154,8 +152,13 @@ pub trait ImapSession: Send {
 
     /// Own the connection while watching INBOX, renewing IDLE on a fixed deadline.
     /// The default keeps read-only test sources compatible without claiming IDLE support.
-    async fn watch_inbox(self: Box<Self>, _changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> Result<(), ProviderError> {
-        Err(ProviderError::InvalidOperation("IDLE is not supported by this session".into()))
+    async fn watch_inbox(
+        self: Box<Self>,
+        _changed: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::InvalidOperation(
+            "IDLE is not supported by this session".into(),
+        ))
     }
 
     /// Re-borrow this session as the Phase 3 WRITE surface
@@ -187,7 +190,10 @@ where
 {
     /// Takes ownership of an already-authenticated `async-imap` session.
     pub fn new(session: Session<T>) -> Self {
-        Self { session, gmail_message_ids: false }
+        Self {
+            session,
+            gmail_message_ids: false,
+        }
     }
 }
 
@@ -196,15 +202,23 @@ impl<T> ImapSession for AsyncImapSession<T>
 where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
-    fn supports_label_extensions(&self) -> bool { self.gmail_message_ids }
-    async fn watch_inbox(self: Box<Self>, changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> Result<(), ProviderError> {
+    fn supports_label_extensions(&self) -> bool {
+        self.gmail_message_ids
+    }
+    async fn watch_inbox(
+        self: Box<Self>,
+        changed: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<(), ProviderError> {
+        use super::policy::{IDLE_COMMAND_TIMEOUT, IDLE_RENEW_INTERVAL};
         use async_imap::extensions::idle::IdleResponse;
-        use super::policy::{IDLE_RENEW_INTERVAL, IDLE_COMMAND_TIMEOUT};
         let mut session = self.session;
         loop {
             let mut idle = session.idle();
-            tokio::time::timeout(IDLE_COMMAND_TIMEOUT, idle.init()).await
-                .map_err(|_| ProviderError::TransientTransport("IMAP IDLE startup timed out".into()))?
+            tokio::time::timeout(IDLE_COMMAND_TIMEOUT, idle.init())
+                .await
+                .map_err(|_| {
+                    ProviderError::TransientTransport("IMAP IDLE startup timed out".into())
+                })?
                 .map_err(|error| map_imap_error(&error))?;
             // Catch up after connecting or renewing: changes between the last sync
             // and EXAMINE/IDLE may already be reflected in the selected mailbox.
@@ -217,12 +231,21 @@ where
             let notified = match outcome {
                 Err(_) | Ok(Ok(IdleResponse::Timeout)) => false,
                 Ok(Ok(IdleResponse::NewData(_))) => true,
-                Ok(Ok(IdleResponse::ManualInterrupt)) => return Err(ProviderError::TransientTransport("IMAP IDLE connection closed".into())),
+                Ok(Ok(IdleResponse::ManualInterrupt)) => {
+                    return Err(ProviderError::TransientTransport(
+                        "IMAP IDLE connection closed".into(),
+                    ))
+                }
                 Ok(Err(error)) => return Err(map_imap_error(&error)),
             };
-            if notified { changed(); }
-            session = tokio::time::timeout(IDLE_COMMAND_TIMEOUT, idle.done()).await
-                .map_err(|_| ProviderError::TransientTransport("IMAP IDLE completion timed out".into()))?
+            if notified {
+                changed();
+            }
+            session = tokio::time::timeout(IDLE_COMMAND_TIMEOUT, idle.done())
+                .await
+                .map_err(|_| {
+                    ProviderError::TransientTransport("IMAP IDLE completion timed out".into())
+                })?
                 .map_err(|error| map_imap_error(&error))?;
         }
     }
@@ -259,9 +282,17 @@ where
         // body/flag fetches. Only enable after post-login capability discovery.
         let extended;
         let items = if self.gmail_message_ids
-            && matches!(items, super::fetch::IDENTITY_ITEMS | super::fetch::INDEX_IDENTITY_ITEMS | super::fetch::FLAGS_ITEMS)
-        {
-            let extra = if items == super::fetch::FLAGS_ITEMS { "X-GM-LABELS" } else { "X-GM-MSGID X-GM-LABELS" };
+            && matches!(
+                items,
+                super::fetch::IDENTITY_ITEMS
+                    | super::fetch::INDEX_IDENTITY_ITEMS
+                    | super::fetch::FLAGS_ITEMS
+            ) {
+            let extra = if items == super::fetch::FLAGS_ITEMS {
+                "X-GM-LABELS"
+            } else {
+                "X-GM-MSGID X-GM-LABELS"
+            };
             extended = format!("{} {extra})", items.strip_suffix(')').unwrap_or(items));
             // Preserve the nested HEADER.FIELDS closing parentheses: remove
             // only the outer FETCH list delimiter.
@@ -291,7 +322,8 @@ where
             .iter()
             .map(|cap| format!("{cap:?}").to_ascii_uppercase())
             .collect();
-        self.gmail_message_ids = capabilities.iter()
+        self.gmail_message_ids = capabilities
+            .iter()
             .any(|cap| super::write::capability_matches(cap, "X-GM-EXT-1"));
         Ok(capabilities)
     }
@@ -323,7 +355,9 @@ where
                     NameAttribute::Trash => special_use = Some("\\Trash".to_string()),
                     // The negotiated label extension also advertises this
                     // system view. Never expose it as a creatable user label.
-                    NameAttribute::Extension(attribute) if attribute.eq_ignore_ascii_case("\\Important") => {
+                    NameAttribute::Extension(attribute)
+                        if attribute.eq_ignore_ascii_case("\\Important") =>
+                    {
                         special_use.get_or_insert_with(|| "\\Important".to_string());
                     }
                     _ => {}
@@ -332,10 +366,16 @@ where
             entries.push(MailboxEntry {
                 name: if self.gmail_message_ids {
                     native_list_string(name.name(), name.borrow_owner().borrow_owner())
-                } else { name.name().to_string() },
-                delimiter: name.delimiter().map(|delimiter| if self.gmail_message_ids {
-                    native_list_string(delimiter, name.borrow_owner().borrow_owner())
-                } else { delimiter.to_string() }),
+                } else {
+                    name.name().to_string()
+                },
+                delimiter: name.delimiter().map(|delimiter| {
+                    if self.gmail_message_ids {
+                        native_list_string(delimiter, name.borrow_owner().borrow_owner())
+                    } else {
+                        delimiter.to_string()
+                    }
+                }),
                 no_select,
                 special_use,
             });
@@ -428,16 +468,24 @@ where
 /// data: blindly unescaping a literal would address a different mailbox.
 fn native_list_string(value: &str, response: &[u8]) -> String {
     let offset = (value.as_ptr() as usize).checked_sub(response.as_ptr() as usize);
-    let quoted = offset.is_some_and(|offset| offset > 0
-        && offset.checked_add(value.len()).is_some_and(|end| end <= response.len())
-        && response.get(offset - 1) == Some(&b'"'));
-    if !quoted { return value.to_string(); }
+    let quoted = offset.is_some_and(|offset| {
+        offset > 0
+            && offset
+                .checked_add(value.len())
+                .is_some_and(|end| end <= response.len())
+            && response.get(offset - 1) == Some(&b'"')
+    });
+    if !quoted {
+        return value.to_string();
+    }
     let mut chars = value.chars().peekable();
     let mut out = String::new();
     while let Some(ch) = chars.next() {
         if ch == '\\' && chars.peek().is_some_and(|next| matches!(next, '\\' | '"')) {
             out.push(chars.next().expect("peeked escaped character"));
-        } else { out.push(ch); }
+        } else {
+            out.push(ch);
+        }
     }
     out
 }
@@ -569,26 +617,50 @@ impl<T> super::write::ImapWriteSession for AsyncImapSession<T>
 where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
-    async fn uid_store_labels(&mut self, uid_set: &str, op: super::write::StoreOp, labels: &[String]) -> Result<(), ProviderError> {
-        if !self.gmail_message_ids || labels.is_empty()
-            || labels.iter().any(|l| l.is_empty() || l.chars().any(char::is_control)
-                || (l.starts_with('\\') && !["\\Inbox", "\\Trash", "\\Spam"].contains(&l.as_str()))
-                || l.eq_ignore_ascii_case("INBOX"))
-            || uid_set.is_empty() || uid_set.split(',').any(|uid| uid.parse::<u32>().ok().filter(|uid| *uid > 0).is_none())
+    async fn uid_store_labels(
+        &mut self,
+        uid_set: &str,
+        op: super::write::StoreOp,
+        labels: &[String],
+    ) -> Result<(), ProviderError> {
+        if !self.gmail_message_ids
+            || labels.is_empty()
+            || labels.iter().any(|l| {
+                l.is_empty()
+                    || l.chars().any(char::is_control)
+                    || (l.starts_with('\\')
+                        && !["\\Inbox", "\\Trash", "\\Spam"].contains(&l.as_str()))
+                    || l.eq_ignore_ascii_case("INBOX")
+            })
+            || uid_set.is_empty()
+            || uid_set
+                .split(',')
+                .any(|uid| uid.parse::<u32>().ok().filter(|uid| *uid > 0).is_none())
         {
-            return Err(ProviderError::InvalidOperation("Unsupported or invalid IMAP label mutation".into()));
+            return Err(ProviderError::InvalidOperation(
+                "Unsupported or invalid IMAP label mutation".into(),
+            ));
         }
         let mut arguments = Vec::new();
         for label in labels {
             super::policy::check_mailbox_name_len(label.len())?;
             // Catalog names and X-GM-LABELS are already modified UTF-7 wire
             // names. Quote exactly once, without re-encoding ampersands.
-            arguments.push(if label.starts_with('\\') { label.clone() } else {
+            arguments.push(if label.starts_with('\\') {
+                label.clone()
+            } else {
                 format!("\"{}\"", label.replace('\\', "\\\\").replace('"', "\\\""))
             });
         }
-        let item = match op { super::write::StoreOp::Add => "+X-GM-LABELS", super::write::StoreOp::Remove => "-X-GM-LABELS" };
-        self.run_write_command_plain(&format!("UID STORE {uid_set} {item} ({})", arguments.join(" "))).await
+        let item = match op {
+            super::write::StoreOp::Add => "+X-GM-LABELS",
+            super::write::StoreOp::Remove => "-X-GM-LABELS",
+        };
+        self.run_write_command_plain(&format!(
+            "UID STORE {uid_set} {item} ({})",
+            arguments.join(" ")
+        ))
+        .await
     }
     async fn uid_store(
         &mut self,
@@ -659,9 +731,8 @@ where
         // which only escapes `"`/`\`; the encoded name is ASCII, so a non-ASCII
         // Sent mailbox round trips as modified UTF-7, not raw UTF-8) and the
         // parenthesised flag list.
-        let (encoded_mailbox, flag_list) =
-            super::write::prepare_append(mailbox, flags, content)
-                .map_err(super::write::WriteError::Provider)?;
+        let (encoded_mailbox, flag_list) = super::write::prepare_append(mailbox, flags, content)
+            .map_err(super::write::WriteError::Provider)?;
         // The library `append` performs the `+`-continuation handshake and
         // writes the literal; a hand-rolled literal desynchronises the stream
         // (Phase 3 run 1). No INTERNALDATE: the server stamps "now".
@@ -898,5 +969,4 @@ mod tests {
         let with = MailboxStatus::from_mailbox(&mb);
         assert!(with.permanent_keywords);
     }
-
 }

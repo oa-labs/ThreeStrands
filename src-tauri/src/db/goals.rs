@@ -17,16 +17,28 @@ pub struct GoalDeletion {
     pub children: Vec<Goal>,
 }
 
-fn validate_goal_fields(title: &str, notes: Option<&str>, horizon: &str, period: &str, status: &str) -> DbResult<()> {
+fn validate_goal_fields(
+    title: &str,
+    notes: Option<&str>,
+    horizon: &str,
+    period: &str,
+    status: &str,
+) -> DbResult<()> {
     let title = title.trim();
     if title.is_empty() || title.chars().count() > MAX_TITLE {
-        return Err(DatabaseError::invalid(format!("Goal title must be between 1 and {MAX_TITLE} characters")));
+        return Err(DatabaseError::invalid(format!(
+            "Goal title must be between 1 and {MAX_TITLE} characters"
+        )));
     }
     if notes.is_some_and(|value| value.chars().count() > MAX_NOTES) {
-        return Err(DatabaseError::invalid(format!("Goal notes exceed {MAX_NOTES} characters")));
+        return Err(DatabaseError::invalid(format!(
+            "Goal notes exceed {MAX_NOTES} characters"
+        )));
     }
     if !goal_period_matches(horizon, period) {
-        return Err(DatabaseError::invalid("Choose a period that matches the goal's horizon, such as 2026, 2026-H2, or 2026-Q4"));
+        return Err(DatabaseError::invalid(
+            "Choose a period that matches the goal's horizon, such as 2026, 2026-H2, or 2026-Q4",
+        ));
     }
     if !matches!(status, "active" | "achieved" | "dropped") {
         return Err(DatabaseError::invalid("Unknown goal status"));
@@ -77,31 +89,59 @@ const SELECT_GOALS: &str = "SELECT id, account_id, title, notes, horizon, period
 
 fn goal_by_id(connection: &Connection, id: &str) -> DbResult<Option<Goal>> {
     Ok(connection
-        .query_row(&format!("{SELECT_GOALS} WHERE id = ?1"), [id], goal_from_row)
+        .query_row(
+            &format!("{SELECT_GOALS} WHERE id = ?1"),
+            [id],
+            goal_from_row,
+        )
         .optional()?)
 }
 
 /// A task may support only a goal that exists in the task's own account.
-pub(super) fn ensure_goal_link(connection: &Connection, account_id: &str, goal_id: Option<&str>) -> DbResult<()> {
-    let Some(goal_id) = goal_id else { return Ok(()) };
+pub(super) fn ensure_goal_link(
+    connection: &Connection,
+    account_id: &str,
+    goal_id: Option<&str>,
+) -> DbResult<()> {
+    let Some(goal_id) = goal_id else {
+        return Ok(());
+    };
     let goal = goal_by_id(connection, goal_id)?.ok_or(DatabaseError::NotFound("Goal"))?;
     if goal.account_id != account_id {
-        return Err(DatabaseError::invalid("A task can only support a goal in its own account"));
+        return Err(DatabaseError::invalid(
+            "A task can only support a goal in its own account",
+        ));
     }
     Ok(())
 }
 
-fn ensure_parent(connection: &Connection, goal_id: Option<&str>, account_id: &str, horizon: &str, period: &str, parent_id: Option<&str>) -> DbResult<()> {
-    let Some(parent_id) = parent_id else { return Ok(()) };
+fn ensure_parent(
+    connection: &Connection,
+    goal_id: Option<&str>,
+    account_id: &str,
+    horizon: &str,
+    period: &str,
+    parent_id: Option<&str>,
+) -> DbResult<()> {
+    let Some(parent_id) = parent_id else {
+        return Ok(());
+    };
     if Some(parent_id) == goal_id {
         return Err(DatabaseError::invalid("A goal cannot support itself"));
     }
-    let parent = goal_by_id(connection, parent_id)?.ok_or(DatabaseError::NotFound("Parent goal"))?;
+    let parent =
+        goal_by_id(connection, parent_id)?.ok_or(DatabaseError::NotFound("Parent goal"))?;
     if parent.account_id != account_id {
-        return Err(DatabaseError::invalid("A goal can only support a goal in its own account"));
+        return Err(DatabaseError::invalid(
+            "A goal can only support a goal in its own account",
+        ));
     }
-    if horizon_rank(&parent.horizon) >= horizon_rank(horizon) || !period_encloses(&parent.period, period) {
-        return Err(DatabaseError::invalid("A goal can only support a longer-term goal whose period includes it"));
+    if horizon_rank(&parent.horizon) >= horizon_rank(horizon)
+        || !period_encloses(&parent.period, period)
+    {
+        return Err(DatabaseError::invalid(
+            "A goal can only support a longer-term goal whose period includes it",
+        ));
     }
     Ok(())
 }
@@ -125,7 +165,13 @@ impl Database {
     }
 
     pub fn create_goal(&self, request: &CreateGoalRequest) -> DbResult<Goal> {
-        validate_goal_fields(&request.title, request.notes.as_deref(), &request.horizon, &request.period, "active")?;
+        validate_goal_fields(
+            &request.title,
+            request.notes.as_deref(),
+            &request.horizon,
+            &request.period,
+            "active",
+        )?;
         self.with_connection(|connection| {
             ensure_parent(connection, None, &request.account_id, &request.horizon, &request.period, request.parent_goal_id.as_deref())?;
             let id = Uuid::new_v4().to_string();
@@ -204,8 +250,16 @@ impl Database {
             transaction.commit()?;
             Ok((task_ids, child_ids))
         })?;
-        let children = self.list_goals(None)?.into_iter().filter(|goal| child_ids.contains(&goal.id)).collect();
-        let tasks = self.list_tasks(None, None)?.into_iter().filter(|task| task_ids.contains(&task.id)).collect();
+        let children = self
+            .list_goals(None)?
+            .into_iter()
+            .filter(|goal| child_ids.contains(&goal.id))
+            .collect();
+        let tasks = self
+            .list_tasks(None, None)?
+            .into_iter()
+            .filter(|task| task_ids.contains(&task.id))
+            .collect();
         Ok(GoalDeletion { tasks, children })
     }
 
@@ -235,7 +289,13 @@ mod tests {
 
     const ACCOUNT: &str = "you@example.com";
 
-    fn create(database: &Database, title: &str, horizon: &str, period: &str, parent: Option<&str>) -> DbResult<Goal> {
+    fn create(
+        database: &Database,
+        title: &str,
+        horizon: &str,
+        period: &str,
+        parent: Option<&str>,
+    ) -> DbResult<Goal> {
         database.create_goal(&CreateGoalRequest {
             account_id: ACCOUNT.into(),
             title: title.into(),
@@ -274,19 +334,36 @@ mod tests {
     fn goals_round_trip_and_list_longer_horizons_first_then_newest_period() {
         let database = Database::open_memory();
         let year = create(&database, "  Grow the practice  ", "year", "2026", None).unwrap();
-        let quarter = create(&database, "Land two clients", "quarter", "2026-Q4", Some(&year.id)).unwrap();
+        let quarter = create(
+            &database,
+            "Land two clients",
+            "quarter",
+            "2026-Q4",
+            Some(&year.id),
+        )
+        .unwrap();
         let half = create(&database, "Hire", "half", "2026-H2", Some(&year.id)).unwrap();
         let old = create(&database, "Old", "quarter", "2026-Q1", None).unwrap();
         create(&database, "Other account", "year", "2026", None).unwrap();
-        database.with_connection(|connection| {
-            connection.execute("UPDATE goals SET account_id='other@example.com' WHERE title='Other account'", [])?;
-            Ok(())
-        }).unwrap();
+        database
+            .with_connection(|connection| {
+                connection.execute(
+                    "UPDATE goals SET account_id='other@example.com' WHERE title='Other account'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
 
         assert_eq!(year.title, "Grow the practice");
         assert_eq!(year.status, "active");
         assert_eq!(quarter.parent_goal_id.as_deref(), Some(year.id.as_str()));
-        let ids: Vec<String> = database.list_goals(Some(ACCOUNT)).unwrap().into_iter().map(|goal| goal.id).collect();
+        let ids: Vec<String> = database
+            .list_goals(Some(ACCOUNT))
+            .unwrap()
+            .into_iter()
+            .map(|goal| goal.id)
+            .collect();
         assert_eq!(ids, [year.id, half.id, quarter.id, old.id]);
         assert_eq!(database.list_goals(None).unwrap().len(), 5);
     }
@@ -310,12 +387,31 @@ mod tests {
         let q4 = create(&database, "Q4", "quarter", "2026-Q4", Some(&year.id)).unwrap();
 
         assert!(create(&database, "Q2", "quarter", "2026-Q2", Some(&first_half.id)).is_ok());
-        assert!(create(&database, "Q3 under H1", "quarter", "2026-Q3", Some(&first_half.id)).is_err());
+        assert!(create(
+            &database,
+            "Q3 under H1",
+            "quarter",
+            "2026-Q3",
+            Some(&first_half.id)
+        )
+        .is_err());
         assert!(create(&database, "Next year", "quarter", "2027-Q1", Some(&year.id)).is_err());
-        assert!(create(&database, "Same horizon", "quarter", "2026-Q4", Some(&q4.id)).is_err());
+        assert!(create(
+            &database,
+            "Same horizon",
+            "quarter",
+            "2026-Q4",
+            Some(&q4.id)
+        )
+        .is_err());
         assert!(create(&database, "Upside down", "year", "2026", Some(&q4.id)).is_err());
         assert!(create(&database, "Missing", "quarter", "2026-Q4", Some("nope")).is_err());
-        assert!(database.update_goal(&update(&year.id, serde_json::json!({ "parentGoalId": year.id }))).is_err());
+        assert!(database
+            .update_goal(&update(
+                &year.id,
+                serde_json::json!({ "parentGoalId": year.id })
+            ))
+            .is_err());
     }
 
     #[test]
@@ -324,9 +420,16 @@ mod tests {
         let year = create(&database, "Year", "year", "2026", None).unwrap();
         create(&database, "Q4", "quarter", "2026-Q4", Some(&year.id)).unwrap();
 
-        let error = database.update_goal(&update(&year.id, serde_json::json!({ "period": "2027" }))).unwrap_err();
+        let error = database
+            .update_goal(&update(&year.id, serde_json::json!({ "period": "2027" })))
+            .unwrap_err();
         assert!(error.to_string().contains("Unlink them first"));
-        assert!(database.update_goal(&update(&year.id, serde_json::json!({ "title": "Renamed year" }))).is_ok());
+        assert!(database
+            .update_goal(&update(
+                &year.id,
+                serde_json::json!({ "title": "Renamed year" })
+            ))
+            .is_ok());
     }
 
     #[test]
@@ -335,27 +438,64 @@ mod tests {
         let half = create(&database, "H1", "half", "2026-H1", None).unwrap();
         let done = create(&database, "Q1", "quarter", "2026-Q1", Some(&half.id)).unwrap();
         let active = create(&database, "Q2", "quarter", "2026-Q2", Some(&half.id)).unwrap();
-        database.update_goal(&update(&done.id, serde_json::json!({ "status": "achieved" }))).unwrap();
+        database
+            .update_goal(&update(
+                &done.id,
+                serde_json::json!({ "status": "achieved" }),
+            ))
+            .unwrap();
 
-        assert!(database.update_goal(&update(&half.id, serde_json::json!({ "period": "2026-H2" }))).is_err());
-        database.update_goal(&update(&active.id, serde_json::json!({ "status": "dropped" }))).unwrap();
-        let carried = database.update_goal(&update(&half.id, serde_json::json!({ "period": "2026-H2" }))).unwrap();
+        assert!(database
+            .update_goal(&update(
+                &half.id,
+                serde_json::json!({ "period": "2026-H2" })
+            ))
+            .is_err());
+        database
+            .update_goal(&update(
+                &active.id,
+                serde_json::json!({ "status": "dropped" }),
+            ))
+            .unwrap();
+        let carried = database
+            .update_goal(&update(
+                &half.id,
+                serde_json::json!({ "period": "2026-H2" }),
+            ))
+            .unwrap();
         assert_eq!(carried.period, "2026-H2");
         let goals = database.list_goals(None).unwrap();
-        assert!(goals.iter().filter(|goal| goal.horizon == "quarter").all(|goal| goal.parent_goal_id.as_deref() == Some(half.id.as_str())));
+        assert!(goals
+            .iter()
+            .filter(|goal| goal.horizon == "quarter")
+            .all(|goal| goal.parent_goal_id.as_deref() == Some(half.id.as_str())));
     }
 
     #[test]
     fn closing_a_goal_stamps_closed_at_and_reopening_clears_it() {
         let database = Database::open_memory();
         let goal = create(&database, "Ship", "quarter", "2026-Q4", None).unwrap();
-        let achieved = database.update_goal(&update(&goal.id, serde_json::json!({ "status": "achieved" }))).unwrap();
+        let achieved = database
+            .update_goal(&update(
+                &goal.id,
+                serde_json::json!({ "status": "achieved" }),
+            ))
+            .unwrap();
         assert!(achieved.closed_at.is_some());
-        let renamed = database.update_goal(&update(&goal.id, serde_json::json!({ "title": "Shipped" }))).unwrap();
+        let renamed = database
+            .update_goal(&update(&goal.id, serde_json::json!({ "title": "Shipped" })))
+            .unwrap();
         assert_eq!(renamed.closed_at, achieved.closed_at);
-        let reopened = database.update_goal(&update(&goal.id, serde_json::json!({ "status": "active", "notes": null }))).unwrap();
+        let reopened = database
+            .update_goal(&update(
+                &goal.id,
+                serde_json::json!({ "status": "active", "notes": null }),
+            ))
+            .unwrap();
         assert_eq!(reopened.closed_at, None);
-        assert!(database.update_goal(&update(&goal.id, serde_json::json!({ "status": "done" }))).is_err());
+        assert!(database
+            .update_goal(&update(&goal.id, serde_json::json!({ "status": "done" })))
+            .is_err());
     }
 
     #[test]
@@ -368,12 +508,24 @@ mod tests {
         assert!(task(&database, ACCOUNT, Some("missing")).is_err());
 
         let unlinked = task(&database, ACCOUNT, None).unwrap();
-        let link: UpdateTaskRequest = serde_json::from_value(serde_json::json!({ "id": unlinked.id, "goalId": goal.id })).unwrap();
-        assert_eq!(database.update_task(&link).unwrap().goal_id.as_deref(), Some(goal.id.as_str()));
+        let link: UpdateTaskRequest =
+            serde_json::from_value(serde_json::json!({ "id": unlinked.id, "goalId": goal.id }))
+                .unwrap();
+        assert_eq!(
+            database.update_task(&link).unwrap().goal_id.as_deref(),
+            Some(goal.id.as_str())
+        );
         // An update that does not mention the goal leaves the link alone.
-        let rename: UpdateTaskRequest = serde_json::from_value(serde_json::json!({ "id": unlinked.id, "title": "Renamed" })).unwrap();
-        assert_eq!(database.update_task(&rename).unwrap().goal_id.as_deref(), Some(goal.id.as_str()));
-        let clear: UpdateTaskRequest = serde_json::from_value(serde_json::json!({ "id": unlinked.id, "goalId": null })).unwrap();
+        let rename: UpdateTaskRequest =
+            serde_json::from_value(serde_json::json!({ "id": unlinked.id, "title": "Renamed" }))
+                .unwrap();
+        assert_eq!(
+            database.update_task(&rename).unwrap().goal_id.as_deref(),
+            Some(goal.id.as_str())
+        );
+        let clear: UpdateTaskRequest =
+            serde_json::from_value(serde_json::json!({ "id": unlinked.id, "goalId": null }))
+                .unwrap();
         assert_eq!(database.update_task(&clear).unwrap().goal_id, None);
     }
 
@@ -386,14 +538,42 @@ mod tests {
         let other = task(&database, ACCOUNT, Some(&quarter.id)).unwrap();
 
         let deletion = database.delete_goal(&year.id).unwrap();
-        assert_eq!(deletion.tasks.iter().map(|task| task.id.as_str()).collect::<Vec<_>>(), [linked.id.as_str()]);
+        assert_eq!(
+            deletion
+                .tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            [linked.id.as_str()]
+        );
         assert_eq!(deletion.tasks[0].goal_id, None);
-        assert_eq!(deletion.children.iter().map(|goal| goal.id.as_str()).collect::<Vec<_>>(), [quarter.id.as_str()]);
+        assert_eq!(
+            deletion
+                .children
+                .iter()
+                .map(|goal| goal.id.as_str())
+                .collect::<Vec<_>>(),
+            [quarter.id.as_str()]
+        );
         assert_eq!(deletion.children[0].parent_goal_id, None);
         let remaining = database.list_goals(None).unwrap();
-        assert_eq!(remaining.iter().map(|goal| goal.id.as_str()).collect::<Vec<_>>(), [quarter.id.as_str()]);
+        assert_eq!(
+            remaining
+                .iter()
+                .map(|goal| goal.id.as_str())
+                .collect::<Vec<_>>(),
+            [quarter.id.as_str()]
+        );
         let tasks = database.list_tasks(None, None).unwrap();
-        assert_eq!(tasks.iter().find(|task| task.id == other.id).unwrap().goal_id.as_deref(), Some(quarter.id.as_str()));
+        assert_eq!(
+            tasks
+                .iter()
+                .find(|task| task.id == other.id)
+                .unwrap()
+                .goal_id
+                .as_deref(),
+            Some(quarter.id.as_str())
+        );
         // Deleting an unknown goal (a repeated synced deletion) changes nothing.
         let repeat = database.delete_goal(&year.id).unwrap();
         assert!(repeat.tasks.is_empty() && repeat.children.is_empty());

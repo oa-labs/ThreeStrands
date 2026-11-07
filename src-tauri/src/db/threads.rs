@@ -1,8 +1,8 @@
 //! Thread persistence.
 
-use super::DatabaseError;
 use super::messages::resolve_body;
 use super::split_inboxes::split_inbox_matches;
+use super::DatabaseError;
 use super::{decode_json, Database, DbResult};
 use crate::mime::{readable_body_text, UnsubscribeMetadata};
 use crate::models::{MailboxUnreadCounts, Message, Thread, ThreadDetail, ThreadPage};
@@ -30,7 +30,12 @@ pub(super) const THREAD_COLUMNS: &str = "t.id, t.provider_thread_id, t.subject, 
 
 impl Database {
     /// `account_id` merges every account when absent, or scopes to one account.
-    pub fn list_starred_page(&self, account_id: Option<&str>, offset: usize, limit: usize) -> DbResult<ThreadPage> {
+    pub fn list_starred_page(
+        &self,
+        account_id: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> DbResult<ThreadPage> {
         self.list_threads_page_where(account_id, STARRED_FILTER, offset, limit)
     }
 
@@ -318,7 +323,10 @@ impl Database {
                 )?;
                 transaction.execute("DELETE FROM threads WHERE id = ?1", [&thread_id])?;
             }
-            Self::cancel_deleted_snooze(transaction, &local_thread_id(account_id, provider_thread_id))?;
+            Self::cancel_deleted_snooze(
+                transaction,
+                &local_thread_id(account_id, provider_thread_id),
+            )?;
             transaction.execute(
                 "DELETE FROM quarantined_messages
                      WHERE account_id = ?1 AND provider_thread_id = ?2",
@@ -385,7 +393,11 @@ impl Database {
             &format!("SELECT COUNT(*) FROM threads t WHERE {STARRED_FILTER} AND (?1 IS NULL OR t.account_id = ?1)"),
             [account_id], |row| row.get(0),
         )?;
-        Ok(MailboxUnreadCounts { inbox, splits, starred })
+        Ok(MailboxUnreadCounts {
+            inbox,
+            splits,
+            starred,
+        })
     }
 }
 

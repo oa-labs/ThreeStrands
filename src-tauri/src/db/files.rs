@@ -128,7 +128,11 @@ impl Database {
         let joins = "FROM file_attachments a JOIN messages m ON m.id=a.message_id JOIN threads t ON t.id=m.thread_id LEFT JOIN file_stars s ON s.message_id=a.message_id AND s.attachment_id=a.attachment_id";
         let matched = filters.join(" AND ");
         let exclude_calendar = query.exclude_calendar == Some(true);
-        let from = if exclude_calendar { format!("{joins} WHERE {matched} AND NOT {CALENDAR}") } else { format!("{joins} WHERE {matched}") };
+        let from = if exclude_calendar {
+            format!("{joins} WHERE {matched} AND NOT {CALENDAR}")
+        } else {
+            format!("{joins} WHERE {matched}")
+        };
         let (mut page, payloads) = self.with_connection(|connection| {
             let total = connection.query_row(&format!("SELECT COUNT(*) {from}"), rusqlite::params_from_iter(&values), |row| row.get::<_,i64>(0))? as usize;
             let hidden_calendar = if exclude_calendar { connection.query_row(&format!("SELECT COUNT(*) {joins} WHERE {matched} AND {CALENDAR}"), rusqlite::params_from_iter(&values), |row| row.get::<_,i64>(0))? as usize } else { 0 };
@@ -356,7 +360,14 @@ mod tests {
         .unwrap();
         assert_eq!(db.list_files(&q).unwrap().total, 0);
     }
-    fn seed_invitation(db: &Database, account: &str, id: &str, subject: &str, filename: &str, mime_type: &str) {
+    fn seed_invitation(
+        db: &Database,
+        account: &str,
+        id: &str,
+        subject: &str,
+        filename: &str,
+        mime_type: &str,
+    ) {
         let mut mail = message(id, id, "2026-10-02T10:00:00Z", "body");
         mail.subject = subject.into();
         mail.attachments = vec![MessageAttachment {
@@ -373,8 +384,22 @@ mod tests {
     fn files_can_hide_calendar_invitations_and_count_them() {
         let db = database();
         seed(&db, "you@example.com", "report");
-        seed_invitation(&db, "you@example.com", "invite", "Invitation: Weekly sync @ Tue Oct 14", "invite.ics", "application/octet-stream");
-        seed_invitation(&db, "you@example.com", "meeting", "Quarterly planning", "meeting", "text/calendar; method=REQUEST");
+        seed_invitation(
+            &db,
+            "you@example.com",
+            "invite",
+            "Invitation: Weekly sync @ Tue Oct 14",
+            "invite.ics",
+            "application/octet-stream",
+        );
+        seed_invitation(
+            &db,
+            "you@example.com",
+            "meeting",
+            "Quarterly planning",
+            "meeting",
+            "text/calendar; method=REQUEST",
+        );
         let mut q = query("you@example.com");
         let all = db.list_files(&q).unwrap();
         assert_eq!((all.total, all.hidden_calendar), (3, 0));
@@ -390,8 +415,22 @@ mod tests {
     fn files_search_matches_invitation_titles_but_not_other_subjects() {
         let db = database();
         // A document's subject is not its title, so only its filename is searched.
-        seed_invitation(&db, "you@example.com", "notes", "Weekly sync notes", "notes.pdf", "application/pdf");
-        seed_invitation(&db, "you@example.com", "invite", "Invitation: Weekly SYNC @ Tue Oct 14", "invite.ics", "text/calendar");
+        seed_invitation(
+            &db,
+            "you@example.com",
+            "notes",
+            "Weekly sync notes",
+            "notes.pdf",
+            "application/pdf",
+        );
+        seed_invitation(
+            &db,
+            "you@example.com",
+            "invite",
+            "Invitation: Weekly SYNC @ Tue Oct 14",
+            "invite.ics",
+            "text/calendar",
+        );
         let mut q = query("you@example.com");
         q.search = Some("weekly sync".into());
         let page = db.list_files(&q).unwrap();

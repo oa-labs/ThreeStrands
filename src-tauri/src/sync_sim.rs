@@ -31,7 +31,9 @@ use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportE
 
 use crate::db::Database;
 use crate::enrollment::test_support::{local_keys_for, test_identity, FakeEpochKeyStore};
-use crate::enrollment::{begin_genesis, join_with_recovery_phrase, rotate_epoch, run_enrollment_sweep, EnrollmentError};
+use crate::enrollment::{
+    begin_genesis, join_with_recovery_phrase, rotate_epoch, run_enrollment_sweep, EnrollmentError,
+};
 use crate::replicated_sync::{encode_id, pull_from_transports, push_local_state, DeviceIdentity};
 
 const HOUR_MS: i64 = 60 * 60 * 1000;
@@ -62,8 +64,14 @@ impl SimDevice {
 
     fn snippet_ids(&self) -> Vec<String> {
         let connection = self.database.test_connection().unwrap();
-        let mut statement = connection.prepare("SELECT id FROM snippets ORDER BY id").unwrap();
-        let ids = statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<Vec<String>, _>>().unwrap();
+        let mut statement = connection
+            .prepare("SELECT id FROM snippets ORDER BY id")
+            .unwrap();
+        let ids = statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<String>, _>>()
+            .unwrap();
         ids
     }
 }
@@ -91,9 +99,15 @@ impl Sim {
         let transport = Arc::new(FakeTransport::new("shared"));
         let transports: Vec<Arc<dyn SyncTransport>> = vec![transport.clone()];
         let founder = new_device("device-0");
-        let phrase = begin_genesis(&founder.database, &founder.identity, &founder.epoch_keys, &transports, false)
-            .await
-            .unwrap();
+        let phrase = begin_genesis(
+            &founder.database,
+            &founder.identity,
+            &founder.epoch_keys,
+            &transports,
+            false,
+        )
+        .await
+        .unwrap();
         let mut sim = Sim {
             seed,
             rng: StdRng::seed_from_u64(seed),
@@ -117,7 +131,10 @@ impl Sim {
     }
 
     fn fail(&self, message: impl std::fmt::Display) -> ! {
-        panic!("sync simulation seed {} failed in round {}: {message}", self.seed, self.round);
+        panic!(
+            "sync simulation seed {} failed in round {}: {message}",
+            self.seed, self.round
+        );
     }
 
     /// Joins a new device by recovery phrase. A connector that looks like
@@ -129,7 +146,15 @@ impl Sim {
     /// skipped this round.
     async fn join(&mut self) {
         let device = new_device(&format!("device-{}", self.devices.len()));
-        match join_with_recovery_phrase(&device.database, &device.identity, &device.epoch_keys, &self.phrase, &self.transports).await {
+        match join_with_recovery_phrase(
+            &device.database,
+            &device.identity,
+            &device.epoch_keys,
+            &self.phrase,
+            &self.transports,
+        )
+        .await
+        {
             Ok(()) => self.devices.push(device),
             Err(error) if is_retryable_join_failure(&error) => {}
             Err(error) => self.fail(format!("{} couldn't join: {error}", device.name)),
@@ -142,7 +167,14 @@ impl Sim {
     async fn sync(&self, index: usize) -> Option<String> {
         let device = &self.devices[index];
         let transports = &self.transports;
-        let must_rotate = match run_enrollment_sweep(&device.database, &device.identity, &device.epoch_keys, transports).await {
+        let must_rotate = match run_enrollment_sweep(
+            &device.database,
+            &device.identity,
+            &device.epoch_keys,
+            transports,
+        )
+        .await
+        {
             Ok(must_rotate) => must_rotate,
             // An injected outage can fail a sweep; it simply runs again next round.
             Err(error) => {
@@ -154,7 +186,16 @@ impl Sim {
         };
         if must_rotate {
             let keys = local_keys_for(&device.database, &device.identity, &device.epoch_keys);
-            if let Err(error) = rotate_epoch(&device.database, &device.identity, &keys, &device.epoch_keys, transports, None).await {
+            if let Err(error) = rotate_epoch(
+                &device.database,
+                &device.identity,
+                &keys,
+                &device.epoch_keys,
+                transports,
+                None,
+            )
+            .await
+            {
                 if !is_injected_outage(&error) {
                     self.fail(format!("{} collision rotation: {error}", device.name));
                 }
@@ -167,14 +208,24 @@ impl Sim {
         let pulled = pull_from_transports(&device.database, &keys, transports)
             .await
             .unwrap_or_else(|error| self.fail(format!("{} pull: {error}", device.name)));
-        let shared = crate::enrollment::share_keys_with_lagging_peers(&device.database, &keys, transports)
-            .await
-            .unwrap_or_else(|error| self.fail(format!("{} key share: {error}", device.name)));
+        let shared =
+            crate::enrollment::share_keys_with_lagging_peers(&device.database, &keys, transports)
+                .await
+                .unwrap_or_else(|error| self.fail(format!("{} key share: {error}", device.name)));
         if let Err(error) = device.database.load_replica_state() {
             self.fail(format!("{}'s replica is malformed: {error}", device.name));
         }
-        let busy = pushed.sealed_snapshot || pushed.failed > 0 || pulled.merged_states > 0 || pulled.failed_transports > 0 || shared > 0;
-        busy.then(|| format!("{}: {pushed:?} {pulled:?} shared keys with {shared}", device.name))
+        let busy = pushed.sealed_snapshot
+            || pushed.failed > 0
+            || pulled.merged_states > 0
+            || pulled.failed_transports > 0
+            || shared > 0;
+        busy.then(|| {
+            format!(
+                "{}: {pushed:?} {pulled:?} shared keys with {shared}",
+                device.name
+            )
+        })
     }
 
     fn write(&mut self, index: usize) {
@@ -200,14 +251,16 @@ impl Sim {
             let id = ids[self.rng.random_range(0..ids.len())].clone();
             let before = entity_values(database, &id);
             if roll < 8 {
-                let result = database.update_snippet(&id, &name, "edited").and_then(|snippet| {
-                    database.record_local_entity_write(
-                        EntityType::Snippet,
-                        &id,
-                        serde_json::to_value(&snippet).unwrap(),
-                        Some(BTreeSet::from(["name".to_string(), "body".to_string()])),
-                    )
-                });
+                let result = database
+                    .update_snippet(&id, &name, "edited")
+                    .and_then(|snippet| {
+                        database.record_local_entity_write(
+                            EntityType::Snippet,
+                            &id,
+                            serde_json::to_value(&snippet).unwrap(),
+                            Some(BTreeSet::from(["name".to_string(), "body".to_string()])),
+                        )
+                    });
                 self.record_write(index, &id, &before);
                 return self.check_write(index, result);
             }
@@ -230,14 +283,38 @@ impl Sim {
     /// Adds a write just made on device `index` to the history: one
     /// operation per field it wrote, naming as parents the values that field
     /// held on that device just before (`before`).
-    fn record_write(&mut self, index: usize, entity_id: &str, before: &BTreeMap<FieldKey, Vec<(Dot, u64)>>) {
+    fn record_write(
+        &mut self,
+        index: usize,
+        entity_id: &str,
+        before: &BTreeMap<FieldKey, Vec<(Dot, u64)>>,
+    ) {
         let device = &self.devices[index];
         let state = device.database.load_replica_state().unwrap();
         let own = *device.identity.device_id.as_bytes();
         let counter = state.context().get(&own).copied().unwrap_or(0);
-        for (key, values) in state.fields().iter().filter(|(key, _)| key.entity_id == entity_id) {
-            let Some(written) = values.iter().find(|value| value.dot == Dot { device_id: own, counter }) else { continue };
-            let parents = before.get(key).map(|dots| dots.iter().map(|(dot, _)| operation_id(*dot, key)).collect()).unwrap_or_default();
+        for (key, values) in state
+            .fields()
+            .iter()
+            .filter(|(key, _)| key.entity_id == entity_id)
+        {
+            let Some(written) = values.iter().find(|value| {
+                value.dot
+                    == Dot {
+                        device_id: own,
+                        counter,
+                    }
+            }) else {
+                continue;
+            };
+            let parents = before
+                .get(key)
+                .map(|dots| {
+                    dots.iter()
+                        .map(|(dot, _)| operation_id(*dot, key))
+                        .collect()
+                })
+                .unwrap_or_default();
             self.history.apply(Operation {
                 operation_id: operation_id(written.dot, key),
                 entity_type: key.entity_type,
@@ -263,8 +340,16 @@ impl Sim {
                 entity_id: key.entity_id.clone(),
                 field: key.field.clone(),
                 value: None,
-                parents: dots.iter().map(|(dot, _)| operation_id(*dot, key)).collect(),
-                stamp: WinnerStamp { lamport: 0, device_id: [0u8; 16], event_id: [0u8; 16], operation_id: marker },
+                parents: dots
+                    .iter()
+                    .map(|(dot, _)| operation_id(*dot, key))
+                    .collect(),
+                stamp: WinnerStamp {
+                    lamport: 0,
+                    device_id: [0u8; 16],
+                    event_id: [0u8; 16],
+                    operation_id: marker,
+                },
             });
         }
     }
@@ -275,35 +360,60 @@ impl Sim {
     /// heard of every member yet; key catch-up covers the ones its rotation
     /// isn't sealed to.
     async fn maybe_rotate(&mut self) {
-        let newest = self.devices.iter().map(SimDevice::active_epoch).max().unwrap();
+        let newest = self
+            .devices
+            .iter()
+            .map(SimDevice::active_epoch)
+            .max()
+            .unwrap();
         let candidates: Vec<usize> = (0..self.devices.len())
-            .filter(|&index| self.devices[index].offline_until <= self.round && self.devices[index].active_epoch() == newest)
+            .filter(|&index| {
+                self.devices[index].offline_until <= self.round
+                    && self.devices[index].active_epoch() == newest
+            })
             .collect();
         if candidates.is_empty() {
             return;
         }
         let device = &self.devices[candidates[self.rng.random_range(0..candidates.len())]];
         let keys = local_keys_for(&device.database, &device.identity, &device.epoch_keys);
-        if let Err(error) = rotate_epoch(&device.database, &device.identity, &keys, &device.epoch_keys, &self.transports, None).await {
+        if let Err(error) = rotate_epoch(
+            &device.database,
+            &device.identity,
+            &keys,
+            &device.epoch_keys,
+            &self.transports,
+            None,
+        )
+        .await
+        {
             self.fail(format!("{} rotate: {error}", device.name));
         }
     }
 
     fn inject_faults(&mut self) {
         if self.rng.random_bool(0.15) {
-            self.transport.inject_transient_outage(self.rng.random_range(1..=3));
+            self.transport
+                .inject_transient_outage(self.rng.random_range(1..=3));
         }
         if self.rng.random_bool(0.2) {
             let device = &self.devices[self.rng.random_range(0..self.devices.len())];
             let cids: Vec<String> = {
                 let connection = device.database.test_connection().unwrap();
-                let mut statement = connection.prepare("SELECT cid FROM sync_objects ORDER BY cid").unwrap();
-                let cids = statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+                let mut statement = connection
+                    .prepare("SELECT cid FROM sync_objects ORDER BY cid")
+                    .unwrap();
+                let cids = statement
+                    .query_map([], |row| row.get(0))
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
                 cids
             };
             if !cids.is_empty() {
                 let cid = cids[self.rng.random_range(0..cids.len())].clone();
-                self.transport.inject_delayed_visibility(&TransportCid(cid), self.rng.random_range(1..=2));
+                self.transport
+                    .inject_delayed_visibility(&TransportCid(cid), self.rng.random_range(1..=2));
             }
         }
     }
@@ -343,7 +453,9 @@ impl Sim {
             self.maybe_rotate().await;
         }
         self.inject_faults();
-        let mut order: Vec<usize> = (0..self.devices.len()).filter(|&index| self.devices[index].offline_until <= self.round).collect();
+        let mut order: Vec<usize> = (0..self.devices.len())
+            .filter(|&index| self.devices[index].offline_until <= self.round)
+            .collect();
         for position in (1..order.len()).rev() {
             order.swap(position, self.rng.random_range(0..=position));
         }
@@ -366,7 +478,12 @@ impl Sim {
             crate::sync_policy::set_test_clock(Some(self.now));
             let mut activity = Vec::new();
             for index in 0..self.devices.len() {
-                self.devices[index].database.test_connection().unwrap().execute("UPDATE sync_deliveries SET retry_at=NULL", []).unwrap();
+                self.devices[index]
+                    .database
+                    .test_connection()
+                    .unwrap()
+                    .execute("UPDATE sync_deliveries SET retry_at=NULL", [])
+                    .unwrap();
                 activity.extend(self.sync(index).await);
             }
             if activity.is_empty() && attempt > 0 {
@@ -374,48 +491,104 @@ impl Sim {
             }
             last_activity = activity;
         }
-        self.fail(format!("devices kept changing after every device came back: {last_activity:?}"));
+        self.fail(format!(
+            "devices kept changing after every device came back: {last_activity:?}"
+        ));
     }
 
     /// How `device_id_hex`'s own objects stand: deliveries by state, and
     /// which of its snapshot objects the transport can't return.
     fn delivery_summary(&self, device_id_hex: &str) -> String {
-        let Some(device) = self.devices.iter().find(|device| device.device_id_hex() == device_id_hex) else {
+        let Some(device) = self
+            .devices
+            .iter()
+            .find(|device| device.device_id_hex() == device_id_hex)
+        else {
             return "not a simulated device".to_string();
         };
         let (states, cids) = {
             let connection = device.database.test_connection().unwrap();
-            let mut statement =
-                connection.prepare("SELECT state, COUNT(*), MAX(last_error) FROM sync_deliveries GROUP BY state").unwrap();
-            let states: Vec<(String, i64, Option<String>)> =
-                statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
-            let mut statement = connection.prepare("SELECT cid FROM sync_objects WHERE state_sequence IS NOT NULL").unwrap();
-            let cids: Vec<String> = statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+            let mut statement = connection
+                .prepare(
+                    "SELECT state, COUNT(*), MAX(last_error) FROM sync_deliveries GROUP BY state",
+                )
+                .unwrap();
+            let states: Vec<(String, i64, Option<String>)> = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let mut statement = connection
+                .prepare("SELECT cid FROM sync_objects WHERE state_sequence IS NOT NULL")
+                .unwrap();
+            let cids: Vec<String> = statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
             (states, cids)
         };
         let missing: Vec<&String> = cids
             .iter()
-            .filter(|cid| (0..4).all(|_| futures_lite_block_on(self.transport.get_object(&TransportCid((*cid).clone()))).is_err()))
+            .filter(|cid| {
+                (0..4).all(|_| {
+                    futures_lite_block_on(self.transport.get_object(&TransportCid((*cid).clone())))
+                        .is_err()
+                })
+            })
             .collect();
-        format!("{states:?}, unreadable {} of {} snapshot objects: {missing:?}", missing.len(), cids.len())
+        format!(
+            "{states:?}, unreadable {} of {} snapshot objects: {missing:?}",
+            missing.len(),
+            cids.len()
+        )
     }
 
     fn check_convergence(&self) {
-        let states: Vec<_> = self.devices.iter().map(|device| device.database.load_replica_state().unwrap()).collect();
-        let mut keys: BTreeSet<FieldKey> = states.iter().flat_map(|state| state.fields().keys().cloned()).collect();
+        let states: Vec<_> = self
+            .devices
+            .iter()
+            .map(|device| device.database.load_replica_state().unwrap())
+            .collect();
+        let mut keys: BTreeSet<FieldKey> = states
+            .iter()
+            .flat_map(|state| state.fields().keys().cloned())
+            .collect();
         for device in &self.devices {
             for id in device.snippet_ids() {
-                keys.insert(FieldKey { entity_type: EntityType::Snippet, entity_id: id, field: "name".to_string() });
+                keys.insert(FieldKey {
+                    entity_type: EntityType::Snippet,
+                    entity_id: id,
+                    field: "name".to_string(),
+                });
             }
         }
         let mut expected_snippets: BTreeMap<String, (String, String)> = BTreeMap::new();
         let mut snippet_ids: BTreeSet<String> = BTreeSet::new();
         for key in &keys {
-            let expected: BTreeSet<OperationId> = self.surviving(key).iter().map(|operation| operation.operation_id).collect();
+            let expected: BTreeSet<OperationId> = self
+                .surviving(key)
+                .iter()
+                .map(|operation| operation.operation_id)
+                .collect();
             for (device, state) in self.devices.iter().zip(&states) {
-                let actual: BTreeSet<OperationId> = state.values(key).iter().map(|value| operation_id(value.dot, key)).collect();
+                let actual: BTreeSet<OperationId> = state
+                    .values(key)
+                    .iter()
+                    .map(|value| operation_id(value.dot, key))
+                    .collect();
                 if actual != expected {
-                    let lagging: Vec<String> = self.devices.iter().map(|other| format!("{}: {}", other.name, self.delivery_summary(&other.device_id_hex()))).collect();
+                    let lagging: Vec<String> = self
+                        .devices
+                        .iter()
+                        .map(|other| {
+                            format!(
+                                "{}: {}",
+                                other.name,
+                                self.delivery_summary(&other.device_id_hex())
+                            )
+                        })
+                        .collect();
                     self.fail(format!(
                         "{} holds {} values for {key:?} where the history leaves {}; deliveries {lagging:?}",
                         device.name,
@@ -430,21 +603,38 @@ impl Sim {
         }
         for id in snippet_ids {
             let winner = |field: &str| -> Option<serde_json::Value> {
-                let key = FieldKey { entity_type: EntityType::Snippet, entity_id: id.clone(), field: field.to_string() };
-                self.surviving(&key).into_iter().max_by_key(|operation| operation.stamp).and_then(|operation| operation.value)
+                let key = FieldKey {
+                    entity_type: EntityType::Snippet,
+                    entity_id: id.clone(),
+                    field: field.to_string(),
+                };
+                self.surviving(&key)
+                    .into_iter()
+                    .max_by_key(|operation| operation.stamp)
+                    .and_then(|operation| operation.value)
             };
             if winner("_entity") == Some(serde_json::json!(true)) {
-                let text = |field: &str| winner(field).and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default();
+                let text = |field: &str| {
+                    winner(field)
+                        .and_then(|value| value.as_str().map(str::to_string))
+                        .unwrap_or_default()
+                };
                 expected_snippets.insert(id.clone(), (text("name"), text("body")));
             }
         }
         for (device, state) in self.devices.iter().zip(&states) {
             if state != &states[0] {
-                self.fail(format!("{}'s replica differs from {}'s", device.name, self.devices[0].name));
+                self.fail(format!(
+                    "{}'s replica differs from {}'s",
+                    device.name, self.devices[0].name
+                ));
             }
             let snippets = snippet_rows(&device.database);
             if snippets != expected_snippets {
-                self.fail(format!("{} shows {snippets:?}, the history says {expected_snippets:?}", device.name));
+                self.fail(format!(
+                    "{} shows {snippets:?}, the history says {expected_snippets:?}",
+                    device.name
+                ));
             }
         }
     }
@@ -474,21 +664,32 @@ fn futures_lite_block_on<F: std::future::Future>(future: F) -> F::Output {
 }
 
 fn is_injected_outage(error: &EnrollmentError) -> bool {
-    matches!(error, EnrollmentError::Transport(TransportError::Transient(_)))
+    matches!(
+        error,
+        EnrollmentError::Transport(TransportError::Transient(_))
+    )
 }
 
 fn is_retryable_join_failure(error: &EnrollmentError) -> bool {
     is_injected_outage(error)
         || matches!(
             error,
-            EnrollmentError::LegacySpace | EnrollmentError::NoRecoverableRotation | EnrollmentError::RecoveryIncomplete
+            EnrollmentError::LegacySpace
+                | EnrollmentError::NoRecoverableRotation
+                | EnrollmentError::RecoveryIncomplete
         )
 }
 
 fn new_device(name: &str) -> SimDevice {
     let database = Database::open_memory();
     let identity = test_identity(&database);
-    SimDevice { name: name.to_string(), database, identity, epoch_keys: FakeEpochKeyStore::default(), offline_until: 0 }
+    SimDevice {
+        name: name.to_string(),
+        database,
+        identity,
+        epoch_keys: FakeEpochKeyStore::default(),
+        offline_until: 0,
+    }
 }
 
 /// The values a device holds for one entity, by field.
@@ -499,7 +700,15 @@ fn entity_values(database: &Database, entity_id: &str) -> BTreeMap<FieldKey, Vec
         .fields()
         .iter()
         .filter(|(key, _)| key.entity_id == entity_id)
-        .map(|(key, values)| (key.clone(), values.iter().map(|value| (value.dot, value.lamport)).collect()))
+        .map(|(key, values)| {
+            (
+                key.clone(),
+                values
+                    .iter()
+                    .map(|value| (value.dot, value.lamport))
+                    .collect(),
+            )
+        })
         .collect()
 }
 
@@ -521,14 +730,26 @@ fn operation_id(dot: Dot, key: &FieldKey) -> OperationId {
 fn stamp(dot: Dot, lamport: u64) -> WinnerStamp {
     let mut counter = [0u8; 16];
     counter[8..].copy_from_slice(&dot.counter.to_be_bytes());
-    WinnerStamp { lamport, device_id: dot.device_id, event_id: [0u8; 16], operation_id: counter }
+    WinnerStamp {
+        lamport,
+        device_id: dot.device_id,
+        event_id: [0u8; 16],
+        operation_id: counter,
+    }
 }
 
 fn snippet_rows(database: &Database) -> BTreeMap<String, (String, String)> {
     let connection = database.test_connection().unwrap();
-    let mut statement = connection.prepare("SELECT id, name, body FROM snippets").unwrap();
+    let mut statement = connection
+        .prepare("SELECT id, name, body FROM snippets")
+        .unwrap();
     let rows = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, (row.get::<_, String>(1)?, row.get::<_, String>(2)?))))
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                (row.get::<_, String>(1)?, row.get::<_, String>(2)?),
+            ))
+        })
         .unwrap()
         .collect::<Result<BTreeMap<_, _>, _>>()
         .unwrap();
@@ -550,7 +771,11 @@ async fn run_seed(seed: u64, rounds: usize) {
 /// `THREESTRANDS_SYNC_SIM_SEED` to run just one.
 #[tokio::test]
 async fn seeded_schedules_converge_to_the_oracle() {
-    let env = |name: &str| std::env::var(name).ok().and_then(|value| value.parse::<u64>().ok());
+    let env = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+    };
     let seeds = match env("THREESTRANDS_SYNC_SIM_SEED") {
         Some(seed) => seed..seed + 1,
         None => 0..env("THREESTRANDS_SYNC_SIM_SEEDS").unwrap_or(24),

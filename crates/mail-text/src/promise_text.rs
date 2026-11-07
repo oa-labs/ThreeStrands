@@ -26,15 +26,49 @@ const OPENERS: &[&[&str]] = &[
 
 /// Verbs that name something the writer will hand over or do for the reader.
 const VERBS: &[&str] = &[
-    "send", "share", "forward", "follow", "circle", "look", "check", "run", "write", "draft",
-    "prepare", "put", "reconnect", "review", "confirm", "update", "book", "schedule", "set",
-    "dig", "call", "reach", "email", "finish", "fix", "loop", "pull", "compile", "submit",
-    "reply", "respond", "ping", "introduce", "find", "research", "sign",
+    "send",
+    "share",
+    "forward",
+    "follow",
+    "circle",
+    "look",
+    "check",
+    "run",
+    "write",
+    "draft",
+    "prepare",
+    "put",
+    "reconnect",
+    "review",
+    "confirm",
+    "update",
+    "book",
+    "schedule",
+    "set",
+    "dig",
+    "call",
+    "reach",
+    "email",
+    "finish",
+    "fix",
+    "loop",
+    "pull",
+    "compile",
+    "submit",
+    "reply",
+    "respond",
+    "ping",
+    "introduce",
+    "find",
+    "research",
+    "sign",
 ];
 
 /// What may follow "get" for it to promise something: "get back to you",
 /// "get you the numbers", "get it over".
-const GET_OBJECTS: &[&str] = &["back", "you", "it", "that", "this", "those", "these", "the", "them"];
+const GET_OBJECTS: &[&str] = &[
+    "back", "you", "it", "that", "this", "those", "these", "the", "them",
+];
 
 /// The first sentence in `text` that makes a promise, trimmed and capped at
 /// `MAX_PROMISE_EXCERPT_CHARS`, or None.
@@ -64,24 +98,37 @@ fn makes_promise(sentence: &str) -> bool {
         OPENERS.iter().any(|opener| {
             let end = start + opener.len();
             end <= words.len()
-                && words[start..end].iter().zip(opener.iter()).all(|(word, expected)| word == expected)
+                && words[start..end]
+                    .iter()
+                    .zip(opener.iter())
+                    .all(|(word, expected)| word == expected)
                 && names_deliverable(&words[end..])
         })
     })
 }
 
 fn names_deliverable(after: &[String]) -> bool {
-    after.iter().take(MAX_WORDS_BEFORE_VERB + 1).enumerate().any(|(index, word)| {
-        VERBS.contains(&word.as_str())
-            || (word == "get" && after.get(index + 1).is_some_and(|next| GET_OBJECTS.contains(&next.as_str())))
-    })
+    after
+        .iter()
+        .take(MAX_WORDS_BEFORE_VERB + 1)
+        .enumerate()
+        .any(|(index, word)| {
+            VERBS.contains(&word.as_str())
+                || (word == "get"
+                    && after
+                        .get(index + 1)
+                        .is_some_and(|next| GET_OBJECTS.contains(&next.as_str())))
+        })
 }
 
 fn excerpt(sentence: &str) -> String {
     if sentence.chars().count() <= MAX_PROMISE_EXCERPT_CHARS {
         return sentence.to_string();
     }
-    let cut: String = sentence.chars().take(MAX_PROMISE_EXCERPT_CHARS - 1).collect();
+    let cut: String = sentence
+        .chars()
+        .take(MAX_PROMISE_EXCERPT_CHARS - 1)
+        .collect();
     format!("{}…", cut.trim_end())
 }
 

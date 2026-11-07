@@ -45,12 +45,19 @@ pub fn message_trust(message: &RawMessage) -> MessageTrust {
         .map(address_of)
         .map(|address| domain_of(&address))
         .unwrap_or_default();
-    let authentication = header(payload, "Authentication-Results").and_then(authentication_verdicts);
+    let authentication =
+        header(payload, "Authentication-Results").and_then(authentication_verdicts);
     let reply_to = header(payload, "Reply-To")
         .map(address_of)
         .filter(|address| address.contains('@'))
-        .filter(|address| !from_domain.is_empty() && !same_organization(&domain_of(address), &from_domain));
-    MessageTrust { from_domain, authentication, reply_to }
+        .filter(|address| {
+            !from_domain.is_empty() && !same_organization(&domain_of(address), &from_domain)
+        });
+    MessageTrust {
+        from_domain,
+        authentication,
+        reply_to,
+    }
 }
 
 /// Parses one `Authentication-Results` value. Returns None when it reports
@@ -69,7 +76,11 @@ pub fn authentication_verdicts(value: &str) -> Option<AuthenticationVerdicts> {
         let Some((method, result)) = tokens.next().and_then(|token| token.split_once('=')) else {
             continue;
         };
-        let method = method.split('/').next().unwrap_or(method).to_ascii_lowercase();
+        let method = method
+            .split('/')
+            .next()
+            .unwrap_or(method)
+            .to_ascii_lowercase();
         let result = result.trim_matches('"').to_ascii_lowercase();
         match method.as_str() {
             "spf" => {
@@ -79,7 +90,12 @@ pub fn authentication_verdicts(value: &str) -> Option<AuthenticationVerdicts> {
                         .filter_map(|token| token.split_once('='))
                         .find(|(key, _)| key.eq_ignore_ascii_case("smtp.mailfrom"))
                         .map(|(_, value)| value.trim_matches('"').to_ascii_lowercase())
-                        .map(|value| value.rsplit_once('@').map(|(_, domain)| domain.to_string()).unwrap_or(value));
+                        .map(|value| {
+                            value
+                                .rsplit_once('@')
+                                .map(|(_, domain)| domain.to_string())
+                                .unwrap_or(value)
+                        });
                     if let Some(domain) = domain.filter(|domain| !domain.is_empty()) {
                         if !spf_domains.contains(&domain) {
                             spf_domains.push(domain);
@@ -93,10 +109,23 @@ pub fn authentication_verdicts(value: &str) -> Option<AuthenticationVerdicts> {
                 if result == "pass" {
                     let properties: Vec<(String, String)> = tokens
                         .filter_map(|token| token.split_once('='))
-                        .map(|(key, value)| (key.to_ascii_lowercase(), value.trim_matches('"').to_ascii_lowercase()))
+                        .map(|(key, value)| {
+                            (
+                                key.to_ascii_lowercase(),
+                                value.trim_matches('"').to_ascii_lowercase(),
+                            )
+                        })
                         .collect();
-                    let signer = properties.iter().find(|(key, _)| key == "header.d").map(|(_, value)| value.clone())
-                        .or_else(|| properties.iter().find(|(key, _)| key == "header.i").map(|(_, value)| domain_of(value)));
+                    let signer = properties
+                        .iter()
+                        .find(|(key, _)| key == "header.d")
+                        .map(|(_, value)| value.clone())
+                        .or_else(|| {
+                            properties
+                                .iter()
+                                .find(|(key, _)| key == "header.i")
+                                .map(|(_, value)| domain_of(value))
+                        });
                     if let Some(domain) = signer.filter(|domain| !domain.is_empty()) {
                         if !dkim_domains.contains(&domain) {
                             dkim_domains.push(domain);
@@ -111,7 +140,13 @@ pub fn authentication_verdicts(value: &str) -> Option<AuthenticationVerdicts> {
     if spf.is_empty() && dkim.is_empty() && dmarc.is_empty() {
         return None;
     }
-    Some(AuthenticationVerdicts { spf: verdict(spf), dkim: verdict(dkim), dmarc: verdict(dmarc), dkim_domains, spf_domains })
+    Some(AuthenticationVerdicts {
+        spf: verdict(spf),
+        dkim: verdict(dkim),
+        dmarc: verdict(dmarc),
+        dkim_domains,
+        spf_domains,
+    })
 }
 
 fn verdict(results: Vec<String>) -> Option<String> {
@@ -162,7 +197,11 @@ fn split_results(value: &str) -> Vec<String> {
         }
     }
     segments.push(current);
-    segments.into_iter().map(|segment| segment.trim().to_string()).filter(|segment| !segment.is_empty()).collect()
+    segments
+        .into_iter()
+        .map(|segment| segment.trim().to_string())
+        .filter(|segment| !segment.is_empty())
+        .collect()
 }
 
 fn header<'a>(part: &'a MimePart, name: &str) -> Option<&'a str> {
@@ -179,11 +218,17 @@ fn address_of(value: &str) -> String {
         (Some(open), Some(close)) if close > open => &first[open + 1..close],
         _ => first,
     };
-    candidate.trim().trim_matches(|character| character == '"' || character == '\'').to_ascii_lowercase()
+    candidate
+        .trim()
+        .trim_matches(|character| character == '"' || character == '\'')
+        .to_ascii_lowercase()
 }
 
 fn domain_of(address: &str) -> String {
-    address.rsplit_once('@').map(|(_, domain)| domain.trim().to_ascii_lowercase()).unwrap_or_default()
+    address
+        .rsplit_once('@')
+        .map(|(_, domain)| domain.trim().to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
 /// Whether two domains belong to the same organization: equal, or one a
@@ -205,7 +250,13 @@ mod tests {
             snippet: String::new(),
             internal_date: String::new(),
             payload: MimePart {
-                headers: headers.iter().map(|(name, value)| MimeHeader { name: (*name).into(), value: (*value).into() }).collect(),
+                headers: headers
+                    .iter()
+                    .map(|(name, value)| MimeHeader {
+                        name: (*name).into(),
+                        value: (*value).into(),
+                    })
+                    .collect(),
                 ..MimePart::default()
             },
         }
@@ -237,12 +288,18 @@ mod tests {
         .unwrap();
         assert_eq!(verdicts.dmarc, None);
         assert_eq!(verdicts.spf_domains, vec!["partner.example".to_string()]);
-        assert_eq!(verdicts.dkim_domains, vec!["tenant.mailhost.example".to_string()]);
+        assert_eq!(
+            verdicts.dkim_domains,
+            vec!["tenant.mailhost.example".to_string()]
+        );
 
         let bare = authentication_verdicts("mx.example; spf=pass smtp.mailfrom=bounces.shop.example; spf=pass smtp.mailfrom=x@bounces.shop.example").unwrap();
         assert_eq!(bare.spf_domains, vec!["bounces.shop.example".to_string()]);
 
-        let failed = authentication_verdicts("mx.example; spf=softfail smtp.mailfrom=a@partner.example; spf=pass").unwrap();
+        let failed = authentication_verdicts(
+            "mx.example; spf=softfail smtp.mailfrom=a@partner.example; spf=pass",
+        )
+        .unwrap();
         assert_eq!(failed.spf.as_deref(), Some("pass"));
         assert!(failed.spf_domains.is_empty());
     }
@@ -261,7 +318,9 @@ mod tests {
 
     #[test]
     fn failures_and_versioned_methods_keep_the_reported_result() {
-        let verdicts = authentication_verdicts("mx.example; dmarc/1=FAIL header.from=example.com; spf=none").unwrap();
+        let verdicts =
+            authentication_verdicts("mx.example; dmarc/1=FAIL header.from=example.com; spf=none")
+                .unwrap();
         assert_eq!(verdicts.dmarc.as_deref(), Some("fail"));
         assert_eq!(verdicts.spf.as_deref(), Some("none"));
         assert_eq!(verdicts.dkim, None);
@@ -290,8 +349,14 @@ mod tests {
     fn only_the_topmost_results_header_counts() {
         // A lower copy travelled with the message and is not trusted.
         let trust = message_trust(&raw(&[
-            ("Authentication-Results", "mx.receiver.example; dmarc=fail header.from=bank.example"),
-            ("Authentication-Results", "forged.example; dmarc=pass header.from=bank.example"),
+            (
+                "Authentication-Results",
+                "mx.receiver.example; dmarc=fail header.from=bank.example",
+            ),
+            (
+                "Authentication-Results",
+                "forged.example; dmarc=pass header.from=bank.example",
+            ),
             ("From", "Bank <alerts@bank.example>"),
         ]));
         assert_eq!(trust.authentication.unwrap().dmarc.as_deref(), Some("fail"));
@@ -313,16 +378,29 @@ mod tests {
         ]));
         assert_eq!(subdomain.reply_to, None);
 
-        let parent = message_trust(&raw(&[("From", "a@mail.example.com"), ("Reply-To", "b@example.com")]));
+        let parent = message_trust(&raw(&[
+            ("From", "a@mail.example.com"),
+            ("Reply-To", "b@example.com"),
+        ]));
         assert_eq!(parent.reply_to, None);
 
-        let lookalike = message_trust(&raw(&[("From", "a@example.com"), ("Reply-To", "b@notexample.com")]));
+        let lookalike = message_trust(&raw(&[
+            ("From", "a@example.com"),
+            ("Reply-To", "b@notexample.com"),
+        ]));
         assert_eq!(lookalike.reply_to.as_deref(), Some("b@notexample.com"));
     }
 
     #[test]
     fn a_message_without_headers_reports_nothing() {
         let trust = message_trust(&raw(&[]));
-        assert_eq!(trust, MessageTrust { from_domain: String::new(), authentication: None, reply_to: None });
+        assert_eq!(
+            trust,
+            MessageTrust {
+                from_domain: String::new(),
+                authentication: None,
+                reply_to: None
+            }
+        );
     }
 }

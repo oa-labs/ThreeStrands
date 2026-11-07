@@ -79,7 +79,11 @@ pub(crate) async fn sync_account(
     let mut tasks = tokio::task::JoinSet::new();
     for (email, service) in services {
         tasks.spawn(async move {
-            let result = if catch_up { service.sync_if_stale().await } else { service.sync().await };
+            let result = if catch_up {
+                service.sync_if_stale().await
+            } else {
+                service.sync().await
+            };
             (email, result)
         });
     }

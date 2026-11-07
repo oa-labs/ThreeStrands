@@ -345,6 +345,9 @@ mod tests {
         // A read-only / no-permission mutation is a PERMANENT failure, so the
         // mutation queue rolls back rather than retrying forever.
         let read_only = classify_status_text("a2 NO [READ-ONLY] x").into_provider_error();
-        assert!(!read_only.retry_mutation(), "read-only is a permanent write failure");
+        assert!(
+            !read_only.retry_mutation(),
+            "read-only is a permanent write failure"
+        );
     }
 }

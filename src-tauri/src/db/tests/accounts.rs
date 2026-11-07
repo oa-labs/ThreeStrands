@@ -46,14 +46,43 @@ fn adopting_the_same_account_twice_does_not_duplicate_it() {
 fn the_catalogued_spelling_of_an_address_is_found_without_regard_to_case() {
     let database = database();
     database.adopt_account("Joel@Proton.me").unwrap();
-    assert_eq!(database.catalogued_account_email("joel@proton.me").unwrap().as_deref(), Some("Joel@Proton.me"));
-    assert_eq!(database.catalogued_account_email("JOEL@PROTON.ME").unwrap().as_deref(), Some("Joel@Proton.me"));
-    assert_eq!(database.catalogued_account_email("someone@proton.me").unwrap(), None);
+    assert_eq!(
+        database
+            .catalogued_account_email("joel@proton.me")
+            .unwrap()
+            .as_deref(),
+        Some("Joel@Proton.me")
+    );
+    assert_eq!(
+        database
+            .catalogued_account_email("JOEL@PROTON.ME")
+            .unwrap()
+            .as_deref(),
+        Some("Joel@Proton.me")
+    );
+    assert_eq!(
+        database
+            .catalogued_account_email("someone@proton.me")
+            .unwrap(),
+        None
+    );
 
     // Two rows differing only in case: the exact spelling wins.
     database.adopt_account("joel@proton.me").unwrap();
-    assert_eq!(database.catalogued_account_email("joel@proton.me").unwrap().as_deref(), Some("joel@proton.me"));
-    assert_eq!(database.catalogued_account_email("Joel@Proton.me").unwrap().as_deref(), Some("Joel@Proton.me"));
+    assert_eq!(
+        database
+            .catalogued_account_email("joel@proton.me")
+            .unwrap()
+            .as_deref(),
+        Some("joel@proton.me")
+    );
+    assert_eq!(
+        database
+            .catalogued_account_email("Joel@Proton.me")
+            .unwrap()
+            .as_deref(),
+        Some("Joel@Proton.me")
+    );
 }
 
 #[test]
@@ -76,7 +105,11 @@ fn account_label_model_reflects_provider_and_imap_label_storage() {
 
     // An IMAP account's model comes from the label_storage it saved at setup.
     for (account, storage, expected) in [
-        ("folders@example.com", "folders", LabelModel::ImapLabelFolders),
+        (
+            "folders@example.com",
+            "folders",
+            LabelModel::ImapLabelFolders,
+        ),
         ("keywords@example.com", "keywords", LabelModel::ImapKeywords),
         ("none@example.com", "none", LabelModel::ImapNoUserLabels),
     ] {
@@ -123,15 +156,40 @@ fn account_label_model_reflects_provider_and_imap_label_storage() {
         .unwrap();
     assert_eq!(folders.label_model, LabelModel::ImapLabelFolders);
 
-    let native = crate::provider::imap::ImapStateStore::new(database.clone(), "folders@example.com");
+    let native =
+        crate::provider::imap::ImapStateStore::new(database.clone(), "folders@example.com");
     native.set_native_labels(true).unwrap();
-    assert_eq!(database.get_account("folders@example.com").unwrap().unwrap().label_model, LabelModel::ImapNativeLabels);
-    assert!(database.list_accounts().unwrap().iter().any(|account|
-        account.email == "folders@example.com" && account.label_model == LabelModel::ImapNativeLabels));
-    assert_eq!(database.get_account("keywords@example.com").unwrap().unwrap().label_model, LabelModel::ImapKeywords);
+    assert_eq!(
+        database
+            .get_account("folders@example.com")
+            .unwrap()
+            .unwrap()
+            .label_model,
+        LabelModel::ImapNativeLabels
+    );
+    assert!(database
+        .list_accounts()
+        .unwrap()
+        .iter()
+        .any(|account| account.email == "folders@example.com"
+            && account.label_model == LabelModel::ImapNativeLabels));
+    assert_eq!(
+        database
+            .get_account("keywords@example.com")
+            .unwrap()
+            .unwrap()
+            .label_model,
+        LabelModel::ImapKeywords
+    );
     native.set_native_labels(false).unwrap();
-    assert_eq!(database.get_account("folders@example.com").unwrap().unwrap().label_model, LabelModel::ImapNoUserLabels);
-
+    assert_eq!(
+        database
+            .get_account("folders@example.com")
+            .unwrap()
+            .unwrap()
+            .label_model,
+        LabelModel::ImapNoUserLabels
+    );
 }
 
 #[test]
@@ -409,26 +467,61 @@ fn sender_display_name_can_be_saved_cleared_and_cannot_inject_headers() {
 #[test]
 fn account_nicknames_are_optional_validated_and_independent_of_sender_names() {
     let database = database();
-    assert!(database.adopt_account("you@gmail.com").unwrap().nickname.is_none());
-    database.set_account_display_name("you@gmail.com", Some("Joel Reed")).unwrap();
-    database.set_account_nickname("you@gmail.com", Some("  Work  ")).unwrap();
+    assert!(database
+        .adopt_account("you@gmail.com")
+        .unwrap()
+        .nickname
+        .is_none());
+    database
+        .set_account_display_name("you@gmail.com", Some("Joel Reed"))
+        .unwrap();
+    database
+        .set_account_nickname("you@gmail.com", Some("  Work  "))
+        .unwrap();
     let account = database.get_account("you@gmail.com").unwrap().unwrap();
     assert_eq!(account.nickname.as_deref(), Some("Work"));
     assert_eq!(account.display_name.as_deref(), Some("Joel Reed"));
     // Reconnecting preserves the private label.
-    assert_eq!(database.adopt_account("you@gmail.com").unwrap().nickname.as_deref(), Some("Work"));
+    assert_eq!(
+        database
+            .adopt_account("you@gmail.com")
+            .unwrap()
+            .nickname
+            .as_deref(),
+        Some("Work")
+    );
     for length in [199, 200] {
-        database.set_account_nickname("you@gmail.com", Some(&"é".repeat(length))).unwrap();
+        database
+            .set_account_nickname("you@gmail.com", Some(&"é".repeat(length)))
+            .unwrap();
     }
-    for invalid in ["é".repeat(201), "Work\nPersonal".into(), "Work\u{0085}Personal".into()] {
-        assert!(database.set_account_nickname("you@gmail.com", Some(&invalid)).is_err());
+    for invalid in [
+        "é".repeat(201),
+        "Work\nPersonal".into(),
+        "Work\u{0085}Personal".into(),
+    ] {
+        assert!(database
+            .set_account_nickname("you@gmail.com", Some(&invalid))
+            .is_err());
     }
-    assert_eq!(database.list_accounts().unwrap()[0].nickname.as_deref(), Some("é".repeat(200).as_str()));
+    assert_eq!(
+        database.list_accounts().unwrap()[0].nickname.as_deref(),
+        Some("é".repeat(200).as_str())
+    );
     for empty in [Some("   "), None] {
-        database.set_account_nickname("you@gmail.com", empty).unwrap();
-        assert!(database.get_account("you@gmail.com").unwrap().unwrap().nickname.is_none());
+        database
+            .set_account_nickname("you@gmail.com", empty)
+            .unwrap();
+        assert!(database
+            .get_account("you@gmail.com")
+            .unwrap()
+            .unwrap()
+            .nickname
+            .is_none());
     }
-    assert!(database.set_account_nickname("missing@gmail.com", Some("Work")).is_err());
+    assert!(database
+        .set_account_nickname("missing@gmail.com", Some("Work"))
+        .is_err());
 }
 
 #[test]

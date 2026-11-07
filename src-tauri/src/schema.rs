@@ -774,7 +774,11 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
     //   BASELINE <= version       -> apply each migration above it.
     //   version >  LATEST         -> created by a newer build; refuse rather
     //                                than silently run against unknown schema.
-    let version = if stored == 0 { BASELINE_VERSION } else { stored };
+    let version = if stored == 0 {
+        BASELINE_VERSION
+    } else {
+        stored
+    };
     if version < BASELINE_VERSION {
         return Err(format!(
             "database schema v{version} predates the v{BASELINE_VERSION} baseline and can \
@@ -970,17 +974,36 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         // so forgetting removes every copy. Preserve all original evidence.
         let rows = {
             let mut statement = tx.prepare("SELECT id, account_id, requester, sender_email, link_origins FROM sender_delivery_patterns").map_err(error)?;
-            let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?))).map_err(error)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                })
+                .map_err(error)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(error)?
         };
         for (id, account, requester, sender, origins) in rows {
-            let stable = crate::db::sender_feedback::confirmation_id(&account, &requester, &sender, &origins);
-            tx.execute("UPDATE sender_delivery_patterns SET id=?1 WHERE id=?2", rusqlite::params![stable, id]).map_err(error)?;
+            let stable = crate::db::sender_feedback::confirmation_id(
+                &account, &requester, &sender, &origins,
+            );
+            tx.execute(
+                "UPDATE sender_delivery_patterns SET id=?1 WHERE id=?2",
+                rusqlite::params![stable, id],
+            )
+            .map_err(error)?;
         }
     }
     if version < 88 {
         // NULL retains the primary-only default independently of visibility.
-        tx.execute_batch("ALTER TABLE calendar_accounts ADD COLUMN availability_calendar_ids TEXT;").map_err(error)?;
+        tx.execute_batch(
+            "ALTER TABLE calendar_accounts ADD COLUMN availability_calendar_ids TEXT;",
+        )
+        .map_err(error)?;
     }
     if version < 89 {
         // Previews now end at the earliest quoted header block, skip link
@@ -1010,10 +1033,13 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         ); CREATE INDEX IF NOT EXISTS conversation_snoozes_account ON conversation_snoozes(account_id);").map_err(error)?;
     }
     if version < 92 {
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS gmail_sending_identities (
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS gmail_sending_identities (
             account_id TEXT PRIMARY KEY REFERENCES accounts(email) ON DELETE CASCADE,
             identities_json TEXT NOT NULL, refreshed_at INTEGER NOT NULL
-        );").map_err(error)?;
+        );",
+        )
+        .map_err(error)?;
     }
     if version < 93 {
         tx.execute_batch("CREATE TABLE IF NOT EXISTS system_contact_connection(id INTEGER PRIMARY KEY CHECK(id=1), connection_json TEXT NOT NULL);
@@ -1057,35 +1083,47 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
                 version INTEGER NOT NULL, record_json TEXT NOT NULL, UNIQUE(task_id,version));").map_err(error)?;
     }
     if version < 96 {
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS agent_research (
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS agent_research (
             task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id) ON DELETE CASCADE,
             expires_at INTEGER, record_json TEXT NOT NULL);
-            CREATE INDEX IF NOT EXISTS agent_evidence_expiry ON agent_research(expires_at);").map_err(error)?;
+            CREATE INDEX IF NOT EXISTS agent_evidence_expiry ON agent_research(expires_at);",
+        )
+        .map_err(error)?;
     }
     if version < 97 {
         // Device-local identity reservations outlive locations and body eviction.
         // Multiple candidates retain contradictory evidence instead of overwriting it.
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS imap_message_identities (
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_message_identities (
             account_id TEXT NOT NULL,
             namespace TEXT NOT NULL,
             external_id TEXT NOT NULL,
             message_id TEXT NOT NULL,
             PRIMARY KEY(account_id, namespace, external_id, message_id)
         ); CREATE INDEX IF NOT EXISTS imap_message_identities_message
-            ON imap_message_identities(account_id, message_id, namespace);").map_err(error)?;
+            ON imap_message_identities(account_id, message_id, namespace);",
+        )
+        .map_err(error)?;
     }
     if version < 98 {
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS imap_label_snapshots (
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_label_snapshots (
             account_id TEXT NOT NULL, message_id TEXT NOT NULL, labels_json TEXT NOT NULL,
             PRIMARY KEY(account_id,message_id)
-        );").map_err(error)?;
+        );",
+        )
+        .map_err(error)?;
     }
     if version < 99 {
         // Device-local, negotiated protocol support; never exported as settings.
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS imap_server_capabilities (
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_server_capabilities (
             account_id TEXT PRIMARY KEY, native_labels INTEGER NOT NULL DEFAULT 0,
             native_labels_seen INTEGER NOT NULL DEFAULT 0
-        );").map_err(error)?;
+        );",
+        )
+        .map_err(error)?;
     }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
@@ -1117,7 +1155,12 @@ fn post_open_outbox_fixups(connection: &Connection) -> Result<(), String> {
             [Utc::now().timestamp_millis() + 10_000],
         )
         .map_err(error)?;
-    connection.execute("UPDATE outbox_messages SET state='overdue' WHERE state='scheduled' AND deadline<?1", [Utc::now().timestamp_millis()]).map_err(error)?;
+    connection
+        .execute(
+            "UPDATE outbox_messages SET state='overdue' WHERE state='scheduled' AND deadline<?1",
+            [Utc::now().timestamp_millis()],
+        )
+        .map_err(error)?;
     Ok(())
 }
 
@@ -1361,8 +1404,7 @@ mod tests {
             .execute_batch(crate::schema::INITIAL_SCHEMA)
             .unwrap();
         let actual = schema_objects(&connection);
-        let expected: Vec<String> =
-            EXPECTED_V74_OBJECTS.iter().map(|s| s.to_string()).collect();
+        let expected: Vec<String> = EXPECTED_V74_OBJECTS.iter().map(|s| s.to_string()).collect();
         assert_eq!(
             actual, expected,
             "fresh INITIAL_SCHEMA object set drifted from the fully-migrated v74 schema"
@@ -1419,11 +1461,22 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         let after = schema_objects(&connection);
         let mut expected = before.clone();
-        expected.extend(ABOVE_BASELINE_OBJECTS.iter().map(|object| object.to_string()));
+        expected.extend(
+            ABOVE_BASELINE_OBJECTS
+                .iter()
+                .map(|object| object.to_string()),
+        );
         expected.sort();
-        assert_eq!(after, expected, "migrate() must add exactly the post-baseline objects");
+        assert_eq!(
+            after, expected,
+            "migrate() must add exactly the post-baseline objects"
+        );
         super::migrate(&mut connection).unwrap();
-        assert_eq!(schema_objects(&connection), after, "a second migrate() must not alter the schema");
+        assert_eq!(
+            schema_objects(&connection),
+            after,
+            "a second migrate() must not alter the schema"
+        );
         assert_eq!(
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
@@ -1437,20 +1490,44 @@ mod tests {
         let mut connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
         super::migrate(&mut connection).unwrap();
-        connection.execute_batch("DROP TABLE imap_message_identities;
+        connection
+            .execute_batch(
+                "DROP TABLE imap_message_identities;
             PRAGMA user_version=96;
             INSERT INTO accounts(email,color,status,sort_order,connected_at,provider)
                 VALUES('me@example.com','#000000','connected',0,'now','imap');
             INSERT INTO imap_locations(account_id,mailbox,uidvalidity,uid,message_id,flags_json)
-                VALUES('me@example.com','INBOX',1,7,'existing-id','[]');").unwrap();
+                VALUES('me@example.com','INBOX',1,7,'existing-id','[]');",
+            )
+            .unwrap();
         super::migrate(&mut connection).unwrap();
-        let id: String = connection.query_row("SELECT message_id FROM imap_locations WHERE uid=7", [], |row| row.get(0)).unwrap();
+        let id: String = connection
+            .query_row(
+                "SELECT message_id FROM imap_locations WHERE uid=7",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(id, "existing-id");
-        let count: i64 = connection.query_row("SELECT COUNT(*) FROM imap_message_identities", [], |row| row.get(0)).unwrap();
-        assert_eq!(count, 0, "do not infer authoritative IDs from legacy headers");
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM imap_message_identities", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "do not infer authoritative IDs from legacy headers"
+        );
         connection.execute("INSERT INTO imap_message_identities VALUES('me@example.com','gmail-message-id','7b','existing-id')", []).unwrap();
         super::migrate(&mut connection).unwrap();
-        assert_eq!(connection.query_row("SELECT message_id FROM imap_message_identities", [], |r| r.get::<_, String>(0)).unwrap(), "existing-id");
+        assert_eq!(
+            connection
+                .query_row("SELECT message_id FROM imap_message_identities", [], |r| {
+                    r.get::<_, String>(0)
+                })
+                .unwrap(),
+            "existing-id"
+        );
     }
 
     #[test]
@@ -1462,12 +1539,47 @@ mod tests {
             INSERT INTO imap_message_identities VALUES('me@example.com','gmail-message-id','7b','stable-message');
             INSERT INTO imap_bodies VALUES('me@example.com','stable-message',x'616263',3,1);").unwrap();
         super::migrate(&mut connection).unwrap();
-        assert_eq!(connection.query_row("SELECT message_id FROM imap_message_identities", [], |row| row.get::<_, String>(0)).unwrap(), "stable-message");
-        assert_eq!(connection.query_row("SELECT raw FROM imap_bodies", [], |row| row.get::<_, Vec<u8>>(0)).unwrap(), b"abc");
-        assert_eq!(connection.query_row("SELECT COUNT(*) FROM imap_label_snapshots", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
-        connection.execute("INSERT INTO imap_label_snapshots VALUES('me@example.com','stable-message','[]')", []).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT message_id FROM imap_message_identities",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "stable-message"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT raw FROM imap_bodies", [], |row| row
+                    .get::<_, Vec<u8>>(0))
+                .unwrap(),
+            b"abc"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM imap_label_snapshots", [], |row| row
+                    .get::<_, i64>(
+                    0
+                ))
+                .unwrap(),
+            0
+        );
+        connection
+            .execute(
+                "INSERT INTO imap_label_snapshots VALUES('me@example.com','stable-message','[]')",
+                [],
+            )
+            .unwrap();
         super::migrate(&mut connection).unwrap();
-        assert_eq!(connection.query_row("SELECT labels_json FROM imap_label_snapshots", [], |row| row.get::<_, String>(0)).unwrap(), "[]");
+        assert_eq!(
+            connection
+                .query_row("SELECT labels_json FROM imap_label_snapshots", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap(),
+            "[]"
+        );
     }
 
     #[test]
@@ -1479,9 +1591,32 @@ mod tests {
             INSERT INTO imap_message_identities VALUES('me@example.com','gmail-message-id','7b','stable');
             INSERT INTO imap_label_snapshots VALUES('me@example.com','stable','[\"Project\"]');").unwrap();
         super::migrate(&mut connection).unwrap();
-        assert_eq!(connection.query_row("SELECT COUNT(*) FROM imap_server_capabilities", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
-        assert_eq!(connection.query_row("SELECT message_id FROM imap_message_identities", [], |row| row.get::<_, String>(0)).unwrap(), "stable");
-        assert_eq!(connection.query_row("SELECT labels_json FROM imap_label_snapshots", [], |row| row.get::<_, String>(0)).unwrap(), "[\"Project\"]");
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM imap_server_capabilities", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT message_id FROM imap_message_identities",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "stable"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT labels_json FROM imap_label_snapshots", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap(),
+            "[\"Project\"]"
+        );
         super::migrate(&mut connection).unwrap();
     }
 
@@ -1494,9 +1629,19 @@ mod tests {
             INSERT INTO calendar_accounts(email,connected_at,selection_initialized) VALUES('me@example.com','2026-10-27',1);
             INSERT INTO calendar_selections(account_id,calendar_id) VALUES('me@example.com','holiday-feed');").unwrap();
         super::migrate(&mut connection).unwrap();
-        let selection: Option<String> = connection.query_row("SELECT availability_calendar_ids FROM calendar_accounts", [], |row| row.get(0)).unwrap();
+        let selection: Option<String> = connection
+            .query_row(
+                "SELECT availability_calendar_ids FROM calendar_accounts",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(selection, None);
-        let visible: String = connection.query_row("SELECT calendar_id FROM calendar_selections", [], |row| row.get(0)).unwrap();
+        let visible: String = connection
+            .query_row("SELECT calendar_id FROM calendar_selections", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(visible, "holiday-feed");
         super::migrate(&mut connection).unwrap();
     }
@@ -1509,7 +1654,15 @@ mod tests {
         connection.execute_batch("INSERT INTO sender_delivery_patterns VALUES ('old-uuid','you@example.com','ana@partner.example','requests@service.example','ana@partner.example','[\"https://service.example\"]',0,'old-message','2026-10-26T12:00:00Z'); ALTER TABLE calendar_accounts DROP COLUMN availability_calendar_ids; PRAGMA user_version=86;").unwrap();
         super::migrate(&mut connection).unwrap();
         let (id, authenticated, source, origins): (String, bool, String, String) = connection.query_row("SELECT id,authenticated,source_message_id,link_origins FROM sender_delivery_patterns", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
-        assert_eq!(id, crate::db::sender_feedback::confirmation_id("you@example.com", "ana@partner.example", "requests@service.example", &origins));
+        assert_eq!(
+            id,
+            crate::db::sender_feedback::confirmation_id(
+                "you@example.com",
+                "ana@partner.example",
+                "requests@service.example",
+                &origins
+            )
+        );
         assert!(!authenticated);
         assert_eq!(source, "old-message");
         assert_eq!(origins, "[\"https://service.example\"]");
@@ -1523,9 +1676,19 @@ mod tests {
         connection.execute_batch("DROP TABLE sender_delivery_patterns; ALTER TABLE calendar_accounts DROP COLUMN availability_calendar_ids; PRAGMA user_version = 85;").unwrap();
         connection.execute("INSERT INTO compose_settings(key, value) VALUES ('feedback-upgrade-test', 'preserved')", []).unwrap();
         super::migrate(&mut connection).unwrap();
-        let value: String = connection.query_row("SELECT value FROM compose_settings WHERE key = 'feedback-upgrade-test'", [], |row| row.get(0)).unwrap();
+        let value: String = connection
+            .query_row(
+                "SELECT value FROM compose_settings WHERE key = 'feedback-upgrade-test'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(value, "preserved");
-        let count: i64 = connection.query_row("SELECT count(*) FROM sender_delivery_patterns", [], |row| row.get(0)).unwrap();
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM sender_delivery_patterns", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(count, 0);
         super::migrate(&mut connection).unwrap();
     }
@@ -1555,7 +1718,11 @@ mod tests {
         );
         assert_eq!(
             connection
-                .query_row("SELECT name FROM split_inboxes WHERE id = 'split'", [], |row| row.get::<_, String>(0))
+                .query_row(
+                    "SELECT name FROM split_inboxes WHERE id = 'split'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
                 .unwrap(),
             "News"
         );
@@ -1578,7 +1745,9 @@ mod tests {
     #[test]
     fn a_v78_database_gains_server_draft_tables_and_keeps_its_drafts_local_until_edited() {
         let mut connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
         super::migrate(&mut connection).unwrap();
         // Roll back to what a 0.147 database looks like.
         connection
@@ -1586,12 +1755,23 @@ mod tests {
             .unwrap();
         connection.pragma_update(None, "user_version", 78).unwrap();
         connection
-            .execute("INSERT INTO drafts VALUES ('draft-1', 4, '{\"id\":\"draft-1\"}')", [])
+            .execute(
+                "INSERT INTO drafts VALUES ('draft-1', 4, '{\"id\":\"draft-1\"}')",
+                [],
+            )
             .unwrap();
         super::migrate(&mut connection).unwrap();
-        let count = |sql: &str| connection.query_row(sql, [], |row| row.get::<_, i64>(0)).unwrap();
+        let count = |sql: &str| {
+            connection
+                .query_row(sql, [], |row| row.get::<_, i64>(0))
+                .unwrap()
+        };
         assert_eq!(count("SELECT count(*) FROM drafts"), 1);
-        assert_eq!(count("SELECT count(*) FROM draft_server_links"), 0, "existing drafts wait for an edit");
+        assert_eq!(
+            count("SELECT count(*) FROM draft_server_links"),
+            0,
+            "existing drafts wait for an edit"
+        );
         assert_eq!(count("SELECT count(*) FROM draft_server_deletions"), 0);
         assert!(connection
             .execute("INSERT INTO draft_server_links(draft_id, account, state) VALUES ('d', 'a', 'pushing')", [])
@@ -1606,9 +1786,15 @@ mod tests {
         connection
             .execute_batch(crate::schema::INITIAL_SCHEMA)
             .unwrap();
-        connection.execute_batch("ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';").unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';",
+            )
+            .unwrap();
         connection.pragma_update(None, "user_version", 81).unwrap();
-        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
         connection
             .execute_batch(
                 "INSERT INTO messages(id, thread_id, sender, recipients_json, sent_at, body_html, body_text, cc_bcc_json)
@@ -1626,7 +1812,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             stored,
-            vec![("[]".to_string(), "[\"c@example.com\"]".to_string()), ("[]".to_string(), "[]".to_string())]
+            vec![
+                ("[]".to_string(), "[\"c@example.com\"]".to_string()),
+                ("[]".to_string(), "[]".to_string())
+            ]
         );
         let queued: Vec<String> = connection
             .prepare("SELECT thread_id FROM pending_search_reindex ORDER BY thread_id")
@@ -1649,9 +1838,15 @@ mod tests {
         // Before v83 calendar accounts were listed oldest connection first;
         // the new order keeps that, breaking ties by email.
         let mut connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
-        connection.execute_batch("ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';
-             ALTER TABLE messages ADD COLUMN cc_json TEXT NOT NULL DEFAULT '[]';").unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';
+             ALTER TABLE messages ADD COLUMN cc_json TEXT NOT NULL DEFAULT '[]';",
+            )
+            .unwrap();
         connection.pragma_update(None, "user_version", 82).unwrap();
         connection
             .execute_batch(
@@ -1684,7 +1879,9 @@ mod tests {
     #[test]
     fn a_v84_database_keeps_its_summaries_and_gains_brief_focus_and_ai_activity() {
         let mut connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
         super::migrate(&mut connection).unwrap();
         connection
             .execute_batch(
@@ -1701,16 +1898,31 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         // A brief saved before focus existed reads as covering the whole thread.
         let (summary, focus): (String, Option<String>) = connection
-            .query_row("SELECT summary, summary_focus_from FROM threads WHERE id = 'thread-a'", [], |row| Ok((row.get(0)?, row.get(1)?)))
+            .query_row(
+                "SELECT summary, summary_focus_from FROM threads WHERE id = 'thread-a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
             .unwrap();
         assert_eq!((summary.as_str(), focus), ("- Earlier brief", None));
         let analysis_focus: Option<String> = connection
-            .query_row("SELECT focus_from FROM ai_thread_analyses WHERE thread_id = 'thread-a'", [], |row| row.get(0))
+            .query_row(
+                "SELECT focus_from FROM ai_thread_analyses WHERE thread_id = 'thread-a'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(analysis_focus, None);
-        let activity: i64 = connection.query_row("SELECT count(*) FROM ai_activity", [], |row| row.get(0)).unwrap();
+        let activity: i64 = connection
+            .query_row("SELECT count(*) FROM ai_activity", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(activity, 0);
-        assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), super::LATEST_VERSION);
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::LATEST_VERSION
+        );
     }
 
     #[test]
@@ -1719,7 +1931,11 @@ mod tests {
         connection
             .execute_batch(crate::schema::INITIAL_SCHEMA)
             .unwrap();
-        connection.execute_batch("ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';").unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';",
+            )
+            .unwrap();
         connection.pragma_update(None, "user_version", 77).unwrap();
         connection
             .execute_batch(
@@ -1754,7 +1970,9 @@ mod tests {
             .execute_batch(crate::schema::INITIAL_SCHEMA)
             .unwrap();
         connection.pragma_update(None, "user_version", 76).unwrap();
-        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
         connection
             .execute_batch(
                 "INSERT INTO messages(id, thread_id, sender, recipients_json, sent_at, body_html, body_text)
@@ -1791,7 +2009,9 @@ mod tests {
     #[test]
     fn a_v88_database_queues_every_thread_to_rebuild_its_preview() {
         let mut connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
         super::migrate(&mut connection).unwrap();
         connection
             .execute_batch(
@@ -1821,7 +2041,9 @@ mod tests {
     #[test]
     fn a_v80_database_queues_every_thread_to_recheck_its_plain_text() {
         let mut connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
         super::migrate(&mut connection).unwrap();
         connection
             .execute_batch(

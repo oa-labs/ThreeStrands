@@ -68,7 +68,11 @@ impl Database {
     }
 
     /// Notes that refreshing `account`'s sending addresses failed at `at`.
-    pub(crate) fn record_gmail_identities_refresh_failure(&self, account: &str, at: i64) -> DbResult<()> {
+    pub(crate) fn record_gmail_identities_refresh_failure(
+        &self,
+        account: &str,
+        at: i64,
+    ) -> DbResult<()> {
         let mut failures = self
             .gmail_identity_refresh_failures
             .lock()

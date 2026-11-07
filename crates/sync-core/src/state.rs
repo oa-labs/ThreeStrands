@@ -106,7 +106,10 @@ impl ReplicaState {
         context: BTreeMap<DeviceId, u64>,
         fields: impl IntoIterator<Item = (FieldKey, Vec<StateValue>)>,
     ) -> Result<Self, StateError> {
-        let mut state = ReplicaState { context, fields: BTreeMap::new() };
+        let mut state = ReplicaState {
+            context,
+            fields: BTreeMap::new(),
+        };
         for (key, mut values) in fields {
             if values.is_empty() {
                 return Err(StateError::EmptyField);
@@ -155,10 +158,24 @@ impl ReplicaState {
     ) -> Dot {
         let counter = self.context.entry(device_id).or_insert(0);
         *counter += 1;
-        let dot = Dot { device_id, counter: *counter };
+        let dot = Dot {
+            device_id,
+            counter: *counter,
+        };
         for (field, value) in values {
-            let key = FieldKey { entity_type, entity_id: entity_id.to_string(), field };
-            self.fields.insert(key, vec![StateValue { dot, lamport, value }]);
+            let key = FieldKey {
+                entity_type,
+                entity_id: entity_id.to_string(),
+                field,
+            };
+            self.fields.insert(
+                key,
+                vec![StateValue {
+                    dot,
+                    lamport,
+                    value,
+                }],
+            );
         }
         dot
     }
@@ -180,7 +197,12 @@ impl ReplicaState {
     /// Merges `other` into this replica. Returns every field whose values
     /// changed here.
     pub fn merge(&mut self, other: &ReplicaState) -> BTreeSet<FieldKey> {
-        let keys: BTreeSet<FieldKey> = self.fields.keys().chain(other.fields.keys()).cloned().collect();
+        let keys: BTreeSet<FieldKey> = self
+            .fields
+            .keys()
+            .chain(other.fields.keys())
+            .cloned()
+            .collect();
         let mut changed = BTreeSet::new();
         for key in keys {
             let mine = self.values(&key);
@@ -197,7 +219,9 @@ impl ReplicaState {
                 }
             }
             for value in theirs {
-                if !mine.iter().any(|candidate| candidate.dot == value.dot) && !self.has_seen(value.dot) {
+                if !mine.iter().any(|candidate| candidate.dot == value.dot)
+                    && !self.has_seen(value.dot)
+                {
                     merged.push(value.clone());
                 }
             }
@@ -224,7 +248,10 @@ impl ReplicaState {
         let mut values: Vec<&StateValue> = self.values(key).iter().collect();
         values.sort_by_key(|value| value.rank());
         let winner = values.pop()?;
-        Some(Resolution { winner, conflicting: values })
+        Some(Resolution {
+            winner,
+            conflicting: values,
+        })
     }
 }
 
@@ -246,15 +273,33 @@ mod tests {
     const B: DeviceId = [2u8; 16];
 
     fn key(field: &str) -> FieldKey {
-        FieldKey { entity_type: EntityType::Task, entity_id: "task-1".to_string(), field: field.to_string() }
+        FieldKey {
+            entity_type: EntityType::Task,
+            entity_id: "task-1".to_string(),
+            field: field.to_string(),
+        }
     }
 
-    fn write(state: &mut ReplicaState, device: DeviceId, lamport: u64, field: &str, value: Value) -> Dot {
-        state.write(device, lamport, EntityType::Task, "task-1", [(field.to_string(), Some(value))])
+    fn write(
+        state: &mut ReplicaState,
+        device: DeviceId,
+        lamport: u64,
+        field: &str,
+        value: Value,
+    ) -> Dot {
+        state.write(
+            device,
+            lamport,
+            EntityType::Task,
+            "task-1",
+            [(field.to_string(), Some(value))],
+        )
     }
 
     fn working(state: &ReplicaState, field: &str) -> Option<Value> {
-        state.resolve(&key(field)).and_then(|resolution| resolution.winner.value.clone())
+        state
+            .resolve(&key(field))
+            .and_then(|resolution| resolution.winner.value.clone())
     }
 
     #[test]
@@ -305,7 +350,10 @@ mod tests {
         a.remove_entity(EntityType::Task, "task-1");
         assert!(a.fields().is_empty());
         a.merge(&stale);
-        assert!(a.fields().is_empty(), "an old copy must not bring a deleted entity back");
+        assert!(
+            a.fields().is_empty(),
+            "an old copy must not bring a deleted entity back"
+        );
         let mut late = stale.clone();
         late.merge(&a);
         assert!(late.fields().is_empty());
@@ -351,7 +399,14 @@ mod tests {
 
     #[test]
     fn a_malformed_state_is_refused() {
-        let value = |counter| StateValue { dot: Dot { device_id: A, counter }, lamport: 1, value: Some(json!(1)) };
+        let value = |counter| StateValue {
+            dot: Dot {
+                device_id: A,
+                counter,
+            },
+            lamport: 1,
+            value: Some(json!(1)),
+        };
         let context = BTreeMap::from([(A, 1)]);
         assert_eq!(
             ReplicaState::from_parts(context.clone(), [(key("title"), vec![value(2)])]),
@@ -361,7 +416,10 @@ mod tests {
             ReplicaState::from_parts(context.clone(), [(key("title"), vec![value(1), value(1)])]),
             Err(StateError::DuplicateDot)
         );
-        assert_eq!(ReplicaState::from_parts(context.clone(), [(key("title"), vec![])]), Err(StateError::EmptyField));
+        assert_eq!(
+            ReplicaState::from_parts(context.clone(), [(key("title"), vec![])]),
+            Err(StateError::EmptyField)
+        );
         assert!(ReplicaState::from_parts(context, [(key("title"), vec![value(1)])]).is_ok());
     }
 }

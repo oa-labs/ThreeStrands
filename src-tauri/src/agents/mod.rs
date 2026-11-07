@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) mod policy;
 pub(crate) mod research;
-pub(crate) mod transport;
-pub(crate) mod service;
 mod runner;
+pub(crate) mod service;
+pub(crate) mod transport;
 pub(crate) use runner::Runner;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

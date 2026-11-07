@@ -110,12 +110,27 @@ impl SyncPlan {
     /// Search pins are only valid in the mailbox set the background scheduler
     /// can maintain. Use its same system-first cap rather than just synced_now.
     pub(super) fn sync_eligible_mailboxes(&self) -> std::collections::BTreeSet<String> {
-        let candidates = self.synced().filter(|entry| !entry.is_inbox).map(|entry| super::policy::ScheduleCandidate {
-            mailbox: entry.mailbox.clone(), last_attempt: 0, last_visited_at: 0, visited_in_epoch: 0,
-            is_system_role: entry.role.is_some(),
-        }).collect::<Vec<_>>();
-        let (allowed, _) = super::policy::cap_synced_mailboxes(&candidates, super::policy::MAX_SYNCED_MAILBOXES);
-        allowed.into_iter().chain(self.synced().filter(|entry| entry.is_inbox).map(|entry| entry.mailbox.clone())).collect()
+        let candidates = self
+            .synced()
+            .filter(|entry| !entry.is_inbox)
+            .map(|entry| super::policy::ScheduleCandidate {
+                mailbox: entry.mailbox.clone(),
+                last_attempt: 0,
+                last_visited_at: 0,
+                visited_in_epoch: 0,
+                is_system_role: entry.role.is_some(),
+            })
+            .collect::<Vec<_>>();
+        let (allowed, _) =
+            super::policy::cap_synced_mailboxes(&candidates, super::policy::MAX_SYNCED_MAILBOXES);
+        allowed
+            .into_iter()
+            .chain(
+                self.synced()
+                    .filter(|entry| entry.is_inbox)
+                    .map(|entry| entry.mailbox.clone()),
+            )
+            .collect()
     }
     /// The entries this run actually syncs, INBOX first.
     pub fn synced(&self) -> impl Iterator<Item = &PlanEntry> {
@@ -209,7 +224,9 @@ fn resolve_role(
     // 3. Conservative name match (reuse mailboxes.rs's logic).
     // Native label servers advertise system mailboxes explicitly. A user
     // label named Archive or Projects/Sent must remain an ordinary label.
-    if native_labels { return None; }
+    if native_labels {
+        return None;
+    }
     MailboxRole::match_by_name(&mailbox.name, delimiter)
         .filter(|role| explicit_destination(*role, settings).is_none())
 }
@@ -302,13 +319,18 @@ pub fn build_plan(
 }
 
 pub(super) fn build_native_plan(
-    catalog: &[CatalogMailbox], delimiter: Option<&str>, settings: &ImapAccountSettings,
+    catalog: &[CatalogMailbox],
+    delimiter: Option<&str>,
+    settings: &ImapAccountSettings,
 ) -> SyncPlan {
     build_plan_with_roles(catalog, delimiter, settings, true)
 }
 
 fn build_plan_with_roles(
-    catalog: &[CatalogMailbox], delimiter: Option<&str>, settings: &ImapAccountSettings, native_labels: bool,
+    catalog: &[CatalogMailbox],
+    delimiter: Option<&str>,
+    settings: &ImapAccountSettings,
+    native_labels: bool,
 ) -> SyncPlan {
     let mut inbox: Vec<PlanEntry> = Vec::new();
     let mut synced: Vec<PlanEntry> = Vec::new();
@@ -349,8 +371,10 @@ fn build_plan_with_roles(
         }
         // A label-container child under label-folder mode: synced (5b-2), a
         // Folder-class window, contributing `lf:<name relative to container>`.
-        if !explicitly_mapped && is_label_folder_child(&mailbox.name, delimiter, settings)
-            && (!native_labels || mailbox.special_use.is_none()) {
+        if !explicitly_mapped
+            && is_label_folder_child(&mailbox.name, delimiter, settings)
+            && (!native_labels || mailbox.special_use.is_none())
+        {
             let container = settings
                 .label_container
                 .as_deref()
@@ -389,11 +413,19 @@ fn build_plan_with_roles(
         let (window_class, label_kind, location_label_id, synced_now, bucket_synced) = match role {
             // Drafts have their own sync path; All Mail is a bounded, label-free
             // location so archive-only mail can be acquired and search-pinned.
-            Some(MailboxRole::Drafts) => {
-                (SyncWindowClass::NotSynced, LabelKind::None, None, false, false)
-            }
+            Some(MailboxRole::Drafts) => (
+                SyncWindowClass::NotSynced,
+                LabelKind::None,
+                None,
+                false,
+                false,
+            ),
             Some(MailboxRole::All) => (
-                SyncWindowClass::Folder, LabelKind::SystemRole, None, true, true,
+                SyncWindowClass::Folder,
+                LabelKind::SystemRole,
+                None,
+                true,
+                true,
             ),
             // Sent: synced THIS run (run 3), Sent class, SENT label.
             // Its 5,000 is a non-evicting ACQUISITION bound (see
@@ -536,9 +568,9 @@ mod tests {
             mb("Starred", Some("\\Flagged")), // \Flagged, NO MailboxRole
             mb("Archive", Some("\\Archive")),
             mb("Spam", Some("\\Junk")),
-            mb("Labels", None),               // the label container
-            mb("Labels/Work", None),          // a label folder child
-            mb("Clients/Acme", None),         // a user folder
+            mb("Labels", None),       // the label container
+            mb("Labels/Work", None),  // a label folder child
+            mb("Clients/Acme", None), // a user folder
         ];
         let plan = build_plan(&catalog, Some("/"), &settings());
 
@@ -582,7 +614,10 @@ mod tests {
         let all = find("All Mail");
         assert_eq!(all.window_class, SyncWindowClass::Folder);
         assert!(all.synced_now);
-        assert_eq!(all.location_label_id, None, "aggregate acquisition must not invent a label");
+        assert_eq!(
+            all.location_label_id, None,
+            "aggregate acquisition must not invent a label"
+        );
         for name in ["Drafts"] {
             let e = find(name);
             assert_eq!(e.window_class, SyncWindowClass::NotSynced);
@@ -643,15 +678,24 @@ mod tests {
         let mut settings = settings();
         // Override Trash to a mailbox that carries NO attribute and whose name
         // would not match.
-        settings.mailbox_overrides.insert("trash".into(), "Bin42".into());
-        let catalog = vec![mb("INBOX", None), mb("Bin42", None), mb("Trash", Some("\\Junk"))];
+        settings
+            .mailbox_overrides
+            .insert("trash".into(), "Bin42".into());
+        let catalog = vec![
+            mb("INBOX", None),
+            mb("Bin42", None),
+            mb("Trash", Some("\\Junk")),
+        ];
         let plan = build_plan(&catalog, Some("/"), &settings);
         // Bin42 resolves to Trash by override and is synced.
         let bin = plan.entry_for("Bin42").unwrap();
         assert_eq!(bin.role, Some(MailboxRole::Trash));
         assert!(bin.synced_now);
         // The mailbox literally named "Trash" carries \Junk, so it is Junk.
-        assert_eq!(plan.entry_for("Trash").unwrap().role, Some(MailboxRole::Junk));
+        assert_eq!(
+            plan.entry_for("Trash").unwrap().role,
+            Some(MailboxRole::Junk)
+        );
     }
 
     #[test]
@@ -690,11 +734,11 @@ mod tests {
     fn dynamic_labels_use_full_folder_name_and_relative_label_name() {
         let catalog = vec![
             mb("INBOX", None),
-            mb("Clients/Acme", None),             // user folder
-            mb("Labels/Clients", None),           // label folder child
-            mb("Labels/A/B", None),               // nested label folder child
-            mb("Projektübersicht: Q3", None),     // user folder, spaces/colon/non-ASCII
-            mb("Labels/Zoë's: tag", None),        // label folder, odd chars
+            mb("Clients/Acme", None),         // user folder
+            mb("Labels/Clients", None),       // label folder child
+            mb("Labels/A/B", None),           // nested label folder child
+            mb("Projektübersicht: Q3", None), // user folder, spaces/colon/non-ASCII
+            mb("Labels/Zoë's: tag", None),    // label folder, odd chars
         ];
         let plan = build_plan(&catalog, Some("/"), &settings());
         let ids = |name: &str| plan.location_label_ids_for_mailbox(name);
@@ -743,10 +787,10 @@ mod tests {
     fn dynamic_labels_are_ordered_lf_then_folders() {
         let catalog = vec![
             mb("INBOX", None),
-            mb("Zed/Folder", None),       // user folder
-            mb("Clients/Acme", None),     // user folder
-            mb("Labels/Work", None),      // lf
-            mb("Labels/Acme", None),      // lf
+            mb("Zed/Folder", None),   // user folder
+            mb("Clients/Acme", None), // user folder
+            mb("Labels/Work", None),  // lf
+            mb("Labels/Acme", None),  // lf
         ];
         let plan = build_plan(&catalog, Some("/"), &settings());
         assert_eq!(

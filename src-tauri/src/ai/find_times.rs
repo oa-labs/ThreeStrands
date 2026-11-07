@@ -73,17 +73,24 @@ pub struct FindTimesRequest {
 
 /// Rejects an adjustment the provider should never receive: blank or too long.
 pub fn validate_instruction(instruction: Option<&str>) -> Result<Option<String>, String> {
-    let Some(text) = instruction.map(str::trim) else { return Ok(None) };
+    let Some(text) = instruction.map(str::trim) else {
+        return Ok(None);
+    };
     if text.is_empty() {
         return Err("Say how to change the times first".to_string());
     }
     if text.chars().count() > MAX_FIND_TIMES_INSTRUCTION_CHARS {
-        return Err(format!("Keep the adjustment to {MAX_FIND_TIMES_INSTRUCTION_CHARS} characters"));
+        return Err(format!(
+            "Keep the adjustment to {MAX_FIND_TIMES_INSTRUCTION_CHARS} characters"
+        ));
     }
     Ok(Some(text.to_string()))
 }
 
-fn build_find_times_prompt(request: &FindTimesRequest, messages: &[ActionMessageInput]) -> Result<String, String> {
+fn build_find_times_prompt(
+    request: &FindTimesRequest,
+    messages: &[ActionMessageInput],
+) -> Result<String, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Prompt<'a> {
@@ -118,7 +125,11 @@ fn build_find_times_prompt(request: &FindTimesRequest, messages: &[ActionMessage
             subject: &request.subject,
             messages: messages
                 .iter()
-                .map(|message| PromptMessage { sender: &message.sender, sent_at: &message.sent_at, body_text: &message.body_text })
+                .map(|message| PromptMessage {
+                    sender: &message.sender,
+                    sent_at: &message.sent_at,
+                    body_text: &message.body_text,
+                })
                 .collect(),
         },
         draft_text: truncate_chars(&request.draft_text, MAX_FIND_TIMES_DRAFT_CHARS),
@@ -152,33 +163,54 @@ fn find_times_output_schema() -> OutputSchema {
 pub async fn find_times(request: FindTimesRequest, api_key: &str) -> Result<TimeSearch, String> {
     let bounded = action_context(&request.messages, None);
     let prompt = build_find_times_prompt(&request, &bounded)?;
-    let content = call_provider(
-        AiCall {
-            provider: request.provider,
-            model: &request.model,
-            endpoint: request.endpoint.as_deref(),
-            system_prompt: FIND_TIMES_SYSTEM_PROMPT,
-            prompt: &prompt,
-            max_tokens: STRUCTURED_OUTPUT_TOKENS,
-            temperature: 0.2,
-            schema: Some(&find_times_output_schema()),
-            api_key,
-        },
-    )
+    let content = call_provider(AiCall {
+        provider: request.provider,
+        model: &request.model,
+        endpoint: request.endpoint.as_deref(),
+        system_prompt: FIND_TIMES_SYSTEM_PROMPT,
+        prompt: &prompt,
+        max_tokens: STRUCTURED_OUTPUT_TOKENS,
+        temperature: 0.2,
+        schema: Some(&find_times_output_schema()),
+        api_key,
+    })
     .await?;
     let mut search = parse_time_search(&content, &request.current_time)?;
     verify_search_sources(&mut search, &bounded, &request.user_addresses)?;
     Ok(search)
 }
 
-fn verify_search_sources(search: &mut TimeSearch, messages: &[ActionMessageInput], user_addresses: &[String]) -> Result<(), String> {
+fn verify_search_sources(
+    search: &mut TimeSearch,
+    messages: &[ActionMessageInput],
+    user_addresses: &[String],
+) -> Result<(), String> {
     for time in &mut search.proposed_times {
-        let matched = messages.iter().enumerate().find_map(|(index, message)| {
-            let answered_or_own = messages[index..].iter().any(|later| crate::correspondence::stored_addresses(&later.sender).iter().any(|(_, address)| user_addresses.iter().any(|mine| mine.eq_ignore_ascii_case(address))));
-            if answered_or_own { return None; }
-            let evidence = crate::models::ProposalEvidence { source_message_id: message.id.clone(), excerpt: time.source_text.clone() };
-            super::proposals::resolve_evidence(&evidence, std::slice::from_ref(message)).ok().map(|(_, excerpt)| excerpt)
-        }).ok_or("The AI provider returned a proposed time without matching email text")?;
+        let matched = messages
+            .iter()
+            .enumerate()
+            .find_map(|(index, message)| {
+                let answered_or_own = messages[index..].iter().any(|later| {
+                    crate::correspondence::stored_addresses(&later.sender)
+                        .iter()
+                        .any(|(_, address)| {
+                            user_addresses
+                                .iter()
+                                .any(|mine| mine.eq_ignore_ascii_case(address))
+                        })
+                });
+                if answered_or_own {
+                    return None;
+                }
+                let evidence = crate::models::ProposalEvidence {
+                    source_message_id: message.id.clone(),
+                    excerpt: time.source_text.clone(),
+                };
+                super::proposals::resolve_evidence(&evidence, std::slice::from_ref(message))
+                    .ok()
+                    .map(|(_, excerpt)| excerpt)
+            })
+            .ok_or("The AI provider returned a proposed time without matching email text")?;
         time.source_text = matched;
     }
     crate::proposed_times::validate_times(&search.proposed_times)
@@ -232,7 +264,11 @@ pub(crate) fn parse_day_bounds(
             return Err(());
         }
     }
-    Ok(DayBounds { weekdays: allowed, day_start, day_end })
+    Ok(DayBounds {
+        weekdays: allowed,
+        day_start,
+        day_end,
+    })
 }
 
 /// Validates the provider's search. Anything out of bounds fails the request
@@ -248,7 +284,9 @@ fn parse_time_search(content: &str, current_time: &str) -> Result<TimeSearch, St
         .to_string()
     })?;
     let invalid = || "The AI provider returned an invalid time search".to_string();
-    let serde_json::Value::Object(mut object) = value else { return Err(invalid()) };
+    let serde_json::Value::Object(mut object) = value else {
+        return Err(invalid());
+    };
     let proposed_times = match object.remove("proposedTimes") {
         None => Vec::new(), // Older providers/cached searches remain readable.
         Some(value) => serde_json::from_value(value).map_err(|_| invalid())?,
@@ -277,17 +315,33 @@ fn parse_time_search(content: &str, current_time: &str) -> Result<TimeSearch, St
             value
                 .as_u64()
                 .and_then(|minutes| u32::try_from(minutes).ok())
-                .filter(|minutes| (MIN_FIND_TIMES_DURATION_MINUTES..=MAX_FIND_TIMES_DURATION_MINUTES).contains(minutes))
+                .filter(|minutes| {
+                    (MIN_FIND_TIMES_DURATION_MINUTES..=MAX_FIND_TIMES_DURATION_MINUTES)
+                        .contains(minutes)
+                })
                 .ok_or_else(invalid)?,
         ),
         None => return Err(invalid()),
     };
-    if !(object.contains_key("weekdays") && object.contains_key("dayStart") && object.contains_key("dayEnd")) {
+    if !(object.contains_key("weekdays")
+        && object.contains_key("dayStart")
+        && object.contains_key("dayEnd"))
+    {
         return Err(invalid());
     }
-    let DayBounds { weekdays, day_start, day_end } =
-        parse_day_bounds(object.remove("weekdays"), object.remove("dayStart"), object.remove("dayEnd")).map_err(|_| invalid())?;
-    let Some(serde_json::Value::String(reason)) = object.remove("reason") else { return Err(invalid()) };
+    let DayBounds {
+        weekdays,
+        day_start,
+        day_end,
+    } = parse_day_bounds(
+        object.remove("weekdays"),
+        object.remove("dayStart"),
+        object.remove("dayEnd"),
+    )
+    .map_err(|_| invalid())?;
+    let Some(serde_json::Value::String(reason)) = object.remove("reason") else {
+        return Err(invalid());
+    };
     let reason = reason.split_whitespace().collect::<Vec<_>>().join(" ");
     if reason.is_empty() || reason.chars().count() > MAX_FIND_TIMES_REASON_CHARS {
         return Err(invalid());
@@ -327,7 +381,13 @@ mod tests {
     }
 
     fn message(body: &str) -> ActionMessageInput {
-        ActionMessageInput { id: "m1".into(), sender: "matt@example.com".into(), recipients: Vec::new(), sent_at: "2026-10-15T06:14:00-04:00".into(), body_text: body.into() }
+        ActionMessageInput {
+            id: "m1".into(),
+            sender: "matt@example.com".into(),
+            recipients: Vec::new(),
+            sent_at: "2026-10-15T06:14:00-04:00".into(),
+            body_text: body.into(),
+        }
     }
 
     fn request(instruction: Option<&str>, current: Option<TimeSearch>) -> FindTimesRequest {
@@ -363,16 +423,47 @@ mod tests {
 
     #[test]
     fn bounds_the_range_at_fourteen_days_and_requires_it_to_end_after_now() {
-        let at_limit = parse_time_search(&search(json!({"rangeStart": "2026-10-16T00:00:00-04:00", "rangeEnd": "2026-10-30T00:00:00-04:00"})), NOW);
+        let at_limit = parse_time_search(
+            &search(
+                json!({"rangeStart": "2026-10-16T00:00:00-04:00", "rangeEnd": "2026-10-30T00:00:00-04:00"}),
+            ),
+            NOW,
+        );
         assert!(at_limit.is_ok());
-        let below = parse_time_search(&search(json!({"rangeStart": "2026-10-16T00:00:00-04:00", "rangeEnd": "2026-10-29T23:59:00-04:00"})), NOW);
+        let below = parse_time_search(
+            &search(
+                json!({"rangeStart": "2026-10-16T00:00:00-04:00", "rangeEnd": "2026-10-29T23:59:00-04:00"}),
+            ),
+            NOW,
+        );
         assert!(below.is_ok());
-        let above = parse_time_search(&search(json!({"rangeStart": "2026-10-16T00:00:00-04:00", "rangeEnd": "2026-10-30T00:01:00-04:00"})), NOW);
-        assert_eq!(above.unwrap_err(), "The AI provider returned an invalid time search");
-        let backwards = parse_time_search(&search(json!({"rangeStart": "2026-10-20T00:00:00-04:00", "rangeEnd": "2026-10-19T00:00:00-04:00"})), NOW);
+        let above = parse_time_search(
+            &search(
+                json!({"rangeStart": "2026-10-16T00:00:00-04:00", "rangeEnd": "2026-10-30T00:01:00-04:00"}),
+            ),
+            NOW,
+        );
+        assert_eq!(
+            above.unwrap_err(),
+            "The AI provider returned an invalid time search"
+        );
+        let backwards = parse_time_search(
+            &search(
+                json!({"rangeStart": "2026-10-20T00:00:00-04:00", "rangeEnd": "2026-10-19T00:00:00-04:00"}),
+            ),
+            NOW,
+        );
         assert!(backwards.is_err());
-        let past = parse_time_search(&search(json!({"rangeStart": "2026-10-10T00:00:00-04:00", "rangeEnd": "2026-10-15T09:00:00-04:00"})), NOW);
-        assert_eq!(past.unwrap_err(), "The AI provider suggested a time search that has already passed");
+        let past = parse_time_search(
+            &search(
+                json!({"rangeStart": "2026-10-10T00:00:00-04:00", "rangeEnd": "2026-10-15T09:00:00-04:00"}),
+            ),
+            NOW,
+        );
+        assert_eq!(
+            past.unwrap_err(),
+            "The AI provider suggested a time search that has already passed"
+        );
         // A range already under way is kept; the app starts searching from now.
         assert!(parse_time_search(&search(json!({"rangeStart": "2026-10-15T00:00:00-04:00", "rangeEnd": "2026-10-17T00:00:00-04:00"})), NOW).is_ok());
     }
@@ -380,7 +471,11 @@ mod tests {
     #[test]
     fn bounds_the_meeting_length() {
         for (minutes, accepted) in [(4, false), (5, true), (720, true), (721, false)] {
-            assert_eq!(parse_time_search(&search(json!({"durationMinutes": minutes})), NOW).is_ok(), accepted, "{minutes} minutes");
+            assert_eq!(
+                parse_time_search(&search(json!({"durationMinutes": minutes})), NOW).is_ok(),
+                accepted,
+                "{minutes} minutes"
+            );
         }
         assert!(parse_time_search(&search(json!({"durationMinutes": -30})), NOW).is_err());
         assert!(parse_time_search(&search(json!({"durationMinutes": "30"})), NOW).is_err());
@@ -393,8 +488,16 @@ mod tests {
         assert!(parse_time_search(&search(json!({"weekdays": ["mon"]})), NOW).is_err());
         assert!(parse_time_search(&search(json!({"dayStart": "3pm"})), NOW).is_err());
         assert!(parse_time_search(&search(json!({"dayEnd": "24:00"})), NOW).is_err());
-        assert!(parse_time_search(&search(json!({"dayStart": "12:00", "dayEnd": "12:00"})), NOW).is_err());
-        assert!(parse_time_search(&search(json!({"dayStart": "09:00", "dayEnd": "12:00"})), NOW).is_ok());
+        assert!(parse_time_search(
+            &search(json!({"dayStart": "12:00", "dayEnd": "12:00"})),
+            NOW
+        )
+        .is_err());
+        assert!(parse_time_search(
+            &search(json!({"dayStart": "09:00", "dayEnd": "12:00"})),
+            NOW
+        )
+        .is_ok());
     }
 
     #[test]
@@ -414,39 +517,62 @@ mod tests {
         missing.as_object_mut().unwrap().remove("reason");
         assert!(parse_time_search(&missing.to_string(), NOW).is_err());
         assert!(parse_time_search(&search(json!({"rangeStart": "next Monday"})), NOW).is_err());
-        assert_eq!(parse_time_search("not json", NOW).unwrap_err(), "The AI provider returned a malformed time search");
+        assert_eq!(
+            parse_time_search("not json", NOW).unwrap_err(),
+            "The AI provider returned a malformed time search"
+        );
     }
 
     #[test]
     fn limits_the_users_adjustment() {
         assert_eq!(validate_instruction(None).unwrap(), None);
-        assert_eq!(validate_instruction(Some("  afternoons  ")).unwrap().as_deref(), Some("afternoons"));
+        assert_eq!(
+            validate_instruction(Some("  afternoons  "))
+                .unwrap()
+                .as_deref(),
+            Some("afternoons")
+        );
         assert!(validate_instruction(Some("   ")).is_err());
         let at_limit = "a".repeat(MAX_FIND_TIMES_INSTRUCTION_CHARS);
         assert!(validate_instruction(Some(&at_limit)).is_ok());
         let above = "a".repeat(MAX_FIND_TIMES_INSTRUCTION_CHARS + 1);
-        assert_eq!(validate_instruction(Some(&above)).unwrap_err(), format!("Keep the adjustment to {MAX_FIND_TIMES_INSTRUCTION_CHARS} characters"));
+        assert_eq!(
+            validate_instruction(Some(&above)).unwrap_err(),
+            format!("Keep the adjustment to {MAX_FIND_TIMES_INSTRUCTION_CHARS} characters")
+        );
     }
 
     #[test]
     fn keeps_mail_and_the_draft_in_data_fields_and_bounds_the_draft() {
         let mut long = request(Some("only afternoons"), None);
         long.draft_text = "d".repeat(MAX_FIND_TIMES_DRAFT_CHARS + 50);
-        let prompt: serde_json::Value = serde_json::from_str(&build_find_times_prompt(&long, &long.messages).unwrap()).unwrap();
+        let prompt: serde_json::Value =
+            serde_json::from_str(&build_find_times_prompt(&long, &long.messages).unwrap()).unwrap();
         assert_eq!(prompt["instruction"], "only afternoons");
-        assert_eq!(prompt["emailContext"]["messages"][0]["bodyText"], "It would be great if we could connect next week.");
-        assert_eq!(prompt["draftText"].as_str().unwrap().chars().count(), MAX_FIND_TIMES_DRAFT_CHARS);
+        assert_eq!(
+            prompt["emailContext"]["messages"][0]["bodyText"],
+            "It would be great if we could connect next week."
+        );
+        assert_eq!(
+            prompt["draftText"].as_str().unwrap().chars().count(),
+            MAX_FIND_TIMES_DRAFT_CHARS
+        );
         assert_eq!(prompt["currentTime"], NOW);
         assert!(prompt["currentSearch"].is_null());
         // Message ids are never sent; nothing in this request cites a message.
-        assert!(prompt["emailContext"]["messages"][0].get("sourceMessageId").is_none());
+        assert!(prompt["emailContext"]["messages"][0]
+            .get("sourceMessageId")
+            .is_none());
     }
 
     #[test]
     fn sends_the_search_being_adjusted() {
         let current = parse_time_search(&search(json!({})), NOW).unwrap();
         let adjusting = request(Some("Thursday or Friday"), Some(current.clone()));
-        let prompt: serde_json::Value = serde_json::from_str(&build_find_times_prompt(&adjusting, &adjusting.messages).unwrap()).unwrap();
+        let prompt: serde_json::Value = serde_json::from_str(
+            &build_find_times_prompt(&adjusting, &adjusting.messages).unwrap(),
+        )
+        .unwrap();
         assert_eq!(prompt["currentSearch"]["reason"], current.reason);
         assert_eq!(prompt["currentSearch"]["rangeStart"], current.range_start);
     }
@@ -462,17 +588,24 @@ mod tests {
             {"sourceText":"6) Tuesday, Nov. 3rd - 7 PM", "localStart":"2026-11-03T19:00", "durationMinutes":60, "timeZone":null},
             {"sourceText":"7) Wednesday, Nov. 4th - 7 PM", "localStart":"2026-11-04T19:00", "durationMinutes":60, "timeZone":null}
         ]);
-        let parsed = parse_time_search(&search(json!({"proposedTimes":alternatives})), NOW).unwrap();
-        assert_eq!(parsed.proposed_times.len(),7);
-        assert_eq!(parsed.proposed_times[2].local_start.as_deref(),Some("2026-11-01T16:00"));
-        assert!(parsed.proposed_times.iter().all(|time|time.duration_minutes==Some(60)));
+        let parsed =
+            parse_time_search(&search(json!({"proposedTimes":alternatives})), NOW).unwrap();
+        assert_eq!(parsed.proposed_times.len(), 7);
+        assert_eq!(
+            parsed.proposed_times[2].local_start.as_deref(),
+            Some("2026-11-01T16:00")
+        );
+        assert!(parsed
+            .proposed_times
+            .iter()
+            .all(|time| time.duration_minutes == Some(60)));
         // A different prose offer with an explicit zone and an unresolved second choice.
         let prose = json!([
             {"sourceText":"We can do Thursday at noon in London for 45 minutes", "localStart":"2026-11-05T12:00", "durationMinutes":45, "timeZone":"Europe/London"},
             {"sourceText":"or Friday, time to be confirmed", "localStart":null, "durationMinutes":45, "timeZone":"Europe/London"}
         ]);
         let parsed = parse_time_search(&search(json!({"proposedTimes":prose})), NOW).unwrap();
-        assert_eq!(parsed.proposed_times.len(),2);
+        assert_eq!(parsed.proposed_times.len(), 2);
         assert!(parsed.proposed_times[1].local_start.is_none());
         assert!(parse_time_search(&search(json!({"proposedTimes":[{"sourceText":"bad","localStart":"2026-02-30T19:00","durationMinutes":60,"timeZone":null}]})),NOW).is_err());
         assert!(parse_time_search(&search(json!({"proposedTimes":[{"sourceText":"bad","localStart":null,"durationMinutes":null,"timeZone":null,"book":true}]})),NOW).is_err());
@@ -481,16 +614,32 @@ mod tests {
     #[test]
     fn on_demand_offers_use_the_same_normalized_proof_and_never_accept_own_or_invented_slots() {
         let mut input = message("Saturday – 2\u{a0}PM");
-        let make = || parse_time_search(&search(json!({"proposedTimes":[{"sourceText":"Saturday - 2 PM","localStart":"2026-10-31T14:00","durationMinutes":60,"timeZone":null}]})),NOW).unwrap();
+        let make = || {
+            parse_time_search(&search(json!({"proposedTimes":[{"sourceText":"Saturday - 2 PM","localStart":"2026-10-31T14:00","durationMinutes":60,"timeZone":null}]})),NOW).unwrap()
+        };
         let mut parsed = make();
-        verify_search_sources(&mut parsed,std::slice::from_ref(&input),&["me@example.com".into()]).unwrap();
-        assert_eq!(parsed.proposed_times[0].source_text,"Saturday – 2\u{a0}PM");
-        let mut parsed = make(); parsed.proposed_times[0].source_text="Saturday - 3 PM".into();
-        assert!(verify_search_sources(&mut parsed,std::slice::from_ref(&input),&[]).is_err());
-        input.sender="Me <me@example.com>".into();
-        assert!(verify_search_sources(&mut make(),std::slice::from_ref(&input),&["me@example.com".into()]).is_err());
+        verify_search_sources(
+            &mut parsed,
+            std::slice::from_ref(&input),
+            &["me@example.com".into()],
+        )
+        .unwrap();
+        assert_eq!(parsed.proposed_times[0].source_text, "Saturday – 2\u{a0}PM");
+        let mut parsed = make();
+        parsed.proposed_times[0].source_text = "Saturday - 3 PM".into();
+        assert!(verify_search_sources(&mut parsed, std::slice::from_ref(&input), &[]).is_err());
+        input.sender = "Me <me@example.com>".into();
+        assert!(verify_search_sources(
+            &mut make(),
+            std::slice::from_ref(&input),
+            &["me@example.com".into()]
+        )
+        .is_err());
         let original = message("Saturday – 2\u{a0}PM");
-        assert!(verify_search_sources(&mut make(),&[original,input],&["me@example.com".into()]).is_err());
+        assert!(
+            verify_search_sources(&mut make(), &[original, input], &["me@example.com".into()])
+                .is_err()
+        );
     }
 
     #[test]

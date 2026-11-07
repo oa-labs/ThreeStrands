@@ -50,9 +50,16 @@ impl Database {
     }
 
     pub fn contextual_contact_suggestions(
-        &self, account_id: &str, query: &str, limit: usize, seeds: &[String], excluded: &[String],
+        &self,
+        account_id: &str,
+        query: &str,
+        limit: usize,
+        seeds: &[String],
+        excluded: &[String],
     ) -> DbResult<Vec<ContactSuggestion>> {
-        if seeds.is_empty() && excluded.is_empty() { return self.list_contact_suggestions(account_id, query, limit); }
+        if seeds.is_empty() && excluded.is_empty() {
+            return self.list_contact_suggestions(account_id, query, limit);
+        }
         self.contact_suggestions(account_id, query, limit, true, seeds, excluded)
     }
 
@@ -63,11 +70,19 @@ impl Database {
     /// "often emailed with" ranking and are never suggested again, and
     /// neither is the calendar account itself, which organizes the event.
     pub fn invitee_suggestions(
-        &self, calendar_account: Option<&str>, query: &str, limit: usize, invitees: &[String],
+        &self,
+        calendar_account: Option<&str>,
+        query: &str,
+        limit: usize,
+        invitees: &[String],
     ) -> DbResult<Vec<ContactSuggestion>> {
         let accounts = self.list_accounts()?;
         let mail_account = calendar_account
-            .and_then(|calendar| accounts.iter().find(|account| account.email.eq_ignore_ascii_case(calendar)))
+            .and_then(|calendar| {
+                accounts
+                    .iter()
+                    .find(|account| account.email.eq_ignore_ascii_case(calendar))
+            })
             .map(|account| account.email.clone())
             .unwrap_or_else(|| self.primary_account_id());
         let mut excluded = invitees.to_vec();

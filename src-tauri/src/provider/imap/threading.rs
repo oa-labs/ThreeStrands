@@ -172,7 +172,8 @@ impl ThreadState {
         self.created_seq.insert(thread_id.to_string(), created_seq);
         self.next_seq = self.next_seq.max(created_seq + 1);
         for token in tokens {
-            self.token_thread.insert(token.clone(), thread_id.to_string());
+            self.token_thread
+                .insert(token.clone(), thread_id.to_string());
         }
     }
 

@@ -4,12 +4,12 @@
 //! chunk substitution.
 
 use ed25519_dalek::SigningKey;
-use threestrands_sync_envelope::os_rng;
 use serde_json::json;
 use threestrands_sync_envelope::header::{HEADER_LEN, NONCE_LEN};
+use threestrands_sync_envelope::os_rng;
 use threestrands_sync_envelope::{
-    open_snapshot, seal_snapshot, DeviceId, EntityType, EnvelopeError, ObjectKind, OpenParams, ReplicaSnapshot,
-    SealParams, SequenceEntry, SnapshotField, SnapshotValue, PROTOCOL_VERSION,
+    open_snapshot, seal_snapshot, DeviceId, EntityType, EnvelopeError, ObjectKind, OpenParams,
+    ReplicaSnapshot, SealParams, SequenceEntry, SnapshotField, SnapshotValue, PROTOCOL_VERSION,
 };
 
 #[path = "support/mod.rs"]
@@ -22,12 +22,20 @@ fn snapshot(value: &str) -> ReplicaSnapshot {
         device_id,
         state_sequence: 1,
         created_at_ms: 0,
-        context: vec![SequenceEntry { device_id, sequence: 1 }],
+        context: vec![SequenceEntry {
+            device_id,
+            sequence: 1,
+        }],
         fields: vec![SnapshotField {
             entity_type: EntityType::Task,
             entity_id: "task-1".to_string(),
             field: "title".to_string(),
-            values: vec![SnapshotValue { device_id, counter: 1, lamport: 1, value: Some(json!(value)) }],
+            values: vec![SnapshotValue {
+                device_id,
+                counter: 1,
+                lamport: 1,
+                value: Some(json!(value)),
+            }],
         }],
     }
 }

@@ -266,7 +266,10 @@ async fn serve(server: DuplexStream, script: ServerScript, log: WireLog) {
 }
 
 fn store() -> ImapStateStore {
-    ImapStateStore::new(Arc::new(crate::db::Database::open_memory()), "me@example.com")
+    ImapStateStore::new(
+        Arc::new(crate::db::Database::open_memory()),
+        "me@example.com",
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +303,11 @@ async fn select_for_write_returns_a_context_when_uidvalidity_matches() {
     // The writable PERMANENTFLAGS were persisted to the catalog.
     let rows = store.mailboxes().unwrap();
     let inbox = rows.iter().find(|m| m.name == "INBOX").unwrap();
-    assert!(inbox.permanent_flags_json.as_ref().unwrap().contains("Seen"));
+    assert!(inbox
+        .permanent_flags_json
+        .as_ref()
+        .unwrap()
+        .contains("Seen"));
     assert_eq!(inbox.uidnext, 5, "the sync counter is untouched");
     let _ = session.logout().await;
     task.await.unwrap();
@@ -335,10 +342,18 @@ async fn a_stale_uidvalidity_refuses_the_guard_and_sends_no_write() {
 async fn a_verified_store_succeeds_when_the_flag_is_actually_set() {
     let (mut session, _log, task) = connect(ServerScript::default()).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
-    verified_store(&mut session, &ctx, &[10], StoreOp::Add, &["\\Flagged".into()])
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
         .await
-        .expect("the server set \\Flagged and the re-fetch confirmed it");
+        .unwrap();
+    verified_store(
+        &mut session,
+        &ctx,
+        &[10],
+        StoreOp::Add,
+        &["\\Flagged".into()],
+    )
+    .await
+    .expect("the server set \\Flagged and the re-fetch confirmed it");
     let _ = session.logout().await;
     task.await.unwrap();
 }
@@ -352,10 +367,18 @@ async fn a_verified_store_catches_a_silently_ignored_flag() {
     };
     let (mut session, _log, task) = connect(script).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
-    let err = verified_store(&mut session, &ctx, &[10], StoreOp::Add, &["\\Flagged".into()])
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
         .await
-        .unwrap_err();
+        .unwrap();
+    let err = verified_store(
+        &mut session,
+        &ctx,
+        &[10],
+        StoreOp::Add,
+        &["\\Flagged".into()],
+    )
+    .await
+    .unwrap_err();
     match err {
         ProviderError::InvalidOperation(m) => {
             assert!(m.contains("silently ignored"), "{m}");
@@ -373,12 +396,18 @@ async fn a_store_of_a_flag_outside_permanentflags_is_refused_before_the_wire() {
     // refused by can_store_flag before any STORE is sent.
     let (mut session, log, task) = connect(ServerScript::default()).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     let err = verified_store(&mut session, &ctx, &[10], StoreOp::Add, &["MyLabel".into()])
         .await
         .unwrap_err();
     assert!(matches!(err, ProviderError::InvalidOperation(_)));
-    assert_eq!(log.count_starting("UID STORE"), 0, "nothing reached the wire");
+    assert_eq!(
+        log.count_starting("UID STORE"),
+        0,
+        "nothing reached the wire"
+    );
     let _ = session.logout().await;
     task.await.unwrap();
 }
@@ -421,7 +450,9 @@ async fn move_parses_the_untagged_copyuid_before_the_expunge_lines() {
 async fn relocate_uses_move_when_advertised() {
     let (mut session, log, task) = connect(ServerScript::default()).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     let outcome = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
         .await
         .expect("MOVE relocate");
@@ -440,7 +471,9 @@ async fn relocate_uses_copy_delete_expunge_when_only_uidplus() {
     };
     let (mut session, log, task) = connect(script).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     assert_eq!(
         ctx.caps.relocation_strategy(),
         RelocationStrategy::CopyDeleteExpunge
@@ -451,7 +484,11 @@ async fn relocate_uses_copy_delete_expunge_when_only_uidplus() {
     assert_eq!(outcome.copyuid.unwrap().dest, vec![90]);
     assert_eq!(log.count_starting("UID COPY"), 1);
     assert_eq!(log.count_starting("UID STORE"), 1, "the \\Deleted store");
-    assert_eq!(log.count_starting("UID EXPUNGE"), 1, "targeted expunge only");
+    assert_eq!(
+        log.count_starting("UID EXPUNGE"),
+        1,
+        "targeted expunge only"
+    );
     // The expunge named exactly the moved UID set.
     assert!(log
         .seen()
@@ -469,7 +506,9 @@ async fn relocate_is_unsupported_without_move_or_uidplus_and_sends_nothing() {
     };
     let (mut session, log, task) = connect(script).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     let err = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
         .await
         .unwrap_err()
@@ -496,7 +535,9 @@ async fn a_partial_relocate_reports_the_message_in_both_mailboxes() {
     };
     let (mut session, log, task) = connect(script).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     let err = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
         .await
         .unwrap_err()
@@ -530,7 +571,9 @@ async fn a_copy_trycreate_surfaces_as_the_typed_outcome() {
     };
     let (mut session, log, task) = connect(script).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     let err = relocate_uids_recording(&mut session, &ctx, &[10], "Labels/New")
         .await
         .unwrap_err()
@@ -565,7 +608,9 @@ async fn a_recording_relocate_hands_back_the_copyuid_when_the_expunge_fails() {
     };
     let (mut session, log, task) = connect(script).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     let failure = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
         .await
         .expect_err("the expunge failure is surfaced");
@@ -596,11 +641,16 @@ async fn a_recording_relocate_trycreate_reports_no_destination_landed() {
     };
     let (mut session, log, task) = connect(script).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     let failure = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
         .await
         .expect_err("TRYCREATE is surfaced");
-    assert!(failure.copyuid.is_none(), "nothing landed in the destination");
+    assert!(
+        failure.copyuid.is_none(),
+        "nothing landed in the destination"
+    );
     assert!(matches!(failure.error, WriteError::TryCreate(_)));
     assert_eq!(log.count_starting("UID STORE"), 0);
     assert_eq!(log.count_starting("UID EXPUNGE"), 0);
@@ -618,7 +668,9 @@ async fn expunge_source_copies_marks_deleted_then_expunges_without_copying() {
     };
     let (mut session, log, task) = connect(script).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     expunge_source_copies(&mut session, &ctx, &[10])
         .await
         .expect("the source copy is deleted and expunged");
@@ -643,14 +695,22 @@ async fn expunge_source_copies_marks_deleted_then_expunges_without_copying() {
 async fn a_store_over_the_uid_batch_limit_is_split_into_several_commands() {
     let (mut session, log, task) = connect(ServerScript::default()).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     // One more than the per-command cap -> two STORE commands (and two FETCH
     // verifications).
     let n = crate::provider::imap::policy::MAX_UIDS_PER_COMMAND as u32 + 1;
     let uids: Vec<u32> = (1..=n).collect();
-    verified_store(&mut session, &ctx, &uids, StoreOp::Add, &["\\Flagged".into()])
-        .await
-        .unwrap();
+    verified_store(
+        &mut session,
+        &ctx,
+        &uids,
+        StoreOp::Add,
+        &["\\Flagged".into()],
+    )
+    .await
+    .unwrap();
     assert_eq!(log.count_starting("UID STORE"), 2, "split into two batches");
     assert_eq!(log.count_starting("UID FETCH"), 2, "each batch is verified");
     let _ = session.logout().await;
@@ -661,7 +721,9 @@ async fn a_store_over_the_uid_batch_limit_is_split_into_several_commands() {
 async fn a_hostile_destination_name_never_reaches_the_wire() {
     let (mut session, log, task) = connect(ServerScript::default()).await;
     let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100)
+        .await
+        .unwrap();
     // The destination is quoted through build_wire_mailbox_arg, which rejects
     // a CRLF-injection name before any command is built.
     let err = relocate_uids_recording(&mut session, &ctx, &[10], "Archive\r\nA1 DELETE INBOX")
@@ -840,12 +902,7 @@ mod sent_copy_tests {
     }
 
     /// The scripted Sent-mailbox server loop.
-    async fn serve_sent(
-        server: DuplexStream,
-        script: SentScript,
-        state: SentState,
-        log: WireLog,
-    ) {
+    async fn serve_sent(server: DuplexStream, script: SentScript, state: SentState, log: WireLog) {
         let mut server = BufReader::new(server);
         reply(&mut server, "* OK ready\r\n").await;
         loop {
@@ -908,8 +965,8 @@ mod sent_copy_tests {
                     break;
                 }
                 buf.truncate(len); // drop the trailing CRLF the client adds.
-                // Parse the flag list from the command (between the first '('
-                // and the matching ')').
+                                   // Parse the flag list from the command (between the first '('
+                                   // and the matching ')').
                 let flags = store_flags(&rest);
                 let uid = {
                     let mut next = state.next_uid.lock().unwrap();
@@ -929,7 +986,14 @@ mod sent_copy_tests {
                     // the connection drop (a transient-class error).
                     break;
                 }
-                reply(&mut server, &format!("{tag} OK [APPENDUID {} {uid}] appended\r\n", state.uidvalidity)).await;
+                reply(
+                    &mut server,
+                    &format!(
+                        "{tag} OK [APPENDUID {} {uid}] appended\r\n",
+                        state.uidvalidity
+                    ),
+                )
+                .await;
             } else if upper.starts_with("UID SEARCH") {
                 let needle = search_needle(&rest).unwrap_or_default();
                 let hidden = {
@@ -1032,12 +1096,17 @@ mod sent_copy_tests {
 
     #[tokio::test]
     async fn append_then_located_returns_appended_with_byte_identical_seen_only_copy() {
-        let (mut session, state, log, task) =
-            connect_sent(SentScript::default(), &[]).await;
+        let (mut session, state, log, task) = connect_sent(SentScript::default(), &[]).await;
         let raw = raw_with("<abc@proton.me>");
-        let outcome = save_sent_copy(&mut session, "Sent", &raw, "<abc@proton.me>", instant_config(2))
-            .await
-            .expect("append + locate");
+        let outcome = save_sent_copy(
+            &mut session,
+            "Sent",
+            &raw,
+            "<abc@proton.me>",
+            instant_config(2),
+        )
+        .await
+        .expect("append + locate");
         match outcome {
             SentCopy::Appended { uidvalidity, uid } => {
                 assert_eq!(uidvalidity, 777);
@@ -1074,15 +1143,25 @@ mod sent_copy_tests {
         let seeded_leak: &'static str = Box::leak(seeded.into_boxed_str());
         let (mut session, state, log, task) =
             connect_sent(SentScript::default(), &[(seeded_leak, &["\\Seen"])]).await;
-        let outcome = save_sent_copy(&mut session, "Sent", &raw, "<dup@proton.me>", instant_config(2))
-            .await
-            .expect("already present");
+        let outcome = save_sent_copy(
+            &mut session,
+            "Sent",
+            &raw,
+            "<dup@proton.me>",
+            instant_config(2),
+        )
+        .await
+        .expect("already present");
         match outcome {
             SentCopy::AlreadyPresent { uids, .. } => assert_eq!(uids.len(), 1),
             other => panic!("expected AlreadyPresent, got {other:?}"),
         }
         assert_eq!(state.count(), 1, "still exactly one copy");
-        assert_eq!(log.count_starting("APPEND"), 0, "nothing appended on the second call");
+        assert_eq!(
+            log.count_starting("APPEND"),
+            0,
+            "nothing appended on the second call"
+        );
         let _ = session.logout().await;
         task.await.unwrap();
     }
@@ -1094,14 +1173,30 @@ mod sent_copy_tests {
         // First attempt: the server STORES the message, then drops the
         // connection before the tagged OK — the client sees a transient error.
         let raw = raw_with("<lost@proton.me>");
-        let (mut session, state, _log, task) =
-            connect_sent(SentScript { drop_after_store: true, ..Default::default() }, &[]).await;
-        let err = save_sent_copy(&mut session, "Sent", &raw, "<lost@proton.me>", instant_config(1))
-            .await
-            .expect_err("the dropped connection is surfaced");
+        let (mut session, state, _log, task) = connect_sent(
+            SentScript {
+                drop_after_store: true,
+                ..Default::default()
+            },
+            &[],
+        )
+        .await;
+        let err = save_sent_copy(
+            &mut session,
+            "Sent",
+            &raw,
+            "<lost@proton.me>",
+            instant_config(1),
+        )
+        .await
+        .expect_err("the dropped connection is surfaced");
         // The message was REALLY stored by the failed attempt (otherwise this
         // test would prove nothing).
-        assert_eq!(state.stored_count(), 1, "the failed attempt actually stored the message");
+        assert_eq!(
+            state.stored_count(),
+            1,
+            "the failed attempt actually stored the message"
+        );
         assert_eq!(state.count(), 1);
         // The error keeps a transient (retryable) class — NOT a permanent
         // InvalidOperation that would strand the message.
@@ -1121,18 +1216,31 @@ mod sent_copy_tests {
         let task2 = tokio::spawn(async move {
             serve_sent(server, SentScript::default(), state2, server_log).await;
         });
-        let mut session2 = AsyncImapSession::new(
-            Client::new(client).login("user", "password").await.unwrap(),
-        );
-        let retry = save_sent_copy(&mut session2, "Sent", &raw, "<lost@proton.me>", instant_config(1))
-            .await
-            .expect("the retry finds the already-stored copy");
+        let mut session2 =
+            AsyncImapSession::new(Client::new(client).login("user", "password").await.unwrap());
+        let retry = save_sent_copy(
+            &mut session2,
+            "Sent",
+            &raw,
+            "<lost@proton.me>",
+            instant_config(1),
+        )
+        .await
+        .expect("the retry finds the already-stored copy");
         match retry {
             SentCopy::AlreadyPresent { uids, .. } => assert_eq!(uids.len(), 1),
             other => panic!("expected AlreadyPresent on retry, got {other:?}"),
         }
-        assert_eq!(state.count(), 1, "exactly ONE copy after the retry — no duplicate");
-        assert_eq!(log2.count_starting("APPEND"), 0, "the retry appends nothing");
+        assert_eq!(
+            state.count(),
+            1,
+            "exactly ONE copy after the retry — no duplicate"
+        );
+        assert_eq!(
+            log2.count_starting("APPEND"),
+            0,
+            "the retry appends nothing"
+        );
         let _ = session2.logout().await;
         task2.await.unwrap();
     }
@@ -1143,13 +1251,22 @@ mod sent_copy_tests {
     async fn an_overquota_no_is_permanent_and_stores_nothing() {
         let raw = raw_with("<oq@proton.me>");
         let (mut session, state, _log, task) = connect_sent(
-            SentScript { append_overquota: Some("mailbox full".into()), ..Default::default() },
+            SentScript {
+                append_overquota: Some("mailbox full".into()),
+                ..Default::default()
+            },
             &[],
         )
         .await;
-        let err = save_sent_copy(&mut session, "Sent", &raw, "<oq@proton.me>", instant_config(1))
-            .await
-            .expect_err("OVERQUOTA is a definite NO");
+        let err = save_sent_copy(
+            &mut session,
+            "Sent",
+            &raw,
+            "<oq@proton.me>",
+            instant_config(1),
+        )
+        .await
+        .expect_err("OVERQUOTA is a definite NO");
         match err.into_provider_error() {
             ProviderError::PermanentClientRejection(_) => {}
             other => panic!("expected a permanent OVERQUOTA rejection, got {other:?}"),
@@ -1162,21 +1279,37 @@ mod sent_copy_tests {
     #[tokio::test]
     async fn a_trycreate_examine_is_a_typed_missing_mailbox_error_and_creates_nothing() {
         for script in [
-            SentScript { examine_trycreate: Some("Mailbox doesn't exist: Sent".into()), ..Default::default() },
-            SentScript { examine_nonexistent: Some("Unknown mailbox: Sent".into()), ..Default::default() },
+            SentScript {
+                examine_trycreate: Some("Mailbox doesn't exist: Sent".into()),
+                ..Default::default()
+            },
+            SentScript {
+                examine_nonexistent: Some("Unknown mailbox: Sent".into()),
+                ..Default::default()
+            },
         ] {
             let raw = raw_with("<nm@proton.me>");
             let (mut session, state, log, task) = connect_sent(script, &[]).await;
-            let err = save_sent_copy(&mut session, "Sent", &raw, "<nm@proton.me>", instant_config(1))
-                .await
-                .expect_err("a missing Sent mailbox is an error");
+            let err = save_sent_copy(
+                &mut session,
+                "Sent",
+                &raw,
+                "<nm@proton.me>",
+                instant_config(1),
+            )
+            .await
+            .expect_err("a missing Sent mailbox is an error");
             match err.into_provider_error() {
                 ProviderError::InvalidOperation(m) => assert!(m.contains("Sent"), "{m}"),
                 other => panic!("expected a permanent missing-mailbox error, got {other:?}"),
             }
             assert_eq!(state.count(), 0);
             assert_eq!(log.count_starting("APPEND"), 0, "no APPEND, no CREATE");
-            assert_eq!(log.count_starting("CREATE"), 0, "this primitive never creates the mailbox");
+            assert_eq!(
+                log.count_starting("CREATE"),
+                0,
+                "this primitive never creates the mailbox"
+            );
             let _ = session.logout().await;
             task.await.unwrap();
         }
@@ -1190,13 +1323,22 @@ mod sent_copy_tests {
         // re-checks than we allow, so the locate never succeeds.
         let raw = raw_with("<unloc@proton.me>");
         let (mut session, state, log, task) = connect_sent(
-            SentScript { hide_from_search_for: 999, ..Default::default() },
+            SentScript {
+                hide_from_search_for: 999,
+                ..Default::default()
+            },
             &[],
         )
         .await;
-        let outcome = save_sent_copy(&mut session, "Sent", &raw, "<unloc@proton.me>", instant_config(2))
-            .await
-            .expect("stored but unlocatable is still success");
+        let outcome = save_sent_copy(
+            &mut session,
+            "Sent",
+            &raw,
+            "<unloc@proton.me>",
+            instant_config(2),
+        )
+        .await
+        .expect("stored but unlocatable is still success");
         match outcome {
             SentCopy::AppendedUnlocated { uidvalidity } => assert_eq!(uidvalidity, 777),
             other => panic!("expected AppendedUnlocated, got {other:?}"),
@@ -1214,13 +1356,22 @@ mod sent_copy_tests {
         // we get Appended, having appended exactly once (not twice).
         let raw = raw_with("<delay@proton.me>");
         let (mut session, state, log, task) = connect_sent(
-            SentScript { hide_from_search_for: 1, ..Default::default() },
+            SentScript {
+                hide_from_search_for: 1,
+                ..Default::default()
+            },
             &[],
         )
         .await;
-        let outcome = save_sent_copy(&mut session, "Sent", &raw, "<delay@proton.me>", instant_config(3))
-            .await
-            .expect("located within the re-checks");
+        let outcome = save_sent_copy(
+            &mut session,
+            "Sent",
+            &raw,
+            "<delay@proton.me>",
+            instant_config(3),
+        )
+        .await
+        .expect("located within the re-checks");
         match outcome {
             SentCopy::Appended { .. } => {}
             other => panic!("expected Appended after a re-check, got {other:?}"),
@@ -1259,7 +1410,11 @@ mod sent_copy_tests {
             SentCopy::Appended { .. } => {}
             other => panic!("a near-miss must not short-circuit to AlreadyPresent: {other:?}"),
         }
-        assert_eq!(state.count(), 3, "the two near-misses plus the new exact copy");
+        assert_eq!(
+            state.count(),
+            3,
+            "the two near-misses plus the new exact copy"
+        );
         assert_eq!(log.count_starting("APPEND"), 1);
         let _ = session.logout().await;
         task.await.unwrap();
@@ -1275,10 +1430,17 @@ mod sent_copy_tests {
             let err = save_sent_copy(&mut session, "Sent", &raw, hostile, instant_config(1))
                 .await
                 .unwrap_err();
-            assert!(matches!(err.into_provider_error(), ProviderError::InvalidOperation(_)));
+            assert!(matches!(
+                err.into_provider_error(),
+                ProviderError::InvalidOperation(_)
+            ));
             assert_eq!(state.count(), 0);
             // Nothing reached the wire: not even an EXAMINE.
-            assert_eq!(log.count_starting("EXAMINE"), 0, "hostile id refused before any command");
+            assert_eq!(
+                log.count_starting("EXAMINE"),
+                0,
+                "hostile id refused before any command"
+            );
             assert_eq!(log.count_starting("APPEND"), 0);
             let _ = session.logout().await;
             task.await.unwrap();
@@ -1290,7 +1452,10 @@ mod sent_copy_tests {
         // Empty.
         let cases: Vec<(Vec<u8>, &str)> = vec![
             (Vec::new(), "empty"),
-            (b"From: a\r\nMessage-ID: <x@x>\r\n\r\nhas a \0 nul".to_vec(), "nul"),
+            (
+                b"From: a\r\nMessage-ID: <x@x>\r\n\r\nhas a \0 nul".to_vec(),
+                "nul",
+            ),
             (vec![b'x'; policy::APPEND_MAX_BYTES + 1], "oversize"),
         ];
         for (content, label) in cases {
@@ -1299,12 +1464,21 @@ mod sent_copy_tests {
                 .await
                 .unwrap_err();
             match err.into_provider_error() {
-                ProviderError::InvalidOperation(_) | ProviderError::PermanentClientRejection(_) => {}
+                ProviderError::InvalidOperation(_) | ProviderError::PermanentClientRejection(_) => {
+                }
                 other => panic!("{label}: expected a typed rejection, got {other:?}"),
             }
             assert_eq!(state.count(), 0, "{label}: nothing stored");
-            assert_eq!(log.count_starting("APPEND"), 0, "{label}: no APPEND reached the wire");
-            assert_eq!(log.count_starting("EXAMINE"), 0, "{label}: refused before any command");
+            assert_eq!(
+                log.count_starting("APPEND"),
+                0,
+                "{label}: no APPEND reached the wire"
+            );
+            assert_eq!(
+                log.count_starting("EXAMINE"),
+                0,
+                "{label}: refused before any command"
+            );
             let _ = session.logout().await;
             task.await.unwrap();
         }
@@ -1330,7 +1504,8 @@ mod sent_copy_tests {
         let seen = log.seen();
         for verb in ["EXAMINE", "APPEND"] {
             assert!(
-                seen.iter().any(|c| c.to_ascii_uppercase().starts_with(verb) && c.contains(wire)),
+                seen.iter()
+                    .any(|c| c.to_ascii_uppercase().starts_with(verb) && c.contains(wire)),
                 "{verb} must carry the wire name verbatim: {seen:?}"
             );
         }
@@ -1356,7 +1531,11 @@ mod sent_copy_tests {
             .await
             .expect("append");
         let seen = log.seen();
-        assert!(seen.iter().any(|c| c.to_ascii_uppercase().starts_with("APPEND") && c.contains("\"A &- B\"")), "{seen:?}");
+        assert!(
+            seen.iter()
+                .any(|c| c.to_ascii_uppercase().starts_with("APPEND") && c.contains("\"A &- B\"")),
+            "{seen:?}"
+        );
         assert!(!seen.iter().any(|c| c.contains("&--")), "{seen:?}");
         let _ = session.logout().await;
         task.await.unwrap();
@@ -1422,9 +1601,14 @@ mod sent_copy_tests {
         async fn override_true_touches_the_wire_zero_times() {
             let (mut session, _state, log, task) = connect_sent(SentScript::default(), &[]).await;
             let store = store();
-            let step = run(&mut session, &store, true, &req(SentCopyPhase::Pending, false))
-                .await
-                .unwrap();
+            let step = run(
+                &mut session,
+                &store,
+                true,
+                &req(SentCopyPhase::Pending, false),
+            )
+            .await
+            .unwrap();
             assert_eq!(step, SentCopyStep::Done);
             assert_eq!(log.count_starting("EXAMINE"), 0);
             assert_eq!(log.count_starting("APPEND"), 0);
@@ -1438,9 +1622,14 @@ mod sent_copy_tests {
             let (mut session, _state, log, task) = connect_sent(SentScript::default(), &[]).await;
             let store = store();
             store.set_sent_copy_detection(true, 1).unwrap();
-            let step = run(&mut session, &store, false, &req(SentCopyPhase::Pending, false))
-                .await
-                .unwrap();
+            let step = run(
+                &mut session,
+                &store,
+                false,
+                &req(SentCopyPhase::Pending, false),
+            )
+            .await
+            .unwrap();
             assert_eq!(step, SentCopyStep::Done);
             assert_eq!(log.count_starting("APPEND"), 0);
             assert_eq!(log.count_starting("EXAMINE"), 0);
@@ -1451,15 +1640,30 @@ mod sent_copy_tests {
         #[tokio::test]
         async fn first_send_server_copy_present_records_true_without_appending() {
             // Preload a server copy of the Message-ID BEFORE any APPEND of ours.
-            let (mut session, state, log, task) =
-                connect_sent(SentScript::default(), &[(&String::from_utf8_lossy(&raw_with("<decide@x>")), &["\\Seen"])]).await;
+            let (mut session, state, log, task) = connect_sent(
+                SentScript::default(),
+                &[(
+                    &String::from_utf8_lossy(&raw_with("<decide@x>")),
+                    &["\\Seen"],
+                )],
+            )
+            .await;
             let store = store();
-            let step = run(&mut session, &store, false, &req(SentCopyPhase::Pending, false))
-                .await
-                .unwrap();
+            let step = run(
+                &mut session,
+                &store,
+                false,
+                &req(SentCopyPhase::Pending, false),
+            )
+            .await
+            .unwrap();
             assert_eq!(step, SentCopyStep::Done);
             assert_eq!(store.sent_copy_detection().unwrap(), Some(true));
-            assert_eq!(log.count_starting("APPEND"), 0, "no APPEND when the server saved its own");
+            assert_eq!(
+                log.count_starting("APPEND"),
+                0,
+                "no APPEND when the server saved its own"
+            );
             assert_eq!(state.count(), 1, "still exactly the server's one copy");
             let _ = session.logout().await;
             task.await.unwrap();
@@ -1469,13 +1673,26 @@ mod sent_copy_tests {
         async fn first_send_absent_appends_then_recheck() {
             let (mut session, state, log, task) = connect_sent(SentScript::default(), &[]).await;
             let store = store();
-            let step = run(&mut session, &store, false, &req(SentCopyPhase::Pending, false))
-                .await
-                .unwrap();
-            assert_eq!(step, SentCopyStep::Recheck { after: Duration::ZERO });
+            let step = run(
+                &mut session,
+                &store,
+                false,
+                &req(SentCopyPhase::Pending, false),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                step,
+                SentCopyStep::Recheck {
+                    after: Duration::ZERO
+                }
+            );
             assert_eq!(log.count_starting("APPEND"), 1, "we APPEND our copy");
             assert_eq!(state.count(), 1);
-            assert!(store.sent_copy_detection().unwrap().is_none(), "no detection until verify");
+            assert!(
+                store.sent_copy_detection().unwrap().is_none(),
+                "no detection until verify"
+            );
             let _ = session.logout().await;
             task.await.unwrap();
         }
@@ -1483,12 +1700,23 @@ mod sent_copy_tests {
         #[tokio::test]
         async fn verify_with_one_copy_records_false() {
             // One copy present (ours): verify records "server does not save".
-            let (mut session, _state, _log, task) =
-                connect_sent(SentScript::default(), &[(&String::from_utf8_lossy(&raw_with("<decide@x>")), &["\\Seen"])]).await;
+            let (mut session, _state, _log, task) = connect_sent(
+                SentScript::default(),
+                &[(
+                    &String::from_utf8_lossy(&raw_with("<decide@x>")),
+                    &["\\Seen"],
+                )],
+            )
+            .await;
             let store = store();
-            let step = run(&mut session, &store, false, &req(SentCopyPhase::Verify, true))
-                .await
-                .unwrap();
+            let step = run(
+                &mut session,
+                &store,
+                false,
+                &req(SentCopyPhase::Verify, true),
+            )
+            .await
+            .unwrap();
             assert_eq!(step, SentCopyStep::Done);
             assert_eq!(store.sent_copy_detection().unwrap(), Some(false));
             let _ = session.logout().await;
@@ -1499,17 +1727,29 @@ mod sent_copy_tests {
         async fn verify_with_two_copies_records_true_and_leaves_the_duplicate() {
             // Two copies of the same Message-ID (the server saved one too).
             let dup = String::from_utf8_lossy(&raw_with("<decide@x>")).to_string();
-            let (mut session, state, log, task) =
-                connect_sent(SentScript::default(), &[(&dup, &["\\Seen"]), (&dup, &["\\Seen"])]).await;
+            let (mut session, state, log, task) = connect_sent(
+                SentScript::default(),
+                &[(&dup, &["\\Seen"]), (&dup, &["\\Seen"])],
+            )
+            .await;
             let store = store();
-            let step = run(&mut session, &store, false, &req(SentCopyPhase::Verify, true))
-                .await
-                .unwrap();
+            let step = run(
+                &mut session,
+                &store,
+                false,
+                &req(SentCopyPhase::Verify, true),
+            )
+            .await
+            .unwrap();
             assert_eq!(step, SentCopyStep::Done);
             assert_eq!(store.sent_copy_detection().unwrap(), Some(true));
             assert_eq!(state.count(), 2, "the duplicate is LEFT in place");
             assert_eq!(log.count_starting("STORE"), 0, "never flags the duplicate");
-            assert_eq!(log.count_starting("EXPUNGE"), 0, "never expunges the duplicate");
+            assert_eq!(
+                log.count_starting("EXPUNGE"),
+                0,
+                "never expunges the duplicate"
+            );
             let _ = session.logout().await;
             task.await.unwrap();
         }
@@ -1520,11 +1760,20 @@ mod sent_copy_tests {
             // second APPEND, no detection recorded.
             let (mut session, state, log, task) = connect_sent(SentScript::default(), &[]).await;
             let store = store();
-            let err = run(&mut session, &store, false, &req(SentCopyPhase::Verify, true))
-                .await
-                .unwrap_err();
+            let err = run(
+                &mut session,
+                &store,
+                false,
+                &req(SentCopyPhase::Verify, true),
+            )
+            .await
+            .unwrap_err();
             assert!(matches!(err, ProviderError::TransientTransport(_)));
-            assert_eq!(log.count_starting("APPEND"), 0, "verify must never re-APPEND");
+            assert_eq!(
+                log.count_starting("APPEND"),
+                0,
+                "verify must never re-APPEND"
+            );
             assert_eq!(state.count(), 0);
             assert!(store.sent_copy_detection().unwrap().is_none());
             let _ = session.logout().await;
@@ -1538,12 +1787,23 @@ mod sent_copy_tests {
             // "server saves sent" and must NOT move to verify (a single copy
             // there would be misread as ours alone); it finishes after an
             // idempotent (no-op) APPEND and leaves detection undecided.
-            let (mut session, _state, _log, task) =
-                connect_sent(SentScript::default(), &[(&String::from_utf8_lossy(&raw_with("<decide@x>")), &["\\Seen"])]).await;
+            let (mut session, _state, _log, task) = connect_sent(
+                SentScript::default(),
+                &[(
+                    &String::from_utf8_lossy(&raw_with("<decide@x>")),
+                    &["\\Seen"],
+                )],
+            )
+            .await;
             let store = store();
-            let step = run(&mut session, &store, false, &req(SentCopyPhase::Pending, true))
-                .await
-                .unwrap();
+            let step = run(
+                &mut session,
+                &store,
+                false,
+                &req(SentCopyPhase::Pending, true),
+            )
+            .await
+            .unwrap();
             assert_eq!(step, SentCopyStep::Done);
             assert!(
                 store.sent_copy_detection().unwrap().is_none(),
@@ -1561,9 +1821,14 @@ mod sent_copy_tests {
             };
             let (mut session, _state, _log, task) = connect_sent(script, &[]).await;
             let store = store();
-            let err = run(&mut session, &store, false, &req(SentCopyPhase::Pending, false))
-                .await
-                .unwrap_err();
+            let err = run(
+                &mut session,
+                &store,
+                false,
+                &req(SentCopyPhase::Pending, false),
+            )
+            .await
+            .unwrap_err();
             assert!(
                 matches!(err, ProviderError::InvalidOperation(_)),
                 "a missing Sent mailbox is permanent, got {err:?}"
@@ -1625,7 +1890,11 @@ mod live {
         };
         let mgr = ImapConnectionManager::new(cfg);
         let (session, lease) = mgr
-            .connect_leased(ConnectionRole::Command, "test@threestrands.test", "testpassword")
+            .connect_leased(
+                ConnectionRole::Command,
+                "test@threestrands.test",
+                "testpassword",
+            )
             .await
             .expect("live connect should succeed");
         Some((session, lease))
@@ -1639,10 +1908,16 @@ mod live {
         session: &mut crate::provider::imap::connection::ConnectedSession,
         mailboxes: &[&str],
     ) {
-        session.select("INBOX").await.expect("select INBOX before cleanup");
+        session
+            .select("INBOX")
+            .await
+            .expect("select INBOX before cleanup");
         for mailbox in mailboxes {
             session
-                .run_command_capture_code(&format!("DELETE {}", build_wire_mailbox_arg(mailbox).unwrap()))
+                .run_command_capture_code(&format!(
+                    "DELETE {}",
+                    build_wire_mailbox_arg(mailbox).unwrap()
+                ))
                 .await
                 .unwrap_or_else(|e| panic!("cleanup DELETE {mailbox} failed: {e:?}"));
         }
@@ -1662,10 +1937,15 @@ mod live {
         let _ = session
             .run_command_capture_code(&format!("DELETE {}", build_mailbox_arg(mailbox).unwrap()))
             .await;
-        session.create_mailbox(mailbox).await.expect("create scratch mailbox");
+        session
+            .create_mailbox(mailbox)
+            .await
+            .expect("create scratch mailbox");
         session.select("INBOX").await.expect("select INBOX");
         let inbox_uids = session.uid_search("ALL").await.expect("search INBOX");
-        let first = inbox_uids.first().expect("the harness seeds INBOX with mail");
+        let first = inbox_uids
+            .first()
+            .expect("the harness seeds INBOX with mail");
         let dest = build_mailbox_arg(mailbox).unwrap();
         session
             .uid_copy(&first.to_string(), &dest)
@@ -1719,12 +1999,21 @@ mod live {
         let ctx = select_for_write(&mut session, &store, mailbox, uidvalidity)
             .await
             .unwrap();
-        let result =
-            verified_store(&mut session, &ctx, &uids, StoreOp::Add, &["P3R1Label".into()]).await;
+        let result = verified_store(
+            &mut session,
+            &ctx,
+            &uids,
+            StoreOp::Add,
+            &["P3R1Label".into()],
+        )
+        .await;
         if ctx.caps.permits_new_keywords {
             result.expect("a \\*-capable server stores the keyword and the re-fetch confirms it");
         } else {
-            assert!(result.is_err(), "without \\* an arbitrary keyword is refused");
+            assert!(
+                result.is_err(),
+                "without \\* an arbitrary keyword is refused"
+            );
         }
         drop_scratch(&mut session, &[mailbox]).await;
         let _ = session.logout().await;
@@ -1745,7 +2034,10 @@ mod live {
         let _ = session
             .run_command_capture_code(&format!("DELETE {}", build_mailbox_arg(dest).unwrap()))
             .await;
-        session.create_mailbox(dest).await.expect("create destination");
+        session
+            .create_mailbox(dest)
+            .await
+            .expect("create destination");
         seed_message(&mut session, source).await;
         let status = session.select(source).await.unwrap();
         let uidvalidity = status.uid_validity.unwrap();
@@ -1758,12 +2050,21 @@ mod live {
             .expect("relocate to the destination");
         // On a UIDPLUS server a COPYUID is returned.
         if ctx.caps.has_uidplus {
-            let copyuid = outcome.copyuid.as_ref().expect("UIDPLUS server returns COPYUID");
-            assert_eq!(copyuid.source, uids, "COPYUID names exactly the moved source UIDs");
+            let copyuid = outcome
+                .copyuid
+                .as_ref()
+                .expect("UIDPLUS server returns COPYUID");
+            assert_eq!(
+                copyuid.source, uids,
+                "COPYUID names exactly the moved source UIDs"
+            );
             // The mapped destination UIDs are really present in the destination.
             session.select(dest).await.unwrap();
             let in_dest = session.uid_search("ALL").await.unwrap();
-            assert_eq!(in_dest, copyuid.dest, "COPYUID dest UIDs match the real destination");
+            assert_eq!(
+                in_dest, copyuid.dest,
+                "COPYUID dest UIDs match the real destination"
+            );
         }
         // The source UID is gone.
         let after = session.select(source).await.unwrap();
@@ -1828,30 +2129,51 @@ mod live {
         let uidvalidity = status.uid_validity.unwrap();
         let uids = session.uid_search("ALL").await.unwrap();
         assert_eq!(uids.len(), 1, "scratch A seeded with exactly one message");
-        let ctx = select_for_write(&mut session, &store, a, uidvalidity).await.unwrap();
+        let ctx = select_for_write(&mut session, &store, a, uidvalidity)
+            .await
+            .unwrap();
         let fwd = relocate_uids_recording(&mut session, &ctx, &uids, b)
             .await
             .expect("forward relocate A -> B");
         // The source is now empty and B holds exactly one copy.
         session.select(a).await.unwrap();
-        assert!(session.uid_search("ALL").await.unwrap().is_empty(), "A emptied");
+        assert!(
+            session.uid_search("ALL").await.unwrap().is_empty(),
+            "A emptied"
+        );
         let b_status = session.select(b).await.unwrap();
         let b_uids = session.uid_search("ALL").await.unwrap();
-        assert_eq!(b_uids.len(), 1, "exactly one copy landed in B (no duplicate)");
+        assert_eq!(
+            b_uids.len(),
+            1,
+            "exactly one copy landed in B (no duplicate)"
+        );
         if let Some(copyuid) = &fwd.copyuid {
-            assert_eq!(copyuid.dest, b_uids, "COPYUID dest matches the real destination");
+            assert_eq!(
+                copyuid.dest, b_uids,
+                "COPYUID dest matches the real destination"
+            );
         }
 
         // Reverse: B -> A (the reverse direction archive/unarchive uses).
         let b_uidvalidity = b_status.uid_validity.unwrap();
-        let ctx = select_for_write(&mut session, &store, b, b_uidvalidity).await.unwrap();
+        let ctx = select_for_write(&mut session, &store, b, b_uidvalidity)
+            .await
+            .unwrap();
         relocate_uids_recording(&mut session, &ctx, &b_uids, a)
             .await
             .expect("reverse relocate B -> A");
         session.select(b).await.unwrap();
-        assert!(session.uid_search("ALL").await.unwrap().is_empty(), "B emptied");
+        assert!(
+            session.uid_search("ALL").await.unwrap().is_empty(),
+            "B emptied"
+        );
         session.select(a).await.unwrap();
-        assert_eq!(session.uid_search("ALL").await.unwrap().len(), 1, "exactly one copy back in A");
+        assert_eq!(
+            session.uid_search("ALL").await.unwrap().len(),
+            1,
+            "exactly one copy back in A"
+        );
 
         drop_scratch(&mut session, &[a, b]).await;
         let _ = session.logout().await;
@@ -1885,12 +2207,18 @@ mod live {
         let status = session.select(a).await.unwrap();
         let uidvalidity = status.uid_validity.unwrap();
         let uids = session.uid_search("ALL").await.unwrap();
-        let before = session.uid_fetch(&uids[0].to_string(), "FLAGS").await.unwrap();
+        let before = session
+            .uid_fetch(&uids[0].to_string(), "FLAGS")
+            .await
+            .unwrap();
         let source_seen = before.iter().any(|m| {
-            m.flags().any(|f| matches!(f, async_imap::types::Flag::Seen))
+            m.flags()
+                .any(|f| matches!(f, async_imap::types::Flag::Seen))
         });
 
-        let ctx = select_for_write(&mut session, &store, a, uidvalidity).await.unwrap();
+        let ctx = select_for_write(&mut session, &store, a, uidvalidity)
+            .await
+            .unwrap();
         relocate_uids_recording(&mut session, &ctx, &uids, b)
             .await
             .expect("relocate A -> B");
@@ -1899,9 +2227,13 @@ mod live {
         // never SET it).
         session.select(b).await.unwrap();
         let b_uids = session.uid_search("ALL").await.unwrap();
-        let after = session.uid_fetch(&b_uids[0].to_string(), "FLAGS").await.unwrap();
+        let after = session
+            .uid_fetch(&b_uids[0].to_string(), "FLAGS")
+            .await
+            .unwrap();
         let dest_seen = after.iter().any(|m| {
-            m.flags().any(|f| matches!(f, async_imap::types::Flag::Seen))
+            m.flags()
+                .any(|f| matches!(f, async_imap::types::Flag::Seen))
         });
         assert_eq!(dest_seen, source_seen, "the move must not change \\Seen");
 
@@ -1956,7 +2288,9 @@ mod live {
     ) {
         let arg = build_wire_mailbox_arg(wire).unwrap();
         let _ = session.select("INBOX").await;
-        let _ = session.run_command_capture_code(&format!("DELETE {arg}")).await;
+        let _ = session
+            .run_command_capture_code(&format!("DELETE {arg}"))
+            .await;
         crate::provider::imap::write::ImapWriteSession::create_mailbox_arg(session, &arg)
             .await
             .expect("create empty wire-named scratch mailbox");
@@ -2000,17 +2334,17 @@ mod live {
                     crate::provider::imap::write::find_by_message_id(&mut session, message_id, 0)
                         .await
                         .expect("locate after settle");
-                *located.uids.first().expect("the appended copy is now visible")
+                *located
+                    .uids
+                    .first()
+                    .expect("the appended copy is now visible")
             }
             SentCopy::AlreadyPresent { .. } => panic!("scratch mailbox should have been empty"),
         };
 
         // Verify the stored copy: \Seen set, and byte-identical to raw.
         session.select(mailbox).await.unwrap();
-        let flags = session
-            .uid_fetch(&uid.to_string(), "FLAGS")
-            .await
-            .unwrap();
+        let flags = session.uid_fetch(&uid.to_string(), "FLAGS").await.unwrap();
         assert!(
             flags.iter().any(|m| m
                 .flags()
@@ -2025,7 +2359,10 @@ mod live {
             .iter()
             .find_map(|m| m.body().map(<[u8]>::to_vec))
             .expect("the appended body is fetchable");
-        assert_eq!(stored, raw, "the stored Sent copy is byte-identical to raw (Bcc kept)");
+        assert_eq!(
+            stored, raw,
+            "the stored Sent copy is byte-identical to raw (Bcc kept)"
+        );
 
         // Second call: AlreadyPresent, still exactly one copy.
         let second = save_sent_copy(&mut session, mailbox, &raw, message_id, config)
@@ -2071,7 +2408,10 @@ mod live {
             .await
             .expect("append the exact id");
         assert!(
-            matches!(outcome, SentCopy::Appended { .. } | SentCopy::AppendedUnlocated { .. }),
+            matches!(
+                outcome,
+                SentCopy::Appended { .. } | SentCopy::AppendedUnlocated { .. }
+            ),
             "a near-miss must not short-circuit to AlreadyPresent: {outcome:?}"
         );
         session.select(mailbox).await.unwrap();
@@ -2113,4 +2453,3 @@ mod live {
         let _ = session.logout().await;
     }
 }
-

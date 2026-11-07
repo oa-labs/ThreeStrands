@@ -107,7 +107,10 @@ pub(super) fn validate_proposal_items(
             Ok(proposal) => proposal,
             Err(error) => {
                 log::warn!(target: "ai_analyze_thread", "withheld action proposal with an invalid schema: {error}");
-                super::diagnostics::rejected("The AI provider returned a suggestion with an invalid schema", Some(&item));
+                super::diagnostics::rejected(
+                    "The AI provider returned a suggestion with an invalid schema",
+                    Some(&item),
+                );
                 analysis.hidden_count += 1;
                 continue;
             }

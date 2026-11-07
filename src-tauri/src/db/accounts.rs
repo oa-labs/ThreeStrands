@@ -1,12 +1,12 @@
 //! Account persistence.
 
+use super::serialization_error;
 use super::DatabaseError;
 use super::{Database, DbResult};
 use crate::models::{Account, MailProviderKind};
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
-use super::serialization_error;
 
 impl Database {
     /// The account the compose pipeline defaults to and the legacy
@@ -24,7 +24,11 @@ impl Database {
             .ok()
             .and_then(|accounts| {
                 let fallback = accounts.first().map(|account| account.email.clone());
-                accounts.into_iter().find(|account| account.on_this_device).map(|account| account.email).or(fallback)
+                accounts
+                    .into_iter()
+                    .find(|account| account.on_this_device)
+                    .map(|account| account.email)
+                    .or(fallback)
             })
             .unwrap_or_else(|| crate::auth::LEGACY_KEY.to_string())
     }
@@ -48,11 +52,7 @@ impl Database {
     ///
     /// `provider` is the service the account just authorized through, so
     /// it is recorded on a new row and kept current on an existing one.
-    pub fn adopt_mail_account(
-        &self,
-        email: &str,
-        provider: MailProviderKind,
-    ) -> DbResult<Account> {
+    pub fn adopt_mail_account(&self, email: &str, provider: MailProviderKind) -> DbResult<Account> {
         self.with_transaction(|transaction| {
             let exists: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ?1)",
@@ -124,9 +124,7 @@ impl Database {
         &self,
         email: &str,
     ) -> DbResult<Option<crate::provider::imap::ImapAccountSettings>> {
-        self.with_connection(|connection| {
-            super::imap::read_settings_row(connection, email)
-        })
+        self.with_connection(|connection| super::imap::read_settings_row(connection, email))
     }
 
     /// The account's ordered, validated, login-anchored sending identities,
@@ -147,7 +145,11 @@ impl Database {
     ) -> DbResult<Vec<crate::provider::SendingIdentity>> {
         use rusqlite::OptionalExtension;
         self.with_connection(|connection| {
-            if let Some(identities) = super::gmail_identities::cached_gmail_identities(connection, account_id)? { return Ok(identities); }
+            if let Some(identities) =
+                super::gmail_identities::cached_gmail_identities(connection, account_id)?
+            {
+                return Ok(identities);
+            }
             let stored: Vec<crate::provider::imap::Identity> = connection
                 .query_row(
                     "SELECT identities_json FROM imap_account_settings WHERE account_id = ?1",
@@ -157,7 +159,9 @@ impl Database {
                 .optional()?
                 .and_then(|json| serde_json::from_str(&json).ok())
                 .unwrap_or_default();
-            Ok(crate::provider::imap::account_identities(account_id, &stored))
+            Ok(crate::provider::imap::account_identities(
+                account_id, &stored,
+            ))
         })
     }
 
@@ -302,8 +306,14 @@ impl Database {
             )?;
             transaction.execute("DELETE FROM threads WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM mutations WHERE account_id = ?1", [email])?;
-            transaction.execute("DELETE FROM gmail_sending_identities WHERE account_id = ?1", [email])?;
-            transaction.execute("DELETE FROM conversation_snoozes WHERE account_id = ?1", [email])?;
+            transaction.execute(
+                "DELETE FROM gmail_sending_identities WHERE account_id = ?1",
+                [email],
+            )?;
+            transaction.execute(
+                "DELETE FROM conversation_snoozes WHERE account_id = ?1",
+                [email],
+            )?;
             transaction.execute("DELETE FROM tasks WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM goals WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM sync_state WHERE account_id = ?1", [email])?;
@@ -319,9 +329,18 @@ impl Database {
             )?;
             transaction.execute("DELETE FROM triage_events WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM split_inboxes WHERE account_id = ?1", [email])?;
-            transaction.execute("DELETE FROM sender_rules WHERE lower(account_id) = lower(?1)", [email])?;
-            transaction.execute("DELETE FROM sender_rule_actions WHERE lower(account_id) = lower(?1)", [email])?;
-            transaction.execute("DELETE FROM sender_delivery_patterns WHERE lower(account_id) = lower(?1)", [email])?;
+            transaction.execute(
+                "DELETE FROM sender_rules WHERE lower(account_id) = lower(?1)",
+                [email],
+            )?;
+            transaction.execute(
+                "DELETE FROM sender_rule_actions WHERE lower(account_id) = lower(?1)",
+                [email],
+            )?;
+            transaction.execute(
+                "DELETE FROM sender_delivery_patterns WHERE lower(account_id) = lower(?1)",
+                [email],
+            )?;
             purge_imap_cache(transaction, email)?;
             transaction.execute(
                 "DELETE FROM imap_account_settings WHERE account_id = ?1",
@@ -409,7 +428,9 @@ impl Database {
 
     pub fn set_account_nickname(&self, email: &str, nickname: Option<&str>) -> DbResult<()> {
         let normalized = nickname.map(str::trim).filter(|name| !name.is_empty());
-        if normalized.is_some_and(|name| name.chars().count() > 200 || name.chars().any(char::is_control)) {
+        if normalized
+            .is_some_and(|name| name.chars().count() > 200 || name.chars().any(char::is_control))
+        {
             return Err(DatabaseError::invalid(
                 "Account nickname must be 200 characters or fewer and cannot contain control characters",
             ));

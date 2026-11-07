@@ -29,7 +29,9 @@ impl Database {
         }
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
-        self.with_connection(|connection| insert_snippet_row(connection, &id, name, body, &created_at))?;
+        self.with_connection(|connection| {
+            insert_snippet_row(connection, &id, name, body, &created_at)
+        })?;
         Ok(Snippet {
             id,
             name: name.to_string(),

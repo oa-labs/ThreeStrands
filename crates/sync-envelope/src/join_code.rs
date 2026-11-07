@@ -29,10 +29,12 @@ use crate::enrollment::{validate_earlier_epoch_keys, RosterEntry, SealedEpochKey
 use crate::error::EnvelopeError;
 use crate::ids::{DeviceId, Signature};
 use crate::limits::{
-    MAX_JOIN_CODE_CHARS, MAX_JOIN_CONNECTORS, MAX_JOIN_CONNECTOR_CONFIG_BYTES, MAX_JOIN_CONNECTOR_KIND_BYTES,
-    MAX_JOIN_CONNECTOR_SECRETS_BYTES, MAX_JOIN_NAME_CHARS,
+    MAX_JOIN_CODE_CHARS, MAX_JOIN_CONNECTORS, MAX_JOIN_CONNECTOR_CONFIG_BYTES,
+    MAX_JOIN_CONNECTOR_KIND_BYTES, MAX_JOIN_CONNECTOR_SECRETS_BYTES, MAX_JOIN_NAME_CHARS,
 };
-use crate::{canonical_dag_cbor, decode_canonical_dag_cbor, validate_cid_reference, SigningKey, VerifyingKey};
+use crate::{
+    canonical_dag_cbor, decode_canonical_dag_cbor, validate_cid_reference, SigningKey, VerifyingKey,
+};
 
 pub const JOIN_CODE_PREFIX: &str = "TSJOIN1-";
 pub const JOIN_CODE_VERSION: u16 = 1;
@@ -93,7 +95,10 @@ impl std::fmt::Debug for JoinConnector {
         f.debug_struct("JoinConnector")
             .field("kind", &self.kind)
             .field("config_json", &self.config_json)
-            .field("secrets_json", &self.secrets_json.as_ref().map(|_| "<redacted>"))
+            .field(
+                "secrets_json",
+                &self.secrets_json.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -126,7 +131,10 @@ impl JoinCode {
     /// The invite secret as a fixed array; validated to be exactly
     /// [`INVITE_SECRET_LEN`] bytes by encode and decode.
     pub fn invite_secret(&self) -> [u8; INVITE_SECRET_LEN] {
-        self.invite_secret.as_slice().try_into().expect("validated at encode/decode")
+        self.invite_secret
+            .as_slice()
+            .try_into()
+            .expect("validated at encode/decode")
     }
 }
 
@@ -180,7 +188,11 @@ fn validate_join_code(code: &JoinCode) -> Result<(), JoinCodeError> {
         if connector.config_json.len() > MAX_JOIN_CONNECTOR_CONFIG_BYTES {
             return Err(JoinCodeError::LimitExceeded("connector config"));
         }
-        if connector.secrets_json.as_ref().is_some_and(|secrets| secrets.len() > MAX_JOIN_CONNECTOR_SECRETS_BYTES) {
+        if connector
+            .secrets_json
+            .as_ref()
+            .is_some_and(|secrets| secrets.len() > MAX_JOIN_CONNECTOR_SECRETS_BYTES)
+        {
             return Err(JoinCodeError::LimitExceeded("connector secrets"));
         }
     }
@@ -192,7 +204,10 @@ pub fn encode_join_code(code: &JoinCode) -> Result<String, JoinCodeError> {
     let mut payload = canonical_dag_cbor(code).map_err(|_| JoinCodeError::Malformed)?;
     let checksum = Sha256::digest(&payload);
     payload.extend_from_slice(&checksum[..CHECKSUM_LEN]);
-    let text = format!("{JOIN_CODE_PREFIX}{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload));
+    let text = format!(
+        "{JOIN_CODE_PREFIX}{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload)
+    );
     if text.len() > MAX_JOIN_CODE_CHARS {
         return Err(JoinCodeError::TooLong);
     }
@@ -212,8 +227,16 @@ pub fn decode_join_code(text: &str) -> Result<JoinCode, JoinCodeError> {
             let newer = compact
                 .strip_prefix(JOIN_CODE_FAMILY)
                 .and_then(|rest| rest.split_once('-'))
-                .is_some_and(|(version, _)| version.parse::<u16>().is_ok_and(|version| version > JOIN_CODE_VERSION));
-            return Err(if newer { JoinCodeError::NewerVersion } else { JoinCodeError::NotAJoinCode });
+                .is_some_and(|(version, _)| {
+                    version
+                        .parse::<u16>()
+                        .is_ok_and(|version| version > JOIN_CODE_VERSION)
+                });
+            return Err(if newer {
+                JoinCodeError::NewerVersion
+            } else {
+                JoinCodeError::NotAJoinCode
+            });
         }
     };
     let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -226,7 +249,8 @@ pub fn decode_join_code(text: &str) -> Result<JoinCode, JoinCodeError> {
     if Sha256::digest(cbor)[..CHECKSUM_LEN] != *checksum {
         return Err(JoinCodeError::Incomplete);
     }
-    let probe: VersionProbe = decode_canonical_dag_cbor(cbor).map_err(|_| JoinCodeError::Malformed)?;
+    let probe: VersionProbe =
+        decode_canonical_dag_cbor(cbor).map_err(|_| JoinCodeError::Malformed)?;
     if probe.version > JOIN_CODE_VERSION {
         return Err(JoinCodeError::NewerVersion);
     }
@@ -267,19 +291,37 @@ pub struct SignedInvitation {
     pub signature: Signature,
 }
 
-pub fn sign_invitation(signing_key: &SigningKey, invitation: Invitation) -> Result<SignedInvitation, EnvelopeError> {
+pub fn sign_invitation(
+    signing_key: &SigningKey,
+    invitation: Invitation,
+) -> Result<SignedInvitation, EnvelopeError> {
     validate_earlier_epoch_keys(&invitation.earlier_epoch_keys, invitation.key_epoch)?;
     let canonical = canonical_dag_cbor(&invitation)?;
-    let signature = Signature(crypto::sign_bytes(signing_key, INVITATION_SIGNATURE_DOMAIN, &canonical));
-    Ok(SignedInvitation { invitation, signature })
+    let signature = Signature(crypto::sign_bytes(
+        signing_key,
+        INVITATION_SIGNATURE_DOMAIN,
+        &canonical,
+    ));
+    Ok(SignedInvitation {
+        invitation,
+        signature,
+    })
 }
 
 /// Verifies the invitation was signed by whoever holds `verifying_key`.
 /// Callers resolve it from the inviter's entry in the invitation's own
 /// roster (a new device) or their own roster (an existing device).
-pub fn verify_invitation(verifying_key: &VerifyingKey, signed: &SignedInvitation) -> Result<(), EnvelopeError> {
+pub fn verify_invitation(
+    verifying_key: &VerifyingKey,
+    signed: &SignedInvitation,
+) -> Result<(), EnvelopeError> {
     let canonical = canonical_dag_cbor(&signed.invitation)?;
-    crypto::verify_bytes(verifying_key, INVITATION_SIGNATURE_DOMAIN, &canonical, signed.signature.as_bytes())
+    crypto::verify_bytes(
+        verifying_key,
+        INVITATION_SIGNATURE_DOMAIN,
+        &canonical,
+        signed.signature.as_bytes(),
+    )
 }
 
 pub fn encode_signed_invitation(signed: &SignedInvitation) -> Result<Vec<u8>, EnvelopeError> {
@@ -288,7 +330,10 @@ pub fn encode_signed_invitation(signed: &SignedInvitation) -> Result<Vec<u8>, En
 
 pub fn decode_signed_invitation(bytes: &[u8]) -> Result<SignedInvitation, EnvelopeError> {
     let signed: SignedInvitation = decode_canonical_dag_cbor(bytes)?;
-    validate_earlier_epoch_keys(&signed.invitation.earlier_epoch_keys, signed.invitation.key_epoch)?;
+    validate_earlier_epoch_keys(
+        &signed.invitation.earlier_epoch_keys,
+        signed.invitation.key_epoch,
+    )?;
     Ok(signed)
 }
 
@@ -330,9 +375,21 @@ pub fn sign_invitation_redemption(
 ) -> Result<SignedInvitationRedemption, EnvelopeError> {
     validate_redemption(&redemption)?;
     let canonical = canonical_dag_cbor(&redemption)?;
-    let invite_signature = Signature(crypto::sign_bytes(invite_signing_key, REDEMPTION_INVITE_SIGNATURE_DOMAIN, &canonical));
-    let device_signature = Signature(crypto::sign_bytes(device_signing_key, REDEMPTION_DEVICE_SIGNATURE_DOMAIN, &canonical));
-    Ok(SignedInvitationRedemption { redemption, invite_signature, device_signature })
+    let invite_signature = Signature(crypto::sign_bytes(
+        invite_signing_key,
+        REDEMPTION_INVITE_SIGNATURE_DOMAIN,
+        &canonical,
+    ));
+    let device_signature = Signature(crypto::sign_bytes(
+        device_signing_key,
+        REDEMPTION_DEVICE_SIGNATURE_DOMAIN,
+        &canonical,
+    ));
+    Ok(SignedInvitationRedemption {
+        redemption,
+        invite_signature,
+        device_signature,
+    })
 }
 
 /// Verifies both signatures: the invite signature against
@@ -350,9 +407,14 @@ pub fn verify_invitation_redemption(
         &canonical,
         signed.invite_signature.as_bytes(),
     )?;
-    let device_key_bytes: [u8; 32] =
-        signed.redemption.ed25519_public.as_slice().try_into().map_err(|_| EnvelopeError::SignatureInvalid)?;
-    let device_key = VerifyingKey::from_bytes(&device_key_bytes).map_err(|_| EnvelopeError::SignatureInvalid)?;
+    let device_key_bytes: [u8; 32] = signed
+        .redemption
+        .ed25519_public
+        .as_slice()
+        .try_into()
+        .map_err(|_| EnvelopeError::SignatureInvalid)?;
+    let device_key =
+        VerifyingKey::from_bytes(&device_key_bytes).map_err(|_| EnvelopeError::SignatureInvalid)?;
     crypto::verify_bytes(
         &device_key,
         REDEMPTION_DEVICE_SIGNATURE_DOMAIN,
@@ -361,11 +423,15 @@ pub fn verify_invitation_redemption(
     )
 }
 
-pub fn encode_signed_invitation_redemption(signed: &SignedInvitationRedemption) -> Result<Vec<u8>, EnvelopeError> {
+pub fn encode_signed_invitation_redemption(
+    signed: &SignedInvitationRedemption,
+) -> Result<Vec<u8>, EnvelopeError> {
     canonical_dag_cbor(signed)
 }
 
-pub fn decode_signed_invitation_redemption(bytes: &[u8]) -> Result<SignedInvitationRedemption, EnvelopeError> {
+pub fn decode_signed_invitation_redemption(
+    bytes: &[u8],
+) -> Result<SignedInvitationRedemption, EnvelopeError> {
     decode_canonical_dag_cbor(bytes)
 }
 
@@ -383,8 +449,12 @@ mod tests {
             expires_at_ms: 1_800_000_000_000,
             connectors: vec![JoinConnector {
                 kind: "s3".to_string(),
-                config_json: r#"{"endpoint":"https://s3.example.com","region":"auto","bucket":"b-1"}"#.to_string(),
-                secrets_json: Some(r#"{"accessKeyId":"AKIA","secretAccessKey":"secret-value"}"#.to_string()),
+                config_json:
+                    r#"{"endpoint":"https://s3.example.com","region":"auto","bucket":"b-1"}"#
+                        .to_string(),
+                secrets_json: Some(
+                    r#"{"accessKeyId":"AKIA","secretAccessKey":"secret-value"}"#.to_string(),
+                ),
             }],
         }
     }
@@ -399,7 +469,13 @@ mod tests {
         let wrapped: String = text
             .chars()
             .enumerate()
-            .flat_map(|(index, c)| if index % 20 == 19 { vec![c, '\n', ' '] } else { vec![c] })
+            .flat_map(|(index, c)| {
+                if index % 20 == 19 {
+                    vec![c, '\n', ' ']
+                } else {
+                    vec![c]
+                }
+            })
             .collect();
         assert_eq!(decode_join_code(&format!("  {wrapped}\r\n")).unwrap(), code);
     }
@@ -407,25 +483,43 @@ mod tests {
     #[test]
     fn truncation_or_a_typo_is_incomplete_not_garbage() {
         let text = encode_join_code(&sample_code()).unwrap();
-        assert_eq!(decode_join_code(&text[..text.len() - 5]), Err(JoinCodeError::Incomplete));
+        assert_eq!(
+            decode_join_code(&text[..text.len() - 5]),
+            Err(JoinCodeError::Incomplete)
+        );
         let mut chars: Vec<char> = text.chars().collect();
         let index = chars.len() / 2;
         chars[index] = if chars[index] == 'A' { 'B' } else { 'A' };
-        assert_eq!(decode_join_code(&chars.into_iter().collect::<String>()), Err(JoinCodeError::Incomplete));
-        assert_eq!(decode_join_code("TSJOIN1-!!!not-base64"), Err(JoinCodeError::Incomplete));
+        assert_eq!(
+            decode_join_code(&chars.into_iter().collect::<String>()),
+            Err(JoinCodeError::Incomplete)
+        );
+        assert_eq!(
+            decode_join_code("TSJOIN1-!!!not-base64"),
+            Err(JoinCodeError::Incomplete)
+        );
         assert_eq!(decode_join_code("TSJOIN1-"), Err(JoinCodeError::Incomplete));
     }
 
     #[test]
     fn other_text_is_not_a_join_code() {
-        assert_eq!(decode_join_code("abandon ability able about"), Err(JoinCodeError::NotAJoinCode));
+        assert_eq!(
+            decode_join_code("abandon ability able about"),
+            Err(JoinCodeError::NotAJoinCode)
+        );
         assert_eq!(decode_join_code(""), Err(JoinCodeError::NotAJoinCode));
-        assert_eq!(decode_join_code("TSJOIN0-abc"), Err(JoinCodeError::NotAJoinCode));
+        assert_eq!(
+            decode_join_code("TSJOIN0-abc"),
+            Err(JoinCodeError::NotAJoinCode)
+        );
     }
 
     #[test]
     fn a_newer_prefix_or_version_asks_for_an_update() {
-        assert_eq!(decode_join_code("TSJOIN2-anything"), Err(JoinCodeError::NewerVersion));
+        assert_eq!(
+            decode_join_code("TSJOIN2-anything"),
+            Err(JoinCodeError::NewerVersion)
+        );
 
         // A v1 prefix around a body declaring a newer version (with fields
         // this version doesn't know).
@@ -434,10 +528,17 @@ mod tests {
             version: u16,
             something_new: String,
         }
-        let mut payload = canonical_dag_cbor(&Future { version: 2, something_new: "x".to_string() }).unwrap();
+        let mut payload = canonical_dag_cbor(&Future {
+            version: 2,
+            something_new: "x".to_string(),
+        })
+        .unwrap();
         let checksum = Sha256::digest(&payload);
         payload.extend_from_slice(&checksum[..CHECKSUM_LEN]);
-        let text = format!("{JOIN_CODE_PREFIX}{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload));
+        let text = format!(
+            "{JOIN_CODE_PREFIX}{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload)
+        );
         assert_eq!(decode_join_code(&text), Err(JoinCodeError::NewerVersion));
     }
 
@@ -448,7 +549,10 @@ mod tests {
         let mut payload = canonical_dag_cbor(&code).unwrap();
         let checksum = Sha256::digest(&payload);
         payload.extend_from_slice(&checksum[..CHECKSUM_LEN]);
-        let text = format!("{JOIN_CODE_PREFIX}{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload));
+        let text = format!(
+            "{JOIN_CODE_PREFIX}{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload)
+        );
         assert_eq!(decode_join_code(&text), Err(JoinCodeError::Malformed));
 
         let mut bad_cid = sample_code();
@@ -461,7 +565,11 @@ mod tests {
 
     #[test]
     fn inviter_name_limit_below_at_and_above() {
-        for (length, ok) in [(MAX_JOIN_NAME_CHARS - 1, true), (MAX_JOIN_NAME_CHARS, true), (MAX_JOIN_NAME_CHARS + 1, false)] {
+        for (length, ok) in [
+            (MAX_JOIN_NAME_CHARS - 1, true),
+            (MAX_JOIN_NAME_CHARS, true),
+            (MAX_JOIN_NAME_CHARS + 1, false),
+        ] {
             let mut code = sample_code();
             code.inviter_name = "é".repeat(length);
             assert_eq!(encode_join_code(&code).is_ok(), ok, "length {length}");
@@ -470,7 +578,11 @@ mod tests {
 
     #[test]
     fn connector_count_limit_below_at_and_above() {
-        for (count, ok) in [(MAX_JOIN_CONNECTORS - 1, true), (MAX_JOIN_CONNECTORS, true), (MAX_JOIN_CONNECTORS + 1, false)] {
+        for (count, ok) in [
+            (MAX_JOIN_CONNECTORS - 1, true),
+            (MAX_JOIN_CONNECTORS, true),
+            (MAX_JOIN_CONNECTORS + 1, false),
+        ] {
             let mut code = sample_code();
             code.connectors = vec![code.connectors[0].clone(); count];
             let result = encode_join_code(&code);
@@ -486,9 +598,21 @@ mod tests {
     #[test]
     fn connector_field_limits_below_at_and_above() {
         let cases: [FieldCase; 3] = [
-            (MAX_JOIN_CONNECTOR_KIND_BYTES, |c, n| c.kind = "k".repeat(n), "connector kind"),
-            (MAX_JOIN_CONNECTOR_CONFIG_BYTES, |c, n| c.config_json = "c".repeat(n), "connector config"),
-            (MAX_JOIN_CONNECTOR_SECRETS_BYTES, |c, n| c.secrets_json = Some("s".repeat(n)), "connector secrets"),
+            (
+                MAX_JOIN_CONNECTOR_KIND_BYTES,
+                |c, n| c.kind = "k".repeat(n),
+                "connector kind",
+            ),
+            (
+                MAX_JOIN_CONNECTOR_CONFIG_BYTES,
+                |c, n| c.config_json = "c".repeat(n),
+                "connector config",
+            ),
+            (
+                MAX_JOIN_CONNECTOR_SECRETS_BYTES,
+                |c, n| c.secrets_json = Some("s".repeat(n)),
+                "connector secrets",
+            ),
         ];
         for (limit, set, name) in cases {
             for (length, ok) in [(limit - 1, true), (limit, true), (limit + 1, false)] {
@@ -509,7 +633,10 @@ mod tests {
         assert_eq!(decode_join_code(&too_long), Err(JoinCodeError::TooLong));
         // At the limit the length check passes and decoding proceeds (and
         // fails for an unrelated reason).
-        let at_limit = format!("{JOIN_CODE_PREFIX}{}", "A".repeat(MAX_JOIN_CODE_CHARS - JOIN_CODE_PREFIX.len()));
+        let at_limit = format!(
+            "{JOIN_CODE_PREFIX}{}",
+            "A".repeat(MAX_JOIN_CODE_CHARS - JOIN_CODE_PREFIX.len())
+        );
         assert_ne!(decode_join_code(&at_limit), Err(JoinCodeError::TooLong));
         // Whitespace doesn't count toward the limit.
         let text = encode_join_code(&sample_code()).unwrap();
@@ -538,9 +665,18 @@ mod tests {
     #[test]
     fn derived_invite_keys_are_distinct_and_deterministic() {
         let secret = [9u8; INVITE_SECRET_LEN];
-        assert_eq!(invite_ed25519_signing_key(&secret).to_bytes(), invite_ed25519_signing_key(&secret).to_bytes());
-        assert_ne!(invite_ed25519_signing_key(&secret).to_bytes(), invite_x25519_secret(&secret).to_bytes());
-        assert_ne!(invite_ed25519_signing_key(&secret).to_bytes(), invite_ed25519_signing_key(&[8u8; 32]).to_bytes());
+        assert_eq!(
+            invite_ed25519_signing_key(&secret).to_bytes(),
+            invite_ed25519_signing_key(&secret).to_bytes()
+        );
+        assert_ne!(
+            invite_ed25519_signing_key(&secret).to_bytes(),
+            invite_x25519_secret(&secret).to_bytes()
+        );
+        assert_ne!(
+            invite_ed25519_signing_key(&secret).to_bytes(),
+            invite_ed25519_signing_key(&[8u8; 32]).to_bytes()
+        );
     }
 
     fn sample_redemption(invitation_cid: String, device_key: &SigningKey) -> InvitationRedemption {
@@ -559,27 +695,45 @@ mod tests {
         let invite_key = invite_ed25519_signing_key(&[1u8; 32]);
         let device_key = SigningKey::from_bytes(&[2u8; 32]);
         let redemption = sample_redemption(compute_cid(b"invitation"), &device_key);
-        let signed = sign_invitation_redemption(&invite_key, &device_key, redemption.clone()).unwrap();
+        let signed =
+            sign_invitation_redemption(&invite_key, &device_key, redemption.clone()).unwrap();
         verify_invitation_redemption(&invite_key.verifying_key(), &signed).unwrap();
 
         // Wrong invite key (someone without the code).
         let other_invite = invite_ed25519_signing_key(&[3u8; 32]);
-        assert_eq!(verify_invitation_redemption(&other_invite.verifying_key(), &signed), Err(EnvelopeError::SignatureInvalid));
-        let forged = sign_invitation_redemption(&other_invite, &device_key, redemption.clone()).unwrap();
-        assert_eq!(verify_invitation_redemption(&invite_key.verifying_key(), &forged), Err(EnvelopeError::SignatureInvalid));
+        assert_eq!(
+            verify_invitation_redemption(&other_invite.verifying_key(), &signed),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+        let forged =
+            sign_invitation_redemption(&other_invite, &device_key, redemption.clone()).unwrap();
+        assert_eq!(
+            verify_invitation_redemption(&invite_key.verifying_key(), &forged),
+            Err(EnvelopeError::SignatureInvalid)
+        );
 
         // A device signature from a key other than the embedded one.
         let impostor = SigningKey::from_bytes(&[4u8; 32]);
-        let mismatched = sign_invitation_redemption(&invite_key, &impostor, redemption.clone()).unwrap();
-        assert_eq!(verify_invitation_redemption(&invite_key.verifying_key(), &mismatched), Err(EnvelopeError::SignatureInvalid));
+        let mismatched =
+            sign_invitation_redemption(&invite_key, &impostor, redemption.clone()).unwrap();
+        assert_eq!(
+            verify_invitation_redemption(&invite_key.verifying_key(), &mismatched),
+            Err(EnvelopeError::SignatureInvalid)
+        );
 
         // Any tampered field fails.
         let mut tampered = signed.clone();
         tampered.redemption.device_name = "Someone else".to_string();
-        assert_eq!(verify_invitation_redemption(&invite_key.verifying_key(), &tampered), Err(EnvelopeError::SignatureInvalid));
+        assert_eq!(
+            verify_invitation_redemption(&invite_key.verifying_key(), &tampered),
+            Err(EnvelopeError::SignatureInvalid)
+        );
         let mut swapped = signed;
         swapped.invite_signature = swapped.device_signature;
-        assert_eq!(verify_invitation_redemption(&invite_key.verifying_key(), &swapped), Err(EnvelopeError::SignatureInvalid));
+        assert_eq!(
+            verify_invitation_redemption(&invite_key.verifying_key(), &swapped),
+            Err(EnvelopeError::SignatureInvalid)
+        );
     }
 
     #[test]
@@ -622,8 +776,14 @@ mod tests {
         verify_invitation(&inviter.verifying_key(), &signed).unwrap();
         let mut tampered = signed.clone();
         tampered.invitation.expires_at_ms = 30;
-        assert_eq!(verify_invitation(&inviter.verifying_key(), &tampered), Err(EnvelopeError::SignatureInvalid));
-        assert!(verify_invitation(&SigningKey::from_bytes(&[9u8; 32]).verifying_key(), &signed).is_err());
+        assert_eq!(
+            verify_invitation(&inviter.verifying_key(), &tampered),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+        assert!(
+            verify_invitation(&SigningKey::from_bytes(&[9u8; 32]).verifying_key(), &signed)
+                .is_err()
+        );
     }
 
     #[test]

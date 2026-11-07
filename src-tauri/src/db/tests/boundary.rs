@@ -23,8 +23,17 @@ fn persistence_stays_inside_the_db_module() {
     for root in ["lib.rs", "main.rs"] {
         walk(&src, &src.join(root), &mut found);
     }
-    for expected in ["lib.rs", "correspondence.rs", "replicated_sync.rs", "provider/imap/mod.rs", "commands/accounts.rs"] {
-        assert!(found.contains_key(expected), "the module walk never reached {expected}");
+    for expected in [
+        "lib.rs",
+        "correspondence.rs",
+        "replicated_sync.rs",
+        "provider/imap/mod.rs",
+        "commands/accounts.rs",
+    ] {
+        assert!(
+            found.contains_key(expected),
+            "the module walk never reached {expected}"
+        );
     }
     let problems: Vec<String> = found
         .iter()
@@ -36,7 +45,11 @@ fn persistence_stays_inside_the_db_module() {
             )
         })
         .collect();
-    assert!(problems.is_empty(), "Persistence code outside db/:\n{}", problems.join("\n"));
+    assert!(
+        problems.is_empty(),
+        "Persistence code outside db/:\n{}",
+        problems.join("\n")
+    );
 }
 
 #[test]
@@ -54,7 +67,13 @@ fn the_scan_ignores_comments_and_counts_sql_in_every_literal_form() {
         let escaped = "UPDATE drafts SET body = \"x\" WHERE id = ?1";
         use rusqlite::params;
     "####;
-    assert_eq!(scan(source).0, Counts { sql: 3, rusqlite: 1 });
+    assert_eq!(
+        scan(source).0,
+        Counts {
+            sql: 3,
+            rusqlite: 1
+        }
+    );
 }
 
 #[test]
@@ -74,30 +93,53 @@ fn the_scan_skips_test_items_and_finds_production_modules() {
         fn production() { let sql = "SELECT id FROM drafts"; }
     "####;
     let (counts, modules) = scan(source);
-    assert_eq!(counts, Counts { sql: 1, rusqlite: 0 });
+    assert_eq!(
+        counts,
+        Counts {
+            sql: 1,
+            rusqlite: 0
+        }
+    );
     assert_eq!(
         modules,
-        vec![("kept".to_string(), None), ("renamed".to_string(), Some("elsewhere/named.rs".to_string()))]
+        vec![
+            ("kept".to_string(), None),
+            (
+                "renamed".to_string(),
+                Some("elsewhere/named.rs".to_string())
+            )
+        ]
     );
 }
 
 /// Scans `file` and every production module it declares, recording counts
 /// for each file outside `db/` and `schema.rs`.
 fn walk(src: &Path, file: &Path, found: &mut BTreeMap<String, Counts>) {
-    let relative = file.strip_prefix(src).unwrap().to_string_lossy().replace('\\', "/");
+    let relative = file
+        .strip_prefix(src)
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
     if relative == "db.rs" || relative.starts_with("db/") || relative == "schema.rs" {
         return;
     }
-    let source = std::fs::read_to_string(file).unwrap_or_else(|error| panic!("cannot read {}: {error}", file.display()));
+    let source = std::fs::read_to_string(file)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", file.display()));
     let (counts, modules) = scan(&source);
     found.insert(relative, counts);
     let directory = file.parent().unwrap();
     let stem = file.file_stem().unwrap().to_string_lossy();
-    let children = if matches!(stem.as_ref(), "lib" | "main" | "mod") { directory.to_path_buf() } else { directory.join(stem.as_ref()) };
+    let children = if matches!(stem.as_ref(), "lib" | "main" | "mod") {
+        directory.to_path_buf()
+    } else {
+        directory.join(stem.as_ref())
+    };
     for (name, path) in modules {
         let child: PathBuf = match path {
             Some(path) => directory.join(path),
-            None if children.join(format!("{name}.rs")).exists() => children.join(format!("{name}.rs")),
+            None if children.join(format!("{name}.rs")).exists() => {
+                children.join(format!("{name}.rs"))
+            }
             None => children.join(&name).join("mod.rs"),
         };
         walk(src, &child, found);
@@ -136,7 +178,9 @@ fn tokenize(source: &str) -> (String, Vec<String>) {
         } else if let Some(hashes) = raw_string_hashes(rest) {
             let open = 2 + hashes;
             let close = format!("\"{}", "#".repeat(hashes));
-            let end = rest[open..].find(&close).map_or(rest.len(), |end| open + end);
+            let end = rest[open..]
+                .find(&close)
+                .map_or(rest.len(), |end| open + end);
             literals.push(rest[open..end].to_string());
             i += (end + close.len()).min(rest.len());
             code.push(LITERAL);
@@ -150,7 +194,11 @@ fn tokenize(source: &str) -> (String, Vec<String>) {
             code.push(LITERAL);
         } else if rest.starts_with("'\\") && rest.len() > 3 {
             i += rest[3..].find('\'').map_or(rest.len(), |end| end + 4);
-        } else if rest.starts_with('\'') && rest.len() >= 3 && rest.is_char_boundary(2) && rest[2..].starts_with('\'') {
+        } else if rest.starts_with('\'')
+            && rest.len() >= 3
+            && rest.is_char_boundary(2)
+            && rest[2..].starts_with('\'')
+        {
             // A one-byte char literal such as '"' or '{'.
             i += 3;
         } else {
@@ -215,21 +263,35 @@ fn file_modules(code: &str, literals: &[String]) -> Vec<(String, Option<String>)
     while let Some(offset) = code[search..].find("mod ") {
         let start = search + offset;
         search = start + 4;
-        let at_word_start = code[..start].chars().last().is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+        let at_word_start = code[..start]
+            .chars()
+            .last()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
         let rest = &code[start + 4..];
-        let name: String = rest.trim_start().chars().take_while(|ch| ch.is_alphanumeric() || *ch == '_').collect();
+        let name: String = rest
+            .trim_start()
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+            .collect();
         let after = rest.trim_start()[name.len()..].trim_start();
         if !at_word_start || name.is_empty() || !after.starts_with(';') {
             continue;
         }
         // A `#[path = "..."]` attribute directly before this declaration.
         let before = code[..start].trim_end();
-        let before = before.strip_suffix("pub(crate)").or_else(|| before.strip_suffix("pub")).unwrap_or(before).trim_end();
+        let before = before
+            .strip_suffix("pub(crate)")
+            .or_else(|| before.strip_suffix("pub"))
+            .unwrap_or(before)
+            .trim_end();
         let path = before.strip_suffix(']').and_then(|head| {
             let attribute = &head[head.rfind("#[")?..];
             let compact: String = attribute.chars().filter(|ch| !ch.is_whitespace()).collect();
             (compact == format!("#[path={LITERAL}")).then(|| {
-                let index = code[..start].rfind(LITERAL).map(|at| code[..at].matches(LITERAL).count()).unwrap();
+                let index = code[..start]
+                    .rfind(LITERAL)
+                    .map(|at| code[..at].matches(LITERAL).count())
+                    .unwrap();
                 literals[index].clone()
             })
         });
@@ -257,7 +319,17 @@ fn is_sql(text: &str) -> bool {
         "UPDATE" => words.contains(&"SET"),
         "DELETE" => second == "FROM",
         "CREATE" | "DROP" => {
-            matches!(second, "TABLE" | "INDEX" | "UNIQUE" | "TRIGGER" | "VIEW" | "TEMP" | "TEMPORARY" | "VIRTUAL")
+            matches!(
+                second,
+                "TABLE"
+                    | "INDEX"
+                    | "UNIQUE"
+                    | "TRIGGER"
+                    | "VIEW"
+                    | "TEMP"
+                    | "TEMPORARY"
+                    | "VIRTUAL"
+            )
         }
         "ALTER" => second == "TABLE",
         "WITH" => words.contains(&"AS"),

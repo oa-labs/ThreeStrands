@@ -15,7 +15,9 @@ pub(crate) type PendingRedemption = (String, String, String, Vec<u8>, Vec<u8>, S
 type RedemptionInvitation = (String, Option<Vec<u8>>, String);
 
 pub(crate) fn rfc3339_from_ms(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms).map(|time| time.to_rfc3339()).unwrap_or_default()
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|time| time.to_rfc3339())
+        .unwrap_or_default()
 }
 
 /// One redemption of a join code, as stored. Named fields keep the IDs and
@@ -40,9 +42,12 @@ impl Database {
         self.ensure_self_device_name(&device_id)?;
         let label: Option<String> = self
             .connection()?
-            .query_row("SELECT label FROM sync_device_labels WHERE device_id=?1", params![device_id], |row| row.get(0))
-            .optional()
-            ?;
+            .query_row(
+                "SELECT label FROM sync_device_labels WHERE device_id=?1",
+                params![device_id],
+                |row| row.get(0),
+            )
+            .optional()?;
         Ok(label
             .unwrap_or_else(default_device_name)
             .chars()
@@ -75,10 +80,8 @@ impl Database {
                     redeemed_by_name: row.get(5)?,
                     rejected_attempts: row.get(6)?,
                 })
-            })
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -114,10 +117,8 @@ impl Database {
                     inviter_name: row.get(5)?,
                     at: rfc3339_from_ms(row.get(6)?),
                 })
-            })
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -143,7 +144,10 @@ impl Database {
             )
             .optional()
             ?;
-        Ok(name.map(|name| name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| "another device".to_string())))
+        Ok(name.map(|name| {
+            name.filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| "another device".to_string())
+        }))
     }
 
     // ---- Invitations ----
@@ -206,7 +210,10 @@ impl Database {
     }
 
     /// An invitation's direction, invite key, and inviter, if known here.
-    pub(crate) fn invitation_for_redemption(&self, invitation_cid: &str) -> DbResult<Option<RedemptionInvitation>> {
+    pub(crate) fn invitation_for_redemption(
+        &self,
+        invitation_cid: &str,
+    ) -> DbResult<Option<RedemptionInvitation>> {
         Ok(self
             .connection()?
             .query_row(
@@ -217,7 +224,10 @@ impl Database {
             .optional()?)
     }
 
-    pub(crate) fn invitation_status_and_expiry(&self, invitation_cid: &str) -> DbResult<(String, i64)> {
+    pub(crate) fn invitation_status_and_expiry(
+        &self,
+        invitation_cid: &str,
+    ) -> DbResult<(String, i64)> {
         Ok(self.connection()?.query_row(
             "SELECT status, expires_at_ms FROM replicated_sync_invitations WHERE invitation_cid=?1",
             params![invitation_cid],
@@ -241,7 +251,9 @@ impl Database {
             "SELECT invitation_cid FROM replicated_sync_invitations
              WHERE direction='outgoing' AND status='open' AND expires_at_ms < ?1",
         )?;
-        let rows = statement.query_map(params![now_ms], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
+        let rows = statement
+            .query_map(params![now_ms], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -252,7 +264,9 @@ impl Database {
             "SELECT invitation_cid FROM replicated_sync_invitations
              WHERE direction='outgoing' AND status='redeemed' AND object_deleted=0 AND expires_at_ms < ?1",
         )?;
-        let rows = statement.query_map(params![now_ms], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
+        let rows = statement
+            .query_map(params![now_ms], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -328,13 +342,27 @@ impl Database {
              ORDER BY r.created_at_ms, r.redemption_cid",
         )?;
         let rows = statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))?
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
     /// Marks a code redeemed by `device_id` and its redemption admitted.
-    pub(crate) fn admit_redemption(&self, invitation_cid: &str, device_id: &str, redemption_cid: &str) -> DbResult<()> {
+    pub(crate) fn admit_redemption(
+        &self,
+        invitation_cid: &str,
+        device_id: &str,
+        redemption_cid: &str,
+    ) -> DbResult<()> {
         let connection = self.connection()?;
         connection.execute(
             "UPDATE replicated_sync_invitations SET status='redeemed', redeemed_by_device_id=?2, redemption_cid=?3

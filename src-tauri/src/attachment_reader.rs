@@ -42,7 +42,9 @@ impl ReaderCache {
             .file_name()
             .and_then(|name| name.to_str())
             .filter(|name| *name == filename)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid attachment filename"))?;
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "invalid attachment filename")
+            })?;
 
         let _guard = self
             .maintenance
@@ -189,7 +191,10 @@ mod tests {
     }
 
     fn test_root(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("threestrands-reader-{name}-{}", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!(
+            "threestrands-reader-{name}-{}",
+            uuid::Uuid::new_v4()
+        ))
     }
 
     fn add_entry(root: &Path, name: &str, bytes: usize) -> PathBuf {

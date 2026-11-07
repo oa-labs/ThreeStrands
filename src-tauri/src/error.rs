@@ -152,7 +152,10 @@ mod tests {
 
         let provider: AppError = ProviderError::InvalidCursor.into();
         assert!(matches!(provider, AppError::Provider(_)));
-        assert_eq!(provider.to_string(), "the sync cursor is invalid or expired");
+        assert_eq!(
+            provider.to_string(),
+            "the sync cursor is invalid or expired"
+        );
 
         let transport: AppError = TransportError::NotFound.into();
         assert!(matches!(transport, AppError::Transport(_)));
@@ -161,8 +164,14 @@ mod tests {
         // can tell "try again" (EpochChanged) from a rejected credential,
         // while Settings still shows the same sentence as before.
         let enrollment: AppError = EnrollmentError::EpochChanged.into();
-        assert!(matches!(enrollment, AppError::Enrollment(EnrollmentError::EpochChanged)));
-        assert_eq!(enrollment.to_string(), String::from(EnrollmentError::EpochChanged));
+        assert!(matches!(
+            enrollment,
+            AppError::Enrollment(EnrollmentError::EpochChanged)
+        ));
+        assert_eq!(
+            enrollment.to_string(),
+            String::from(EnrollmentError::EpochChanged)
+        );
     }
 
     #[test]
@@ -180,10 +189,8 @@ mod tests {
         // byte-identical to what the pre-AppError command returned.
         let domain = DatabaseError::Validation("message too long".into());
         let via_old_shim: String = domain.to_string();
-        let via_app_error: String = AppError::Database(DatabaseError::Validation(
-            "message too long".into(),
-        ))
-        .into();
+        let via_app_error: String =
+            AppError::Database(DatabaseError::Validation("message too long".into())).into();
         assert_eq!(via_old_shim, via_app_error);
     }
 }

@@ -131,7 +131,10 @@ mod tests {
         .unwrap();
         // Omitted, not serialized as null, so a shared-password account
         // never records an empty SMTP secret.
-        assert!(!encoded.contains("smtp"), "expected no smtp key, got: {encoded}");
+        assert!(
+            !encoded.contains("smtp"),
+            "expected no smtp key, got: {encoded}"
+        );
         let StoredCredential::ImapPassword(decoded) = StoredCredential::decode(&encoded).unwrap()
         else {
             panic!("expected an ImapPassword credential");

@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::Path};
 use uuid::Uuid;
 
-use super::mime::{addresses, attribution_date, build_mime, forward_attachments, header, plain_text_html, reference_ids};
+use super::mime::{
+    addresses, attribution_date, build_mime, forward_attachments, header, plain_text_html,
+    reference_ids,
+};
 use super::{error, UNDO_MS};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,10 +147,24 @@ pub enum Request {
     ListOutbox,
     ListScheduledSummaries,
     SchedulingInfo,
-    ScheduleChoices { local_time: String, time_zone: String },
-    Schedule { id: String, revision: i64, selection: crate::scheduled_send::Selection },
-    Reschedule { id: String, revision: i64, selection: crate::scheduled_send::Selection },
-    SendScheduledNow { id: String, revision: i64 },
+    ScheduleChoices {
+        local_time: String,
+        time_zone: String,
+    },
+    Schedule {
+        id: String,
+        revision: i64,
+        selection: crate::scheduled_send::Selection,
+    },
+    Reschedule {
+        id: String,
+        revision: i64,
+        selection: crate::scheduled_send::Selection,
+    },
+    SendScheduledNow {
+        id: String,
+        revision: i64,
+    },
     Create {
         mode: String,
         source_id: Option<String>,
@@ -284,7 +301,13 @@ impl Database {
             server_draft: None,
         };
         if mode == "new" {
-            if let Some(identity) = identities.iter().skip(1).find(|identity| identity.is_default) { d.from = Some(identity.address.clone()); }
+            if let Some(identity) = identities
+                .iter()
+                .skip(1)
+                .find(|identity| identity.is_default)
+            {
+                d.from = Some(identity.address.clone());
+            }
         }
         if mode != "new" {
             let source_id = source_id.ok_or("Select a source message")?;
@@ -333,10 +356,19 @@ impl Database {
                     delivered_to: header(part, "Delivered-To").to_string(),
                     x_original_to: header(part, "X-Original-To").to_string(),
                 };
-                let own_sender = addresses(from).ok().and_then(|senders| {
-                    (senders.len() == 1).then(|| senders[0].1.to_ascii_lowercase())
-                }).and_then(|sender| identities.iter().position(|identity| crate::provider::imap::identity_normalized(identity) == sender));
-                let chosen = own_sender.unwrap_or_else(|| crate::provider::imap::choose_reply_identity(identities, &headers));
+                let own_sender = addresses(from)
+                    .ok()
+                    .and_then(|senders| {
+                        (senders.len() == 1).then(|| senders[0].1.to_ascii_lowercase())
+                    })
+                    .and_then(|sender| {
+                        identities.iter().position(|identity| {
+                            crate::provider::imap::identity_normalized(identity) == sender
+                        })
+                    });
+                let chosen = own_sender.unwrap_or_else(|| {
+                    crate::provider::imap::choose_reply_identity(identities, &headers)
+                });
                 if chosen != 0 {
                     d.from = Some(identities[chosen].address.clone());
                 }
@@ -366,7 +398,11 @@ impl Database {
                 } else {
                     d.body = String::new();
                     d.forwarded_content = Some(ForwardedContent {
-                        html: format!("<div>{}</div>{}", plain_text_html(&attribution), normalized.body_html),
+                        html: format!(
+                            "<div>{}</div>{}",
+                            plain_text_html(&attribution),
+                            normalized.body_html
+                        ),
                         text: format!("{attribution}{quote}"),
                     });
                 }
@@ -516,10 +552,19 @@ impl Database {
             crate::signatures::utf16_byte_offset(&draft.body_html, signature.html_offset)?;
             crate::signatures::utf16_byte_offset(&draft.body, signature.text_offset)?;
             // A per-message edit always opts out of automatic From switching.
-            if old.signature.as_ref().is_some_and(|old| old.html != signature.html || old.text != signature.text) { signature.automatic = false; }
+            if old
+                .signature
+                .as_ref()
+                .is_some_and(|old| old.html != signature.html || old.text != signature.text)
+            {
+                signature.automatic = false;
+            }
         }
         // Only editable fields cross the trust boundary; routing and file locators are native-owned.
-        let forwarded_edit_len = draft.forwarded_edit.as_ref().map_or(0, |edit| edit.html.len() + edit.text.len());
+        let forwarded_edit_len = draft
+            .forwarded_edit
+            .as_ref()
+            .map_or(0, |edit| edit.html.len() + edit.text.len());
         if draft.body.len() + draft.body_html.len() + forwarded_edit_len > 2 * 1024 * 1024
             || draft.subject.len() > 998
             || draft.to.len() + draft.cc.len() + draft.bcc.len() > 32000
@@ -566,7 +611,12 @@ impl Database {
         // that is not on the new account's identity list and `queue` later
         // rejects it with "no longer on this account". Clear it so the new
         // account starts from its own configured default identity.
-        d.from = self.account_sending_identities(account)?.into_iter().skip(1).find(|identity| identity.is_default).map(|identity| identity.address);
+        d.from = self
+            .account_sending_identities(account)?
+            .into_iter()
+            .skip(1)
+            .find(|identity| identity.is_default)
+            .map(|identity| identity.address);
         self.replace_automatic_signature(&mut d)?;
         let expected = d.revision;
         d.revision += 1;
@@ -595,8 +645,7 @@ impl Database {
             // No address, or an explicit null -> primary identity.
             None => None,
             Some(address) => {
-                let normalized =
-                    crate::provider::imap::normalize_identity_address(address);
+                let normalized = crate::provider::imap::normalize_identity_address(address);
                 let matched = identities.iter().find(|identity| {
                     crate::provider::imap::identity_normalized(identity) == normalized
                 });

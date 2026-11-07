@@ -27,15 +27,21 @@ pub fn stored_addresses(value: &str) -> Vec<(String, String)> {
     if value.contains(['\r', '\n']) {
         return vec![];
     }
-    let (name, address) = match value.strip_suffix('>').and_then(|rest| rest.rsplit_once('<')) {
+    let (name, address) = match value
+        .strip_suffix('>')
+        .and_then(|rest| rest.rsplit_once('<'))
+    {
         Some((name, address)) => (name.trim().trim_matches('"').trim(), address.trim()),
         None => ("", value),
     };
-    let valid = address
-        .rsplit_once('@')
-        .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.') && !domain.starts_with('.'))
-        && !address.contains([' ', '\t', '<', '>', ',', '"']);
-    if valid { vec![(name.to_string(), address.to_string())] } else { vec![] }
+    let valid = address.rsplit_once('@').is_some_and(|(local, domain)| {
+        !local.is_empty() && domain.contains('.') && !domain.starts_with('.')
+    }) && !address.contains([' ', '\t', '<', '>', ',', '"']);
+    if valid {
+        vec![(name.to_string(), address.to_string())]
+    } else {
+        vec![]
+    }
 }
 
 pub fn addresses(value: &str) -> Result<Vec<(String, String)>, String> {
@@ -107,20 +113,30 @@ pub(super) fn plain_text_html(text: &str) -> String {
         .replace('\n', "<br>")
 }
 
-pub(super) fn forward_attachments(source: &RawMessage, normalized: &crate::mime::NormalizedMessage) -> Result<Vec<Attachment>, String> {
-    normalized.attachments.iter().map(|attachment| {
-        Ok(Attachment {
-            id: Uuid::new_v4().to_string(),
-            name: attachment.filename.clone(),
-            size: attachment.size,
-            mime: attachment.mime_type.clone(),
-            ready: false,
-            message_id: Some(source.id.clone()),
-            provider_id: crate::mime::provider_attachment_id_from_payload(source, &attachment.id)?,
-            inline: attachment.inline,
-            content_id: attachment.content_id.clone(),
+pub(super) fn forward_attachments(
+    source: &RawMessage,
+    normalized: &crate::mime::NormalizedMessage,
+) -> Result<Vec<Attachment>, String> {
+    normalized
+        .attachments
+        .iter()
+        .map(|attachment| {
+            Ok(Attachment {
+                id: Uuid::new_v4().to_string(),
+                name: attachment.filename.clone(),
+                size: attachment.size,
+                mime: attachment.mime_type.clone(),
+                ready: false,
+                message_id: Some(source.id.clone()),
+                provider_id: crate::mime::provider_attachment_id_from_payload(
+                    source,
+                    &attachment.id,
+                )?,
+                inline: attachment.inline,
+                content_id: attachment.content_id.clone(),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 pub(crate) fn build_mime(
@@ -131,7 +147,15 @@ pub(crate) fn build_mime(
     id: &str,
     root: &Path,
 ) -> Result<Vec<u8>, String> {
-    build_message(d, identities, account_display_name, message_id_domain, id, root, true)
+    build_message(
+        d,
+        identities,
+        account_display_name,
+        message_id_domain,
+        id,
+        root,
+        true,
+    )
 }
 
 /// The server copy of a draft: the message exactly as it would be sent, but
@@ -146,7 +170,15 @@ pub(crate) fn build_draft_mime(
     root: &Path,
 ) -> Result<Vec<u8>, String> {
     let id = crate::draft_push::server_message_local_part(&d.id);
-    build_message(d, identities, account_display_name, message_id_domain, &id, root, false)
+    build_message(
+        d,
+        identities,
+        account_display_name,
+        message_id_domain,
+        &id,
+        root,
+        false,
+    )
 }
 
 fn build_message(
@@ -179,20 +211,19 @@ fn build_message(
     // the account's own address a valid From.
     let account_identity = [crate::provider::SendingIdentity {
         address: d.account.clone(),
-        display_name: None, ..Default::default() }];
+        display_name: None,
+        ..Default::default()
+    }];
     let identities: &[crate::provider::SendingIdentity] = if identities.is_empty() {
         &account_identity
     } else {
         identities
     };
     let from_address = d.sender_address();
-    let from_normalized =
-        crate::provider::imap::normalize_identity_address(from_address);
-    let matched = identities
-        .iter()
-        .find(|identity| {
-            crate::provider::imap::normalize_identity_address(&identity.address) == from_normalized
-        });
+    let from_normalized = crate::provider::imap::normalize_identity_address(from_address);
+    let matched = identities.iter().find(|identity| {
+        crate::provider::imap::normalize_identity_address(&identity.address) == from_normalized
+    });
     // A `from` explicitly set to an address that is NOT one of the account's
     // identities (a stale identity removed from settings) must fail CLEARLY,
     // never silently send as another address. When `from` is unset the From is
@@ -245,10 +276,14 @@ fn build_message(
     } else {
         builder.from(from_address.to_string())
     };
-    let builder = if let Some(reply_to) = matched.and_then(|identity| identity.reply_to.as_deref()) {
-        crate::provider::imap::validate_envelope_address(reply_to).map_err(|error| error.to_string())?;
+    let builder = if let Some(reply_to) = matched.and_then(|identity| identity.reply_to.as_deref())
+    {
+        crate::provider::imap::validate_envelope_address(reply_to)
+            .map_err(|error| error.to_string())?;
         builder.reply_to(reply_to.to_string())
-    } else { builder };
+    } else {
+        builder
+    };
     let mut body = d.body.clone();
     let mut body_html = d.body_html.clone();
     let mut signature_images = Vec::new();
@@ -257,20 +292,43 @@ fn build_message(
         if !signature.html.is_empty() {
             let (html, images) = crate::signatures::embed_images(&signature.html, id)?;
             signature_images = images;
-            body = crate::signatures::insert_signature(&body, signature.text_offset, &signature.text, false)?;
+            body = crate::signatures::insert_signature(
+                &body,
+                signature.text_offset,
+                &signature.text,
+                false,
+            )?;
             if body_html.is_empty() {
                 // Native-created drafts have no authored HTML yet. The native
                 // signature boundary starts at zero, above their reply history.
                 let byte = crate::signatures::utf16_byte_offset(&d.body, signature.text_offset)?;
                 let prefix = plain_text_html(&d.body[..byte]);
                 let suffix = plain_text_html(&d.body[byte..]);
-                body_html = format!("{prefix}{}{html}{}{suffix}", if byte > 0 { "<br><br>" } else { "" }, if byte < d.body.len() && !d.body[byte..].starts_with("\n\n") { "<br><br>" } else { "" });
+                body_html = format!(
+                    "{prefix}{}{html}{}{suffix}",
+                    if byte > 0 { "<br><br>" } else { "" },
+                    if byte < d.body.len() && !d.body[byte..].starts_with("\n\n") {
+                        "<br><br>"
+                    } else {
+                        ""
+                    }
+                );
             } else {
-                body_html = crate::signatures::insert_signature(&body_html, signature.html_offset, &html, true)?;
+                body_html = crate::signatures::insert_signature(
+                    &body_html,
+                    signature.html_offset,
+                    &html,
+                    true,
+                )?;
             }
         }
     }
-    if let Some(forwarded) = d.forwarded_edit.as_ref().filter(|_| d.forwarded_content.is_some()).or(d.forwarded_content.as_ref()) {
+    if let Some(forwarded) = d
+        .forwarded_edit
+        .as_ref()
+        .filter(|_| d.forwarded_content.is_some())
+        .or(d.forwarded_content.as_ref())
+    {
         body.push_str(&format!("\n\n{}", forwarded.text));
         if body_html.trim().is_empty() {
             body_html = plain_text_html(&d.body);

@@ -34,9 +34,9 @@
 //! synthetic response, ready for the day the trait is backed by `imap-next`
 //! (which exposes attributes) — the swap stays local to the session impl.
 
-use super::identity::IdentityInputs;
 #[cfg(test)]
 use super::identity::derive_message_id;
+use super::identity::IdentityInputs;
 use super::policy;
 use super::session::{flag_to_wire, ImapSession};
 use super::ImapStateStore;
@@ -75,17 +75,26 @@ pub(super) fn server_labels(fetch: &async_imap::types::Fetch) -> Option<Vec<Stri
     fetch.gmail_labels().map(|labels| {
         // imap-proto retains quoted-string escapes. Decode only the two IMAP
         // quoted specials; atom system labels such as \Inbox stay untouched.
-        let mut labels: Vec<String> = labels.iter().map(|label| {
-            let mut chars = label.chars().peekable();
-            let mut out = String::new();
-            while let Some(ch) = chars.next() {
-                if ch == '\\' && chars.peek().is_some_and(|ch| matches!(ch, '\\' | '"')) {
-                    if let Some(escaped) = chars.next() { out.push(escaped); }
-                } else { out.push(ch); }
-            }
-            out
-        }).collect();
-        labels.sort(); labels.dedup(); labels
+        let mut labels: Vec<String> = labels
+            .iter()
+            .map(|label| {
+                let mut chars = label.chars().peekable();
+                let mut out = String::new();
+                while let Some(ch) = chars.next() {
+                    if ch == '\\' && chars.peek().is_some_and(|ch| matches!(ch, '\\' | '"')) {
+                        if let Some(escaped) = chars.next() {
+                            out.push(escaped);
+                        }
+                    } else {
+                        out.push(ch);
+                    }
+                }
+                out
+            })
+            .collect();
+        labels.sort();
+        labels.dedup();
+        labels
     })
 }
 
@@ -165,7 +174,12 @@ pub async fn fetch_identity(
         let header_block = fetch.header().unwrap_or_default();
         let mut inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
         inputs.gmail_message_id = fetch.gmail_msg_id().copied();
-        rows.push(IdentityRow { uid, flags, inputs, labels: server_labels(fetch) });
+        rows.push(IdentityRow {
+            uid,
+            flags,
+            inputs,
+            labels: server_labels(fetch),
+        });
     }
     Ok(rows)
 }
@@ -191,7 +205,15 @@ pub async fn fetch_identity_index(
         let mut inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
         inputs.gmail_message_id = fetch.gmail_msg_id().copied();
         let threading = parse_threading_headers(header_block);
-        rows.push((IdentityRow { uid, flags, inputs, labels: server_labels(fetch) }, threading));
+        rows.push((
+            IdentityRow {
+                uid,
+                flags,
+                inputs,
+                labels: server_labels(fetch),
+            },
+            threading,
+        ));
     }
     Ok(rows)
 }
@@ -458,7 +480,14 @@ mod tests {
     fn the_index_identity_pass_carries_the_threading_headers() {
         // The index-tier pass adds IN-REPLY-TO and REFERENCES to the identity
         // quad so a body-less mailbox still threads from headers.
-        for field in ["MESSAGE-ID", "IN-REPLY-TO", "REFERENCES", "DATE", "FROM", "SUBJECT"] {
+        for field in [
+            "MESSAGE-ID",
+            "IN-REPLY-TO",
+            "REFERENCES",
+            "DATE",
+            "FROM",
+            "SUBJECT",
+        ] {
             assert!(
                 INDEX_IDENTITY_ITEMS.contains(field),
                 "{field} must be in the index identity pass"
@@ -480,8 +509,14 @@ mod tests {
         // SLICE5A_FIXES item 3: the per-poll flag sweep must not re-fetch
         // bodies or headers — FLAGS_ITEMS carries no BODY whatsoever.
         assert_eq!(FLAGS_ITEMS, "(UID FLAGS)");
-        assert!(!FLAGS_ITEMS.contains("BODY"), "the flag sweep item has no BODY");
-        assert!(!FLAGS_ITEMS.contains("RFC822"), "and no RFC822.SIZE / headers");
+        assert!(
+            !FLAGS_ITEMS.contains("BODY"),
+            "the flag sweep item has no BODY"
+        );
+        assert!(
+            !FLAGS_ITEMS.contains("RFC822"),
+            "and no RFC822.SIZE / headers"
+        );
     }
 
     #[test]
@@ -654,9 +689,10 @@ mod tests {
             let mut row = row(7, "<size@example.com>");
             row.inputs.rfc822_size = size as u32;
             let id = derive_message_id(store.account_id(), &row.inputs);
-            let resolved = resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1)
-                .await
-                .unwrap();
+            let resolved =
+                resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1)
+                    .await
+                    .unwrap();
             if size > policy::MAX_RAW_MESSAGE_BYTES {
                 assert!(resolved.body_skipped);
                 assert_eq!(fetcher.fetches, 0);
@@ -714,9 +750,10 @@ mod tests {
         for advertised in [0, 10] {
             let mut row = row(7, "<size@example.com>");
             row.inputs.rfc822_size = advertised;
-            let resolved = resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1)
-                .await
-                .unwrap();
+            let resolved =
+                resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1)
+                    .await
+                    .unwrap();
             assert!(resolved.body_skipped);
             assert_eq!(cache.total_size().unwrap(), 0);
         }
@@ -764,17 +801,10 @@ mod tests {
         };
         let mut sneaky = row(8, "<sneaky@x>");
         sneaky.inputs.rfc822_size = 10; // lies
-        let resolved = resolve_and_cache_body(
-            &mut understated,
-            &store,
-            &cache,
-            "INBOX",
-            1,
-            &sneaky,
-            1,
-        )
-        .await
-        .unwrap();
+        let resolved =
+            resolve_and_cache_body(&mut understated, &store, &cache, "INBOX", 1, &sneaky, 1)
+                .await
+                .unwrap();
         assert!(resolved.body_skipped, "understated oversize is skipped");
         assert_eq!(understated.fetches, 1, "the body was fetched then rejected");
         assert!(!cache.contains(&resolved.message_id).unwrap());
@@ -790,7 +820,10 @@ mod tests {
         struct EmptyFetcher;
         #[async_trait]
         impl BodyFetcher for EmptyFetcher {
-            async fn fetch_raw_body(&mut self, _uid: u32) -> Result<Option<Vec<u8>>, ProviderError> {
+            async fn fetch_raw_body(
+                &mut self,
+                _uid: u32,
+            ) -> Result<Option<Vec<u8>>, ProviderError> {
                 Ok(None)
             }
         }
@@ -813,7 +846,10 @@ mod tests {
         struct FailingFetcher;
         #[async_trait]
         impl BodyFetcher for FailingFetcher {
-            async fn fetch_raw_body(&mut self, _uid: u32) -> Result<Option<Vec<u8>>, ProviderError> {
+            async fn fetch_raw_body(
+                &mut self,
+                _uid: u32,
+            ) -> Result<Option<Vec<u8>>, ProviderError> {
                 Err(ProviderError::TransientTransport("dropped".into()))
             }
         }
@@ -832,14 +868,27 @@ mod tests {
         #[async_trait]
         impl BodyFetcher for RejectedFetcher {
             async fn fetch_raw_body(&mut self, _: u32) -> Result<Option<Vec<u8>>, ProviderError> {
-                Err(ProviderError::PermanentClientRejection("server refused fetch".into()))
+                Err(ProviderError::PermanentClientRejection(
+                    "server refused fetch".into(),
+                ))
             }
         }
         let store = store();
         let cache = BodyCache::new(store.clone());
-        let result = resolve_and_cache_body(&mut RejectedFetcher, &store, &cache,
-            "INBOX", 1, &row(9, "<x@x>"), 1).await;
-        assert!(matches!(result, Err(ProviderError::PermanentClientRejection(_))));
+        let result = resolve_and_cache_body(
+            &mut RejectedFetcher,
+            &store,
+            &cache,
+            "INBOX",
+            1,
+            &row(9, "<x@x>"),
+            1,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(ProviderError::PermanentClientRejection(_))
+        ));
         assert_eq!(cache.total_size().unwrap(), 0);
     }
 
@@ -1085,10 +1134,16 @@ mod tests {
                     let mut fetcher = SessionBodyFetcher {
                         session: &mut session,
                     };
-                    let id =
-                        resolve_and_record(&mut fetcher, &store, &cache, mailbox, uidvalidity, &row)
-                            .await
-                            .message_id;
+                    let id = resolve_and_record(
+                        &mut fetcher,
+                        &store,
+                        &cache,
+                        mailbox,
+                        uidvalidity,
+                        &row,
+                    )
+                    .await
+                    .message_id;
                     ids.insert(id);
                 }
             }

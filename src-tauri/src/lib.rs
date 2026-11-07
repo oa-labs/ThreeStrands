@@ -1,25 +1,18 @@
-mod clock;
-mod transport_validation;
-mod ai;
 mod agents;
+mod ai;
 mod app_update;
-mod availability;
-mod proposed_times;
 mod attachment_reader;
-mod file_preview;
-mod attachment_text;
 mod attachment_security;
+mod attachment_text;
 mod auth;
+mod availability;
 mod backoff;
 mod calendar;
 mod calendar_files;
+mod clock;
 mod commands;
-mod correspondence;
-mod signatures;
-mod gmail_signatures;
-mod scheduled_send;
 mod contact_interchange;
-mod system_contacts;
+mod correspondence;
 mod credentials;
 mod db;
 mod default_apps;
@@ -29,6 +22,8 @@ mod endpoint_origin;
 mod enrollment;
 mod error;
 mod error_text;
+mod file_preview;
+mod gmail_signatures;
 mod http_client;
 mod image_format;
 mod image_proxy;
@@ -37,6 +32,11 @@ mod launch_args;
 mod limits;
 mod mail_links;
 mod models;
+mod proposed_times;
+mod scheduled_send;
+mod signatures;
+mod system_contacts;
+mod transport_validation;
 // Mail parsing and text handling live in their own crates; these keep `crate::mime::…` and the
 // other module paths the app already uses.
 use threestrands_mail_mime::{html_plain_text, mime, sender_trust};
@@ -50,9 +50,9 @@ mod sync;
 mod sync_connectors;
 mod sync_folder;
 mod sync_policy;
+mod sync_projection;
 #[cfg(test)]
 mod sync_sim;
-mod sync_projection;
 mod system_fonts;
 mod transfer;
 #[path = "unsubscribe.rs"]
@@ -295,7 +295,9 @@ mod database_task_tests {
                     .filter(|pair| pair[0].trim() == "#[tauri::command]")
                     .filter_map(|pair| {
                         let item = pair[1].trim();
-                        item.strip_prefix("pub(crate) ").unwrap_or(item).strip_prefix("fn ")
+                        item.strip_prefix("pub(crate) ")
+                            .unwrap_or(item)
+                            .strip_prefix("fn ")
                     })
                     .filter_map(|rest| rest.split('(').next())
                     .map(str::to_string),
@@ -308,7 +310,10 @@ mod database_task_tests {
             .iter()
             .filter(|name| !synchronous.iter().any(|found| found == *name))
             .collect();
-        assert!(missed.is_empty(), "the scan no longer finds these commands: {missed:?}");
+        assert!(
+            missed.is_empty(),
+            "the scan no longer finds these commands: {missed:?}"
+        );
 
         let unexpected: Vec<&String> = synchronous
             .iter()
@@ -324,7 +329,11 @@ mod database_task_tests {
 #[cfg(test)]
 mod account_startup_tests {
     use super::{catalogued_mail_provider, startup_account_credentials};
-    use crate::{auth::{self, AuthConfig}, db::Database, models::MailProviderKind};
+    use crate::{
+        auth::{self, AuthConfig},
+        db::Database,
+        models::MailProviderKind,
+    };
 
     #[test]
     fn a_fresh_install_starts_with_the_gmail_placeholder() {
@@ -338,8 +347,12 @@ mod account_startup_tests {
     #[test]
     fn catalogued_accounts_start_through_their_recorded_provider() {
         let database = Database::open_memory();
-        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
-        database.adopt_mail_account("home@example.com", MailProviderKind::Gmail).unwrap();
+        database
+            .adopt_mail_account("work@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        database
+            .adopt_mail_account("home@example.com", MailProviderKind::Gmail)
+            .unwrap();
         let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
         let started = credentials
             .iter()
@@ -348,8 +361,16 @@ mod account_startup_tests {
         assert_eq!(
             started,
             [
-                ("work@example.com", "work@example.com".to_string(), MailProviderKind::Gmail),
-                ("home@example.com", "home@example.com".to_string(), MailProviderKind::Gmail),
+                (
+                    "work@example.com",
+                    "work@example.com".to_string(),
+                    MailProviderKind::Gmail
+                ),
+                (
+                    "home@example.com",
+                    "home@example.com".to_string(),
+                    MailProviderKind::Gmail
+                ),
             ]
         );
     }
@@ -358,7 +379,9 @@ mod account_startup_tests {
     fn nothing_starts_without_a_configured_oauth_app() {
         let database = Database::open_memory();
         assert!(startup_account_credentials(&database, &AuthConfig::default()).is_empty());
-        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
+        database
+            .adopt_mail_account("work@example.com", MailProviderKind::Gmail)
+            .unwrap();
         assert!(startup_account_credentials(&database, &AuthConfig::default()).is_empty());
     }
 
@@ -372,11 +395,16 @@ mod account_startup_tests {
     #[test]
     fn an_imap_account_now_enters_the_startup_registry() {
         let database = Database::open_memory();
-        database.adopt_mail_account("imap@example.com", MailProviderKind::Imap).unwrap();
+        database
+            .adopt_mail_account("imap@example.com", MailProviderKind::Imap)
+            .unwrap();
 
         for config in [AuthConfig::default(), AuthConfig::google_for_test()] {
             let credentials = startup_account_credentials(&database, &config);
-            let keys = credentials.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+            let keys = credentials
+                .iter()
+                .map(|(key, _)| key.as_str())
+                .collect::<Vec<_>>();
             assert_eq!(keys, ["imap@example.com"], "IMAP accounts now start");
             assert_eq!(credentials[0].1.mail_provider(), MailProviderKind::Imap);
         }
@@ -390,14 +418,27 @@ mod account_startup_tests {
     #[test]
     fn an_account_not_set_up_on_this_device_stays_out_of_the_startup_registry() {
         let database = Database::open_memory();
-        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
-        database.adopt_mail_account("personal@example.com", MailProviderKind::Imap).unwrap();
-        database.disconnect_account_locally("personal@example.com").unwrap();
+        database
+            .adopt_mail_account("work@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        database
+            .adopt_mail_account("personal@example.com", MailProviderKind::Imap)
+            .unwrap();
+        database
+            .disconnect_account_locally("personal@example.com")
+            .unwrap();
 
         let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
-        let keys = credentials.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+        let keys = credentials
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>();
         assert_eq!(keys, ["work@example.com"]);
-        assert_eq!(database.list_accounts().unwrap().len(), 2, "it stays in the catalog");
+        assert_eq!(
+            database.list_accounts().unwrap().len(),
+            2,
+            "it stays in the catalog"
+        );
         assert_eq!(database.primary_account_id(), "work@example.com");
     }
 
@@ -407,8 +448,12 @@ mod account_startup_tests {
     #[test]
     fn an_imap_primary_provider_starts_alongside_gmail() {
         let database = Database::open_memory();
-        database.adopt_mail_account("imap@example.com", MailProviderKind::Imap).unwrap();
-        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
+        database
+            .adopt_mail_account("imap@example.com", MailProviderKind::Imap)
+            .unwrap();
+        database
+            .adopt_mail_account("work@example.com", MailProviderKind::Gmail)
+            .unwrap();
 
         assert_eq!(database.primary_account_id(), "imap@example.com");
         let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
@@ -431,8 +476,12 @@ mod account_startup_tests {
     #[test]
     fn an_account_with_an_unsupported_provider_is_skipped_without_blocking_others() {
         let database = Database::open_memory();
-        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
-        database.adopt_mail_account("future@example.com", MailProviderKind::Gmail).unwrap();
+        database
+            .adopt_mail_account("work@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        database
+            .adopt_mail_account("future@example.com", MailProviderKind::Gmail)
+            .unwrap();
         database
             .test_with_connection(|connection| {
                 connection.execute(
@@ -443,7 +492,10 @@ mod account_startup_tests {
             })
             .unwrap();
         let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
-        let keys = credentials.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+        let keys = credentials
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>();
         assert_eq!(keys, ["work@example.com"]);
         assert!(catalogued_mail_provider(&database, "future@example.com")
             .unwrap_err()
@@ -468,7 +520,10 @@ mod background_failure_tests {
     #[test]
     fn log_failure_passes_through_success_and_absorbs_errors() {
         assert_eq!(log_failure("test step", Ok::<_, String>(7)), Some(7));
-        assert_eq!(log_failure("test step", Err::<u8, _>("boom".to_string())), None);
+        assert_eq!(
+            log_failure("test step", Err::<u8, _>("boom".to_string())),
+            None
+        );
     }
 
     #[test]
@@ -487,7 +542,10 @@ mod background_failure_tests {
     #[test]
     fn full_resync_after_recovery_clears_every_accounts_cursor() {
         let database = Database::open_memory();
-        for (email, cursor) in [("work@example.com", "work-cursor"), ("personal@example.com", "personal-cursor")] {
+        for (email, cursor) in [
+            ("work@example.com", "work-cursor"),
+            ("personal@example.com", "personal-cursor"),
+        ] {
             database.adopt_account(email).unwrap();
             database.finish_sync(email, cursor).unwrap();
             assert_eq!(database.cursor(email).unwrap().as_deref(), Some(cursor));
@@ -687,7 +745,11 @@ mod mail_sync_activity_event_tests {
     #[test]
     fn serializes_the_shape_the_frontend_listens_for() {
         assert_eq!(
-            serde_json::to_value(MailSyncActivityEvent { account_id: "a@example.com", active: true }).unwrap(),
+            serde_json::to_value(MailSyncActivityEvent {
+                account_id: "a@example.com",
+                active: true
+            })
+            .unwrap(),
             serde_json::json!({ "accountId": "a@example.com", "active": true })
         );
     }
@@ -725,7 +787,10 @@ mod combined_sync_status_tests {
         }];
         let merged = merge_sync_statuses(
             vec![
-                ("first@example.com".into(), status(Some("2026-09-18T12:00:00Z"), None, 0, None)),
+                (
+                    "first@example.com".into(),
+                    status(Some("2026-09-18T12:00:00Z"), None, 0, None),
+                ),
                 ("second@example.com".into(), failing),
             ],
             vec![],
@@ -792,7 +857,9 @@ fn combined_sync_status(database: &Database) -> AppResult<SyncStatus> {
         return database_result(database.sync_status(auth::LEGACY_KEY));
     }
     // Accounts not set up on this device have nothing to sync here.
-    let accounts = accounts.into_iter().filter(|account| account.on_this_device);
+    let accounts = accounts
+        .into_iter()
+        .filter(|account| account.on_this_device);
     let mut statuses = Vec::new();
     let mut errors = Vec::new();
     for account in accounts {
@@ -818,7 +885,10 @@ fn spawn_synced_account(
 ) -> ConnectedAccount {
     let activity = app.state::<sync::SyncActivity>().inner().clone();
     let service = SyncService::new(database, auth.clone()).with_activity(activity);
-    service.set_foreground(app.get_webview_window("main").is_some_and(|window| window.is_focused().unwrap_or(false)));
+    service.set_foreground(
+        app.get_webview_window("main")
+            .is_some_and(|window| window.is_focused().unwrap_or(false)),
+    );
     let polling_service = service.clone();
     let poll_task = tauri::async_runtime::spawn(async move {
         polling_service
@@ -870,7 +940,9 @@ fn spawn_pending_flush(handle: &tauri::AppHandle) {
 }
 
 fn update_mail_foreground(handle: &tauri::AppHandle) {
-    let foreground = handle.get_webview_window("main").is_some_and(|window| window.is_focused().unwrap_or(false));
+    let foreground = handle
+        .get_webview_window("main")
+        .is_some_and(|window| window.is_focused().unwrap_or(false));
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
         if let Some(state) = handle.try_state::<AppState>() {
@@ -900,12 +972,27 @@ fn spawn_foreground_sync(handle: &tauri::AppHandle) {
 fn reconcile_account_registry(handle: &tauri::AppHandle) {
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
-        let Some(state) = handle.try_state::<AppState>() else { return; };
-        let catalog = state.database.list_accounts().unwrap_or_default().into_iter().map(|account| account.email).collect::<HashSet<_>>();
+        let Some(state) = handle.try_state::<AppState>() else {
+            return;
+        };
+        let catalog = state
+            .database
+            .list_accounts()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|account| account.email)
+            .collect::<HashSet<_>>();
         let removed = {
             let mut accounts = state.accounts.lock().await;
-            let emails = accounts.keys().filter(|email| *email != auth::LEGACY_KEY && !catalog.contains(*email)).cloned().collect::<Vec<_>>();
-            emails.into_iter().filter_map(|email| accounts.remove(&email)).collect::<Vec<_>>()
+            let emails = accounts
+                .keys()
+                .filter(|email| *email != auth::LEGACY_KEY && !catalog.contains(*email))
+                .cloned()
+                .collect::<Vec<_>>();
+            emails
+                .into_iter()
+                .filter_map(|email| accounts.remove(&email))
+                .collect::<Vec<_>>()
         };
         // The deletion already purged local data, so also stop runs started
         // outside the polling loop before they write any more of it back.
@@ -994,7 +1081,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     launch_args::deliver(
         app.handle(),
-        &std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+        &std::env::args_os()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
         &std::env::current_dir().unwrap_or_default(),
     );
     let data_dir = app
@@ -1004,24 +1093,35 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&data_dir)?;
     restrict_dir_to_owner(&data_dir);
     ai::diagnostics::initialize(data_dir.join("ai-diagnostics.json"));
-    let (opened_database, recovery) =
-        db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
+    let (opened_database, recovery) = db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
     let database = Arc::new(opened_database);
     let usage_database = database.clone();
     ai::set_usage_recorder(Arc::new(move |event| {
         let day = chrono::Local::now().format("%Y-%m-%d").to_string();
-        if let Err(error) = usage_database.record_ai_usage(&day, event.provider.id(), &event.model, event.input_tokens, event.output_tokens, event.cost_usd) {
+        if let Err(error) = usage_database.record_ai_usage(
+            &day,
+            event.provider.id(),
+            &event.model,
+            event.input_tokens,
+            event.output_tokens,
+            event.cost_usd,
+        ) {
             log::warn!(target: "ai_provider", "could not record AI usage: {error}");
         }
         let to_i64 = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
-        let purpose = event.purpose.clone().unwrap_or_else(|| ai::RequestPurpose::new("other"));
+        let purpose = event
+            .purpose
+            .clone()
+            .unwrap_or_else(|| ai::RequestPurpose::new("other"));
         let entry = models::AiActivity {
             at: chrono::Utc::now().to_rfc3339(),
             feature: purpose.feature.to_string(),
             provider: event.provider.id().to_string(),
             model: event.model.clone(),
             subject: purpose.subject,
-            message_count: purpose.message_count.map(|count| i64::try_from(count).unwrap_or(i64::MAX)),
+            message_count: purpose
+                .message_count
+                .map(|count| i64::try_from(count).unwrap_or(i64::MAX)),
             input_tokens: to_i64(event.input_tokens),
             output_tokens: to_i64(event.output_tokens),
         };
@@ -1040,13 +1140,15 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Managed before any account's sync service is built, since each one
     // reports to it.
     let activity_handle = app.handle().clone();
-    app.manage(sync::SyncActivity::with_listener(move |account_id, active| {
-        use tauri::Emitter;
-        let _ = activity_handle.emit(
-            "mail-sync-activity",
-            MailSyncActivityEvent { account_id, active },
-        );
-    }));
+    app.manage(sync::SyncActivity::with_listener(
+        move |account_id, active| {
+            use tauri::Emitter;
+            let _ = activity_handle.emit(
+                "mail-sync-activity",
+                MailSyncActivityEvent { account_id, active },
+            );
+        },
+    ));
     spawn_badge_loop(database.clone(), app.handle().clone());
     system_contacts::spawn(database.clone(), app.handle().clone());
     spawn_snooze_loop(database.clone(), app.handle().clone());
@@ -1074,7 +1176,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(move |event: draft_push::DraftEvent| {
                 use tauri::Emitter;
                 let _ = match event {
-                    draft_push::DraftEvent::Status(status) => handle.emit("draft-server-status", status),
+                    draft_push::DraftEvent::Status(status) => {
+                        handle.emit("draft-server-status", status)
+                    }
                     draft_push::DraftEvent::ListChanged => handle.emit("drafts-changed", ()),
                 };
             })
@@ -1085,12 +1189,17 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let worker = correspondence.clone();
     tauri::async_runtime::spawn(async move {
         if worker.is_connected().await {
-            log_failure("refreshing account identity", worker.refresh_identity_if_unknown().await);
+            log_failure(
+                "refreshing account identity",
+                worker.refresh_identity_if_unknown().await,
+            );
         }
         worker.run().await;
     });
     let replicated_sync = replicated_sync::ReplicatedSync::new(database.clone());
-    replicated_sync.clone().spawn(app.handle().clone(), reconcile_account_registry);
+    replicated_sync
+        .clone()
+        .spawn(app.handle().clone(), reconcile_account_registry);
     let agent_runner = agents::Runner::new(database.clone());
     agent_runner.start();
     app.manage(AppState {
@@ -1135,8 +1244,7 @@ fn spawn_badge_loop(database: Arc<Database>, handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             let badge_database = database.clone();
-            if let Ok(count) =
-                run_database_task(move || badge_database.count_unread_inbox()).await
+            if let Ok(count) = run_database_task(move || badge_database.count_unread_inbox()).await
             {
                 if let Some(window) = handle.get_webview_window("main") {
                     let _ = window.set_badge_count((count > 0).then_some(count));
@@ -1170,7 +1278,8 @@ fn spawn_snooze_loop(database: Arc<Database>, handle: tauri::AppHandle) {
 }
 
 const FIRST_STORAGE_MAINTENANCE_DELAY: std::time::Duration = std::time::Duration::from_secs(3 * 60);
-const STORAGE_MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+const STORAGE_MAINTENANCE_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(6 * 60 * 60);
 /// Pause between storage backfill batches so they don't starve the database
 /// mutex that normal sync and read operations also need.
 const BACKFILL_BATCH_PAUSE: std::time::Duration = std::time::Duration::from_millis(200);
@@ -1182,12 +1291,11 @@ const BACKFILL_BATCH_PAUSE: std::time::Duration = std::time::Duration::from_mill
 fn spawn_storage_maintenance(database: Arc<Database>) {
     tauri::async_runtime::spawn(async move {
         let upgrade_db = database.clone();
-        let needs_upgrade =
-            tokio::task::spawn_blocking(move || upgrade_db.needs_vacuum_upgrade())
-                .await
-                .ok()
-                .and_then(|result| log_failure("checking auto-vacuum mode", result))
-                .unwrap_or(false);
+        let needs_upgrade = tokio::task::spawn_blocking(move || upgrade_db.needs_vacuum_upgrade())
+            .await
+            .ok()
+            .and_then(|result| log_failure("checking auto-vacuum mode", result))
+            .unwrap_or(false);
         if needs_upgrade {
             let upgrade_db = database.clone();
             if let Ok(result) =
@@ -1198,9 +1306,15 @@ fn spawn_storage_maintenance(database: Arc<Database>) {
         }
         loop {
             let backfill_db = database.clone();
-            let indexed = tokio::task::spawn_blocking(move || backfill_db.backfill_co_recipients(200))
-                .await.ok().and_then(|result| log_failure("indexing co-recipients", result)).unwrap_or(0);
-            if indexed == 0 { break; }
+            let indexed =
+                tokio::task::spawn_blocking(move || backfill_db.backfill_co_recipients(200))
+                    .await
+                    .ok()
+                    .and_then(|result| log_failure("indexing co-recipients", result))
+                    .unwrap_or(0);
+            if indexed == 0 {
+                break;
+            }
             tokio::time::sleep(BACKFILL_BATCH_PAUSE).await;
         }
         // One-time backfill: compress any message bodies left over from
@@ -1270,7 +1384,10 @@ fn run_storage_maintenance(database: &Database) -> Vec<&'static str> {
             failed.push(name);
         }
     };
-    step("pruning expired threads", database.prune_expired_threads().map(|_| ()));
+    step(
+        "pruning expired threads",
+        database.prune_expired_threads().map(|_| ()),
+    );
     step(
         "pruning orphaned message metadata",
         database.prune_orphaned_message_metadata().map(|_| ()),
@@ -1280,7 +1397,10 @@ fn run_storage_maintenance(database: &Database) -> Vec<&'static str> {
     // reflects the latest writes without carrying an ever-growing WAL of its
     // own.
     step("checkpointing the WAL", database.checkpoint_wal());
-    step("creating the periodic backup", database.create_periodic_backup());
+    step(
+        "creating the periodic backup",
+        database.create_periodic_backup(),
+    );
     failed
 }
 
@@ -1312,8 +1432,8 @@ fn startup_account_credentials(
     database: &Database,
     auth_config: &AuthConfig,
 ) -> Vec<(String, AccountAuth)> {
-    let catalog = log_failure("listing accounts at startup", database.list_accounts())
-        .unwrap_or_default();
+    let catalog =
+        log_failure("listing accounts at startup", database.list_accounts()).unwrap_or_default();
     if catalog.is_empty() {
         return auth_config
             .mail_account(MailProviderKind::Gmail, auth::LEGACY_KEY)
@@ -1362,8 +1482,12 @@ fn startup_account_credentials(
 fn catalogued_mail_provider(database: &Database, email: &str) -> Result<MailProviderKind, String> {
     match database.get_account(email)? {
         None => Ok(MailProviderKind::Gmail),
-        Some(account) => MailProviderKind::parse(&account.provider)
-            .ok_or_else(|| format!("{email} uses an unsupported mail provider: {}", account.provider)),
+        Some(account) => MailProviderKind::parse(&account.provider).ok_or_else(|| {
+            format!(
+                "{email} uses an unsupported mail provider: {}",
+                account.provider
+            )
+        }),
     }
 }
 
@@ -1566,8 +1690,13 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::settings::delete_split_inbox,
         commands::settings::reorder_split_inboxes,
         commands::mail::list_split_inbox_page,
-        commands::settings::signature_library, commands::settings::save_signature, commands::settings::delete_signature, commands::settings::save_signature_defaults, commands::settings::delete_signature_defaults,
-        gmail_signatures::list_gmail_signatures, gmail_signatures::import_gmail_signature,
+        commands::settings::signature_library,
+        commands::settings::save_signature,
+        commands::settings::delete_signature,
+        commands::settings::save_signature_defaults,
+        commands::settings::delete_signature_defaults,
+        gmail_signatures::list_gmail_signatures,
+        gmail_signatures::import_gmail_signature,
         commands::settings::list_snippets,
         commands::settings::create_snippet,
         commands::settings::update_snippet,
@@ -1688,10 +1817,13 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
         tauri::RunEvent::Resumed => {
             update_mail_foreground(handle);
             if let Some(state) = handle.try_state::<AppState>() {
-                log_failure("recovering scheduled sends after wake", state.correspondence.resume_schedules());
+                log_failure(
+                    "recovering scheduled sends after wake",
+                    state.correspondence.resume_schedules(),
+                );
             }
             spawn_foreground_sync(handle);
-        },
+        }
         // macOS opens `mailto:` links and `.ics` files here when ThreeStrands
         // handles them (Info.plist declares both), including the one that
         // launched it. Windows and Linux pass them as arguments; see
@@ -1713,7 +1845,10 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
         tauri::RunEvent::Exit => {
             if let Some(state) = handle.try_state::<AppState>() {
                 state.agent_runner.request_stop();
-                log_failure("checkpointing the WAL at exit", state.database.checkpoint_on_exit());
+                log_failure(
+                    "checkpointing the WAL at exit",
+                    state.database.checkpoint_on_exit(),
+                );
             }
         }
         _ => {}

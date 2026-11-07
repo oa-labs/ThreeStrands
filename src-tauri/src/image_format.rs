@@ -69,11 +69,18 @@ pub(crate) fn validate_raster_with_limit(bytes: &[u8], max_bytes: usize) -> Resu
     validate_raster_dimensions(dimensions.width, dimensions.height)
 }
 
-pub(crate) fn validate_contact_photo(bytes:&[u8])->Result<(),String>{
-    if bytes.len()>MAX_CONTACT_PHOTO_BYTES{return Err("Contact photo must be 64 KiB or smaller".into())}
-    if !bytes.starts_with(&[0xff,0xd8,0xff]){return Err("Contact photos must be JPEG images".into())}
-    let dimensions=imagesize::blob_size(bytes).map_err(|_|"Unable to verify contact photo dimensions")?;
-    if dimensions.width>160||dimensions.height>160{return Err("Contact photos must be 160 × 160 pixels or smaller".into())}
+pub(crate) fn validate_contact_photo(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() > MAX_CONTACT_PHOTO_BYTES {
+        return Err("Contact photo must be 64 KiB or smaller".into());
+    }
+    if !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Err("Contact photos must be JPEG images".into());
+    }
+    let dimensions =
+        imagesize::blob_size(bytes).map_err(|_| "Unable to verify contact photo dimensions")?;
+    if dimensions.width > 160 || dimensions.height > 160 {
+        return Err("Contact photos must be 160 × 160 pixels or smaller".into());
+    }
     validate_raster(bytes)
 }
 
@@ -120,7 +127,12 @@ mod tests {
         for mime_type in ["", "application/octet-stream", "binary/octet-stream"] {
             assert!(is_generic_binary_mime(mime_type), "{mime_type}");
         }
-        for mime_type in ["image/svg+xml", "text/html", "text/plain", "application/xml"] {
+        for mime_type in [
+            "image/svg+xml",
+            "text/html",
+            "text/plain",
+            "application/xml",
+        ] {
             assert!(!is_generic_binary_mime(mime_type), "{mime_type}");
         }
     }
@@ -177,15 +189,24 @@ mod tests {
             "Image exceeds the maximum allowed size"
         );
         assert_eq!(
-            validate_raster_with_limit(&vec![0; MAX_REMOTE_IMAGE_BYTES + 1], MAX_REMOTE_IMAGE_BYTES)
-                .unwrap_err(),
+            validate_raster_with_limit(
+                &vec![0; MAX_REMOTE_IMAGE_BYTES + 1],
+                MAX_REMOTE_IMAGE_BYTES
+            )
+            .unwrap_err(),
             "Image exceeds the maximum allowed size"
         );
     }
 
     #[test]
     fn contact_photos_require_small_jpeg_rasters() {
-        assert_eq!(validate_contact_photo(&[0x89,0x50,0x4e,0x47]).unwrap_err(),"Contact photos must be JPEG images");
-        assert_eq!(validate_contact_photo(&vec![0xff;MAX_CONTACT_PHOTO_BYTES+1]).unwrap_err(),"Contact photo must be 64 KiB or smaller");
+        assert_eq!(
+            validate_contact_photo(&[0x89, 0x50, 0x4e, 0x47]).unwrap_err(),
+            "Contact photos must be JPEG images"
+        );
+        assert_eq!(
+            validate_contact_photo(&vec![0xff; MAX_CONTACT_PHOTO_BYTES + 1]).unwrap_err(),
+            "Contact photo must be 64 KiB or smaller"
+        );
     }
 }

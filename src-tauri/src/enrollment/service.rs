@@ -8,25 +8,30 @@ use chrono::Utc;
 use serde::Serialize;
 use serde_bytes::ByteBuf;
 use threestrands_sync_envelope::{
-    compute_cid, decode_signed_enrollment_grant, decode_signed_enrollment_rejection, decode_signed_enrollment_request,
-    decode_signed_key_rotation, encode_signed_enrollment_grant, encode_signed_enrollment_rejection, encode_signed_enrollment_request,
+    compute_cid, decode_signed_enrollment_grant, decode_signed_enrollment_rejection,
+    decode_signed_enrollment_request, decode_signed_key_rotation, encode_signed_enrollment_grant,
+    encode_signed_enrollment_rejection, encode_signed_enrollment_request,
     encode_signed_key_rotation, enrollment_fingerprint, generate_recovery_seed,
     recovery_ed25519_signing_key, recovery_phrase_from_seed, recovery_seed_from_phrase,
-    recovery_x25519_secret, seal_to_x25519, sign_enrollment_grant, sign_enrollment_rejection, sign_enrollment_request,
-    sign_key_rotation, try_open_sealed_box, verify_enrollment_grant, verify_enrollment_rejection, verify_enrollment_request,
-    verify_key_rotation, EnrollmentGrant, EnrollmentRequest,
-    EnrollmentRejection, KeyRotation, RequestId, RosterEntry, SignedEnrollmentGrant, SignedEnrollmentRequest,
-    SignedKeyRotation, VerifyingKey, X25519PublicKey,
+    recovery_x25519_secret, seal_to_x25519, sign_enrollment_grant, sign_enrollment_rejection,
+    sign_enrollment_request, sign_key_rotation, try_open_sealed_box, verify_enrollment_grant,
+    verify_enrollment_rejection, verify_enrollment_request, verify_key_rotation, EnrollmentGrant,
+    EnrollmentRejection, EnrollmentRequest, KeyRotation, RequestId, RosterEntry,
+    SignedEnrollmentGrant, SignedEnrollmentRequest, SignedKeyRotation, VerifyingKey,
+    X25519PublicKey,
 };
 use threestrands_sync_envelope::{protocol_marker_cid, PROTOCOL_MARKER};
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use crate::db::{Database, DatabaseError, DbResult};
-use crate::replicated_sync::{decode_id, encode_id, random_id, x25519_public_bytes, DeviceIdentity, LocalKeys};
+use crate::replicated_sync::{
+    decode_id, encode_id, random_id, x25519_public_bytes, DeviceIdentity, LocalKeys,
+};
 
 use super::crypto::{
-    adopt_epoch_key, is_self_consistent_rotation, open_earlier_epoch_keys, roster_entry_verifying_key, roster_entry_x25519,
-    seal_earlier_epoch_keys, store_earlier_epoch_keys, EpochKeyStore,
+    adopt_epoch_key, is_self_consistent_rotation, open_earlier_epoch_keys,
+    roster_entry_verifying_key, roster_entry_x25519, seal_earlier_epoch_keys,
+    store_earlier_epoch_keys, EpochKeyStore,
 };
 use super::join_codes;
 use super::{EnrollmentError, EnrollmentResult, EnrollmentStatus};
@@ -40,14 +45,23 @@ impl Database {
     /// `key_epoch` with the rotation `incoming_cid`: it initiated the
     /// rotation it holds for that epoch, that rotation's content address is
     /// the greater of the two, and nothing has rotated past the epoch yet.
-    pub(super) fn must_rotate_after_collision(&self, identity: &DeviceIdentity, key_epoch: u32, incoming_cid: &str) -> DbResult<bool> {
+    pub(super) fn must_rotate_after_collision(
+        &self,
+        identity: &DeviceIdentity,
+        key_epoch: u32,
+        incoming_cid: &str,
+    ) -> DbResult<bool> {
         if self.active_epoch()? != key_epoch {
             return Ok(false);
         }
         let own_rotation = self.epoch_source_control_object(key_epoch)?;
-        let Some((own_cid, bytes)) = own_rotation else { return Ok(false) };
-        let initiated_here = decode_signed_key_rotation(&bytes)
-            .is_ok_and(|signed| signed.rotation.initiator_device_id == identity.device_id && signed.rotation.key_epoch == key_epoch);
+        let Some((own_cid, bytes)) = own_rotation else {
+            return Ok(false);
+        };
+        let initiated_here = decode_signed_key_rotation(&bytes).is_ok_and(|signed| {
+            signed.rotation.initiator_device_id == identity.device_id
+                && signed.rotation.key_epoch == key_epoch
+        });
         Ok(initiated_here && own_cid.as_str() > incoming_cid)
     }
 
@@ -73,7 +87,11 @@ impl Database {
 /// just now, and to any connector added later. A control object that never
 /// reaches storage would otherwise be lost silently — a rotation lost that
 /// way leaves every other device without the new epoch's key.
-async fn publish_control_object(database: &Database, transports: &[Arc<dyn SyncTransport>], bytes: &[u8]) -> EnrollmentResult<String> {
+async fn publish_control_object(
+    database: &Database,
+    transports: &[Arc<dyn SyncTransport>],
+    bytes: &[u8],
+) -> EnrollmentResult<String> {
     let cid = compute_cid(bytes);
     database.store_control_object(&cid, bytes)?;
     publish_to_all(transports, bytes).await;
@@ -90,7 +108,6 @@ pub(super) async fn publish_to_all(transports: &[Arc<dyn SyncTransport>], bytes:
     }
     cid
 }
-
 
 // ============================ Genesis and joining ============================
 
@@ -168,7 +185,10 @@ async fn inspect_transport(transport: &dyn SyncTransport) -> TransportSpace {
         for locator in &page.objects {
             match transport.get_object(&locator.cid).await {
                 Ok(bytes) if is_self_consistent_rotation(&bytes) => {
-                    return match transport.get_object(&TransportCid(protocol_marker_cid())).await {
+                    return match transport
+                        .get_object(&TransportCid(protocol_marker_cid()))
+                        .await
+                    {
                         Ok(marker) if marker == PROTOCOL_MARKER => TransportSpace::Current,
                         Err(TransportError::NotFound) => TransportSpace::Legacy,
                         _ => TransportSpace::Unknown,
@@ -183,7 +203,11 @@ async fn inspect_transport(transport: &dyn SyncTransport) -> TransportSpace {
             break;
         }
     }
-    if incomplete { TransportSpace::Unknown } else { TransportSpace::Empty }
+    if incomplete {
+        TransportSpace::Unknown
+    } else {
+        TransportSpace::Empty
+    }
 }
 
 pub(crate) const RECOVERY_INCOMPLETE: &str =
@@ -192,21 +216,31 @@ pub(crate) const RECOVERY_INCOMPLETE: &str =
 /// The newest key epoch any listed, still-active device's verified head
 /// says it's using, on any transport. Heads that can't be fetched or
 /// verified are skipped.
-async fn newest_epoch_in_heads(transports: &[Arc<dyn SyncTransport>], roster: &[RosterEntry]) -> u32 {
+async fn newest_epoch_in_heads(
+    transports: &[Arc<dyn SyncTransport>],
+    roster: &[RosterEntry],
+) -> u32 {
     let locators: Vec<threestrands_sync_transport::HeadLocator> = roster
         .iter()
         .filter(|entry| entry.status == "active")
-        .map(|entry| threestrands_sync_transport::HeadLocator { device_id: entry.device_id, remote_id: None })
+        .map(|entry| threestrands_sync_transport::HeadLocator {
+            device_id: entry.device_id,
+            remote_id: None,
+        })
         .collect();
     let mut newest = 0;
     for transport in transports {
-        let Ok(heads) = transport.resolve_heads(&locators).await else { continue };
+        let Ok(heads) = transport.resolve_heads(&locators).await else {
+            continue;
+        };
         for signed in heads {
             let verified = roster
                 .iter()
                 .find(|entry| entry.device_id == signed.head.device_id)
                 .and_then(|entry| roster_entry_verifying_key(entry).ok())
-                .is_some_and(|key| threestrands_sync_envelope::verify_device_head(&key, &signed).is_ok());
+                .is_some_and(|key| {
+                    threestrands_sync_envelope::verify_device_head(&key, &signed).is_ok()
+                });
             if verified {
                 newest = newest.max(signed.head.epoch);
             }
@@ -241,7 +275,10 @@ pub(crate) async fn protocol_marker_missing(transports: &[Arc<dyn SyncTransport>
 
 /// Stores the protocol marker on every transport now, and records it as a
 /// local object so repair delivers it to any connector added later.
-pub(crate) async fn publish_protocol_marker(database: &Database, transports: &[Arc<dyn SyncTransport>]) -> EnrollmentResult<()> {
+pub(crate) async fn publish_protocol_marker(
+    database: &Database,
+    transports: &[Arc<dyn SyncTransport>],
+) -> EnrollmentResult<()> {
     database.ensure_protocol_marker_object()?;
     let cid = TransportCid(protocol_marker_cid());
     for transport in transports {
@@ -273,7 +310,9 @@ pub async fn begin_genesis(
     require_not_started(database)?;
     match inspect_sync_space(transports).await {
         SyncSpacePresence::Legacy => return Err(EnrollmentError::LegacySpace),
-        SyncSpacePresence::Existing if !allow_existing_space => return Err(EnrollmentError::ExistingSpace),
+        SyncSpacePresence::Existing if !allow_existing_space => {
+            return Err(EnrollmentError::ExistingSpace)
+        }
         _ => {}
     }
     database.set_beta_features_enabled(true)?;
@@ -284,7 +323,9 @@ pub async fn begin_genesis(
     let seed = generate_recovery_seed();
     let phrase = recovery_phrase_from_seed(&seed);
     let recovery_x25519_public = X25519PublicKey::from(&recovery_x25519_secret(&seed)).to_bytes();
-    let recovery_ed25519_public = recovery_ed25519_signing_key(&seed).verifying_key().to_bytes();
+    let recovery_ed25519_public = recovery_ed25519_signing_key(&seed)
+        .verifying_key()
+        .to_bytes();
     database.set_recovery_public_keys(&recovery_ed25519_public, &recovery_x25519_public)?;
 
     let identity_x25519_public = x25519_public_bytes(&identity.x25519_secret);
@@ -323,7 +364,11 @@ pub async fn begin_genesis(
 /// Starts this device as a joiner: bootstraps its own device keys and
 /// publishes a signed enrollment request. Returns the request's fingerprint
 /// for display — the same value an approving device must see and confirm.
-pub async fn publish_enrollment_request(database: &Database, identity: &DeviceIdentity, transports: &[Arc<dyn SyncTransport>]) -> EnrollmentResult<String> {
+pub async fn publish_enrollment_request(
+    database: &Database,
+    identity: &DeviceIdentity,
+    transports: &[Arc<dyn SyncTransport>],
+) -> EnrollmentResult<String> {
     refuse_legacy_space(transports).await?;
     database.set_beta_features_enabled(true)?;
     let x25519_public = x25519_public_bytes(&identity.x25519_secret);
@@ -368,7 +413,12 @@ pub async fn publish_enrollment_request(database: &Database, identity: &DeviceId
 /// Returns whether this device must rotate to resolve an epoch collision
 /// (see [`RotationOutcome::Collision`]); the caller does so once it has
 /// loaded its keys.
-pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, transports: &[Arc<dyn SyncTransport>]) -> EnrollmentResult<bool> {
+pub async fn run_enrollment_sweep(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    transports: &[Arc<dyn SyncTransport>],
+) -> EnrollmentResult<bool> {
     // Objects arrive in content-address order, so a join-code redemption
     // can come before the invitation it names. Those are retried once the
     // whole sweep has run, rather than waiting for the next cycle.
@@ -377,18 +427,32 @@ pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity
     for transport in transports {
         let mut cursor: Option<String> = None;
         loop {
-            let Some(page) = transport.scan(cursor.as_deref()).await? else { break };
+            let Some(page) = transport.scan(cursor.as_deref()).await? else {
+                break;
+            };
             for locator in &page.objects {
                 if database.seen_control_object(&locator.cid.0)? {
                     continue;
                 }
-                let Ok(bytes) = transport.get_object(&locator.cid).await else { continue };
-                match try_apply_control_object(database, identity, epoch_keys, &locator.cid.0, &bytes)? {
-                    ControlObject::Applied => database.mark_control_object_seen(&locator.cid.0, "control")?,
+                let Ok(bytes) = transport.get_object(&locator.cid).await else {
+                    continue;
+                };
+                match try_apply_control_object(
+                    database,
+                    identity,
+                    epoch_keys,
+                    &locator.cid.0,
+                    &bytes,
+                )? {
+                    ControlObject::Applied => {
+                        database.mark_control_object_seen(&locator.cid.0, "control")?
+                    }
                     // Not recognized as a control object at all (most
                     // objects are sealed snapshots) — still mark
                     // seen so we never re-fetch it.
-                    ControlObject::NotControl => database.mark_control_object_seen(&locator.cid.0, "other")?,
+                    ControlObject::NotControl => {
+                        database.mark_control_object_seen(&locator.cid.0, "other")?
+                    }
                     // A join-code redemption whose invitation hasn't
                     // arrived yet: retry after this sweep, and leave it
                     // unseen if it still can't be applied.
@@ -422,7 +486,13 @@ enum ControlObject {
     RotateToResolve,
 }
 
-fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, cid: &str, bytes: &[u8]) -> EnrollmentResult<ControlObject> {
+fn try_apply_control_object(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    cid: &str,
+    bytes: &[u8],
+) -> EnrollmentResult<ControlObject> {
     if let Ok(signed) = decode_signed_enrollment_request(bytes) {
         apply_incoming_request(database, identity, signed)?;
         return Ok(ControlObject::Applied);
@@ -437,29 +507,42 @@ fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoc
         return Ok(ControlObject::Applied);
     }
     if let Ok(signed) = decode_signed_enrollment_rejection(bytes) {
-        return Ok(if apply_incoming_rejection(database, signed)? { ControlObject::Applied } else { ControlObject::RetryLater });
+        return Ok(if apply_incoming_rejection(database, signed)? {
+            ControlObject::Applied
+        } else {
+            ControlObject::RetryLater
+        });
     }
     if let Ok(signed) = decode_signed_key_rotation(bytes) {
-        return Ok(match apply_incoming_rotation(database, identity, epoch_keys, signed, cid)? {
-            RotationOutcome::Done => ControlObject::Applied,
-            RotationOutcome::UnknownInitiator => ControlObject::RetryLater,
-            RotationOutcome::Collision => ControlObject::RotateToResolve,
-        });
+        return Ok(
+            match apply_incoming_rotation(database, identity, epoch_keys, signed, cid)? {
+                RotationOutcome::Done => ControlObject::Applied,
+                RotationOutcome::UnknownInitiator => ControlObject::RetryLater,
+                RotationOutcome::Collision => ControlObject::RotateToResolve,
+            },
+        );
     }
     if let Ok(signed) = threestrands_sync_envelope::decode_signed_invitation(bytes) {
         join_codes::apply_incoming_invitation(database, identity, signed, cid)?;
         return Ok(ControlObject::Applied);
     }
     if let Ok(signed) = threestrands_sync_envelope::decode_signed_invitation_redemption(bytes) {
-        return Ok(match join_codes::apply_incoming_redemption(database, identity, signed, cid, now_ms())? {
-            join_codes::JoinObjectOutcome::Done => ControlObject::Applied,
-            join_codes::JoinObjectOutcome::RetryLater => ControlObject::RetryLater,
-        });
+        return Ok(
+            match join_codes::apply_incoming_redemption(database, identity, signed, cid, now_ms())?
+            {
+                join_codes::JoinObjectOutcome::Done => ControlObject::Applied,
+                join_codes::JoinObjectOutcome::RetryLater => ControlObject::RetryLater,
+            },
+        );
     }
     Ok(ControlObject::NotControl)
 }
 
-fn apply_incoming_request(database: &Database, identity: &DeviceIdentity, signed: SignedEnrollmentRequest) -> EnrollmentResult<()> {
+fn apply_incoming_request(
+    database: &Database,
+    identity: &DeviceIdentity,
+    signed: SignedEnrollmentRequest,
+) -> EnrollmentResult<()> {
     if signed.request.device_id == identity.device_id {
         return Ok(()); // our own request, not an incoming one to review
     }
@@ -467,11 +550,16 @@ fn apply_incoming_request(database: &Database, identity: &DeviceIdentity, signed
         Ok(bytes) => bytes,
         Err(_) => return Ok(()),
     };
-    let Ok(verifying_key) = VerifyingKey::from_bytes(&verifying_key_bytes) else { return Ok(()) };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&verifying_key_bytes) else {
+        return Ok(());
+    };
     if verify_enrollment_request(&verifying_key, &signed).is_err() {
         return Ok(());
     }
-    let fingerprint = enrollment_fingerprint(&signed.request.ed25519_public, &signed.request.x25519_public);
+    let fingerprint = enrollment_fingerprint(
+        &signed.request.ed25519_public,
+        &signed.request.x25519_public,
+    );
     database.record_enrollment_request(
         "incoming",
         &encode_id(signed.request.request_id.as_bytes()),
@@ -483,7 +571,12 @@ fn apply_incoming_request(database: &Database, identity: &DeviceIdentity, signed
     Ok(())
 }
 
-fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedEnrollmentGrant) -> EnrollmentResult<()> {
+fn apply_incoming_grant(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    signed: SignedEnrollmentGrant,
+) -> EnrollmentResult<()> {
     let request_id_hex = encode_id(signed.grant.request_id.as_bytes());
 
     // This grant may be addressed to another device that received the same
@@ -491,7 +584,8 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
     // it and the roster names the exact requester keys we recorded.
     let unresolved_incoming = database.unresolved_incoming_request(&request_id_hex)?;
     if !signed.grant.signed_by_recovery {
-        let trusted_approver = database.active_device_public_key(&encode_id(signed.grant.approver_device_id.as_bytes()))?;
+        let trusted_approver = database
+            .active_device_public_key(&encode_id(signed.grant.approver_device_id.as_bytes()))?;
         let approver_verifies = trusted_approver
             .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
             .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
@@ -499,11 +593,13 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
             .unwrap_or(false);
         let approved_requester = signed.grant.roster.iter().find(|entry| {
             entry.status == "active"
-                && unresolved_incoming.as_ref().is_none_or(|(requester_id, requester_ed25519, requester_x25519)| {
-                    encode_id(entry.device_id.as_bytes()) == *requester_id
-                        && entry.ed25519_public.as_slice() == requester_ed25519
-                        && entry.x25519_public.as_slice() == requester_x25519
-                })
+                && unresolved_incoming.as_ref().is_none_or(
+                    |(requester_id, requester_ed25519, requester_x25519)| {
+                        encode_id(entry.device_id.as_bytes()) == *requester_id
+                            && entry.ed25519_public.as_slice() == requester_ed25519
+                            && entry.x25519_public.as_slice() == requester_x25519
+                    },
+                )
         });
         if approver_verifies {
             if let Some(entry) = approved_requester {
@@ -519,7 +615,8 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
                     let requester_id = encode_id(entry.device_id.as_bytes());
                     let requester_ed25519 = entry.ed25519_public.as_slice();
                     if let Ok(requester_x25519) = roster_entry_x25519(entry) {
-                        let fingerprint = enrollment_fingerprint(requester_ed25519, &requester_x25519);
+                        let fingerprint =
+                            enrollment_fingerprint(requester_ed25519, &requester_x25519);
                         database.record_approved_incoming_request(
                             &request_id_hex,
                             &requester_id,
@@ -544,13 +641,19 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
         if !signed.grant.signed_by_recovery {
             return Ok(());
         }
-        let Some((recovery_ed25519, _)) = database.recovery_public_keys()? else { return Ok(()) };
-        let Ok(verifying_key) = VerifyingKey::from_bytes(&recovery_ed25519) else { return Ok(()) };
+        let Some((recovery_ed25519, _)) = database.recovery_public_keys()? else {
+            return Ok(());
+        };
+        let Ok(verifying_key) = VerifyingKey::from_bytes(&recovery_ed25519) else {
+            return Ok(());
+        };
         if verify_enrollment_grant(&verifying_key, &signed).is_err() {
             return Ok(());
         }
         database.adopt_roster(&signed.grant.roster)?;
-        if let Some(bytes) = try_open_sealed_box(&identity.x25519_secret, &signed.grant.sealed_epoch_key) {
+        if let Some(bytes) =
+            try_open_sealed_box(&identity.x25519_secret, &signed.grant.sealed_epoch_key)
+        {
             if let Ok(k_epoch) = bytes.try_into() {
                 epoch_keys.store(signed.grant.key_epoch, &k_epoch)?;
             }
@@ -629,11 +732,13 @@ pub(super) fn apply_key_share(
         return Ok(KeyShare::Other);
     }
     let enrolled = database.has_epoch_history()?;
-    let answers_our_request = database.outgoing_request_open(&encode_id(grant.request_id.as_bytes()))?;
+    let answers_our_request =
+        database.outgoing_request_open(&encode_id(grant.request_id.as_bytes()))?;
     if !enrolled || answers_our_request {
         return Ok(KeyShare::Other);
     }
-    let Some(current) = try_open_sealed_box(&identity.x25519_secret, &grant.sealed_epoch_key) else {
+    let Some(current) = try_open_sealed_box(&identity.x25519_secret, &grant.sealed_epoch_key)
+    else {
         return Ok(KeyShare::Other);
     };
     let sender = database.device_status_and_key(&encode_id(grant.approver_device_id.as_bytes()))?;
@@ -648,7 +753,8 @@ pub(super) fn apply_key_share(
     let Ok(current): Result<[u8; 32], _> = current.try_into() else {
         return Ok(KeyShare::Applied);
     };
-    let Some(earlier) = open_earlier_epoch_keys(&identity.x25519_secret, &grant.earlier_epoch_keys) else {
+    let Some(earlier) = open_earlier_epoch_keys(&identity.x25519_secret, &grant.earlier_epoch_keys)
+    else {
         return Ok(KeyShare::Applied);
     };
     if !verified {
@@ -682,7 +788,10 @@ pub(crate) async fn share_keys_with_lagging_peers(
         .ok_or(EnrollmentError::MissingRecoveryKeys)?;
     let roster = database.full_roster_snapshot()?;
     for (device_id, x25519_public) in &lagging {
-        let recipient: [u8; 32] = x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid peer X25519 key"))?;
+        let recipient: [u8; 32] = x25519_public
+            .as_slice()
+            .try_into()
+            .map_err(|_| EnrollmentError::MalformedKey("Invalid peer X25519 key"))?;
         let share = EnrollmentGrant {
             request_id: RequestId::from_bytes(random_id()),
             approver_device_id: keys.device_id,
@@ -708,25 +817,34 @@ pub(crate) async fn share_keys_with_lagging_peers(
 /// peer. A joining device can verify the response signature as informational
 /// status before it has a roster of its own. Missing requests are retried
 /// after the rest of the sweep so object ordering cannot leave peers stale.
-fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envelope::SignedEnrollmentRejection) -> EnrollmentResult<bool> {
+fn apply_incoming_rejection(
+    database: &Database,
+    signed: threestrands_sync_envelope::SignedEnrollmentRejection,
+) -> EnrollmentResult<bool> {
     let request_id = encode_id(signed.rejection.request_id.as_bytes());
     let rejector_id = encode_id(signed.rejection.rejector_device_id.as_bytes());
     let trusted_key = database.active_device_public_key(&rejector_id)?;
     let embedded_key = <[u8; 32]>::try_from(signed.rejection.rejector_ed25519_public.as_slice())
         .ok()
         .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok());
-    let Some(embedded_key) = embedded_key else { return Ok(true) };
+    let Some(embedded_key) = embedded_key else {
+        return Ok(true);
+    };
     let is_trusted_peer = trusted_key
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
         .is_some_and(|bytes| bytes == embedded_key.to_bytes());
 
     let request_direction = database.enrollment_request_direction(&request_id)?;
-    let Some(direction) = request_direction else { return Ok(false) };
+    let Some(direction) = request_direction else {
+        return Ok(false);
+    };
     // Existing devices only honor decisions from a peer already in their
     // trusted roster. A joining device has no roster yet, so it can verify
     // the signature as an informational response; a later approval grant
     // still takes precedence and enables explicit fingerprint review.
-    if (direction == "incoming" && !is_trusted_peer) || verify_enrollment_rejection(&embedded_key, &signed).is_err() {
+    if (direction == "incoming" && !is_trusted_peer)
+        || verify_enrollment_rejection(&embedded_key, &signed).is_err()
+    {
         return Ok(true);
     }
 
@@ -748,7 +866,9 @@ pub async fn reject_enrollment_request(
         return Err(EnrollmentError::RequestNotPending);
     }
     let rejection = EnrollmentRejection {
-        request_id: RequestId::from_bytes(decode_id(request_id_hex).map_err(EnrollmentError::MalformedId)?),
+        request_id: RequestId::from_bytes(
+            decode_id(request_id_hex).map_err(EnrollmentError::MalformedId)?,
+        ),
         rejector_device_id: identity.device_id,
         rejector_ed25519_public: ByteBuf::from(identity.verifying_key.to_bytes().to_vec()),
         rejected_at_ms: now_ms(),
@@ -775,7 +895,13 @@ pub(super) enum RotationOutcome {
     Collision,
 }
 
-pub(super) fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedKeyRotation, cid: &str) -> EnrollmentResult<RotationOutcome> {
+pub(super) fn apply_incoming_rotation(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    signed: SignedKeyRotation,
+    cid: &str,
+) -> EnrollmentResult<RotationOutcome> {
     // A rotation is only auto-applied when its signer is already in our
     // roster: no new trust decision, just an authenticated update to an
     // existing one. A genesis/recovery-only rotation (signer not yet
@@ -788,9 +914,17 @@ pub(super) fn apply_incoming_rotation(database: &Database, identity: &DeviceIden
     // receive that epoch's key. A signer that is known but revoked is
     // ignored for good.
     let roster = database.known_device_roster()?;
-    let Some((_, verifying_key)) = roster.iter().find(|(device_id, _)| *device_id == signed.rotation.initiator_device_id) else {
-        let known_but_revoked = database.device_known(&encode_id(signed.rotation.initiator_device_id.as_bytes()))?;
-        return Ok(if known_but_revoked { RotationOutcome::Done } else { RotationOutcome::UnknownInitiator });
+    let Some((_, verifying_key)) = roster
+        .iter()
+        .find(|(device_id, _)| *device_id == signed.rotation.initiator_device_id)
+    else {
+        let known_but_revoked =
+            database.device_known(&encode_id(signed.rotation.initiator_device_id.as_bytes()))?;
+        return Ok(if known_but_revoked {
+            RotationOutcome::Done
+        } else {
+            RotationOutcome::UnknownInitiator
+        });
     };
     if verify_key_rotation(verifying_key, &signed).is_err() {
         return Ok(RotationOutcome::Done);
@@ -798,12 +932,28 @@ pub(super) fn apply_incoming_rotation(database: &Database, identity: &DeviceIden
     apply_rotation_common(database, identity, epoch_keys, &signed, cid)
 }
 
-fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: &SignedKeyRotation, cid: &str) -> EnrollmentResult<RotationOutcome> {
+fn apply_rotation_common(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    signed: &SignedKeyRotation,
+    cid: &str,
+) -> EnrollmentResult<RotationOutcome> {
     database.adopt_roster(&signed.rotation.roster)?;
     join_codes::note_admission_if_listed(database, identity, &signed.rotation.roster)?;
     database.set_recovery_public_keys(
-        signed.rotation.recovery_ed25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
-        signed.rotation.recovery_x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
+        signed
+            .rotation
+            .recovery_ed25519_public
+            .as_slice()
+            .try_into()
+            .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
+        signed
+            .rotation
+            .recovery_x25519_public
+            .as_slice()
+            .try_into()
+            .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
     )?;
 
     // Try every sealed stanza with our own device secret first, then (if we
@@ -820,11 +970,13 @@ fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_k
     }
     if let Some(k_epoch) = opened {
         if !adopt_epoch_key(epoch_keys, signed.rotation.key_epoch, &k_epoch)? {
-            return Ok(if database.must_rotate_after_collision(identity, signed.rotation.key_epoch, cid)? {
-                RotationOutcome::Collision
-            } else {
-                RotationOutcome::Done
-            });
+            return Ok(
+                if database.must_rotate_after_collision(identity, signed.rotation.key_epoch, cid)? {
+                    RotationOutcome::Collision
+                } else {
+                    RotationOutcome::Done
+                },
+            );
         }
         // Rotations are scanned in content-address order, not epoch order,
         // so a device catching up can meet an older rotation after a newer
@@ -839,18 +991,41 @@ fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_k
 /// The joining device's explicit action after visually comparing
 /// [`enrollment_fingerprint`] on both screens: imports a staged grant,
 /// adopting the epoch key and the whole roster it carries.
-pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, request_id_hex: &str) -> EnrollmentResult<()> {
+pub async fn confirm_and_import_grant(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    request_id_hex: &str,
+) -> EnrollmentResult<()> {
     let grant_cbor = database.staged_enrollment_grant(request_id_hex)?;
     let signed = decode_signed_enrollment_grant(&grant_cbor)?;
-    let k_epoch_bytes = try_open_sealed_box(&identity.x25519_secret, &signed.grant.sealed_epoch_key)
-        .ok_or(EnrollmentError::NotSealedToThisDevice("This grant was not sealed to this device"))?;
-    let k_epoch: [u8; 32] = k_epoch_bytes.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid sealed epoch key"))?;
-    let earlier = open_earlier_epoch_keys(&identity.x25519_secret, &signed.grant.earlier_epoch_keys)
-        .ok_or(EnrollmentError::NotSealedToThisDevice("This grant's earlier keys were not sealed to this device"))?;
+    let k_epoch_bytes =
+        try_open_sealed_box(&identity.x25519_secret, &signed.grant.sealed_epoch_key).ok_or(
+            EnrollmentError::NotSealedToThisDevice("This grant was not sealed to this device"),
+        )?;
+    let k_epoch: [u8; 32] = k_epoch_bytes
+        .try_into()
+        .map_err(|_| EnrollmentError::MalformedKey("Invalid sealed epoch key"))?;
+    let earlier =
+        open_earlier_epoch_keys(&identity.x25519_secret, &signed.grant.earlier_epoch_keys).ok_or(
+            EnrollmentError::NotSealedToThisDevice(
+                "This grant's earlier keys were not sealed to this device",
+            ),
+        )?;
 
     database.adopt_roster(&signed.grant.roster)?;
-    let recovery_ed25519: [u8; 32] = signed.grant.recovery_ed25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?;
-    let recovery_x25519: [u8; 32] = signed.grant.recovery_x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?;
+    let recovery_ed25519: [u8; 32] = signed
+        .grant
+        .recovery_ed25519_public
+        .as_slice()
+        .try_into()
+        .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?;
+    let recovery_x25519: [u8; 32] = signed
+        .grant
+        .recovery_x25519_public
+        .as_slice()
+        .try_into()
+        .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?;
     database.set_recovery_public_keys(&recovery_ed25519, &recovery_x25519)?;
 
     epoch_keys.store(signed.grant.key_epoch, &k_epoch)?;
@@ -876,22 +1051,37 @@ pub async fn approve_enrollment_request(
     request_id_hex: &str,
     transports: &[Arc<dyn SyncTransport>],
 ) -> EnrollmentResult<()> {
-    let (requester_device_id, requester_ed25519, requester_x25519) = database.pending_incoming_request(request_id_hex)?;
-    let requester_x25519: [u8; 32] = requester_x25519.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid requester X25519 key"))?;
-    let requester_ed25519_bytes: [u8; 32] = requester_ed25519.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
-    let requester_verifying_key = VerifyingKey::from_bytes(&requester_ed25519_bytes).map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
-    let requester_device_id_bytes = decode_id(&requester_device_id).map_err(DatabaseError::Corrupt)?;
+    let (requester_device_id, requester_ed25519, requester_x25519) =
+        database.pending_incoming_request(request_id_hex)?;
+    let requester_x25519: [u8; 32] = requester_x25519
+        .try_into()
+        .map_err(|_| EnrollmentError::MalformedKey("Invalid requester X25519 key"))?;
+    let requester_ed25519_bytes: [u8; 32] = requester_ed25519
+        .try_into()
+        .map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
+    let requester_verifying_key = VerifyingKey::from_bytes(&requester_ed25519_bytes)
+        .map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
+    let requester_device_id_bytes =
+        decode_id(&requester_device_id).map_err(DatabaseError::Corrupt)?;
 
     // The approved device must appear in its own grant's roster (and in
     // every roster snapshot this device hands out from now on), so trust
     // it locally before building the snapshot below.
-    database.trust_device_keys(&requester_device_id_bytes, &requester_verifying_key, &requester_x25519)?;
+    database.trust_device_keys(
+        &requester_device_id_bytes,
+        &requester_verifying_key,
+        &requester_x25519,
+    )?;
 
     let roster = database.full_roster_snapshot()?;
-    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or(EnrollmentError::MissingRecoveryKeys)?;
+    let (recovery_ed25519, recovery_x25519) = database
+        .recovery_public_keys()?
+        .ok_or(EnrollmentError::MissingRecoveryKeys)?;
 
     let grant = EnrollmentGrant {
-        request_id: RequestId::from_bytes(decode_id(request_id_hex).map_err(EnrollmentError::MalformedId)?),
+        request_id: RequestId::from_bytes(
+            decode_id(request_id_hex).map_err(EnrollmentError::MalformedId)?,
+        ),
         approver_device_id: identity.device_id,
         signed_by_recovery: false,
         key_epoch: keys.key_epoch,
@@ -930,7 +1120,9 @@ pub async fn rotate_epoch(
     if database.active_epoch()? != keys.key_epoch {
         return Err(EnrollmentError::EpochChanged);
     }
-    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or(EnrollmentError::MissingRecoveryKeys)?;
+    let (recovery_ed25519, recovery_x25519) = database
+        .recovery_public_keys()?
+        .ok_or(EnrollmentError::MissingRecoveryKeys)?;
 
     if let Some(hex) = revoke_device_id_hex {
         let device_id = decode_id(hex).map_err(EnrollmentError::MalformedId)?;
@@ -942,7 +1134,10 @@ pub async fn rotate_epoch(
     // revocation explicitly the next time it applies this object. Only
     // the still-active subset receives a sealed stanza for the new key.
     let roster = database.full_roster_snapshot()?;
-    let active_recipients: Vec<&RosterEntry> = roster.iter().filter(|entry| entry.status == "active").collect();
+    let active_recipients: Vec<&RosterEntry> = roster
+        .iter()
+        .filter(|entry| entry.status == "active")
+        .collect();
 
     let mut k_epoch = [0u8; 32];
     rand::Rng::fill_bytes(&mut threestrands_sync_envelope::os_rng(), &mut k_epoch);
@@ -988,24 +1183,37 @@ pub async fn rotate_epoch(
 /// of the newest rotation, not whichever one the scan happens to meet
 /// first. Only rotations that verify against their own initiator count, so
 /// arbitrary bytes that happen to decode can't steer the choice.
-pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, phrase: &str, transports: &[Arc<dyn SyncTransport>]) -> EnrollmentResult<()> {
+pub async fn join_with_recovery_phrase(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    phrase: &str,
+    transports: &[Arc<dyn SyncTransport>],
+) -> EnrollmentResult<()> {
     require_not_started(database)?;
     refuse_legacy_space(transports).await?;
     database.set_beta_features_enabled(true)?;
     let seed = recovery_seed_from_phrase(phrase).map_err(EnrollmentError::InvalidRecoveryPhrase)?;
     let recovery_secret_bytes = recovery_x25519_secret(&seed).to_bytes();
 
-    let mut opened: std::collections::BTreeMap<u32, (SignedKeyRotation, String, [u8; 32])> = std::collections::BTreeMap::new();
+    let mut opened: std::collections::BTreeMap<u32, (SignedKeyRotation, String, [u8; 32])> =
+        std::collections::BTreeMap::new();
     for transport in transports {
         let mut cursor: Option<String> = None;
         loop {
-            let Some(page) = transport.scan(cursor.as_deref()).await? else { break };
+            let Some(page) = transport.scan(cursor.as_deref()).await? else {
+                break;
+            };
             for locator in &page.objects {
-                let Ok(bytes) = transport.get_object(&locator.cid).await else { continue };
+                let Ok(bytes) = transport.get_object(&locator.cid).await else {
+                    continue;
+                };
                 if !is_self_consistent_rotation(&bytes) {
                     continue;
                 }
-                let Ok(signed) = decode_signed_key_rotation(&bytes) else { continue };
+                let Ok(signed) = decode_signed_key_rotation(&bytes) else {
+                    continue;
+                };
                 let Some(k_epoch_bytes) = signed
                     .rotation
                     .sealed_stanzas
@@ -1014,8 +1222,14 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
                 else {
                     continue;
                 };
-                let Ok(k_epoch): Result<[u8; 32], _> = k_epoch_bytes.try_into() else { continue };
-                opened.entry(signed.rotation.key_epoch).or_insert((signed, locator.cid.0.clone(), k_epoch));
+                let Ok(k_epoch): Result<[u8; 32], _> = k_epoch_bytes.try_into() else {
+                    continue;
+                };
+                opened.entry(signed.rotation.key_epoch).or_insert((
+                    signed,
+                    locator.cid.0.clone(),
+                    k_epoch,
+                ));
             }
             cursor = page.next_cursor;
             if cursor.is_none() {
@@ -1034,19 +1248,34 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
     // hasn't reached this connector yet shows up as a gap or as a newer
     // epoch in use. Either way, wait rather than join incomplete.
     let newest_in_use = newest_epoch_in_heads(transports, &latest.rotation.roster).await;
-    if (0..=latest_epoch).any(|epoch| !opened.contains_key(&epoch)) || newest_in_use > latest_epoch {
+    if (0..=latest_epoch).any(|epoch| !opened.contains_key(&epoch)) || newest_in_use > latest_epoch
+    {
         return Err(EnrollmentError::RecoveryIncomplete);
     }
 
     database.adopt_roster(&latest.rotation.roster)?;
     database.set_recovery_public_keys(
-        latest.rotation.recovery_ed25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
-        latest.rotation.recovery_x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
+        latest
+            .rotation
+            .recovery_ed25519_public
+            .as_slice()
+            .try_into()
+            .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
+        latest
+            .rotation
+            .recovery_x25519_public
+            .as_slice()
+            .try_into()
+            .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
     )?;
     // Trust ourselves alongside the recovered roster — a fresh device
     // recovering has no prior self-entry there.
     let self_x25519_public = x25519_public_bytes(&identity.x25519_secret);
-    database.trust_device_keys(identity.device_id.as_bytes(), &identity.verifying_key, &self_x25519_public)?;
+    database.trust_device_keys(
+        identity.device_id.as_bytes(),
+        &identity.verifying_key,
+        &self_x25519_public,
+    )?;
     for (key_epoch, (_, cid, k_epoch)) in &opened {
         epoch_keys.store(*key_epoch, k_epoch)?;
         database.record_epoch_activation(*key_epoch, cid)?;
@@ -1072,9 +1301,11 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
         earlier_epoch_keys: vec![],
     };
     database.ensure_protocol_marker_object()?;
-    let signed_announcement = sign_enrollment_grant(&recovery_ed25519_signing_key(&seed), announcement)?;
+    let signed_announcement =
+        sign_enrollment_grant(&recovery_ed25519_signing_key(&seed), announcement)?;
     let announcement_bytes = encode_signed_enrollment_grant(&signed_announcement)?;
-    let announcement_cid = publish_control_object(database, transports, &announcement_bytes).await?;
+    let announcement_cid =
+        publish_control_object(database, transports, &announcement_bytes).await?;
     database.mark_control_object_seen(&announcement_cid, "enrollment_grant")?;
     Ok(())
 }

@@ -56,14 +56,14 @@ use super::{ImapLocation, ImapStateStore};
 mod body_fetch;
 mod drafts;
 mod label_folders;
+mod label_moves;
 mod mail_send;
 mod moves;
-mod label_moves;
-mod native_labels;
 mod mutate;
+mod native_labels;
 mod refresh;
-mod snoozes;
 mod server_search;
+mod snoozes;
 
 /// The INBOX name, the only mailbox this slice syncs.
 const INBOX: &str = "INBOX";
@@ -77,8 +77,9 @@ const INBOX: &str = "INBOX";
 #[async_trait]
 pub(super) trait ImapSessionSource: Send + Sync {
     async fn open(&self) -> ProviderResult<Box<dyn ImapSession>>;
-    async fn open_idle(&self) -> ProviderResult<Option<Box<dyn ImapSession>>> { Ok(None) }
-
+    async fn open_idle(&self) -> ProviderResult<Option<Box<dyn ImapSession>>> {
+        Ok(None)
+    }
 }
 
 /// The production session source: dial through the connection manager on the
@@ -92,8 +93,14 @@ struct ManagerSessionSource {
 #[async_trait]
 impl ImapSessionSource for ManagerSessionSource {
     async fn open_idle(&self) -> ProviderResult<Option<Box<dyn ImapSession>>> {
-        let (session, lease) = self.manager.connect_leased(ConnectionRole::Idle, &self.username, &self.password).await?;
-        Ok(Some(Box::new(LeasedSession { session, _lease: lease })))
+        let (session, lease) = self
+            .manager
+            .connect_leased(ConnectionRole::Idle, &self.username, &self.password)
+            .await?;
+        Ok(Some(Box::new(LeasedSession {
+            session,
+            _lease: lease,
+        })))
     }
 
     async fn open(&self) -> ProviderResult<Box<dyn ImapSession>> {
@@ -107,7 +114,10 @@ impl ImapSessionSource for ManagerSessionSource {
         {
             Ok((mut session, lease)) => {
                 session.capabilities().await?;
-                Ok(Box::new(LeasedSession { session, _lease: lease }))
+                Ok(Box::new(LeasedSession {
+                    session,
+                    _lease: lease,
+                }))
             }
             Err(error) if error.retry_mutation() || is_transient(&error) => {
                 let (mut session, lease) = self
@@ -115,7 +125,10 @@ impl ImapSessionSource for ManagerSessionSource {
                     .connect_leased(ConnectionRole::Command, &self.username, &self.password)
                     .await?;
                 session.capabilities().await?;
-                Ok(Box::new(LeasedSession { session, _lease: lease }))
+                Ok(Box::new(LeasedSession {
+                    session,
+                    _lease: lease,
+                }))
             }
             Err(error) => Err(error),
         }
@@ -135,7 +148,10 @@ impl ImapSession for LeasedSession {
     fn supports_label_extensions(&self) -> bool {
         self.session.supports_label_extensions()
     }
-    async fn watch_inbox(self: Box<Self>, changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> ProviderResult<()> {
+    async fn watch_inbox(
+        self: Box<Self>,
+        changed: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) -> ProviderResult<()> {
         let Self { session, _lease } = *self;
         let result = Box::new(session).watch_inbox(changed).await;
         drop(_lease);
@@ -183,7 +199,12 @@ impl ImapSession for LeasedSession {
 
 #[async_trait]
 impl super::write::ImapWriteSession for LeasedSession {
-    async fn uid_store_labels(&mut self, uid_set: &str, op: super::write::StoreOp, labels: &[String]) -> ProviderResult<()> {
+    async fn uid_store_labels(
+        &mut self,
+        uid_set: &str,
+        op: super::write::StoreOp,
+        labels: &[String],
+    ) -> ProviderResult<()> {
         self.session.uid_store_labels(uid_set, op, labels).await
     }
     async fn uid_store(
@@ -471,7 +492,6 @@ pub(super) struct ImapSearchResult {
     pub skipped_over_cap: usize,
 }
 
-
 /// Choose the account's [`LabelModel`] from its saved `label_storage`. INBOX
 /// has no user labels this slice, but the model still drives the frontend's
 /// label actions, so it is reported faithfully from setup.
@@ -513,11 +533,12 @@ impl ImapProvider {
     /// Open an authenticated session through the configured source.
     async fn open_session(&self) -> ProviderResult<Box<dyn ImapSession>> {
         let session = self.source.open().await?;
-        self.store.set_native_labels(session.supports_label_extensions()).map_err(db_err)?;
+        self.store
+            .set_native_labels(session.supports_label_extensions())
+            .map_err(db_err)?;
         Ok(session)
     }
 }
-
 
 /// Whether an error is a transient transport failure worth one reconnect.
 fn is_transient(error: &ProviderError) -> bool {
@@ -547,7 +568,12 @@ impl MailProvider for ImapProvider {
             send_supported: true,
             server_search: true,
             provided_threads: false,
-            label_model: self.store.native_label_model().ok().flatten().unwrap_or(self.label_model),
+            label_model: self
+                .store
+                .native_label_model()
+                .ok()
+                .flatten()
+                .unwrap_or(self.label_model),
             // No server-side sent copy to verify an uncertain send against;
             // an uncertain IMAP send resolves to the terminal Unverifiable
             // state via `find_sent_copy` -> Ok(None), not a Gmail-style
@@ -580,6 +606,6 @@ mod tests;
 // No network, no openssl / /dev/tcp.
 // ===========================================================================
 #[cfg(test)]
-mod mutate_tests;
-#[cfg(test)]
 mod drafts_tests;
+#[cfg(test)]
+mod mutate_tests;

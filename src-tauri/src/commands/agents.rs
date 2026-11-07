@@ -123,7 +123,7 @@ pub(crate) async fn agent_research_settings(
     tokio::task::spawn_blocking(move || {
         Ok(ResearchSettings {
             config: db.research_config()?,
-            policy:crate::agents::policy::client_contract(),
+            policy: crate::agents::policy::client_contract(),
             model_key_configured: crate::agents::service::key("model")?.is_some(),
             search_key_configured: crate::agents::service::key("search")?.is_some(),
         })

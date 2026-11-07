@@ -17,7 +17,9 @@ use crate::header::{MESSAGE_ID_LEN, NONCE_LEN};
 use crate::ids::DeviceId;
 use crate::limits;
 use crate::vector::{validate_sequence_vector, SequenceEntry};
-use crate::{crypto, open_object, seal_object, EntityType, ObjectKind, OpenParams, SealParams, SealedMessage};
+use crate::{
+    crypto, open_object, seal_object, EntityType, ObjectKind, OpenParams, SealParams, SealedMessage,
+};
 
 /// The only sync protocol version this crate seals or opens. Version 3
 /// replaced the per-device event log with replica snapshots; earlier
@@ -60,7 +62,11 @@ pub struct SnapshotValue {
 }
 
 fn field_order(left: &SnapshotField, right: &SnapshotField) -> Ordering {
-    (left.entity_type, &left.entity_id, &left.field).cmp(&(right.entity_type, &right.entity_id, &right.field))
+    (left.entity_type, &left.entity_id, &left.field).cmp(&(
+        right.entity_type,
+        &right.entity_id,
+        &right.field,
+    ))
 }
 
 fn value_order(left: &SnapshotValue, right: &SnapshotValue) -> Ordering {
@@ -118,7 +124,9 @@ pub fn validate_snapshot(snapshot: &ReplicaSnapshot) -> Result<(), EnvelopeError
                 return Err(EnvelopeError::LimitExceeded("value outside context"));
             }
             if let Some(json) = &value.value {
-                let size = serde_json::to_vec(json).map(|bytes| bytes.len()).unwrap_or(usize::MAX);
+                let size = serde_json::to_vec(json)
+                    .map(|bytes| bytes.len())
+                    .unwrap_or(usize::MAX);
                 if size > limits::MAX_VALUE_BYTES {
                     return Err(EnvelopeError::LimitExceeded("value size"));
                 }
@@ -164,15 +172,22 @@ where
 }
 
 /// Seals `snapshot` using fresh random nonces.
-pub fn seal_snapshot(snapshot: ReplicaSnapshot, params: &SealParams) -> Result<SealedMessage, EnvelopeError> {
+pub fn seal_snapshot(
+    snapshot: ReplicaSnapshot,
+    params: &SealParams,
+) -> Result<SealedMessage, EnvelopeError> {
     seal_snapshot_with_nonces(snapshot, params, crypto::random_nonce)
 }
 
 /// Opens one snapshot's complete chunk set (in any order): everything
 /// [`open_object`] checks, plus the snapshot's own contract and that its
 /// message id is the one derived from its author and sequence.
-pub fn open_snapshot(chunks: &[Vec<u8>], params: &OpenParams) -> Result<ReplicaSnapshot, EnvelopeError> {
-    let (snapshot, _, message_id) = open_object::<ReplicaSnapshot>(chunks, params, ObjectKind::Snapshot)?;
+pub fn open_snapshot(
+    chunks: &[Vec<u8>],
+    params: &OpenParams,
+) -> Result<ReplicaSnapshot, EnvelopeError> {
+    let (snapshot, _, message_id) =
+        open_object::<ReplicaSnapshot>(chunks, params, ObjectKind::Snapshot)?;
     if message_id != message_id_for_snapshot(&snapshot.device_id, snapshot.state_sequence) {
         return Err(EnvelopeError::Malformed);
     }

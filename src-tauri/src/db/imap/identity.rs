@@ -18,14 +18,23 @@ const HEADER_NAMESPACE: &str = "header-hash";
 impl ImapStateStore {
     pub(crate) fn gmail_message_id(&self, message_id: &str) -> DbResult<Option<u64>> {
         self.database.with_connection(|c| {
-            let mut query = c.prepare("SELECT DISTINCT external_id FROM imap_message_identities
-                WHERE account_id=?1 AND message_id=?2 AND namespace='gmail-message-id'")?;
-            let ids = query.query_map(params![self.account_id, message_id], |r| r.get::<_, String>(0))?
+            let mut query = c.prepare(
+                "SELECT DISTINCT external_id FROM imap_message_identities
+                WHERE account_id=?1 AND message_id=?2 AND namespace='gmail-message-id'",
+            )?;
+            let ids = query
+                .query_map(params![self.account_id, message_id], |r| {
+                    r.get::<_, String>(0)
+                })?
                 .collect::<Result<Vec<_>, _>>()?;
             match ids.as_slice() {
                 [] => Ok(None),
-                [id] => u64::from_str_radix(id, 16).map(Some).map_err(|_| DatabaseError::invalid("Invalid stored message identity")),
-                _ => Err(DatabaseError::invalid("Conflicting stored message identities")),
+                [id] => u64::from_str_radix(id, 16)
+                    .map(Some)
+                    .map_err(|_| DatabaseError::invalid("Invalid stored message identity")),
+                _ => Err(DatabaseError::invalid(
+                    "Conflicting stored message identities",
+                )),
             }
         })
     }

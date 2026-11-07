@@ -21,9 +21,13 @@ pub use brief::{
 };
 pub use chat::{chat, chat_search_terms, ChatAttachmentInput, ChatRequest, ChatThreadInput};
 pub(crate) use chat::{MAX_CHAT_TURN_CHARS, MAX_MAILBOX_CHAT_THREADS};
-pub use compose::{generate_reply, reply_context, review_draft, DraftReviewRequest, DraftReviewResult};
+pub use compose::{
+    generate_reply, reply_context, review_draft, DraftReviewRequest, DraftReviewResult,
+};
 pub(crate) use compose::{MAX_WRITING_PROFILE_ABOUT_CHARS, MAX_WRITING_PROFILE_INSTRUCTIONS_CHARS};
-pub use contact::{enrich_contact, ContactEnrichmentRequest, ContactEnrichmentResult, ContactMessageInput};
+pub use contact::{
+    enrich_contact, ContactEnrichmentRequest, ContactEnrichmentResult, ContactMessageInput,
+};
 pub use context::{sent_message_count, ActionMessageInput, ThreadMessageInput};
 pub use provider::{
     configured, get_key, list_models, set, test_connection, AiProvider, ModelInfo, Reasoning,
@@ -41,19 +45,19 @@ mod tests {
     };
     use crate::ai::compose::{generate_reply, reply_context};
     use crate::ai::contact::{
-        contact_output_schema, enrich_contact, CONTACT_FIELDS, ContactEnrichmentRequest,
-        ContactMessageInput,
+        contact_output_schema, enrich_contact, ContactEnrichmentRequest, ContactMessageInput,
+        CONTACT_FIELDS,
     };
     use crate::ai::context::{
-        action_context, ActionMessageInput, MAX_BODY_CHARS, MAX_MESSAGES, ThreadMessageInput,
+        action_context, ActionMessageInput, ThreadMessageInput, MAX_BODY_CHARS, MAX_MESSAGES,
     };
     use crate::ai::provider::{
-        AiProvider, REQUEST_TIMEOUT, Reasoning, STRUCTURED_OUTPUT_TOKENS, TEXT_OUTPUT_TOKENS,
+        AiProvider, Reasoning, REQUEST_TIMEOUT, STRUCTURED_OUTPUT_TOKENS, TEXT_OUTPUT_TOKENS,
     };
     use crate::ai::test_support::chat_request;
     use crate::models::{ActionProposal, ContactProfile, ReplyAssistContext, ReplyAssistMessage};
-    use serde_json::json;
     use axum::{extract::State, routing::post, Json, Router};
+    use serde_json::json;
     use std::sync::{Arc, Mutex};
 
     /// Strict structured output rejects schemas whose objects leave a property
@@ -168,26 +172,48 @@ mod tests {
         assert_eq!(context.messages[1].body_text, "It is fixed now.");
         // Generating a reply re-applies the bounds to the reviewed context; the
         // result must not change.
-        let reapplied = reply_context("Feed".into(), context.messages.iter().map(|message| ThreadMessageInput {
-            sender: message.sender.clone(),
-            sent_at: message.sent_at.clone(),
-            body_text: message.body_text.clone(),
-        }).collect());
+        let reapplied = reply_context(
+            "Feed".into(),
+            context
+                .messages
+                .iter()
+                .map(|message| ThreadMessageInput {
+                    sender: message.sender.clone(),
+                    sent_at: message.sent_at.clone(),
+                    body_text: message.body_text.clone(),
+                })
+                .collect(),
+        );
         assert_eq!(reapplied.messages[1].body_text, "It is fixed now.");
 
-        let actions: Vec<ActionMessageInput> = messages.iter().enumerate().map(|(index, message)| ActionMessageInput {
-            id: format!("m{index}"),
-            sender: message.sender.clone(),
-            recipients: Vec::new(),
-            sent_at: message.sent_at.clone(),
-            body_text: message.body_text.clone(),
-        }).collect();
-        assert_eq!(action_context(&actions, None)[1].body_text, "It is fixed now.");
+        let actions: Vec<ActionMessageInput> = messages
+            .iter()
+            .enumerate()
+            .map(|(index, message)| ActionMessageInput {
+                id: format!("m{index}"),
+                sender: message.sender.clone(),
+                recipients: Vec::new(),
+                sent_at: message.sent_at.clone(),
+                body_text: message.body_text.clone(),
+            })
+            .collect();
+        assert_eq!(
+            action_context(&actions, None)[1].body_text,
+            "It is fixed now."
+        );
 
         let mut request = chat_request("Is it fixed?");
-        request.other_threads = vec![ChatThreadInput { thread_id: "other".into(), subject: "Feed".into(), messages }];
-        let prompt: serde_json::Value = serde_json::from_str(&build_chat_prompt(&request, &[]).unwrap()).unwrap();
-        assert_eq!(prompt["otherThreads"][0]["messages"][1]["bodyText"], "It is fixed now.");
+        request.other_threads = vec![ChatThreadInput {
+            thread_id: "other".into(),
+            subject: "Feed".into(),
+            messages,
+        }];
+        let prompt: serde_json::Value =
+            serde_json::from_str(&build_chat_prompt(&request, &[]).unwrap()).unwrap();
+        assert_eq!(
+            prompt["otherThreads"][0]["messages"][1]["bodyText"],
+            "It is fixed now."
+        );
     }
 
     #[test]
@@ -206,13 +232,25 @@ mod tests {
         assert_eq!(context.messages.last().unwrap().body_text, reply_body);
 
         // The quoted tail of an earlier message lies past that message's cap.
-        let tail = "The west region import fails only when the partner file arrives after midnight.";
+        let tail =
+            "The west region import fails only when the partner file arrives after midnight.";
         let long = format!("{}\n{tail}", "x".repeat(MAX_BODY_CHARS));
         let quote_of_tail = format!("Noted.\n\nOn Mon, A wrote:\n> {tail}");
-        let context = reply_context("Feed".into(), vec![
-            ThreadMessageInput { sender: "a@example.com".into(), sent_at: "1".into(), body_text: long },
-            ThreadMessageInput { sender: "b@example.com".into(), sent_at: "2".into(), body_text: quote_of_tail.clone() },
-        ]);
+        let context = reply_context(
+            "Feed".into(),
+            vec![
+                ThreadMessageInput {
+                    sender: "a@example.com".into(),
+                    sent_at: "1".into(),
+                    body_text: long,
+                },
+                ThreadMessageInput {
+                    sender: "b@example.com".into(),
+                    sent_at: "2".into(),
+                    body_text: quote_of_tail.clone(),
+                },
+            ],
+        );
         assert_eq!(context.messages[1].body_text, quote_of_tail);
     }
 

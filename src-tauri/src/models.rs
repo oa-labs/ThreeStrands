@@ -1419,13 +1419,18 @@ mod mail_provider_kind_tests {
                 "the IPC spelling must match the stored one"
             );
         }
-        assert_eq!(MailProviderKind::parse("gmail"), Some(MailProviderKind::Gmail));
-        assert_eq!(MailProviderKind::parse("imap"), Some(MailProviderKind::Imap));
+        assert_eq!(
+            MailProviderKind::parse("gmail"),
+            Some(MailProviderKind::Gmail)
+        );
+        assert_eq!(
+            MailProviderKind::parse("imap"),
+            Some(MailProviderKind::Imap)
+        );
         assert_eq!(MailProviderKind::parse("Gmail"), None);
         assert_eq!(MailProviderKind::parse("exchange"), None);
     }
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -1473,13 +1478,19 @@ pub struct FilePage {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextQuery {
-    pub account_ids: Vec<String>, pub thread_id: Option<String>,
-    pub terms: Vec<String>, pub attendees: Vec<String>,
-    pub after: Option<String>, pub before: Option<String>,
+    pub account_ids: Vec<String>,
+    pub thread_id: Option<String>,
+    pub terms: Vec<String>,
+    pub attendees: Vec<String>,
+    pub after: Option<String>,
+    pub before: Option<String>,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceConversation {
-    pub thread_id: String, pub account_id: String, pub subject: String,
-    pub sent_at: String, pub participants: Vec<String>,
+    pub thread_id: String,
+    pub account_id: String,
+    pub subject: String,
+    pub sent_at: String,
+    pub participants: Vec<String>,
 }

@@ -124,9 +124,7 @@ fn opening_a_database_snapshots_at_its_pre_migration_version() {
                 .execute_batch(crate::schema::INITIAL_SCHEMA)
                 .unwrap();
             // Pose as a v60 database from before the squash.
-            connection
-                .pragma_update(None, "user_version", 60)
-                .unwrap();
+            connection.pragma_update(None, "user_version", 60).unwrap();
         }
         let result = Database::open(&temp.path);
         let error = result

@@ -6,8 +6,8 @@ use threestrands_sync_envelope::SignedDeviceHead;
 use threestrands_sync_transport::conformance;
 use threestrands_sync_transport::fake::FakeTransport;
 use threestrands_sync_transport::{
-    Cid, HeadLocator, ObjectLocator, ScanPage, SyncTransport, TransportCapabilities, TransportError, TransportHealth,
-    TransportInstanceId,
+    Cid, HeadLocator, ObjectLocator, ScanPage, SyncTransport, TransportCapabilities,
+    TransportError, TransportHealth, TransportInstanceId,
 };
 
 /// Delegates every call to an inner transport while recording what `scan`
@@ -24,11 +24,18 @@ struct ObservedTransport<T> {
 
 impl<T> ObservedTransport<T> {
     fn new(inner: T) -> Self {
-        Self { inner, hide_enumeration: false, scans: Mutex::new(Vec::new()) }
+        Self {
+            inner,
+            hide_enumeration: false,
+            scans: Mutex::new(Vec::new()),
+        }
     }
 
     fn without_enumeration(inner: T) -> Self {
-        Self { hide_enumeration: true, ..Self::new(inner) }
+        Self {
+            hide_enumeration: true,
+            ..Self::new(inner)
+        }
     }
 
     fn scans(&self) -> Vec<Option<ScanPage>> {
@@ -63,12 +70,19 @@ impl<T: SyncTransport> SyncTransport for ObservedTransport<T> {
         self.inner.publish_head(head).await
     }
 
-    async fn resolve_heads(&self, known: &[HeadLocator]) -> Result<Vec<SignedDeviceHead>, TransportError> {
+    async fn resolve_heads(
+        &self,
+        known: &[HeadLocator],
+    ) -> Result<Vec<SignedDeviceHead>, TransportError> {
         self.inner.resolve_heads(known).await
     }
 
     async fn scan(&self, cursor: Option<&str>) -> Result<Option<ScanPage>, TransportError> {
-        let result = if self.hide_enumeration { Ok(None) } else { self.inner.scan(cursor).await };
+        let result = if self.hide_enumeration {
+            Ok(None)
+        } else {
+            self.inner.scan(cursor).await
+        };
         if let Ok(page) = &result {
             self.scans.lock().unwrap().push(page.clone());
         }
@@ -118,24 +132,50 @@ async fn scan_enumerates_every_put_object_across_pages() {
     let transport = ObservedTransport::new(fake_with_page_size("a", PAGE_SIZE));
     conformance::scan_enumerates_every_put_object_across_pages(&transport).await;
 
-    let pages: Vec<ScanPage> = transport.scans().into_iter().map(|page| page.expect("the fake enumerates")).collect();
-    assert!(pages.len() > 1, "the check must fetch more than one page, fetched {}", pages.len());
+    let pages: Vec<ScanPage> = transport
+        .scans()
+        .into_iter()
+        .map(|page| page.expect("the fake enumerates"))
+        .collect();
     assert!(
-        pages[..pages.len() - 1].iter().all(|page| page.next_cursor.is_some()),
+        pages.len() > 1,
+        "the check must fetch more than one page, fetched {}",
+        pages.len()
+    );
+    assert!(
+        pages[..pages.len() - 1]
+            .iter()
+            .all(|page| page.next_cursor.is_some()),
         "every page but the last must hand back a cursor"
     );
-    assert_eq!(pages.last().unwrap().next_cursor, None, "the walk ends on a page with no cursor");
-    assert!(pages.iter().all(|page| page.objects.len() <= PAGE_SIZE), "no page may exceed the page size");
+    assert_eq!(
+        pages.last().unwrap().next_cursor,
+        None,
+        "the walk ends on a page with no cursor"
+    );
+    assert!(
+        pages.iter().all(|page| page.objects.len() <= PAGE_SIZE),
+        "no page may exceed the page size"
+    );
 
     let mut counts: HashMap<Cid, usize> = HashMap::new();
     for object in pages.iter().flat_map(|page| &page.objects) {
         *counts.entry(object.cid.clone()).or_default() += 1;
     }
-    let expected: Vec<Cid> =
-        (0..7).map(|index| Cid::for_bytes(format!("conformance: scan object {index}").as_bytes())).collect();
-    assert_eq!(counts.len(), expected.len(), "only the put objects are enumerated: {counts:?}");
+    let expected: Vec<Cid> = (0..7)
+        .map(|index| Cid::for_bytes(format!("conformance: scan object {index}").as_bytes()))
+        .collect();
+    assert_eq!(
+        counts.len(),
+        expected.len(),
+        "only the put objects are enumerated: {counts:?}"
+    );
     for cid in &expected {
-        assert_eq!(counts.get(cid), Some(&1), "{cid} must be enumerated exactly once across all pages");
+        assert_eq!(
+            counts.get(cid),
+            Some(&1),
+            "{cid} must be enumerated exactly once across all pages"
+        );
     }
     assert!(pages.len() >= expected.len().div_ceil(PAGE_SIZE));
 }
@@ -155,9 +195,15 @@ async fn assert_scan_matches_reported_capabilities(transport: &dyn SyncTransport
     }
 
     let capabilities = transport.capabilities();
-    let first = transport.scan(None).await.expect("scan must not error on a healthy transport");
+    let first = transport
+        .scan(None)
+        .await
+        .expect("scan must not error on a healthy transport");
     if !capabilities.enumeration {
-        assert_eq!(first, None, "a transport reporting no enumeration must answer scan with Ok(None)");
+        assert_eq!(
+            first, None,
+            "a transport reporting no enumeration must answer scan with Ok(None)"
+        );
         return;
     }
 
@@ -165,15 +211,31 @@ async fn assert_scan_matches_reported_capabilities(transport: &dyn SyncTransport
     let mut page = first.expect("a transport reporting enumeration must return a scan page");
     loop {
         for object in &page.objects {
-            assert!(!seen.contains(&object.cid), "resuming a cursor must not repeat {}", object.cid);
+            assert!(
+                !seen.contains(&object.cid),
+                "resuming a cursor must not repeat {}",
+                object.cid
+            );
             seen.push(object.cid.clone());
         }
-        let Some(cursor) = page.next_cursor.take() else { break };
-        assert!(capabilities.incremental_cursor, "a cursor was returned without incremental_cursor support");
-        page = transport.scan(Some(&cursor)).await.unwrap().expect("a fresh cursor must still be recognized");
+        let Some(cursor) = page.next_cursor.take() else {
+            break;
+        };
+        assert!(
+            capabilities.incremental_cursor,
+            "a cursor was returned without incremental_cursor support"
+        );
+        page = transport
+            .scan(Some(&cursor))
+            .await
+            .unwrap()
+            .expect("a fresh cursor must still be recognized");
     }
     for cid in &put {
-        assert!(seen.contains(cid), "an enumerating transport must list {cid}");
+        assert!(
+            seen.contains(cid),
+            "an enumerating transport must list {cid}"
+        );
     }
 }
 
@@ -187,7 +249,14 @@ async fn scan_capability_matches_observed_scan_behavior() {
     // The same check with pagination forced, so the cursor path is taken.
     let paged = ObservedTransport::new(fake_with_page_size("b", 1));
     assert_scan_matches_reported_capabilities(&paged).await;
-    assert!(paged.scans().iter().filter(|page| page.as_ref().is_some_and(|p| p.next_cursor.is_some())).count() >= 2);
+    assert!(
+        paged
+            .scans()
+            .iter()
+            .filter(|page| page.as_ref().is_some_and(|p| p.next_cursor.is_some()))
+            .count()
+            >= 2
+    );
 
     // A transport that reports no enumeration answers scan with Ok(None),
     // and the shared enumeration check skips it rather than failing.
@@ -195,5 +264,9 @@ async fn scan_capability_matches_observed_scan_behavior() {
     assert!(!hidden.capabilities().enumeration);
     assert_scan_matches_reported_capabilities(&hidden).await;
     conformance::scan_enumerates_every_put_object_across_pages(&hidden).await;
-    assert_eq!(hidden.scans().len(), 1, "the shared check must not scan a non-enumerating transport");
+    assert_eq!(
+        hidden.scans().len(),
+        1,
+        "the shared check must not scan a non-enumerating transport"
+    );
 }

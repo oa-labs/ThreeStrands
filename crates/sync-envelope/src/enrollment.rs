@@ -15,9 +15,11 @@ use crate::ids::{DeviceId, RequestId, Signature};
 use crate::limits::MAX_EARLIER_EPOCH_KEYS;
 use crate::{canonical_dag_cbor, decode_canonical_dag_cbor, SigningKey, VerifyingKey};
 
-const REQUEST_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-request-signature/v1";
+const REQUEST_SIGNATURE_DOMAIN: &[u8] =
+    b"threestrands/sync-envelope/enrollment-request-signature/v1";
 const GRANT_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-grant-signature/v1";
-const REJECTION_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-rejection-signature/v1";
+const REJECTION_SIGNATURE_DOMAIN: &[u8] =
+    b"threestrands/sync-envelope/enrollment-rejection-signature/v1";
 const ROTATION_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/key-rotation-signature/v1";
 const FINGERPRINT_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-fingerprint/v1";
 
@@ -46,13 +48,18 @@ pub struct SealedEpochKey {
 /// before `key_epoch`, and fit [`MAX_EARLIER_EPOCH_KEYS`]. Checked when
 /// signing and again when decoding, so an out-of-contract list can neither
 /// be produced nor accepted.
-pub(crate) fn validate_earlier_epoch_keys(entries: &[SealedEpochKey], key_epoch: u32) -> Result<(), EnvelopeError> {
+pub(crate) fn validate_earlier_epoch_keys(
+    entries: &[SealedEpochKey],
+    key_epoch: u32,
+) -> Result<(), EnvelopeError> {
     if entries.len() > MAX_EARLIER_EPOCH_KEYS {
         return Err(EnvelopeError::LimitExceeded("earlier epoch key count"));
     }
     let mut previous: Option<u32> = None;
     for entry in entries {
-        if entry.key_epoch >= key_epoch || previous.is_some_and(|previous| entry.key_epoch <= previous) {
+        if entry.key_epoch >= key_epoch
+            || previous.is_some_and(|previous| entry.key_epoch <= previous)
+        {
             return Err(EnvelopeError::LimitExceeded("earlier epoch key order"));
         }
         previous = Some(entry.key_epoch);
@@ -84,7 +91,11 @@ pub fn sign_enrollment_request(
     request: EnrollmentRequest,
 ) -> Result<SignedEnrollmentRequest, EnvelopeError> {
     let canonical = canonical_dag_cbor(&request)?;
-    let signature = Signature(crypto::sign_bytes(signing_key, REQUEST_SIGNATURE_DOMAIN, &canonical));
+    let signature = Signature(crypto::sign_bytes(
+        signing_key,
+        REQUEST_SIGNATURE_DOMAIN,
+        &canonical,
+    ));
     Ok(SignedEnrollmentRequest { request, signature })
 }
 
@@ -93,16 +104,28 @@ pub fn sign_enrollment_request(
 /// must pass `verifying_key` derived from that same embedded field — this
 /// function does not and cannot establish that the embedded key is
 /// trustworthy.
-pub fn verify_enrollment_request(verifying_key: &VerifyingKey, signed: &SignedEnrollmentRequest) -> Result<(), EnvelopeError> {
+pub fn verify_enrollment_request(
+    verifying_key: &VerifyingKey,
+    signed: &SignedEnrollmentRequest,
+) -> Result<(), EnvelopeError> {
     let canonical = canonical_dag_cbor(&signed.request)?;
-    crypto::verify_bytes(verifying_key, REQUEST_SIGNATURE_DOMAIN, &canonical, signed.signature.as_bytes())
+    crypto::verify_bytes(
+        verifying_key,
+        REQUEST_SIGNATURE_DOMAIN,
+        &canonical,
+        signed.signature.as_bytes(),
+    )
 }
 
-pub fn encode_signed_enrollment_request(signed: &SignedEnrollmentRequest) -> Result<Vec<u8>, EnvelopeError> {
+pub fn encode_signed_enrollment_request(
+    signed: &SignedEnrollmentRequest,
+) -> Result<Vec<u8>, EnvelopeError> {
     canonical_dag_cbor(signed)
 }
 
-pub fn decode_signed_enrollment_request(bytes: &[u8]) -> Result<SignedEnrollmentRequest, EnvelopeError> {
+pub fn decode_signed_enrollment_request(
+    bytes: &[u8],
+) -> Result<SignedEnrollmentRequest, EnvelopeError> {
     decode_canonical_dag_cbor(bytes)
 }
 
@@ -138,10 +161,17 @@ pub struct SignedEnrollmentGrant {
     pub signature: Signature,
 }
 
-pub fn sign_enrollment_grant(signing_key: &SigningKey, grant: EnrollmentGrant) -> Result<SignedEnrollmentGrant, EnvelopeError> {
+pub fn sign_enrollment_grant(
+    signing_key: &SigningKey,
+    grant: EnrollmentGrant,
+) -> Result<SignedEnrollmentGrant, EnvelopeError> {
     validate_earlier_epoch_keys(&grant.earlier_epoch_keys, grant.key_epoch)?;
     let canonical = canonical_dag_cbor(&grant)?;
-    let signature = Signature(crypto::sign_bytes(signing_key, GRANT_SIGNATURE_DOMAIN, &canonical));
+    let signature = Signature(crypto::sign_bytes(
+        signing_key,
+        GRANT_SIGNATURE_DOMAIN,
+        &canonical,
+    ));
     Ok(SignedEnrollmentGrant { grant, signature })
 }
 
@@ -151,16 +181,28 @@ pub fn sign_enrollment_grant(signing_key: &SigningKey, grant: EnrollmentGrant) -
 /// for `signed.grant.approver_device_id` otherwise — plus, for a brand new
 /// device with no roster of its own yet, a human fingerprint confirmation
 /// before trusting that embedded entry at all.
-pub fn verify_enrollment_grant(verifying_key: &VerifyingKey, signed: &SignedEnrollmentGrant) -> Result<(), EnvelopeError> {
+pub fn verify_enrollment_grant(
+    verifying_key: &VerifyingKey,
+    signed: &SignedEnrollmentGrant,
+) -> Result<(), EnvelopeError> {
     let canonical = canonical_dag_cbor(&signed.grant)?;
-    crypto::verify_bytes(verifying_key, GRANT_SIGNATURE_DOMAIN, &canonical, signed.signature.as_bytes())
+    crypto::verify_bytes(
+        verifying_key,
+        GRANT_SIGNATURE_DOMAIN,
+        &canonical,
+        signed.signature.as_bytes(),
+    )
 }
 
-pub fn encode_signed_enrollment_grant(signed: &SignedEnrollmentGrant) -> Result<Vec<u8>, EnvelopeError> {
+pub fn encode_signed_enrollment_grant(
+    signed: &SignedEnrollmentGrant,
+) -> Result<Vec<u8>, EnvelopeError> {
     canonical_dag_cbor(signed)
 }
 
-pub fn decode_signed_enrollment_grant(bytes: &[u8]) -> Result<SignedEnrollmentGrant, EnvelopeError> {
+pub fn decode_signed_enrollment_grant(
+    bytes: &[u8],
+) -> Result<SignedEnrollmentGrant, EnvelopeError> {
     let signed: SignedEnrollmentGrant = decode_canonical_dag_cbor(bytes)?;
     validate_earlier_epoch_keys(&signed.grant.earlier_epoch_keys, signed.grant.key_epoch)?;
     Ok(signed)
@@ -183,22 +225,44 @@ pub struct SignedEnrollmentRejection {
     pub signature: Signature,
 }
 
-pub fn sign_enrollment_rejection(signing_key: &SigningKey, rejection: EnrollmentRejection) -> Result<SignedEnrollmentRejection, EnvelopeError> {
+pub fn sign_enrollment_rejection(
+    signing_key: &SigningKey,
+    rejection: EnrollmentRejection,
+) -> Result<SignedEnrollmentRejection, EnvelopeError> {
     let canonical = canonical_dag_cbor(&rejection)?;
-    let signature = Signature(crypto::sign_bytes(signing_key, REJECTION_SIGNATURE_DOMAIN, &canonical));
-    Ok(SignedEnrollmentRejection { rejection, signature })
+    let signature = Signature(crypto::sign_bytes(
+        signing_key,
+        REJECTION_SIGNATURE_DOMAIN,
+        &canonical,
+    ));
+    Ok(SignedEnrollmentRejection {
+        rejection,
+        signature,
+    })
 }
 
-pub fn verify_enrollment_rejection(verifying_key: &VerifyingKey, signed: &SignedEnrollmentRejection) -> Result<(), EnvelopeError> {
+pub fn verify_enrollment_rejection(
+    verifying_key: &VerifyingKey,
+    signed: &SignedEnrollmentRejection,
+) -> Result<(), EnvelopeError> {
     let canonical = canonical_dag_cbor(&signed.rejection)?;
-    crypto::verify_bytes(verifying_key, REJECTION_SIGNATURE_DOMAIN, &canonical, signed.signature.as_bytes())
+    crypto::verify_bytes(
+        verifying_key,
+        REJECTION_SIGNATURE_DOMAIN,
+        &canonical,
+        signed.signature.as_bytes(),
+    )
 }
 
-pub fn encode_signed_enrollment_rejection(signed: &SignedEnrollmentRejection) -> Result<Vec<u8>, EnvelopeError> {
+pub fn encode_signed_enrollment_rejection(
+    signed: &SignedEnrollmentRejection,
+) -> Result<Vec<u8>, EnvelopeError> {
     canonical_dag_cbor(signed)
 }
 
-pub fn decode_signed_enrollment_rejection(bytes: &[u8]) -> Result<SignedEnrollmentRejection, EnvelopeError> {
+pub fn decode_signed_enrollment_rejection(
+    bytes: &[u8],
+) -> Result<SignedEnrollmentRejection, EnvelopeError> {
     decode_canonical_dag_cbor(bytes)
 }
 
@@ -225,18 +289,36 @@ pub struct SignedKeyRotation {
     pub signature: Signature,
 }
 
-pub fn sign_key_rotation(signing_key: &SigningKey, rotation: KeyRotation) -> Result<SignedKeyRotation, EnvelopeError> {
+pub fn sign_key_rotation(
+    signing_key: &SigningKey,
+    rotation: KeyRotation,
+) -> Result<SignedKeyRotation, EnvelopeError> {
     let canonical = canonical_dag_cbor(&rotation)?;
-    let signature = Signature(crypto::sign_bytes(signing_key, ROTATION_SIGNATURE_DOMAIN, &canonical));
-    Ok(SignedKeyRotation { rotation, signature })
+    let signature = Signature(crypto::sign_bytes(
+        signing_key,
+        ROTATION_SIGNATURE_DOMAIN,
+        &canonical,
+    ));
+    Ok(SignedKeyRotation {
+        rotation,
+        signature,
+    })
 }
 
 /// Verifies the rotation was signed by whoever holds `verifying_key`.
 /// Callers resolve it from their own current (pre-rotation) roster by
 /// `signed.rotation.initiator_device_id` before calling this.
-pub fn verify_key_rotation(verifying_key: &VerifyingKey, signed: &SignedKeyRotation) -> Result<(), EnvelopeError> {
+pub fn verify_key_rotation(
+    verifying_key: &VerifyingKey,
+    signed: &SignedKeyRotation,
+) -> Result<(), EnvelopeError> {
     let canonical = canonical_dag_cbor(&signed.rotation)?;
-    crypto::verify_bytes(verifying_key, ROTATION_SIGNATURE_DOMAIN, &canonical, signed.signature.as_bytes())
+    crypto::verify_bytes(
+        verifying_key,
+        ROTATION_SIGNATURE_DOMAIN,
+        &canonical,
+        signed.signature.as_bytes(),
+    )
 }
 
 pub fn encode_signed_key_rotation(signed: &SignedKeyRotation) -> Result<Vec<u8>, EnvelopeError> {
@@ -284,7 +366,8 @@ mod tests {
     #[test]
     fn request_round_trips_and_verifies_self_consistently() {
         let signing_key = SigningKey::generate(&mut os_rng());
-        let signed = sign_enrollment_request(&signing_key, sample_request(&signing_key, [9u8; 32])).unwrap();
+        let signed =
+            sign_enrollment_request(&signing_key, sample_request(&signing_key, [9u8; 32])).unwrap();
         verify_enrollment_request(&signing_key.verifying_key(), &signed).unwrap();
 
         let bytes = encode_signed_enrollment_request(&signed).unwrap();
@@ -295,7 +378,8 @@ mod tests {
     #[test]
     fn request_rejects_a_tampered_field() {
         let signing_key = SigningKey::generate(&mut os_rng());
-        let mut signed = sign_enrollment_request(&signing_key, sample_request(&signing_key, [9u8; 32])).unwrap();
+        let mut signed =
+            sign_enrollment_request(&signing_key, sample_request(&signing_key, [9u8; 32])).unwrap();
         signed.request.created_at_ms += 1;
         assert!(verify_enrollment_request(&signing_key.verifying_key(), &signed).is_err());
     }
@@ -308,7 +392,9 @@ mod tests {
             EnrollmentRejection {
                 request_id: RequestId::from_bytes([1u8; 16]),
                 rejector_device_id: DeviceId::from_bytes([3u8; 16]),
-                rejector_ed25519_public: ByteBuf::from(signing_key.verifying_key().to_bytes().to_vec()),
+                rejector_ed25519_public: ByteBuf::from(
+                    signing_key.verifying_key().to_bytes().to_vec(),
+                ),
                 rejected_at_ms: 1000,
             },
         )
@@ -352,7 +438,11 @@ mod tests {
         assert_eq!(decode_signed_enrollment_grant(&bytes).unwrap(), signed);
     }
 
-    fn sample_grant(approver: &SigningKey, key_epoch: u32, earlier_epoch_keys: Vec<SealedEpochKey>) -> EnrollmentGrant {
+    fn sample_grant(
+        approver: &SigningKey,
+        key_epoch: u32,
+        earlier_epoch_keys: Vec<SealedEpochKey>,
+    ) -> EnrollmentGrant {
         EnrollmentGrant {
             request_id: RequestId::from_bytes([1u8; 16]),
             approver_device_id: DeviceId::from_bytes([3u8; 16]),
@@ -375,14 +465,19 @@ mod tests {
     fn earlier(epochs: impl IntoIterator<Item = u32>) -> Vec<SealedEpochKey> {
         epochs
             .into_iter()
-            .map(|key_epoch| SealedEpochKey { key_epoch, sealed_key: ByteBuf::from(vec![key_epoch as u8; 72]) })
+            .map(|key_epoch| SealedEpochKey {
+                key_epoch,
+                sealed_key: ByteBuf::from(vec![key_epoch as u8; 72]),
+            })
             .collect()
     }
 
     #[test]
     fn a_grant_carries_earlier_epoch_keys_under_its_signature() {
         let approver = SigningKey::generate(&mut os_rng());
-        let signed = sign_enrollment_grant(&approver, sample_grant(&approver, 4, earlier([0, 1, 3]))).unwrap();
+        let signed =
+            sign_enrollment_grant(&approver, sample_grant(&approver, 4, earlier([0, 1, 3])))
+                .unwrap();
         let bytes = encode_signed_enrollment_grant(&signed).unwrap();
         let decoded = decode_signed_enrollment_grant(&bytes).unwrap();
         assert_eq!(decoded, signed);
@@ -432,24 +527,49 @@ mod tests {
             created_at_ms: current.created_at_ms,
         };
         let legacy_canonical = canonical_dag_cbor(&legacy).unwrap();
-        let signature = Signature(crypto::sign_bytes(&approver, GRANT_SIGNATURE_DOMAIN, &legacy_canonical));
-        let legacy_bytes = canonical_dag_cbor(&PreKeyringSignedGrant { grant: legacy, signature }).unwrap();
+        let signature = Signature(crypto::sign_bytes(
+            &approver,
+            GRANT_SIGNATURE_DOMAIN,
+            &legacy_canonical,
+        ));
+        let legacy_bytes = canonical_dag_cbor(&PreKeyringSignedGrant {
+            grant: legacy,
+            signature,
+        })
+        .unwrap();
 
         let decoded = decode_signed_enrollment_grant(&legacy_bytes).unwrap();
         assert!(decoded.grant.earlier_epoch_keys.is_empty());
         verify_enrollment_grant(&approver.verifying_key(), &decoded).unwrap();
         // With no earlier keys, a grant encodes exactly as it did before.
-        assert_eq!(encode_signed_enrollment_grant(&decoded).unwrap(), legacy_bytes);
+        assert_eq!(
+            encode_signed_enrollment_grant(&decoded).unwrap(),
+            legacy_bytes
+        );
     }
 
     #[test]
     fn earlier_epoch_keys_are_limited_in_count() {
         let approver = SigningKey::generate(&mut os_rng());
         let at_limit = MAX_EARLIER_EPOCH_KEYS as u32;
-        let below = sign_enrollment_grant(&approver, sample_grant(&approver, at_limit, earlier(0..at_limit - 1))).unwrap();
-        assert!(decode_signed_enrollment_grant(&encode_signed_enrollment_grant(&below).unwrap()).is_ok());
-        let exact = sign_enrollment_grant(&approver, sample_grant(&approver, at_limit, earlier(0..at_limit))).unwrap();
-        assert!(decode_signed_enrollment_grant(&encode_signed_enrollment_grant(&exact).unwrap()).is_ok());
+        let below = sign_enrollment_grant(
+            &approver,
+            sample_grant(&approver, at_limit, earlier(0..at_limit - 1)),
+        )
+        .unwrap();
+        assert!(
+            decode_signed_enrollment_grant(&encode_signed_enrollment_grant(&below).unwrap())
+                .is_ok()
+        );
+        let exact = sign_enrollment_grant(
+            &approver,
+            sample_grant(&approver, at_limit, earlier(0..at_limit)),
+        )
+        .unwrap();
+        assert!(
+            decode_signed_enrollment_grant(&encode_signed_enrollment_grant(&exact).unwrap())
+                .is_ok()
+        );
 
         let above = sample_grant(&approver, at_limit + 1, earlier(0..at_limit + 1));
         assert!(matches!(
@@ -457,7 +577,10 @@ mod tests {
             Err(EnvelopeError::LimitExceeded("earlier epoch key count"))
         ));
         // A peer that skipped the check when signing is still refused.
-        let unchecked = SignedEnrollmentGrant { grant: above, signature: Signature([0u8; 64]) };
+        let unchecked = SignedEnrollmentGrant {
+            grant: above,
+            signature: Signature([0u8; 64]),
+        };
         let bytes = canonical_dag_cbor(&unchecked).unwrap();
         assert!(matches!(
             decode_signed_enrollment_grant(&bytes),
@@ -468,13 +591,22 @@ mod tests {
     #[test]
     fn earlier_epoch_keys_must_be_distinct_ascending_and_before_the_current_epoch() {
         let approver = SigningKey::generate(&mut os_rng());
-        for bad in [earlier([2, 1]), earlier([1, 1]), earlier([1, 4]), earlier([5])] {
+        for bad in [
+            earlier([2, 1]),
+            earlier([1, 1]),
+            earlier([1, 4]),
+            earlier([5]),
+        ] {
             let grant = sample_grant(&approver, 4, bad);
             assert!(matches!(
                 sign_enrollment_grant(&approver, grant.clone()),
                 Err(EnvelopeError::LimitExceeded("earlier epoch key order"))
             ));
-            let bytes = canonical_dag_cbor(&SignedEnrollmentGrant { grant, signature: Signature([0u8; 64]) }).unwrap();
+            let bytes = canonical_dag_cbor(&SignedEnrollmentGrant {
+                grant,
+                signature: Signature([0u8; 64]),
+            })
+            .unwrap();
             assert!(decode_signed_enrollment_grant(&bytes).is_err());
         }
     }

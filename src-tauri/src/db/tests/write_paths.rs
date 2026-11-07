@@ -31,8 +31,14 @@ fn dump(db: &Database, tables: &[&str], start: &chrono::DateTime<chrono::FixedOf
     let connection = db.connection().unwrap();
     let mut out = String::new();
     for table in tables {
-        let mut statement = connection.prepare(&format!("SELECT * FROM {table}")).unwrap();
-        let columns: Vec<String> = statement.column_names().iter().map(|name| name.to_string()).collect();
+        let mut statement = connection
+            .prepare(&format!("SELECT * FROM {table}"))
+            .unwrap();
+        let columns: Vec<String> = statement
+            .column_names()
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
         let mut rows: Vec<String> = statement
             .query_map([], |row| {
                 Ok((0..columns.len())
@@ -41,7 +47,9 @@ fn dump(db: &Database, tables: &[&str], start: &chrono::DateTime<chrono::FixedOf
                             ValueRef::Null => "NULL".to_string(),
                             ValueRef::Integer(value) => value.to_string(),
                             ValueRef::Real(value) => value.to_string(),
-                            ValueRef::Text(bytes) => normalize(&String::from_utf8_lossy(bytes), start),
+                            ValueRef::Text(bytes) => {
+                                normalize(&String::from_utf8_lossy(bytes), start)
+                            }
                             ValueRef::Blob(bytes) => format!("<{} bytes>", bytes.len()),
                         };
                         format!("{}={}", columns[index], value)
@@ -64,7 +72,11 @@ fn dump(db: &Database, tables: &[&str], start: &chrono::DateTime<chrono::FixedOf
 
 fn start() -> chrono::DateTime<chrono::FixedOffset> {
     // Truncate to whole seconds: some writers round timestamps.
-    chrono::DateTime::parse_from_rfc3339(&(chrono::Utc::now() - chrono::Duration::seconds(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)).unwrap()
+    chrono::DateTime::parse_from_rfc3339(
+        &(chrono::Utc::now() - chrono::Duration::seconds(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    )
+    .unwrap()
 }
 
 fn task(id: &str, title: &str, updated_at: &str) -> Value {
@@ -81,60 +93,147 @@ fn task(id: &str, title: &str, updated_at: &str) -> Value {
 fn synced_projection_writes_exactly_these_rows() {
     let start = start();
     let db = database();
-    db.adopt_mail_account("existing@example.com", MailProviderKind::Gmail).unwrap();
+    db.adopt_mail_account("existing@example.com", MailProviderKind::Gmail)
+        .unwrap();
     db.set_beta_features_enabled(true).unwrap();
-    let project = |entity_type: EntityType, id: &str, payload: Value| db.materialize_entity(entity_type, id, Some(&payload), false).unwrap();
-    let delete = |entity_type: EntityType, id: &str| db.materialize_entity(entity_type, id, None, true).unwrap();
+    let project = |entity_type: EntityType, id: &str, payload: Value| {
+        db.materialize_entity(entity_type, id, Some(&payload), false)
+            .unwrap()
+    };
+    let delete = |entity_type: EntityType, id: &str| {
+        db.materialize_entity(entity_type, id, None, true).unwrap()
+    };
 
     project(EntityType::Task, "task-1", task("task-1", "First", T0));
     project(EntityType::Task, "task-1", task("task-1", "Renamed", T1));
     project(EntityType::Task, "task-2", task("task-2", "Doomed", T0));
     delete(EntityType::Task, "task-2");
 
-    project(EntityType::Snippet, "snippet-1", json!({"id": "snippet-1", "name": "Hi", "body": "Hello", "createdAt": T0}));
-    project(EntityType::Snippet, "snippet-1", json!({"id": "snippet-1", "name": "Hey", "body": "Hello again", "createdAt": T1}));
-    project(EntityType::Snippet, "snippet-2", json!({"id": "snippet-2", "name": "Bye", "body": "Later", "createdAt": T0}));
+    project(
+        EntityType::Snippet,
+        "snippet-1",
+        json!({"id": "snippet-1", "name": "Hi", "body": "Hello", "createdAt": T0}),
+    );
+    project(
+        EntityType::Snippet,
+        "snippet-1",
+        json!({"id": "snippet-1", "name": "Hey", "body": "Hello again", "createdAt": T1}),
+    );
+    project(
+        EntityType::Snippet,
+        "snippet-2",
+        json!({"id": "snippet-2", "name": "Bye", "body": "Later", "createdAt": T0}),
+    );
     delete(EntityType::Snippet, "snippet-2");
 
     let split = |name: &str, created_at: &str| json!({"id": "split-1", "name": name, "matchKind": "domain", "matchValue": "example.com", "sortOrder": 3, "createdAt": created_at, "accountId": "me@example.com"});
     project(EntityType::SplitInbox, "split-1", split("News", T0));
     project(EntityType::SplitInbox, "split-1", split("Newsletters", T1));
-    project(EntityType::SplitInbox, "split-2", json!({"id": "split-2", "name": "Gone", "matchKind": "domain", "matchValue": "x.example.com", "sortOrder": 1, "createdAt": T0, "accountId": "me@example.com"}));
+    project(
+        EntityType::SplitInbox,
+        "split-2",
+        json!({"id": "split-2", "name": "Gone", "matchKind": "domain", "matchValue": "x.example.com", "sortOrder": 1, "createdAt": T0, "accountId": "me@example.com"}),
+    );
     delete(EntityType::SplitInbox, "split-2");
 
-    project(EntityType::MailAccount, "existing@example.com", json!({"email": "existing@example.com", "displayName": "Me", "nickname": "Work", "color": "#112233", "provider": "gmail", "sortOrder": 5}));
-    project(EntityType::MailAccount, "new@example.com", json!({"email": "new@example.com", "displayName": null, "nickname": null, "color": "#445566", "provider": "imap", "sortOrder": 6}));
+    project(
+        EntityType::MailAccount,
+        "existing@example.com",
+        json!({"email": "existing@example.com", "displayName": "Me", "nickname": "Work", "color": "#112233", "provider": "gmail", "sortOrder": 5}),
+    );
+    project(
+        EntityType::MailAccount,
+        "new@example.com",
+        json!({"email": "new@example.com", "displayName": null, "nickname": null, "color": "#445566", "provider": "imap", "sortOrder": 6}),
+    );
 
-    project(EntityType::CalendarAccount, "cal-a@example.com", json!({"email": "cal-a@example.com"}));
-    project(EntityType::CalendarAccount, "cal-b@example.com", json!({"email": "cal-b@example.com", "sortOrder": 9}));
-    project(EntityType::CalendarAccount, "cal-a@example.com", json!({"email": "cal-a@example.com", "sortOrder": 4}));
-    project(EntityType::CalendarAccount, "cal-b@example.com", json!({"email": "cal-b@example.com"}));
+    project(
+        EntityType::CalendarAccount,
+        "cal-a@example.com",
+        json!({"email": "cal-a@example.com"}),
+    );
+    project(
+        EntityType::CalendarAccount,
+        "cal-b@example.com",
+        json!({"email": "cal-b@example.com", "sortOrder": 9}),
+    );
+    project(
+        EntityType::CalendarAccount,
+        "cal-a@example.com",
+        json!({"email": "cal-a@example.com", "sortOrder": 4}),
+    );
+    project(
+        EntityType::CalendarAccount,
+        "cal-b@example.com",
+        json!({"email": "cal-b@example.com"}),
+    );
 
-    let report = |operation: &str| json!({
-        "operationId": operation, "ownerInstallationId": "00000000-0000-4000-8000-000000000001",
-        "ownerSyncDeviceId": null, "ownerNameAtCreation": "Laptop", "account": "me@example.com",
-        "subject": "Later", "scheduledAt": 1_900_000_000_000_i64, "timeZone": "UTC", "state": "scheduled",
-        "blockedReason": null, "reportRevision": 1, "statusChangedAt": 1_800_000_000_000_i64,
-    });
+    let report = |operation: &str| {
+        json!({
+            "operationId": operation, "ownerInstallationId": "00000000-0000-4000-8000-000000000001",
+            "ownerSyncDeviceId": null, "ownerNameAtCreation": "Laptop", "account": "me@example.com",
+            "subject": "Later", "scheduledAt": 1_900_000_000_000_i64, "timeZone": "UTC", "state": "scheduled",
+            "blockedReason": null, "reportRevision": 1, "statusChangedAt": 1_800_000_000_000_i64,
+        })
+    };
     let summary_id = |operation: &str| format!("00000000-0000-4000-8000-000000000001:{operation}");
-    project(EntityType::ScheduledSendSummary, &summary_id("00000000-0000-4000-8000-0000000000a1"), json!({"report": report("00000000-0000-4000-8000-0000000000a1")}));
+    project(
+        EntityType::ScheduledSendSummary,
+        &summary_id("00000000-0000-4000-8000-0000000000a1"),
+        json!({"report": report("00000000-0000-4000-8000-0000000000a1")}),
+    );
     let mut revised = report("00000000-0000-4000-8000-0000000000a1");
     revised["reportRevision"] = json!(2);
-    project(EntityType::ScheduledSendSummary, &summary_id("00000000-0000-4000-8000-0000000000a1"), json!({"report": revised}));
-    project(EntityType::ScheduledSendSummary, &summary_id("00000000-0000-4000-8000-0000000000a2"), json!({"report": report("00000000-0000-4000-8000-0000000000a2")}));
-    delete(EntityType::ScheduledSendSummary, &summary_id("00000000-0000-4000-8000-0000000000a2"));
+    project(
+        EntityType::ScheduledSendSummary,
+        &summary_id("00000000-0000-4000-8000-0000000000a1"),
+        json!({"report": revised}),
+    );
+    project(
+        EntityType::ScheduledSendSummary,
+        &summary_id("00000000-0000-4000-8000-0000000000a2"),
+        json!({"report": report("00000000-0000-4000-8000-0000000000a2")}),
+    );
+    delete(
+        EntityType::ScheduledSendSummary,
+        &summary_id("00000000-0000-4000-8000-0000000000a2"),
+    );
 
-    project(EntityType::SenderRule, "rule-1", json!({"id": "rule-1", "accountId": "me@example.com", "matchKind": "address", "matchValue": "spam@example.com", "action": "mute", "createdAt": T0}));
-    project(EntityType::SenderRule, "rule-2", json!({"id": "rule-2", "accountId": "me@example.com", "matchKind": "address", "matchValue": "gone@example.com", "action": "mute", "createdAt": T0}));
+    project(
+        EntityType::SenderRule,
+        "rule-1",
+        json!({"id": "rule-1", "accountId": "me@example.com", "matchKind": "address", "matchValue": "spam@example.com", "action": "mute", "createdAt": T0}),
+    );
+    project(
+        EntityType::SenderRule,
+        "rule-2",
+        json!({"id": "rule-2", "accountId": "me@example.com", "matchKind": "address", "matchValue": "gone@example.com", "action": "mute", "createdAt": T0}),
+    );
     delete(EntityType::SenderRule, "rule-2");
 
-    project(EntityType::Preferences, "portable", json!({"fontSize": 14, "deviceName:abc123": "Laptop"}));
-    db.update_synced_preferences(json!({"fontSize": 16, "theme": "dark"})).unwrap();
+    project(
+        EntityType::Preferences,
+        "portable",
+        json!({"fontSize": 14, "deviceName:abc123": "Laptop"}),
+    );
+    db.update_synced_preferences(json!({"fontSize": 16, "theme": "dark"}))
+        .unwrap();
     project(EntityType::Retention, "mail", json!({"days": 30}));
 
     let actual = dump(
         &db,
-        &["tasks", "snippets", "split_inboxes", "accounts", "calendar_accounts", "scheduled_send_summaries", "sender_rules", "synced_preferences", "sync_device_labels", "compose_settings"],
+        &[
+            "tasks",
+            "snippets",
+            "split_inboxes",
+            "accounts",
+            "calendar_accounts",
+            "scheduled_send_summaries",
+            "sender_rules",
+            "synced_preferences",
+            "sync_device_labels",
+            "compose_settings",
+        ],
         &start,
     );
     assert_eq!(actual, SYNCED_PROJECTION, "\n--- actual ---\n{actual}");
@@ -145,7 +244,8 @@ fn local_saves_write_exactly_these_rows() {
     let start = start();
     let db = database();
     db.create_snippet("Hi", "Hello").unwrap();
-    db.create_split_inbox("News", "domain", "example.com", "me@example.com").unwrap();
+    db.create_split_inbox("News", "domain", "example.com", "me@example.com")
+        .unwrap();
     let contact: crate::models::SaveContactRequest = serde_json::from_value(json!({
         "id": "contact-1", "displayName": "Ada", "role": null, "company": "Engines", "location": null, "bio": null,
         "notes": null, "links": ["https://example.com"], "photoData": null, "favorite": true,
@@ -153,15 +253,26 @@ fn local_saves_write_exactly_these_rows() {
     }))
     .unwrap();
     db.save_contact_profile(&contact).unwrap();
-    let group = db.create_contact_group("Friends", &["contact-1".to_string()], &[]).unwrap();
-    db.add_contact_group_members(&group.group.id, &[], &["new@example.com".to_string()]).unwrap();
+    let group = db
+        .create_contact_group("Friends", &["contact-1".to_string()], &[])
+        .unwrap();
+    db.add_contact_group_members(&group.group.id, &[], &["new@example.com".to_string()])
+        .unwrap();
     db.set_retention_days(Some(90)).unwrap();
     db.set_retention_days(None).unwrap();
     db.set_retention_days(Some(365)).unwrap();
 
     let actual = dump(
         &db,
-        &["snippets", "split_inboxes", "contacts", "contact_addresses", "contact_groups", "contact_group_members", "compose_settings"],
+        &[
+            "snippets",
+            "split_inboxes",
+            "contacts",
+            "contact_addresses",
+            "contact_groups",
+            "contact_group_members",
+            "compose_settings",
+        ],
         &start,
     );
     assert_eq!(actual, LOCAL_SAVES, "\n--- actual ---\n{actual}");
@@ -171,7 +282,8 @@ fn local_saves_write_exactly_these_rows() {
 fn settings_import_writes_exactly_these_rows() {
     let start = start();
     let db = database();
-    db.adopt_mail_account("existing@example.com", MailProviderKind::Gmail).unwrap();
+    db.adopt_mail_account("existing@example.com", MailProviderKind::Gmail)
+        .unwrap();
     db.create_snippet("Old", "Replaced by the import").unwrap();
     db.store_signature(&template("old")).unwrap();
 
@@ -208,12 +320,34 @@ fn settings_import_writes_exactly_these_rows() {
         signatures: vec![template("work")],
         defaults: vec![defaults("existing@example.com", "", Some("work"), None)],
     };
-    db.import_transfer_data(&accounts, &not_here, &splits, &snippets, &contacts, Some(&groups), Some(&rules), Some(180), Some(&library))
-        .unwrap();
+    db.import_transfer_data(
+        &accounts,
+        &not_here,
+        &splits,
+        &snippets,
+        &contacts,
+        Some(&groups),
+        Some(&rules),
+        Some(180),
+        Some(&library),
+    )
+    .unwrap();
 
     let actual = dump(
         &db,
-        &["accounts", "split_inboxes", "snippets", "contacts", "contact_addresses", "contact_groups", "contact_group_members", "sender_rules", "signatures", "signature_defaults", "compose_settings"],
+        &[
+            "accounts",
+            "split_inboxes",
+            "snippets",
+            "contacts",
+            "contact_addresses",
+            "contact_groups",
+            "contact_group_members",
+            "sender_rules",
+            "signatures",
+            "signature_defaults",
+            "compose_settings",
+        ],
         &start,
     );
     assert_eq!(actual, SETTINGS_IMPORT, "\n--- actual ---\n{actual}");

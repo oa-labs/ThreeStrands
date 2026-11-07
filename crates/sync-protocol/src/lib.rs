@@ -87,21 +87,33 @@ impl EntityType {
         let object = payload
             .as_object()
             .ok_or_else(|| "A synchronized record must be a JSON object".to_string())?;
-        let limit = if self == Self::Draft { MAX_SYNCED_DRAFT_BYTES + 64 * 1024 } else { MAX_PAYLOAD_BYTES };
+        let limit = if self == Self::Draft {
+            MAX_SYNCED_DRAFT_BYTES + 64 * 1024
+        } else {
+            MAX_PAYLOAD_BYTES
+        };
         if serde_json::to_vec(payload).map_err(display)?.len() > limit {
             return Err("The synchronized record is too large".to_string());
         }
         match self {
             Self::ScheduledSendSummary => {
-                if object.len() != 1 { return Err("A scheduled summary contains only a report".into()); }
-                let report: ScheduledSendReport = serde_json::from_value(object.get("report").cloned().unwrap_or(Value::Null)).map_err(display)?;
+                if object.len() != 1 {
+                    return Err("A scheduled summary contains only a report".into());
+                }
+                let report: ScheduledSendReport =
+                    serde_json::from_value(object.get("report").cloned().unwrap_or(Value::Null))
+                        .map_err(display)?;
                 report.validate()?;
             }
             Self::Task => {
                 required_string(object, "title", 240)?;
                 enum_string(object, "kind", &["action", "follow_up", "waiting_for"])?;
                 enum_string(object, "dueKind", &["none", "date", "datetime"])?;
-                enum_string(object, "status", &["open", "in_progress", "completed", "cancelled"])?;
+                enum_string(
+                    object,
+                    "status",
+                    &["open", "in_progress", "completed", "cancelled"],
+                )?;
                 optional_string(object, "notes", 8_000)?;
                 optional_string(object, "evidenceText", 4_000)?;
                 optional_string(object, "goalId", 128)?;
@@ -112,24 +124,58 @@ impl EntityType {
             }
             Self::Signature => {
                 required_string(object, "id", 128)?;
-                if object["id"].as_str().unwrap().len() > 128 { return Err("Signature id is too large".into()); }
+                if object["id"].as_str().unwrap().len() > 128 {
+                    return Err("Signature id is too large".into());
+                }
                 required_string(object, "name", 200)?;
                 let (html, text) = signature_content(payload)?;
-                if html.trim().is_empty() || html.len() > MAX_SIGNATURE_HTML_BYTES || text.len() > MAX_SIGNATURE_TEXT_BYTES { return Err("Signature content is too large or empty".into()); }
+                if html.trim().is_empty()
+                    || html.len() > MAX_SIGNATURE_HTML_BYTES
+                    || text.len() > MAX_SIGNATURE_TEXT_BYTES
+                {
+                    return Err("Signature content is too large or empty".into());
+                }
             }
             Self::SignatureDefaults => {
-                if object.keys().any(|key| !["id", "account", "address", "newSignatureId", "replySignatureId"].contains(&key.as_str())) { return Err("Unknown signature defaults field".into()); }
+                if object.keys().any(|key| {
+                    ![
+                        "id",
+                        "account",
+                        "address",
+                        "newSignatureId",
+                        "replySignatureId",
+                    ]
+                    .contains(&key.as_str())
+                }) {
+                    return Err("Unknown signature defaults field".into());
+                }
                 required_string(object, "id", 320)?;
                 let id = object["id"].as_str().unwrap();
-                if !id.strip_prefix("signature-default:").is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|ch| ch.is_ascii_hexdigit())) { return Err("Invalid signature defaults identity".into()); }
+                if !id.strip_prefix("signature-default:").is_some_and(|hash| {
+                    hash.len() == 64 && hash.bytes().all(|ch| ch.is_ascii_hexdigit())
+                }) {
+                    return Err("Invalid signature defaults identity".into());
+                }
                 required_string(object, "account", 320)?;
                 let account = object["account"].as_str().unwrap();
-                let address = object.get("address").and_then(Value::as_str).ok_or("Signature address must be a string")?;
-                if !account.contains('@') || account.chars().any(char::is_control) || address.len() > 320 || (!address.is_empty() && (!address.contains('@') || address.chars().any(char::is_control))) { return Err("Invalid signature address".into()); }
+                let address = object
+                    .get("address")
+                    .and_then(Value::as_str)
+                    .ok_or("Signature address must be a string")?;
+                if !account.contains('@')
+                    || account.chars().any(char::is_control)
+                    || address.len() > 320
+                    || (!address.is_empty()
+                        && (!address.contains('@') || address.chars().any(char::is_control)))
+                {
+                    return Err("Invalid signature address".into());
+                }
                 for field in ["newSignatureId", "replySignatureId"] {
                     // A cleared replica field projects as absence. Both it
                     // and an explicit JSON null mean No Signature.
-                    if !matches!(object.get(field), None | Some(Value::Null)) { required_string(object, field, 128)?; }
+                    if !matches!(object.get(field), None | Some(Value::Null)) {
+                        required_string(object, field, 128)?;
+                    }
                 }
             }
             Self::Draft => {
@@ -138,40 +184,108 @@ impl EntityType {
             Self::SenderConfirmation => {
                 // One atomic field prevents concurrent confirmations from
                 // combining authentication evidence with another pattern.
-                if object.len() != 1 { return Err("Unknown sender confirmation field".into()); }
-                let pattern = object.get("pattern").and_then(Value::as_object).ok_or("Missing sender confirmation")?;
-                if pattern.keys().any(|key| !["id", "accountId", "requester", "senderEmail", "replyTo", "linkOrigins", "authenticated", "sourceMessageId", "confirmedAt"].contains(&key.as_str())) {
+                if object.len() != 1 {
+                    return Err("Unknown sender confirmation field".into());
+                }
+                let pattern = object
+                    .get("pattern")
+                    .and_then(Value::as_object)
+                    .ok_or("Missing sender confirmation")?;
+                if pattern.keys().any(|key| {
+                    ![
+                        "id",
+                        "accountId",
+                        "requester",
+                        "senderEmail",
+                        "replyTo",
+                        "linkOrigins",
+                        "authenticated",
+                        "sourceMessageId",
+                        "confirmedAt",
+                    ]
+                    .contains(&key.as_str())
+                }) {
                     return Err("Unknown sender confirmation detail".into());
                 }
-                for field in ["id", "accountId", "requester", "senderEmail", "sourceMessageId", "confirmedAt"] {
+                for field in [
+                    "id",
+                    "accountId",
+                    "requester",
+                    "senderEmail",
+                    "sourceMessageId",
+                    "confirmedAt",
+                ] {
                     required_string(pattern, field, 2048)?;
                 }
-                if !matches!(pattern.get("replyTo"), Some(Value::Null) | Some(Value::String(_))) || !pattern.get("authenticated").is_some_and(Value::is_boolean) {
+                if !matches!(
+                    pattern.get("replyTo"),
+                    Some(Value::Null) | Some(Value::String(_))
+                ) || !pattern.get("authenticated").is_some_and(Value::is_boolean)
+                {
                     return Err("Invalid sender confirmation evidence".into());
                 }
-                let origins = pattern.get("linkOrigins").and_then(Value::as_array).ok_or("Missing link origins")?;
-                if origins.len() > MAX_SENDER_CONFIRMATION_ORIGINS || origins.iter().any(|origin| !origin.is_string()) {
+                let origins = pattern
+                    .get("linkOrigins")
+                    .and_then(Value::as_array)
+                    .ok_or("Missing link origins")?;
+                if origins.len() > MAX_SENDER_CONFIRMATION_ORIGINS
+                    || origins.iter().any(|origin| !origin.is_string())
+                {
                     return Err("Invalid link origins".into());
                 }
             }
             Self::ConversationSnooze => {
-                if object.len() != 1 { return Err("A snooze contains only a schedule".into()); }
-                let schedule = object.get("schedule").and_then(Value::as_object).ok_or("Missing snooze schedule")?;
-                if schedule.keys().any(|key| !["id", "accountId", "providerThreadId", "until", "state", "messageIds", "references"].contains(&key.as_str())) {
+                if object.len() != 1 {
+                    return Err("A snooze contains only a schedule".into());
+                }
+                let schedule = object
+                    .get("schedule")
+                    .and_then(Value::as_object)
+                    .ok_or("Missing snooze schedule")?;
+                if schedule.keys().any(|key| {
+                    ![
+                        "id",
+                        "accountId",
+                        "providerThreadId",
+                        "until",
+                        "state",
+                        "messageIds",
+                        "references",
+                    ]
+                    .contains(&key.as_str())
+                }) {
                     return Err("Unknown snooze detail".into());
                 }
-                for field in ["id", "accountId", "providerThreadId"] { required_string(schedule, field, 2048)?; }
+                for field in ["id", "accountId", "providerThreadId"] {
+                    required_string(schedule, field, 2048)?;
+                }
                 enum_string(schedule, "state", &["active", "returned", "cancelled"])?;
                 match schedule.get("until") {
-                    Some(Value::String(value)) if value.len() <= 64 => {},
+                    Some(Value::String(value)) if value.len() <= 64 => {}
                     _ => return Err("Invalid snooze return time".into()),
                 }
                 if let Some(references) = schedule.get("references") {
                     let references = references.as_array().ok_or("Invalid snooze references")?;
-                    if references.iter().any(|reference| reference.as_str().is_none_or(|value| value.len()>2048 || !value.is_ascii() || value.chars().any(char::is_control))) { return Err("Invalid snooze reference".into()); }
+                    if references.iter().any(|reference| {
+                        reference.as_str().is_none_or(|value| {
+                            value.len() > 2048
+                                || !value.is_ascii()
+                                || value.chars().any(char::is_control)
+                        })
+                    }) {
+                        return Err("Invalid snooze reference".into());
+                    }
                 }
-                let ids = schedule.get("messageIds").and_then(Value::as_array).ok_or("Missing snooze message references")?;
-                if ids.iter().any(|id| id.as_str().is_none_or(|id| id.is_empty() || id.len() > 2048)) { return Err("Invalid snooze message reference".into()); }
+                let ids = schedule
+                    .get("messageIds")
+                    .and_then(Value::as_array)
+                    .ok_or("Missing snooze message references")?;
+                if ids.iter().any(|id| {
+                    id.as_str()
+                        .is_none_or(|id| id.is_empty() || id.len() > 2048)
+                }) {
+                    return Err("Invalid snooze message reference".into());
+                }
             }
             Self::SenderRule => {
                 required_string(object, "id", 128)?;
@@ -192,8 +306,13 @@ impl EntityType {
                 required_string(object, "provider", 40)?;
                 required_string(object, "color", 20)?;
                 optional_string(object, "nickname", 200)?;
-                if object.get("nickname").and_then(Value::as_str)
-                    .is_some_and(|name| name.trim().is_empty() || name.chars().any(char::is_control)) {
+                if object
+                    .get("nickname")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| {
+                        name.trim().is_empty() || name.chars().any(char::is_control)
+                    })
+                {
                     return Err("nickname is invalid".to_string());
                 }
             }
@@ -201,17 +320,28 @@ impl EntityType {
             Self::CalendarSelection => {
                 required_string(object, "accountId", 320)?;
                 for field in ["calendarIds", "availabilityCalendarIds"] {
-                    if field == "availabilityCalendarIds" && !object.contains_key(field) { continue; }
-                    let values = object.get(field).and_then(Value::as_array)
+                    if field == "availabilityCalendarIds" && !object.contains_key(field) {
+                        continue;
+                    }
+                    let values = object
+                        .get(field)
+                        .and_then(Value::as_array)
                         .ok_or_else(|| format!("{field} must be an array"))?;
-                    if values.len() > 500 || values.iter().any(|value| value.as_str().is_none_or(|value| value.len() > 1_000)) {
+                    if values.len() > 500
+                        || values
+                            .iter()
+                            .any(|value| value.as_str().is_none_or(|value| value.len() > 1_000))
+                    {
                         return Err(format!("{field} is invalid"));
                     }
                 }
             }
             Self::Preferences => validate_preferences(object)?,
             Self::Retention => {
-                if !matches!(object.get("days"), Some(Value::Null) | Some(Value::Number(_))) {
+                if !matches!(
+                    object.get("days"),
+                    Some(Value::Null) | Some(Value::Number(_))
+                ) {
                     return Err("Retention days must be a number or null".to_string());
                 }
             }
@@ -219,8 +349,14 @@ impl EntityType {
                 required_string(object, "title", 240)?;
                 required_string(object, "accountId", 320)?;
                 enum_string(object, "status", &["active", "achieved", "dropped"])?;
-                let horizon = object.get("horizon").and_then(Value::as_str).unwrap_or_default();
-                let period = object.get("period").and_then(Value::as_str).unwrap_or_default();
+                let horizon = object
+                    .get("horizon")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let period = object
+                    .get("period")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 if !goal_period_matches(horizon, period) {
                     return Err("The goal horizon or period is invalid".to_string());
                 }
@@ -232,7 +368,10 @@ impl EntityType {
                 required_string(object, "name", 100)?;
                 optional_string(object, "createdAt", 64)?;
                 let mut members = 0;
-                for (field, value) in object.iter().filter(|(field, _)| field.starts_with(CONTACT_GROUP_MEMBER_PREFIX)) {
+                for (field, value) in object
+                    .iter()
+                    .filter(|(field, _)| field.starts_with(CONTACT_GROUP_MEMBER_PREFIX))
+                {
                     let contact_id = &field[CONTACT_GROUP_MEMBER_PREFIX.len()..];
                     if contact_id.is_empty() || contact_id.len() > 128 {
                         return Err("A contact group member id is invalid".to_string());
@@ -256,12 +395,31 @@ impl EntityType {
                 optional_string(object, "bio", 4_000)?;
                 optional_string(object, "notes", 8_000)?;
                 optional_string(object, "photoData", 90_000)?;
-                let addresses = object.get("addresses").and_then(Value::as_array).ok_or_else(|| "addresses must be an array".to_string())?;
-                if addresses.is_empty() || addresses.len() > 100 || addresses.iter().any(|value| value.as_str().is_none_or(|email| email.len() > 320 || !email.contains('@'))) {
+                let addresses = object
+                    .get("addresses")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "addresses must be an array".to_string())?;
+                if addresses.is_empty()
+                    || addresses.len() > 100
+                    || addresses.iter().any(|value| {
+                        value
+                            .as_str()
+                            .is_none_or(|email| email.len() > 320 || !email.contains('@'))
+                    })
+                {
                     return Err("addresses are invalid".to_string());
                 }
-                let links = object.get("links").and_then(Value::as_array).ok_or_else(|| "links must be an array".to_string())?;
-                if links.len() > 20 || links.iter().any(|value| value.as_str().is_none_or(|link| link.len() > 2_048 || !link.starts_with("https://"))) {
+                let links = object
+                    .get("links")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "links must be an array".to_string())?;
+                if links.len() > 20
+                    || links.iter().any(|value| {
+                        value
+                            .as_str()
+                            .is_none_or(|link| link.len() > 2_048 || !link.starts_with("https://"))
+                    })
+                {
                     return Err("links are invalid".to_string());
                 }
             }
@@ -276,29 +434,65 @@ impl EntityType {
 pub fn signature_content(payload: &Value) -> Result<(String, String), String> {
     let object = payload.as_object().ok_or("Invalid signature content")?;
     if object.contains_key("html") {
-        if object.keys().any(|key| !["id", "name", "html", "text"].contains(&key.as_str())) { return Err("Unknown signature field".into()); }
-        return Ok((object["html"].as_str().ok_or("Signature HTML must be a string")?.into(), object.get("text").and_then(Value::as_str).ok_or("Signature text must be a string")?.into()));
+        if object
+            .keys()
+            .any(|key| !["id", "name", "html", "text"].contains(&key.as_str()))
+        {
+            return Err("Unknown signature field".into());
+        }
+        return Ok((
+            object["html"]
+                .as_str()
+                .ok_or("Signature HTML must be a string")?
+                .into(),
+            object
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or("Signature text must be a string")?
+                .into(),
+        ));
     }
-    let hash = object.get("contentHash").and_then(Value::as_str).ok_or("Missing signature content hash")?;
-    if hash.len() != 64 || !hash.bytes().all(|ch| ch.is_ascii_hexdigit()) { return Err("Invalid signature content hash".into()); }
+    let hash = object
+        .get("contentHash")
+        .and_then(Value::as_str)
+        .ok_or("Missing signature content hash")?;
+    if hash.len() != 64 || !hash.bytes().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err("Invalid signature content hash".into());
+    }
     let mut html = std::collections::BTreeMap::new();
     let mut text = std::collections::BTreeMap::new();
     for (key, value) in object {
-        if ["id", "name", "contentHash"].contains(&key.as_str()) { continue; }
+        if ["id", "name", "contentHash"].contains(&key.as_str()) {
+            continue;
+        }
         let mut parts = key.split(':');
         let kind = parts.next().unwrap_or_default();
         let version = parts.next().unwrap_or_default();
         let index = parts.next().unwrap_or_default();
         let number: usize = index.parse().map_err(|_| "Invalid signature chunk index")?;
-        if version != hash || index != number.to_string() || parts.next().is_some() { return Err("Invalid signature chunk identity".into()); }
+        if version != hash || index != number.to_string() || parts.next().is_some() {
+            return Err("Invalid signature chunk identity".into());
+        }
         let value = value.as_str().ok_or("Invalid signature chunk")?;
-        match kind { "html" => { html.insert(number, value); }, "text" => { text.insert(number, value); }, _ => return Err("Unknown signature field".into()) }
+        match kind {
+            "html" => {
+                html.insert(number, value);
+            }
+            "text" => {
+                text.insert(number, value);
+            }
+            _ => return Err("Unknown signature field".into()),
+        }
     }
     let join = |chunks: std::collections::BTreeMap<usize, &str>| -> Result<String, String> {
-        if chunks.is_empty() { return Err("Missing signature content chunks".into()); }
+        if chunks.is_empty() {
+            return Err("Missing signature content chunks".into());
+        }
         let mut result = String::new();
         for (expected, (index, value)) in chunks.into_iter().enumerate() {
-            if expected != index { return Err("Missing signature content chunk".into()); }
+            if expected != index {
+                return Err("Missing signature content chunk".into());
+            }
             result.push_str(value);
         }
         Ok(result)
@@ -315,25 +509,53 @@ pub fn signature_content(payload: &Value) -> Result<(String, String), String> {
 pub fn draft_content(payload: &Value) -> Result<String, String> {
     let object = payload.as_object().ok_or("Invalid draft")?;
     required_string(object, "id", 128)?;
-    let hash = object.get("contentHash").and_then(Value::as_str).ok_or("Missing draft content hash")?;
-    if hash.len() != 64 || !hash.bytes().all(|ch| ch.is_ascii_hexdigit()) { return Err("Invalid draft content hash".into()); }
+    let hash = object
+        .get("contentHash")
+        .and_then(Value::as_str)
+        .ok_or("Missing draft content hash")?;
+    if hash.len() != 64 || !hash.bytes().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err("Invalid draft content hash".into());
+    }
     let mut chunks = std::collections::BTreeMap::new();
     for (key, value) in object {
-        if ["id", "contentHash"].contains(&key.as_str()) { continue; }
+        if ["id", "contentHash"].contains(&key.as_str()) {
+            continue;
+        }
         let mut parts = key.split(':');
-        let (kind, version, index) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+        let (kind, version, index) = (
+            parts.next().unwrap_or_default(),
+            parts.next().unwrap_or_default(),
+            parts.next().unwrap_or_default(),
+        );
         let number: usize = index.parse().map_err(|_| "Invalid draft chunk index")?;
-        if kind != "content" || version != hash || index != number.to_string() || parts.next().is_some() { return Err("Unknown draft field".into()); }
+        if kind != "content"
+            || version != hash
+            || index != number.to_string()
+            || parts.next().is_some()
+        {
+            return Err("Unknown draft field".into());
+        }
         chunks.insert(number, value.as_str().ok_or("Invalid draft chunk")?);
     }
-    if chunks.is_empty() { return Err("Missing draft content".into()); }
+    if chunks.is_empty() {
+        return Err("Missing draft content".into());
+    }
     let mut content = String::new();
     for (expected, (index, chunk)) in chunks.into_iter().enumerate() {
-        if expected != index { return Err("Missing draft content chunk".into()); }
+        if expected != index {
+            return Err("Missing draft content chunk".into());
+        }
         content.push_str(chunk);
     }
-    if content.len() > MAX_SYNCED_DRAFT_BYTES { return Err("The draft is too large to sync".into()); }
-    if !serde_json::from_str::<Value>(&content).map_err(display)?.is_object() { return Err("Invalid draft content".into()); }
+    if content.len() > MAX_SYNCED_DRAFT_BYTES {
+        return Err("The draft is too large to sync".into());
+    }
+    if !serde_json::from_str::<Value>(&content)
+        .map_err(display)?
+        .is_object()
+    {
+        return Err("Invalid draft content".into());
+    }
     Ok(content)
 }
 
@@ -372,8 +594,12 @@ pub fn goal_period_matches(horizon: &str, period: &str) -> bool {
     let year = bytes.len() >= 4 && bytes[..4].iter().all(u8::is_ascii_digit);
     match horizon {
         "year" => year && bytes.len() == 4,
-        "half" => year && bytes.len() == 7 && &bytes[4..6] == b"-H" && matches!(bytes[6], b'1' | b'2'),
-        "quarter" => year && bytes.len() == 7 && &bytes[4..6] == b"-Q" && matches!(bytes[6], b'1'..=b'4'),
+        "half" => {
+            year && bytes.len() == 7 && &bytes[4..6] == b"-H" && matches!(bytes[6], b'1' | b'2')
+        }
+        "quarter" => {
+            year && bytes.len() == 7 && &bytes[4..6] == b"-Q" && matches!(bytes[6], b'1'..=b'4')
+        }
         _ => false,
     }
 }
@@ -453,26 +679,57 @@ mod tests {
     fn signature_payloads_are_bounded_and_reject_unrelated_data() {
         let valid = json!({"id":"work", "name":"Work", "html":"<p>Regards</p>", "text":"Regards"});
         assert!(EntityType::Signature.validate_payload(&valid).is_ok());
-        for length in [MAX_SIGNATURE_HTML_BYTES - 1, MAX_SIGNATURE_HTML_BYTES, MAX_SIGNATURE_HTML_BYTES + 1] {
-            let mut value = valid.clone(); value["html"] = json!("x".repeat(length));
-            assert_eq!(EntityType::Signature.validate_payload(&value).is_ok(), length <= MAX_SIGNATURE_HTML_BYTES);
+        for length in [
+            MAX_SIGNATURE_HTML_BYTES - 1,
+            MAX_SIGNATURE_HTML_BYTES,
+            MAX_SIGNATURE_HTML_BYTES + 1,
+        ] {
+            let mut value = valid.clone();
+            value["html"] = json!("x".repeat(length));
+            assert_eq!(
+                EntityType::Signature.validate_payload(&value).is_ok(),
+                length <= MAX_SIGNATURE_HTML_BYTES
+            );
         }
-        for length in [MAX_SIGNATURE_TEXT_BYTES - 1, MAX_SIGNATURE_TEXT_BYTES, MAX_SIGNATURE_TEXT_BYTES + 1] {
-            let mut value = valid.clone(); value["text"] = json!("x".repeat(length));
-            assert_eq!(EntityType::Signature.validate_payload(&value).is_ok(), length <= MAX_SIGNATURE_TEXT_BYTES);
+        for length in [
+            MAX_SIGNATURE_TEXT_BYTES - 1,
+            MAX_SIGNATURE_TEXT_BYTES,
+            MAX_SIGNATURE_TEXT_BYTES + 1,
+        ] {
+            let mut value = valid.clone();
+            value["text"] = json!("x".repeat(length));
+            assert_eq!(
+                EntityType::Signature.validate_payload(&value).is_ok(),
+                length <= MAX_SIGNATURE_TEXT_BYTES
+            );
         }
-        let mut unicode = valid.clone(); unicode["html"] = json!("é".repeat(MAX_SIGNATURE_HTML_BYTES / 2 + 1));
+        let mut unicode = valid.clone();
+        unicode["html"] = json!("é".repeat(MAX_SIGNATURE_HTML_BYTES / 2 + 1));
         assert!(EntityType::Signature.validate_payload(&unicode).is_err());
-        let mut secret = valid; secret["credentials"] = json!("must stay local");
+        let mut secret = valid;
+        secret["credentials"] = json!("must stay local");
         assert!(EntityType::Signature.validate_payload(&secret).is_err());
         let defaults = json!({"id":format!("signature-default:{}", "a".repeat(64)), "account":"me@example.com", "address":"alias@example.com", "newSignatureId":"work", "replySignatureId":null});
-        assert!(EntityType::SignatureDefaults.validate_payload(&defaults).is_ok());
-        let mut cleared = defaults.clone(); cleared.as_object_mut().unwrap().remove("replySignatureId");
-        assert!(EntityType::SignatureDefaults.validate_payload(&cleared).is_ok());
+        assert!(EntityType::SignatureDefaults
+            .validate_payload(&defaults)
+            .is_ok());
+        let mut cleared = defaults.clone();
+        cleared.as_object_mut().unwrap().remove("replySignatureId");
+        assert!(EntityType::SignatureDefaults
+            .validate_payload(&cleared)
+            .is_ok());
         for field in ["id", "account", "address", "newSignatureId"] {
-            let mut invalid = defaults.clone(); invalid[field] = json!("bad");
-            if field == "newSignatureId" { invalid[field] = json!(42); }
-            assert!(EntityType::SignatureDefaults.validate_payload(&invalid).is_err(), "{field}");
+            let mut invalid = defaults.clone();
+            invalid[field] = json!("bad");
+            if field == "newSignatureId" {
+                invalid[field] = json!(42);
+            }
+            assert!(
+                EntityType::SignatureDefaults
+                    .validate_payload(&invalid)
+                    .is_err(),
+                "{field}"
+            );
         }
     }
 
@@ -480,31 +737,54 @@ mod tests {
     fn draft_payloads_are_hash_addressed_bounded_chunks() {
         let hash = "a".repeat(64);
         let draft = |content: &str| json!({"id": "draft-1", "contentHash": hash, format!("content:{hash}:0"): content});
-        assert_eq!(draft_content(&draft("{\"subject\":\"Hi\"}")).unwrap(), "{\"subject\":\"Hi\"}");
+        assert_eq!(
+            draft_content(&draft("{\"subject\":\"Hi\"}")).unwrap(),
+            "{\"subject\":\"Hi\"}"
+        );
         assert!(EntityType::Draft.validate_payload(&draft("{}")).is_ok());
         let mut split = json!({"id": "draft-1", "contentHash": hash});
         split[format!("content:{hash}:0")] = json!("{\"a\":");
         split[format!("content:{hash}:1")] = json!("1}");
         assert_eq!(draft_content(&split).unwrap(), "{\"a\":1}");
-        let mut gap = split.clone(); gap.as_object_mut().unwrap().remove(&format!("content:{hash}:0"));
+        let mut gap = split.clone();
+        gap.as_object_mut()
+            .unwrap()
+            .remove(&format!("content:{hash}:0"));
         assert!(draft_content(&gap).is_err());
-        let mut other_version = split.clone(); other_version[format!("content:{}:0", "b".repeat(64))] = json!("x");
-        assert!(draft_content(&other_version).is_err(), "only the named version's chunks are read");
-        let mut extra = draft("{}"); extra["body"] = json!("must live in content");
+        let mut other_version = split.clone();
+        other_version[format!("content:{}:0", "b".repeat(64))] = json!("x");
+        assert!(
+            draft_content(&other_version).is_err(),
+            "only the named version's chunks are read"
+        );
+        let mut extra = draft("{}");
+        extra["body"] = json!("must live in content");
         assert!(EntityType::Draft.validate_payload(&extra).is_err());
         assert!(EntityType::Draft.validate_payload(&draft("[]")).is_err());
-        assert!(EntityType::Draft.validate_payload(&draft("not json")).is_err());
-        let mut short = draft("{}"); short["contentHash"] = json!("abc");
+        assert!(EntityType::Draft
+            .validate_payload(&draft("not json"))
+            .is_err());
+        let mut short = draft("{}");
+        short["contentHash"] = json!("abc");
         assert!(EntityType::Draft.validate_payload(&short).is_err());
-        for length in [MAX_SYNCED_DRAFT_BYTES - 1, MAX_SYNCED_DRAFT_BYTES, MAX_SYNCED_DRAFT_BYTES + 1] {
+        for length in [
+            MAX_SYNCED_DRAFT_BYTES - 1,
+            MAX_SYNCED_DRAFT_BYTES,
+            MAX_SYNCED_DRAFT_BYTES + 1,
+        ] {
             let body = "x".repeat(length - "{\"b\":\"\"}".len());
             let content = format!("{{\"b\":\"{body}\"}}");
             assert_eq!(content.len(), length);
             let mut value = json!({"id": "draft-1", "contentHash": hash});
             for (index, chunk) in content.as_bytes().chunks(60_000).enumerate() {
-                value[format!("content:{hash}:{index}")] = json!(std::str::from_utf8(chunk).unwrap());
+                value[format!("content:{hash}:{index}")] =
+                    json!(std::str::from_utf8(chunk).unwrap());
             }
-            assert_eq!(EntityType::Draft.validate_payload(&value).is_ok(), length <= MAX_SYNCED_DRAFT_BYTES, "{length}");
+            assert_eq!(
+                EntityType::Draft.validate_payload(&value).is_ok(),
+                length <= MAX_SYNCED_DRAFT_BYTES,
+                "{length}"
+            );
         }
     }
 
@@ -566,7 +846,8 @@ mod tests {
             "status": "open"
         });
         assert!(EntityType::Task.validate_payload(&valid).is_ok());
-        let invalid = json!({ "title": "x", "kind": "action", "dueKind": "none", "status": "lost" });
+        let invalid =
+            json!({ "title": "x", "kind": "action", "dueKind": "none", "status": "lost" });
         assert!(EntityType::Task.validate_payload(&invalid).is_err());
     }
 
@@ -577,11 +858,23 @@ mod tests {
         for count in [499, 500, 501] {
             let mut value = old.clone();
             value["availabilityCalendarIds"] = serde_json::json!(vec!["calendar"; count]);
-            assert_eq!(EntityType::CalendarSelection.validate_payload(&value).is_ok(), count <= 500);
+            assert_eq!(
+                EntityType::CalendarSelection
+                    .validate_payload(&value)
+                    .is_ok(),
+                count <= 500
+            );
         }
-        for value in [serde_json::json!(null), serde_json::json!([1]), serde_json::json!(["x".repeat(1001)])] {
-            let mut payload = old.clone(); payload["availabilityCalendarIds"] = value;
-            assert!(EntityType::CalendarSelection.validate_payload(&payload).is_err());
+        for value in [
+            serde_json::json!(null),
+            serde_json::json!([1]),
+            serde_json::json!(["x".repeat(1001)]),
+        ] {
+            let mut payload = old.clone();
+            payload["availabilityCalendarIds"] = value;
+            assert!(EntityType::CalendarSelection
+                .validate_payload(&payload)
+                .is_err());
         }
     }
 
@@ -593,7 +886,12 @@ mod tests {
             account["nickname"] = nickname;
             EntityType::MailAccount.validate_payload(&account).unwrap();
         }
-        for nickname in [json!("é".repeat(201)), json!("Work\nPersonal"), json!("  "), json!(42)] {
+        for nickname in [
+            json!("é".repeat(201)),
+            json!("Work\nPersonal"),
+            json!("  "),
+            json!(42),
+        ] {
             account["nickname"] = nickname;
             assert!(EntityType::MailAccount.validate_payload(&account).is_err());
         }
@@ -630,7 +928,10 @@ mod tests {
         ] {
             let mut invalid = valid.clone();
             invalid[field] = value;
-            assert!(EntityType::Goal.validate_payload(&invalid).is_err(), "{field} should be rejected");
+            assert!(
+                EntityType::Goal.validate_payload(&invalid).is_err(),
+                "{field} should be rejected"
+            );
         }
     }
 
@@ -642,8 +943,15 @@ mod tests {
         assert!(goal_period_matches("quarter", "2026-Q1"));
         assert!(goal_period_matches("quarter", "2026-Q4"));
         for (horizon, period) in [
-            ("year", "26"), ("year", "2026-Q1"), ("half", "2026-H0"), ("half", "2026-H3"),
-            ("quarter", "2026-Q0"), ("quarter", "2026-Q5"), ("quarter", "2026-q4"), ("quarter", "20x6-Q4"), ("week", "2026"),
+            ("year", "26"),
+            ("year", "2026-Q1"),
+            ("half", "2026-H0"),
+            ("half", "2026-H3"),
+            ("quarter", "2026-Q0"),
+            ("quarter", "2026-Q5"),
+            ("quarter", "2026-q4"),
+            ("quarter", "20x6-Q4"),
+            ("week", "2026"),
         ] {
             assert!(!goal_period_matches(horizon, period), "{horizon} {period}");
         }
@@ -663,7 +971,10 @@ mod tests {
         ] {
             let mut invalid = valid.clone();
             invalid[field] = value;
-            assert!(EntityType::ContactGroup.validate_payload(&invalid).is_err(), "{field} should be rejected");
+            assert!(
+                EntityType::ContactGroup.validate_payload(&invalid).is_err(),
+                "{field} should be rejected"
+            );
         }
         let mut at_limit = json!({"name": "Everyone"});
         for index in 0..MAX_CONTACT_GROUP_MEMBERS {
@@ -674,18 +985,20 @@ mod tests {
         at_limit["member:contact:removed"] = json!(null);
         assert!(EntityType::ContactGroup.validate_payload(&at_limit).is_ok());
         at_limit["member:contact:one-more"] = json!(true);
-        assert!(EntityType::ContactGroup.validate_payload(&at_limit).is_err());
+        assert!(EntityType::ContactGroup
+            .validate_payload(&at_limit)
+            .is_err());
     }
 
     #[test]
     fn validates_contact_sync_payload_and_bounded_photo() {
-        let valid=json!({"id":"contact:jane@example.com","displayName":"Jane","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["jane@example.com"],"sentCount":0,"receivedCount":0,"lastInteractedAt":null});
+        let valid = json!({"id":"contact:jane@example.com","displayName":"Jane","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["jane@example.com"],"sentCount":0,"receivedCount":0,"lastInteractedAt":null});
         assert!(EntityType::Contact.validate_payload(&valid).is_ok());
-        let mut invalid=valid.clone();
-        invalid["addresses"]=json!([]);
+        let mut invalid = valid.clone();
+        invalid["addresses"] = json!([]);
         assert!(EntityType::Contact.validate_payload(&invalid).is_err());
-        invalid=valid;
-        invalid["photoData"]=json!("x".repeat(90_001));
+        invalid = valid;
+        invalid["photoData"] = json!("x".repeat(90_001));
         assert!(EntityType::Contact.validate_payload(&invalid).is_err());
     }
     #[test]
@@ -695,16 +1008,40 @@ mod tests {
             "senderEmail":"requests@service.example", "replyTo":"ana@partner.example", "linkOrigins":[],
             "authenticated":false, "sourceMessageId":"message", "confirmedAt":"2026-10-26T12:00:00Z"
         }});
-        for count in [MAX_SENDER_CONFIRMATION_ORIGINS - 1, MAX_SENDER_CONFIRMATION_ORIGINS, MAX_SENDER_CONFIRMATION_ORIGINS + 1] {
+        for count in [
+            MAX_SENDER_CONFIRMATION_ORIGINS - 1,
+            MAX_SENDER_CONFIRMATION_ORIGINS,
+            MAX_SENDER_CONFIRMATION_ORIGINS + 1,
+        ] {
             let mut value = valid.clone();
-            value["pattern"]["linkOrigins"] = serde_json::json!(vec!["https://service.example"; count]);
-            assert_eq!(EntityType::SenderConfirmation.validate_payload(&value).is_ok(), count <= MAX_SENDER_CONFIRMATION_ORIGINS);
+            value["pattern"]["linkOrigins"] =
+                serde_json::json!(vec!["https://service.example"; count]);
+            assert_eq!(
+                EntityType::SenderConfirmation
+                    .validate_payload(&value)
+                    .is_ok(),
+                count <= MAX_SENDER_CONFIRMATION_ORIGINS
+            );
         }
-        let mut extra = valid.clone(); extra["token"] = serde_json::json!("secret");
-        assert!(EntityType::SenderConfirmation.validate_payload(&extra).is_err());
-        for field in ["authenticated", "requester", "sourceMessageId", "linkOrigins"] {
-            let mut missing = valid.clone(); missing["pattern"].as_object_mut().unwrap().remove(field);
-            assert!(EntityType::SenderConfirmation.validate_payload(&missing).is_err(), "{field}");
+        let mut extra = valid.clone();
+        extra["token"] = serde_json::json!("secret");
+        assert!(EntityType::SenderConfirmation
+            .validate_payload(&extra)
+            .is_err());
+        for field in [
+            "authenticated",
+            "requester",
+            "sourceMessageId",
+            "linkOrigins",
+        ] {
+            let mut missing = valid.clone();
+            missing["pattern"].as_object_mut().unwrap().remove(field);
+            assert!(
+                EntityType::SenderConfirmation
+                    .validate_payload(&missing)
+                    .is_err(),
+                "{field}"
+            );
         }
     }
 
@@ -728,7 +1065,10 @@ mod tests {
         ] {
             let mut bad = valid.clone();
             bad[field] = value;
-            assert!(EntityType::SenderRule.validate_payload(&bad).is_err(), "{field}");
+            assert!(
+                EntityType::SenderRule.validate_payload(&bad).is_err(),
+                "{field}"
+            );
         }
         // A build from before mute rules cannot decode the new type, so it
         // never merges a snapshot partially (see docs/cross-device-sync.md).
@@ -754,21 +1094,81 @@ mod tests {
 
     #[test]
     fn scheduled_summary_allowlist_rejects_content_credentials_and_invalid_reports() {
-        let report=ScheduledSendReport {operation_id:"00000000-0000-4000-8000-000000000001".into(),owner_installation_id:"00000000-0000-4000-8000-000000000002".into(),owner_sync_device_id:None,owner_name_at_creation:"MacBook".into(),account:"me@example.com".into(),subject:"Hello".into(),scheduled_at:1_800_000_000_000,time_zone:"America/New_York".into(),state:"scheduled".into(),blocked_reason:None,report_revision:1,status_changed_at:1_700_000_000_000};
-        let valid=json!({"report":report});assert!(EntityType::ScheduledSendSummary.validate_payload(&valid).is_ok());
-        for field in ["body","bodyHtml","to","bcc","raw","attachments","token","error"] {
-            let mut bad=valid.clone();bad["report"][field]=json!("private");assert!(EntityType::ScheduledSendSummary.validate_payload(&bad).is_err());
-            let mut bad=valid.clone();bad[field]=json!("private");assert!(EntityType::ScheduledSendSummary.validate_payload(&bad).is_err());
+        let report = ScheduledSendReport {
+            operation_id: "00000000-0000-4000-8000-000000000001".into(),
+            owner_installation_id: "00000000-0000-4000-8000-000000000002".into(),
+            owner_sync_device_id: None,
+            owner_name_at_creation: "MacBook".into(),
+            account: "me@example.com".into(),
+            subject: "Hello".into(),
+            scheduled_at: 1_800_000_000_000,
+            time_zone: "America/New_York".into(),
+            state: "scheduled".into(),
+            blocked_reason: None,
+            report_revision: 1,
+            status_changed_at: 1_700_000_000_000,
+        };
+        let valid = json!({"report":report});
+        assert!(EntityType::ScheduledSendSummary
+            .validate_payload(&valid)
+            .is_ok());
+        for field in [
+            "body",
+            "bodyHtml",
+            "to",
+            "bcc",
+            "raw",
+            "attachments",
+            "token",
+            "error",
+        ] {
+            let mut bad = valid.clone();
+            bad["report"][field] = json!("private");
+            assert!(EntityType::ScheduledSendSummary
+                .validate_payload(&bad)
+                .is_err());
+            let mut bad = valid.clone();
+            bad[field] = json!("private");
+            assert!(EntityType::ScheduledSendSummary
+                .validate_payload(&bad)
+                .is_err());
         }
-        for (field,value) in [("scheduledAt",json!(-1)),("state",json!("resend")),("reportRevision",json!(0)),("timeZone",json!("unknown")),("ownerInstallationId",json!("")),("blockedReason",json!("server error with secret"))] {
-            let mut bad=valid.clone();bad["report"][field]=value;assert!(EntityType::ScheduledSendSummary.validate_payload(&bad).is_err(),"{field}");
+        for (field, value) in [
+            ("scheduledAt", json!(-1)),
+            ("state", json!("resend")),
+            ("reportRevision", json!(0)),
+            ("timeZone", json!("unknown")),
+            ("ownerInstallationId", json!("")),
+            ("blockedReason", json!("server error with secret")),
+        ] {
+            let mut bad = valid.clone();
+            bad["report"][field] = value;
+            assert!(
+                EntityType::ScheduledSendSummary
+                    .validate_payload(&bad)
+                    .is_err(),
+                "{field}"
+            );
         }
         // An old vocabulary rejects the new variant; snapshots cannot partially decode.
-        #[derive(Deserialize)] #[serde(rename_all="snake_case")] enum PreviousType {Task,Snippet,SplitInbox,MailAccount,CalendarAccount,CalendarSelection,Preferences,Retention,Contact,Goal,ContactGroup}
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum PreviousType {
+            Task,
+            Snippet,
+            SplitInbox,
+            MailAccount,
+            CalendarAccount,
+            CalendarSelection,
+            Preferences,
+            Retention,
+            Contact,
+            Goal,
+            ContactGroup,
+        }
         assert!(serde_json::from_str::<PreviousType>("\"scheduled_send_summary\"").is_err());
         assert!(serde_json::from_str::<EntityType>("\"task\"").is_ok());
     }
-
 }
 
 /// Read-only metadata. No recipient, MIME, attachment, credential or raw error fields.
@@ -790,18 +1190,60 @@ pub struct ScheduledSendReport {
 }
 
 impl ScheduledSendReport {
-    pub fn entity_id(&self) -> String { format!("{}:{}", self.owner_installation_id, self.operation_id) }
+    pub fn entity_id(&self) -> String {
+        format!("{}:{}", self.owner_installation_id, self.operation_id)
+    }
     pub fn validate(&self) -> Result<(), String> {
-        let uuid = |v: &str| v.len() == 36 && v.bytes().enumerate().all(|(i,b)| if [8,13,18,23].contains(&i) { b == b'-' } else { b.is_ascii_hexdigit() });
-        if !uuid(&self.operation_id) || !uuid(&self.owner_installation_id)
-            || self.owner_sync_device_id.as_ref().is_some_and(|v| v.len() != 32 || !v.bytes().all(|b| b.is_ascii_hexdigit()))
-            || self.owner_name_at_creation.trim().is_empty() || self.owner_name_at_creation.chars().count() > 60
-            || self.account.is_empty() || self.account.len() > 320 || !self.account.contains('@') || self.account.contains(['\r','\n'])
-            || self.subject.chars().count() > 998 || self.time_zone.parse::<chrono_tz::Tz>().is_err()
-            || !(0..=253402300799999).contains(&self.scheduled_at) || !(0..=253402300799999).contains(&self.status_changed_at)
+        let uuid = |v: &str| {
+            v.len() == 36
+                && v.bytes().enumerate().all(|(i, b)| {
+                    if [8, 13, 18, 23].contains(&i) {
+                        b == b'-'
+                    } else {
+                        b.is_ascii_hexdigit()
+                    }
+                })
+        };
+        if !uuid(&self.operation_id)
+            || !uuid(&self.owner_installation_id)
+            || self
+                .owner_sync_device_id
+                .as_ref()
+                .is_some_and(|v| v.len() != 32 || !v.bytes().all(|b| b.is_ascii_hexdigit()))
+            || self.owner_name_at_creation.trim().is_empty()
+            || self.owner_name_at_creation.chars().count() > 60
+            || self.account.is_empty()
+            || self.account.len() > 320
+            || !self.account.contains('@')
+            || self.account.contains(['\r', '\n'])
+            || self.subject.chars().count() > 998
+            || self.time_zone.parse::<chrono_tz::Tz>().is_err()
+            || !(0..=253402300799999).contains(&self.scheduled_at)
+            || !(0..=253402300799999).contains(&self.status_changed_at)
             || self.report_revision < 1
-            || !["scheduled","overdue","undo_pending","ready","sending","sent","failed","uncertain","unverifiable","canceled"].contains(&self.state.as_str())
-            || self.blocked_reason.as_ref().is_some_and(|v| !["authorization","owner_unavailable","account_disconnected","provider_unavailable"].contains(&v.as_str())) {
+            || ![
+                "scheduled",
+                "overdue",
+                "undo_pending",
+                "ready",
+                "sending",
+                "sent",
+                "failed",
+                "uncertain",
+                "unverifiable",
+                "canceled",
+            ]
+            .contains(&self.state.as_str())
+            || self.blocked_reason.as_ref().is_some_and(|v| {
+                ![
+                    "authorization",
+                    "owner_unavailable",
+                    "account_disconnected",
+                    "provider_unavailable",
+                ]
+                .contains(&v.as_str())
+            })
+        {
             return Err("Invalid scheduled-send report".into());
         }
         Ok(())
@@ -815,14 +1257,28 @@ mod snooze_tests {
     #[test]
     fn snooze_snapshots_accept_workflow_references_and_reject_content_and_search_injection() {
         let valid = json!({"schedule": {"id": "me@example.com:thread", "accountId": "me@example.com", "providerThreadId": "thread", "until": "2099-01-01T09:00:00Z", "state": "active", "messageIds": ["message"], "references": ["message@example.com"]}});
-        assert!(EntityType::ConversationSnooze.validate_payload(&valid).is_ok());
-        let mut preceding = valid.clone(); preceding["schedule"].as_object_mut().unwrap().remove("references");
-        assert!(EntityType::ConversationSnooze.validate_payload(&preceding).is_ok());
+        assert!(EntityType::ConversationSnooze
+            .validate_payload(&valid)
+            .is_ok());
+        let mut preceding = valid.clone();
+        preceding["schedule"]
+            .as_object_mut()
+            .unwrap()
+            .remove("references");
+        assert!(EntityType::ConversationSnooze
+            .validate_payload(&preceding)
+            .is_ok());
         for key in ["body", "subject", "accessToken", "apiKey"] {
-            let mut extra = valid.clone(); extra["schedule"][key] = json!("private");
-            assert!(EntityType::ConversationSnooze.validate_payload(&extra).is_err());
+            let mut extra = valid.clone();
+            extra["schedule"][key] = json!("private");
+            assert!(EntityType::ConversationSnooze
+                .validate_payload(&extra)
+                .is_err());
         }
-        let mut injected = valid; injected["schedule"]["references"] = json!(["x\r\nSTORE 1 +FLAGS \\Deleted"]);
-        assert!(EntityType::ConversationSnooze.validate_payload(&injected).is_err());
+        let mut injected = valid;
+        injected["schedule"]["references"] = json!(["x\r\nSTORE 1 +FLAGS \\Deleted"]);
+        assert!(EntityType::ConversationSnooze
+            .validate_payload(&injected)
+            .is_err());
     }
 }

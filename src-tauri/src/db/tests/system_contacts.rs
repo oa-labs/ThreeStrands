@@ -176,16 +176,25 @@ fn large_address_books_remain_searchable_beyond_the_interactive_list_limit() {
 fn source_cards_do_not_merge_people_and_saved_ownership_wins_consistently() {
     let db = Database::open_memory();
     let first = contact();
-    let mut second = contact(); second.id = "another-native-card".into();
+    let mut second = contact();
+    second.id = "another-native-card".into();
     second.addresses = vec!["ada@example.com".into(), "another@example.org".into()];
-    db.replace_system_contacts(&source(), &[first, second]).unwrap();
+    db.replace_system_contacts(&source(), &[first, second])
+        .unwrap();
     assert_eq!(db.list_contact_profiles("Ada", 100).unwrap().len(), 2);
-    let suggestions = db.list_contact_suggestions("you@example.org", "ada@example.com", 10).unwrap();
+    let suggestions = db
+        .list_contact_suggestions("you@example.org", "ada@example.com", 10)
+        .unwrap();
     assert_eq!(suggestions.len(), 1);
-    let id = db.list_contact_profiles("another@", 100).unwrap()[0].id.clone();
+    let id = db.list_contact_profiles("another@", 100).unwrap()[0]
+        .id
+        .clone();
     db.ensure_saved_contact(&id).unwrap();
     // A source card overlapping any saved address is not partially offered as
     // a second person, even through its other address.
-    assert!(db.list_contact_suggestions("you@example.org", "ada+work", 10).unwrap().is_empty());
+    assert!(db
+        .list_contact_suggestions("you@example.org", "ada+work", 10)
+        .unwrap()
+        .is_empty());
     assert_eq!(db.list_contact_profiles("Ada", 100).unwrap().len(), 1);
 }

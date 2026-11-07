@@ -3,8 +3,8 @@ use super::super::super::session::ImapSession;
 use super::super::super::tls::parse_sha256_fingerprint;
 use super::super::{BodyCache, ImapProvider, ImapProviderConfig, ImapStateStore};
 use crate::db::Database;
-use crate::provider::{LabelModel, MailSync};
 use crate::provider::MailMutate;
+use crate::provider::{LabelModel, MailSync};
 use std::sync::Arc;
 
 const HOST: &str = "127.0.0.1";
@@ -60,7 +60,10 @@ async fn live_provider_syncs_inbox_keeps_seen_absent_and_is_stable_on_re_poll() 
     assert!(!threads.thread_ids.is_empty(), "the harness seeds INBOX");
     let mut any_message = false;
     for thread_id in &threads.thread_ids {
-        let messages = provider.fetch_thread(thread_id).await.expect("fetch_thread");
+        let messages = provider
+            .fetch_thread(thread_id)
+            .await
+            .expect("fetch_thread");
         any_message |= !messages.is_empty();
     }
     assert!(any_message, "seeded threads have messages");
@@ -77,7 +80,11 @@ async fn live_provider_syncs_inbox_keeps_seen_absent_and_is_stable_on_re_poll() 
         .0;
     probe.examine("INBOX").await.expect("examine");
     let uids = probe.uid_search("ALL").await.expect("search");
-    let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+    let set = uids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     let rows = super::super::super::fetch::fetch_flags_only(&mut probe, &set)
         .await
         .expect("flags");
@@ -95,7 +102,10 @@ async fn live_provider_syncs_inbox_keeps_seen_absent_and_is_stable_on_re_poll() 
     let first = provider.poll(&cursor).await.expect("delivery poll");
     let gen_before = first.cursor.generation().unwrap();
     let batch = provider.poll(&first.cursor).await.expect("re-poll");
-    assert!(batch.changed_threads.is_empty(), "a stable re-poll is empty");
+    assert!(
+        batch.changed_threads.is_empty(),
+        "a stable re-poll is empty"
+    );
     assert_eq!(batch.cursor.generation(), Some(gen_before), "no idle bump");
 }
 
@@ -166,7 +176,11 @@ async fn live_provider_syncs_sent_trash_and_junk_as_designed() {
         .0;
     probe.examine("INBOX").await.expect("examine");
     let uids = probe.uid_search("ALL").await.expect("search");
-    let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+    let set = uids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     let rows = super::super::super::fetch::fetch_flags_only(&mut probe, &set)
         .await
         .expect("flags");
@@ -181,10 +195,8 @@ async fn live_provider_syncs_sent_trash_and_junk_as_designed() {
     let junk = provider.store.locations_in_mailbox("Junk").expect("junk");
     assert!(!trash.is_empty(), "Trash is index-synced");
     assert!(!junk.is_empty(), "Junk is index-synced");
-    for (mailbox, location, expected) in [
-        ("Trash", &trash[0], "TRASH"),
-        ("Junk", &junk[0], "SPAM"),
-    ] {
+    for (mailbox, location, expected) in [("Trash", &trash[0], "TRASH"), ("Junk", &junk[0], "SPAM")]
+    {
         let t = provider
             .store
             .thread_of_message(&location.message_id)
@@ -192,7 +204,8 @@ async fn live_provider_syncs_sent_trash_and_junk_as_designed() {
             .expect("a thread");
         let msgs = provider.fetch_thread(&t).await.expect("fetch_thread");
         assert!(
-            msgs.iter().any(|m| m.label_ids.contains(&expected.to_string())),
+            msgs.iter()
+                .any(|m| m.label_ids.contains(&expected.to_string())),
             "{mailbox} message carries {expected}"
         );
         // … but never hot, so never reported to the engine.
@@ -257,7 +270,10 @@ async fn live_provider_follows_an_inbox_to_archive_move_without_notfound_or_seen
     let mut followed = false;
     for _ in 0..6 {
         cursor = provider.poll(&cursor).await.expect("poll").cursor;
-        let locs = provider.store.locations_for_message(&moved_id).expect("locations");
+        let locs = provider
+            .store
+            .locations_for_message(&moved_id)
+            .expect("locations");
         let mailboxes: std::collections::BTreeSet<&str> =
             locs.iter().map(|l| l.mailbox.as_str()).collect();
         if !mailboxes.contains("INBOX") && mailboxes.contains("Archive") {
@@ -274,11 +290,16 @@ async fn live_provider_follows_an_inbox_to_archive_move_without_notfound_or_seen
         .thread_of_message(&moved_id)
         .expect("thread_of_message")
         .expect("a thread for the moved message");
-    let messages = provider.fetch_thread(&thread).await.expect("fetch_thread not NotFound");
+    let messages = provider
+        .fetch_thread(&thread)
+        .await
+        .expect("fetch_thread not NotFound");
     assert!(!messages.is_empty(), "the moved thread still has a message");
-    let labels: Vec<String> =
-        messages.iter().flat_map(|m| m.label_ids.clone()).collect();
-    assert!(!labels.contains(&"INBOX".to_string()), "no INBOX after archiving: {labels:?}");
+    let labels: Vec<String> = messages.iter().flat_map(|m| m.label_ids.clone()).collect();
+    assert!(
+        !labels.contains(&"INBOX".to_string()),
+        "no INBOX after archiving: {labels:?}"
+    );
 
     // \Seen is still absent on the moved message's Archive copy (sync is
     // EXAMINE + BODY.PEEK, so it never set it).
@@ -293,7 +314,11 @@ async fn live_provider_follows_an_inbox_to_archive_move_without_notfound_or_seen
         .0;
     probe.examine("Archive").await.expect("examine archive");
     let uids = probe.uid_search("ALL").await.expect("search");
-    let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+    let set = uids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     let rows = super::super::super::fetch::fetch_flags_only(&mut probe, &set)
         .await
         .expect("flags");
@@ -352,10 +377,12 @@ async fn live_provider_reports_folder_and_lf_labels_and_lists_them() {
         .expect("thread_of_message")
         .expect("a thread");
     let messages = provider.fetch_thread(&thread).await.expect("fetch_thread");
-    let labels: Vec<String> =
-        messages.iter().flat_map(|m| m.label_ids.clone()).collect();
+    let labels: Vec<String> = messages.iter().flat_map(|m| m.label_ids.clone()).collect();
     assert!(labels.contains(&"INBOX".to_string()), "INBOX: {labels:?}");
-    assert!(labels.contains(&"lf:Clients".to_string()), "lf:Clients: {labels:?}");
+    assert!(
+        labels.contains(&"lf:Clients".to_string()),
+        "lf:Clients: {labels:?}"
+    );
     assert!(
         labels.contains(&"folder:Folders/Projects".to_string()),
         "folder:Folders/Projects: {labels:?}"
@@ -364,8 +391,10 @@ async fn live_provider_reports_folder_and_lf_labels_and_lists_them() {
     // The folder-only old message is index-synced (a location exists)
     // but its thread is NOT hot (it has no INBOX/Sent location), so it
     // is never reported to the engine.
-    let folder_locs =
-        provider.store.locations_in_mailbox("Folders/Projects").expect("folder");
+    let folder_locs = provider
+        .store
+        .locations_in_mailbox("Folders/Projects")
+        .expect("folder");
     let folder_only = folder_locs
         .iter()
         .find(|l| {
@@ -388,9 +417,11 @@ async fn live_provider_reports_folder_and_lf_labels_and_lists_them() {
 
     // list_labels contains the dynamic labels (read from the local plan).
     let listed = provider.list_labels().await.expect("list_labels");
-    let ids: std::collections::BTreeSet<&str> =
-        listed.iter().map(|l| l.id.as_str()).collect();
-    assert!(ids.contains("lf:Clients"), "list_labels has lf:Clients: {ids:?}");
+    let ids: std::collections::BTreeSet<&str> = listed.iter().map(|l| l.id.as_str()).collect();
+    assert!(
+        ids.contains("lf:Clients"),
+        "list_labels has lf:Clients: {ids:?}"
+    );
     assert!(
         ids.contains("folder:Folders/Projects"),
         "list_labels has folder:Folders/Projects: {ids:?}"
@@ -398,7 +429,10 @@ async fn live_provider_reports_folder_and_lf_labels_and_lists_them() {
     // Kinds are correct.
     let lf = listed.iter().find(|l| l.id == "lf:Clients").unwrap();
     assert_eq!(lf.kind, "user");
-    let folder = listed.iter().find(|l| l.id == "folder:Folders/Projects").unwrap();
+    let folder = listed
+        .iter()
+        .find(|l| l.id == "folder:Folders/Projects")
+        .unwrap();
     assert_eq!(folder.kind, "folder");
 }
 
@@ -466,18 +500,29 @@ async fn live_provider_adds_removes_and_deletes_a_user_label() {
             .expect("cleanup login")
             .0;
         // Remove the scratch INBOX copy.
-        c.run_command_capture_code("SELECT INBOX").await.expect("select inbox");
+        c.run_command_capture_code("SELECT INBOX")
+            .await
+            .expect("select inbox");
         let _ = c
-            .run_command_capture_code(&format!("UID STORE {scratch_uid} +FLAGS.SILENT (\\Deleted)"))
+            .run_command_capture_code(&format!(
+                "UID STORE {scratch_uid} +FLAGS.SILENT (\\Deleted)"
+            ))
             .await;
-        let _ = c.run_command_capture_code(&format!("UID EXPUNGE {scratch_uid}")).await;
+        let _ = c
+            .run_command_capture_code(&format!("UID EXPUNGE {scratch_uid}"))
+            .await;
         // Delete the scratch label mailbox (after selecting INBOX).
-        let _ = c.run_command_capture_code(&format!("DELETE \"{label_mailbox}\"")).await;
+        let _ = c
+            .run_command_capture_code(&format!("DELETE \"{label_mailbox}\""))
+            .await;
         let _ = c.logout().await;
     };
 
     // Create the label through the provider; add it to the scratch copy.
-    let created = provider.create_label(label_name).await.expect("create_label");
+    let created = provider
+        .create_label(label_name)
+        .await
+        .expect("create_label");
     assert_eq!(created.id, format!("lf:{label_name}"));
 
     // Resync so the provider learns the scratch INBOX copy's id/thread.
@@ -501,7 +546,14 @@ async fn live_provider_adds_removes_and_deletes_a_user_label() {
     };
 
     // Add the label, sync, and observe lf:<name> on the message.
-    if let Err(error) = provider.modify_messages(std::slice::from_ref(&scratch_id), std::slice::from_ref(&created.id), &[]).await {
+    if let Err(error) = provider
+        .modify_messages(
+            std::slice::from_ref(&scratch_id),
+            std::slice::from_ref(&created.id),
+            &[],
+        )
+        .await
+    {
         cleanup(config.clone()).await;
         panic!("add label failed: {error:?}");
     }
@@ -522,7 +574,14 @@ async fn live_provider_adds_removes_and_deletes_a_user_label() {
 
     // Remove the label (expunges only the label copy), then delete the
     // now-empty scratch label.
-    if let Err(error) = provider.modify_messages(std::slice::from_ref(&scratch_id), &[], std::slice::from_ref(&created.id)).await {
+    if let Err(error) = provider
+        .modify_messages(
+            std::slice::from_ref(&scratch_id),
+            &[],
+            std::slice::from_ref(&created.id),
+        )
+        .await
+    {
         cleanup(config.clone()).await;
         panic!("remove label failed: {error:?}");
     }
@@ -542,10 +601,14 @@ async fn live_provider_adds_removes_and_deletes_a_user_label() {
         .await
         .expect("final cleanup login")
         .0;
-    c.run_command_capture_code("SELECT INBOX").await.expect("select inbox");
-    c.run_command_capture_code(&format!("UID STORE {scratch_uid} +FLAGS.SILENT (\\Deleted)"))
+    c.run_command_capture_code("SELECT INBOX")
         .await
-        .expect("flag scratch copy deleted");
+        .expect("select inbox");
+    c.run_command_capture_code(&format!(
+        "UID STORE {scratch_uid} +FLAGS.SILENT (\\Deleted)"
+    ))
+    .await
+    .expect("flag scratch copy deleted");
     c.run_command_capture_code(&format!("UID EXPUNGE {scratch_uid}"))
         .await
         .expect("expunge scratch copy — cleanup must succeed");

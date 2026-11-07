@@ -12,10 +12,12 @@ use serde_json::{Map, Value};
 
 use super::DatabaseError;
 use super::{Database, DbResult};
+use crate::models::{
+    ContactGroup, ContactGroupRecipients, ContactProfile, GroupRecipient, SaveContactRequest,
+};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
-use crate::models::{ContactGroup, ContactGroupRecipients, ContactProfile, GroupRecipient, SaveContactRequest};
 
 pub(crate) const MAX_CONTACT_GROUPS: usize = 200;
 pub(crate) const MAX_GROUP_MEMBERS: usize = threestrands_sync_protocol::MAX_CONTACT_GROUP_MEMBERS;
@@ -39,8 +41,13 @@ pub(crate) fn member_field(contact_id: &str) -> String {
 
 pub(crate) fn validate_group_name(name: &str) -> DbResult<String> {
     let name = name.trim();
-    if name.is_empty() || name.chars().count() > MAX_GROUP_NAME || name.chars().any(char::is_control) {
-        return Err(DatabaseError::invalid(format!("Group names must be between 1 and {MAX_GROUP_NAME} characters")));
+    if name.is_empty()
+        || name.chars().count() > MAX_GROUP_NAME
+        || name.chars().any(char::is_control)
+    {
+        return Err(DatabaseError::invalid(format!(
+            "Group names must be between 1 and {MAX_GROUP_NAME} characters"
+        )));
     }
     Ok(name.to_string())
 }
@@ -50,14 +57,27 @@ fn group_by_id(connection: &Connection, id: &str) -> DbResult<Option<ContactGrou
         .query_row(
             "SELECT id,name,created_at,updated_at FROM contact_groups WHERE id=?1",
             [id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
         )
         .optional()?;
     let Some((id, name, created_at, updated_at)) = row else {
         return Ok(None);
     };
     let member_ids = present_member_ids(connection, &id)?;
-    Ok(Some(ContactGroup { id, name, member_ids, created_at, updated_at }))
+    Ok(Some(ContactGroup {
+        id,
+        name,
+        member_ids,
+        created_at,
+        updated_at,
+    }))
 }
 
 /// Members whose contact is on this device, by name.
@@ -72,19 +92,28 @@ fn present_member_ids(connection: &Connection, group_id: &str) -> DbResult<Vec<S
 
 /// Every stored member, including ones whose contact hasn't synced here yet.
 fn stored_member_ids(connection: &Connection, group_id: &str) -> DbResult<BTreeSet<String>> {
-    let mut statement = connection.prepare("SELECT contact_id FROM contact_group_members WHERE group_id=?1")?;
+    let mut statement =
+        connection.prepare("SELECT contact_id FROM contact_group_members WHERE group_id=?1")?;
     let rows = statement.query_map([group_id], |row| row.get(0))?;
     rows.collect::<Result<BTreeSet<_>, _>>().map_err(Into::into)
 }
 
-fn ensure_unique_name(connection: &Connection, name: &str, except_id: Option<&str>) -> DbResult<()> {
+fn ensure_unique_name(
+    connection: &Connection,
+    name: &str,
+    except_id: Option<&str>,
+) -> DbResult<()> {
     let mut statement = connection.prepare("SELECT id,name FROM contact_groups")?;
-    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
     let folded = name.to_lowercase();
     for row in rows {
         let (id, existing) = row?;
         if Some(id.as_str()) != except_id && existing.to_lowercase() == folded {
-            return Err(DatabaseError::invalid(format!("A group named \u{201c}{existing}\u{201d} already exists")));
+            return Err(DatabaseError::invalid(format!(
+                "A group named \u{201c}{existing}\u{201d} already exists"
+            )));
         }
     }
     Ok(())
@@ -93,7 +122,8 @@ fn ensure_unique_name(connection: &Connection, name: &str, except_id: Option<&st
 impl Database {
     pub fn list_contact_groups(&self) -> DbResult<Vec<ContactGroup>> {
         self.with_connection(|connection| {
-            let mut statement = connection.prepare("SELECT id FROM contact_groups ORDER BY name COLLATE NOCASE, id")?;
+            let mut statement = connection
+                .prepare("SELECT id FROM contact_groups ORDER BY name COLLATE NOCASE, id")?;
             let ids = statement
                 .query_map([], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -109,14 +139,22 @@ impl Database {
 
     /// Creates a group, optionally with its first members (see
     /// [`Self::add_contact_group_members`] for how members are resolved).
-    pub fn create_contact_group(&self, name: &str, contact_ids: &[String], emails: &[String]) -> DbResult<ContactGroupWrite> {
+    pub fn create_contact_group(
+        &self,
+        name: &str,
+        contact_ids: &[String],
+        emails: &[String],
+    ) -> DbResult<ContactGroupWrite> {
         let name = validate_group_name(name)?;
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         self.with_transaction(|tx| {
-            let count: i64 = tx.query_row("SELECT COUNT(*) FROM contact_groups", [], |row| row.get(0))?;
+            let count: i64 =
+                tx.query_row("SELECT COUNT(*) FROM contact_groups", [], |row| row.get(0))?;
             if count as usize >= MAX_CONTACT_GROUPS {
-                return Err(DatabaseError::invalid(format!("You can have at most {MAX_CONTACT_GROUPS} groups")));
+                return Err(DatabaseError::invalid(format!(
+                    "You can have at most {MAX_CONTACT_GROUPS} groups"
+                )));
             }
             ensure_unique_name(tx, &name, None)?;
             tx.execute(
@@ -127,7 +165,9 @@ impl Database {
         })?;
         let mut write = if contact_ids.is_empty() && emails.is_empty() {
             ContactGroupWrite {
-                group: self.get_contact_group(&id)?.ok_or(DatabaseError::NotFound("Saved group"))?,
+                group: self
+                    .get_contact_group(&id)?
+                    .ok_or(DatabaseError::NotFound("Saved group"))?,
                 fields: BTreeSet::new(),
                 saved_contacts: Vec::new(),
             }
@@ -140,7 +180,9 @@ impl Database {
                 }
             }
         };
-        write.fields.extend(["id", "name", "createdAt"].map(String::from));
+        write
+            .fields
+            .extend(["id", "name", "createdAt"].map(String::from));
         Ok(write)
     }
 
@@ -158,7 +200,9 @@ impl Database {
             Ok(())
         })?;
         Ok(ContactGroupWrite {
-            group: self.get_contact_group(id)?.ok_or(DatabaseError::NotFound("Group"))?,
+            group: self
+                .get_contact_group(id)?
+                .ok_or(DatabaseError::NotFound("Group"))?,
             fields: BTreeSet::from(["name".to_string()]),
             saved_contacts: Vec::new(),
         })
@@ -167,9 +211,16 @@ impl Database {
     /// Adds contacts to a group. A mail-derived contact (`derived:<email>`)
     /// is saved first, and a typed address with no saved contact becomes a
     /// new contact, so every member is a saved contact.
-    pub fn add_contact_group_members(&self, id: &str, contact_ids: &[String], emails: &[String]) -> DbResult<ContactGroupWrite> {
+    pub fn add_contact_group_members(
+        &self,
+        id: &str,
+        contact_ids: &[String],
+        emails: &[String],
+    ) -> DbResult<ContactGroupWrite> {
         if contact_ids.len() + emails.len() > MAX_GROUP_MEMBERS {
-            return Err(DatabaseError::invalid(format!("A group can have at most {MAX_GROUP_MEMBERS} members")));
+            return Err(DatabaseError::invalid(format!(
+                "A group can have at most {MAX_GROUP_MEMBERS} members"
+            )));
         }
         if self.get_contact_group(id)?.is_none() {
             return Err(DatabaseError::NotFound("Group"));
@@ -186,9 +237,15 @@ impl Database {
         for raw in emails {
             let email = raw.trim().to_ascii_lowercase();
             if !email.contains('@') || email.len() > 320 || email.chars().any(char::is_whitespace) {
-                return Err(DatabaseError::invalid(format!("\u{201c}{}\u{201d} isn't a valid email address", raw.trim())));
+                return Err(DatabaseError::invalid(format!(
+                    "\u{201c}{}\u{201d} isn't a valid email address",
+                    raw.trim()
+                )));
             }
-            if let Some(owner) = self.contact_ids_for_addresses(std::slice::from_ref(&email))?.remove(&email) {
+            if let Some(owner) = self
+                .contact_ids_for_addresses(std::slice::from_ref(&email))?
+                .remove(&email)
+            {
                 resolved.push(owner);
                 continue;
             }
@@ -212,26 +269,41 @@ impl Database {
         }
         let fields = self.with_transaction(|tx| {
             let existing = stored_member_ids(tx, id)?;
-            let added = resolved.iter().filter(|member| !existing.contains(*member)).cloned().collect::<BTreeSet<_>>();
+            let added = resolved
+                .iter()
+                .filter(|member| !existing.contains(*member))
+                .cloned()
+                .collect::<BTreeSet<_>>();
             if existing.len() + added.len() > MAX_GROUP_MEMBERS {
-                return Err(DatabaseError::invalid(format!("A group can have at most {MAX_GROUP_MEMBERS} members")));
+                return Err(DatabaseError::invalid(format!(
+                    "A group can have at most {MAX_GROUP_MEMBERS} members"
+                )));
             }
             for member in &added {
                 insert_group_member(tx, id, member)?;
             }
             if !added.is_empty() {
-                tx.execute("UPDATE contact_groups SET updated_at=?1 WHERE id=?2", params![Utc::now().to_rfc3339(), id])?;
+                tx.execute(
+                    "UPDATE contact_groups SET updated_at=?1 WHERE id=?2",
+                    params![Utc::now().to_rfc3339(), id],
+                )?;
             }
             Ok(added.iter().map(|member| member_field(member)).collect())
         })?;
         Ok(ContactGroupWrite {
-            group: self.get_contact_group(id)?.ok_or(DatabaseError::NotFound("Group"))?,
+            group: self
+                .get_contact_group(id)?
+                .ok_or(DatabaseError::NotFound("Group"))?,
             fields,
             saved_contacts,
         })
     }
 
-    pub fn remove_contact_group_members(&self, id: &str, contact_ids: &[String]) -> DbResult<ContactGroupWrite> {
+    pub fn remove_contact_group_members(
+        &self,
+        id: &str,
+        contact_ids: &[String],
+    ) -> DbResult<ContactGroupWrite> {
         let fields = self.with_transaction(|tx| {
             if group_by_id(tx, id)?.is_none() {
                 return Err(DatabaseError::NotFound("Group"));
@@ -247,12 +319,17 @@ impl Database {
                 }
             }
             if !fields.is_empty() {
-                tx.execute("UPDATE contact_groups SET updated_at=?1 WHERE id=?2", params![Utc::now().to_rfc3339(), id])?;
+                tx.execute(
+                    "UPDATE contact_groups SET updated_at=?1 WHERE id=?2",
+                    params![Utc::now().to_rfc3339(), id],
+                )?;
             }
             Ok(fields)
         })?;
         Ok(ContactGroupWrite {
-            group: self.get_contact_group(id)?.ok_or(DatabaseError::NotFound("Group"))?,
+            group: self
+                .get_contact_group(id)?
+                .ok_or(DatabaseError::NotFound("Group"))?,
             fields,
             saved_contacts: Vec::new(),
         })
@@ -270,8 +347,9 @@ impl Database {
     /// each group's lost member.
     pub fn contact_group_ids_for_contact(&self, contact_id: &str) -> DbResult<Vec<String>> {
         self.with_connection(|connection| {
-            let mut statement =
-                connection.prepare("SELECT group_id FROM contact_group_members WHERE contact_id=?1 ORDER BY group_id")?;
+            let mut statement = connection.prepare(
+                "SELECT group_id FROM contact_group_members WHERE contact_id=?1 ORDER BY group_id",
+            )?;
             let rows = statement.query_map([contact_id], |row| row.get(0))?;
             rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
         })
@@ -322,9 +400,16 @@ impl Database {
     /// record's `member:*` fields; the name is not checked for uniqueness,
     /// since two devices may each have created the same name.
     pub(crate) fn upsert_synced_contact_group(&self, id: &str, payload: &Value) -> DbResult<()> {
-        let name = payload.get("name").and_then(Value::as_str).ok_or_else(|| DatabaseError::corrupt("A synced group has no name"))?;
+        let name = payload
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DatabaseError::corrupt("A synced group has no name"))?;
         let now = Utc::now().to_rfc3339();
-        let created_at = payload.get("createdAt").and_then(Value::as_str).unwrap_or(&now).to_string();
+        let created_at = payload
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .unwrap_or(&now)
+            .to_string();
         let members = payload
             .as_object()
             .into_iter()
@@ -375,8 +460,15 @@ pub(super) fn contact_group_record_on(
 
 /// Adds one member to a group. Used by local edits, synced groups, and
 /// settings import.
-pub(super) fn insert_group_member(connection: &rusqlite::Connection, group_id: &str, contact_id: &str) -> DbResult<()> {
-    connection.execute("INSERT INTO contact_group_members(group_id,contact_id) VALUES(?1,?2)", params![group_id, contact_id])?;
+pub(super) fn insert_group_member(
+    connection: &rusqlite::Connection,
+    group_id: &str,
+    contact_id: &str,
+) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO contact_group_members(group_id,contact_id) VALUES(?1,?2)",
+        params![group_id, contact_id],
+    )?;
     Ok(())
 }
 
@@ -438,47 +530,129 @@ mod tests {
             connection.execute("INSERT INTO contact_addresses(contact_id,email,position) VALUES(?1,'alias@example.com',1)", [&ada])?;
             Ok(())
         }).unwrap();
-        let group = database.create_contact_group("Board", &[ada.clone(), zed.clone()], &[]).unwrap().group;
-        let empty = database.create_contact_group("Empty", &[], &[]).unwrap().group;
-        let mut sent = message("group-sent", "group-thread", "2026-10-01T12:00:00Z", "sent to both members");
+        let group = database
+            .create_contact_group("Board", &[ada.clone(), zed.clone()], &[])
+            .unwrap()
+            .group;
+        let empty = database
+            .create_contact_group("Empty", &[], &[])
+            .unwrap()
+            .group;
+        let mut sent = message(
+            "group-sent",
+            "group-thread",
+            "2026-10-01T12:00:00Z",
+            "sent to both members",
+        );
         sent.from = "you@example.com".into();
         sent.to = vec!["ADA@example.com".into(), "zed@example.com".into()];
-        let mut received = message("group-reply", "group-thread", "2026-10-03T12:00:00Z", "member reply");
+        let mut received = message(
+            "group-reply",
+            "group-thread",
+            "2026-10-03T12:00:00Z",
+            "member reply",
+        );
         received.from = "alias@example.com".into();
         received.to = vec!["you@example.com".into()];
-        database.upsert_thread("you@example.com", &[sent, received]).unwrap();
-        let mut other = message("group-other", "other-thread", "2026-10-02T12:00:00Z", "other account");
+        database
+            .upsert_thread("you@example.com", &[sent, received])
+            .unwrap();
+        let mut other = message(
+            "group-other",
+            "other-thread",
+            "2026-10-02T12:00:00Z",
+            "other account",
+        );
         other.from = "ada@example.com".into();
         other.to = vec!["other@example.com".into()];
-        database.upsert_thread("other@example.com", &[other]).unwrap();
-        let mut outgoing = message("group-outgoing", "sent-thread", "2026-10-04T12:00:00Z", "sent using group");
+        database
+            .upsert_thread("other@example.com", &[other])
+            .unwrap();
+        let mut outgoing = message(
+            "group-outgoing",
+            "sent-thread",
+            "2026-10-04T12:00:00Z",
+            "sent using group",
+        );
         outgoing.from = "you@example.com".into();
         outgoing.to = vec!["ada@example.com".into(), "zed@example.com".into()];
-        database.upsert_thread("you@example.com", &[outgoing]).unwrap();
-        let unrelated = message("unrelated", "unrelated-thread", "2026-10-05T12:00:00Z", "not a member");
-        database.upsert_thread("you@example.com", &[unrelated]).unwrap();
+        database
+            .upsert_thread("you@example.com", &[outgoing])
+            .unwrap();
+        let unrelated = message(
+            "unrelated",
+            "unrelated-thread",
+            "2026-10-05T12:00:00Z",
+            "not a member",
+        );
+        database
+            .upsert_thread("you@example.com", &[unrelated])
+            .unwrap();
 
-        let all = database.contact_group_timeline(&group.id, 0, 20, None).unwrap();
-        assert_eq!(all.iter().map(|item| item.thread_id.as_str()).collect::<Vec<_>>(), vec!["you@example.com:sent-thread", "you@example.com:group-thread", "other@example.com:other-thread"]);
+        let all = database
+            .contact_group_timeline(&group.id, 0, 20, None)
+            .unwrap();
+        assert_eq!(
+            all.iter()
+                .map(|item| item.thread_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "you@example.com:sent-thread",
+                "you@example.com:group-thread",
+                "other@example.com:other-thread"
+            ]
+        );
         assert_eq!(all[1].contact_email, "alias@example.com");
         assert_eq!(all[1].sent_at, "2026-10-03T12:00:00Z");
         for (index, expected) in all.iter().enumerate() {
-            let page = database.contact_group_timeline(&group.id, index, 1, None).unwrap();
+            let page = database
+                .contact_group_timeline(&group.id, index, 1, None)
+                .unwrap();
             assert_eq!(page.len(), 1);
             assert_eq!(page[0].thread_id, expected.thread_id);
         }
-        assert!(database.contact_group_timeline(&group.id, 3, 1, None).unwrap().is_empty());
-        assert_eq!(database.contact_group_timeline(&group.id, 0, 20, Some("you@example.com")).unwrap().len(), 2);
-        assert_eq!(database.contact_group_timeline(&group.id, 0, 20, Some("other@example.com")).unwrap().len(), 1);
-        assert!(database.contact_group_timeline(&empty.id, 0, 20, None).unwrap().is_empty());
-        assert!(database.contact_group_timeline("missing", 0, 20, None).unwrap().is_empty());
-        database.remove_contact_group_members(&group.id, &[ada]).unwrap();
-        let remaining = database.contact_group_timeline(&group.id, 0, 20, None).unwrap();
+        assert!(database
+            .contact_group_timeline(&group.id, 3, 1, None)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            database
+                .contact_group_timeline(&group.id, 0, 20, Some("you@example.com"))
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            database
+                .contact_group_timeline(&group.id, 0, 20, Some("other@example.com"))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(database
+            .contact_group_timeline(&empty.id, 0, 20, None)
+            .unwrap()
+            .is_empty());
+        assert!(database
+            .contact_group_timeline("missing", 0, 20, None)
+            .unwrap()
+            .is_empty());
+        database
+            .remove_contact_group_members(&group.id, &[ada])
+            .unwrap();
+        let remaining = database
+            .contact_group_timeline(&group.id, 0, 20, None)
+            .unwrap();
         assert_eq!(remaining.len(), 2);
         assert_eq!(remaining[1].contact_email, "zed@example.com");
         assert_eq!(remaining[1].sent_at, "2026-10-01T12:00:00Z");
-        database.remove_contact_group_members(&group.id, &[zed]).unwrap();
-        assert!(database.contact_group_timeline(&group.id, 0, 20, None).unwrap().is_empty());
+        database
+            .remove_contact_group_members(&group.id, &[zed])
+            .unwrap();
+        assert!(database
+            .contact_group_timeline(&group.id, 0, 20, None)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -486,13 +660,27 @@ mod tests {
         let database = Database::open_memory();
         let zed = contact(&database, "Zed", "zed@example.com");
         let ada = contact(&database, "Ada", "ada@example.com");
-        let write = database.create_contact_group("  Board  ", &[zed.clone(), ada.clone()], &[]).unwrap();
+        let write = database
+            .create_contact_group("  Board  ", &[zed.clone(), ada.clone()], &[])
+            .unwrap();
         assert_eq!(write.group.name, "Board");
         assert_eq!(write.group.member_ids, vec![ada.clone(), zed.clone()]);
-        assert!(write.fields.contains("name") && write.fields.contains("createdAt") && write.fields.contains("id"));
-        assert!(write.fields.contains(&member_field(&ada)) && write.fields.contains(&member_field(&zed)));
+        assert!(
+            write.fields.contains("name")
+                && write.fields.contains("createdAt")
+                && write.fields.contains("id")
+        );
+        assert!(
+            write.fields.contains(&member_field(&ada))
+                && write.fields.contains(&member_field(&zed))
+        );
         database.create_contact_group("alpha", &[], &[]).unwrap();
-        let names = database.list_contact_groups().unwrap().into_iter().map(|group| group.name).collect::<Vec<_>>();
+        let names = database
+            .list_contact_groups()
+            .unwrap()
+            .into_iter()
+            .map(|group| group.name)
+            .collect::<Vec<_>>();
         assert_eq!(names, vec!["alpha", "Board"]);
     }
 
@@ -500,12 +688,28 @@ mod tests {
     fn group_names_are_bounded_and_unique_ignoring_case() {
         let database = Database::open_memory();
         assert!(database.create_contact_group(" ", &[], &[]).is_err());
-        assert!(database.create_contact_group(&"x".repeat(MAX_GROUP_NAME), &[], &[]).is_ok());
-        assert!(database.create_contact_group(&"y".repeat(MAX_GROUP_NAME + 1), &[], &[]).is_err());
-        assert!(database.create_contact_group("Bad\nname", &[], &[]).is_err());
-        let board = database.create_contact_group("Board", &[], &[]).unwrap().group;
-        assert!(database.create_contact_group("BOARD", &[], &[]).unwrap_err().to_string().contains("already exists"));
-        let other = database.create_contact_group("Family", &[], &[]).unwrap().group;
+        assert!(database
+            .create_contact_group(&"x".repeat(MAX_GROUP_NAME), &[], &[])
+            .is_ok());
+        assert!(database
+            .create_contact_group(&"y".repeat(MAX_GROUP_NAME + 1), &[], &[])
+            .is_err());
+        assert!(database
+            .create_contact_group("Bad\nname", &[], &[])
+            .is_err());
+        let board = database
+            .create_contact_group("Board", &[], &[])
+            .unwrap()
+            .group;
+        assert!(database
+            .create_contact_group("BOARD", &[], &[])
+            .unwrap_err()
+            .to_string()
+            .contains("already exists"));
+        let other = database
+            .create_contact_group("Family", &[], &[])
+            .unwrap()
+            .group;
         assert!(database.rename_contact_group(&other.id, "board").is_err());
         // Renaming a group to a different case of its own name is fine.
         let renamed = database.rename_contact_group(&board.id, "board").unwrap();
@@ -517,31 +721,61 @@ mod tests {
     fn typed_addresses_reuse_an_owner_or_become_new_saved_contacts() {
         let database = Database::open_memory();
         let ada = contact(&database, "Ada", "ada@example.com");
-        let group = database.create_contact_group("Board", &[], &[]).unwrap().group;
+        let group = database
+            .create_contact_group("Board", &[], &[])
+            .unwrap()
+            .group;
         let write = database
-            .add_contact_group_members(&group.id, &[], &[" ADA@example.com ".into(), "new@example.com".into()])
+            .add_contact_group_members(
+                &group.id,
+                &[],
+                &[" ADA@example.com ".into(), "new@example.com".into()],
+            )
             .unwrap();
         assert_eq!(write.saved_contacts.len(), 1);
-        assert_eq!(write.saved_contacts[0].addresses, vec!["new@example.com".to_string()]);
+        assert_eq!(
+            write.saved_contacts[0].addresses,
+            vec!["new@example.com".to_string()]
+        );
         assert_eq!(write.group.member_ids.len(), 2);
         assert!(write.group.member_ids.contains(&ada));
-        assert!(database.add_contact_group_members(&group.id, &[], &["not an address".into()]).is_err());
+        assert!(database
+            .add_contact_group_members(&group.id, &[], &["not an address".into()])
+            .is_err());
         // Re-adding an existing member changes nothing to replicate.
-        let again = database.add_contact_group_members(&group.id, std::slice::from_ref(&ada), &[]).unwrap();
+        let again = database
+            .add_contact_group_members(&group.id, std::slice::from_ref(&ada), &[])
+            .unwrap();
         assert!(again.fields.is_empty());
     }
 
     #[test]
     fn membership_is_bounded_at_the_limit() {
         let database = Database::open_memory();
-        let group = database.create_contact_group("Everyone", &[], &[]).unwrap().group;
-        let emails = (0..MAX_GROUP_MEMBERS).map(|index| format!("person{index}@example.com")).collect::<Vec<_>>();
-        let write = database.add_contact_group_members(&group.id, &[], &emails).unwrap();
+        let group = database
+            .create_contact_group("Everyone", &[], &[])
+            .unwrap()
+            .group;
+        let emails = (0..MAX_GROUP_MEMBERS)
+            .map(|index| format!("person{index}@example.com"))
+            .collect::<Vec<_>>();
+        let write = database
+            .add_contact_group_members(&group.id, &[], &emails)
+            .unwrap();
         assert_eq!(write.group.member_ids.len(), MAX_GROUP_MEMBERS);
-        assert!(database.add_contact_group_members(&group.id, &[], &["one-more@example.com".into()]).is_err());
-        let too_many = (0..=MAX_GROUP_MEMBERS).map(|index| format!("x{index}@example.com")).collect::<Vec<_>>();
-        let other = database.create_contact_group("Too many", &[], &[]).unwrap().group;
-        assert!(database.add_contact_group_members(&other.id, &[], &too_many).is_err());
+        assert!(database
+            .add_contact_group_members(&group.id, &[], &["one-more@example.com".into()])
+            .is_err());
+        let too_many = (0..=MAX_GROUP_MEMBERS)
+            .map(|index| format!("x{index}@example.com"))
+            .collect::<Vec<_>>();
+        let other = database
+            .create_contact_group("Too many", &[], &[])
+            .unwrap()
+            .group;
+        assert!(database
+            .add_contact_group_members(&other.id, &[], &too_many)
+            .is_err());
     }
 
     #[test]
@@ -549,14 +783,30 @@ mod tests {
         let database = Database::open_memory();
         let ada = contact(&database, "Ada", "ada@example.com");
         let bob = contact(&database, "Bob", "bob@example.com");
-        let group = database.create_contact_group("Board", &[ada.clone(), bob.clone()], &[]).unwrap().group;
-        let removed = database.remove_contact_group_members(&group.id, &[bob.clone(), "missing".into()]).unwrap();
+        let group = database
+            .create_contact_group("Board", &[ada.clone(), bob.clone()], &[])
+            .unwrap()
+            .group;
+        let removed = database
+            .remove_contact_group_members(&group.id, &[bob.clone(), "missing".into()])
+            .unwrap();
         assert_eq!(removed.fields, BTreeSet::from([member_field(&bob)]));
         assert_eq!(removed.group.member_ids, vec![ada.clone()]);
-        assert_eq!(database.contact_group_ids_for_contact(&ada).unwrap(), vec![group.id.clone()]);
+        assert_eq!(
+            database.contact_group_ids_for_contact(&ada).unwrap(),
+            vec![group.id.clone()]
+        );
         database.delete_contact_profile(&ada).unwrap();
-        assert!(database.get_contact_group(&group.id).unwrap().unwrap().member_ids.is_empty());
-        assert!(database.contact_group_ids_for_contact(&ada).unwrap().is_empty());
+        assert!(database
+            .get_contact_group(&group.id)
+            .unwrap()
+            .unwrap()
+            .member_ids
+            .is_empty());
+        assert!(database
+            .contact_group_ids_for_contact(&ada)
+            .unwrap()
+            .is_empty());
         database.delete_contact_group(&group.id).unwrap();
         assert!(database.get_contact_group(&group.id).unwrap().is_none());
         assert!(database.get_contact_profile(&bob).unwrap().is_some());
@@ -570,25 +820,56 @@ mod tests {
         request.addresses = vec!["ada@home.example".into(), "ada@work.example".into()];
         database
             .save_contact_profile(&SaveContactRequest {
-                id: Some(request.id.clone()), display_name: request.display_name, role: None, company: None, location: None,
-                bio: None, notes: None, links: Vec::new(), photo_data: None, favorite: false, addresses: request.addresses,
-                birthday: None, keep_in_touch: None,
+                id: Some(request.id.clone()),
+                display_name: request.display_name,
+                role: None,
+                company: None,
+                location: None,
+                bio: None,
+                notes: None,
+                links: Vec::new(),
+                photo_data: None,
+                favorite: false,
+                addresses: request.addresses,
+                birthday: None,
+                keep_in_touch: None,
             })
             .unwrap();
         let bob = contact(&database, "Bob", "bob@example.com");
-        let group = database.create_contact_group("Board", &[ada.clone(), bob.clone()], &[]).unwrap().group;
+        let group = database
+            .create_contact_group("Board", &[ada.clone(), bob.clone()], &[])
+            .unwrap()
+            .group;
         // A member whose contact hasn't synced here is left out.
         let mut record = database.contact_group_record(&group.id).unwrap().unwrap();
         record[member_field("contact:later")] = Value::Bool(true);
-        database.upsert_synced_contact_group(&group.id, &record).unwrap();
+        database
+            .upsert_synced_contact_group(&group.id, &record)
+            .unwrap();
         database.create_contact_group("Empty", &[], &[]).unwrap();
         let directory = database.list_contact_group_recipients().unwrap();
-        assert_eq!(directory.iter().map(|group| group.name.as_str()).collect::<Vec<_>>(), vec!["Board", "Empty"]);
+        assert_eq!(
+            directory
+                .iter()
+                .map(|group| group.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Board", "Empty"]
+        );
         assert_eq!(
             directory[0].members,
             vec![
-                GroupRecipient { contact_id: ada, display_name: Some("Ada".into()), email: "ada@home.example".into(), addresses: vec!["ada@home.example".into(), "ada@work.example".into()] },
-                GroupRecipient { contact_id: bob, display_name: Some("Bob".into()), email: "bob@example.com".into(), addresses: vec!["bob@example.com".into()] },
+                GroupRecipient {
+                    contact_id: ada,
+                    display_name: Some("Ada".into()),
+                    email: "ada@home.example".into(),
+                    addresses: vec!["ada@home.example".into(), "ada@work.example".into()]
+                },
+                GroupRecipient {
+                    contact_id: bob,
+                    display_name: Some("Bob".into()),
+                    email: "bob@example.com".into(),
+                    addresses: vec!["bob@example.com".into()]
+                },
             ]
         );
         assert!(directory[1].members.is_empty());
@@ -598,7 +879,10 @@ mod tests {
     fn sync_records_carry_every_stored_member_and_materialize_back() {
         let database = Database::open_memory();
         let ada = contact(&database, "Ada", "ada@example.com");
-        let group = database.create_contact_group("Board", std::slice::from_ref(&ada), &[]).unwrap().group;
+        let group = database
+            .create_contact_group("Board", std::slice::from_ref(&ada), &[])
+            .unwrap()
+            .group;
         let record = database.contact_group_record(&group.id).unwrap().unwrap();
         assert_eq!(record["name"], "Board");
         assert_eq!(record[member_field(&ada)], true);
@@ -608,17 +892,28 @@ mod tests {
         let mut incoming = record.clone();
         incoming["name"] = Value::String("Directors".into());
         incoming[member_field("contact:later")] = Value::Bool(true);
-        database.upsert_synced_contact_group(&group.id, &incoming).unwrap();
+        database
+            .upsert_synced_contact_group(&group.id, &incoming)
+            .unwrap();
         let synced = database.get_contact_group(&group.id).unwrap().unwrap();
-        assert_eq!((synced.name.as_str(), synced.member_ids.clone()), ("Directors", vec![ada.clone()]));
-        assert_eq!(database.contact_group_record(&group.id).unwrap().unwrap()[member_field("contact:later")], true);
+        assert_eq!(
+            (synced.name.as_str(), synced.member_ids.clone()),
+            ("Directors", vec![ada.clone()])
+        );
+        assert_eq!(
+            database.contact_group_record(&group.id).unwrap().unwrap()
+                [member_field("contact:later")],
+            true
+        );
 
         // A record without the member drops it; a duplicate name is accepted from sync.
         database.create_contact_group("Family", &[], &[]).unwrap();
         let mut dropped = incoming.clone();
         dropped.as_object_mut().unwrap().remove(&member_field(&ada));
         dropped["name"] = Value::String("family".into());
-        database.upsert_synced_contact_group(&group.id, &dropped).unwrap();
+        database
+            .upsert_synced_contact_group(&group.id, &dropped)
+            .unwrap();
         let synced = database.get_contact_group(&group.id).unwrap().unwrap();
         assert_eq!(synced.name, "family");
         assert!(synced.member_ids.is_empty());

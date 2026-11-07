@@ -22,7 +22,8 @@ impl EndpointOrigin {
     /// Parses `input`, naming it `label` (e.g. "RPC URL") in every error
     /// message so the user can tell which field was rejected.
     pub fn parse(input: &str, label: &str) -> Result<Self, String> {
-        let url = url::Url::parse(input.trim()).map_err(|error| format!("Invalid {label}: {error}"))?;
+        let url =
+            url::Url::parse(input.trim()).map_err(|error| format!("Invalid {label}: {error}"))?;
         let scheme = match url.scheme() {
             "https" => "https",
             "http" => "http",
@@ -37,7 +38,10 @@ impl EndpointOrigin {
         if url.fragment().is_some() {
             return Err(format!("{label} must not contain a fragment"));
         }
-        let host = url.host_str().ok_or_else(|| format!("{label} must have a host"))?.to_string();
+        let host = url
+            .host_str()
+            .ok_or_else(|| format!("{label} must have a host"))?
+            .to_string();
         if scheme == "http" && !is_loopback_host(&host) {
             return Err(format!("Non-loopback endpoints must use HTTPS ({label})"));
         }
@@ -56,7 +60,10 @@ impl EndpointOrigin {
     /// `scheme://host[:port][/prefix]`, with no trailing slash.
     pub fn base_url(&self) -> String {
         let port = self.port.map(|port| format!(":{port}")).unwrap_or_default();
-        format!("{}://{}{}{}", self.scheme, self.host, port, self.path_prefix)
+        format!(
+            "{}://{}{}{}",
+            self.scheme, self.host, port, self.path_prefix
+        )
     }
 }
 
@@ -83,7 +90,8 @@ mod tests {
 
     #[test]
     fn names_the_field_in_errors() {
-        let error = EndpointOrigin::parse("http://storage.example.com", "Endpoint URL").unwrap_err();
+        let error =
+            EndpointOrigin::parse("http://storage.example.com", "Endpoint URL").unwrap_err();
         assert!(error.contains("Endpoint URL"), "{error}");
     }
 
@@ -91,7 +99,8 @@ mod tests {
     fn base_url_keeps_port_and_prefix_without_a_trailing_slash() {
         let origin = EndpointOrigin::parse("http://127.0.0.1:9000/minio/", "Endpoint URL").unwrap();
         assert_eq!(origin.base_url(), "http://127.0.0.1:9000/minio");
-        let origin = EndpointOrigin::parse("https://s3.us-east-1.amazonaws.com", "Endpoint URL").unwrap();
+        let origin =
+            EndpointOrigin::parse("https://s3.us-east-1.amazonaws.com", "Endpoint URL").unwrap();
         assert_eq!(origin.base_url(), "https://s3.us-east-1.amazonaws.com");
     }
 

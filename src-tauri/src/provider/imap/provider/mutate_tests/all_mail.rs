@@ -622,7 +622,11 @@ async fn native_user_label_catalog_excludes_advertised_system_views() {
         ("Starred View", "\\Flagged"),
     ] {
         state.lock().unwrap().folder(name, 9);
-        state.lock().unwrap().list_attributes.insert(name.into(), attribute.into());
+        state
+            .lock()
+            .unwrap()
+            .list_attributes
+            .insert(name.into(), attribute.into());
         store
             .upsert_mailbox(&crate::provider::imap::ImapMailbox {
                 name: name.into(),

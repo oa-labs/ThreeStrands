@@ -14,9 +14,15 @@ impl Database {
             (
                 TriageEventKind::Open | TriageEventKind::Close | TriageEventKind::Response,
                 Some(_),
-            ) => return Err(DatabaseError::invalid("Open and close triage events cannot have an action")),
+            ) => {
+                return Err(DatabaseError::invalid(
+                    "Open and close triage events cannot have an action",
+                ))
+            }
             (TriageEventKind::Disposition | TriageEventKind::Restore, None) => {
-                return Err(DatabaseError::invalid("Disposition and restore triage events require an action"))
+                return Err(DatabaseError::invalid(
+                    "Disposition and restore triage events require an action",
+                ))
             }
             _ => {}
         }

@@ -10,9 +10,7 @@ mod identity;
 use rusqlite::OptionalExtension;
 
 use super::{Database, DbResult};
-use crate::provider::imap::{
-    plan, policy, ImapAccountSettings, LabelStorage, SecurityMode,
-};
+use crate::provider::imap::{plan, policy, ImapAccountSettings, LabelStorage, SecurityMode};
 
 /// One IMAP mailbox's catalog row: its LIST wire name, hierarchy delimiter,
 /// special-use attribute, and the UID counters a resync compares against.
@@ -76,17 +74,22 @@ impl ImapStateStore {
 
     #[cfg(test)]
     pub(crate) fn native_labels(&self) -> DbResult<bool> {
-        self.database.with_connection(|c| Ok(native_label_model_on(c, &self.account_id)? == Some(crate::provider::LabelModel::ImapNativeLabels)))
+        self.database.with_connection(|c| {
+            Ok(native_label_model_on(c, &self.account_id)?
+                == Some(crate::provider::LabelModel::ImapNativeLabels))
+        })
     }
 
     /// Native semantics remain sticky if a server temporarily loses support:
     /// user-label removal must never fall back to deleting a folder copy.
     pub(crate) fn uses_native_labels(&self) -> DbResult<bool> {
-        self.database.with_connection(|c| Ok(native_label_model_on(c, &self.account_id)?.is_some()))
+        self.database
+            .with_connection(|c| Ok(native_label_model_on(c, &self.account_id)?.is_some()))
     }
 
     pub(crate) fn native_label_model(&self) -> DbResult<Option<crate::provider::LabelModel>> {
-        self.database.with_connection(|c| native_label_model_on(c, &self.account_id))
+        self.database
+            .with_connection(|c| native_label_model_on(c, &self.account_id))
     }
     /// Inbox membership can be learned through All Mail even when the Inbox
     /// copy is outside its acquisition window. Authoritative absence also
@@ -193,7 +196,11 @@ impl ImapStateStore {
     /// Record the per-device Sent-copy detection result (idempotent upsert).
     /// `decided_at` is a millisecond timestamp. Overwrites a prior decision so
     /// run 5's "reset then re-detect" lands a fresh result.
-    pub fn set_sent_copy_detection(&self, server_saves_sent: bool, decided_at: i64) -> DbResult<()> {
+    pub fn set_sent_copy_detection(
+        &self,
+        server_saves_sent: bool,
+        decided_at: i64,
+    ) -> DbResult<()> {
         self.database.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO imap_sent_copy_detection(account_id, server_saves_sent, decided_at)
@@ -518,7 +525,9 @@ impl ImapStateStore {
                  WHERE account_id = ?1 AND thread_id = ?2 ORDER BY message_id",
             )?;
             let rows = statement
-                .query_map(rusqlite::params![self.account_id, thread_id], |row| row.get(0))?
+                .query_map(rusqlite::params![self.account_id, thread_id], |row| {
+                    row.get(0)
+                })?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(rows)
         })
@@ -574,7 +583,9 @@ impl ImapStateStore {
                  WHERE account_id = ?1 AND generation > ?2 ORDER BY thread_id",
             )?;
             let rows = statement
-                .query_map(rusqlite::params![self.account_id, since as i64], |row| row.get(0))?
+                .query_map(rusqlite::params![self.account_id, since as i64], |row| {
+                    row.get(0)
+                })?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(rows)
         })
@@ -843,7 +854,9 @@ impl ImapStateStore {
                  ORDER BY t.thread_id",
             )?;
             let rows = statement
-                .query_map(rusqlite::params![self.account_id, mailbox], |row| row.get(0))?
+                .query_map(rusqlite::params![self.account_id, mailbox], |row| {
+                    row.get(0)
+                })?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(rows)
         })
@@ -1156,7 +1169,13 @@ impl ImapStateStore {
     /// UID refreshes its timestamp (resetting the TTL) rather than inserting a
     /// duplicate. Used by the acquire round, in that round's transaction.
     #[cfg(test)]
-    pub fn upsert_pin(&self, mailbox: &str, uidvalidity: i64, uid: i64, pinned_at: i64) -> DbResult<()> {
+    pub fn upsert_pin(
+        &self,
+        mailbox: &str,
+        uidvalidity: i64,
+        uid: i64,
+        pinned_at: i64,
+    ) -> DbResult<()> {
         self.database.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO imap_search_pins
@@ -1466,9 +1485,8 @@ impl ImapStateStore {
     /// Whether a thread is currently marked hot (has, or ever had, a location
     /// in INBOX or Sent).
     pub fn is_thread_hot(&self, thread_id: &str) -> DbResult<bool> {
-        self.database.with_connection(|connection| {
-            self.is_thread_hot_conn(connection, thread_id)
-        })
+        self.database
+            .with_connection(|connection| self.is_thread_hot_conn(connection, thread_id))
     }
 
     /// A merge inherits hotness from any member, including a marker left on
@@ -1829,8 +1847,7 @@ impl ImapStateStore {
                     |row| row.get(0),
                 )
                 .unwrap_or(0);
-            let oldest_kept =
-                current.saturating_sub(policy::JOURNAL_RETENTION_GENERATIONS as i64);
+            let oldest_kept = current.saturating_sub(policy::JOURNAL_RETENTION_GENERATIONS as i64);
             connection.execute(
                 "DELETE FROM imap_change_journal
                  WHERE account_id = ?1 AND generation < ?2",
@@ -1841,18 +1858,31 @@ impl ImapStateStore {
     }
 }
 
-pub(super) fn native_label_model_on(c: &rusqlite::Connection, account: &str) -> DbResult<Option<crate::provider::LabelModel>> {
+pub(super) fn native_label_model_on(
+    c: &rusqlite::Connection,
+    account: &str,
+) -> DbResult<Option<crate::provider::LabelModel>> {
     let mut support: Option<bool> = c.query_row("SELECT native_labels FROM imap_server_capabilities WHERE account_id=?1 AND native_labels_seen=1",
         [account], |row| row.get(0)).optional()?;
     // Upgraded accounts may already have authoritative snapshots from before
     // capability caching existed. Keep their native semantics, but wait for
     // fresh negotiation before advertising writable labels.
-    if support.is_none() && c.query_row("SELECT EXISTS(SELECT 1 FROM imap_label_snapshots WHERE account_id=?1)",
-        [account], |row| row.get::<_, bool>(0))? {
+    if support.is_none()
+        && c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM imap_label_snapshots WHERE account_id=?1)",
+            [account],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
         support = Some(false);
     }
-    Ok(support.map(|supported| if supported { crate::provider::LabelModel::ImapNativeLabels }
-        else { crate::provider::LabelModel::ImapNoUserLabels }))
+    Ok(support.map(|supported| {
+        if supported {
+            crate::provider::LabelModel::ImapNativeLabels
+        } else {
+            crate::provider::LabelModel::ImapNoUserLabels
+        }
+    }))
 }
 
 /// The writes one sync round applies atomically through

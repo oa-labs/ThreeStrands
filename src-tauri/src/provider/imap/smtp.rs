@@ -51,13 +51,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
+use crate::provider::imap::connection;
 use crate::provider::imap::policy;
 use crate::provider::imap::settings::SecurityMode;
 use crate::provider::imap::tls::{
     certificate_change, certificate_change_in_io, CertificateInfo, CollectingCertVerifier,
     PinnedCertVerifier, Sha256Fingerprint,
 };
-use crate::provider::imap::connection;
 use crate::provider::ProviderError;
 
 // ===========================================================================
@@ -118,9 +118,9 @@ async fn connect_smtp_tls_with_verifier(
         .map_err(|e| ProviderError::InvalidOperation(format!("invalid SMTP server name: {e}")))?;
     let transport = |message: String| ProviderError::TransientTransport(message);
     let handshake = |error: std::io::Error, step: &str| match certificate_change_in_io(&error) {
-        Some(change) => ProviderError::CertificateChanged(format!(
-            "SMTP server {host}:{port} ({change})"
-        )),
+        Some(change) => {
+            ProviderError::CertificateChanged(format!("SMTP server {host}:{port} ({change})"))
+        }
         None => transport(format!("SMTP {step} handshake failed: {error}")),
     };
 
@@ -213,10 +213,9 @@ async fn read_smtp_reply<S: tokio::io::AsyncRead + Unpin + ?Sized>(
         }
     };
     let text = String::from_utf8_lossy(&buf);
-    let code: u16 = text
-        .get(0..3)
-        .and_then(|c| c.parse().ok())
-        .ok_or_else(|| ProviderError::TransientTransport(format!("unparsable SMTP reply: {text}")))?;
+    let code: u16 = text.get(0..3).and_then(|c| c.parse().ok()).ok_or_else(|| {
+        ProviderError::TransientTransport(format!("unparsable SMTP reply: {text}"))
+    })?;
     if code == expected {
         Ok(())
     } else {
@@ -439,7 +438,11 @@ fn sanitise_reply_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len().min(policy::MAX_SMTP_REPLY_TEXT_BYTES));
     let mut last_was_space = false;
     for ch in text.chars() {
-        let mapped = if ch.is_control() || ch == '\t' { ' ' } else { ch };
+        let mapped = if ch.is_control() || ch == '\t' {
+            ' '
+        } else {
+            ch
+        };
         if mapped == ' ' {
             if last_was_space {
                 continue;
@@ -515,12 +518,9 @@ pub fn classify_definite(phase: Phase, reply: Option<&SmtpReply>) -> ProviderErr
         }
         // A permanent (5xx) reply on the envelope is a permanent rejection
         // (e.g. 553/550 on MAIL FROM naming the identity; 554 to DATA).
-        (_, Some(r)) if (500..=599).contains(&r.code) => {
-            ProviderError::PermanentClientRejection(format!(
-                "the SMTP server rejected the message ({})",
-                r.summary()
-            ))
-        }
+        (_, Some(r)) if (500..=599).contains(&r.code) => ProviderError::PermanentClientRejection(
+            format!("the SMTP server rejected the message ({})", r.summary()),
+        ),
         // A transient (4xx) reply is retryable transport (e.g. 450 on RCPT,
         // 451 as a final reply).
         (_, Some(r)) if (400..=499).contains(&r.code) => {
@@ -531,10 +531,9 @@ pub fn classify_definite(phase: Phase, reply: Option<&SmtpReply>) -> ProviderErr
         }
         // No code: a connect/DNS/refused/drop/timeout BEFORE 354. Transient
         // transport — the server never took responsibility.
-        (_, Some(r)) => ProviderError::InvalidOperation(format!(
-            "unexpected SMTP reply ({})",
-            r.summary()
-        )),
+        (_, Some(r)) => {
+            ProviderError::InvalidOperation(format!("unexpected SMTP reply ({})", r.summary()))
+        }
         (_, None) => ProviderError::TransientTransport(
             "the SMTP connection failed before the server accepted the message".into(),
         ),
@@ -615,7 +614,13 @@ pub struct SmtpFailure {
 /// resending").
 #[derive(Clone, Debug)]
 pub struct SmtpUnknown {
-    #[cfg_attr(not(test), expect(dead_code, reason = "tests assert which phase went unknown; send reports every unknown alike"))]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "tests assert which phase went unknown; send reports every unknown alike"
+        )
+    )]
     pub phase: Phase,
 }
 
@@ -625,7 +630,13 @@ pub struct SmtpUnknown {
 pub enum SmtpOutcome {
     /// The server accepted the message (2xx final reply). Carries that reply.
     Accepted {
-        #[cfg_attr(not(test), expect(dead_code, reason = "tests assert the accepting reply; send only needs the verdict"))]
+        #[cfg_attr(
+            not(test),
+            expect(
+                dead_code,
+                reason = "tests assert the accepting reply; send only needs the verdict"
+            )
+        )]
         reply: SmtpReply,
     },
     /// Definite non-delivery; the server never took responsibility.
@@ -633,7 +644,13 @@ pub enum SmtpOutcome {
     /// The message data may or may not have been received; do not resend
     /// automatically.
     Unknown(
-        #[cfg_attr(not(test), expect(dead_code, reason = "tests assert the phase; send reports every unknown alike"))]
+        #[cfg_attr(
+            not(test),
+            expect(
+                dead_code,
+                reason = "tests assert the phase; send reports every unknown alike"
+            )
+        )]
         SmtpUnknown,
     ),
 }
@@ -783,14 +800,19 @@ impl SmtpSession {
                 Ok(reply) if is_2xx(reply.code) => {}
                 Ok(reply) => {
                     let err = classify_rcpt_rejection(rcpt, &reply);
-                    return self.abort_not_delivered(Phase::Rcpt, err, Some(reply)).await;
+                    return self
+                        .abort_not_delivered(Phase::Rcpt, err, Some(reply))
+                        .await;
                 }
                 Err(fail) => return SmtpOutcome::NotDelivered(fail),
             }
         }
 
         // --- DATA request (up to and including the server's 354) ---
-        match self.cmd_definite(Phase::DataRequest, "DATA\r\n".to_string()).await {
+        match self
+            .cmd_definite(Phase::DataRequest, "DATA\r\n".to_string())
+            .await
+        {
             Ok(reply) if reply.code == 354 => {}
             Ok(reply) => {
                 let err = classify_definite(Phase::DataRequest, Some(&reply));
@@ -806,9 +828,7 @@ impl SmtpSession {
         if self.write_body(&framed).await.is_err() {
             // A drop/error DURING the body write is conservatively UNKNOWN:
             // the server may already hold a prefix (or the whole thing).
-            return SmtpOutcome::Unknown(SmtpUnknown {
-                phase: Phase::Body,
-            });
+            return SmtpOutcome::Unknown(SmtpUnknown { phase: Phase::Body });
         }
 
         // --- Final reply (its own, longer, timeout; expiry => UNKNOWN) ---
@@ -857,8 +877,7 @@ impl SmtpSession {
         phase: Phase,
         command: String,
     ) -> Result<SmtpReply, SmtpFailure> {
-        match tokio::time::timeout(self.timeouts.command, self.client.cmd(command.as_bytes()))
-            .await
+        match tokio::time::timeout(self.timeouts.command, self.client.cmd(command.as_bytes())).await
         {
             Ok(Ok(resp)) => Ok(SmtpReply::from_response(&resp)),
             Ok(Err(_)) | Err(_) => Err(SmtpFailure {
@@ -896,23 +915,21 @@ impl SmtpSession {
     ) -> SmtpOutcome {
         self.best_effort_rset().await;
         self.best_effort_quit().await;
-        SmtpOutcome::NotDelivered(SmtpFailure { phase, error, reply })
+        SmtpOutcome::NotDelivered(SmtpFailure {
+            phase,
+            error,
+            reply,
+        })
     }
 
     async fn best_effort_rset(&mut self) {
-        let _ = tokio::time::timeout(
-            policy::SMTP_CLEANUP_TIMEOUT,
-            self.client.cmd(b"RSET\r\n"),
-        )
-        .await;
+        let _ =
+            tokio::time::timeout(policy::SMTP_CLEANUP_TIMEOUT, self.client.cmd(b"RSET\r\n")).await;
     }
 
     async fn best_effort_quit(&mut self) {
-        let _ = tokio::time::timeout(
-            policy::SMTP_CLEANUP_TIMEOUT,
-            self.client.cmd(b"QUIT\r\n"),
-        )
-        .await;
+        let _ =
+            tokio::time::timeout(policy::SMTP_CLEANUP_TIMEOUT, self.client.cmd(b"QUIT\r\n")).await;
     }
 }
 

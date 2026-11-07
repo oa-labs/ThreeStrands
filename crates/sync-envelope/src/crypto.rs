@@ -10,7 +10,9 @@ use rand::rand_core::UnwrapErr;
 use rand::rngs::SysRng;
 use rand::Rng;
 use sha2::Sha256;
-use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
+use x25519_dalek::{
+    EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret,
+};
 
 use crate::error::EnvelopeError;
 use crate::header::NONCE_LEN;
@@ -156,7 +158,11 @@ pub fn seal_to_x25519(recipient_public: &[u8; 32], plaintext: &[u8]) -> Vec<u8> 
     let ephemeral_public = X25519PublicKey::from(&ephemeral_secret);
     let recipient = X25519PublicKey::from(*recipient_public);
     let shared = ephemeral_secret.diffie_hellman(&recipient);
-    let key = derive_sealed_box_key(shared.as_bytes(), ephemeral_public.as_bytes(), recipient_public);
+    let key = derive_sealed_box_key(
+        shared.as_bytes(),
+        ephemeral_public.as_bytes(),
+        recipient_public,
+    );
     let nonce = random_nonce();
     let ciphertext = aead_encrypt(&key, &nonce, SEALED_BOX_AAD, plaintext);
 
@@ -183,11 +189,19 @@ pub fn try_open_sealed_box(recipient_secret: &[u8; 32], sealed: &[u8]) -> Option
     let recipient_public_bytes = X25519PublicKey::from(&secret).to_bytes();
     let ephemeral_public = X25519PublicKey::from(ephemeral_public_bytes);
     let shared = secret.diffie_hellman(&ephemeral_public);
-    let key = derive_sealed_box_key(shared.as_bytes(), &ephemeral_public_bytes, &recipient_public_bytes);
+    let key = derive_sealed_box_key(
+        shared.as_bytes(),
+        &ephemeral_public_bytes,
+        &recipient_public_bytes,
+    );
     aead_decrypt(&key, &nonce, SEALED_BOX_AAD, ciphertext).ok()
 }
 
-fn derive_sealed_box_key(shared_secret: &[u8; 32], ephemeral_public: &[u8; 32], recipient_public: &[u8; 32]) -> [u8; 32] {
+fn derive_sealed_box_key(
+    shared_secret: &[u8; 32],
+    ephemeral_public: &[u8; 32],
+    recipient_public: &[u8; 32],
+) -> [u8; 32] {
     let hkdf = Hkdf::<Sha256>::new(None, shared_secret);
     let mut info = Vec::with_capacity(SEALED_BOX_HKDF_DOMAIN.len() + 64);
     info.extend_from_slice(SEALED_BOX_HKDF_DOMAIN);
@@ -199,7 +213,11 @@ fn derive_sealed_box_key(shared_secret: &[u8; 32], ephemeral_public: &[u8; 32], 
     out
 }
 
-fn signing_preimage(domain: &[u8], message_id: &[u8; 8], canonical_unsigned_body: &[u8]) -> Vec<u8> {
+fn signing_preimage(
+    domain: &[u8],
+    message_id: &[u8; 8],
+    canonical_unsigned_body: &[u8],
+) -> Vec<u8> {
     let mut preimage = Vec::with_capacity(domain.len() + 8 + canonical_unsigned_body.len());
     preimage.extend_from_slice(domain);
     preimage.extend_from_slice(message_id);
@@ -247,9 +265,13 @@ mod tests {
     #[test]
     fn sealed_box_round_trips_and_is_anonymous_to_the_wrong_key() {
         let recipient_secret = [4u8; 32];
-        let recipient_public = X25519PublicKey::from(&X25519StaticSecret::from(recipient_secret)).to_bytes();
+        let recipient_public =
+            X25519PublicKey::from(&X25519StaticSecret::from(recipient_secret)).to_bytes();
         let sealed = seal_to_x25519(&recipient_public, b"epoch key bytes");
-        assert_eq!(try_open_sealed_box(&recipient_secret, &sealed), Some(b"epoch key bytes".to_vec()));
+        assert_eq!(
+            try_open_sealed_box(&recipient_secret, &sealed),
+            Some(b"epoch key bytes".to_vec())
+        );
 
         let wrong_secret = [5u8; 32];
         assert_eq!(try_open_sealed_box(&wrong_secret, &sealed), None);
@@ -258,7 +280,8 @@ mod tests {
     #[test]
     fn sealed_box_is_freshly_randomized_per_call() {
         let recipient_secret = [6u8; 32];
-        let recipient_public = X25519PublicKey::from(&X25519StaticSecret::from(recipient_secret)).to_bytes();
+        let recipient_public =
+            X25519PublicKey::from(&X25519StaticSecret::from(recipient_secret)).to_bytes();
         let a = seal_to_x25519(&recipient_public, b"same plaintext");
         let b = seal_to_x25519(&recipient_public, b"same plaintext");
         assert_ne!(a, b);
@@ -267,7 +290,8 @@ mod tests {
     #[test]
     fn sealed_box_rejects_truncated_and_tampered_input() {
         let recipient_secret = [7u8; 32];
-        let recipient_public = X25519PublicKey::from(&X25519StaticSecret::from(recipient_secret)).to_bytes();
+        let recipient_public =
+            X25519PublicKey::from(&X25519StaticSecret::from(recipient_secret)).to_bytes();
         let sealed = seal_to_x25519(&recipient_public, b"payload");
 
         assert_eq!(try_open_sealed_box(&recipient_secret, &sealed[..10]), None);
@@ -289,8 +313,22 @@ mod tests {
 
         let other_key = SigningKey::generate(&mut os_rng()).verifying_key();
         assert!(verify_object(&other_key, domain, &message_id, body, &signature).is_err());
-        assert!(verify_object(&verifying_key, domain, &message_id, b"different-body", &signature).is_err());
+        assert!(verify_object(
+            &verifying_key,
+            domain,
+            &message_id,
+            b"different-body",
+            &signature
+        )
+        .is_err());
         assert!(verify_object(&verifying_key, domain, &[0u8; 8], body, &signature).is_err());
-        assert!(verify_object(&verifying_key, b"other-domain", &message_id, body, &signature).is_err());
+        assert!(verify_object(
+            &verifying_key,
+            b"other-domain",
+            &message_id,
+            body,
+            &signature
+        )
+        .is_err());
     }
 }

@@ -1,12 +1,12 @@
 //! Atomic address-book imports and explicit merges. Suppression is local to
 //! this installation and intentionally independent of saved-profile lifetime.
-use super::DatabaseError;
 use super::contacts::save_contact_on;
+use super::DatabaseError;
 use super::{Database, DbResult};
-use crate::models::{ContactProfile, ContactRecord, KeepInTouch, SaveContactRequest};
 use crate::db::sync_state::{
     record_replicated_deletion_in_transaction, record_replicated_write_in_transaction,
 };
+use crate::models::{ContactProfile, ContactRecord, KeepInTouch, SaveContactRequest};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -72,8 +72,7 @@ impl Database {
         if contacts.len() > crate::contact_interchange::MAX_IMPORT_CONTACTS {
             return Err(DatabaseError::invalid("Too many contacts in one import"));
         }
-        let sync = self
-            .replicated_sync_active()?;
+        let sync = self.replicated_sync_active()?;
         self.with_transaction(|tx| {
             let mut result = ContactImportResult {
                 imported: 0,
@@ -115,10 +114,11 @@ impl Database {
     ) -> DbResult<ContactProfile> {
         let sources: BTreeSet<_> = source_ids.iter().cloned().collect();
         if sources.is_empty() || sources.len() > 50 || sources.contains(target_id) {
-            return Err(DatabaseError::invalid("Choose a retained contact and 1 to 50 other saved contacts"));
+            return Err(DatabaseError::invalid(
+                "Choose a retained contact and 1 to 50 other saved contacts",
+            ));
         }
-        let sync = self
-            .replicated_sync_active()?;
+        let sync = self.replicated_sync_active()?;
         self.with_transaction(|tx| {
             let mut target = read_record(tx, target_id)?;
             let mut group_fields = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
@@ -189,8 +189,7 @@ impl Database {
 
     pub fn set_contact_suppressed(&self, email: &str, suppressed: bool) -> DbResult<()> {
         let email = email.trim().to_ascii_lowercase();
-        let parsed =
-            crate::correspondence::addresses(&email).map_err(DatabaseError::Validation)?;
+        let parsed = crate::correspondence::addresses(&email).map_err(DatabaseError::Validation)?;
         if email.len() > 320
             || parsed.len() != 1
             || parsed[0].1 != email

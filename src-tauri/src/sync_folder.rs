@@ -29,14 +29,16 @@ use crate::transport_validation::sanitize_cid;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use threestrands_sync_envelope::os_rng;
 use rand::Rng;
+use threestrands_sync_envelope::os_rng;
 use tokio::io::AsyncWriteExt;
 
-use threestrands_sync_envelope::{compute_cid, decode_signed_head, encode_signed_head, DeviceId, SignedDeviceHead};
+use threestrands_sync_envelope::{
+    compute_cid, decode_signed_head, encode_signed_head, DeviceId, SignedDeviceHead,
+};
 use threestrands_sync_transport::{
-    Cid, HeadLocator, ObjectLocator, ScanPage, SyncTransport, TransportCapabilities, TransportError,
-    TransportHealth, TransportInstanceId,
+    Cid, HeadLocator, ObjectLocator, ScanPage, SyncTransport, TransportCapabilities,
+    TransportError, TransportHealth, TransportInstanceId,
 };
 
 const CORPUS_DIR_NAME: &str = "threestrands-sync";
@@ -59,19 +61,30 @@ impl SyncFolderTransport {
     /// `selected_folder/threestrands-sync`. `selected_folder` must already
     /// exist — this never creates arbitrary ancestor directories, and never
     /// follows a symlink at that boundary.
-    pub async fn open(instance_id: impl Into<String>, selected_folder: &Path) -> Result<Self, TransportError> {
-        let metadata = tokio::fs::symlink_metadata(selected_folder).await.map_err(io_error)?;
+    pub async fn open(
+        instance_id: impl Into<String>,
+        selected_folder: &Path,
+    ) -> Result<Self, TransportError> {
+        let metadata = tokio::fs::symlink_metadata(selected_folder)
+            .await
+            .map_err(io_error)?;
         if metadata.is_symlink() {
             return Err(TransportError::Permanent(
                 "the selected sync folder must not itself be a symlink".to_string(),
             ));
         }
         if !metadata.is_dir() {
-            return Err(TransportError::Permanent("the selected sync folder does not exist".to_string()));
+            return Err(TransportError::Permanent(
+                "the selected sync folder does not exist".to_string(),
+            ));
         }
         let root = selected_folder.join(CORPUS_DIR_NAME);
-        tokio::fs::create_dir_all(root.join("objects")).await.map_err(io_error)?;
-        tokio::fs::create_dir_all(root.join("heads")).await.map_err(io_error)?;
+        tokio::fs::create_dir_all(root.join("objects"))
+            .await
+            .map_err(io_error)?;
+        tokio::fs::create_dir_all(root.join("heads"))
+            .await
+            .map_err(io_error)?;
         let marker = root.join(FORMAT_MARKER);
         if tokio::fs::metadata(&marker).await.is_err() {
             atomic_write(&root, &marker, b"1").await?;
@@ -86,11 +99,19 @@ impl SyncFolderTransport {
     fn object_path(&self, cid: &Cid) -> Result<PathBuf, TransportError> {
         let name = sanitize_cid(&cid.0)?;
         let shard = &name[..2];
-        Ok(self.root.join("objects").join(shard).join(format!("{name}.block")))
+        Ok(self
+            .root
+            .join("objects")
+            .join(shard)
+            .join(format!("{name}.block")))
     }
 
     fn head_path(&self, device_id: &DeviceId) -> PathBuf {
-        let tag: String = device_id.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
+        let tag: String = device_id
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         self.root.join("heads").join(format!("{tag}.head"))
     }
 
@@ -133,7 +154,9 @@ async fn directory_size(dir: &Path) -> Result<u64, TransportError> {
         Err(error) => return Err(io_error(error)),
     };
     while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
-        let Ok(file_type) = entry.file_type().await else { continue };
+        let Ok(file_type) = entry.file_type().await else {
+            continue;
+        };
         if file_type.is_symlink() {
             continue;
         }
@@ -162,7 +185,9 @@ impl SyncTransport for SyncFolderTransport {
 
     async fn put_object(&self, cid: &Cid, bytes: &[u8]) -> Result<ObjectLocator, TransportError> {
         if bytes.len() as u64 > MAX_OBJECT_BYTES {
-            return Err(TransportError::Permanent("object exceeds the folder adapter's size limit".to_string()));
+            return Err(TransportError::Permanent(
+                "object exceeds the folder adapter's size limit".to_string(),
+            ));
         }
         if compute_cid(bytes) != cid.0 {
             return Err(TransportError::Permanent(
@@ -170,12 +195,17 @@ impl SyncTransport for SyncFolderTransport {
             ));
         }
         let path = self.object_path(cid)?;
-        let dir = path.parent().expect("object_path always has objects/<shard> as its parent");
+        let dir = path
+            .parent()
+            .expect("object_path always has objects/<shard> as its parent");
         tokio::fs::create_dir_all(dir).await.map_err(io_error)?;
         match tokio::fs::symlink_metadata(&path).await {
             Ok(_) => {
                 let existing = read_regular_file(&path).await?;
-                if existing.len() as u64 > MAX_OBJECT_BYTES || compute_cid(&existing) != cid.0 || existing != bytes {
+                if existing.len() as u64 > MAX_OBJECT_BYTES
+                    || compute_cid(&existing) != cid.0
+                    || existing != bytes
+                {
                     return Err(TransportError::Corruption(
                         "existing object bytes do not match the requested CID".to_string(),
                     ));
@@ -199,7 +229,9 @@ impl SyncTransport for SyncFolderTransport {
         let path = self.object_path(cid)?;
         let bytes = read_regular_file(&path).await?;
         if bytes.len() as u64 > MAX_OBJECT_BYTES {
-            return Err(TransportError::Corruption("stored object exceeds the size limit".to_string()));
+            return Err(TransportError::Corruption(
+                "stored object exceeds the size limit".to_string(),
+            ));
         }
         if compute_cid(&bytes) != cid.0 {
             return Err(TransportError::Corruption(
@@ -211,9 +243,12 @@ impl SyncTransport for SyncFolderTransport {
 
     async fn publish_head(&self, head: &SignedDeviceHead) -> Result<HeadLocator, TransportError> {
         let path = self.head_path(&head.head.device_id);
-        let dir = path.parent().expect("head_path always has heads/ as its parent");
+        let dir = path
+            .parent()
+            .expect("head_path always has heads/ as its parent");
         tokio::fs::create_dir_all(dir).await.map_err(io_error)?;
-        let bytes = encode_signed_head(head).map_err(|error| TransportError::Permanent(error.to_string()))?;
+        let bytes = encode_signed_head(head)
+            .map_err(|error| TransportError::Permanent(error.to_string()))?;
         atomic_write(dir, &path, &bytes).await?;
         Ok(HeadLocator {
             device_id: head.head.device_id,
@@ -221,7 +256,10 @@ impl SyncTransport for SyncFolderTransport {
         })
     }
 
-    async fn resolve_heads(&self, known: &[HeadLocator]) -> Result<Vec<SignedDeviceHead>, TransportError> {
+    async fn resolve_heads(
+        &self,
+        known: &[HeadLocator],
+    ) -> Result<Vec<SignedDeviceHead>, TransportError> {
         let mut heads = Vec::new();
         for locator in known {
             let path = self.head_path(&locator.device_id);
@@ -259,11 +297,18 @@ impl SyncTransport for SyncFolderTransport {
 
         let end = (offset + SCAN_PAGE_SIZE).min(cids.len());
         let page = cids.get(offset..end).unwrap_or_default().to_vec();
-        let next_cursor = if end < cids.len() { Some(end.to_string()) } else { None };
+        let next_cursor = if end < cids.len() {
+            Some(end.to_string())
+        } else {
+            None
+        };
         Ok(Some(ScanPage {
             objects: page
                 .into_iter()
-                .map(|cid| ObjectLocator { remote_id: None, cid: Cid(cid) })
+                .map(|cid| ObjectLocator {
+                    remote_id: None,
+                    cid: Cid(cid),
+                })
                 .collect(),
             next_cursor,
         }))
@@ -314,7 +359,9 @@ async fn list_object_cids(objects_dir: &Path) -> Result<Vec<String>, TransportEr
         Err(error) => return Err(io_error(error)),
     };
     while let Some(shard_entry) = shard_entries.next_entry().await.map_err(io_error)? {
-        let Ok(file_type) = shard_entry.file_type().await else { continue };
+        let Ok(file_type) = shard_entry.file_type().await else {
+            continue;
+        };
         if !file_type.is_dir() {
             continue;
         }
@@ -323,7 +370,9 @@ async fn list_object_cids(objects_dir: &Path) -> Result<Vec<String>, TransportEr
             Err(_) => continue,
         };
         while let Some(file_entry) = file_entries.next_entry().await.map_err(io_error)? {
-            let Ok(file_type) = file_entry.file_type().await else { continue };
+            let Ok(file_type) = file_entry.file_type().await else {
+                continue;
+            };
             if !file_type.is_file() {
                 // Ignore symlinks, directories, and any other special file.
                 continue;
@@ -367,7 +416,9 @@ async fn atomic_write(dir: &Path, final_path: &Path, bytes: &[u8]) -> Result<(),
     let suffix = os_rng().next_u64();
     let temp_path = dir.join(format!(".tmp-{suffix:016x}-{}", std::process::id()));
     {
-        let mut file = tokio::fs::File::create(&temp_path).await.map_err(io_error)?;
+        let mut file = tokio::fs::File::create(&temp_path)
+            .await
+            .map_err(io_error)?;
         file.write_all(bytes).await.map_err(io_error)?;
         file.sync_all().await.map_err(io_error)?;
     }
@@ -402,7 +453,8 @@ mod tests {
 
     impl TempFolder {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("threestrands-sync-folder-test-{}", Uuid::new_v4()));
+            let path = std::env::temp_dir()
+                .join(format!("threestrands-sync-folder-test-{}", Uuid::new_v4()));
             std::fs::create_dir_all(&path).unwrap();
             Self { path }
         }
@@ -415,7 +467,9 @@ mod tests {
     }
 
     async fn open_transport(folder: &TempFolder, instance_id: &str) -> SyncFolderTransport {
-        SyncFolderTransport::open(instance_id, &folder.path).await.unwrap()
+        SyncFolderTransport::open(instance_id, &folder.path)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -492,13 +546,19 @@ mod tests {
         tokio::fs::write(&path, b"tampered bytes!!").await.unwrap();
 
         let result = transport.get_object(&cid).await;
-        assert_eq!(result, Err(TransportError::Corruption(
-            "stored object bytes do not match its filename CID".to_string()
-        )));
+        assert_eq!(
+            result,
+            Err(TransportError::Corruption(
+                "stored object bytes do not match its filename CID".to_string()
+            ))
+        );
         let result = transport.put_object(&cid, &bytes).await;
-        assert_eq!(result, Err(TransportError::Corruption(
-            "existing object bytes do not match the requested CID".to_string()
-        )));
+        assert_eq!(
+            result,
+            Err(TransportError::Corruption(
+                "existing object bytes do not match the requested CID".to_string()
+            ))
+        );
     }
 
     #[tokio::test]
@@ -508,9 +568,12 @@ mod tests {
         let cid = Cid::for_bytes(b"authentic bytes");
 
         let result = transport.put_object(&cid, b"different bytes").await;
-        assert_eq!(result, Err(TransportError::Permanent(
-            "object bytes do not match the requested CID".to_string()
-        )));
+        assert_eq!(
+            result,
+            Err(TransportError::Permanent(
+                "object bytes do not match the requested CID".to_string()
+            ))
+        );
     }
 
     #[tokio::test]
@@ -523,13 +586,18 @@ mod tests {
         tokio::fs::write(&real_path, &bytes).await.unwrap();
 
         let path = transport.object_path(&cid).unwrap();
-        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
         #[cfg(unix)]
         tokio::fs::symlink(&real_path, &path).await.unwrap();
         #[cfg(windows)]
         tokio::fs::symlink_file(&real_path, &path).await.unwrap();
 
-        assert_eq!(transport.get_object(&cid).await, Err(TransportError::NotFound));
+        assert_eq!(
+            transport.get_object(&cid).await,
+            Err(TransportError::NotFound)
+        );
     }
 
     #[tokio::test]
@@ -539,10 +607,13 @@ mod tests {
         for malformed in ["../../etc/passwd", "..", "", "has spaces", "has/slash", "a"] {
             let cid = Cid(malformed.to_string());
             assert!(transport.put_object(&cid, b"x").await.is_err());
-            assert!(transport.get_object(&cid).await.is_err() || matches!(
-                transport.get_object(&cid).await,
-                Err(TransportError::NotFound)
-            ));
+            assert!(
+                transport.get_object(&cid).await.is_err()
+                    || matches!(
+                        transport.get_object(&cid).await,
+                        Err(TransportError::NotFound)
+                    )
+            );
         }
     }
 
@@ -562,8 +633,13 @@ mod tests {
     #[tokio::test]
     async fn opening_refuses_a_symlinked_selection() {
         let real_folder = TempFolder::new();
-        let link_path = std::env::temp_dir().join(format!("threestrands-sync-folder-symlink-{}", Uuid::new_v4()));
-        tokio::fs::symlink(&real_folder.path, &link_path).await.unwrap();
+        let link_path = std::env::temp_dir().join(format!(
+            "threestrands-sync-folder-symlink-{}",
+            Uuid::new_v4()
+        ));
+        tokio::fs::symlink(&real_folder.path, &link_path)
+            .await
+            .unwrap();
         let result = SyncFolderTransport::open("a", &link_path).await;
         assert!(result.is_err());
         let _ = tokio::fs::remove_file(&link_path).await;
@@ -584,7 +660,10 @@ mod tests {
 
         transport.delete_all_corpus_data().await.unwrap();
 
-        assert_eq!(transport.get_object(&cid).await, Err(TransportError::NotFound));
+        assert_eq!(
+            transport.get_object(&cid).await,
+            Err(TransportError::NotFound)
+        );
         assert!(tokio::fs::metadata(&sibling).await.is_ok());
     }
 
@@ -603,15 +682,24 @@ mod tests {
 
         let first = transport.scan(None).await.unwrap().unwrap();
         assert_eq!(first.objects.len(), SCAN_PAGE_SIZE);
-        let cursor = first.next_cursor.clone().expect("a full page must hand back a cursor");
+        let cursor = first
+            .next_cursor
+            .clone()
+            .expect("a full page must hand back a cursor");
 
         let second = transport.scan(Some(&cursor)).await.unwrap().unwrap();
         assert_eq!(second.objects.len(), 3);
-        assert!(second.next_cursor.is_none(), "the final page must not hand back a cursor");
+        assert!(
+            second.next_cursor.is_none(),
+            "the final page must not hand back a cursor"
+        );
 
         let mut seen = std::collections::BTreeSet::new();
         for locator in first.objects.iter().chain(&second.objects) {
-            assert!(seen.insert(locator.cid.0.clone()), "an object was enumerated twice");
+            assert!(
+                seen.insert(locator.cid.0.clone()),
+                "an object was enumerated twice"
+            );
         }
         assert_eq!(seen, stored);
 

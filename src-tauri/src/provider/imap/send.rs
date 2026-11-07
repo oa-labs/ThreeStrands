@@ -170,9 +170,7 @@ pub fn derive_envelope(raw: &[u8], identities: &[SendingIdentity]) -> Result<Env
     let mail_from = match from_addrs.as_slice() {
         [] => return Err("The message has no From address, so it was not sent.".into()),
         [one] => one.clone(),
-        _ => {
-            return Err("The message has more than one From address, so it was not sent.".into())
-        }
+        _ => return Err("The message has more than one From address, so it was not sent.".into()),
     };
     let from_norm = normalize_identity_address(&mail_from);
     let is_identity = identities
@@ -405,7 +403,9 @@ mod tests {
     fn ident(addr: &str) -> SendingIdentity {
         SendingIdentity {
             address: addr.to_string(),
-            display_name: None, ..Default::default() }
+            display_name: None,
+            ..Default::default()
+        }
     }
 
     // ---- strip_bcc_header --------------------------------------------
@@ -505,8 +505,7 @@ mod tests {
     #[test]
     fn a_secondary_identity_from_is_accepted() {
         let raw = b"From: work@proton.me\r\nTo: a@x\r\n\r\nbody";
-        let env =
-            derive_envelope(raw, &[ident("me@proton.me"), ident("work@proton.me")]).unwrap();
+        let env = derive_envelope(raw, &[ident("me@proton.me"), ident("work@proton.me")]).unwrap();
         assert_eq!(env.mail_from, "work@proton.me");
     }
 
@@ -718,7 +717,12 @@ mod provider_level_tests {
             };
             run_session(tls, script, log2, body2).await;
         });
-        FakeSmtp { port, pin, log, body }
+        FakeSmtp {
+            port,
+            pin,
+            log,
+            body,
+        }
     }
 
     async fn run_session<S>(
@@ -883,7 +887,10 @@ mod provider_level_tests {
     }
 
     async fn permit(provider: &ImapProvider) -> Box<dyn Delivery> {
-        provider.prepare_delivery().await.expect("prepare connects + authenticates")
+        provider
+            .prepare_delivery()
+            .await
+            .expect("prepare connects + authenticates")
     }
 
     /// Extract the error from a `prepare_delivery` result. `Box<dyn Delivery>`
@@ -908,19 +915,31 @@ mod provider_level_tests {
         // Provider id equals the sync derivation from the Message-ID (none
         // here, so from Date/From/Subject/size — but we only assert it is
         // non-empty and account-scoped).
-        assert!(receipt.provider_message_id.contains("me@proton.me") || !receipt.provider_message_id.is_empty());
+        assert!(
+            receipt.provider_message_id.contains("me@proton.me")
+                || !receipt.provider_message_id.is_empty()
+        );
         assert_eq!(receipt.thread_id, None, "a new message carries no thread");
         // Envelope: MAIL FROM = identity, one RCPT per To/Cc/Bcc.
         assert!(srv.saw("MAIL FROM:<me@proton.me>"));
         assert!(srv.saw("RCPT TO:<a@x.test>"));
         assert!(srv.saw("RCPT TO:<b@y.test>"));
-        assert!(srv.saw("RCPT TO:<hidden@z.test>"), "the Bcc address IS RCPT'd");
+        assert!(
+            srv.saw("RCPT TO:<hidden@z.test>"),
+            "the Bcc address IS RCPT'd"
+        );
         // The transmitted body must NOT contain the Bcc header, must keep the
         // body, and dot-stuffing/terminator intact.
         let body = srv.body_bytes();
         let text = String::from_utf8_lossy(&body);
-        assert!(!text.contains("Bcc:"), "the Bcc header must not be transmitted");
-        assert!(!text.contains("hidden@z.test"), "the blind address is not disclosed in the header block\n{text}");
+        assert!(
+            !text.contains("Bcc:"),
+            "the Bcc header must not be transmitted"
+        );
+        assert!(
+            !text.contains("hidden@z.test"),
+            "the blind address is not disclosed in the header block\n{text}"
+        );
         assert!(text.contains("hello"));
         assert!(body.ends_with(b"\r\n.\r\n"));
     }
@@ -999,7 +1018,10 @@ mod provider_level_tests {
         assert!(definite, "a stale/foreign From is a definite non-delivery");
         assert!(msg.contains("evil@attacker.test"));
         // The server never saw a MAIL FROM: the gate ran before any envelope.
-        assert!(!srv.saw("MAIL FROM"), "no envelope bytes after a rejected From");
+        assert!(
+            !srv.saw("MAIL FROM"),
+            "no envelope bytes after a rejected From"
+        );
     }
 
     #[tokio::test]
@@ -1013,7 +1035,10 @@ mod provider_level_tests {
             .await
             .unwrap_err();
         assert!(definite);
-        assert!(msg.contains("me@proton.me"), "the message names the identity: {msg}");
+        assert!(
+            msg.contains("me@proton.me"),
+            "the message names the identity: {msg}"
+        );
         assert!(msg.contains("553"), "{msg}");
     }
 
@@ -1050,7 +1075,10 @@ mod provider_level_tests {
         let srv = start(Script::Reject535Auth).await;
         let provider = provider_for(&srv, "me@proton.me", "me@proton.me", vec![]);
         let err = prepare_err(provider.prepare_delivery().await);
-        assert!(matches!(err, ProviderError::ReauthenticationRequired(_)), "{err:?}");
+        assert!(
+            matches!(err, ProviderError::ReauthenticationRequired(_)),
+            "{err:?}"
+        );
     }
 
     #[tokio::test]
@@ -1101,7 +1129,10 @@ mod provider_level_tests {
                 .await
                 .expect("connect to a closed port fails fast"),
         );
-        assert!(matches!(err, ProviderError::TransientTransport(_)), "{err:?}");
+        assert!(
+            matches!(err, ProviderError::TransientTransport(_)),
+            "{err:?}"
+        );
     }
 
     #[tokio::test]
@@ -1153,8 +1184,14 @@ mod provider_level_tests {
             settings,
         });
         let err = prepare_err(provider.prepare_delivery().await);
-        assert!(matches!(err, ProviderError::CertificateChanged(_)), "{err:?}");
-        assert!(err.requires_reauthentication(), "a changed certificate pauses the account");
+        assert!(
+            matches!(err, ProviderError::CertificateChanged(_)),
+            "{err:?}"
+        );
+        assert!(
+            err.requires_reauthentication(),
+            "a changed certificate pauses the account"
+        );
         // Nothing authenticated.
         assert!(!srv.saw("AUTH"));
     }

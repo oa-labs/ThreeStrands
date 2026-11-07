@@ -95,7 +95,11 @@ impl Database {
     /// anything later to someone on its To line, in any conversation. Trashed
     /// conversations and ones with an open task are left out too: the task
     /// already tracks it. `account_id` scopes to one account.
-    pub fn list_open_promises(&self, account_id: Option<&str>, since: &str) -> DbResult<Vec<OpenPromise>> {
+    pub fn list_open_promises(
+        &self,
+        account_id: Option<&str>,
+        since: &str,
+    ) -> DbResult<Vec<OpenPromise>> {
         self.with_connection(|connection| {
             let mut sent = connection.prepare(
                 "SELECT m.id, m.thread_id, m.sender, m.recipients_json, m.sent_at, t.account_id
@@ -166,7 +170,13 @@ impl Database {
 
 /// The same test as Files and the reader's invitation card: a text/calendar part or an .ics file.
 fn is_calendar_attachment(attachment: &MessageAttachment) -> bool {
-    attachment.mime_type.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case("text/calendar")
+    attachment
+        .mime_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .eq_ignore_ascii_case("text/calendar")
         || attachment.filename.to_ascii_lowercase().ends_with(".ics")
 }
 

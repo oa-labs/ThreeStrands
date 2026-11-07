@@ -381,28 +381,41 @@ fn label_name_sql() -> String {
 /// matched once by the query's own `MATCH`, which also supplies the rank and
 /// snippet. Free text inside `Not`/`AnyOf` (`nested`) becomes a subquery on
 /// the same index. User text is always bound, never interpolated.
-fn term_predicate(term: &QueryTerm, binds: &mut Vec<Value>, nested: bool) -> DbResult<Option<String>> {
+fn term_predicate(
+    term: &QueryTerm,
+    binds: &mut Vec<Value>,
+    nested: bool,
+) -> DbResult<Option<String>> {
     let predicate = match term {
         QueryTerm::FreeText { .. } if !nested => return Ok(None),
         QueryTerm::FreeText { text, quoted } => {
-            let fts = fts_query(&if *quoted { format!("\"{text}\"") } else { text.clone() });
+            let fts = fts_query(&if *quoted {
+                format!("\"{text}\"")
+            } else {
+                text.clone()
+            });
             if fts.trim().is_empty() {
                 // Nothing searchable (punctuation only): matches nothing, as
                 // the top-level path returns no results for it.
                 "0".to_string()
             } else {
                 binds.push(Value::Text(fts));
-                "t.id IN (SELECT thread_id FROM thread_search WHERE thread_search MATCH ?)".to_string()
+                "t.id IN (SELECT thread_id FROM thread_search WHERE thread_search MATCH ?)"
+                    .to_string()
             }
         }
         QueryTerm::From(value) => {
-            binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
+            binds.push(Value::Text(crate::search_query::like_contains_pattern(
+                value,
+            )));
             "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
              AND m.sender LIKE ? ESCAPE '\\')"
                 .to_string()
         }
         QueryTerm::To(value) => {
-            binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
+            binds.push(Value::Text(crate::search_query::like_contains_pattern(
+                value,
+            )));
             // Like Gmail, `to:` covers To, Cc and Bcc. Both columns are JSON
             // arrays, so each element is matched through `json_each`: a LIKE
             // over the raw text would also match the brackets, quotes and
@@ -414,11 +427,15 @@ fn term_predicate(term: &QueryTerm, binds: &mut Vec<Value>, nested: bool) -> DbR
                 .to_string()
         }
         QueryTerm::Subject(value) => {
-            binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
+            binds.push(Value::Text(crate::search_query::like_contains_pattern(
+                value,
+            )));
             "t.subject LIKE ? ESCAPE '\\'".to_string()
         }
         QueryTerm::Date { bound, date } => {
-            binds.push(Value::Text(crate::search_query::utc_day_start_rfc3339(*date)));
+            binds.push(Value::Text(crate::search_query::utc_day_start_rfc3339(
+                *date,
+            )));
             let op = match bound {
                 // `after:d` = on or after the start of day d (UTC).
                 DateBound::After => ">=",
@@ -467,7 +484,9 @@ fn term_predicate(term: &QueryTerm, binds: &mut Vec<Value>, nested: bool) -> DbR
         QueryTerm::AnyOf(alternatives) => {
             let mut parts = Vec::with_capacity(alternatives.len());
             for alternative in alternatives {
-                parts.push(term_predicate(alternative, binds, true)?.unwrap_or_else(|| "1".to_string()));
+                parts.push(
+                    term_predicate(alternative, binds, true)?.unwrap_or_else(|| "1".to_string()),
+                );
             }
             format!("(({}))", parts.join(") OR ("))
         }
@@ -578,7 +597,9 @@ pub(super) fn preview_context(
 ) -> threestrands_mail_text::preview_text::PreviewContext {
     threestrands_mail_text::preview_text::PreviewContext {
         subject: subject.to_string(),
-        image_only_words: latest_html.map(crate::html_plain_text::image_only_words).unwrap_or_default(),
+        image_only_words: latest_html
+            .map(crate::html_plain_text::image_only_words)
+            .unwrap_or_default(),
     }
 }
 

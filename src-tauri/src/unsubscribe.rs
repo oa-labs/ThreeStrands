@@ -133,18 +133,28 @@ mod tests {
     }
 
     fn target(method: UnsubscribeMethod, url: &str) -> UnsubscribeTarget {
-        UnsubscribeTarget { request_id: "request".into(), method, url: url.into() }
+        UnsubscribeTarget {
+            request_id: "request".into(),
+            method,
+            url: url.into(),
+        }
     }
 
     #[test]
     fn mailto_fallback_starts_an_in_app_draft() {
         let mut opened = None;
         let result = open_fallback(
-            &target(UnsubscribeMethod::Mailto, "mailto:leave@lists.example?subject=unsubscribe"),
+            &target(
+                UnsubscribeMethod::Mailto,
+                "mailto:leave@lists.example?subject=unsubscribe",
+            ),
             |url| opened = Some(url.to_string()),
         )
         .unwrap();
-        assert_eq!(opened.as_deref(), Some("mailto:leave@lists.example?subject=unsubscribe"));
+        assert_eq!(
+            opened.as_deref(),
+            Some("mailto:leave@lists.example?subject=unsubscribe")
+        );
         assert_eq!(result.outcome, "opened");
     }
 
@@ -152,7 +162,10 @@ mod tests {
     fn rejects_a_fallback_whose_url_does_not_match_its_method() {
         let mut opened = false;
         assert!(open_fallback(
-            &target(UnsubscribeMethod::Mailto, "https://lists.example/unsubscribe"),
+            &target(
+                UnsubscribeMethod::Mailto,
+                "https://lists.example/unsubscribe"
+            ),
             |_| opened = true,
         )
         .is_err());

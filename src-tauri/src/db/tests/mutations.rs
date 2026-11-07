@@ -52,7 +52,10 @@ fn spam_and_label_mutations_preserve_label_editing_semantics() {
         assert_eq!(thread.labels, expected_labels, "{mutation:?}");
         assert_eq!(thread.archived, archived, "{mutation:?}");
         assert!(!thread.unread, "unrelated read state changed: {mutation:?}");
-        assert!(!thread.starred, "unrelated star state changed: {mutation:?}");
+        assert!(
+            !thread.starred,
+            "unrelated star state changed: {mutation:?}"
+        );
     }
 }
 
@@ -163,7 +166,10 @@ fn a_failing_mutation_rolls_back_the_whole_batch() {
         ])
         .unwrap_err();
 
-    assert!(matches!(error, DatabaseError::NotFound("Thread")), "{error}");
+    assert!(
+        matches!(error, DatabaseError::NotFound("Thread")),
+        "{error}"
+    );
     assert_eq!(error.to_string(), "Thread not found");
     assert_eq!(
         starred(&database, "welcome"),

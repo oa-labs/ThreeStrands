@@ -69,8 +69,7 @@ pub enum StoreOp {
     Remove,
 }
 
-impl StoreOp {
-}
+impl StoreOp {}
 
 /// One UIDPLUS `COPYUID` / `APPENDUID` mapping, parsed from the TYPED
 /// `imap-proto` response code rather than from a Debug string. `source` and
@@ -162,8 +161,15 @@ pub type WriteResult<T> = Result<T, WriteError>;
 pub trait ImapWriteSession: ImapSession {
     /// Capability-gated native label membership. Implementations must validate
     /// UID sets and labels before constructing a wire command.
-    async fn uid_store_labels(&mut self, _uid_set: &str, _op: StoreOp, _labels: &[String]) -> Result<(), ProviderError> {
-        Err(ProviderError::InvalidOperation("Native-label extensions are unavailable".into()))
+    async fn uid_store_labels(
+        &mut self,
+        _uid_set: &str,
+        _op: StoreOp,
+        _labels: &[String],
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::InvalidOperation(
+            "Native-label extensions are unavailable".into(),
+        ))
     }
     /// `UID STORE <set> ±FLAGS.SILENT (<flags>)`. `uid_set` is a built set
     /// string; `flags` are already-validated wire spellings. Does NOT verify
@@ -241,12 +247,7 @@ pub trait ImapWriteSession: ImapSession {
     /// makes the lost-reply retry idempotent. A tagged `NO` that DOES carry a
     /// code (some servers) is still lifted to [`WriteError::TryCreate`] for
     /// TRYCREATE/NONEXISTENT.
-    async fn append(
-        &mut self,
-        mailbox: &str,
-        flags: &[String],
-        content: &[u8],
-    ) -> WriteResult<()>;
+    async fn append(&mut self, mailbox: &str, flags: &[String], content: &[u8]) -> WriteResult<()>;
 }
 
 // ===========================================================================
@@ -308,7 +309,9 @@ pub(super) fn decode_modified_utf7(input: &str) -> Result<String, ProviderError>
                 return Err(invalid());
             }
             let units: Vec<u16> = bytes
-                .as_chunks::<2>().0.iter()
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
                 .collect();
             out.push_str(&String::from_utf16(&units).map_err(|_| invalid())?);
@@ -324,10 +327,7 @@ pub(super) fn decode_modified_utf7(input: &str) -> Result<String, ProviderError>
 /// NUL an attacker uses to truncate a C-side parse. `what` names the field for
 /// the error message.
 fn reject_control_chars(value: &str, what: &str) -> Result<(), ProviderError> {
-    if let Some(bad) = value
-        .chars()
-        .find(|&c| c == '\r' || c == '\n' || c == '\0')
-    {
+    if let Some(bad) = value.chars().find(|&c| c == '\r' || c == '\n' || c == '\0') {
         return Err(ProviderError::InvalidOperation(format!(
             "{what} contains a forbidden control character ({:#04x}); refusing to build a command",
             bad as u32
@@ -519,8 +519,7 @@ pub(super) fn encode_modified_utf7(input: &str) -> String {
 /// Modified base64 (RFC 3501): standard base64 alphabet with `+/` replaced by
 /// `+,` and NO `=` padding. Encodes raw bytes (here, UTF-16BE code units).
 fn modified_base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+,";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+,";
     let mut out = String::new();
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -603,11 +602,7 @@ impl WriteCaps {
     /// Bridge profile) but needs no stored flag here; `MOVE` and `UIDPLUS` are
     /// what gate behaviour.
     pub fn derive(capabilities: &[String], writable_select: &MailboxStatus) -> Self {
-        let has = |word: &str| {
-            capabilities
-                .iter()
-                .any(|cap| capability_matches(cap, word))
-        };
+        let has = |word: &str| capabilities.iter().any(|cap| capability_matches(cap, word));
         Self {
             has_move: has("MOVE"),
             has_uidplus: has("UIDPLUS"),
@@ -765,11 +760,7 @@ fn persist_writable_permanent_flags(
     // Column-only UPDATE: never creates a row and never touches the counters
     // the sync gate trusts (an uncatalogued mailbox is simply not persisted;
     // discovery owns creating catalog rows).
-    let _ = store.set_mailbox_write_capabilities(
-        mailbox,
-        &flags_json,
-        status.permanent_keywords,
-    );
+    let _ = store.set_mailbox_write_capabilities(mailbox, &flags_json, status.permanent_keywords);
 }
 
 // ===========================================================================
@@ -838,9 +829,7 @@ fn verify_fetched_flags(
             .map(|flag| super::session::flag_to_wire(&flag))
             .collect();
         for flag in requested {
-            let here = present
-                .iter()
-                .any(|p| flags_equal(p, flag));
+            let here = present.iter().any(|p| flags_equal(p, flag));
             let ok = match op {
                 StoreOp::Add => here,
                 StoreOp::Remove => !here,
@@ -1558,10 +1547,7 @@ pub async fn save_sent_copy(
 /// permanent `InvalidOperation` (NOT the retryable TryCreate — there is no
 /// create-and-retry here, the caller decides out of band). A missing
 /// UIDVALIDITY is a permanent error (we cannot anchor a `Located` without it).
-async fn examine_for_append(
-    session: &mut dyn ImapWriteSession,
-    mailbox: &str,
-) -> WriteResult<u32> {
+async fn examine_for_append(session: &mut dyn ImapWriteSession, mailbox: &str) -> WriteResult<u32> {
     // `mailbox` is the WIRE spelling from the catalog/plan; async-imap's
     // `examine` quotes it, so it goes out verbatim (see `prepare_append`).
     let _ = build_wire_mailbox_arg(mailbox).map_err(WriteError::Provider)?;
@@ -1605,9 +1591,7 @@ fn no_sent_mailbox_error(mailbox: &str, cause: &ProviderError) -> ProviderError 
         ProviderError::TransientTransport(_) => ProviderError::TransientTransport(text),
         ProviderError::RetryableServer(_) => ProviderError::RetryableServer(text),
         ProviderError::Authentication(_) => ProviderError::Authentication(text),
-        ProviderError::ReauthenticationRequired(_) => {
-            ProviderError::ReauthenticationRequired(text)
-        }
+        ProviderError::ReauthenticationRequired(_) => ProviderError::ReauthenticationRequired(text),
         ProviderError::CertificateChanged(_) => ProviderError::CertificateChanged(text),
         // Any other failure (a plain NO/BAD) is a permanent inability to reach
         // the Sent mailbox.
@@ -1706,7 +1690,9 @@ pub(super) async fn decide_sent_copy<Io: SentCopyIo + Send>(
                 }
                 // (b) Absent -> APPEND ours, then verify after the delay.
                 io.append_copy().await?;
-                return Ok(SentCopyStep::Recheck { after: verify_delay });
+                return Ok(SentCopyStep::Recheck {
+                    after: verify_delay,
+                });
             }
             // append_attempted is true but we are still in Pending. The engine
             // sets the flag BEFORE the provider call, so this is a retry after
@@ -1842,7 +1828,7 @@ mod tests {
         );
         // A single BMP char.
         assert_eq!(encode_modified_utf7("\u{00e9}"), "&AOk-"); // é
-        // An astral char (emoji) uses a surrogate pair.
+                                                               // An astral char (emoji) uses a surrogate pair.
         assert_eq!(encode_modified_utf7("\u{1F600}"), "&2D3eAA-");
     }
 
@@ -1870,10 +1856,7 @@ mod tests {
     fn mailbox_arg_quotes_and_escapes_like_async_imap() {
         assert_eq!(build_mailbox_arg("INBOX").unwrap(), "\"INBOX\"");
         // A quote and a backslash in the name are escaped inside the quotes.
-        assert_eq!(
-            build_mailbox_arg("a\"b").unwrap(),
-            "\"a\\\"b\""
-        );
+        assert_eq!(build_mailbox_arg("a\"b").unwrap(), "\"a\\\"b\"");
         assert_eq!(build_mailbox_arg("a\\b").unwrap(), "\"a\\\\b\"");
         // `]` and `)` are ordinary characters in a quoted string — allowed.
         assert_eq!(build_mailbox_arg("a]b)c").unwrap(), "\"a]b)c\"");
@@ -1917,10 +1900,7 @@ mod tests {
 
     #[test]
     fn a_non_ascii_mailbox_name_builds_a_utf7_quoted_arg() {
-        assert_eq!(
-            build_mailbox_arg("Pièces").unwrap(),
-            "\"Pi&AOg-ces\""
-        );
+        assert_eq!(build_mailbox_arg("Pièces").unwrap(), "\"Pi&AOg-ces\"");
     }
 
     // ---- flag validation ---------------------------------------------
@@ -1950,8 +1930,8 @@ mod tests {
         for bad in [
             "",
             " ",
-            "a b",       // space
-            "a(b",       // paren
+            "a b", // space
+            "a(b", // paren
             "a)b",
             "a{b",
             "a}b",
@@ -1967,10 +1947,7 @@ mod tests {
             "\\*",
             "a*b",
         ] {
-            assert!(
-                validate_flag(bad).is_err(),
-                "flag {bad:?} must be rejected"
-            );
+            assert!(validate_flag(bad).is_err(), "flag {bad:?} must be rejected");
         }
     }
 
@@ -1984,13 +1961,18 @@ mod tests {
     #[test]
     fn validate_flags_rejects_empty_and_over_count_lists() {
         assert!(validate_flags(&[]).is_err());
-        let too_many: Vec<String> =
-            (0..=policy::MAX_FLAGS_PER_COMMAND).map(|i| format!("kw{i}")).collect();
+        let too_many: Vec<String> = (0..=policy::MAX_FLAGS_PER_COMMAND)
+            .map(|i| format!("kw{i}"))
+            .collect();
         assert!(validate_flags(&too_many).is_err());
         // Exactly at the limit, all valid atoms: accepted.
-        let exact: Vec<String> =
-            (0..policy::MAX_FLAGS_PER_COMMAND).map(|i| format!("kw{i}")).collect();
-        assert_eq!(validate_flags(&exact).unwrap().len(), policy::MAX_FLAGS_PER_COMMAND);
+        let exact: Vec<String> = (0..policy::MAX_FLAGS_PER_COMMAND)
+            .map(|i| format!("kw{i}"))
+            .collect();
+        assert_eq!(
+            validate_flags(&exact).unwrap().len(),
+            policy::MAX_FLAGS_PER_COMMAND
+        );
     }
 
     // ---- UID set building --------------------------------------------
@@ -2054,7 +2036,16 @@ mod tests {
         // The primary account's PERMANENTFLAGS: no \*, no \Answered.
         let bridge = WriteCaps::derive(
             &["MOVE".into(), "UIDPLUS".into()],
-            &status(&["$Forwarded", "Forwarded", "\\Deleted", "\\Flagged", "\\Seen"], false),
+            &status(
+                &[
+                    "$Forwarded",
+                    "Forwarded",
+                    "\\Deleted",
+                    "\\Flagged",
+                    "\\Seen",
+                ],
+                false,
+            ),
         );
         // Listed system flags and keywords: storable.
         assert!(bridge.can_store_flag("\\Seen"));
@@ -2071,7 +2062,10 @@ mod tests {
         // A \*-capable server (the Dovecot container) admits new keywords.
         let wildcard = WriteCaps::derive(
             &["MOVE".into(), "UIDPLUS".into()],
-            &status(&["\\Seen", "\\Flagged", "\\Deleted", "\\Answered", "\\Draft"], true),
+            &status(
+                &["\\Seen", "\\Flagged", "\\Deleted", "\\Answered", "\\Draft"],
+                true,
+            ),
         );
         assert!(wildcard.can_store_flag("MyLabel"));
         assert!(wildcard.can_store_flag("\\Answered"));
@@ -2100,7 +2094,10 @@ mod tests {
         let neither = WriteCaps::derive(&["IMAP4REV1".into()], &status(&[], false));
         match neither.relocation_strategy() {
             RelocationStrategy::Unsupported(reason) => {
-                assert!(reason.contains("EXPUNGE"), "reason names the hazard: {reason}");
+                assert!(
+                    reason.contains("EXPUNGE"),
+                    "reason names the hazard: {reason}"
+                );
             }
             other => panic!("expected Unsupported, got {other:?}"),
         }
@@ -2132,8 +2129,8 @@ mod tests {
 
     #[test]
     fn write_error_trycreate_collapses_to_a_permanent_invalid_operation() {
-        let err = WriteError::TryCreate("Mailbox doesn't exist: Labels/New".into())
-            .into_provider_error();
+        let err =
+            WriteError::TryCreate("Mailbox doesn't exist: Labels/New".into()).into_provider_error();
         match err {
             ProviderError::InvalidOperation(msg) => {
                 assert!(msg.contains("TRYCREATE"), "{msg}");
@@ -2255,24 +2252,41 @@ mod tests {
 
     #[test]
     fn validate_search_message_id_rejects_unsafe_values_and_empty_normalization() {
-        for bad in ["<a\"b@x>", "<a\\b@x>", "<a b@x>", "<a\rb@x>", "<a\nb@x>", "<a\0b@x>"] {
-            assert!(validate_search_message_id(bad).is_err(), "{bad} must be refused");
+        for bad in [
+            "<a\"b@x>", "<a\\b@x>", "<a b@x>", "<a\rb@x>", "<a\nb@x>", "<a\0b@x>",
+        ] {
+            assert!(
+                validate_search_message_id(bad).is_err(),
+                "{bad} must be refused"
+            );
         }
         // Normalizes to empty (only brackets) -> refused.
         assert!(validate_search_message_id("<>").is_err());
         // A clean id is accepted and returns its normalized token.
-        assert_eq!(validate_search_message_id("<ABC@Example.com>").unwrap(), "abc@example.com");
+        assert_eq!(
+            validate_search_message_id("<ABC@Example.com>").unwrap(),
+            "abc@example.com"
+        );
     }
 
     #[test]
     fn header_message_id_matches_compares_the_normalized_token_exactly() {
         let target = super::super::identity::normalize_message_id("<abc@x>");
         // An exact match (case/bracket/folding insensitive).
-        assert!(header_message_id_matches(b"Message-ID: <ABC@x>\r\n\r\n", &target));
+        assert!(header_message_id_matches(
+            b"Message-ID: <ABC@x>\r\n\r\n",
+            &target
+        ));
         assert!(header_message_id_matches(b"Message-Id: <abc@x>", &target));
         // Near-misses must NOT match (substring hits the SEARCH would surface).
-        assert!(!header_message_id_matches(b"Message-ID: <xabc@x>\r\n", &target));
-        assert!(!header_message_id_matches(b"Message-ID: <abc@xy>\r\n", &target));
+        assert!(!header_message_id_matches(
+            b"Message-ID: <xabc@x>\r\n",
+            &target
+        ));
+        assert!(!header_message_id_matches(
+            b"Message-ID: <abc@xy>\r\n",
+            &target
+        ));
         // A different header, or no colon, never matches.
         assert!(!header_message_id_matches(b"Subject: <abc@x>\r\n", &target));
         assert!(!header_message_id_matches(b"garbage", &target));
@@ -2310,11 +2324,19 @@ mod tests {
         }
         // A coded TRYCREATE NO (the shape async-imap uses when it DOES surface a
         // code) lifts to the typed TryCreate.
-        let trycreate = E::No(r#"code: Some(TryCreate), info: Some("Mailbox doesn't exist: Sent")"#.into());
-        assert!(matches!(map_append_error(&trycreate), WriteError::TryCreate(_)));
+        let trycreate =
+            E::No(r#"code: Some(TryCreate), info: Some("Mailbox doesn't exist: Sent")"#.into());
+        assert!(matches!(
+            map_append_error(&trycreate),
+            WriteError::TryCreate(_)
+        ));
         // A coded NONEXISTENT NO likewise.
-        let nonexistent = E::No(r#"code: None, info: Some("[NONEXISTENT] no such mailbox")"#.into());
-        assert!(matches!(map_append_error(&nonexistent), WriteError::TryCreate(_)));
+        let nonexistent =
+            E::No(r#"code: None, info: Some("[NONEXISTENT] no such mailbox")"#.into());
+        assert!(matches!(
+            map_append_error(&nonexistent),
+            WriteError::TryCreate(_)
+        ));
         // An OVERQUOTA NO that DID carry through as text stays permanent.
         let overquota = E::No(r#"code: None, info: Some("[OVERQUOTA] mailbox full")"#.into());
         match map_append_error(&overquota) {
@@ -2326,8 +2348,14 @@ mod tests {
     #[test]
     fn save_sent_config_default_uses_the_policy_recheck_count() {
         let config = SaveSentConfig::default();
-        assert_eq!(config.relocate_rechecks, policy::SENT_COPY_RELOCATE_RECHECKS);
-        assert!(!config.recheck_delay.is_zero(), "the production default settles between re-checks");
+        assert_eq!(
+            config.relocate_rechecks,
+            policy::SENT_COPY_RELOCATE_RECHECKS
+        );
+        assert!(
+            !config.recheck_delay.is_zero(),
+            "the production default settles between re-checks"
+        );
     }
 
     // ---- Phase 4 run 4b: the Sent-copy DECISION state machine --------------
@@ -2412,17 +2440,24 @@ mod tests {
     #[tokio::test]
     async fn override_true_is_done_with_no_network_or_detection() {
         let mut io = FakeIo::new().with_override();
-        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false))
+            .await
+            .unwrap();
         assert_eq!(step, SentCopyStep::Done);
         assert_eq!(io.appended.get(), 0, "override APPENDs nothing");
         assert!(io.recorded.get().is_none(), "override records no detection");
-        assert!(io.count_returns.borrow().is_empty(), "override does not count");
+        assert!(
+            io.count_returns.borrow().is_empty(),
+            "override does not count"
+        );
     }
 
     #[tokio::test]
     async fn detection_some_true_is_done_without_appending() {
         let mut io = FakeIo::new().with_detection(true);
-        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false))
+            .await
+            .unwrap();
         assert_eq!(step, SentCopyStep::Done);
         assert_eq!(io.appended.get(), 0);
     }
@@ -2430,7 +2465,9 @@ mod tests {
     #[tokio::test]
     async fn detection_some_false_appends_our_copy_and_is_done() {
         let mut io = FakeIo::new().with_detection(false);
-        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false))
+            .await
+            .unwrap();
         assert_eq!(step, SentCopyStep::Done);
         assert_eq!(io.appended.get(), 1, "we save the copy ourselves");
         assert!(io.recorded.get().is_none());
@@ -2441,34 +2478,58 @@ mod tests {
         // None + a copy present BEFORE any APPEND of ours == the server saved
         // its own copy. Record true, append nothing.
         let mut io = FakeIo::new().with_counts(&[1]);
-        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false))
+            .await
+            .unwrap();
         assert_eq!(step, SentCopyStep::Done);
-        assert_eq!(io.appended.get(), 0, "a server-saved copy means we never APPEND");
+        assert_eq!(
+            io.appended.get(),
+            0,
+            "a server-saved copy means we never APPEND"
+        );
         assert_eq!(io.recorded.get(), Some(true));
     }
 
     #[tokio::test]
     async fn first_send_copy_absent_appends_then_asks_to_verify() {
         let mut io = FakeIo::new().with_counts(&[0]);
-        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
-        assert_eq!(step, SentCopyStep::Recheck { after: Duration::from_secs(10) });
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false))
+            .await
+            .unwrap();
+        assert_eq!(
+            step,
+            SentCopyStep::Recheck {
+                after: Duration::from_secs(10)
+            }
+        );
         assert_eq!(io.appended.get(), 1);
-        assert!(io.recorded.get().is_none(), "no detection recorded until verify");
+        assert!(
+            io.recorded.get().is_none(),
+            "no detection recorded until verify"
+        );
     }
 
     #[tokio::test]
     async fn verify_with_two_copies_records_server_saves_sent_and_leaves_the_duplicate() {
         let mut io = FakeIo::new().with_counts(&[2]);
-        let step = decide(&mut io, &request(SentCopyPhase::Verify, true)).await.unwrap();
+        let step = decide(&mut io, &request(SentCopyPhase::Verify, true))
+            .await
+            .unwrap();
         assert_eq!(step, SentCopyStep::Done);
         assert_eq!(io.recorded.get(), Some(true), "server saved one too");
-        assert_eq!(io.appended.get(), 0, "verify never appends; never deletes the duplicate");
+        assert_eq!(
+            io.appended.get(),
+            0,
+            "verify never appends; never deletes the duplicate"
+        );
     }
 
     #[tokio::test]
     async fn verify_with_one_copy_records_server_does_not_save() {
         let mut io = FakeIo::new().with_counts(&[1]);
-        let step = decide(&mut io, &request(SentCopyPhase::Verify, true)).await.unwrap();
+        let step = decide(&mut io, &request(SentCopyPhase::Verify, true))
+            .await
+            .unwrap();
         assert_eq!(step, SentCopyStep::Done);
         assert_eq!(io.recorded.get(), Some(false));
     }
@@ -2478,10 +2539,19 @@ mod tests {
         // Our APPEND's copy is not visible yet. Do NOT append again (that is how
         // a duplicate is born); retry the verify later, record nothing.
         let mut io = FakeIo::new().with_counts(&[0]);
-        let err = decide(&mut io, &request(SentCopyPhase::Verify, true)).await.unwrap_err();
+        let err = decide(&mut io, &request(SentCopyPhase::Verify, true))
+            .await
+            .unwrap_err();
         assert!(matches!(err, ProviderError::TransientTransport(_)));
-        assert_eq!(io.appended.get(), 0, "a zero-copy verify must NOT re-append");
-        assert!(io.recorded.get().is_none(), "no detection recorded on a retry-later verify");
+        assert_eq!(
+            io.appended.get(),
+            0,
+            "a zero-copy verify must NOT re-append"
+        );
+        assert!(
+            io.recorded.get().is_none(),
+            "no detection recorded on a retry-later verify"
+        );
     }
 
     #[tokio::test]
@@ -2498,14 +2568,27 @@ mod tests {
         // later send would then APPEND a duplicate). The next send decides
         // cleanly.
         let mut io = FakeIo::new();
-        let step = decide(&mut io, &request(SentCopyPhase::Pending, true)).await.unwrap();
-        assert_eq!(step, SentCopyStep::Done, "an ambiguous retry must not move to verify");
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, true))
+            .await
+            .unwrap();
+        assert_eq!(
+            step,
+            SentCopyStep::Done,
+            "an ambiguous retry must not move to verify"
+        );
         assert!(
             io.recorded.get().is_none(),
             "an ambiguous copy is never recorded as evidence either way"
         );
-        assert_eq!(io.appended.get(), 1, "the idempotent APPEND is a no-op if present");
-        assert!(io.count_returns.borrow().is_empty(), "the evidence rule: no count before deciding");
+        assert_eq!(
+            io.appended.get(),
+            1,
+            "the idempotent APPEND is a no-op if present"
+        );
+        assert!(
+            io.count_returns.borrow().is_empty(),
+            "the evidence rule: no count before deciding"
+        );
     }
 
     #[tokio::test]
@@ -2518,9 +2601,15 @@ mod tests {
         struct FailingFirstLook(FakeIo, bool);
         #[async_trait]
         impl SentCopyIo for FailingFirstLook {
-            fn server_saves_sent_override(&self) -> bool { self.0.server_saves_sent_override() }
-            async fn detection(&mut self) -> Result<Option<bool>, ProviderError> { self.0.detection().await }
-            async fn record_detection(&mut self, v: bool) -> Result<(), ProviderError> { self.0.record_detection(v).await }
+            fn server_saves_sent_override(&self) -> bool {
+                self.0.server_saves_sent_override()
+            }
+            async fn detection(&mut self) -> Result<Option<bool>, ProviderError> {
+                self.0.detection().await
+            }
+            async fn record_detection(&mut self, v: bool) -> Result<(), ProviderError> {
+                self.0.record_detection(v).await
+            }
             async fn count_in_sent(&mut self) -> Result<usize, ProviderError> {
                 if !self.1 {
                     self.1 = true;
@@ -2528,22 +2617,37 @@ mod tests {
                 }
                 self.0.count_in_sent().await
             }
-            async fn append_copy(&mut self) -> Result<(), ProviderError> { self.0.append_copy().await }
+            async fn append_copy(&mut self) -> Result<(), ProviderError> {
+                self.0.append_copy().await
+            }
         }
         let mut io = FailingFirstLook(FakeIo::new().with_counts(&[1, 1, 1]), false);
         // Attempt 1: first look, transient failure (nothing appended).
-        let first = decide_sent_copy(&mut io, &request(SentCopyPhase::Pending, false), Duration::ZERO).await;
+        let first = decide_sent_copy(
+            &mut io,
+            &request(SentCopyPhase::Pending, false),
+            Duration::ZERO,
+        )
+        .await;
         assert!(matches!(first, Err(ProviderError::TransientTransport(_))));
         // Attempt 2: the engine now passes append_attempted = true.
-        let mut step = decide_sent_copy(&mut io, &request(SentCopyPhase::Pending, true), Duration::ZERO)
-            .await
-            .unwrap();
+        let mut step = decide_sent_copy(
+            &mut io,
+            &request(SentCopyPhase::Pending, true),
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
         // If it asked to verify, run the verify (it must not exist, but if it
         // did, the single server copy must not be recorded as "ours alone").
         if matches!(step, SentCopyStep::Recheck { .. }) {
-            step = decide_sent_copy(&mut io, &request(SentCopyPhase::Verify, true), Duration::ZERO)
-                .await
-                .unwrap();
+            step = decide_sent_copy(
+                &mut io,
+                &request(SentCopyPhase::Verify, true),
+                Duration::ZERO,
+            )
+            .await
+            .unwrap();
         }
         assert_eq!(step, SentCopyStep::Done);
         assert_ne!(

@@ -167,7 +167,12 @@ impl ImapAccountSettings {
     /// Whether `host:port` has a pin and `presented` is a DIFFERENT
     /// certificate. An unpinned endpoint never counts as changed: it verifies
     /// against the platform roots instead.
-    pub fn certificate_changed(&self, host: &str, port: u16, presented: &Sha256Fingerprint) -> bool {
+    pub fn certificate_changed(
+        &self,
+        host: &str,
+        port: u16,
+        presented: &Sha256Fingerprint,
+    ) -> bool {
         self.pinned_for(host, port)
             .is_some_and(|pinned| &pinned != presented)
     }
@@ -214,7 +219,10 @@ mod tests {
         }
         // Existing database rows retain their established spelling.
         assert_eq!(SecurityMode::StartTls.as_str(), "starttls");
-        assert_eq!(SecurityMode::parse("starttls"), Some(SecurityMode::StartTls));
+        assert_eq!(
+            SecurityMode::parse("starttls"),
+            Some(SecurityMode::StartTls)
+        );
     }
 
     #[test]
@@ -223,14 +231,18 @@ mod tests {
         let load = || database.imap_account_settings("me@proton.me").unwrap();
         assert!(load().is_none(), "no row before save");
         let settings = sample();
-        database.save_imap_account_settings("me@proton.me", &settings).unwrap();
+        database
+            .save_imap_account_settings("me@proton.me", &settings)
+            .unwrap();
         assert_eq!(load().unwrap(), settings);
         // A second save updates in place rather than erroring on the PK.
         let changed = ImapAccountSettings {
             server_saves_sent: false,
             ..settings.clone()
         };
-        database.save_imap_account_settings("me@proton.me", &changed).unwrap();
+        database
+            .save_imap_account_settings("me@proton.me", &changed)
+            .unwrap();
         assert_eq!(load().unwrap(), changed);
     }
 
@@ -267,7 +279,11 @@ mod tests {
         for mode in [SecurityMode::ImplicitTls, SecurityMode::StartTls] {
             assert_eq!(SecurityMode::parse(mode.as_str()), Some(mode));
         }
-        for storage in [LabelStorage::Keywords, LabelStorage::Folders, LabelStorage::None] {
+        for storage in [
+            LabelStorage::Keywords,
+            LabelStorage::Folders,
+            LabelStorage::None,
+        ] {
             assert_eq!(LabelStorage::parse(storage.as_str()), Some(storage));
         }
     }

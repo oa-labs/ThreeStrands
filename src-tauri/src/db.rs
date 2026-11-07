@@ -19,21 +19,20 @@ mod accounts;
 mod agents;
 mod ai;
 mod calendar_accounts;
+mod co_recipients;
 mod compose_settings;
 pub(crate) mod contact_groups;
 pub(crate) mod contact_management;
 mod contact_suggestions;
-mod co_recipients;
-mod system_contacts;
 pub(crate) mod contacts;
-mod enrollment;
 mod drafts;
-mod goals;
-pub(crate) mod gmail_identities;
-pub(crate) mod imap;
-mod join_codes;
+mod enrollment;
 mod files;
+pub(crate) mod gmail_identities;
+mod goals;
+pub(crate) mod imap;
 mod ingestion;
+mod join_codes;
 mod labels;
 mod mail_sync;
 mod maintenance;
@@ -55,15 +54,16 @@ pub(crate) mod snoozes;
 mod split_inboxes;
 pub(crate) mod sync_state;
 mod synced_preferences;
+mod system_contacts;
 mod tasks;
 mod threads;
 mod today;
 mod triage;
 
+pub(crate) use join_codes::{rfc3339_from_ms, RedemptionRecord};
 pub(crate) use labels::cache_label_listing;
 pub use mail_sync::SentBackfillProgress;
 pub use mutations::PendingMutation;
-pub(crate) use join_codes::{rfc3339_from_ms, RedemptionRecord};
 pub use recovery::{open_with_recovery, OpenError, RecoveryOutcome};
 pub(crate) use scheduled_send::{record_schedule_report, ScheduledDraftRow};
 pub(crate) use sender::MAX_SENDER_THREADS;
@@ -149,10 +149,7 @@ impl Database {
     }
 
     /// Runs one read or write operation while holding the connection guard.
-    fn with_connection<R>(
-        &self,
-        work: impl FnOnce(&Connection) -> DbResult<R>,
-    ) -> DbResult<R> {
+    fn with_connection<R>(&self, work: impl FnOnce(&Connection) -> DbResult<R>) -> DbResult<R> {
         let connection = self.connection()?;
         work(&connection)
     }
@@ -206,8 +203,12 @@ pub(crate) fn sending_addresses_for_account(
     account_id: &str,
 ) -> std::collections::BTreeSet<String> {
     use rusqlite::OptionalExtension;
-    if let Ok(Some(identities)) = gmail_identities::cached_gmail_identities(connection, account_id) {
-        return identities.iter().map(crate::provider::imap::identity_normalized).collect();
+    if let Ok(Some(identities)) = gmail_identities::cached_gmail_identities(connection, account_id)
+    {
+        return identities
+            .iter()
+            .map(crate::provider::imap::identity_normalized)
+            .collect();
     }
     // Read the stored identity list (if this is an IMAP account with a row).
     let stored: Vec<crate::provider::imap::Identity> = connection

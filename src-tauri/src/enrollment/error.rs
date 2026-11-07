@@ -89,7 +89,9 @@ pub enum EnrollmentError {
     JoinCodeExpired,
     #[error("That join code isn't open anymore.")]
     JoinCodeNotOpen,
-    #[error("This join code's invitation is damaged or doesn't match the code. Ask for a new one.")]
+    #[error(
+        "This join code's invitation is damaged or doesn't match the code. Ask for a new one."
+    )]
     InvitationDamaged,
     #[error("{}", INVITATION_NOT_FOUND)]
     InvitationNotFound,
@@ -103,7 +105,6 @@ pub enum EnrollmentError {
     #[error("{0}")]
     Invalid(String),
 }
-
 
 /// Compatibility conversion for the Tauri commands, which still report
 /// errors to the frontend as strings.

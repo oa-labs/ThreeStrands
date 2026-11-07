@@ -29,24 +29,28 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use threestrands_sync_envelope::{
-    compute_cid, decode_join_code, decode_signed_invitation, encode_join_code, encode_signed_invitation,
-    encode_signed_invitation_redemption, generate_invite_secret, invite_ed25519_signing_key, invite_x25519_secret,
-    seal_to_x25519, sign_invitation, sign_invitation_redemption, try_open_sealed_box, verify_invitation,
-    verify_invitation_redemption, InvitationRedemption, Invitation, JoinCode, JoinConnector, SignedInvitation,
-    SignedInvitationRedemption, VerifyingKey, X25519PublicKey, JOIN_CODE_VERSION,
+    compute_cid, decode_join_code, decode_signed_invitation, encode_join_code,
+    encode_signed_invitation, encode_signed_invitation_redemption, generate_invite_secret,
+    invite_ed25519_signing_key, invite_x25519_secret, seal_to_x25519, sign_invitation,
+    sign_invitation_redemption, try_open_sealed_box, verify_invitation,
+    verify_invitation_redemption, Invitation, InvitationRedemption, JoinCode, JoinConnector,
+    SignedInvitation, SignedInvitationRedemption, VerifyingKey, X25519PublicKey, JOIN_CODE_VERSION,
 };
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use super::crypto::{
-    open_earlier_epoch_keys, roster_entry_verifying_key, seal_earlier_epoch_keys, store_earlier_epoch_keys, EpochKeyStore,
+    open_earlier_epoch_keys, roster_entry_verifying_key, seal_earlier_epoch_keys,
+    store_earlier_epoch_keys, EpochKeyStore,
 };
 use super::service::{protocol_marker_missing, require_not_started};
 use super::{EnrollmentError, EnrollmentResult};
 use crate::db::{rfc3339_from_ms, Database, DatabaseError};
-use crate::replicated_sync::{decode_id, encode_id, x25519_public_bytes, DeviceIdentity, LocalKeys};
+use crate::replicated_sync::{
+    decode_id, encode_id, x25519_public_bytes, DeviceIdentity, LocalKeys,
+};
 use crate::sync_connectors::{
-    Connector, ConnectorCredentials, FolderConfig, TransportConfig, TransportSecrets, FOLDER_KIND, IPFS_RPC_KIND,
-    S3_KIND,
+    Connector, ConnectorCredentials, FolderConfig, TransportConfig, TransportSecrets, FOLDER_KIND,
+    IPFS_RPC_KIND, S3_KIND,
 };
 
 /// Shortest and longest join-code lifetime Settings may request, in hours.
@@ -156,7 +160,6 @@ struct FolderHint {
 
 // ================================= Helpers ===================================
 
-
 fn folder_name(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
@@ -173,10 +176,18 @@ fn new_instance_id(kind: &str) -> String {
 }
 
 /// Puts `bytes` on every transport; returns the instance ids that accepted.
-async fn put_everywhere(transports: &[Arc<dyn SyncTransport>], cid: &str, bytes: &[u8]) -> Vec<String> {
+async fn put_everywhere(
+    transports: &[Arc<dyn SyncTransport>],
+    cid: &str,
+    bytes: &[u8],
+) -> Vec<String> {
     let mut accepted = Vec::new();
     for transport in transports {
-        if transport.put_object(&TransportCid(cid.to_string()), bytes).await.is_ok() {
+        if transport
+            .put_object(&TransportCid(cid.to_string()), bytes)
+            .await
+            .is_ok()
+        {
             accepted.push(transport.instance_id().0);
         }
     }
@@ -186,7 +197,9 @@ async fn put_everywhere(transports: &[Arc<dyn SyncTransport>], cid: &str, bytes:
 async fn delete_everywhere(transports: &[Arc<dyn SyncTransport>], cid: &str) {
     for transport in transports {
         // Best effort: a provider deletion, not a logical one.
-        let _ = transport.delete_object(&TransportCid(cid.to_string())).await;
+        let _ = transport
+            .delete_object(&TransportCid(cid.to_string()))
+            .await;
     }
 }
 
@@ -209,26 +222,39 @@ pub(crate) async fn create_join_code(
         )));
     }
     if choices.is_empty() {
-        return Err(EnrollmentError::Invalid("Choose at least one connector to include in the join code".to_string()));
+        return Err(EnrollmentError::Invalid(
+            "Choose at least one connector to include in the join code".to_string(),
+        ));
     }
-    let rows = database.configured_transports().map_err(|error| EnrollmentError::Connector(error.to_string()))?;
+    let rows = database
+        .configured_transports()
+        .map_err(|error| EnrollmentError::Connector(error.to_string()))?;
     let mut connectors = Vec::with_capacity(choices.len());
     let mut selected_ids = Vec::with_capacity(choices.len());
     for choice in choices {
         let row = rows
             .iter()
             .find(|row| row.instance_id == choice.instance_id)
-            .ok_or_else(|| EnrollmentError::Connector("One of the chosen connectors no longer exists".to_string()))?;
-        let config = row
-            .config()
-            .ok_or_else(|| EnrollmentError::Connector("One of the chosen connectors can't be read by this version of ThreeStrands".to_string()))?;
+            .ok_or_else(|| {
+                EnrollmentError::Connector(
+                    "One of the chosen connectors no longer exists".to_string(),
+                )
+            })?;
+        let config = row.config().ok_or_else(|| {
+            EnrollmentError::Connector(
+                "One of the chosen connectors can't be read by this version of ThreeStrands"
+                    .to_string(),
+            )
+        })?;
         let config_json = match &config {
             TransportConfig::Folder(folder) => serde_json::to_string(&FolderHint {
                 folder_name: folder_name(&folder.path),
                 label: config.label().map(str::to_string),
             })
             .map_err(crate::db::serialization_error)?,
-            _ => config.to_config_json().map_err(EnrollmentError::Connector)?,
+            _ => config
+                .to_config_json()
+                .map_err(EnrollmentError::Connector)?,
         };
         let secrets_json = if choice.include_credentials {
             TransportSecrets::load(config.kind(), &row.instance_id)
@@ -239,7 +265,11 @@ pub(crate) async fn create_join_code(
         } else {
             None
         };
-        connectors.push(JoinConnector { kind: config.kind().to_string(), config_json, secrets_json });
+        connectors.push(JoinConnector {
+            kind: config.kind().to_string(),
+            config_json,
+            secrets_json,
+        });
         selected_ids.push(row.instance_id.clone());
     }
 
@@ -265,7 +295,9 @@ pub(crate) async fn create_join_code(
     let invite_x25519_public = X25519PublicKey::from(&invite_x25519_secret(&secret)).to_bytes();
     let invitation = Invitation {
         inviter_device_id: identity.device_id,
-        invite_ed25519_public: ByteBuf::from(invite_signing_key.verifying_key().to_bytes().to_vec()),
+        invite_ed25519_public: ByteBuf::from(
+            invite_signing_key.verifying_key().to_bytes().to_vec(),
+        ),
         invite_x25519_public: ByteBuf::from(invite_x25519_public.to_vec()),
         key_epoch: keys.key_epoch,
         sealed_epoch_key: ByteBuf::from(seal_to_x25519(&invite_x25519_public, &keys.k_epoch)),
@@ -316,7 +348,9 @@ fn connector_preview(index: usize, connector: &JoinConnector) -> JoinCodeConnect
         needs_credentials: false,
     };
     if connector.kind == FOLDER_KIND {
-        let Ok(hint) = serde_json::from_str::<FolderHint>(&connector.config_json) else { return unsupported };
+        let Ok(hint) = serde_json::from_str::<FolderHint>(&connector.config_json) else {
+            return unsupported;
+        };
         return JoinCodeConnectorPreview {
             supported: true,
             location: hint.folder_name.clone(),
@@ -326,7 +360,9 @@ fn connector_preview(index: usize, connector: &JoinConnector) -> JoinCodeConnect
             ..unsupported
         };
     }
-    let Some(config) = TransportConfig::from_row(&connector.kind, &connector.config_json) else { return unsupported };
+    let Some(config) = TransportConfig::from_row(&connector.kind, &connector.config_json) else {
+        return unsupported;
+    };
     JoinCodeConnectorPreview {
         supported: true,
         location: config.location(),
@@ -343,7 +379,12 @@ pub(crate) fn preview_join_code(text: &str, now_ms: i64) -> EnrollmentResult<Joi
         inviter_name: code.inviter_name.clone(),
         expires_at: rfc3339_from_ms(code.expires_at_ms),
         expired: now_ms > code.expires_at_ms,
-        connectors: code.connectors.iter().enumerate().map(|(index, connector)| connector_preview(index, connector)).collect(),
+        connectors: code
+            .connectors
+            .iter()
+            .enumerate()
+            .map(|(index, connector)| connector_preview(index, connector))
+            .collect(),
     })
 }
 
@@ -357,16 +398,29 @@ pub(crate) fn prepare_join_connectors(
     folders: &[JoinFolderChoice],
     credentials: Vec<JoinCredentialsChoice>,
 ) -> EnrollmentResult<Vec<(TransportConfig, Option<TransportSecrets>)>> {
-    let mut provided: std::collections::HashMap<usize, ConnectorCredentials> =
-        credentials.into_iter().map(|choice| (choice.connector_index, choice.credentials)).collect();
+    let mut provided: std::collections::HashMap<usize, ConnectorCredentials> = credentials
+        .into_iter()
+        .map(|choice| (choice.connector_index, choice.credentials))
+        .collect();
     let mut prepared = Vec::new();
     for (index, connector) in code.connectors.iter().enumerate() {
         let config = if connector.kind == FOLDER_KIND {
-            let Ok(hint) = serde_json::from_str::<FolderHint>(&connector.config_json) else { continue };
-            let choice = folders.iter().find(|choice| choice.connector_index == index).ok_or_else(|| {
-                EnrollmentError::Invalid(format!("Choose this device's copy of the shared folder \"{}\".", hint.folder_name))
-            })?;
-            TransportConfig::Folder(FolderConfig { path: choice.path.clone(), label: hint.label })
+            let Ok(hint) = serde_json::from_str::<FolderHint>(&connector.config_json) else {
+                continue;
+            };
+            let choice = folders
+                .iter()
+                .find(|choice| choice.connector_index == index)
+                .ok_or_else(|| {
+                    EnrollmentError::Invalid(format!(
+                        "Choose this device's copy of the shared folder \"{}\".",
+                        hint.folder_name
+                    ))
+                })?;
+            TransportConfig::Folder(FolderConfig {
+                path: choice.path.clone(),
+                label: hint.label,
+            })
         } else {
             match TransportConfig::from_row(&connector.kind, &connector.config_json) {
                 Some(config) => config,
@@ -374,11 +428,20 @@ pub(crate) fn prepare_join_connectors(
             }
         };
         let secrets = match (provided.remove(&index), &connector.secrets_json) {
-            (Some(credentials), _) => Some(credentials.into_secrets().map_err(EnrollmentError::Connector)?),
-            (None, Some(json)) => Some(TransportSecrets::from_portable_json(&connector.kind, json).map_err(EnrollmentError::Connector)?),
+            (Some(credentials), _) => Some(
+                credentials
+                    .into_secrets()
+                    .map_err(EnrollmentError::Connector)?,
+            ),
+            (None, Some(json)) => Some(
+                TransportSecrets::from_portable_json(&connector.kind, json)
+                    .map_err(EnrollmentError::Connector)?,
+            ),
             (None, None) => None,
         };
-        config.validate("join", secrets.as_ref()).map_err(EnrollmentError::Connector)?;
+        config
+            .validate("join", secrets.as_ref())
+            .map_err(EnrollmentError::Connector)?;
         prepared.push((config, secrets));
     }
     if prepared.is_empty() {
@@ -400,7 +463,10 @@ pub(crate) struct OpenedInvitation {
 /// Checks fetched bytes against the code: exactly the CID it names, signed
 /// by the inviter in its own roster, carrying the invite keys the code's
 /// secret derives, and sealing an epoch key that secret opens.
-pub(crate) fn verify_fetched_invitation(bytes: &[u8], code: &JoinCode) -> EnrollmentResult<OpenedInvitation> {
+pub(crate) fn verify_fetched_invitation(
+    bytes: &[u8],
+    code: &JoinCode,
+) -> EnrollmentResult<OpenedInvitation> {
     let damaged = || EnrollmentError::InvitationDamaged;
     if compute_cid(bytes) != code.invitation_cid {
         return Err(damaged());
@@ -415,7 +481,9 @@ pub(crate) fn verify_fetched_invitation(bytes: &[u8], code: &JoinCode) -> Enroll
     let inviter_key = roster_entry_verifying_key(inviter).map_err(|_| damaged())?;
     verify_invitation(&inviter_key, &signed).map_err(|_| damaged())?;
     let secret = code.invite_secret();
-    let expected_ed25519 = invite_ed25519_signing_key(&secret).verifying_key().to_bytes();
+    let expected_ed25519 = invite_ed25519_signing_key(&secret)
+        .verifying_key()
+        .to_bytes();
     let x25519_secret = invite_x25519_secret(&secret);
     let expected_x25519 = X25519PublicKey::from(&x25519_secret).to_bytes();
     if invitation.invite_ed25519_public.as_slice() != expected_ed25519
@@ -423,17 +491,24 @@ pub(crate) fn verify_fetched_invitation(bytes: &[u8], code: &JoinCode) -> Enroll
     {
         return Err(damaged());
     }
-    let k_epoch: [u8; 32] = try_open_sealed_box(&x25519_secret.to_bytes(), &invitation.sealed_epoch_key)
-        .and_then(|bytes| bytes.try_into().ok())
-        .ok_or_else(damaged)?;
+    let k_epoch: [u8; 32] =
+        try_open_sealed_box(&x25519_secret.to_bytes(), &invitation.sealed_epoch_key)
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or_else(damaged)?;
     let earlier_epoch_keys =
-        open_earlier_epoch_keys(&x25519_secret.to_bytes(), &invitation.earlier_epoch_keys).ok_or_else(damaged)?;
-    Ok(OpenedInvitation { signed, k_epoch, earlier_epoch_keys })
+        open_earlier_epoch_keys(&x25519_secret.to_bytes(), &invitation.earlier_epoch_keys)
+            .ok_or_else(damaged)?;
+    Ok(OpenedInvitation {
+        signed,
+        k_epoch,
+        earlier_epoch_keys,
+    })
 }
 
 pub(crate) const INVITATION_NOT_FOUND: &str = "Couldn't find this join code's invitation in its connectors. If it uses a shared folder, check that you chose the right folder and that your sync app has finished downloading, then try again.";
 pub(crate) const CREDENTIALS_REJECTED: &str = "Storage rejected the credentials for this join code's connector. Check the access key, or ask for a new join code.";
-pub(crate) const STORAGE_UNREACHABLE: &str = "Couldn't reach this join code's storage. Check your connection, then try again.";
+pub(crate) const STORAGE_UNREACHABLE: &str =
+    "Couldn't reach this join code's storage. Check your connection, then try again.";
 
 /// Fetches and verifies the invitation from the first transport that has
 /// it. When none does, the error says why, most specific first: an object
@@ -447,7 +522,10 @@ pub(crate) async fn find_invitation(
     let mut credentials_rejected = false;
     let mut unreachable = false;
     for transport in transports {
-        let bytes = match transport.get_object(&TransportCid(code.invitation_cid.clone())).await {
+        let bytes = match transport
+            .get_object(&TransportCid(code.invitation_cid.clone()))
+            .await
+        {
             Ok(bytes) => bytes,
             Err(TransportError::Authentication(_)) => {
                 credentials_rejected = true;
@@ -495,25 +573,50 @@ pub(crate) async fn commit_redemption(
         device_name: database.self_device_name(identity)?,
         created_at_ms: now_ms,
     };
-    let signed = sign_invitation_redemption(&invite_ed25519_signing_key(&code.invite_secret()), &identity.signing_key, redemption)
-        ?;
+    let signed = sign_invitation_redemption(
+        &invite_ed25519_signing_key(&code.invite_secret()),
+        &identity.signing_key,
+        redemption,
+    )?;
     let bytes = encode_signed_invitation_redemption(&signed)?;
     let redemption_cid = compute_cid(&bytes);
-    if put_everywhere(transports, &redemption_cid, &bytes).await.is_empty() {
-        return Err(EnrollmentError::PublishFailed("Couldn't reach any of this join code's connectors to finish joining. Try again."));
+    if put_everywhere(transports, &redemption_cid, &bytes)
+        .await
+        .is_empty()
+    {
+        return Err(EnrollmentError::PublishFailed(
+            "Couldn't reach any of this join code's connectors to finish joining. Try again.",
+        ));
     }
 
     database.set_beta_features_enabled(true)?;
     database.adopt_roster(&invitation.roster)?;
     database.set_recovery_public_keys(
-        invitation.recovery_ed25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
-        invitation.recovery_x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
+        invitation
+            .recovery_ed25519_public
+            .as_slice()
+            .try_into()
+            .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
+        invitation
+            .recovery_x25519_public
+            .as_slice()
+            .try_into()
+            .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
     )?;
-    database.trust_device_keys(identity.device_id.as_bytes(), &identity.verifying_key, &self_x25519_public)?;
+    database.trust_device_keys(
+        identity.device_id.as_bytes(),
+        &identity.verifying_key,
+        &self_x25519_public,
+    )?;
     epoch_keys.store(invitation.key_epoch, &opened.k_epoch)?;
     database.set_active_epoch(invitation.key_epoch)?;
     database.record_epoch_activation(invitation.key_epoch, &code.invitation_cid)?;
-    store_earlier_epoch_keys(database, epoch_keys, &opened.earlier_epoch_keys, &code.invitation_cid)?;
+    store_earlier_epoch_keys(
+        database,
+        epoch_keys,
+        &opened.earlier_epoch_keys,
+        &code.invitation_cid,
+    )?;
     database.mark_control_object_seen(&code.invitation_cid, "invitation")?;
     database.mark_control_object_seen(&redemption_cid, "invitation_redemption")?;
     database.record_incoming_invitation(
@@ -559,16 +662,31 @@ pub(crate) async fn join_with_code(
         }
     }
     if transports.is_empty() {
-        return Err(open_error.unwrap_or_else(|| EnrollmentError::Connector("Couldn't open any of this join code's connectors".to_string())));
+        return Err(open_error.unwrap_or_else(|| {
+            EnrollmentError::Connector(
+                "Couldn't open any of this join code's connectors".to_string(),
+            )
+        }));
     }
     let opened = find_invitation(&code, &transports).await?;
     if protocol_marker_missing(&transports).await {
         return Err(EnrollmentError::LegacySpace);
     }
     for (instance_id, config, secrets) in &opened_connectors {
-        database.add_transport(instance_id, config, secrets.as_ref()).map_err(EnrollmentError::Connector)?;
+        database
+            .add_transport(instance_id, config, secrets.as_ref())
+            .map_err(EnrollmentError::Connector)?;
     }
-    commit_redemption(database, identity, epoch_keys, &code, opened, &transports, now_ms).await
+    commit_redemption(
+        database,
+        identity,
+        epoch_keys,
+        &code,
+        opened,
+        &transports,
+        now_ms,
+    )
+    .await
 }
 
 // =============================== Sweep hooks =================================
@@ -596,7 +714,10 @@ pub(super) fn apply_incoming_invitation(
         return Ok(());
     }
     let roster = database.known_device_roster()?;
-    let Some((_, inviter_key)) = roster.iter().find(|(device_id, _)| *device_id == invitation.inviter_device_id) else {
+    let Some((_, inviter_key)) = roster
+        .iter()
+        .find(|(device_id, _)| *device_id == invitation.inviter_device_id)
+    else {
         return Ok(());
     };
     if verify_invitation(inviter_key, &signed).is_err() {
@@ -628,18 +749,34 @@ pub(super) fn apply_incoming_redemption(
     }
     let invitation = database.invitation_for_redemption(&redemption.invitation_cid)?;
     let Some((direction, Some(invite_public), inviter_device_id)) = invitation else {
-        let still_syncing = invitation.is_none() && now_ms < redemption.created_at_ms.saturating_add(REDEMPTION_RETRY_WINDOW_MS);
-        return Ok(if still_syncing { JoinObjectOutcome::RetryLater } else { JoinObjectOutcome::Done });
+        let still_syncing = invitation.is_none()
+            && now_ms
+                < redemption
+                    .created_at_ms
+                    .saturating_add(REDEMPTION_RETRY_WINDOW_MS);
+        return Ok(if still_syncing {
+            JoinObjectOutcome::RetryLater
+        } else {
+            JoinObjectOutcome::Done
+        });
     };
     if direction == "incoming" {
         return Ok(JoinObjectOutcome::Done);
     }
-    let Ok(invite_public): Result<[u8; 32], _> = invite_public.try_into() else { return Ok(JoinObjectOutcome::Done) };
-    let Ok(invite_key) = VerifyingKey::from_bytes(&invite_public) else { return Ok(JoinObjectOutcome::Done) };
+    let Ok(invite_public): Result<[u8; 32], _> = invite_public.try_into() else {
+        return Ok(JoinObjectOutcome::Done);
+    };
+    let Ok(invite_key) = VerifyingKey::from_bytes(&invite_public) else {
+        return Ok(JoinObjectOutcome::Done);
+    };
     if verify_invitation_redemption(&invite_key, &signed).is_err() {
         return Ok(JoinObjectOutcome::Done);
     }
-    let state = if direction == "outgoing" { "pending" } else { "observed" };
+    let state = if direction == "outgoing" {
+        "pending"
+    } else {
+        "observed"
+    };
     database.record_redemption(crate::db::RedemptionRecord {
         redemption_cid: cid,
         invitation_cid: &redemption.invitation_cid,
@@ -657,15 +794,21 @@ pub(super) fn apply_incoming_redemption(
 
 /// On the joiner: once a rotation lists this device as active, its join
 /// is complete.
-pub(super) fn note_admission_if_listed(database: &Database, identity: &DeviceIdentity, roster: &[threestrands_sync_envelope::RosterEntry]) -> EnrollmentResult<()> {
-    if roster.iter().any(|entry| entry.device_id == identity.device_id && entry.status == "active") {
+pub(super) fn note_admission_if_listed(
+    database: &Database,
+    identity: &DeviceIdentity,
+    roster: &[threestrands_sync_envelope::RosterEntry],
+) -> EnrollmentResult<()> {
+    if roster
+        .iter()
+        .any(|entry| entry.device_id == identity.device_id && entry.status == "active")
+    {
         database.mark_incoming_invitations_admitted()?;
     }
     Ok(())
 }
 
 // ============================ Inviter maintenance ============================
-
 
 /// On the inviter, once per sync cycle: admits the first valid redemption
 /// of each open, unexpired invitation, rejects the rest, expires old
@@ -683,7 +826,15 @@ pub(crate) async fn process_join_codes(
 
     let mut rotate = false;
     let mut closed = Vec::new();
-    for (redemption_cid, invitation_cid, device_id_hex, ed25519_public, x25519_public, device_name) in pending {
+    for (
+        redemption_cid,
+        invitation_cid,
+        device_id_hex,
+        ed25519_public,
+        x25519_public,
+        device_name,
+    ) in pending
+    {
         let (status, expires_at_ms) = database.invitation_status_and_expiry(&invitation_cid)?;
         let already_known = database.device_known(&device_id_hex)?;
         let keys_valid = <[u8; 32]>::try_from(ed25519_public.as_slice())
@@ -760,4 +911,3 @@ fn mark_object_deleted(database: &Database, invitation_cid: &str) -> EnrollmentR
 }
 
 // ============================ Listing and notices ============================
-

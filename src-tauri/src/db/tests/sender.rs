@@ -19,26 +19,104 @@ fn from(id: &str, thread: &str, date: &str, sender: &str, labels: &[&str]) -> No
 #[test]
 fn sender_history_counts_automated_mail_the_contact_index_leaves_out() {
     let database = database();
-    let mut newest = from("n3", "news-3", "2026-10-07T09:00:00Z", "Launch News <News@Launch.example>", &["INBOX", "UNREAD"]);
+    let mut newest = from(
+        "n3",
+        "news-3",
+        "2026-10-07T09:00:00Z",
+        "Launch News <News@Launch.example>",
+        &["INBOX", "UNREAD"],
+    );
     // Bulk mail: the contact index skips it, the sender history must not.
-    newest.unsubscribe = Some(crate::mime::UnsubscribeMetadata { one_click_url: None, mailto_url: Some("mailto:leave@launch.example".into()), web_url: None, list_id: None });
+    newest.unsubscribe = Some(crate::mime::UnsubscribeMetadata {
+        one_click_url: None,
+        mailto_url: Some("mailto:leave@launch.example".into()),
+        web_url: None,
+        list_id: None,
+    });
     database.upsert_thread(ACCOUNT, &[newest]).unwrap();
-    database.upsert_thread(ACCOUNT, &[from("n2", "news-2", "2026-09-30T09:00:00Z", "news@launch.example", &["INBOX"])]).unwrap();
-    database.upsert_thread(ACCOUNT, &[from("n1", "news-1", "2026-09-23T09:00:00Z", "\"Launch\" <news@launch.example>", &[])]).unwrap();
-    database.upsert_thread(ACCOUNT, &[from("n0", "news-0", "2026-09-16T09:00:00Z", "news@launch.example", &["TRASH"])]).unwrap();
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[from(
+                "n2",
+                "news-2",
+                "2026-09-30T09:00:00Z",
+                "news@launch.example",
+                &["INBOX"],
+            )],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[from(
+                "n1",
+                "news-1",
+                "2026-09-23T09:00:00Z",
+                "\"Launch\" <news@launch.example>",
+                &[],
+            )],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[from(
+                "n0",
+                "news-0",
+                "2026-09-16T09:00:00Z",
+                "news@launch.example",
+                &["TRASH"],
+            )],
+        )
+        .unwrap();
     // A look-alike address that merely contains the sender's.
-    database.upsert_thread(ACCOUNT, &[from("x", "other", "2026-10-08T09:00:00Z", "breaking-news@launch.example", &["INBOX"])]).unwrap();
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[from(
+                "x",
+                "other",
+                "2026-10-08T09:00:00Z",
+                "breaking-news@launch.example",
+                &["INBOX"],
+            )],
+        )
+        .unwrap();
     // The same sender in another account stays out.
-    database.upsert_thread("work@example.org", &[from("w", "work", "2026-10-09T09:00:00Z", "news@launch.example", &["INBOX"])]).unwrap();
+    database
+        .upsert_thread(
+            "work@example.org",
+            &[from(
+                "w",
+                "work",
+                "2026-10-09T09:00:00Z",
+                "news@launch.example",
+                &["INBOX"],
+            )],
+        )
+        .unwrap();
 
-    let history = database.sender_history(ACCOUNT, " News@Launch.example ", 10).unwrap();
+    let history = database
+        .sender_history(ACCOUNT, " News@Launch.example ", 10)
+        .unwrap();
     assert_eq!(history.received_count, 4);
     assert_eq!(history.read_count, 3);
     assert_eq!(history.first_at.as_deref(), Some("2026-09-16T09:00:00Z"));
-    assert_eq!(history.recent_received_at.first().map(String::as_str), Some("2026-10-07T09:00:00Z"));
-    assert_eq!(history.inbox_thread_ids, vec![local("news-3"), local("news-2")]);
     assert_eq!(
-        history.threads.iter().map(|item| item.thread_id.clone()).collect::<Vec<_>>(),
+        history.recent_received_at.first().map(String::as_str),
+        Some("2026-10-07T09:00:00Z")
+    );
+    assert_eq!(
+        history.inbox_thread_ids,
+        vec![local("news-3"), local("news-2")]
+    );
+    assert_eq!(
+        history
+            .threads
+            .iter()
+            .map(|item| item.thread_id.clone())
+            .collect::<Vec<_>>(),
         vec![local("news-3"), local("news-2"), local("news-1")],
         "trashed conversations are not listed",
     );
@@ -50,23 +128,31 @@ fn sender_history_reports_the_users_latest_message_and_lists_each_conversation_o
     let database = database();
     let person = "Ana Ruiz <ana@studio.example>";
     database
-        .upsert_thread(ACCOUNT, &[
-            from("a1", "chat", "2026-08-01T10:00:00Z", person, &["INBOX"]),
-            from("a2", "chat", "2026-08-03T10:00:00Z", person, &["INBOX"]),
-        ])
+        .upsert_thread(
+            ACCOUNT,
+            &[
+                from("a1", "chat", "2026-08-01T10:00:00Z", person, &["INBOX"]),
+                from("a2", "chat", "2026-08-03T10:00:00Z", person, &["INBOX"]),
+            ],
+        )
         .unwrap();
     let mut reply = message("r1", "chat-reply", "2026-08-02T10:00:00Z", "Thanks");
     reply.from = ACCOUNT.into();
     reply.to = vec![person.into()];
     database.upsert_thread(ACCOUNT, &[reply]).unwrap();
 
-    let history = database.sender_history(ACCOUNT, "ana@studio.example", 1).unwrap();
+    let history = database
+        .sender_history(ACCOUNT, "ana@studio.example", 1)
+        .unwrap();
     assert_eq!(history.received_count, 2);
     assert_eq!(history.threads.len(), 1);
     assert_eq!(history.threads[0].thread_id, local("chat"));
     assert_eq!(history.threads[0].sent_at, "2026-08-03T10:00:00Z");
     assert_eq!(history.inbox_thread_ids, vec![local("chat")]);
-    assert_eq!(history.last_sent_at.as_deref(), Some("2026-08-02T10:00:00Z"));
+    assert_eq!(
+        history.last_sent_at.as_deref(),
+        Some("2026-08-02T10:00:00Z")
+    );
 }
 
 #[test]
@@ -98,10 +184,22 @@ fn message_trust_reads_the_stored_headers_and_is_absent_without_them() {
             ..MimePart::default()
         },
     };
-    let mut signed = from("signed", "signed-thread", "2026-10-01T00:00:00Z", "news@launch.example", &["INBOX"]);
+    let mut signed = from(
+        "signed",
+        "signed-thread",
+        "2026-10-01T00:00:00Z",
+        "news@launch.example",
+        &["INBOX"],
+    );
     signed.metadata_json = serde_json::to_string(&raw).unwrap();
     // The fixture default stores `{}`, which is not a provider payload.
-    let bare = from("bare", "bare-thread", "2026-10-01T00:00:00Z", "news@launch.example", &["INBOX"]);
+    let bare = from(
+        "bare",
+        "bare-thread",
+        "2026-10-01T00:00:00Z",
+        "news@launch.example",
+        &["INBOX"],
+    );
     database.upsert_thread(ACCOUNT, &[signed]).unwrap();
     database.upsert_thread(ACCOUNT, &[bare]).unwrap();
 
@@ -137,32 +235,117 @@ fn sender_feedback_is_explicit_scoped_to_exact_requester_and_account_and_reversi
     let database = database();
     let sender = "requests@signing.example";
     let requester = "ana@partner.example";
-    database.upsert_thread(ACCOUNT, &[delivery_message("original", sender, requester, "pass")]).unwrap();
-    database.upsert_thread(ACCOUNT, &[delivery_message("next", sender, requester, "pass")]).unwrap();
-    assert!(database.sender_familiarity("original", sender, "").unwrap().delivery_patterns.is_empty());
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message("original", sender, requester, "pass")],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message("next", sender, requester, "pass")],
+        )
+        .unwrap();
+    assert!(database
+        .sender_familiarity("original", sender, "")
+        .unwrap()
+        .delivery_patterns
+        .is_empty());
 
-    database.confirm_sender_delivery("original", &["https://signing.example".into(), "https://help.example".into(), "https://signing.example/".into()]).unwrap();
-    database.confirm_sender_delivery("original", &["https://help.example".into(), "https://signing.example".into()]).unwrap();
-    let patterns = database.sender_familiarity("next", sender, "").unwrap().delivery_patterns;
-    assert_eq!(patterns.len(), 1, "duplicate confirmations must be idempotent");
+    database
+        .confirm_sender_delivery(
+            "original",
+            &[
+                "https://signing.example".into(),
+                "https://help.example".into(),
+                "https://signing.example/".into(),
+            ],
+        )
+        .unwrap();
+    database
+        .confirm_sender_delivery(
+            "original",
+            &[
+                "https://help.example".into(),
+                "https://signing.example".into(),
+            ],
+        )
+        .unwrap();
+    let patterns = database
+        .sender_familiarity("next", sender, "")
+        .unwrap()
+        .delivery_patterns;
+    assert_eq!(
+        patterns.len(),
+        1,
+        "duplicate confirmations must be idempotent"
+    );
     let pattern = &patterns[0];
     assert_eq!(pattern.sender_email, sender);
     assert_eq!(pattern.reply_to.as_deref(), Some(requester));
-    assert_eq!(pattern.link_origins, ["https://help.example", "https://signing.example"]);
+    assert_eq!(
+        pattern.link_origins,
+        ["https://help.example", "https://signing.example"]
+    );
     assert!(pattern.authenticated);
     assert_eq!(pattern.source_message_id, "original");
 
     // Same Reply-To, different delivery service: return the prior evidence
     // so the UI can call out a changed pattern, never copy trust to it.
-    database.upsert_thread(ACCOUNT, &[delivery_message("changed", "requests@new-service.example", requester, "pass")]).unwrap();
-    assert_eq!(database.sender_familiarity("changed", "requests@new-service.example", "").unwrap().delivery_patterns.len(), 1);
-    database.upsert_thread(ACCOUNT, &[delivery_message("another-person", sender, "bob@partner.example", "pass")]).unwrap();
-    assert!(database.sender_familiarity("another-person", sender, "").unwrap().delivery_patterns.is_empty());
-    database.upsert_thread("other@example.com", &[delivery_message("other-account", sender, requester, "pass")]).unwrap();
-    assert!(database.sender_familiarity("other-account", sender, "").unwrap().delivery_patterns.is_empty());
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message(
+                "changed",
+                "requests@new-service.example",
+                requester,
+                "pass",
+            )],
+        )
+        .unwrap();
+    assert_eq!(
+        database
+            .sender_familiarity("changed", "requests@new-service.example", "")
+            .unwrap()
+            .delivery_patterns
+            .len(),
+        1
+    );
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message(
+                "another-person",
+                sender,
+                "bob@partner.example",
+                "pass",
+            )],
+        )
+        .unwrap();
+    assert!(database
+        .sender_familiarity("another-person", sender, "")
+        .unwrap()
+        .delivery_patterns
+        .is_empty());
+    database
+        .upsert_thread(
+            "other@example.com",
+            &[delivery_message("other-account", sender, requester, "pass")],
+        )
+        .unwrap();
+    assert!(database
+        .sender_familiarity("other-account", sender, "")
+        .unwrap()
+        .delivery_patterns
+        .is_empty());
     database.forget_sender_delivery(&pattern.id).unwrap();
     database.forget_sender_delivery(&pattern.id).unwrap();
-    assert!(database.sender_familiarity("next", sender, "").unwrap().delivery_patterns.is_empty());
+    assert!(database
+        .sender_familiarity("next", sender, "")
+        .unwrap()
+        .delivery_patterns
+        .is_empty());
 }
 
 #[test]
@@ -170,13 +353,42 @@ fn sender_feedback_survives_reopening_and_cached_source_removal() {
     let temp = crate::db::test_support::TempDbPath::new();
     {
         let database = crate::db::Database::open(&temp.path).unwrap();
-        database.upsert_thread(ACCOUNT, &[delivery_message("confirmed", "notifications@portal.example", "person@customer.example", "pass")]).unwrap();
-        database.confirm_sender_delivery("confirmed", &["https://portal.example".into()]).unwrap();
-        database.connection().unwrap().execute("DELETE FROM threads WHERE id = ?1", [local("confirmed")]).unwrap();
+        database
+            .upsert_thread(
+                ACCOUNT,
+                &[delivery_message(
+                    "confirmed",
+                    "notifications@portal.example",
+                    "person@customer.example",
+                    "pass",
+                )],
+            )
+            .unwrap();
+        database
+            .confirm_sender_delivery("confirmed", &["https://portal.example".into()])
+            .unwrap();
+        database
+            .connection()
+            .unwrap()
+            .execute("DELETE FROM threads WHERE id = ?1", [local("confirmed")])
+            .unwrap();
     }
     let database = crate::db::Database::open(&temp.path).unwrap();
-    database.upsert_thread(ACCOUNT, &[delivery_message("future", "notifications@portal.example", "person@customer.example", "pass")]).unwrap();
-    let patterns = database.sender_familiarity("future", "notifications@portal.example", "").unwrap().delivery_patterns;
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message(
+                "future",
+                "notifications@portal.example",
+                "person@customer.example",
+                "pass",
+            )],
+        )
+        .unwrap();
+    let patterns = database
+        .sender_familiarity("future", "notifications@portal.example", "")
+        .unwrap()
+        .delivery_patterns;
     assert_eq!(patterns.len(), 1);
     assert_eq!(patterns[0].source_message_id, "confirmed");
 }
@@ -184,9 +396,22 @@ fn sender_feedback_survives_reopening_and_cached_source_removal() {
 #[test]
 fn sender_feedback_without_authentication_never_teaches_a_reusable_pattern() {
     let database = database();
-    database.upsert_thread(ACCOUNT, &[delivery_message("unverified", "requests@service.example", "ana@partner.example", "fail")]).unwrap();
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message(
+                "unverified",
+                "requests@service.example",
+                "ana@partner.example",
+                "fail",
+            )],
+        )
+        .unwrap();
     database.confirm_sender_delivery("unverified", &[]).unwrap();
-    let patterns = database.sender_familiarity("unverified", "requests@service.example", "").unwrap().delivery_patterns;
+    let patterns = database
+        .sender_familiarity("unverified", "requests@service.example", "")
+        .unwrap()
+        .delivery_patterns;
     assert_eq!(patterns.len(), 1);
     assert!(!patterns[0].authenticated);
 }
@@ -195,35 +420,111 @@ fn sender_feedback_without_authentication_never_teaches_a_reusable_pattern() {
 fn sender_feedback_requires_cached_headers_and_never_stores_document_urls_or_tokens() {
     let database = database();
     assert!(database.confirm_sender_delivery("missing", &[]).is_err());
-    database.upsert_thread(ACCOUNT, &[from("bare-feedback", "bare-feedback", "2026-10-01T00:00:00Z", "requests@service.example", &["INBOX"])]).unwrap();
-    assert!(database.confirm_sender_delivery("bare-feedback", &[]).is_err());
-    database.upsert_thread(ACCOUNT, &[delivery_message("valid-feedback", "requests@service.example", "ana@partner.example", "pass")]).unwrap();
-    for value in ["not-a-url", "javascript:alert(1)", "https://service.example/document/secret", "https://service.example?token=secret", "https://service.example/#secret", "https://user:secret@service.example/"] {
-        assert!(database.confirm_sender_delivery("valid-feedback", &[value.into()]).is_err(), "{value}");
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[from(
+                "bare-feedback",
+                "bare-feedback",
+                "2026-10-01T00:00:00Z",
+                "requests@service.example",
+                &["INBOX"],
+            )],
+        )
+        .unwrap();
+    assert!(database
+        .confirm_sender_delivery("bare-feedback", &[])
+        .is_err());
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message(
+                "valid-feedback",
+                "requests@service.example",
+                "ana@partner.example",
+                "pass",
+            )],
+        )
+        .unwrap();
+    for value in [
+        "not-a-url",
+        "javascript:alert(1)",
+        "https://service.example/document/secret",
+        "https://service.example?token=secret",
+        "https://service.example/#secret",
+        "https://user:secret@service.example/",
+    ] {
+        assert!(
+            database
+                .confirm_sender_delivery("valid-feedback", &[value.into()])
+                .is_err(),
+            "{value}"
+        );
     }
-    assert!(database.sender_familiarity("valid-feedback", "requests@service.example", "").unwrap().delivery_patterns.is_empty());
+    assert!(database
+        .sender_familiarity("valid-feedback", "requests@service.example", "")
+        .unwrap()
+        .delivery_patterns
+        .is_empty());
 }
 
 #[test]
 fn sender_feedback_enforces_the_shared_origin_limit_locally_and_on_sync() {
     use threestrands_sync_protocol::{EntityType, MAX_SENDER_CONFIRMATION_ORIGINS};
     let source = database();
-    source.upsert_thread(ACCOUNT, &[delivery_message("limit-source", "requests@service.example", "ana@partner.example", "pass")]).unwrap();
-    for count in [MAX_SENDER_CONFIRMATION_ORIGINS - 1, MAX_SENDER_CONFIRMATION_ORIGINS, MAX_SENDER_CONFIRMATION_ORIGINS + 1] {
-        let origins: Vec<String> = (0..count).map(|i| format!("https://site{i}.example")).collect();
-        assert_eq!(source.confirm_sender_delivery("limit-source", &origins).is_ok(), count <= MAX_SENDER_CONFIRMATION_ORIGINS);
+    source
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message(
+                "limit-source",
+                "requests@service.example",
+                "ana@partner.example",
+                "pass",
+            )],
+        )
+        .unwrap();
+    for count in [
+        MAX_SENDER_CONFIRMATION_ORIGINS - 1,
+        MAX_SENDER_CONFIRMATION_ORIGINS,
+        MAX_SENDER_CONFIRMATION_ORIGINS + 1,
+    ] {
+        let origins: Vec<String> = (0..count)
+            .map(|i| format!("https://site{i}.example"))
+            .collect();
+        assert_eq!(
+            source
+                .confirm_sender_delivery("limit-source", &origins)
+                .is_ok(),
+            count <= MAX_SENDER_CONFIRMATION_ORIGINS
+        );
         let mut record = source.list_sender_confirmations().unwrap().remove(0);
         record.link_origins = origins;
         record.link_origins.sort();
-        record.id = crate::db::sender_feedback::confirmation_id(&record.account_id, &record.requester, &record.sender_email, &serde_json::to_string(&record.link_origins).unwrap());
+        record.id = crate::db::sender_feedback::confirmation_id(
+            &record.account_id,
+            &record.requester,
+            &record.sender_email,
+            &serde_json::to_string(&record.link_origins).unwrap(),
+        );
         let peer = database();
         let payload = serde_json::json!({"pattern": record});
-        assert_eq!(peer.materialize_entity(EntityType::SenderConfirmation, &record.id, Some(&payload), false).is_ok(), count <= MAX_SENDER_CONFIRMATION_ORIGINS);
+        assert_eq!(
+            peer.materialize_entity(
+                EntityType::SenderConfirmation,
+                &record.id,
+                Some(&payload),
+                false
+            )
+            .is_ok(),
+            count <= MAX_SENDER_CONFIRMATION_ORIGINS
+        );
     }
 }
 
 fn sync_feedback(peer: &crate::db::Database, source: &crate::db::Database) {
-    let touched = peer.merge_replica_state(&source.load_replica_state().unwrap()).unwrap();
+    let touched = peer
+        .merge_replica_state(&source.load_replica_state().unwrap())
+        .unwrap();
     peer.materialize_touched_entities(&touched).unwrap();
 }
 
@@ -236,12 +537,24 @@ fn sender_confirmations_sync_atomically_and_forgetting_survives_stale_snapshots(
     peer.set_beta_features_enabled(true).unwrap();
     let sender = "requests@service.example";
     let requester = "ana@partner.example";
-    source.upsert_thread(ACCOUNT, &[delivery_message("original-sync", sender, requester, "pass")]).unwrap();
-    peer.upsert_thread(ACCOUNT, &[delivery_message("peer-sync", sender, requester, "fail")]).unwrap();
-    source.confirm_sender_delivery("original-sync", &["https://service.example".into()]).unwrap();
+    source
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message("original-sync", sender, requester, "pass")],
+        )
+        .unwrap();
+    peer.upsert_thread(
+        ACCOUNT,
+        &[delivery_message("peer-sync", sender, requester, "fail")],
+    )
+    .unwrap();
+    source
+        .confirm_sender_delivery("original-sync", &["https://service.example".into()])
+        .unwrap();
     // Two devices independently remember an identical pattern. Their evidence
     // remains atomic and their identity converges rather than duplicating.
-    peer.confirm_sender_delivery("peer-sync", &["https://service.example".into()]).unwrap();
+    peer.confirm_sender_delivery("peer-sync", &["https://service.example".into()])
+        .unwrap();
     let source_record = source.list_sender_confirmations().unwrap().remove(0);
     let peer_record = peer.list_sender_confirmations().unwrap().remove(0);
     assert_eq!(source_record.id, peer_record.id);
@@ -250,9 +563,18 @@ fn sender_confirmations_sync_atomically_and_forgetting_survives_stale_snapshots(
     sync_feedback(&peer, &source);
     sync_feedback(&source, &peer);
     assert_eq!(peer.list_sender_confirmations().unwrap().len(), 1);
-    let payload = source.resolve_field_winner(EntityType::SenderConfirmation, &source_record.id, "pattern").unwrap().unwrap();
-    assert!(payload == serde_json::to_value(&source_record).unwrap() || payload == serde_json::to_value(&peer_record).unwrap());
-    assert_eq!(serde_json::to_value(peer.list_sender_confirmations().unwrap().remove(0)).unwrap(), payload);
+    let payload = source
+        .resolve_field_winner(EntityType::SenderConfirmation, &source_record.id, "pattern")
+        .unwrap()
+        .unwrap();
+    assert!(
+        payload == serde_json::to_value(&source_record).unwrap()
+            || payload == serde_json::to_value(&peer_record).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(peer.list_sender_confirmations().unwrap().remove(0)).unwrap(),
+        payload
+    );
     let stale = peer.load_replica_state().unwrap();
     peer.forget_sender_delivery(&source_record.id).unwrap();
     sync_feedback(&source, &peer);
@@ -261,9 +583,16 @@ fn sender_confirmations_sync_atomically_and_forgetting_survives_stale_snapshots(
     source.materialize_touched_entities(&touched).unwrap();
     source.reconcile_replicated_sync_backlog().unwrap();
     assert!(source.list_sender_confirmations().unwrap().is_empty());
-    assert_eq!(source.resolve_field_winner(EntityType::SenderConfirmation, &source_record.id, "pattern").unwrap(), None);
+    assert_eq!(
+        source
+            .resolve_field_winner(EntityType::SenderConfirmation, &source_record.id, "pattern")
+            .unwrap(),
+        None
+    );
     // An explicit new confirmation can be made after forgetting.
-    source.confirm_sender_delivery("original-sync", &["https://service.example".into()]).unwrap();
+    source
+        .confirm_sender_delivery("original-sync", &["https://service.example".into()])
+        .unwrap();
     sync_feedback(&peer, &source);
     assert_eq!(peer.list_sender_confirmations().unwrap().len(), 1);
 }
@@ -274,36 +603,110 @@ fn existing_confirmations_backfill_without_broadening_account_requester_or_authe
     let peer = database();
     let sender = "requests@service.example";
     let requester = "ana@partner.example";
-    source.upsert_thread(ACCOUNT, &[delivery_message("old-confirmation", sender, requester, "fail")]).unwrap();
-    source.confirm_sender_delivery("old-confirmation", &[]).unwrap();
-    source.connection().unwrap().execute("DELETE FROM messages WHERE id=?1", ["old-confirmation"]).unwrap();
+    source
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message(
+                "old-confirmation",
+                sender,
+                requester,
+                "fail",
+            )],
+        )
+        .unwrap();
+    source
+        .confirm_sender_delivery("old-confirmation", &[])
+        .unwrap();
+    source
+        .connection()
+        .unwrap()
+        .execute("DELETE FROM messages WHERE id=?1", ["old-confirmation"])
+        .unwrap();
     source.reconcile_replicated_sync_backlog().unwrap();
-    assert_eq!(source.reconcile_replicated_sync_backlog().unwrap(), 0, "backfill is idempotent");
+    assert_eq!(
+        source.reconcile_replicated_sync_backlog().unwrap(),
+        0,
+        "backfill is idempotent"
+    );
     sync_feedback(&peer, &source);
-    peer.upsert_thread(ACCOUNT, &[delivery_message("future-peer", sender, requester, "pass")]).unwrap();
-    let patterns = peer.sender_familiarity("future-peer", sender, "").unwrap().delivery_patterns;
+    peer.upsert_thread(
+        ACCOUNT,
+        &[delivery_message("future-peer", sender, requester, "pass")],
+    )
+    .unwrap();
+    let patterns = peer
+        .sender_familiarity("future-peer", sender, "")
+        .unwrap()
+        .delivery_patterns;
     assert_eq!(patterns.len(), 1);
-    assert!(!patterns[0].authenticated, "sync must never upgrade authentication evidence");
+    assert!(
+        !patterns[0].authenticated,
+        "sync must never upgrade authentication evidence"
+    );
     assert_eq!(patterns[0].source_message_id, "old-confirmation");
-    peer.upsert_thread("other@example.com", &[delivery_message("other-peer-account", sender, requester, "pass")]).unwrap();
-    assert!(peer.sender_familiarity("other-peer-account", sender, "").unwrap().delivery_patterns.is_empty());
-    peer.upsert_thread(ACCOUNT, &[delivery_message("other-peer-person", sender, "bob@partner.example", "pass")]).unwrap();
-    assert!(peer.sender_familiarity("other-peer-person", sender, "").unwrap().delivery_patterns.is_empty());
+    peer.upsert_thread(
+        "other@example.com",
+        &[delivery_message(
+            "other-peer-account",
+            sender,
+            requester,
+            "pass",
+        )],
+    )
+    .unwrap();
+    assert!(peer
+        .sender_familiarity("other-peer-account", sender, "")
+        .unwrap()
+        .delivery_patterns
+        .is_empty());
+    peer.upsert_thread(
+        ACCOUNT,
+        &[delivery_message(
+            "other-peer-person",
+            sender,
+            "bob@partner.example",
+            "pass",
+        )],
+    )
+    .unwrap();
+    assert!(peer
+        .sender_familiarity("other-peer-person", sender, "")
+        .unwrap()
+        .delivery_patterns
+        .is_empty());
 }
 
 #[test]
 fn synchronized_confirmations_reject_unsafe_destinations_and_mismatched_evidence() {
     use threestrands_sync_protocol::EntityType;
     let source = database();
-    source.upsert_thread(ACCOUNT, &[delivery_message("validation-source", "requests@service.example", "ana@partner.example", "pass")]).unwrap();
-    source.confirm_sender_delivery("validation-source", &["https://service.example".into()]).unwrap();
+    source
+        .upsert_thread(
+            ACCOUNT,
+            &[delivery_message(
+                "validation-source",
+                "requests@service.example",
+                "ana@partner.example",
+                "pass",
+            )],
+        )
+        .unwrap();
+    source
+        .confirm_sender_delivery("validation-source", &["https://service.example".into()])
+        .unwrap();
     let record = source.list_sender_confirmations().unwrap().remove(0);
     let valid = serde_json::json!({"pattern": record});
     let peer = database();
     for (field, value) in [
         ("linkOrigins", serde_json::json!(["javascript:alert(1)"])),
-        ("linkOrigins", serde_json::json!(["https://service.example/document?token=secret"])),
-        ("linkOrigins", serde_json::json!(["https://user:secret@service.example"])),
+        (
+            "linkOrigins",
+            serde_json::json!(["https://service.example/document?token=secret"]),
+        ),
+        (
+            "linkOrigins",
+            serde_json::json!(["https://user:secret@service.example"]),
+        ),
         ("requester", serde_json::json!("other@partner.example")),
         ("accountId", serde_json::json!("other@example.com")),
         ("senderEmail", serde_json::json!("spoof@service.example")),
@@ -311,12 +714,35 @@ fn synchronized_confirmations_reject_unsafe_destinations_and_mismatched_evidence
         ("confirmedAt", serde_json::json!("yesterday")),
         ("secret", serde_json::json!("credential")),
     ] {
-        let mut invalid = valid.clone(); invalid["pattern"][field] = value;
-        assert!(peer.materialize_entity(EntityType::SenderConfirmation, &record.id, Some(&invalid), false).is_err(), "{field}");
+        let mut invalid = valid.clone();
+        invalid["pattern"][field] = value;
+        assert!(
+            peer.materialize_entity(
+                EntityType::SenderConfirmation,
+                &record.id,
+                Some(&invalid),
+                false
+            )
+            .is_err(),
+            "{field}"
+        );
     }
-    assert!(peer.materialize_entity(EntityType::SenderConfirmation, "wrong-id", Some(&valid), false).is_err());
+    assert!(peer
+        .materialize_entity(
+            EntityType::SenderConfirmation,
+            "wrong-id",
+            Some(&valid),
+            false
+        )
+        .is_err());
     assert!(peer.list_sender_confirmations().unwrap().is_empty());
-    peer.materialize_entity(EntityType::SenderConfirmation, &record.id, Some(&valid), false).unwrap();
+    peer.materialize_entity(
+        EntityType::SenderConfirmation,
+        &record.id,
+        Some(&valid),
+        false,
+    )
+    .unwrap();
     assert_eq!(peer.list_sender_confirmations().unwrap().len(), 1);
 }
 
@@ -345,10 +771,25 @@ fn sender_familiarity_reads_what_the_user_sent_received_and_saved() {
     let database = database();
     // The user wrote to Ana twice, and Ana wrote before the newest message.
     let mut chat = vec![
-        from("a1", "chat", "2026-08-01T10:00:00Z", "Ana Ruiz <Ana@Studio.example>", &["INBOX"]),
-        from("a2", "chat", "2026-09-03T10:00:00Z", "Ana Ruiz <ana@studio.example>", &["INBOX"]),
+        from(
+            "a1",
+            "chat",
+            "2026-08-01T10:00:00Z",
+            "Ana Ruiz <Ana@Studio.example>",
+            &["INBOX"],
+        ),
+        from(
+            "a2",
+            "chat",
+            "2026-09-03T10:00:00Z",
+            "Ana Ruiz <ana@studio.example>",
+            &["INBOX"],
+        ),
     ];
-    for (id, date) in [("s1", "2026-08-02T10:00:00Z"), ("s2", "2026-09-02T10:00:00Z")] {
+    for (id, date) in [
+        ("s1", "2026-08-02T10:00:00Z"),
+        ("s2", "2026-09-02T10:00:00Z"),
+    ] {
         let mut sent = message(id, "chat", date, "Thanks");
         sent.from = ACCOUNT.into();
         sent.to = vec!["Ana Ruiz <ana@studio.example>".into()];
@@ -357,18 +798,33 @@ fn sender_familiarity_reads_what_the_user_sent_received_and_saved() {
     database.upsert_thread(ACCOUNT, &chat).unwrap();
     save_contact(&database, "Jane Rivera", &["jane@partner.example"]);
 
-    let ana = database.sender_familiarity("a2", " ANA@studio.example ", "Ana Ruiz").unwrap();
+    let ana = database
+        .sender_familiarity("a2", " ANA@studio.example ", "Ana Ruiz")
+        .unwrap();
     assert_eq!(ana.sent_count, 2);
     assert_eq!(ana.first_sent_at.as_deref(), Some("2026-08-02T10:00:00Z"));
     assert!(ana.received_before);
     assert_eq!(ana.contact_name, None);
-    assert!(ana.name_matches.is_empty(), "the sender's own address is not another address");
-    assert_eq!(ana.known_domains, vec!["partner.example".to_string(), "studio.example".to_string()]);
+    assert!(
+        ana.name_matches.is_empty(),
+        "the sender's own address is not another address"
+    );
+    assert_eq!(
+        ana.known_domains,
+        vec!["partner.example".to_string(), "studio.example".to_string()]
+    );
 
     // Ana's first message had nothing before it.
-    assert!(!database.sender_familiarity("a1", "ana@studio.example", "Ana Ruiz").unwrap().received_before);
+    assert!(
+        !database
+            .sender_familiarity("a1", "ana@studio.example", "Ana Ruiz")
+            .unwrap()
+            .received_before
+    );
 
-    let jane = database.sender_familiarity("missing", "jane@partner.example", "Jane Rivera").unwrap();
+    let jane = database
+        .sender_familiarity("missing", "jane@partner.example", "Jane Rivera")
+        .unwrap();
     assert_eq!(jane.contact_name.as_deref(), Some("Jane Rivera"));
     assert_eq!(jane.sent_count, 0);
 }
@@ -380,16 +836,57 @@ fn sender_familiarity_lists_known_addresses_that_share_the_display_name() {
     sent.from = ACCOUNT.into();
     sent.to = vec!["Ana Ruiz <ana@studio.example>".into()];
     database.upsert_thread(ACCOUNT, &[sent]).unwrap();
-    save_contact(&database, "Jane Rivera", &["jane@partner.example", "j.rivera@partner.example"]);
+    save_contact(
+        &database,
+        "Jane Rivera",
+        &["jane@partner.example", "j.rivera@partner.example"],
+    );
     // Only received mail does not make an address known.
-    database.upsert_thread(ACCOUNT, &[from("x1", "spam", "2026-08-05T10:00:00Z", "Jane Rivera <jane.rivera@freemail.example>", &["INBOX"])]).unwrap();
+    database
+        .upsert_thread(
+            ACCOUNT,
+            &[from(
+                "x1",
+                "spam",
+                "2026-08-05T10:00:00Z",
+                "Jane Rivera <jane.rivera@freemail.example>",
+                &["INBOX"],
+            )],
+        )
+        .unwrap();
 
-    let impostor = database.sender_familiarity("x2", "jane.rivera.office@freemail.example", "  \"jane  RIVERA\" ").unwrap();
-    assert_eq!(impostor.name_matches, vec!["j.rivera@partner.example".to_string(), "jane@partner.example".to_string()]);
+    let impostor = database
+        .sender_familiarity(
+            "x2",
+            "jane.rivera.office@freemail.example",
+            "  \"jane  RIVERA\" ",
+        )
+        .unwrap();
+    assert_eq!(
+        impostor.name_matches,
+        vec![
+            "j.rivera@partner.example".to_string(),
+            "jane@partner.example".to_string()
+        ]
+    );
     assert_eq!(impostor.sent_count, 0);
     assert_eq!(impostor.contact_name, None);
-    assert_eq!(database.sender_familiarity("x2", "ana.r@freemail.example", "Ana Ruiz").unwrap().name_matches, vec!["ana@studio.example".to_string()]);
+    assert_eq!(
+        database
+            .sender_familiarity("x2", "ana.r@freemail.example", "Ana Ruiz")
+            .unwrap()
+            .name_matches,
+        vec!["ana@studio.example".to_string()]
+    );
     // One-word or very short names are too common to compare.
-    assert!(database.sender_familiarity("x2", "x@freemail.example", "Jane").unwrap().name_matches.is_empty());
-    assert!(database.sender_familiarity("x2", "x@freemail.example", "A Ru").unwrap().name_matches.is_empty());
+    assert!(database
+        .sender_familiarity("x2", "x@freemail.example", "Jane")
+        .unwrap()
+        .name_matches
+        .is_empty());
+    assert!(database
+        .sender_familiarity("x2", "x@freemail.example", "A Ru")
+        .unwrap()
+        .name_matches
+        .is_empty());
 }

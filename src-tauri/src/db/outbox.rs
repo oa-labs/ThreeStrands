@@ -71,18 +71,19 @@ impl Database {
     /// The prepared MIME of a queued send.
     pub(crate) fn outbox_raw(&self, id: &str) -> DbResult<Vec<u8>> {
         self.with_connection(|c| {
-            Ok(c.query_row(
-                "SELECT raw FROM outbox_messages WHERE id=?1",
-                [id],
-                |r| r.get(0),
-            )?)
+            Ok(
+                c.query_row("SELECT raw FROM outbox_messages WHERE id=?1", [id], |r| {
+                    r.get(0)
+                })?,
+            )
         })
     }
     pub(crate) fn has_scheduled_sends(&self) -> DbResult<bool> {
         self.with_connection(|c| {
             Ok(c.query_row(
                 "SELECT EXISTS(SELECT 1 FROM outbox_messages WHERE schedule_json IS NOT NULL)",
-                [], |row| row.get::<_, bool>(0),
+                [],
+                |row| row.get::<_, bool>(0),
             )?)
         })
     }
@@ -98,7 +99,12 @@ impl Database {
 
     /// Moves draft `item.draft` at `revision` into the outbox as `item`, with
     /// its prepared MIME.
-    pub(crate) fn insert_queued_send(&self, item: &OutboxItem, revision: i64, raw: &[u8]) -> DbResult<()> {
+    pub(crate) fn insert_queued_send(
+        &self,
+        item: &OutboxItem,
+        revision: i64,
+        raw: &[u8],
+    ) -> DbResult<()> {
         let d = &item.draft;
         let payload = serde_json::to_string(d).map_err(serialization_error)?;
         self.with_transaction(|tx| {
@@ -146,7 +152,14 @@ impl Database {
                 params![d.id, d.revision, payload],
             )?;
             Self::mark_draft_push_pending(tx, &d, unix_millis())?;
-            if let Some(schedule) = &item.schedule { record_schedule_report(tx,id,&schedule.report.owner_installation_id,unix_millis())?; }
+            if let Some(schedule) = &item.schedule {
+                record_schedule_report(
+                    tx,
+                    id,
+                    &schedule.report.owner_installation_id,
+                    unix_millis(),
+                )?;
+            }
             Ok(())
         })?;
         Ok(d)
@@ -164,7 +177,13 @@ impl Database {
     /// on `state='uncertain'` makes this a no-op if the row has since moved
     /// on. See `docs/imap-design.md` ("Sending").
     pub fn mark_unverifiable(&self, id: &str) -> DbResult<()> {
-        let owner=self.outbox()?.into_iter().find(|o|o.id==id).and_then(|o|o.schedule).map(|s|s.report.owner_installation_id).unwrap_or_default();
+        let owner = self
+            .outbox()?
+            .into_iter()
+            .find(|o| o.id == id)
+            .and_then(|o| o.schedule)
+            .map(|s| s.report.owner_installation_id)
+            .unwrap_or_default();
         self.change_outbox("UPDATE outbox_messages SET state='unverifiable', error='This message may have been sent, but delivery could not be confirmed. Confirm with the recipient before sending it again.' WHERE id=?1 AND state='uncertain'",[id],id,&owner,unix_millis())?;
         Ok(())
     }
@@ -172,11 +191,14 @@ impl Database {
     /// connected account never pauses another account's in-flight sends.
     #[cfg(test)]
     pub fn pause_ready_sends_for(&self, account: &str) -> DbResult<()> {
-        self.pause_ready_sends_for_owned(account,"")
+        self.pause_ready_sends_for_owned(account, "")
     }
     pub fn pause_ready_sends_for_owned(&self, account: &str, owner: &str) -> DbResult<()> {
-        let items=self.outbox()?;
-        for item in items.into_iter().filter(|o|o.draft.account==account && ["undo_pending","ready","scheduled","overdue"].contains(&o.state.as_str())) {
+        let items = self.outbox()?;
+        for item in items.into_iter().filter(|o| {
+            o.draft.account == account
+                && ["undo_pending", "ready", "scheduled", "overdue"].contains(&o.state.as_str())
+        }) {
             self.change_outbox("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE id=?1 AND state IN ('undo_pending','ready','scheduled','overdue')",[&item.id],&item.id,owner,unix_millis())?;
         }
         Ok(())
@@ -203,7 +225,13 @@ impl Database {
 
     /// Records that a send left `uncertain` was found in the account's sent
     /// mail.
-    pub(crate) fn mark_uncertain_send_sent(&self, id: &str, provider_id: &str, owner: &str, at: i64) -> DbResult<()> {
+    pub(crate) fn mark_uncertain_send_sent(
+        &self,
+        id: &str,
+        provider_id: &str,
+        owner: &str,
+        at: i64,
+    ) -> DbResult<()> {
         self.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![provider_id,id],id,owner,at)?;
         Ok(())
     }
@@ -227,7 +255,13 @@ impl Database {
     /// Leaves a queued send queued with a plain-language note, stamping
     /// `last_attempt_at` (not `attempts` or `state`) so the retry gate
     /// rate-limits the next attempt.
-    pub(crate) fn note_send_prepare_retry(&self, id: &str, message: &str, owner: &str, at: i64) -> DbResult<()> {
+    pub(crate) fn note_send_prepare_retry(
+        &self,
+        id: &str,
+        message: &str,
+        owner: &str,
+        at: i64,
+    ) -> DbResult<()> {
         self.change_outbox(
             "UPDATE outbox_messages SET error=?2,last_attempt_at=?3 WHERE id=?1 AND state IN ('undo_pending','ready')",
             params![id, message, at],
@@ -238,7 +272,13 @@ impl Database {
         Ok(())
     }
     /// Moves a queued send to `failed`, so the draft stays restorable.
-    pub(crate) fn fail_queued_send(&self, id: &str, message: &str, owner: &str, at: i64) -> DbResult<()> {
+    pub(crate) fn fail_queued_send(
+        &self,
+        id: &str,
+        message: &str,
+        owner: &str,
+        at: i64,
+    ) -> DbResult<()> {
         self.change_outbox(
             "UPDATE outbox_messages SET state='failed',error=?2 WHERE id=?1 AND state IN ('undo_pending','ready')",
             params![id, message],
@@ -282,20 +322,32 @@ impl Database {
                 owner,
                 at,
             )?,
-            None => self.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2",params![provider_id,id],id,owner,at)?,
+            None => self.change_outbox(
+                "UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2",
+                params![provider_id, id],
+                id,
+                owner,
+                at,
+            )?,
         };
         Ok(())
     }
     /// Records a delivery attempt that failed (`definite`) or whose outcome
     /// is unknown.
-    pub(crate) fn record_send_failed(&self, id: &str, definite: bool, message: &str, owner: &str, at: i64) -> DbResult<()> {
+    pub(crate) fn record_send_failed(
+        &self,
+        id: &str,
+        definite: bool,
+        message: &str,
+        owner: &str,
+        at: i64,
+    ) -> DbResult<()> {
         self.change_outbox(
             "UPDATE outbox_messages SET state=?1,error=?2 WHERE id=?3",
-            params![
-                if definite { "failed" } else { "uncertain" },
-                message,
-                id
-            ], id,owner,at,
+            params![if definite { "failed" } else { "uncertain" }, message, id],
+            id,
+            owner,
+            at,
         )?;
         Ok(())
     }
@@ -312,7 +364,12 @@ impl Database {
         })
     }
     /// Up to `limit` Sent-copy jobs due at `at` on `accounts`, oldest first.
-    pub(crate) fn due_sent_copy_jobs(&self, at: i64, accounts: &[&str], limit: i64) -> DbResult<Vec<SentCopyJob>> {
+    pub(crate) fn due_sent_copy_jobs(
+        &self,
+        at: i64,
+        accounts: &[&str],
+        limit: i64,
+    ) -> DbResult<Vec<SentCopyJob>> {
         let available = serde_json::to_string(accounts).map_err(serialization_error)?;
         self.with_connection(|c| {
             let mut q = c.prepare(
@@ -383,7 +440,13 @@ impl Database {
         Ok(())
     }
     /// Gives up on a Sent-copy job that used its last attempt.
-    pub(crate) fn abandon_sent_copy_job_after_attempts(&self, id: &str, attempts: i64, message: &str, at: i64) -> DbResult<()> {
+    pub(crate) fn abandon_sent_copy_job_after_attempts(
+        &self,
+        id: &str,
+        attempts: i64,
+        message: &str,
+        at: i64,
+    ) -> DbResult<()> {
         self.change_outbox(
             "UPDATE outbox_messages SET sent_copy_state='abandoned',\
              sent_copy_attempts=?2,sent_copy_error=?3 \
@@ -397,7 +460,14 @@ impl Database {
     }
     /// Counts a transient Sent-copy failure and retries at `next_at`,
     /// keeping the job's state.
-    pub(crate) fn retry_sent_copy_job(&self, id: &str, attempts: i64, next_at: i64, message: &str, at: i64) -> DbResult<()> {
+    pub(crate) fn retry_sent_copy_job(
+        &self,
+        id: &str,
+        attempts: i64,
+        next_at: i64,
+        message: &str,
+        at: i64,
+    ) -> DbResult<()> {
         self.change_outbox(
             "UPDATE outbox_messages SET sent_copy_attempts=?2,sent_copy_next_at=?3,\
              sent_copy_error=?4 WHERE id=?1 AND sent_copy_state IN ('pending','verify')",

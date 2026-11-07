@@ -4,8 +4,8 @@
 //! commits on its own.
 
 use super::{
-    accounts, compose_settings, contact_groups, contacts, sender_rules, signatures, snippets, split_inboxes, Database,
-    DbResult,
+    accounts, compose_settings, contact_groups, contacts, sender_rules, signatures, snippets,
+    split_inboxes, Database, DbResult,
 };
 use crate::transfer::{
     TransferAccount, TransferContact, TransferContactGroup, TransferSenderRule, TransferSnippet,
@@ -71,7 +71,13 @@ impl Database {
 
             snippets::delete_all_snippets(transaction)?;
             for snippet in snippets {
-                snippets::insert_snippet_row(transaction, &snippet.id, &snippet.name, &snippet.body, &snippet.created_at)?;
+                snippets::insert_snippet_row(
+                    transaction,
+                    &snippet.id,
+                    &snippet.name,
+                    &snippet.body,
+                    &snippet.created_at,
+                )?;
             }
 
             if let Some(library) = signatures {
@@ -81,7 +87,14 @@ impl Database {
             contacts::delete_all_contacts(transaction)?;
             for contact in contacts {
                 contacts::insert_imported_contact(transaction, contact)?;
-                for (position,email) in contact.addresses.iter().enumerate() { contacts::insert_contact_address(transaction, &contact.id, email, position as i64)?; }
+                for (position, email) in contact.addresses.iter().enumerate() {
+                    contacts::insert_contact_address(
+                        transaction,
+                        &contact.id,
+                        email,
+                        position as i64,
+                    )?;
+                }
             }
 
             // An export from before contact groups has none to offer, so
@@ -103,7 +116,8 @@ impl Database {
                 sender_rules::delete_all_sender_rules(transaction)?;
                 let now = Utc::now().to_rfc3339();
                 for rule in rules {
-                    let value = sender_rules::normalize_rule_match(&rule.match_kind, &rule.match_value)?;
+                    let value =
+                        sender_rules::normalize_rule_match(&rule.match_kind, &rule.match_value)?;
                     sender_rules::insert_imported_sender_rule(transaction, rule, &value, &now)?;
                 }
             }

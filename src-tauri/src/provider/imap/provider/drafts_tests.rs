@@ -46,18 +46,26 @@ impl DraftsServer {
     }
 
     fn live(&self) -> Vec<&Stored> {
-        self.messages.iter().filter(|m| !m.flags.iter().any(|f| f == "\\Deleted")).collect()
+        self.messages
+            .iter()
+            .filter(|m| !m.flags.iter().any(|f| f == "\\Deleted"))
+            .collect()
     }
 
     fn count(&self, prefix: &str) -> usize {
-        self.commands.iter().filter(|c| c.to_ascii_uppercase().starts_with(prefix)).count()
+        self.commands
+            .iter()
+            .filter(|c| c.to_ascii_uppercase().starts_with(prefix))
+            .count()
     }
 }
 
 fn message_id_header(raw: &[u8]) -> Option<String> {
     String::from_utf8_lossy(raw).split("\r\n").find_map(|line| {
         let (name, _) = line.split_once(':')?;
-        name.trim().eq_ignore_ascii_case("message-id").then(|| line.to_string())
+        name.trim()
+            .eq_ignore_ascii_case("message-id")
+            .then(|| line.to_string())
     })
 }
 
@@ -73,7 +81,11 @@ fn uids_in(set: &str) -> Vec<u32> {
 fn respond(state: &mut DraftsServer, tag: &str, rest: &str) -> String {
     let upper = rest.to_ascii_uppercase();
     if upper.starts_with("CAPABILITY") {
-        let caps = if state.uidplus { "IMAP4REV1 UIDPLUS" } else { "IMAP4REV1" };
+        let caps = if state.uidplus {
+            "IMAP4REV1 UIDPLUS"
+        } else {
+            "IMAP4REV1"
+        };
         format!("* CAPABILITY {caps}\r\n{tag} OK done\r\n")
     } else if upper.starts_with("SELECT") || upper.starts_with("EXAMINE") {
         if !rest.contains("Drafts") {
@@ -90,27 +102,49 @@ fn respond(state: &mut DraftsServer, tag: &str, rest: &str) -> String {
         let live = state.live();
         let hits: Vec<u32> = if let Some(start) = rest.find('"') {
             let needle = &rest[start + 1..rest.rfind('"').unwrap()];
-            live.iter().filter(|m| message_id_header(&m.raw).is_some_and(|h| h.contains(needle))).map(|m| m.uid).collect()
+            live.iter()
+                .filter(|m| message_id_header(&m.raw).is_some_and(|h| h.contains(needle)))
+                .map(|m| m.uid)
+                .collect()
         } else if let Some(set) = upper.strip_prefix("UID SEARCH UID ") {
             let wanted = uids_in(set.split_whitespace().next().unwrap_or(""));
-            live.iter().filter(|m| wanted.contains(&m.uid)).map(|m| m.uid).collect()
+            live.iter()
+                .filter(|m| wanted.contains(&m.uid))
+                .map(|m| m.uid)
+                .collect()
         } else {
             live.iter().map(|m| m.uid).collect()
         };
-        let list = hits.iter().map(u32::to_string).collect::<Vec<_>>().join(" ");
+        let list = hits
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
         format!("* SEARCH {list}\r\n{tag} OK done\r\n")
     } else if upper.starts_with("UID FETCH") {
         let set = rest.split_whitespace().nth(2).unwrap_or("");
         let wanted = uids_in(set);
         let mut out = String::new();
-        for (seq, message) in state.messages.iter().enumerate().filter(|(_, m)| wanted.contains(&m.uid)) {
+        for (seq, message) in state
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| wanted.contains(&m.uid))
+        {
             let (section, bytes) = if upper.contains("HEADER.FIELDS") {
-                let header = message_id_header(&message.raw).map(|h| format!("{h}\r\n\r\n")).unwrap_or_else(|| "\r\n".into());
+                let header = message_id_header(&message.raw)
+                    .map(|h| format!("{h}\r\n\r\n"))
+                    .unwrap_or_else(|| "\r\n".into());
                 ("BODY[HEADER.FIELDS (MESSAGE-ID)]", header.into_bytes())
             } else {
                 ("BODY[]", message.raw.clone())
             };
-            out.push_str(&format!("* {} FETCH (UID {} {section} {{{}}}\r\n", seq + 1, message.uid, bytes.len()));
+            out.push_str(&format!(
+                "* {} FETCH (UID {} {section} {{{}}}\r\n",
+                seq + 1,
+                message.uid,
+                bytes.len()
+            ));
             out.push_str(&String::from_utf8_lossy(&bytes));
             out.push_str(")\r\n");
         }
@@ -118,7 +152,11 @@ fn respond(state: &mut DraftsServer, tag: &str, rest: &str) -> String {
     } else if upper.starts_with("UID STORE") {
         let set = rest.split_whitespace().nth(2).unwrap_or("");
         let wanted = uids_in(set);
-        for message in state.messages.iter_mut().filter(|m| wanted.contains(&m.uid)) {
+        for message in state
+            .messages
+            .iter_mut()
+            .filter(|m| wanted.contains(&m.uid))
+        {
             if !message.flags.iter().any(|f| f == "\\Deleted") {
                 message.flags.push("\\Deleted".into());
             }
@@ -126,7 +164,9 @@ fn respond(state: &mut DraftsServer, tag: &str, rest: &str) -> String {
         format!("{tag} OK done\r\n")
     } else if upper.starts_with("UID EXPUNGE") {
         let wanted = uids_in(rest.split_whitespace().nth(2).unwrap_or(""));
-        state.messages.retain(|m| !(wanted.contains(&m.uid) && m.flags.iter().any(|f| f == "\\Deleted")));
+        state
+            .messages
+            .retain(|m| !(wanted.contains(&m.uid) && m.flags.iter().any(|f| f == "\\Deleted")));
         format!("{tag} OK done\r\n")
     } else if upper.starts_with("LOGOUT") {
         format!("* BYE\r\n{tag} OK done\r\n")
@@ -153,11 +193,17 @@ fn spawn(state: Arc<Mutex<DraftsServer>>) -> DuplexStream {
                 state.lock().unwrap().commands.push(rest.clone());
             }
             if upper.starts_with("LOGIN") {
-                server.get_mut().write_all(format!("{tag} OK logged in\r\n").as_bytes()).await.unwrap();
+                server
+                    .get_mut()
+                    .write_all(format!("{tag} OK logged in\r\n").as_bytes())
+                    .await
+                    .unwrap();
                 continue;
             }
             if upper.starts_with("APPEND") {
-                let len: usize = rest[rest.rfind('{').unwrap() + 1..rest.rfind('}').unwrap()].parse().unwrap();
+                let len: usize = rest[rest.rfind('{').unwrap() + 1..rest.rfind('}').unwrap()]
+                    .parse()
+                    .unwrap();
                 server.get_mut().write_all(b"+ go\r\n").await.unwrap();
                 let mut buf = vec![0u8; len + 2];
                 if server.read_exact(&mut buf).await.is_err() {
@@ -172,17 +218,29 @@ fn spawn(state: Arc<Mutex<DraftsServer>>) -> DuplexStream {
                     let mut state = state.lock().unwrap();
                     let uid = state.next_uid;
                     state.next_uid += 1;
-                    state.messages.push(Stored { uid, flags, raw: buf });
+                    state.messages.push(Stored {
+                        uid,
+                        flags,
+                        raw: buf,
+                    });
                     std::mem::take(&mut state.drop_after_append)
                 };
                 if drop {
                     break;
                 }
-                server.get_mut().write_all(format!("{tag} OK appended\r\n").as_bytes()).await.unwrap();
+                server
+                    .get_mut()
+                    .write_all(format!("{tag} OK appended\r\n").as_bytes())
+                    .await
+                    .unwrap();
                 continue;
             }
             let response = respond(&mut state.lock().unwrap(), &tag, &rest);
-            server.get_mut().write_all(response.as_bytes()).await.unwrap();
+            server
+                .get_mut()
+                .write_all(response.as_bytes())
+                .await
+                .unwrap();
             if upper.starts_with("LOGOUT") {
                 break;
             }
@@ -200,14 +258,18 @@ impl ImapSessionSource for Source {
             .login("user", "password")
             .await
             .map_err(|(error, _)| super::super::error::map_imap_error(&error))?;
-        Ok(Box::new(super::super::session::AsyncImapSession::new(session)))
+        Ok(Box::new(super::super::session::AsyncImapSession::new(
+            session,
+        )))
     }
 }
 
 fn provider(server: Arc<Mutex<DraftsServer>>, with_drafts: bool) -> ImapProvider {
     use super::super::settings::SecurityMode;
     let database = Arc::new(Database::open_memory());
-    database.adopt_mail_account("me@example.com", crate::models::MailProviderKind::Imap).unwrap();
+    database
+        .adopt_mail_account("me@example.com", crate::models::MailProviderKind::Imap)
+        .unwrap();
     let store = ImapStateStore::new(database, "me@example.com");
     let uidvalidity = server.lock().unwrap().uidvalidity;
     for (name, special) in [("INBOX", None), ("Drafts", Some("\\Drafts"))] {
@@ -274,15 +336,27 @@ async fn an_account_keeps_server_drafts_only_with_a_drafts_mailbox() {
     assert!(provider(DraftsServer::new(), true).server_drafts());
     let without = provider(DraftsServer::new(), false);
     assert!(!without.server_drafts());
-    assert!(matches!(without.create_server_draft(&draft(OURS, "x"), None).await, Err(ProviderError::InvalidOperation(_))));
+    assert!(matches!(
+        without.create_server_draft(&draft(OURS, "x"), None).await,
+        Err(ProviderError::InvalidOperation(_))
+    ));
 }
 
 #[tokio::test]
 async fn a_new_draft_is_appended_with_draft_and_seen_flags() {
     let server = DraftsServer::new();
     let imap = provider(server.clone(), true);
-    let created = imap.create_server_draft(&draft(OURS, "First"), None).await.unwrap();
-    assert_eq!(created, ServerDraft { id: "42:1".into(), version: Some("42:1".into()) });
+    let created = imap
+        .create_server_draft(&draft(OURS, "First"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        created,
+        ServerDraft {
+            id: "42:1".into(),
+            version: Some("42:1".into())
+        }
+    );
     let state = server.lock().unwrap();
     assert_eq!(state.messages[0].flags, ["\\Draft", "\\Seen"]);
     assert_eq!(state.messages[0].raw, draft(OURS, "First"));
@@ -294,7 +368,9 @@ async fn a_mailbox_that_cannot_keep_the_draft_flag_still_gets_the_draft() {
     let server = DraftsServer::new();
     server.lock().unwrap().permanent_flags = vec!["\\Seen".into(), "\\Deleted".into()];
     let imap = provider(server.clone(), true);
-    imap.create_server_draft(&draft(OURS, "First"), None).await.unwrap();
+    imap.create_server_draft(&draft(OURS, "First"), None)
+        .await
+        .unwrap();
     assert_eq!(server.lock().unwrap().messages[0].flags, ["\\Seen"]);
 }
 
@@ -302,14 +378,28 @@ async fn a_mailbox_that_cannot_keep_the_draft_flag_still_gets_the_draft() {
 async fn an_update_stores_the_new_copy_before_removing_the_old_one() {
     let server = DraftsServer::new();
     let imap = provider(server.clone(), true);
-    let first = imap.create_server_draft(&draft(OURS, "First"), None).await.unwrap();
-    let second = imap.update_server_draft(&first.id, &draft(OURS, "Second"), None).await.unwrap();
+    let first = imap
+        .create_server_draft(&draft(OURS, "First"), None)
+        .await
+        .unwrap();
+    let second = imap
+        .update_server_draft(&first.id, &draft(OURS, "Second"), None)
+        .await
+        .unwrap();
     assert_eq!(second.id, "42:2");
     let state = server.lock().unwrap();
     assert_eq!(state.live().len(), 1);
     assert!(String::from_utf8_lossy(&state.live()[0].raw).contains("Second"));
-    let append = state.commands.iter().rposition(|c| c.starts_with("APPEND")).unwrap();
-    let store = state.commands.iter().rposition(|c| c.starts_with("UID STORE")).unwrap();
+    let append = state
+        .commands
+        .iter()
+        .rposition(|c| c.starts_with("APPEND"))
+        .unwrap();
+    let store = state
+        .commands
+        .iter()
+        .rposition(|c| c.starts_with("UID STORE"))
+        .unwrap();
     assert!(append < store, "append before remove: {:?}", state.commands);
     assert_eq!(state.count("UID EXPUNGE"), 1);
     assert_eq!(state.count("EXPUNGE"), 0, "never a plain EXPUNGE");
@@ -320,8 +410,13 @@ async fn without_uidplus_old_copies_are_only_marked_deleted() {
     let server = DraftsServer::new();
     server.lock().unwrap().uidplus = false;
     let imap = provider(server.clone(), true);
-    let first = imap.create_server_draft(&draft(OURS, "First"), None).await.unwrap();
-    imap.update_server_draft(&first.id, &draft(OURS, "Second"), None).await.unwrap();
+    let first = imap
+        .create_server_draft(&draft(OURS, "First"), None)
+        .await
+        .unwrap();
+    imap.update_server_draft(&first.id, &draft(OURS, "Second"), None)
+        .await
+        .unwrap();
     let state = server.lock().unwrap();
     assert_eq!(state.messages.len(), 2, "nothing expunged");
     assert_eq!(state.live().len(), 1);
@@ -333,9 +428,18 @@ async fn a_save_interrupted_after_storing_is_found_by_message_id_not_appended_tw
     let server = DraftsServer::new();
     server.lock().unwrap().drop_after_append = true;
     let imap = provider(server.clone(), true);
-    assert!(imap.create_server_draft(&draft(OURS, "First"), None).await.is_err());
+    assert!(imap
+        .create_server_draft(&draft(OURS, "First"), None)
+        .await
+        .is_err());
     let found = imap.find_server_draft(OURS).await.unwrap();
-    assert_eq!(found, Some(ServerDraft { id: "42:1".into(), version: Some("42:1".into()) }));
+    assert_eq!(
+        found,
+        Some(ServerDraft {
+            id: "42:1".into(),
+            version: Some("42:1".into())
+        })
+    );
     assert_eq!(server.lock().unwrap().count("APPEND"), 1);
 }
 
@@ -344,13 +448,28 @@ async fn listing_shows_the_newest_copy_and_removes_this_apps_stale_duplicates() 
     let server = DraftsServer::new();
     {
         let mut state = server.lock().unwrap();
-        for (uid, raw) in [(1, draft(OURS, "old")), (2, draft("CAF@other.example", "theirs")), (3, draft(OURS, "new")), (4, draft("CAF@other.example", "theirs again"))] {
-            state.messages.push(Stored { uid, flags: vec![], raw });
+        for (uid, raw) in [
+            (1, draft(OURS, "old")),
+            (2, draft("CAF@other.example", "theirs")),
+            (3, draft(OURS, "new")),
+            (4, draft("CAF@other.example", "theirs again")),
+        ] {
+            state.messages.push(Stored {
+                uid,
+                flags: vec![],
+                raw,
+            });
         }
         state.next_uid = 5;
     }
     let imap = provider(server.clone(), true);
-    let listed: Vec<String> = imap.list_server_drafts().await.unwrap().into_iter().map(|d| d.id).collect();
+    let listed: Vec<String> = imap
+        .list_server_drafts()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
     assert_eq!(listed, ["42:3", "42:4"]);
     let state = server.lock().unwrap();
     let live: Vec<u32> = state.live().iter().map(|m| m.uid).collect();
@@ -361,7 +480,10 @@ async fn listing_shows_the_newest_copy_and_removes_this_apps_stale_duplicates() 
 async fn fetching_returns_the_stored_message() {
     let server = DraftsServer::new();
     let imap = provider(server.clone(), true);
-    let created = imap.create_server_draft(&draft(OURS, "Body text"), None).await.unwrap();
+    let created = imap
+        .create_server_draft(&draft(OURS, "Body text"), None)
+        .await
+        .unwrap();
     let fetched = imap.fetch_server_draft(&created.id).await.unwrap();
     assert_eq!(fetched.raw, draft(OURS, "Body text"));
     assert_eq!(fetched.thread_id, None);
@@ -372,11 +494,23 @@ async fn fetching_returns_the_stored_message() {
 async fn a_copy_that_is_gone_or_from_another_uidvalidity_reports_not_found() {
     let server = DraftsServer::new();
     let imap = provider(server.clone(), true);
-    let created = imap.create_server_draft(&draft(OURS, "x"), None).await.unwrap();
-    assert_eq!(imap.server_draft_version(&created.id).await.unwrap(), Some(created.id.clone()));
+    let created = imap
+        .create_server_draft(&draft(OURS, "x"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        imap.server_draft_version(&created.id).await.unwrap(),
+        Some(created.id.clone())
+    );
     imap.delete_server_draft(&created.id).await.unwrap();
     assert_eq!(imap.server_draft_version(&created.id).await.unwrap(), None);
-    assert!(matches!(imap.delete_server_draft(&created.id).await, Err(ProviderError::NotFound)));
-    assert!(matches!(imap.fetch_server_draft("41:1").await, Err(ProviderError::NotFound)));
+    assert!(matches!(
+        imap.delete_server_draft(&created.id).await,
+        Err(ProviderError::NotFound)
+    ));
+    assert!(matches!(
+        imap.fetch_server_draft("41:1").await,
+        Err(ProviderError::NotFound)
+    ));
     assert_eq!(imap.server_draft_version("not-an-id").await.unwrap(), None);
 }

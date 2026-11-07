@@ -101,7 +101,6 @@ fn retry_at(attempts: u32, at: i64) -> i64 {
     at + crate::backoff::retry_delay_secs(attempts.max(1)) * 1_000
 }
 
-
 pub(crate) enum RemovedDraft {
     Delete,
     Wait,
@@ -111,7 +110,11 @@ pub(crate) enum RemovedDraft {
 /// the user, and whether it retries on its own.
 fn classify_push_error(error: &ProviderError, account: &str) -> (&'static str, String, bool) {
     if error.requires_reauthentication() {
-        ("failed", format!("Reconnect {account} to save this draft to the server."), true)
+        (
+            "failed",
+            format!("Reconnect {account} to save this draft to the server."),
+            true,
+        )
     } else if error.retry_mutation() || matches!(error, ProviderError::NotFound) {
         ("retrying", "The server couldn't be reached.".into(), true)
     } else {
@@ -143,14 +146,17 @@ impl Correspondence {
 
     pub(crate) async fn push_due_drafts(&self, at: i64) -> Result<(), String> {
         let _guard = self.draft_pushes.lock().await;
-        let providers = self.draft_providers(self.database.due_draft_accounts(at)?).await;
+        let providers = self
+            .draft_providers(self.database.due_draft_accounts(at)?)
+            .await;
         self.push_due_drafts_with(at, &providers).await
     }
 
     /// Asks the worker to pull every account's server drafts on its next
     /// round, as when the window comes to the front.
     pub fn request_draft_pull(&self) {
-        self.draft_pull_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.draft_pull_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     async fn run_draft_round(
@@ -164,12 +170,18 @@ impl Correspondence {
         accounts.sort();
         accounts.dedup();
         let providers = self.draft_providers(accounts).await;
-        let force = self.draft_pull_requested.swap(false, std::sync::atomic::Ordering::SeqCst);
+        let force = self
+            .draft_pull_requested
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
         self.push_due_drafts_with(at, &providers).await?;
-        self.pull_due_accounts(at, &providers, schedules, force).await
+        self.pull_due_accounts(at, &providers, schedules, force)
+            .await
     }
 
-    async fn draft_providers(&self, accounts: Vec<String>) -> HashMap<String, Arc<dyn MailProvider>> {
+    async fn draft_providers(
+        &self,
+        accounts: Vec<String>,
+    ) -> HashMap<String, Arc<dyn MailProvider>> {
         let mut providers = HashMap::new();
         for account in accounts {
             if let Ok(provider) = self.provider_for(&account).await {
@@ -190,7 +202,8 @@ impl Correspondence {
             self.push_link(&link, providers.get(&link.account)).await?;
         }
         for deletion in self.database.due_draft_deletions(at)? {
-            self.delete_server_copy(&deletion, providers.get(&deletion.account)).await?;
+            self.delete_server_copy(&deletion, providers.get(&deletion.account))
+                .await?;
         }
         Ok(())
     }
@@ -213,9 +226,17 @@ impl Correspondence {
             // The save that moved it already queued the old copy's deletion.
             return Ok(());
         }
-        if let Some(server_id) = link.server_id.as_ref().filter(|_| link.pushed_revision >= draft.revision) {
-            let server = ServerDraft { id: server_id.clone(), version: None };
-            self.database.record_draft_pushed(&draft.id, &server, draft.revision)?;
+        if let Some(server_id) = link
+            .server_id
+            .as_ref()
+            .filter(|_| link.pushed_revision >= draft.revision)
+        {
+            let server = ServerDraft {
+                id: server_id.clone(),
+                version: None,
+            };
+            self.database
+                .record_draft_pushed(&draft.id, &server, draft.revision)?;
             return Ok(());
         }
         let provider = match provider {
@@ -223,7 +244,13 @@ impl Correspondence {
             None => {
                 let attempts = link.attempts + 1;
                 let message = format!("{} isn't connected on this device.", draft.account);
-                self.database.record_draft_push_failure(&draft.id, "retrying", &message, Some(retry_at(attempts, unix_millis())), attempts)?;
+                self.database.record_draft_push_failure(
+                    &draft.id,
+                    "retrying",
+                    &message,
+                    Some(retry_at(attempts, unix_millis())),
+                    attempts,
+                )?;
                 self.notify_draft(&draft, "retrying", Some(message));
                 return Ok(());
             }
@@ -241,20 +268,29 @@ impl Correspondence {
                 self.notify_draft(&draft, "conflict", None);
             }
             Ok(Some(server)) => {
-                let current = self.database.record_draft_pushed(&draft.id, &server, draft.revision)?;
+                let current =
+                    self.database
+                        .record_draft_pushed(&draft.id, &server, draft.revision)?;
                 if current <= draft.revision {
                     self.notify_draft(&draft, "saved", None);
                 }
             }
             Err(PushError::Message(message)) => {
-                self.database.record_draft_push_failure(&draft.id, "failed", &message, None, link.attempts)?;
+                self.database.record_draft_push_failure(
+                    &draft.id,
+                    "failed",
+                    &message,
+                    None,
+                    link.attempts,
+                )?;
                 self.notify_draft(&draft, "failed", Some(message));
             }
             Err(PushError::Provider(error)) => {
                 let (state, message, retries) = classify_push_error(&error, &draft.account);
                 let attempts = link.attempts + 1;
                 let due = retries.then(|| retry_at(attempts, unix_millis()));
-                self.database.record_draft_push_failure(&draft.id, state, &message, due, attempts)?;
+                self.database
+                    .record_draft_push_failure(&draft.id, state, &message, due, attempts)?;
                 self.notify_draft(&draft, state, Some(message));
             }
         }
@@ -275,20 +311,29 @@ impl Correspondence {
         // is a new copy, that can mean another device or app replaced it.
         let mut replaced = false;
         if let (Some(id), Some(seen)) = (&server_id, &link.server_version) {
-            match provider.server_draft_version(id).await.map_err(PushError::Provider)? {
+            match provider
+                .server_draft_version(id)
+                .await
+                .map_err(PushError::Provider)?
+            {
                 None => {
                     server_id = None;
                     replaced = true;
                 }
                 Some(current) if current != *seen => {
-                    self.hold_server_conflict(provider, draft, id).await.map_err(PushError::Provider)?;
+                    self.hold_server_conflict(provider, draft, id)
+                        .await
+                        .map_err(PushError::Provider)?;
                     return Ok(None);
                 }
                 Some(_) => {}
             }
         }
         let server_id = server_id.as_deref();
-        let identities = provider.identities(&draft.account).await.map_err(PushError::Provider)?;
+        let identities = provider
+            .identities(&draft.account)
+            .await
+            .map_err(PushError::Provider)?;
         let domain = provider
             .message_id_domain(draft.sender_address())
             .map_err(PushError::Provider)?;
@@ -297,8 +342,14 @@ impl Correspondence {
             .get_account(&draft.account)
             .map_err(|error| PushError::Message(error.to_string()))?
             .and_then(|account| account.display_name);
-        let raw = build_draft_mime(draft, &identities, display_name.as_deref(), domain.as_deref(), &self.root)
-            .map_err(PushError::Message)?;
+        let raw = build_draft_mime(
+            draft,
+            &identities,
+            display_name.as_deref(),
+            domain.as_deref(),
+            &self.root,
+        )
+        .map_err(PushError::Message)?;
         let thread = draft.thread_id.as_deref();
         let existing = match server_id {
             Some(id) => Some(id.to_string()),
@@ -308,7 +359,9 @@ impl Correspondence {
                     .await
                     .map_err(PushError::Provider)?;
                 if let Some(found) = found.as_ref().filter(|_| replaced) {
-                    self.hold_server_conflict(provider, draft, &found.id).await.map_err(PushError::Provider)?;
+                    self.hold_server_conflict(provider, draft, &found.id)
+                        .await
+                        .map_err(PushError::Provider)?;
                     return Ok(None);
                 }
                 found.map(|found| found.id)
@@ -321,7 +374,11 @@ impl Correspondence {
                 result => return result.map(Some).map_err(PushError::Provider),
             }
         }
-        provider.create_server_draft(&raw, thread).await.map(Some).map_err(PushError::Provider)
+        provider
+            .create_server_draft(&raw, thread)
+            .await
+            .map(Some)
+            .map_err(PushError::Provider)
     }
 
     async fn delete_server_copy(
@@ -329,7 +386,13 @@ impl Correspondence {
         deletion: &Deletion,
         provider: Option<&Arc<dyn MailProvider>>,
     ) -> Result<(), String> {
-        let retry = |attempts: u32| self.database.defer_draft_deletion(deletion.id, attempts, retry_at(attempts, unix_millis()));
+        let retry = |attempts: u32| {
+            self.database.defer_draft_deletion(
+                deletion.id,
+                attempts,
+                retry_at(attempts, unix_millis()),
+            )
+        };
         let Some(provider) = provider else {
             retry(deletion.attempts + 1)?;
             return Ok(());
@@ -341,8 +404,14 @@ impl Correspondence {
         let server_id = match &deletion.server_id {
             Some(id) => Some(id.clone()),
             None => {
-                let domain = provider.message_id_domain(&deletion.account).unwrap_or(None);
-                let message_id = format!("{}@{}", deletion.message_id, domain.as_deref().unwrap_or("threestrands.local"));
+                let domain = provider
+                    .message_id_domain(&deletion.account)
+                    .unwrap_or(None);
+                let message_id = format!(
+                    "{}@{}",
+                    deletion.message_id,
+                    domain.as_deref().unwrap_or("threestrands.local")
+                );
                 match provider.find_server_draft(&message_id).await {
                     Ok(found) => found.map(|found| found.id),
                     Err(_) => {
@@ -357,8 +426,12 @@ impl Correspondence {
             None => Ok(()),
         };
         match result {
-            Ok(()) | Err(ProviderError::NotFound) => self.database.finish_draft_deletion(deletion.id)?,
-            Err(error) if error.retry_mutation() || error.requires_reauthentication() => retry(deletion.attempts + 1)?,
+            Ok(()) | Err(ProviderError::NotFound) => {
+                self.database.finish_draft_deletion(deletion.id)?
+            }
+            Err(error) if error.retry_mutation() || error.requires_reauthentication() => {
+                retry(deletion.attempts + 1)?
+            }
             // The server refused for good; leaving the copy is safer than retrying forever.
             Err(error) => {
                 log::warn!(target: "drafts", "server draft deletion refused: {error}");
@@ -372,7 +445,10 @@ impl Correspondence {
         (self.draft_events)(DraftEvent::Status(ServerDraftEvent {
             id: draft.id.clone(),
             revision: draft.revision,
-            status: ServerDraftStatus { state: state.into(), error },
+            status: ServerDraftStatus {
+                state: state.into(),
+                error,
+            },
         }));
     }
 }
@@ -424,7 +500,10 @@ pub(crate) mod tests {
 
     impl FakeDrafts {
         pub(crate) fn new() -> Arc<Self> {
-            Arc::new(Self { supported: true, ..Self::default() })
+            Arc::new(Self {
+                supported: true,
+                ..Self::default()
+            })
         }
         pub(crate) fn drafts(&self) -> MutexGuard<'_, HashMap<String, FakeDraft>> {
             self.drafts.lock().unwrap()
@@ -437,7 +516,8 @@ pub(crate) mod tests {
         /// Stores `raw` as another app would: a new draft, or an edit to `id`.
         pub(crate) fn write_elsewhere(&self, id: &str, raw: &str, thread: Option<&str>) {
             let version = self.next_version();
-            self.drafts().insert(id.into(), (raw.into(), thread.map(str::to_string), version));
+            self.drafts()
+                .insert(id.into(), (raw.into(), thread.map(str::to_string), version));
         }
         pub(crate) fn calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
@@ -464,22 +544,36 @@ pub(crate) mod tests {
         async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
             panic!("Pushing a draft must never send it");
         }
-        async fn find_sent_copy(&self, _: &str, _: &str) -> ProviderResult<Option<DeliveryReceipt>> {
+        async fn find_sent_copy(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> ProviderResult<Option<DeliveryReceipt>> {
             panic!("Pushing a draft must never look for sent mail");
         }
         fn server_drafts(&self) -> bool {
             self.supported
         }
         async fn find_server_draft(&self, message_id: &str) -> ProviderResult<Option<ServerDraft>> {
-            self.calls.lock().unwrap().push(format!("find {message_id}"));
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("find {message_id}"));
             let header = format!("Message-ID: <{message_id}>");
             Ok(self
                 .drafts()
                 .iter()
                 .find(|(_, (raw, ..))| raw.contains(&header))
-                .map(|(id, (.., version))| ServerDraft { id: id.clone(), version: Some(version.clone()) }))
+                .map(|(id, (.., version))| ServerDraft {
+                    id: id.clone(),
+                    version: Some(version.clone()),
+                }))
         }
-        async fn create_server_draft(&self, raw: &[u8], thread: Option<&str>) -> ProviderResult<ServerDraft> {
+        async fn create_server_draft(
+            &self,
+            raw: &[u8],
+            thread: Option<&str>,
+        ) -> ProviderResult<ServerDraft> {
             self.calls.lock().unwrap().push("create".into());
             self.take_failure()?;
             let mut created = self.created.lock().unwrap();
@@ -489,11 +583,23 @@ pub(crate) mod tests {
             let version = self.next_version();
             self.drafts().insert(
                 id.clone(),
-                (String::from_utf8_lossy(raw).into_owned(), thread.map(str::to_string), version.clone()),
+                (
+                    String::from_utf8_lossy(raw).into_owned(),
+                    thread.map(str::to_string),
+                    version.clone(),
+                ),
             );
-            Ok(ServerDraft { id, version: Some(version) })
+            Ok(ServerDraft {
+                id,
+                version: Some(version),
+            })
         }
-        async fn update_server_draft(&self, id: &str, raw: &[u8], thread: Option<&str>) -> ProviderResult<ServerDraft> {
+        async fn update_server_draft(
+            &self,
+            id: &str,
+            raw: &[u8],
+            thread: Option<&str>,
+        ) -> ProviderResult<ServerDraft> {
             self.calls.lock().unwrap().push(format!("update {id}"));
             self.take_failure()?;
             if !self.drafts().contains_key(id) {
@@ -502,13 +608,23 @@ pub(crate) mod tests {
             let version = self.next_version();
             self.drafts().insert(
                 id.into(),
-                (String::from_utf8_lossy(raw).into_owned(), thread.map(str::to_string), version.clone()),
+                (
+                    String::from_utf8_lossy(raw).into_owned(),
+                    thread.map(str::to_string),
+                    version.clone(),
+                ),
             );
-            Ok(ServerDraft { id: id.into(), version: Some(version) })
+            Ok(ServerDraft {
+                id: id.into(),
+                version: Some(version),
+            })
         }
         async fn delete_server_draft(&self, id: &str) -> ProviderResult<()> {
             self.calls.lock().unwrap().push(format!("delete {id}"));
-            self.drafts().remove(id).map(|_| ()).ok_or(ProviderError::NotFound)
+            self.drafts()
+                .remove(id)
+                .map(|_| ())
+                .ok_or(ProviderError::NotFound)
         }
         async fn list_server_drafts(&self) -> ProviderResult<Vec<ServerDraft>> {
             self.calls.lock().unwrap().push("list".into());
@@ -516,20 +632,35 @@ pub(crate) mod tests {
                 let mut failing = self.failing_lists.lock().unwrap();
                 if *failing > 0 {
                     *failing -= 1;
-                    return Err(ProviderError::RetryableServer("403 Forbidden: Quota exceeded".into()));
+                    return Err(ProviderError::RetryableServer(
+                        "403 Forbidden: Quota exceeded".into(),
+                    ));
                 }
             }
             Ok(self
                 .drafts()
                 .iter()
-                .map(|(id, (.., version))| ServerDraft { id: id.clone(), version: Some(version.clone()) })
+                .map(|(id, (.., version))| ServerDraft {
+                    id: id.clone(),
+                    version: Some(version.clone()),
+                })
                 .collect())
         }
-        async fn fetch_server_draft(&self, id: &str) -> ProviderResult<crate::provider::FetchedServerDraft> {
+        async fn fetch_server_draft(
+            &self,
+            id: &str,
+        ) -> ProviderResult<crate::provider::FetchedServerDraft> {
             self.calls.lock().unwrap().push(format!("fetch {id}"));
-            let (raw, thread, version) = self.drafts().get(id).cloned().ok_or(ProviderError::NotFound)?;
+            let (raw, thread, version) = self
+                .drafts()
+                .get(id)
+                .cloned()
+                .ok_or(ProviderError::NotFound)?;
             Ok(crate::provider::FetchedServerDraft {
-                draft: ServerDraft { id: id.into(), version: Some(version) },
+                draft: ServerDraft {
+                    id: id.into(),
+                    version: Some(version),
+                },
                 thread_id: thread,
                 raw: raw.into_bytes(),
             })
@@ -584,7 +715,12 @@ pub(crate) mod tests {
         async fn modify_thread(&self, _: &str, _: &[String], _: &[String]) -> ProviderResult<()> {
             unreachable!()
         }
-        async fn modify_messages(&self, _: &[String], _: &[String], _: &[String]) -> ProviderResult<()> {
+        async fn modify_messages(
+            &self,
+            _: &[String],
+            _: &[String],
+            _: &[String],
+        ) -> ProviderResult<()> {
             unreachable!()
         }
         async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
@@ -627,7 +763,8 @@ pub(crate) mod tests {
             database.adopt_account(ACCOUNT).unwrap();
             let events = Arc::new(StdMutex::new(Vec::new()));
             let recorded = events.clone();
-            let root = TempRoot(std::env::temp_dir().join(format!("drafts-{}", uuid::Uuid::new_v4())));
+            let root =
+                TempRoot(std::env::temp_dir().join(format!("drafts-{}", uuid::Uuid::new_v4())));
             std::fs::create_dir_all(&root.0).unwrap();
             let service = Correspondence {
                 sending_identity: Arc::new(|_| Ok("00000000-0000-4000-8000-000000000001".into())),
@@ -641,13 +778,21 @@ pub(crate) mod tests {
                 draft_events: Arc::new(move |event| recorded.lock().unwrap().push(event)),
                 draft_pull_requested: Arc::default(),
             };
-            Self { service, server, events, root }
+            Self {
+                service,
+                server,
+                events,
+                root,
+            }
         }
         pub(crate) fn db(&self) -> &Database {
             &self.service.database
         }
         pub(crate) fn providers(&self) -> HashMap<String, Arc<dyn MailProvider>> {
-            HashMap::from([(ACCOUNT.to_string(), self.server.clone() as Arc<dyn MailProvider>)])
+            HashMap::from([(
+                ACCOUNT.to_string(),
+                self.server.clone() as Arc<dyn MailProvider>,
+            )])
         }
         pub(crate) fn new_draft(&self) -> Draft {
             self.db().create_draft("new", None, ACCOUNT, &[]).unwrap()
@@ -659,14 +804,23 @@ pub(crate) mod tests {
         }
         /// Runs the worker as if `delay_ms` had passed since now.
         pub(crate) async fn run_after(&self, delay_ms: i64) {
-            self.service.push_due_drafts_with(unix_millis() + delay_ms, &self.providers()).await.unwrap();
+            self.service
+                .push_due_drafts_with(unix_millis() + delay_ms, &self.providers())
+                .await
+                .unwrap();
         }
         /// Pulls the account's server drafts.
         pub(crate) async fn pull(&self) -> bool {
-            self.service.pull_server_drafts(ACCOUNT, self.server.as_ref()).await.unwrap()
+            self.service
+                .pull_server_drafts(ACCOUNT, self.server.as_ref())
+                .await
+                .unwrap()
         }
         async fn run_disconnected(&self, delay_ms: i64) {
-            self.service.push_due_drafts_with(unix_millis() + delay_ms, &HashMap::new()).await.unwrap();
+            self.service
+                .push_due_drafts_with(unix_millis() + delay_ms, &HashMap::new())
+                .await
+                .unwrap();
         }
         pub(crate) fn status(&self, draft: &Draft) -> Option<ServerDraftStatus> {
             let current = self.db().draft(&draft.id).unwrap();
@@ -679,7 +833,11 @@ pub(crate) mod tests {
             self.db()
                 .test_connection()
                 .unwrap()
-                .query_row("SELECT due_at FROM draft_server_links WHERE draft_id=?1", [&draft.id], |row| row.get(0))
+                .query_row(
+                    "SELECT due_at FROM draft_server_links WHERE draft_id=?1",
+                    [&draft.id],
+                    |row| row.get(0),
+                )
                 .unwrap()
         }
         pub(crate) fn only_server_body(&self) -> String {
@@ -699,13 +857,18 @@ pub(crate) mod tests {
 
         // Well inside the delay, so the time the test itself takes can't cross it.
         harness.run_after(DRAFT_PUSH_DELAY_MS - 1_000).await;
-        assert!(harness.server.calls().is_empty(), "nothing is pushed before the delay");
+        assert!(
+            harness.server.calls().is_empty(),
+            "nothing is pushed before the delay"
+        );
 
         harness.run_after(DRAFT_PUSH_DELAY_MS).await;
         assert!(harness.only_server_body().contains("First version"));
         assert_eq!(harness.state(&draft), "saved");
         let events = harness.events.lock().unwrap().clone();
-        let Some(DraftEvent::Status(last)) = events.last() else { panic!("expected a status event") };
+        let Some(DraftEvent::Status(last)) = events.last() else {
+            panic!("expected a status event")
+        };
         assert_eq!(last.status.state, "saved");
         assert_eq!(last.revision, draft.revision);
     }
@@ -727,7 +890,10 @@ pub(crate) mod tests {
             .unwrap();
         let second = harness.edit(first, "ab");
         let due = harness.link_due(&second).unwrap();
-        assert!(due <= since + 1_000 + 50, "the cap wins over the delay: {due} vs {since}");
+        assert!(
+            due <= since + 1_000 + 50,
+            "the cap wins over the delay: {due} vs {since}"
+        );
     }
 
     #[tokio::test]
@@ -739,7 +905,11 @@ pub(crate) mod tests {
         assert_eq!(harness.state(&draft), "pending");
         harness.run_after(PAST_DELAY).await;
         assert!(harness.only_server_body().contains("Two"));
-        assert_eq!(harness.server.calls()[2..], ["version server-1", "update server-1"], "checks for edits made elsewhere first");
+        assert_eq!(
+            harness.server.calls()[2..],
+            ["version server-1", "update server-1"],
+            "checks for edits made elsewhere first"
+        );
         assert_eq!(harness.state(&draft), "saved");
     }
 
@@ -753,7 +923,10 @@ pub(crate) mod tests {
             .db()
             .test_connection()
             .unwrap()
-            .execute("UPDATE draft_server_links SET server_id=NULL WHERE draft_id=?1", [&draft.id])
+            .execute(
+                "UPDATE draft_server_links SET server_id=NULL WHERE draft_id=?1",
+                [&draft.id],
+            )
             .unwrap();
         harness.edit(draft.clone(), "Two");
         harness.run_after(PAST_DELAY).await;
@@ -779,7 +952,10 @@ pub(crate) mod tests {
     async fn the_composer_closing_pushes_without_waiting() {
         let harness = Harness::new();
         let draft = harness.edit(harness.new_draft(), "Closing now");
-        harness.db().push_drafts_now(Some(&draft.id), unix_millis()).unwrap();
+        harness
+            .db()
+            .push_drafts_now(Some(&draft.id), unix_millis())
+            .unwrap();
         harness.run_after(0).await;
         assert!(harness.only_server_body().contains("Closing now"));
     }
@@ -788,14 +964,20 @@ pub(crate) mod tests {
     async fn a_temporary_failure_retries_with_backoff_and_keeps_it_through_edits() {
         let harness = Harness::new();
         let draft = harness.edit(harness.new_draft(), "One");
-        harness.server.fail_next(ProviderError::TransientTransport("offline".into()));
+        harness
+            .server
+            .fail_next(ProviderError::TransientTransport("offline".into()));
         harness.run_after(PAST_DELAY).await;
         assert_eq!(harness.state(&draft), "retrying");
         let backoff = harness.link_due(&draft).unwrap();
         assert!(backoff >= unix_millis() + crate::backoff::retry_delay_secs(1) * 1_000 - 1_000);
 
         let draft = harness.edit(draft, "Two");
-        assert_eq!(harness.link_due(&draft), Some(backoff), "editing must not skip the backoff");
+        assert_eq!(
+            harness.link_due(&draft),
+            Some(backoff),
+            "editing must not skip the backoff"
+        );
         assert_eq!(harness.state(&draft), "retrying");
 
         harness.run_after(backoff - unix_millis() + 1).await;
@@ -807,7 +989,9 @@ pub(crate) mod tests {
     async fn a_rejected_grant_asks_the_user_to_reconnect() {
         let harness = Harness::new();
         let draft = harness.edit(harness.new_draft(), "One");
-        harness.server.fail_next(ProviderError::ReauthenticationRequired("revoked".into()));
+        harness
+            .server
+            .fail_next(ProviderError::ReauthenticationRequired("revoked".into()));
         harness.run_after(PAST_DELAY).await;
         let status = harness.status(&draft).unwrap();
         assert_eq!(status.state, "failed");
@@ -832,7 +1016,11 @@ pub(crate) mod tests {
         let draft = harness.db().save_draft(draft).unwrap();
         harness.run_after(PAST_DELAY).await;
         assert_eq!(harness.state(&draft), "failed");
-        assert_eq!(harness.link_due(&draft), None, "a failed build is not retried on its own");
+        assert_eq!(
+            harness.link_due(&draft),
+            None,
+            "a failed build is not retried on its own"
+        );
 
         let mut fixed = draft;
         fixed.to = "jane@example.com".into();
@@ -849,7 +1037,10 @@ pub(crate) mod tests {
             .db()
             .test_connection()
             .unwrap()
-            .execute("UPDATE accounts SET provider='imap' WHERE email=?1", [ACCOUNT])
+            .execute(
+                "UPDATE accounts SET provider='imap' WHERE email=?1",
+                [ACCOUNT],
+            )
             .unwrap();
         let draft = harness.edit(harness.new_draft(), "Saved to Drafts");
         assert_eq!(harness.state(&draft), "pending");
@@ -864,7 +1055,10 @@ pub(crate) mod tests {
             .db()
             .test_connection()
             .unwrap()
-            .execute("UPDATE accounts SET on_this_device=0 WHERE email=?1", [ACCOUNT])
+            .execute(
+                "UPDATE accounts SET on_this_device=0 WHERE email=?1",
+                [ACCOUNT],
+            )
             .unwrap();
         let draft = harness.edit(harness.new_draft(), "Local");
         assert_eq!(harness.status(&draft), None);
@@ -902,10 +1096,20 @@ pub(crate) mod tests {
         let draft = harness.edit(harness.new_draft(), "One");
         harness.run_after(PAST_DELAY).await;
         harness.db().discard_draft(&draft.id).unwrap();
-        harness.run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS - 1_000).await;
-        assert_eq!(harness.server.drafts().len(), 1, "Undo can still leave the server untouched");
-        harness.run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS + 1).await;
-        harness.run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS + 1).await;
+        harness
+            .run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS - 1_000)
+            .await;
+        assert_eq!(
+            harness.server.drafts().len(),
+            1,
+            "Undo can still leave the server untouched"
+        );
+        harness
+            .run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS + 1)
+            .await;
+        harness
+            .run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS + 1)
+            .await;
         assert!(harness.server.drafts().is_empty());
         assert_eq!(harness.server.calls().last().unwrap(), "delete server-1");
     }
@@ -921,10 +1125,19 @@ pub(crate) mod tests {
         assert!(restored.body.contains("One"));
         assert!(restored.revision > draft.revision);
         assert_eq!(harness.state(&restored), "saved");
-        harness.run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS * 2).await;
+        harness
+            .run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS * 2)
+            .await;
         assert_eq!(harness.server.drafts().len(), 1);
-        assert!(!harness.server.calls().iter().any(|call| call.starts_with("delete") || call.starts_with("update")));
-        assert!(harness.db().restore_discarded_draft(&draft.id).is_err(), "only once");
+        assert!(!harness
+            .server
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("delete") || call.starts_with("update")));
+        assert!(
+            harness.db().restore_discarded_draft(&draft.id).is_err(),
+            "only once"
+        );
     }
 
     #[tokio::test]
@@ -951,12 +1164,24 @@ pub(crate) mod tests {
         harness.db().discard_draft(&draft.id).unwrap();
         // The link was retired into a queued deletion that hasn't run yet.
         let late = crate::correspondence::DISCARD_SERVER_DELAY_MS + 1;
-        harness.service.database.test_connection().unwrap()
-            .execute("UPDATE draft_server_deletions SET due_at=?1", [unix_millis() + 60 * 60 * 1000]).unwrap();
+        harness
+            .service
+            .database
+            .test_connection()
+            .unwrap()
+            .execute(
+                "UPDATE draft_server_deletions SET due_at=?1",
+                [unix_millis() + 60 * 60 * 1000],
+            )
+            .unwrap();
         harness.run_after(late).await;
         harness.db().restore_discarded_draft(&draft.id).unwrap();
         harness.run_after(60 * 60 * 1000 + 1).await;
-        assert_eq!(harness.server.drafts().len(), 1, "the restored draft keeps a server copy");
+        assert_eq!(
+            harness.server.drafts().len(),
+            1,
+            "the restored draft keeps a server copy"
+        );
     }
 
     #[tokio::test]
@@ -978,17 +1203,40 @@ pub(crate) mod tests {
         let file = uuid::Uuid::new_v4().to_string();
         std::fs::write(harness.root.0.join(&file), b"notes").unwrap();
         draft.attachments.push(crate::correspondence::Attachment {
-            id: file.clone(), name: "notes.txt".into(), size: 5, mime: "text/plain".into(), ready: true,
-            message_id: None, provider_id: None, inline: false, content_id: None,
+            id: file.clone(),
+            name: "notes.txt".into(),
+            size: 5,
+            mime: "text/plain".into(),
+            ready: true,
+            message_id: None,
+            provider_id: None,
+            inline: false,
+            content_id: None,
         });
         let payload = serde_json::to_string(&draft).unwrap();
-        harness.db().test_connection().unwrap().execute("UPDATE drafts SET payload=?2 WHERE id=?1", params![draft.id, payload]).unwrap();
+        harness
+            .db()
+            .test_connection()
+            .unwrap()
+            .execute(
+                "UPDATE drafts SET payload=?2 WHERE id=?1",
+                params![draft.id, payload],
+            )
+            .unwrap();
         harness.db().discard_draft(&draft.id).unwrap();
         harness.service.cleanup().unwrap();
-        assert!(harness.root.0.join(&file).exists(), "Undo brings the file back too");
+        assert!(
+            harness.root.0.join(&file).exists(),
+            "Undo brings the file back too"
+        );
 
         let expired = unix_millis() - crate::correspondence::DISCARDED_DRAFT_RETENTION_MS - 1;
-        harness.db().test_connection().unwrap().execute("UPDATE discarded_drafts SET discarded_at=?1", [expired]).unwrap();
+        harness
+            .db()
+            .test_connection()
+            .unwrap()
+            .execute("UPDATE discarded_drafts SET discarded_at=?1", [expired])
+            .unwrap();
         harness.service.cleanup().unwrap();
         assert!(!harness.root.0.join(&file).exists());
         assert!(harness.db().restore_discarded_draft(&draft.id).is_err());
@@ -1003,16 +1251,30 @@ pub(crate) mod tests {
         harness.run_after(PAST_DELAY).await;
         let item = harness
             .db()
-            .queue(&draft.id, draft.revision, false, &[], None, std::path::Path::new("/unused"))
+            .queue(
+                &draft.id,
+                draft.revision,
+                false,
+                &[],
+                None,
+                std::path::Path::new("/unused"),
+            )
             .unwrap();
         harness.run_after(0).await;
-        assert_eq!(harness.server.drafts().len(), 1, "Undo must still find the server copy");
+        assert_eq!(
+            harness.server.drafts().len(),
+            1,
+            "Undo must still find the server copy"
+        );
 
         harness
             .db()
             .test_connection()
             .unwrap()
-            .execute("UPDATE outbox_messages SET state='sent' WHERE id=?1", [&item.id])
+            .execute(
+                "UPDATE outbox_messages SET state='sent' WHERE id=?1",
+                [&item.id],
+            )
             .unwrap();
         harness.run_after(SEND_PENDING_RECHECK_MS + 1).await;
         harness.run_after(SEND_PENDING_RECHECK_MS + 1).await;
@@ -1028,13 +1290,24 @@ pub(crate) mod tests {
         harness.run_after(PAST_DELAY).await;
         let item = harness
             .db()
-            .queue(&draft.id, draft.revision, false, &[], None, std::path::Path::new("/unused"))
+            .queue(
+                &draft.id,
+                draft.revision,
+                false,
+                &[],
+                None,
+                std::path::Path::new("/unused"),
+            )
             .unwrap();
         harness.run_after(0).await;
         let restored = harness.db().cancel_send(&item.id, false).unwrap();
         harness.run_after(PAST_DELAY).await;
         assert_eq!(harness.server.drafts().len(), 1);
-        assert!(!harness.server.calls().iter().any(|call| call.starts_with("delete")));
+        assert!(!harness
+            .server
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("delete")));
         assert_eq!(harness.state(&restored), "saved");
     }
 
@@ -1044,9 +1317,15 @@ pub(crate) mod tests {
         harness.db().adopt_account("other@example.com").unwrap();
         let draft = harness.edit(harness.new_draft(), "One");
         harness.run_after(PAST_DELAY).await;
-        harness.db().set_draft_account(&draft.id, "other@example.com").unwrap();
+        harness
+            .db()
+            .set_draft_account(&draft.id, "other@example.com")
+            .unwrap();
         harness.run_after(0).await;
-        assert!(harness.server.drafts().is_empty(), "the old account's copy is deleted");
+        assert!(
+            harness.server.drafts().is_empty(),
+            "the old account's copy is deleted"
+        );
         let pending: i64 = harness
             .db()
             .test_connection()
@@ -1094,7 +1373,11 @@ pub(crate) mod tests {
         let payload: String = database
             .test_connection()
             .unwrap()
-            .query_row("SELECT payload FROM drafts WHERE id=?1", [&saved.id], |row| row.get(0))
+            .query_row(
+                "SELECT payload FROM drafts WHERE id=?1",
+                [&saved.id],
+                |row| row.get(0),
+            )
             .unwrap();
         assert!(!payload.contains("serverDraft"));
     }

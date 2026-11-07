@@ -50,7 +50,10 @@ pub async fn delete_removes_the_object(transport: &dyn SyncTransport) {
     transport.get_object(&cid).await.unwrap();
 
     transport.delete_object(&cid).await.unwrap();
-    assert_eq!(transport.get_object(&cid).await, Err(crate::TransportError::NotFound));
+    assert_eq!(
+        transport.get_object(&cid).await,
+        Err(crate::TransportError::NotFound)
+    );
 }
 
 /// If a transport supports enumeration, walking every page (following
@@ -114,7 +117,8 @@ pub async fn resolve_heads_round_trips_a_published_head(transport: &dyn SyncTran
         .unwrap();
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0], signed);
-    threestrands_sync_envelope::verify_device_head(&signing_key.verifying_key(), &resolved[0]).unwrap();
+    threestrands_sync_envelope::verify_device_head(&signing_key.verifying_key(), &resolved[0])
+        .unwrap();
 }
 
 /// Asking to resolve a device that has never published a head on this
@@ -140,7 +144,10 @@ pub async fn anti_entropy_repairs_a_missing_object_between_two_instances(
     let bytes = b"conformance: anti-entropy repair".to_vec();
     let cid = Cid::for_bytes(&bytes);
     source.put_object(&cid, &bytes).await.unwrap();
-    assert_eq!(target.get_object(&cid).await, Err(crate::TransportError::NotFound));
+    assert_eq!(
+        target.get_object(&cid).await,
+        Err(crate::TransportError::NotFound)
+    );
 
     let repaired = source.get_object(&cid).await.unwrap();
     target.put_object(&cid, &repaired).await.unwrap();

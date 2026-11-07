@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    CreateLabelRequest, Label, MailboxUnreadCounts, SearchThreadsRequest, Thread, ThreadDetail,
-    OpenPromise, ThreadMutation, ThreadPage, TodayMailPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
+    CreateLabelRequest, Label, MailboxUnreadCounts, OpenPromise, SearchThreadsRequest, Thread,
+    ThreadDetail, ThreadMutation, ThreadPage, TodayMailPage, TriageEvent, TriageSenderStats,
+    UpdateLabelRequest,
 };
 use crate::sync::SyncService;
 use tauri::State;
@@ -15,7 +16,9 @@ use crate::{resolve_account, run_database_task, sync_services, AppError, AppResu
 /// Accounts currently checking for mail, for a frontend that mounted after
 /// their `mail-sync-activity` start event fired.
 #[tauri::command]
-pub(crate) async fn mail_sync_activity(activity: State<'_, sync::SyncActivity>) -> AppResult<Vec<String>> {
+pub(crate) async fn mail_sync_activity(
+    activity: State<'_, sync::SyncActivity>,
+) -> AppResult<Vec<String>> {
     Ok(activity.active_accounts())
 }
 
@@ -24,7 +27,10 @@ pub(crate) async fn correspondence_request(
     request: correspondence::Request,
     state: State<'_, AppState>,
 ) -> AppResult<serde_json::Value> {
-    state.correspondence.request(request).await
+    state
+        .correspondence
+        .request(request)
+        .await
         .map_err(AppError::from)
 }
 
@@ -32,14 +38,20 @@ pub(crate) async fn correspondence_request(
 const EXIT_UNDO_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 
 #[tauri::command]
-pub(crate) async fn finish_exit(app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<()> {
+pub(crate) async fn finish_exit(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
     // Give pending undo windows time to complete while keeping the UI responsive.
     while state.database.pending_undo()? {
         tokio::time::sleep(EXIT_UNDO_POLL_INTERVAL).await;
     }
     // Give drafts a bounded chance to reach the server; they stay saved here.
     state.correspondence.push_drafts_before_exit().await;
-    crate::log_failure("stopping delegated work before exit", state.agent_runner.shutdown().await);
+    crate::log_failure(
+        "stopping delegated work before exit",
+        state.agent_runner.shutdown().await,
+    );
     // Do not terminate while a provider request is awaiting acknowledgement.
     let _send_guard = state.correspondence.gate.lock().await;
     state
@@ -59,33 +71,53 @@ pub(crate) async fn list_threads(
 }
 
 #[tauri::command]
-pub(crate) async fn snooze_threads(ids: Vec<String>, until: String, state: State<'_, AppState>) -> AppResult<Vec<crate::db::snoozes::ConversationSnooze>> {
+pub(crate) async fn snooze_threads(
+    ids: Vec<String>,
+    until: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::db::snoozes::ConversationSnooze>> {
     let database = state.database.clone();
     run_database_task(move || database.snooze_threads(&ids, &until)).await
 }
 
 #[tauri::command]
-pub(crate) async fn return_snoozed_threads(ids: Vec<String>, state: State<'_, AppState>) -> AppResult<()> {
+pub(crate) async fn return_snoozed_threads(
+    ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
     let database = state.database.clone();
     run_database_task(move || database.return_snoozed_threads(&ids)).await
 }
 
 #[tauri::command]
-pub(crate) async fn restore_snoozes(records: Vec<crate::db::snoozes::ConversationSnooze>, archived_ids: Vec<String>, state: State<'_, AppState>) -> AppResult<()> {
+pub(crate) async fn restore_snoozes(
+    records: Vec<crate::db::snoozes::ConversationSnooze>,
+    archived_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
     let database = state.database.clone();
     run_database_task(move || database.restore_snoozes(&records, &archived_ids)).await
 }
 
 #[tauri::command]
-pub(crate) async fn list_snooze_records(account_id: Option<String>, state: State<'_, AppState>) -> AppResult<Vec<crate::db::snoozes::ConversationSnooze>> {
+pub(crate) async fn list_snooze_records(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::db::snoozes::ConversationSnooze>> {
     let database = state.database.clone();
     run_database_task(move || database.list_snooze_records(account_id.as_deref())).await
 }
 
 #[tauri::command]
-pub(crate) async fn list_snoozed_page(account_id: Option<String>, offset: usize, limit: usize, state: State<'_, AppState>) -> AppResult<ThreadPage> {
+pub(crate) async fn list_snoozed_page(
+    account_id: Option<String>,
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> AppResult<ThreadPage> {
     let database = state.database.clone();
-    run_database_task(move || database.list_snoozed_page(account_id.as_deref(), offset, limit)).await
+    run_database_task(move || database.list_snoozed_page(account_id.as_deref(), offset, limit))
+        .await
 }
 
 #[tauri::command]
@@ -107,9 +139,15 @@ pub(crate) async fn list_trash(
 }
 
 #[tauri::command]
-pub(crate) async fn list_starred_page(account_id: Option<String>, offset: usize, limit: usize, state: State<'_, AppState>) -> AppResult<ThreadPage> {
+pub(crate) async fn list_starred_page(
+    account_id: Option<String>,
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> AppResult<ThreadPage> {
     let database = state.database.clone();
-    run_database_task(move || database.list_starred_page(account_id.as_deref(), offset, limit)).await
+    run_database_task(move || database.list_starred_page(account_id.as_deref(), offset, limit))
+        .await
 }
 
 #[tauri::command]
@@ -120,11 +158,14 @@ pub(crate) async fn list_threads_page(
     state: State<'_, AppState>,
 ) -> AppResult<ThreadPage> {
     let database = state.database.clone();
-    run_database_task(move || database.list_threads_page(account_id.as_deref(), offset, limit)).await
+    run_database_task(move || database.list_threads_page(account_id.as_deref(), offset, limit))
+        .await
 }
 
 #[tauri::command]
-pub(crate) async fn list_unread_counts(state: State<'_, AppState>) -> AppResult<HashMap<String, i64>> {
+pub(crate) async fn list_unread_counts(
+    state: State<'_, AppState>,
+) -> AppResult<HashMap<String, i64>> {
     let database = state.database.clone();
     run_database_task(move || database.list_unread_counts()).await
 }
@@ -147,7 +188,8 @@ pub(crate) async fn list_open_promises(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<OpenPromise>> {
     let database = state.database.clone();
-    let since = (chrono::Utc::now() - chrono::Duration::days(crate::db::PROMISE_LOOKBACK_DAYS)).to_rfc3339();
+    let since = (chrono::Utc::now() - chrono::Duration::days(crate::db::PROMISE_LOOKBACK_DAYS))
+        .to_rfc3339();
     run_database_task(move || database.list_open_promises(account_id.as_deref(), &since)).await
 }
 
@@ -168,7 +210,8 @@ pub(crate) async fn list_all_mail_page(
     state: State<'_, AppState>,
 ) -> AppResult<ThreadPage> {
     let database = state.database.clone();
-    run_database_task(move || database.list_all_mail_page(account_id.as_deref(), offset, limit)).await
+    run_database_task(move || database.list_all_mail_page(account_id.as_deref(), offset, limit))
+        .await
 }
 
 #[tauri::command]
@@ -246,7 +289,10 @@ pub(crate) async fn backfill_search_threads(
 }
 
 #[tauri::command]
-pub(crate) async fn mutate_thread(mutation: ThreadMutation, state: State<'_, AppState>) -> AppResult<()> {
+pub(crate) async fn mutate_thread(
+    mutation: ThreadMutation,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
     let database = state.database.clone();
     run_database_task(move || database.mutate_thread(&mutation)).await
 }
@@ -261,7 +307,10 @@ pub(crate) async fn mutate_threads(
 }
 
 #[tauri::command]
-pub(crate) async fn record_triage_event(event: TriageEvent, state: State<'_, AppState>) -> AppResult<()> {
+pub(crate) async fn record_triage_event(
+    event: TriageEvent,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
     let database = state.database.clone();
     run_database_task(move || database.record_triage_event(&event)).await
 }
@@ -273,7 +322,8 @@ pub(crate) async fn list_triage_sender_stats(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<TriageSenderStats>> {
     let database = state.database.clone();
-    run_database_task(move || database.list_triage_sender_stats(&account_id, limit.unwrap_or(100))).await
+    run_database_task(move || database.list_triage_sender_stats(&account_id, limit.unwrap_or(100)))
+        .await
 }
 
 #[tauri::command]
@@ -329,7 +379,10 @@ pub(crate) async fn list_labels(
         Some(id) => id.to_string(),
         None => state.database.primary_account_id(),
     };
-    let auth = resolve_account(&state, account_id.as_deref(), |account| account.auth.clone()).await?;
+    let auth = resolve_account(&state, account_id.as_deref(), |account| {
+        account.auth.clone()
+    })
+    .await?;
 
     let labels = auth
         .provider(&state.database)
@@ -391,6 +444,7 @@ async fn resolve_sync(
     state: &State<'_, AppState>,
     account_id: Option<&str>,
 ) -> AppResult<SyncService> {
-    resolve_account(state, account_id, |account| account.sync.clone()).await
+    resolve_account(state, account_id, |account| account.sync.clone())
+        .await
         .map_err(AppError::from)
 }

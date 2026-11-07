@@ -30,7 +30,9 @@ impl ImapSessionSource for CountingSource {
             .login("user", "password")
             .await
             .map_err(|(error, _)| super::super::super::error::map_imap_error(&error))?;
-        Ok(Box::new(super::super::super::session::AsyncImapSession::new(session)))
+        Ok(Box::new(
+            super::super::super::session::AsyncImapSession::new(session),
+        ))
     }
 }
 
@@ -71,10 +73,30 @@ fn multi_mailbox() -> FakeMailbox {
     let mut mb = FakeMailbox::new(100);
     mb.add(&["\\Seen"], &message("<inbox-old@x>", "old inbox hit", ""));
     mb.add(&["\\Seen"], &message("<inbox-new@x>", "new inbox hit", ""));
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<arch-old@x>", "old archive hit", ""));
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<arch-new@x>", "new archive hit", ""));
-    mb.add_to("Sent", 70, &["\\Seen"], &message("<sent-old@x>", "old sent hit", ""));
-    mb.add_to("Sent", 70, &["\\Seen"], &message("<sent-new@x>", "new sent hit", ""));
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<arch-old@x>", "old archive hit", ""),
+    );
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<arch-new@x>", "new archive hit", ""),
+    );
+    mb.add_to(
+        "Sent",
+        70,
+        &["\\Seen"],
+        &message("<sent-old@x>", "old sent hit", ""),
+    );
+    mb.add_to(
+        "Sent",
+        70,
+        &["\\Seen"],
+        &message("<sent-new@x>", "new sent hit", ""),
+    );
     mb
 }
 
@@ -88,8 +110,18 @@ fn multi_mailbox() -> FakeMailbox {
 #[tokio::test]
 async fn the_backfill_path_ingests_an_old_hit_into_the_engine_thread_list() {
     let mut mb = FakeMailbox::new(100);
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "old one", ""));
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "new two", ""));
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<a1@x>", "old one", ""),
+    );
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<a2@x>", "new two", ""),
+    );
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store, _opens) = counting_provider(mailbox);
     let db = store.database();
@@ -110,18 +142,33 @@ async fn the_backfill_path_ingests_an_old_hit_into_the_engine_thread_list() {
     .await
     .expect("backfill search");
 
-    let page = provider.search("in:archive subject:old", None).await.unwrap();
+    let page = provider
+        .search("in:archive subject:old", None)
+        .await
+        .unwrap();
     let after = db.local_provider_thread_ids("me@example.com").unwrap();
     let old_thread = store
         .thread_of_message(
-            &store.location_message_id("Archive", 50, 1).unwrap().expect("uid 1 located"),
+            &store
+                .location_message_id("Archive", 50, 1)
+                .unwrap()
+                .expect("uid 1 located"),
         )
         .unwrap()
         .expect("uid 1 threaded");
     let old_thread = store.resolve_thread_alias(&old_thread).unwrap();
-    assert!(page.thread_ids.contains(&old_thread), "search returns the old hit");
-    assert!(!before.contains(&old_thread), "the old hit was not in the engine before");
-    assert!(after.contains(&old_thread), "the backfill put it in the engine thread list");
+    assert!(
+        page.thread_ids.contains(&old_thread),
+        "search returns the old hit"
+    );
+    assert!(
+        !before.contains(&old_thread),
+        "the old hit was not in the engine before"
+    );
+    assert!(
+        after.contains(&old_thread),
+        "the backfill put it in the engine thread list"
+    );
 }
 
 #[tokio::test]
@@ -131,9 +178,24 @@ async fn an_old_out_of_window_hit_is_returned_pinned_and_survives_a_sync() {
     // driver acquires + pins them, so the OLD uid 1 comes back and
     // survives the next sweep.
     let mut mb = FakeMailbox::new(100);
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "old one", ""));
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "old two", ""));
-    mb.add_to("Archive", 50, &["\\Seen"], &message("<a3@x>", "new three", ""));
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<a1@x>", "old one", ""),
+    );
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<a2@x>", "old two", ""),
+    );
+    mb.add_to(
+        "Archive",
+        50,
+        &["\\Seen"],
+        &message("<a3@x>", "new three", ""),
+    );
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store, opens) = counting_provider(mailbox);
     let db = store.database();
@@ -149,7 +211,11 @@ async fn an_old_out_of_window_hit_is_returned_pinned_and_survives_a_sync() {
     // uid 1 (the oldest, out of window) is pinned and located.
     assert!(store.is_pinned("Archive", 50, 1).unwrap(), "old uid pinned");
     assert!(
-        store.locations_in_mailbox("Archive").unwrap().iter().any(|l| l.uid == 1),
+        store
+            .locations_in_mailbox("Archive")
+            .unwrap()
+            .iter()
+            .any(|l| l.uid == 1),
         "old uid located"
     );
     let hit_thread = result.thread_ids[0].clone();
@@ -159,7 +225,11 @@ async fn an_old_out_of_window_hit_is_returned_pinned_and_survives_a_sync() {
         .await
         .unwrap();
     assert!(
-        store.locations_in_mailbox("Archive").unwrap().iter().any(|l| l.uid == 1),
+        store
+            .locations_in_mailbox("Archive")
+            .unwrap()
+            .iter()
+            .any(|l| l.uid == 1),
         "pinned old hit survives a sync"
     );
     assert!(
@@ -178,8 +248,14 @@ async fn hits_across_three_mailboxes_are_newest_first_and_deduped() {
     // Default set is INBOX, Archive, Sent (plan order). from:x matches
     // all (the fake returns every uid), so each mailbox contributes its
     // two messages, newest-UID-first within a mailbox.
-    let result = provider.search_detailed("from:someone", None).await.expect("search");
-    assert_eq!(plan_mailboxes_default(&provider), vec!["INBOX", "Archive", "Sent"]);
+    let result = provider
+        .search_detailed("from:someone", None)
+        .await
+        .expect("search");
+    assert_eq!(
+        plan_mailboxes_default(&provider),
+        vec!["INBOX", "Archive", "Sent"]
+    );
     assert_eq!(result.partial, None);
     // Six distinct threads, newest-first within each mailbox, mailboxes
     // in plan order: INBOX(new,old), Archive(new,old), Sent(new,old).
@@ -204,7 +280,11 @@ async fn hits_across_three_mailboxes_are_newest_first_and_deduped() {
     let mut sorted = result.thread_ids.clone();
     sorted.sort();
     sorted.dedup();
-    assert_eq!(sorted.len(), result.thread_ids.len(), "no duplicate thread ids");
+    assert_eq!(
+        sorted.len(),
+        result.thread_ids.len(),
+        "no duplicate thread ids"
+    );
 }
 
 #[tokio::test]
@@ -215,12 +295,23 @@ async fn two_hits_sharing_a_thread_are_returned_once() {
     mb.add(&["\\Seen"], &message("<p@x>", "parent", ""));
     mb.add(
         &["\\Seen"],
-        &message("<r@x>", "Re: parent", "In-Reply-To: <p@x>\r\nReferences: <p@x>\r\n"),
+        &message(
+            "<r@x>",
+            "Re: parent",
+            "In-Reply-To: <p@x>\r\nReferences: <p@x>\r\n",
+        ),
     );
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, _store, _opens) = counting_provider(mailbox);
-    let result = provider.search_detailed("in:inbox subject:parent", None).await.unwrap();
-    assert_eq!(result.thread_ids.len(), 1, "a reply and its parent are one thread");
+    let result = provider
+        .search_detailed("in:inbox subject:parent", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.thread_ids.len(),
+        1,
+        "a reply and its parent are one thread"
+    );
 }
 
 // --- 3) budget below / exact / above -----------------------------------
@@ -233,7 +324,12 @@ async fn the_acquire_budget_is_enforced_below_exact_and_above() {
     let build = |count: usize| {
         let mut mb = FakeMailbox::new(100);
         for i in 0..count {
-            mb.add_to("Archive", 50, &["\\Seen"], &message(&format!("<a{i}@x>"), &format!("m{i}"), ""));
+            mb.add_to(
+                "Archive",
+                50,
+                &["\\Seen"],
+                &message(&format!("<a{i}@x>"), &format!("m{i}"), ""),
+            );
         }
         Arc::new(Mutex::new(mb))
     };
@@ -253,8 +349,15 @@ async fn the_acquire_budget_is_enforced_below_exact_and_above() {
     // Above the budget: capped to the budget, reported partial.
     let (p, _s, _o) = counting_provider(build(MAX_SEARCH_ACQUIRE + 5));
     let above = p.search_detailed("in:archive from:a", None).await.unwrap();
-    assert_eq!(above.thread_ids.len(), MAX_SEARCH_ACQUIRE, "capped at the budget");
-    assert_eq!(above.partial, Some(super::super::PartialReason::BudgetReached));
+    assert_eq!(
+        above.thread_ids.len(),
+        MAX_SEARCH_ACQUIRE,
+        "capped at the budget"
+    );
+    assert_eq!(
+        above.partial,
+        Some(super::super::PartialReason::BudgetReached)
+    );
 }
 
 // --- 4) deadline: an expired deadline after the first mailbox returns
@@ -276,18 +379,27 @@ async fn an_expired_deadline_after_the_first_mailbox_returns_partial() {
     // but-partial shape; a positive-but-tiny budget is covered by the
     // live path. Here we prove the PARTIAL path fires and names counts.
     provider.search_deadline_override = Some(std::time::Duration::ZERO);
-    let result = provider.search_detailed("from:someone", None).await.unwrap();
+    let result = provider
+        .search_detailed("from:someone", None)
+        .await
+        .unwrap();
     match result.partial {
         Some(super::super::PartialReason::DeadlineExpired {
             mailboxes_searched,
             mailboxes_planned,
         }) => {
             assert_eq!(mailboxes_planned, 3, "INBOX, Archive, Sent planned");
-            assert_eq!(mailboxes_searched, 0, "the zero deadline stopped before mailbox 1");
+            assert_eq!(
+                mailboxes_searched, 0,
+                "the zero deadline stopped before mailbox 1"
+            );
         }
         other => panic!("expected DeadlineExpired, got {other:?}"),
     }
-    assert!(result.thread_ids.is_empty(), "nothing acquired past the deadline");
+    assert!(
+        result.thread_ids.is_empty(),
+        "nothing acquired past the deadline"
+    );
     // Nothing was pinned (no acquire ran).
     assert_eq!(store.search_pin_count().unwrap(), 0);
 }
@@ -387,11 +499,21 @@ async fn a_skipped_query_makes_no_network_call_and_returns_empty() {
     let mailbox = Arc::new(Mutex::new(multi_mailbox()));
     let (provider, _store, opens) = counting_provider(mailbox);
     // `category:promotions` is an unknown operator -> Raw -> Skipped by the renderer.
-    let result = provider.search_detailed("category:promotions", None).await.unwrap();
+    let result = provider
+        .search_detailed("category:promotions", None)
+        .await
+        .unwrap();
     assert!(result.thread_ids.is_empty());
-    assert!(result.skipped.is_some(), "carries the skip reason for the UI");
+    assert!(
+        result.skipped.is_some(),
+        "carries the skip reason for the UI"
+    );
     assert_eq!(result.partial, None);
-    assert_eq!(opens.load(Ordering::SeqCst), 0, "no session opened for a Skipped render");
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        0,
+        "no session opened for a Skipped render"
+    );
     // The MailSync wrapper returns the same empty page, next: None.
     let page = provider.search("category:promotions", None).await.unwrap();
     assert!(page.thread_ids.is_empty());
@@ -403,10 +525,17 @@ async fn a_no_server_matches_query_makes_no_network_call_and_returns_empty() {
     let mailbox = Arc::new(Mutex::new(multi_mailbox()));
     let (provider, _store, opens) = counting_provider(mailbox);
     // in:nowhere is an unknown mailbox -> NoServerMatches.
-    let result = provider.search_detailed("in:nowhere from:a", None).await.unwrap();
+    let result = provider
+        .search_detailed("in:nowhere from:a", None)
+        .await
+        .unwrap();
     assert!(result.thread_ids.is_empty());
     assert!(result.no_matches.is_some());
-    assert_eq!(opens.load(Ordering::SeqCst), 0, "no session opened for a no-match render");
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        0,
+        "no session opened for a no-match render"
+    );
 }
 
 // --- 6) an unsynced planned mailbox is skipped + reported, others run --
@@ -433,9 +562,16 @@ async fn an_unsynced_mailbox_is_skipped_and_reported_others_still_run() {
         local_filters: Vec::new(),
     };
     let result = provider.run_search_plan(&plan, search_plan).await.unwrap();
-    assert_eq!(result.unsynced_mailboxes, vec!["Archive"], "Archive reported unsynced");
+    assert_eq!(
+        result.unsynced_mailboxes,
+        vec!["Archive"],
+        "Archive reported unsynced"
+    );
     // INBOX and Sent still produced hits; Archive contributed none.
-    assert!(!result.thread_ids.is_empty(), "the synced mailboxes still run");
+    assert!(
+        !result.thread_ids.is_empty(),
+        "the synced mailboxes still run"
+    );
     assert!(
         store.locations_in_mailbox("Archive").unwrap().is_empty(),
         "nothing acquired in the unsynced mailbox"
@@ -469,7 +605,11 @@ async fn has_attachment_filters_the_returned_threads_but_keeps_them_pinned() {
         .search_detailed("in:inbox has:attachment from:a", None)
         .await
         .unwrap();
-    assert_eq!(result.thread_ids.len(), 1, "only the attachment thread is returned");
+    assert_eq!(
+        result.thread_ids.len(),
+        1,
+        "only the attachment thread is returned"
+    );
     assert_eq!(subject_of(&store, &result.thread_ids[0]), "has attachment");
     // BOTH were acquired + pinned (the filtered-out one stays pinned).
     assert_eq!(
@@ -491,7 +631,10 @@ async fn a_server_error_on_the_second_mailbox_returns_partial_with_the_first() {
     mb.folder("Archive", 50).examine_fails = true;
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, _store, _opens) = counting_provider(mailbox);
-    let result = provider.search_detailed("from:someone", None).await.unwrap();
+    let result = provider
+        .search_detailed("from:someone", None)
+        .await
+        .unwrap();
     assert!(
         !result.thread_ids.is_empty(),
         "INBOX hits acquired before the failing mailbox are returned"
@@ -522,7 +665,12 @@ async fn acquire_uidvalidity_mismatch_is_a_clean_skip_not_a_wrong_ingest() {
     let mailbox = Arc::new(Mutex::new(mb));
     let (provider, store, _opens) = counting_provider(mailbox.clone());
     let plan = provider.build_sync_plan().unwrap();
-    let archive = plan.entries.iter().find(|e| e.mailbox == "Archive").unwrap().clone();
+    let archive = plan
+        .entries
+        .iter()
+        .find(|e| e.mailbox == "Archive")
+        .unwrap()
+        .clone();
     let snapshot = mailbox.lock().unwrap().clone();
     let mut session = open_scripted_session(snapshot).await;
     // Expect the WRONG incarnation (server reports 50): a clean error,
@@ -532,7 +680,10 @@ async fn acquire_uidvalidity_mismatch_is_a_clean_skip_not_a_wrong_ingest() {
         .await
         .expect_err("mismatch must error");
     let _ = session.logout().await;
-    assert!(matches!(err, super::super::AcquireError::UidValidityMismatch { .. }));
+    assert!(matches!(
+        err,
+        super::super::AcquireError::UidValidityMismatch { .. }
+    ));
     assert!(
         store.locations_in_mailbox("Archive").unwrap().is_empty(),
         "nothing ingested under the wrong incarnation"
@@ -640,7 +791,10 @@ mod report_mapping {
             .await
             .unwrap();
         assert!(page.thread_ids.is_empty());
-        assert_eq!(report.server_searched_accounts, 0, "nothing reached the server");
+        assert_eq!(
+            report.server_searched_accounts, 0,
+            "nothing reached the server"
+        );
         assert_eq!(
             report.status,
             SearchReportStatus::Skipped {
@@ -678,8 +832,10 @@ mod report_mapping {
         let mailbox = Arc::new(Mutex::new(multi_mailbox()));
         let (mut provider, _store, _opens) = counting_provider(mailbox);
         provider.search_deadline_override = Some(std::time::Duration::ZERO);
-        let (_page, report) =
-            provider.search_with_report("from:someone", None).await.unwrap();
+        let (_page, report) = provider
+            .search_with_report("from:someone", None)
+            .await
+            .unwrap();
         assert_eq!(
             report.status,
             SearchReportStatus::Partial {
@@ -702,8 +858,10 @@ mod report_mapping {
             );
         }
         let (provider, _store, _opens) = counting_provider(Arc::new(Mutex::new(mb)));
-        let (_page, report) =
-            provider.search_with_report("in:archive from:a", None).await.unwrap();
+        let (_page, report) = provider
+            .search_with_report("in:archive from:a", None)
+            .await
+            .unwrap();
         assert_eq!(
             report.status,
             SearchReportStatus::Partial {
@@ -719,8 +877,10 @@ mod report_mapping {
         let mut mb = multi_mailbox();
         mb.folder("Archive", 50).examine_fails = true;
         let (provider, _store, _opens) = counting_provider(Arc::new(Mutex::new(mb)));
-        let (_page, report) =
-            provider.search_with_report("from:someone", None).await.unwrap();
+        let (_page, report) = provider
+            .search_with_report("from:someone", None)
+            .await
+            .unwrap();
         assert_eq!(
             report.status,
             SearchReportStatus::Partial {
@@ -749,7 +909,12 @@ mod report_mapping {
         let result = provider.run_search_plan(&plan, search_plan).await.unwrap();
         let report = imap_search_report(&result);
         assert_eq!(report.unsynced_mailboxes, 1, "Archive counted unsynced");
-        assert_eq!(report.status, SearchReportStatus::Partial { reasons: vec![crate::provider::PartialSearchReason::Budget] });
+        assert_eq!(
+            report.status,
+            SearchReportStatus::Partial {
+                reasons: vec![crate::provider::PartialSearchReason::Budget]
+            }
+        );
     }
 
     /// The report survives the whole backfill path:

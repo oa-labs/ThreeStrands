@@ -11,16 +11,19 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
 };
 use chrono::Utc;
-use threestrands_sync_envelope::os_rng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use threestrands_sync_envelope::os_rng;
 
 use crate::{
     ai::AiProvider,
     correspondence::validate_retention_days,
     db::Database,
     error_text::display,
-    models::{is_known_account_provider, Account, AvailabilityPreferences, Snippet, SplitInbox, ContactGroup, ContactProfile, KeepInTouch},
+    models::{
+        is_known_account_provider, Account, AvailabilityPreferences, ContactGroup, ContactProfile,
+        KeepInTouch, Snippet, SplitInbox,
+    },
 };
 
 const FORMAT: &str = "dispatch-settings";
@@ -39,8 +42,8 @@ const MAX_TEXT_LENGTH: usize = 2_048;
 /// Mirrors `CALENDAR_COLORS` in src/calendarColors.ts; only these ids may be
 /// stored, so an imported value never reaches an inline style as raw CSS.
 const CALENDAR_COLOR_IDS: [&str; 16] = [
-    "red", "coral", "orange", "amber", "yellow", "lime", "green", "teal",
-    "cyan", "sky", "blue", "indigo", "purple", "pink", "brown", "gray",
+    "red", "coral", "orange", "amber", "yellow", "lime", "green", "teal", "cyan", "sky", "blue",
+    "indigo", "purple", "pink", "brown", "gray",
 ];
 /// Total colored calendars across every account in one transfer.
 const MAX_CALENDAR_COLORS: usize = 2_000;
@@ -102,7 +105,10 @@ pub struct AvailabilityProfiles {
 impl Default for AvailabilityProfiles {
     fn default() -> Self {
         Self {
-            default_profile: AvailabilityProfileName { id: "default".to_string(), name: "Default".to_string() },
+            default_profile: AvailabilityProfileName {
+                id: "default".to_string(),
+                name: "Default".to_string(),
+            },
             other_profiles: Vec::new(),
             account_defaults: BTreeMap::new(),
         }
@@ -155,10 +161,16 @@ pub struct TransferPreferences {
     #[serde(default)]
     pub email_minimum_font_size: i64,
     // Added in 0.163; preceding exports import at 100% zoom.
-    #[serde(default = "default_email_zoom", skip_serializing_if = "is_default_email_zoom")]
+    #[serde(
+        default = "default_email_zoom",
+        skip_serializing_if = "is_default_email_zoom"
+    )]
     pub email_zoom: i64,
     // Added in 0.165; preceding exports import with the contrast floor on.
-    #[serde(default = "default_email_text_colors", skip_serializing_if = "is_default_email_text_colors")]
+    #[serde(
+        default = "default_email_text_colors",
+        skip_serializing_if = "is_default_email_text_colors"
+    )]
     pub email_text_colors: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub mark_read_on_archive: bool,
@@ -174,11 +186,17 @@ pub struct TransferPreferences {
     pub mark_read_on_snooze: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub snooze_returns_unread: bool,
-    #[serde(default = "default_after_triage", skip_serializing_if = "is_default_after_triage")]
+    #[serde(
+        default = "default_after_triage",
+        skip_serializing_if = "is_default_after_triage"
+    )]
     pub after_triage: String,
     pub auto_read_delay_seconds: i64,
     pub load_remote_images: bool,
-    #[serde(default = "default_show_starred_inbox", skip_serializing_if = "is_default_show_starred_inbox")]
+    #[serde(
+        default = "default_show_starred_inbox",
+        skip_serializing_if = "is_default_show_starred_inbox"
+    )]
     pub show_starred_inbox: bool,
     pub selected_account_id: Option<String>,
     pub ai_provider: AiProvider,
@@ -296,7 +314,10 @@ impl TransferPreferences {
             return Err("The transfer contains an invalid email zoom".to_string());
         }
         // Mirrors EMAIL_TEXT_COLORS in emailRenderingPolicy.ts.
-        if !matches!(self.email_text_colors.as_str(), "sender" | "contrast" | "app") {
+        if !matches!(
+            self.email_text_colors.as_str(),
+            "sender" | "contrast" | "app"
+        ) {
             return Err("The transfer contains an invalid email text color mode".to_string());
         }
         // Mirrors AFTER_TRIAGE_CHOICES in settings.ts.
@@ -320,10 +341,13 @@ impl TransferPreferences {
     }
 }
 
-fn validate_availability_profiles(profiles: &AvailabilityProfiles, shared: &AvailabilityPreferences) -> Result<(), String> {
+fn validate_availability_profiles(
+    profiles: &AvailabilityProfiles,
+    shared: &AvailabilityPreferences,
+) -> Result<(), String> {
     use crate::availability::{
-        MAX_AVAILABILITY_ACCOUNT_DEFAULTS, MAX_AVAILABILITY_PROFILES, MAX_AVAILABILITY_PROFILE_ID_CHARS,
-        MAX_AVAILABILITY_PROFILE_NAME_CHARS,
+        MAX_AVAILABILITY_ACCOUNT_DEFAULTS, MAX_AVAILABILITY_PROFILES,
+        MAX_AVAILABILITY_PROFILE_ID_CHARS, MAX_AVAILABILITY_PROFILE_NAME_CHARS,
     };
     let invalid = || "The transfer contains an invalid availability profile".to_string();
     if profiles.other_profiles.len() >= MAX_AVAILABILITY_PROFILES
@@ -332,16 +356,35 @@ fn validate_availability_profiles(profiles: &AvailabilityProfiles, shared: &Avai
         return Err(invalid());
     }
     let names = std::iter::once((&profiles.default_profile.id, &profiles.default_profile.name))
-        .chain(profiles.other_profiles.iter().map(|profile| (&profile.id, &profile.name)));
+        .chain(
+            profiles
+                .other_profiles
+                .iter()
+                .map(|profile| (&profile.id, &profile.name)),
+        );
     let mut ids = HashSet::new();
     let mut lowercase_names = HashSet::new();
     for (id, name) in names {
         // Names are shown as typed, so they arrive trimmed, and two profiles
         // can't share a name in any letter case.
-        validate_required_text("availability profile id", id, MAX_AVAILABILITY_PROFILE_ID_CHARS).map_err(|_| invalid())?;
+        validate_required_text(
+            "availability profile id",
+            id,
+            MAX_AVAILABILITY_PROFILE_ID_CHARS,
+        )
+        .map_err(|_| invalid())?;
         // The limit counts characters, as the name field does; a character is at most four bytes.
-        validate_required_text("availability profile name", name, MAX_AVAILABILITY_PROFILE_NAME_CHARS * 4).map_err(|_| invalid())?;
-        if name.chars().count() > MAX_AVAILABILITY_PROFILE_NAME_CHARS || name.trim() != name || !ids.insert(id.as_str()) || !lowercase_names.insert(name.to_lowercase()) {
+        validate_required_text(
+            "availability profile name",
+            name,
+            MAX_AVAILABILITY_PROFILE_NAME_CHARS * 4,
+        )
+        .map_err(|_| invalid())?;
+        if name.chars().count() > MAX_AVAILABILITY_PROFILE_NAME_CHARS
+            || name.trim() != name
+            || !ids.insert(id.as_str())
+            || !lowercase_names.insert(name.to_lowercase())
+        {
             return Err(invalid());
         }
     }
@@ -356,8 +399,18 @@ fn validate_availability_profiles(profiles: &AvailabilityProfiles, shared: &Avai
         .map_err(|_| invalid())?;
     }
     for (account, id) in &profiles.account_defaults {
-        validate_required_text("availability profile account", account, MAX_WRITING_PROFILE_ACCOUNT_LENGTH).map_err(|_| invalid())?;
-        if *account != account.to_lowercase() || !profiles.other_profiles.iter().any(|profile| profile.id == *id) {
+        validate_required_text(
+            "availability profile account",
+            account,
+            MAX_WRITING_PROFILE_ACCOUNT_LENGTH,
+        )
+        .map_err(|_| invalid())?;
+        if *account != account.to_lowercase()
+            || !profiles
+                .other_profiles
+                .iter()
+                .any(|profile| profile.id == *id)
+        {
             return Err(invalid());
         }
     }
@@ -370,22 +423,36 @@ fn validate_writing_profiles(profiles: &WritingProfiles) -> Result<(), String> {
         return Err(invalid());
     }
     for (account, profile) in profiles {
-        validate_required_text("writing profile account", account, MAX_WRITING_PROFILE_ACCOUNT_LENGTH).map_err(|_| invalid())?;
+        validate_required_text(
+            "writing profile account",
+            account,
+            MAX_WRITING_PROFILE_ACCOUNT_LENGTH,
+        )
+        .map_err(|_| invalid())?;
         // Keys are lowercased so one account cannot carry two profiles, and a
         // profile with nothing in it is not stored.
         if *account != account.to_lowercase()
-            || (profile.about_you.trim().is_empty() && profile.review_instructions.trim().is_empty())
+            || (profile.about_you.trim().is_empty()
+                && profile.review_instructions.trim().is_empty())
         {
             return Err(invalid());
         }
         for (text, limit) in [
-            (&profile.about_you, crate::ai::MAX_WRITING_PROFILE_ABOUT_CHARS),
-            (&profile.review_instructions, crate::ai::MAX_WRITING_PROFILE_INSTRUCTIONS_CHARS),
+            (
+                &profile.about_you,
+                crate::ai::MAX_WRITING_PROFILE_ABOUT_CHARS,
+            ),
+            (
+                &profile.review_instructions,
+                crate::ai::MAX_WRITING_PROFILE_INSTRUCTIONS_CHARS,
+            ),
         ] {
             // Multi-line text: the limit counts characters, as Draft Review
             // does, and line breaks and tabs are the only control characters.
             if text.chars().count() > limit
-                || text.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
+                || text
+                    .chars()
+                    .any(|c| c.is_control() && c != '\n' && c != '\t')
             {
                 return Err(invalid());
             }
@@ -400,12 +467,14 @@ fn validate_calendar_colors(colors: &CalendarColors) -> Result<(), String> {
         return Err(invalid());
     }
     for (account_id, calendars) in colors {
-        validate_required_text("calendar account", account_id, MAX_CALENDAR_ACCOUNT_LENGTH).map_err(|_| invalid())?;
+        validate_required_text("calendar account", account_id, MAX_CALENDAR_ACCOUNT_LENGTH)
+            .map_err(|_| invalid())?;
         if calendars.is_empty() {
             return Err(invalid());
         }
         for (calendar_id, color_id) in calendars {
-            validate_required_text("calendar", calendar_id, MAX_CALENDAR_ID_LENGTH).map_err(|_| invalid())?;
+            validate_required_text("calendar", calendar_id, MAX_CALENDAR_ID_LENGTH)
+                .map_err(|_| invalid())?;
             if !CALENDAR_COLOR_IDS.contains(&color_id.as_str()) {
                 return Err(invalid());
             }
@@ -515,19 +584,42 @@ impl From<Snippet> for TransferSnippet {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TransferContact {
-    pub id:String,
-    pub display_name:Option<String>, pub role:Option<String>, pub company:Option<String>,
-    pub location:Option<String>, pub bio:Option<String>, pub notes:Option<String>,
-    pub links:Vec<String>, pub photo_data:Option<String>, pub favorite:bool, pub addresses:Vec<String>,
+    pub id: String,
+    pub display_name: Option<String>,
+    pub role: Option<String>,
+    pub company: Option<String>,
+    pub location: Option<String>,
+    pub bio: Option<String>,
+    pub notes: Option<String>,
+    pub links: Vec<String>,
+    pub photo_data: Option<String>,
+    pub favorite: bool,
+    pub addresses: Vec<String>,
     /// Added in 0.67.0; earlier exports omit it.
     #[serde(default)]
-    pub birthday:Option<String>,
+    pub birthday: Option<String>,
     /// Added in 0.67.0; earlier exports omit it and import with reminders off.
     #[serde(default)]
-    pub keep_in_touch:TransferKeepInTouch,
+    pub keep_in_touch: TransferKeepInTouch,
 }
 impl From<ContactProfile> for TransferContact {
-    fn from(c:ContactProfile)->Self { Self{id:c.id,display_name:c.display_name,role:c.role,company:c.company,location:c.location,bio:c.bio,notes:c.notes,links:c.links,photo_data:c.photo_data,favorite:c.favorite,addresses:c.addresses,birthday:c.birthday,keep_in_touch:c.keep_in_touch.into()} }
+    fn from(c: ContactProfile) -> Self {
+        Self {
+            id: c.id,
+            display_name: c.display_name,
+            role: c.role,
+            company: c.company,
+            location: c.location,
+            bio: c.bio,
+            notes: c.notes,
+            links: c.links,
+            photo_data: c.photo_data,
+            favorite: c.favorite,
+            addresses: c.addresses,
+            birthday: c.birthday,
+            keep_in_touch: c.keep_in_touch.into(),
+        }
+    }
 }
 
 /// The export's copy of [`KeepInTouch`]. Kept separate so the transfer can
@@ -535,17 +627,33 @@ impl From<ContactProfile> for TransferContact {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 pub(crate) struct TransferKeepInTouch {
-    pub interval_days:Option<i64>,
-    pub started_at:Option<String>,
-    pub snoozed_until:Option<String>,
-    pub snoozed_at:Option<String>,
-    pub last_touch_at:Option<String>,
+    pub interval_days: Option<i64>,
+    pub started_at: Option<String>,
+    pub snoozed_until: Option<String>,
+    pub snoozed_at: Option<String>,
+    pub last_touch_at: Option<String>,
 }
 impl From<KeepInTouch> for TransferKeepInTouch {
-    fn from(k:KeepInTouch)->Self { Self{interval_days:k.interval_days,started_at:k.started_at,snoozed_until:k.snoozed_until,snoozed_at:k.snoozed_at,last_touch_at:k.last_touch_at} }
+    fn from(k: KeepInTouch) -> Self {
+        Self {
+            interval_days: k.interval_days,
+            started_at: k.started_at,
+            snoozed_until: k.snoozed_until,
+            snoozed_at: k.snoozed_at,
+            last_touch_at: k.last_touch_at,
+        }
+    }
 }
 impl From<&TransferKeepInTouch> for KeepInTouch {
-    fn from(k:&TransferKeepInTouch)->Self { Self{interval_days:k.interval_days,started_at:k.started_at.clone(),snoozed_until:k.snoozed_until.clone(),snoozed_at:k.snoozed_at.clone(),last_touch_at:k.last_touch_at.clone()} }
+    fn from(k: &TransferKeepInTouch) -> Self {
+        Self {
+            interval_days: k.interval_days,
+            started_at: k.started_at.clone(),
+            snoozed_until: k.snoozed_until.clone(),
+            snoozed_at: k.snoozed_at.clone(),
+            last_touch_at: k.last_touch_at.clone(),
+        }
+    }
 }
 
 /// A contact group in the export. Members are contact ids from the same
@@ -560,7 +668,12 @@ pub(crate) struct TransferContactGroup {
 }
 impl From<ContactGroup> for TransferContactGroup {
     fn from(group: ContactGroup) -> Self {
-        Self { id: group.id, name: group.name, member_ids: group.member_ids, created_at: group.created_at }
+        Self {
+            id: group.id,
+            name: group.name,
+            member_ids: group.member_ids,
+            created_at: group.created_at,
+        }
     }
 }
 
@@ -629,7 +742,9 @@ impl TransferPayload {
             return Err(format!("Unsupported transfer version {}", self.version));
         }
         self.preferences.validate()?;
-        if let Some(library) = &self.signatures { library.validate()?; }
+        if let Some(library) = &self.signatures {
+            library.validate()?;
+        }
         validate_retention_days(self.retention_days)
             .map_err(|_| "The transfer contains an invalid retention period".to_string())?;
         let mut account_emails = HashSet::new();
@@ -645,7 +760,10 @@ impl TransferPayload {
                 validate_required_text("account display name", name, 200)?;
             }
             if let Some(nickname) = &account.nickname {
-                if nickname.trim().is_empty() || nickname.chars().count() > 200 || nickname.chars().any(char::is_control) {
+                if nickname.trim().is_empty()
+                    || nickname.chars().count() > 200
+                    || nickname.chars().any(char::is_control)
+                {
                     return Err("The transfer contains an invalid account nickname".to_string());
                 }
             }
@@ -700,20 +818,60 @@ impl TransferPayload {
                 return Err("The transfer contains an invalid Snippet body".to_string());
             }
         }
-        let mut contact_ids=HashSet::new();
-        let mut addresses=HashSet::new();
+        let mut contact_ids = HashSet::new();
+        let mut addresses = HashSet::new();
         for contact in &self.contacts {
-            validate_required_text("contact id",&contact.id,128)?;
-            if !contact_ids.insert(&contact.id) || contact.addresses.is_empty() || contact.addresses.len()>100 {return Err("The transfer contains an invalid contact".into())}
-            for email in &contact.addresses {validate_required_text("contact email",email,320)?; if !email.contains('@') || !addresses.insert(email.to_ascii_lowercase()){return Err("The transfer contains a duplicate or invalid contact address".into())}}
-            for (name,value,max) in [("display name",&contact.display_name,200),("role",&contact.role,200),("company",&contact.company,200),("location",&contact.location,200),("bio",&contact.bio,4000),("notes",&contact.notes,8000)] {if let Some(value)=value {validate_required_text(name,value,max)?;}}
-            if contact.links.len()>20 || contact.links.iter().any(|link| {
-                if link.len()>2048 { return true; }
-                match url::Url::parse(link) { Ok(url)=>url.scheme()!="https"||url.host_str().is_none(), Err(_)=>true }
-            }){return Err("The transfer contains an invalid contact link".into())}
-            crate::db::contacts::normalize_birthday(contact.birthday.as_deref()).map_err(|_|"The transfer contains an invalid contact birthday")?;
-            crate::db::contacts::validate_keep_in_touch(&KeepInTouch::from(&contact.keep_in_touch)).map_err(|_|"The transfer contains invalid keep-in-touch settings")?;
-            if let Some(photo)=&contact.photo_data {use base64::{engine::general_purpose::STANDARD,Engine};let bytes=STANDARD.decode(photo).map_err(|_|"The transfer contains an invalid contact photo")?;crate::image_format::validate_contact_photo(&bytes)?;}
+            validate_required_text("contact id", &contact.id, 128)?;
+            if !contact_ids.insert(&contact.id)
+                || contact.addresses.is_empty()
+                || contact.addresses.len() > 100
+            {
+                return Err("The transfer contains an invalid contact".into());
+            }
+            for email in &contact.addresses {
+                validate_required_text("contact email", email, 320)?;
+                if !email.contains('@') || !addresses.insert(email.to_ascii_lowercase()) {
+                    return Err(
+                        "The transfer contains a duplicate or invalid contact address".into(),
+                    );
+                }
+            }
+            for (name, value, max) in [
+                ("display name", &contact.display_name, 200),
+                ("role", &contact.role, 200),
+                ("company", &contact.company, 200),
+                ("location", &contact.location, 200),
+                ("bio", &contact.bio, 4000),
+                ("notes", &contact.notes, 8000),
+            ] {
+                if let Some(value) = value {
+                    validate_required_text(name, value, max)?;
+                }
+            }
+            if contact.links.len() > 20
+                || contact.links.iter().any(|link| {
+                    if link.len() > 2048 {
+                        return true;
+                    }
+                    match url::Url::parse(link) {
+                        Ok(url) => url.scheme() != "https" || url.host_str().is_none(),
+                        Err(_) => true,
+                    }
+                })
+            {
+                return Err("The transfer contains an invalid contact link".into());
+            }
+            crate::db::contacts::normalize_birthday(contact.birthday.as_deref())
+                .map_err(|_| "The transfer contains an invalid contact birthday")?;
+            crate::db::contacts::validate_keep_in_touch(&KeepInTouch::from(&contact.keep_in_touch))
+                .map_err(|_| "The transfer contains invalid keep-in-touch settings")?;
+            if let Some(photo) = &contact.photo_data {
+                use base64::{engine::general_purpose::STANDARD, Engine};
+                let bytes = STANDARD
+                    .decode(photo)
+                    .map_err(|_| "The transfer contains an invalid contact photo")?;
+                crate::image_format::validate_contact_photo(&bytes)?;
+            }
         }
         let rules = self.sender_rules.as_deref().unwrap_or_default();
         if rules.len() > crate::db::sender_rules::MAX_SENDER_RULES {
@@ -726,10 +884,16 @@ impl TransferPayload {
                 return Err("The transfer contains a duplicate muted sender".to_string());
             }
             if !account_emails.contains(&rule.account_id.to_ascii_lowercase()) {
-                return Err("The transfer contains a muted sender for an unknown account".to_string());
+                return Err(
+                    "The transfer contains a muted sender for an unknown account".to_string(),
+                );
             }
             if rule.action != "mute"
-                || crate::db::sender_rules::normalize_rule_match(&rule.match_kind, &rule.match_value).is_err()
+                || crate::db::sender_rules::normalize_rule_match(
+                    &rule.match_kind,
+                    &rule.match_value,
+                )
+                .is_err()
                 || chrono::DateTime::parse_from_rfc3339(&rule.created_at).is_err()
             {
                 return Err("The transfer contains an invalid muted sender".to_string());
@@ -751,7 +915,10 @@ impl TransferPayload {
             }
             let mut members = HashSet::new();
             if group.member_ids.len() > crate::db::contact_groups::MAX_GROUP_MEMBERS
-                || group.member_ids.iter().any(|id| !contact_ids.contains(id) || !members.insert(id))
+                || group
+                    .member_ids
+                    .iter()
+                    .any(|id| !contact_ids.contains(id) || !members.insert(id))
             {
                 return Err("The transfer contains a contact group with invalid members".into());
             }
@@ -819,9 +986,21 @@ fn build_export_payload(
         .into_iter()
         .map(TransferSnippet::from)
         .collect();
-    let contacts=database.list_saved_contact_profiles()?.into_iter().map(TransferContact::from).collect();
-    let contact_groups = database.list_contact_groups()?.into_iter().map(TransferContactGroup::from).collect();
-    let sender_rules = database.list_sender_rules()?.into_iter().map(TransferSenderRule::from).collect();
+    let contacts = database
+        .list_saved_contact_profiles()?
+        .into_iter()
+        .map(TransferContact::from)
+        .collect();
+    let contact_groups = database
+        .list_contact_groups()?
+        .into_iter()
+        .map(TransferContactGroup::from)
+        .collect();
+    let sender_rules = database
+        .list_sender_rules()?
+        .into_iter()
+        .map(TransferSenderRule::from)
+        .collect();
     Ok(TransferPayload {
         version: VERSION,
         exported_at: Utc::now().to_rfc3339(),
@@ -861,8 +1040,12 @@ pub fn export(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-fn validate_export_size(size:u64)->Result<(),String>{
-    if size>MAX_FILE_BYTES {Err("The settings export exceeds the maximum supported file size".to_string())} else {Ok(())}
+fn validate_export_size(size: u64) -> Result<(), String> {
+    if size > MAX_FILE_BYTES {
+        Err("The settings export exceeds the maximum supported file size".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 /// A decrypted, validated import waiting for the user to choose which of its
@@ -948,7 +1131,10 @@ pub fn apply_staged_import(
         .map_err(display)?
         .take()
         .ok_or_else(|| "Choose a settings file to import first".to_string())?;
-    let not_here = not_here.iter().map(|email| email.to_ascii_lowercase()).collect::<HashSet<_>>();
+    let not_here = not_here
+        .iter()
+        .map(|email| email.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
     apply_import_choosing(database, payload, &not_here)
 }
 
@@ -994,7 +1180,9 @@ fn read_and_decrypt(path: &Path, password: &str) -> Result<TransferPayload, Stri
     let metadata =
         fs::metadata(path).map_err(|error| format!("Could not read the export: {error}"))?;
     if metadata.len() > MAX_FILE_BYTES {
-        return Err("The selected file is too large to be a ThreeStrands settings export".to_string());
+        return Err(
+            "The selected file is too large to be a ThreeStrands settings export".to_string(),
+        );
     }
     let encoded = fs::read(path).map_err(|error| format!("Could not read the export: {error}"))?;
     decrypt(&encoded, password)
@@ -1116,11 +1304,15 @@ mod tests {
     fn drafts_and_their_server_links_never_enter_the_settings_export() {
         let db = Database::open_memory();
         db.adopt_account("you@example.com").unwrap();
-        let mut draft = db.create_draft("new", None, "you@example.com", &[]).unwrap();
+        let mut draft = db
+            .create_draft("new", None, "you@example.com", &[])
+            .unwrap();
         draft.subject = "Private draft subject".into();
         draft.body = "Private draft body".into();
         db.save_draft(draft).unwrap();
-        let exported = serde_json::to_string(&build_export_payload(&db, payload().preferences).unwrap()).unwrap();
+        let exported =
+            serde_json::to_string(&build_export_payload(&db, payload().preferences).unwrap())
+                .unwrap();
         assert!(!exported.contains("Private draft"));
         assert!(!exported.contains("draft_server") && !exported.contains("serverDraft"));
     }
@@ -1129,7 +1321,7 @@ mod tests {
     fn export_size_validation_matches_the_import_limit() {
         assert!(validate_export_size(0).is_ok());
         assert!(validate_export_size(MAX_FILE_BYTES).is_ok());
-        assert!(validate_export_size(MAX_FILE_BYTES+1).is_err());
+        assert!(validate_export_size(MAX_FILE_BYTES + 1).is_err());
     }
 
     #[test]
@@ -1140,11 +1332,14 @@ mod tests {
             ..Default::default()
         };
         let contact = crate::system_contacts::SystemContact {
-            id: "private-native-id".into(), source_id: "private-source-id".into(),
+            id: "private-native-id".into(),
+            source_id: "private-source-id".into(),
             addresses: vec!["private-system-contact@example.org".into()],
             ..Default::default()
         };
-        database.replace_system_contacts(&connection, &[contact]).unwrap();
+        database
+            .replace_system_contacts(&connection, &[contact])
+            .unwrap();
         let exported = build_export_payload(&database, payload().preferences).unwrap();
         assert!(exported.contacts.is_empty());
         let json = serde_json::to_string(&exported).unwrap();
@@ -1231,17 +1426,44 @@ mod tests {
         let staged = StagedImport::default();
 
         let preview = stage_import(&database, &staged, candidate).unwrap();
-        let listed: Vec<_> = preview.accounts.iter().map(|account| (account.email.as_str(), account.set_up_here)).collect();
-        assert_eq!(listed, [("person@example.com", false), ("work@example.com", true)]);
-        assert!(database.get_account("person@example.com").unwrap().is_none(), "previewing writes nothing");
+        let listed: Vec<_> = preview
+            .accounts
+            .iter()
+            .map(|account| (account.email.as_str(), account.set_up_here))
+            .collect();
+        assert_eq!(
+            listed,
+            [("person@example.com", false), ("work@example.com", true)]
+        );
+        assert!(
+            database
+                .get_account("person@example.com")
+                .unwrap()
+                .is_none(),
+            "previewing writes nothing"
+        );
 
         apply_staged_import(&database, &staged, &["Person@Example.com".to_string()]).unwrap();
         let person = database.get_account("person@example.com").unwrap().unwrap();
-        assert!(!person.on_this_device, "an unchosen account is available, not waiting to reconnect");
-        assert_eq!(database.get_account("work@example.com").unwrap().unwrap().nickname.as_deref(), Some("Work"));
+        assert!(
+            !person.on_this_device,
+            "an unchosen account is available, not waiting to reconnect"
+        );
+        assert_eq!(
+            database
+                .get_account("work@example.com")
+                .unwrap()
+                .unwrap()
+                .nickname
+                .as_deref(),
+            Some("Work")
+        );
 
         let error = apply_staged_import(&database, &staged, &[]).unwrap_err();
-        assert!(error.contains("Choose a settings file"), "a staged import applies once");
+        assert!(
+            error.contains("Choose a settings file"),
+            "a staged import applies once"
+        );
     }
 
     #[test]
@@ -1287,25 +1509,37 @@ mod tests {
     fn v1_payload_defaults_availability_preferences() {
         let mut serialized = serde_json::to_value(payload()).unwrap();
         serialized["version"] = serde_json::json!(1);
-        serialized["preferences"].as_object_mut().unwrap().remove("availabilityPreferences");
+        serialized["preferences"]
+            .as_object_mut()
+            .unwrap()
+            .remove("availabilityPreferences");
         serialized["preferences"]["aiFeatures"]
             .as_object_mut()
             .unwrap()
             .remove("actionExtraction");
         let decoded: TransferPayload = serde_json::from_value(serialized).unwrap();
         assert_eq!(decoded.version, 1);
-        assert_eq!(decoded.preferences.availability_preferences.default_duration_minutes, 30);
+        assert_eq!(
+            decoded
+                .preferences
+                .availability_preferences
+                .default_duration_minutes,
+            30
+        );
         assert!(!decoded.preferences.ai_features.action_extraction);
         decoded.validate().unwrap();
     }
 
     #[test]
     fn version_two_export_imports_with_empty_contacts_and_disabled_contact_ai() {
-        let mut legacy=serde_json::to_value(payload()).unwrap();
-        legacy["version"]=serde_json::json!(2);
+        let mut legacy = serde_json::to_value(payload()).unwrap();
+        legacy["version"] = serde_json::json!(2);
         legacy.as_object_mut().unwrap().remove("contacts");
-        legacy["preferences"]["aiFeatures"].as_object_mut().unwrap().remove("contactEnrichment");
-        let decoded:TransferPayload=serde_json::from_value(legacy).unwrap();
+        legacy["preferences"]["aiFeatures"]
+            .as_object_mut()
+            .unwrap()
+            .remove("contactEnrichment");
+        let decoded: TransferPayload = serde_json::from_value(legacy).unwrap();
         decoded.validate().unwrap();
         assert!(decoded.contacts.is_empty());
         assert!(!decoded.preferences.ai_features.contact_enrichment);
@@ -1328,7 +1562,10 @@ mod tests {
     #[test]
     fn an_export_from_before_thread_chat_imports_with_it_off() {
         let mut legacy = serde_json::to_value(payload()).unwrap();
-        legacy["preferences"]["aiFeatures"].as_object_mut().unwrap().remove("threadChat");
+        legacy["preferences"]["aiFeatures"]
+            .as_object_mut()
+            .unwrap()
+            .remove("threadChat");
         legacy["preferences"]["aiFeatures"]["proactiveBriefs"] = serde_json::json!(true);
         let decoded: TransferPayload = serde_json::from_value(legacy).unwrap();
         decoded.validate().unwrap();
@@ -1337,7 +1574,11 @@ mod tests {
 
         let mut current = payload();
         current.preferences.ai_features.thread_chat = true;
-        let round_trip = decrypt(&encrypt(&current, "correct horse").unwrap(), "correct horse").unwrap();
+        let round_trip = decrypt(
+            &encrypt(&current, "correct horse").unwrap(),
+            "correct horse",
+        )
+        .unwrap();
         assert!(round_trip.preferences.ai_features.thread_chat);
     }
 
@@ -1346,7 +1587,11 @@ mod tests {
         let mut current = payload();
         current.preferences.ai_features.proactive_briefs = true;
         current.preferences.ai_features.proactive_known_senders_only = true;
-        let decoded = decrypt(&encrypt(&current, "correct horse").unwrap(), "correct horse").unwrap();
+        let decoded = decrypt(
+            &encrypt(&current, "correct horse").unwrap(),
+            "correct horse",
+        )
+        .unwrap();
         assert!(decoded.preferences.ai_features.proactive_briefs);
         assert!(decoded.preferences.ai_features.proactive_known_senders_only);
     }
@@ -1362,10 +1607,20 @@ mod tests {
         // Every weekday split around lunch, plus a short Saturday: more
         // windows than the previous limit of fourteen allowed.
         current.preferences.availability_preferences.working_windows = (1..=5)
-            .flat_map(|weekday| [window(weekday, "09:00", "12:00"), window(weekday, "13:00", "17:00"), window(weekday, "19:00", "20:00")])
+            .flat_map(|weekday| {
+                [
+                    window(weekday, "09:00", "12:00"),
+                    window(weekday, "13:00", "17:00"),
+                    window(weekday, "19:00", "20:00"),
+                ]
+            })
             .chain([window(6, "10:00", "11:00")])
             .collect();
-        let decoded = decrypt(&encrypt(&current, "correct horse").unwrap(), "correct horse").unwrap();
+        let decoded = decrypt(
+            &encrypt(&current, "correct horse").unwrap(),
+            "correct horse",
+        )
+        .unwrap();
         decoded.validate().unwrap();
         let windows: Vec<(u8, String, String)> = decoded
             .preferences
@@ -1375,11 +1630,14 @@ mod tests {
             .map(|w| (w.weekday, w.start, w.end))
             .collect();
         assert_eq!(windows.len(), 16);
-        assert_eq!(&windows[..3], &[
-            (1, "09:00".to_string(), "12:00".to_string()),
-            (1, "13:00".to_string(), "17:00".to_string()),
-            (1, "19:00".to_string(), "20:00".to_string()),
-        ]);
+        assert_eq!(
+            &windows[..3],
+            &[
+                (1, "09:00".to_string(), "12:00".to_string()),
+                (1, "13:00".to_string(), "17:00".to_string()),
+                (1, "19:00".to_string(), "20:00".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -1430,7 +1688,11 @@ mod tests {
         assert!(decoded.preferences.ai_features.classify);
 
         // Still emitted, so a re-export keeps the flag for older builds.
-        let round_trip = decrypt(&encrypt(&decoded, "correct horse").unwrap(), "correct horse").unwrap();
+        let round_trip = decrypt(
+            &encrypt(&decoded, "correct horse").unwrap(),
+            "correct horse",
+        )
+        .unwrap();
         assert!(round_trip.preferences.ai_features.classify);
     }
 
@@ -1548,30 +1810,63 @@ mod tests {
 
     #[test]
     fn signatures_and_defaults_round_trip_and_the_preceding_export_preserves_them() {
-        use crate::signatures::tests::{template, defaults};
+        use crate::signatures::tests::{defaults, template};
         let db = Database::open_memory();
         let mut signature = template("portable");
         signature.html = "<p>portable<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=\" alt=\"Logo\"></p>".into();
         signature.html.push_str("<img src=\"https://images.example/large-logo.png?version=2&amp;size=large\" alt=\"Hosted logo\">");
         db.store_signature(&signature).unwrap();
-        db.store_signature_defaults(&defaults("me@example.com", "alias@example.com", Some("portable"), None)).unwrap();
+        db.store_signature_defaults(&defaults(
+            "me@example.com",
+            "alias@example.com",
+            Some("portable"),
+            None,
+        ))
+        .unwrap();
         let exported = build_export_payload(&db, payload().preferences).unwrap();
         let encoded = encrypt(&exported, fixtures::PASSWORD).unwrap();
         let destination = Database::open_memory();
         apply_import(&destination, decrypt(&encoded, fixtures::PASSWORD).unwrap()).unwrap();
-        assert_eq!(destination.signature_library().unwrap().signatures[0].text, "portable");
-        assert_eq!(destination.signature_library().unwrap().signatures[0].html, signature.html);
-        assert_eq!(destination.signature_library().unwrap().defaults[0].address, "alias@example.com");
+        assert_eq!(
+            destination.signature_library().unwrap().signatures[0].text,
+            "portable"
+        );
+        assert_eq!(
+            destination.signature_library().unwrap().signatures[0].html,
+            signature.html
+        );
+        assert_eq!(
+            destination.signature_library().unwrap().defaults[0].address,
+            "alias@example.com"
+        );
         let previous = decrypt(fixtures::V5_0_132, fixtures::PASSWORD).unwrap();
         assert!(previous.signatures.is_none());
         apply_import(&destination, previous).unwrap();
-        assert_eq!(destination.signature_library().unwrap().signatures[0].text, "portable");
-        assert_eq!(destination.signature_library().unwrap().signatures[0].html, signature.html);
-        assert_eq!(destination.signature_library().unwrap().defaults[0].new_signature_id.as_deref(), Some("portable"));
+        assert_eq!(
+            destination.signature_library().unwrap().signatures[0].text,
+            "portable"
+        );
+        assert_eq!(
+            destination.signature_library().unwrap().signatures[0].html,
+            signature.html
+        );
+        assert_eq!(
+            destination.signature_library().unwrap().defaults[0]
+                .new_signature_id
+                .as_deref(),
+            Some("portable")
+        );
         let mut clear = payload();
-        clear.signatures = Some(crate::signatures::SignatureLibrary { signatures: vec![], defaults: vec![] });
+        clear.signatures = Some(crate::signatures::SignatureLibrary {
+            signatures: vec![],
+            defaults: vec![],
+        });
         apply_import(&destination, clear).unwrap();
-        assert!(destination.signature_library().unwrap().signatures.is_empty());
+        assert!(destination
+            .signature_library()
+            .unwrap()
+            .signatures
+            .is_empty());
     }
 
     #[test]
@@ -1702,12 +1997,16 @@ mod tests {
         /// the fixture exercises the new `TransferAccount::imap` field end to
         /// end. The only fixture with a regenerate helper
         /// (`regenerate_current_settings_transfer_fixture`).
-        pub(super) const V5_0_170: &[u8] = include_bytes!("../tests/fixtures/settings-transfer/v5-0.170.dispatch-settings");
-        pub(super) const V5_0_181: &[u8] = include_bytes!("../tests/fixtures/settings-transfer/v5-0.181.dispatch-settings");
-        pub(super) const V5_0_132: &[u8] = include_bytes!("../tests/fixtures/settings-transfer/v5-0.132.dispatch-settings");
+        pub(super) const V5_0_170: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v5-0.170.dispatch-settings");
+        pub(super) const V5_0_181: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v5-0.181.dispatch-settings");
+        pub(super) const V5_0_132: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v5-0.132.dispatch-settings");
         pub(super) const V5_CURRENT: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v5-current.dispatch-settings");
-        pub(super) const V5_CURRENT_PATH: &str = "tests/fixtures/settings-transfer/v5-current.dispatch-settings";
+        pub(super) const V5_CURRENT_PATH: &str =
+            "tests/fixtures/settings-transfer/v5-current.dispatch-settings";
         pub(super) const V5_CURRENT_SALT: [u8; super::SALT_LEN] = [0x55; super::SALT_LEN];
         pub(super) const V5_CURRENT_NONCE: [u8; super::NONCE_LEN] = [0xd5; super::NONCE_LEN];
         /// The webview's `readExportablePreferences()` shape, shared with
@@ -1717,7 +2016,9 @@ mod tests {
     }
 
     fn envelope_version(bytes: &[u8]) -> u32 {
-        serde_json::from_slice::<EncryptedEnvelope>(bytes).unwrap().version
+        serde_json::from_slice::<EncryptedEnvelope>(bytes)
+            .unwrap()
+            .version
     }
 
     fn import_fixture(bytes: &[u8]) -> (Database, ImportResult) {
@@ -1751,7 +2052,11 @@ mod tests {
         assert_eq!(availability.default_duration_minutes, 30);
         assert_eq!(availability.slot_increment_minutes, 15);
         assert_eq!(availability.drive_time_buffer_minutes, 0);
-        let weekdays: Vec<u8> = availability.working_windows.iter().map(|w| w.weekday).collect();
+        let weekdays: Vec<u8> = availability
+            .working_windows
+            .iter()
+            .map(|w| w.weekday)
+            .collect();
         assert_eq!(weekdays, vec![1, 2, 3, 4, 5]);
     }
 
@@ -1777,31 +2082,62 @@ mod tests {
     fn preceding_export_defaults_mark_read_on_open_on_and_round_trips_opt_out() {
         let (_, result) = import_fixture(fixtures::V5_CURRENT);
         assert!(result.preferences.mark_read_on_open);
-        assert!(serde_json::to_value(&result.preferences).unwrap().get("markReadOnOpen").is_none());
+        assert!(serde_json::to_value(&result.preferences)
+            .unwrap()
+            .get("markReadOnOpen")
+            .is_none());
         let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
         payload.preferences.mark_read_on_open = false;
-        let imported = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+        let imported = decrypt(
+            &encrypt(&payload, fixtures::PASSWORD).unwrap(),
+            fixtures::PASSWORD,
+        )
+        .unwrap();
         assert!(!imported.preferences.mark_read_on_open);
-        assert_eq!(serde_json::to_value(&imported.preferences).unwrap()["markReadOnOpen"], false);
+        assert_eq!(
+            serde_json::to_value(&imported.preferences).unwrap()["markReadOnOpen"],
+            false
+        );
     }
 
     #[test]
     fn preceding_export_defaults_triage_choices_and_round_trips_changes() {
         let (_, result) = import_fixture(fixtures::V5_CURRENT);
         let preferences = &result.preferences;
-        assert!(!preferences.mark_read_on_trash && !preferences.mark_read_on_snooze && !preferences.snooze_returns_unread);
+        assert!(
+            !preferences.mark_read_on_trash
+                && !preferences.mark_read_on_snooze
+                && !preferences.snooze_returns_unread
+        );
         assert_eq!(preferences.after_triage, "older");
         let json = serde_json::to_value(preferences).unwrap();
-        for key in ["markReadOnTrash", "markReadOnSnooze", "snoozeReturnsUnread", "afterTriage"] {
-            assert!(json.get(key).is_none(), "{key} should be omitted at its default");
+        for key in [
+            "markReadOnTrash",
+            "markReadOnSnooze",
+            "snoozeReturnsUnread",
+            "afterTriage",
+        ] {
+            assert!(
+                json.get(key).is_none(),
+                "{key} should be omitted at its default"
+            );
         }
         let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
         payload.preferences.mark_read_on_trash = true;
         payload.preferences.mark_read_on_snooze = true;
         payload.preferences.snooze_returns_unread = true;
         payload.preferences.after_triage = "list".to_string();
-        let imported = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap().preferences;
-        assert!(imported.mark_read_on_trash && imported.mark_read_on_snooze && imported.snooze_returns_unread);
+        let imported = decrypt(
+            &encrypt(&payload, fixtures::PASSWORD).unwrap(),
+            fixtures::PASSWORD,
+        )
+        .unwrap()
+        .preferences;
+        assert!(
+            imported.mark_read_on_trash
+                && imported.mark_read_on_snooze
+                && imported.snooze_returns_unread
+        );
         assert_eq!(imported.after_triage, "list");
     }
 
@@ -1823,7 +2159,11 @@ mod tests {
         let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
         for value in [50, 51, 100, 125, 199, 200] {
             payload.preferences.email_zoom = value;
-            let result = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+            let result = decrypt(
+                &encrypt(&payload, fixtures::PASSWORD).unwrap(),
+                fixtures::PASSWORD,
+            )
+            .unwrap();
             assert_eq!(result.preferences.email_zoom, value);
         }
         for value in [49, 201, -1] {
@@ -1836,10 +2176,17 @@ mod tests {
     fn preceding_export_defaults_mark_read_on_archive_off_and_round_trips_opt_in() {
         let (_, result) = import_fixture(fixtures::V5_CURRENT);
         assert!(!result.preferences.mark_read_on_archive);
-        assert!(serde_json::to_value(&result.preferences).unwrap().get("markReadOnArchive").is_none());
+        assert!(serde_json::to_value(&result.preferences)
+            .unwrap()
+            .get("markReadOnArchive")
+            .is_none());
         let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
         payload.preferences.mark_read_on_archive = true;
-        let imported = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+        let imported = decrypt(
+            &encrypt(&payload, fixtures::PASSWORD).unwrap(),
+            fixtures::PASSWORD,
+        )
+        .unwrap();
         assert!(imported.preferences.mark_read_on_archive);
     }
 
@@ -1847,10 +2194,17 @@ mod tests {
     fn preceding_export_defaults_starred_inbox_on_and_round_trips_opt_out() {
         let (_, result) = import_fixture(fixtures::V5_CURRENT);
         assert!(result.preferences.show_starred_inbox);
-        assert!(serde_json::to_value(&result.preferences).unwrap().get("showStarredInbox").is_none());
+        assert!(serde_json::to_value(&result.preferences)
+            .unwrap()
+            .get("showStarredInbox")
+            .is_none());
         let mut payload = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
         payload.preferences.show_starred_inbox = false;
-        let imported = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+        let imported = decrypt(
+            &encrypt(&payload, fixtures::PASSWORD).unwrap(),
+            fixtures::PASSWORD,
+        )
+        .unwrap();
         assert!(!imported.preferences.show_starred_inbox);
     }
 
@@ -1868,7 +2222,11 @@ mod tests {
         let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
         for value in ["sender", "contrast", "app"] {
             payload.preferences.email_text_colors = value.to_string();
-            let result = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+            let result = decrypt(
+                &encrypt(&payload, fixtures::PASSWORD).unwrap(),
+                fixtures::PASSWORD,
+            )
+            .unwrap();
             assert_eq!(result.preferences.email_text_colors, value);
         }
         for value in ["", "invert", "Contrast"] {
@@ -1882,7 +2240,11 @@ mod tests {
         let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
         for value in [0, 12, 18, 32] {
             payload.preferences.email_minimum_font_size = value;
-            let result = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+            let result = decrypt(
+                &encrypt(&payload, fixtures::PASSWORD).unwrap(),
+                fixtures::PASSWORD,
+            )
+            .unwrap();
             assert_eq!(result.preferences.email_minimum_font_size, value);
         }
         for value in [-1, 1, 11, 33] {
@@ -1903,29 +2265,65 @@ mod tests {
         assert_eq!(preferences.font_family, "Georgia");
         assert_eq!(preferences.auto_read_delay_seconds, 3);
         assert!(preferences.load_remote_images);
-        assert_eq!(preferences.selected_account_id.as_deref(), Some("legacy@example.com"));
+        assert_eq!(
+            preferences.selected_account_id.as_deref(),
+            Some("legacy@example.com")
+        );
         assert!(matches!(preferences.ai_provider, AiProvider::Anthropic));
         assert_eq!(preferences.ai_model, "example-model-v1");
         assert_eq!(preferences.ai_endpoint, "");
         let features = &preferences.ai_features;
         assert!(features.draft_assist && features.summarize && features.classify);
         assert!(!features.action_extraction && !features.contact_enrichment);
-        assert!(!features.proactive_briefs && !features.proactive_known_senders_only && !features.thread_chat);
+        assert!(
+            !features.proactive_briefs
+                && !features.proactive_known_senders_only
+                && !features.thread_chat
+        );
         assert_default_availability(preferences);
 
-        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (2, 1, 0, 0));
+        assert_eq!(
+            (
+                result.account_count,
+                result.split_inbox_count,
+                result.snippet_count,
+                result.contact_count
+            ),
+            (2, 1, 0, 0)
+        );
         assert_eq!(
             accounts_of(&database),
             vec![
-                ("legacy@example.com".into(), Some("Legacy Person".into()), "#4285F4".into(), "gmail".into(), 0),
-                ("second@example.org".into(), None, "#0F9D58".into(), "gmail".into(), 1),
+                (
+                    "legacy@example.com".into(),
+                    Some("Legacy Person".into()),
+                    "#4285F4".into(),
+                    "gmail".into(),
+                    0
+                ),
+                (
+                    "second@example.org".into(),
+                    None,
+                    "#0F9D58".into(),
+                    "gmail".into(),
+                    1
+                ),
             ]
         );
-        assert!(database.list_accounts().unwrap().iter().all(|a| a.status == "needs_reauth"));
+        assert!(database
+            .list_accounts()
+            .unwrap()
+            .iter()
+            .all(|a| a.status == "needs_reauth"));
         // Version 1 Split Inboxes were global; the owner migrates to the first account.
         assert_eq!(
             split_owners_of(&database),
-            vec![("split-v1".into(), "domain".into(), "shop.example.com".into(), "legacy@example.com".into())]
+            vec![(
+                "split-v1".into(),
+                "domain".into(),
+                "shop.example.com".into(),
+                "legacy@example.com".into()
+            )]
         );
         assert!(database.list_snippets().unwrap().is_empty());
         assert!(database.list_saved_contact_profiles().unwrap().is_empty());
@@ -1954,15 +2352,37 @@ mod tests {
         assert_eq!(
             accounts_of(&database),
             vec![
-                ("owner@example.com".into(), Some("Owner".into()), "#DB4437".into(), "gmail".into(), 0),
-                ("work@example.org".into(), Some("Work".into()), "#F4B400".into(), "gmail".into(), 1),
+                (
+                    "owner@example.com".into(),
+                    Some("Owner".into()),
+                    "#DB4437".into(),
+                    "gmail".into(),
+                    0
+                ),
+                (
+                    "work@example.org".into(),
+                    Some("Work".into()),
+                    "#F4B400".into(),
+                    "gmail".into(),
+                    1
+                ),
             ]
         );
         assert_eq!(
             split_owners_of(&database),
             vec![
-                ("split-owned".into(), "label".into(), "Team".into(), "work@example.org".into()),
-                ("split-unowned".into(), "pattern".into(), "newsletter".into(), "owner@example.com".into()),
+                (
+                    "split-owned".into(),
+                    "label".into(),
+                    "Team".into(),
+                    "work@example.org".into()
+                ),
+                (
+                    "split-unowned".into(),
+                    "pattern".into(),
+                    "newsletter".into(),
+                    "owner@example.com".into()
+                ),
             ]
         );
         assert_eq!(database.retention_days().unwrap(), None);
@@ -1992,10 +2412,23 @@ mod tests {
             .collect();
         assert_eq!(windows, vec![(1, "08:30", "16:30"), (3, "10:00", "18:00")]);
 
-        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (1, 1, 0, 0));
+        assert_eq!(
+            (
+                result.account_count,
+                result.split_inbox_count,
+                result.snippet_count,
+                result.contact_count
+            ),
+            (1, 1, 0, 0)
+        );
         assert_eq!(
             split_owners_of(&database),
-            vec![("split-v2".into(), "domain".into(), "calendar.example.com".into(), "planner@example.com".into())]
+            vec![(
+                "split-v2".into(),
+                "domain".into(),
+                "calendar.example.com".into(),
+                "planner@example.com".into()
+            )]
         );
         assert_eq!(database.retention_days().unwrap(), Some(30));
     }
@@ -2011,11 +2444,30 @@ mod tests {
         assert_eq!(preferences.ai_model, "accounts/example/models/demo");
         assert!(preferences.ai_features.action_extraction);
         assert!(!preferences.ai_features.contact_enrichment);
-        assert_eq!(preferences.availability_preferences.time_zone, "Europe/Berlin");
-        assert_eq!(preferences.availability_preferences.working_windows.len(), 2);
-        assert_eq!(preferences.availability_preferences.default_duration_minutes, 60);
+        assert_eq!(
+            preferences.availability_preferences.time_zone,
+            "Europe/Berlin"
+        );
+        assert_eq!(
+            preferences.availability_preferences.working_windows.len(),
+            2
+        );
+        assert_eq!(
+            preferences
+                .availability_preferences
+                .default_duration_minutes,
+            60
+        );
 
-        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (1, 0, 1, 0));
+        assert_eq!(
+            (
+                result.account_count,
+                result.split_inbox_count,
+                result.snippet_count,
+                result.contact_count
+            ),
+            (1, 0, 1, 0)
+        );
         let snippets = database.list_snippets().unwrap();
         assert_eq!(snippets.len(), 1);
         assert_eq!(snippets[0].id, "snippet-v2");
@@ -2040,7 +2492,11 @@ mod tests {
         assert_eq!(preferences.ai_endpoint, "https://llm.example.test/v1");
         let features = &preferences.ai_features;
         assert!(features.contact_enrichment && features.summarize);
-        assert!(!features.proactive_briefs && !features.proactive_known_senders_only && !features.thread_chat);
+        assert!(
+            !features.proactive_briefs
+                && !features.proactive_known_senders_only
+                && !features.thread_chat
+        );
 
         assert_eq!(result.contact_count, 1);
         let contacts = database.list_saved_contact_profiles().unwrap();
@@ -2058,10 +2514,22 @@ mod tests {
         assert!(contact.favorite);
         let mut addresses = contact.addresses.clone();
         addresses.sort();
-        assert_eq!(addresses, vec!["ada.work@example.org".to_string(), "ada@example.com".to_string()]);
+        assert_eq!(
+            addresses,
+            vec![
+                "ada.work@example.org".to_string(),
+                "ada@example.com".to_string()
+            ]
+        );
         assert_eq!(
             accounts_of(&database),
-            vec![("contacts@example.com".into(), None, "#0F9D58".into(), "gmail".into(), 0)]
+            vec![(
+                "contacts@example.com".into(),
+                None,
+                "#0F9D58".into(),
+                "gmail".into(),
+                0
+            )]
         );
         assert_eq!(database.retention_days().unwrap(), None);
     }
@@ -2072,7 +2540,12 @@ mod tests {
         TransferPayload {
             signatures: Some(crate::signatures::SignatureLibrary {
                 signatures: vec![crate::signatures::tests::template("work-signature")],
-                defaults: vec![crate::signatures::tests::defaults("current@example.com", "", Some("work-signature"), None)],
+                defaults: vec![crate::signatures::tests::defaults(
+                    "current@example.com",
+                    "",
+                    Some("work-signature"),
+                    None,
+                )],
             }),
             version: VERSION,
             exported_at: "2026-09-29T12:00:00+00:00".to_string(),
@@ -2124,7 +2597,10 @@ mod tests {
                         "current@example.com".to_string(),
                         BTreeMap::from([
                             ("current@example.com".to_string(), "teal".to_string()),
-                            ("team@group.calendar.google.com".to_string(), "coral".to_string()),
+                            (
+                                "team@group.calendar.google.com".to_string(),
+                                "coral".to_string(),
+                            ),
                         ]),
                     ),
                     (
@@ -2135,23 +2611,38 @@ mod tests {
                 writing_profiles: WritingProfiles::from([(
                     "current@example.com".to_string(),
                     WritingProfile {
-                        about_you: "CEO of a consulting firm.\nI write to prospective clients.".to_string(),
+                        about_you: "CEO of a consulting firm.\nI write to prospective clients."
+                            .to_string(),
                         review_instructions: "Push for one specific next step.".to_string(),
                     },
                 )]),
                 availability_profiles: AvailabilityProfiles {
-                    default_profile: AvailabilityProfileName { id: "default".to_string(), name: "Work".to_string() },
+                    default_profile: AvailabilityProfileName {
+                        id: "default".to_string(),
+                        name: "Work".to_string(),
+                    },
                     other_profiles: vec![AvailabilityProfile {
                         id: "church".to_string(),
                         name: "Church".to_string(),
                         working_windows: vec![
-                            crate::models::AvailabilityWindow { weekday: 2, start: "18:30".to_string(), end: "21:00".to_string() },
-                            crate::models::AvailabilityWindow { weekday: 6, start: "08:00".to_string(), end: "12:00".to_string() },
+                            crate::models::AvailabilityWindow {
+                                weekday: 2,
+                                start: "18:30".to_string(),
+                                end: "21:00".to_string(),
+                            },
+                            crate::models::AvailabilityWindow {
+                                weekday: 6,
+                                start: "08:00".to_string(),
+                                end: "12:00".to_string(),
+                            },
                         ],
                         default_duration_minutes: 60,
                         drive_time_buffer_minutes: 15,
                     }],
-                    account_defaults: BTreeMap::from([("other@example.net".to_string(), "church".to_string())]),
+                    account_defaults: BTreeMap::from([(
+                        "other@example.net".to_string(),
+                        "church".to_string(),
+                    )]),
                 },
             },
             accounts: vec![
@@ -2265,12 +2756,19 @@ mod tests {
 
     fn seal_current_fixture() -> Vec<u8> {
         let plaintext = serde_json::to_vec(&current_fixture_payload()).unwrap();
-        seal(&plaintext, fixtures::PASSWORD, &fixtures::V5_CURRENT_SALT, &fixtures::V5_CURRENT_NONCE).unwrap()
+        seal(
+            &plaintext,
+            fixtures::PASSWORD,
+            &fixtures::V5_CURRENT_SALT,
+            &fixtures::V5_CURRENT_NONCE,
+        )
+        .unwrap()
     }
 
     #[test]
     fn frozen_v5_0_140_export_defaults_drive_time_to_none_and_preserves_availability() {
-        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v5-0.140.dispatch-settings");
+        let bytes =
+            include_bytes!("../tests/fixtures/settings-transfer/v5-0.140.dispatch-settings");
         let (_, result) = import_fixture(bytes);
         let availability = result.preferences.availability_preferences;
         assert_eq!(availability.drive_time_buffer_minutes, 0);
@@ -2282,7 +2780,10 @@ mod tests {
     #[test]
     fn transfer_rejects_excessive_drive_time() {
         let mut payload = current_fixture_payload();
-        payload.preferences.availability_preferences.drive_time_buffer_minutes = crate::availability::MAX_DRIVE_TIME_BUFFER_MINUTES + 1;
+        payload
+            .preferences
+            .availability_preferences
+            .drive_time_buffer_minutes = crate::availability::MAX_DRIVE_TIME_BUFFER_MINUTES + 1;
         assert!(payload.validate().is_err());
     }
 
@@ -2290,7 +2791,15 @@ mod tests {
     fn frozen_v5_current_export_imports_every_current_field() {
         assert_eq!(envelope_version(fixtures::V5_CURRENT), VERSION);
         let (database, result) = import_fixture(fixtures::V5_CURRENT);
-        assert_eq!(database.get_account("current@example.com").unwrap().unwrap().nickname.as_deref(), Some("Work"));
+        assert_eq!(
+            database
+                .get_account("current@example.com")
+                .unwrap()
+                .unwrap()
+                .nickname
+                .as_deref(),
+            Some("Work")
+        );
 
         let preferences = &result.preferences;
         assert_eq!(preferences.accent, "amber");
@@ -2305,16 +2814,47 @@ mod tests {
         assert!(features.proactive_known_senders_only && features.thread_chat);
         assert!(!features.classify);
         assert_eq!(preferences.availability_preferences.time_zone, "Asia/Tokyo");
-        assert_eq!(preferences.availability_preferences.slot_increment_minutes, 5);
-        assert_eq!(preferences.availability_preferences.drive_time_buffer_minutes, 30);
-        assert_eq!(preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
-        assert_eq!(preferences.calendar_colors["current@example.com"]["team@group.calendar.google.com"], "coral");
-        assert_eq!(preferences.writing_profiles, current_fixture_payload().preferences.writing_profiles);
-        assert_eq!(preferences.availability_profiles, current_fixture_payload().preferences.availability_profiles);
-        assert_eq!(preferences.availability_profiles.account_defaults["other@example.net"], "church");
+        assert_eq!(
+            preferences.availability_preferences.slot_increment_minutes,
+            5
+        );
+        assert_eq!(
+            preferences
+                .availability_preferences
+                .drive_time_buffer_minutes,
+            30
+        );
+        assert_eq!(
+            preferences.calendar_colors,
+            current_fixture_payload().preferences.calendar_colors
+        );
+        assert_eq!(
+            preferences.calendar_colors["current@example.com"]["team@group.calendar.google.com"],
+            "coral"
+        );
+        assert_eq!(
+            preferences.writing_profiles,
+            current_fixture_payload().preferences.writing_profiles
+        );
+        assert_eq!(
+            preferences.availability_profiles,
+            current_fixture_payload().preferences.availability_profiles
+        );
+        assert_eq!(
+            preferences.availability_profiles.account_defaults["other@example.net"],
+            "church"
+        );
 
         // Version 5 adds a third account (IMAP) carrying its settings.
-        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (3, 1, 1, 1));
+        assert_eq!(
+            (
+                result.account_count,
+                result.split_inbox_count,
+                result.snippet_count,
+                result.contact_count
+            ),
+            (3, 1, 1, 1)
+        );
         assert_eq!(result.contact_group_count, 1);
         let groups = database.list_contact_groups().unwrap();
         assert_eq!(groups.len(), 1);
@@ -2325,18 +2865,45 @@ mod tests {
         assert_eq!(
             accounts_of(&database),
             vec![
-                ("current@example.com".into(), Some("Current".into()), "#123ABC".into(), "gmail".into(), 0),
-                ("other@example.net".into(), None, "#ABCDEF".into(), "gmail".into(), 1),
-                ("me@proton.me".into(), Some("Proton".into()), "#6D4AFF".into(), "imap".into(), 2),
+                (
+                    "current@example.com".into(),
+                    Some("Current".into()),
+                    "#123ABC".into(),
+                    "gmail".into(),
+                    0
+                ),
+                (
+                    "other@example.net".into(),
+                    None,
+                    "#ABCDEF".into(),
+                    "gmail".into(),
+                    1
+                ),
+                (
+                    "me@proton.me".into(),
+                    Some("Proton".into()),
+                    "#6D4AFF".into(),
+                    "imap".into(),
+                    2
+                ),
             ]
         );
         // The IMAP account's non-secret settings imported into the table; the
         // password is NOT present anywhere in the export.
-        let imap = database.imap_account_settings("me@proton.me").unwrap().unwrap();
+        let imap = database
+            .imap_account_settings("me@proton.me")
+            .unwrap()
+            .unwrap();
         assert_eq!(imap.imap_host, "127.0.0.1");
         assert_eq!(imap.imap_port, 1143);
-        assert_eq!(imap.imap_security, crate::provider::imap::SecurityMode::StartTls);
-        assert_eq!(imap.label_storage, crate::provider::imap::LabelStorage::Folders);
+        assert_eq!(
+            imap.imap_security,
+            crate::provider::imap::SecurityMode::StartTls
+        );
+        assert_eq!(
+            imap.label_storage,
+            crate::provider::imap::LabelStorage::Folders
+        );
         assert_eq!(imap.label_container.as_deref(), Some("Labels"));
         assert_eq!(imap.identities.len(), 1);
         assert_eq!(imap.identities[0].address, "me@proton.me");
@@ -2349,24 +2916,46 @@ mod tests {
         let detection_rows: i64 = database
             .test_connection()
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM imap_sent_copy_detection", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM imap_sent_copy_detection", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(
             detection_rows, 0,
             "an exported/imported IMAP account must contain no Sent-copy detection state"
         );
         // The two Gmail accounts have no IMAP settings row.
-        assert!(database.imap_account_settings("current@example.com").unwrap().is_none());
+        assert!(database
+            .imap_account_settings("current@example.com")
+            .unwrap()
+            .is_none());
         // No password string leaked into the serialized export.
-        let plaintext = String::from_utf8(serde_json::to_vec(&current_fixture_payload()).unwrap()).unwrap();
-        assert!(!plaintext.contains("password"), "a password must never appear in the export");
+        let plaintext =
+            String::from_utf8(serde_json::to_vec(&current_fixture_payload()).unwrap()).unwrap();
+        assert!(
+            !plaintext.contains("password"),
+            "a password must never appear in the export"
+        );
 
         assert_eq!(
             split_owners_of(&database),
-            vec![("split-current".into(), "pattern".into(), "build failed".into(), "other@example.net".into())]
+            vec![(
+                "split-current".into(),
+                "pattern".into(),
+                "build failed".into(),
+                "other@example.net".into()
+            )]
         );
-        assert_eq!(database.signature_library().unwrap().signatures[0].text, "work-signature");
-        assert_eq!(database.signature_library().unwrap().defaults[0].new_signature_id.as_deref(), Some("work-signature"));
+        assert_eq!(
+            database.signature_library().unwrap().signatures[0].text,
+            "work-signature"
+        );
+        assert_eq!(
+            database.signature_library().unwrap().defaults[0]
+                .new_signature_id
+                .as_deref(),
+            Some("work-signature")
+        );
         assert_eq!(database.list_snippets().unwrap()[0].body, "<p>Thanks!</p>");
         let contacts = database.list_saved_contact_profiles().unwrap();
         assert_eq!(contacts.len(), 1);
@@ -2376,13 +2965,22 @@ mod tests {
         let kit = &contacts[0].keep_in_touch;
         assert_eq!(kit.interval_days, Some(30));
         assert_eq!(kit.started_at.as_deref(), Some("2026-09-01T09:00:00+00:00"));
-        assert_eq!(kit.snoozed_until.as_deref(), Some("2026-10-20T09:00:00+00:00"));
+        assert_eq!(
+            kit.snoozed_until.as_deref(),
+            Some("2026-10-20T09:00:00+00:00")
+        );
         assert_eq!(kit.snoozed_at.as_deref(), Some("2026-09-28T09:00:00+00:00"));
-        assert_eq!(kit.last_touch_at.as_deref(), Some("2026-09-15T09:00:00+00:00"));
+        assert_eq!(
+            kit.last_touch_at.as_deref(),
+            Some("2026-09-15T09:00:00+00:00")
+        );
         assert_eq!(database.retention_days().unwrap(), Some(365));
         assert_eq!(result.sender_rule_count, 1);
         let rules = database.list_sender_rules().unwrap();
-        assert_eq!((rules[0].account_id.as_str(), rules[0].match_value.as_str()), ("current@example.com", "news@launch.example"));
+        assert_eq!(
+            (rules[0].account_id.as_str(), rules[0].match_value.as_str()),
+            ("current@example.com", "news@launch.example")
+        );
     }
 
     // ---- Phase 4 run 2 (F): identity-list transfer regression coverage.
@@ -2422,7 +3020,10 @@ mod tests {
         let path = crate::db::test_support::TempDbPath::new();
         let database = Database::open(&path.path).unwrap();
         apply_import(&database, decrypt(&encoded, "correct horse").unwrap()).unwrap();
-        let imap = database.imap_account_settings("me@proton.me").unwrap().unwrap();
+        let imap = database
+            .imap_account_settings("me@proton.me")
+            .unwrap()
+            .unwrap();
         assert_eq!(imap.identities.len(), 2);
         assert_eq!(imap.identities[0].address, "me@proton.me");
         assert_eq!(imap.identities[1].address, "work@proton.me");
@@ -2432,7 +3033,10 @@ mod tests {
         let identities =
             crate::provider::imap::account_identities("me@proton.me", &imap.identities);
         assert_eq!(
-            identities.iter().map(|i| i.address.as_str()).collect::<Vec<_>>(),
+            identities
+                .iter()
+                .map(|i| i.address.as_str())
+                .collect::<Vec<_>>(),
             vec!["me@proton.me", "work@proton.me"]
         );
     }
@@ -2498,14 +3102,20 @@ mod tests {
         let path = crate::db::test_support::TempDbPath::new();
         let database = Database::open(&path.path).unwrap();
         apply_import(&database, decrypt(&encoded, "correct horse").unwrap()).unwrap();
-        let imap = database.imap_account_settings("me@proton.me").unwrap().unwrap();
+        let imap = database
+            .imap_account_settings("me@proton.me")
+            .unwrap()
+            .unwrap();
         // The hostile entry is stored verbatim (import does not sanitize) ...
         assert_eq!(imap.identities.len(), 2);
         // ... but the accessor DROPS it, leaving only the valid login.
         let identities =
             crate::provider::imap::account_identities("me@proton.me", &imap.identities);
         assert_eq!(
-            identities.iter().map(|i| i.address.as_str()).collect::<Vec<_>>(),
+            identities
+                .iter()
+                .map(|i| i.address.as_str())
+                .collect::<Vec<_>>(),
             vec!["me@proton.me"],
             "the hostile identity is dropped by the accessor"
         );
@@ -2529,7 +3139,10 @@ mod tests {
         for account in database.list_accounts().unwrap() {
             assert_eq!(account.provider, "gmail");
             assert!(
-                database.imap_account_settings(&account.email).unwrap().is_none(),
+                database
+                    .imap_account_settings(&account.email)
+                    .unwrap()
+                    .is_none(),
                 "a version-4 account must import with no IMAP settings"
             );
         }
@@ -2558,15 +3171,32 @@ mod tests {
         assert!(!features.classify);
         assert_eq!(preferences.availability_preferences.time_zone, "Asia/Tokyo");
         assert_eq!(
-            (result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count),
+            (
+                result.account_count,
+                result.split_inbox_count,
+                result.snippet_count,
+                result.contact_count
+            ),
             (2, 1, 1, 1)
         );
         assert_eq!(result.contact_group_count, 1);
         assert_eq!(
             accounts_of(&database),
             vec![
-                ("current@example.com".into(), Some("Current".into()), "#123ABC".into(), "gmail".into(), 0),
-                ("other@example.net".into(), None, "#ABCDEF".into(), "gmail".into(), 1),
+                (
+                    "current@example.com".into(),
+                    Some("Current".into()),
+                    "#123ABC".into(),
+                    "gmail".into(),
+                    0
+                ),
+                (
+                    "other@example.net".into(),
+                    None,
+                    "#ABCDEF".into(),
+                    "gmail".into(),
+                    1
+                ),
             ]
         );
         assert_eq!(database.retention_days().unwrap(), Some(365));
@@ -2582,7 +3212,10 @@ mod tests {
         assert_eq!(contacts[0].company.as_deref(), Some("Example Navy"));
         assert_eq!(contacts[0].notes.as_deref(), Some("Prefers email."));
         assert_eq!(contacts[0].birthday, None);
-        assert_eq!(contacts[0].keep_in_touch, crate::models::KeepInTouch::default());
+        assert_eq!(
+            contacts[0].keep_in_touch,
+            crate::models::KeepInTouch::default()
+        );
         assert_eq!(contacts[0].keep_in_touch_due_at, None);
     }
 
@@ -2594,7 +3227,10 @@ mod tests {
         result.preferences.validate().unwrap();
         assert!(result.preferences.calendar_colors.is_empty());
         assert_eq!(result.preferences.accent, "amber");
-        assert_eq!(result.preferences.availability_preferences.time_zone, "Asia/Tokyo");
+        assert_eq!(
+            result.preferences.availability_preferences.time_zone,
+            "Asia/Tokyo"
+        );
         assert_eq!(result.contact_count, 1);
     }
 
@@ -2603,14 +3239,25 @@ mod tests {
         let bytes = include_bytes!("../tests/fixtures/settings-transfer/v3-0.78.dispatch-settings");
         assert_eq!(envelope_version(bytes), 3);
         let database = Database::open_memory();
-        database.create_contact_group("Local group", &[], &["local@example.com".into()]).unwrap();
+        database
+            .create_contact_group("Local group", &[], &["local@example.com".into()])
+            .unwrap();
         let payload = decrypt(bytes, fixtures::PASSWORD).unwrap();
         assert!(payload.contact_groups.is_none());
         let result = apply_import(&database, payload).unwrap();
         assert_eq!((result.contact_count, result.contact_group_count), (1, 0));
-        assert_eq!(result.preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
+        assert_eq!(
+            result.preferences.calendar_colors,
+            current_fixture_payload().preferences.calendar_colors
+        );
         let groups = database.list_contact_groups().unwrap();
-        assert_eq!(groups.iter().map(|group| group.name.as_str()).collect::<Vec<_>>(), vec!["Local group"]);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Local group"]
+        );
         // Import replaced the address book, so the local member is gone while the group stays.
         assert!(groups[0].member_ids.is_empty());
     }
@@ -2618,9 +3265,16 @@ mod tests {
     #[test]
     fn importing_contact_groups_replaces_the_local_ones() {
         let database = Database::open_memory();
-        database.create_contact_group("Local group", &[], &[]).unwrap();
+        database
+            .create_contact_group("Local group", &[], &[])
+            .unwrap();
         apply_import(&database, current_fixture_payload()).unwrap();
-        let names = database.list_contact_groups().unwrap().into_iter().map(|group| group.name).collect::<Vec<_>>();
+        let names = database
+            .list_contact_groups()
+            .unwrap()
+            .into_iter()
+            .map(|group| group.name)
+            .collect::<Vec<_>>();
         assert_eq!(names, vec!["Navy friends"]);
         let mut empty = current_fixture_payload();
         empty.contact_groups = Some(Vec::new());
@@ -2635,17 +3289,47 @@ mod tests {
         }
         let mutations: [fn(&mut TransferPayload); 7] = [
             |p| p.contact_groups.as_mut().unwrap()[0].name = " ".into(),
-            |p| p.contact_groups.as_mut().unwrap()[0].name = "x".repeat(crate::db::contact_groups::MAX_GROUP_NAME + 1),
+            |p| {
+                p.contact_groups.as_mut().unwrap()[0].name =
+                    "x".repeat(crate::db::contact_groups::MAX_GROUP_NAME + 1)
+            },
             |p| p.contact_groups.as_mut().unwrap()[0].id = String::new(),
-            |p| p.contact_groups.as_mut().unwrap()[0].member_ids = vec!["not-in-this-export".into()],
-            |p| p.contact_groups.as_mut().unwrap()[0].member_ids = vec!["contact-current".into(), "contact-current".into()],
-            |p| { let copy = p.contact_groups.as_ref().unwrap()[0].clone(); p.contact_groups.as_mut().unwrap().push(TransferContactGroup { id: "group-2".into(), name: "NAVY FRIENDS".into(), ..copy }); },
-            |p| { let copy = p.contact_groups.as_ref().unwrap()[0].clone(); p.contact_groups.as_mut().unwrap().push(TransferContactGroup { name: "Other".into(), ..copy }); },
+            |p| {
+                p.contact_groups.as_mut().unwrap()[0].member_ids = vec!["not-in-this-export".into()]
+            },
+            |p| {
+                p.contact_groups.as_mut().unwrap()[0].member_ids =
+                    vec!["contact-current".into(), "contact-current".into()]
+            },
+            |p| {
+                let copy = p.contact_groups.as_ref().unwrap()[0].clone();
+                p.contact_groups
+                    .as_mut()
+                    .unwrap()
+                    .push(TransferContactGroup {
+                        id: "group-2".into(),
+                        name: "NAVY FRIENDS".into(),
+                        ..copy
+                    });
+            },
+            |p| {
+                let copy = p.contact_groups.as_ref().unwrap()[0].clone();
+                p.contact_groups
+                    .as_mut()
+                    .unwrap()
+                    .push(TransferContactGroup {
+                        name: "Other".into(),
+                        ..copy
+                    });
+            },
         ];
         for (index, mutate) in mutations.iter().enumerate() {
             let mut payload = current_fixture_payload();
             mutate(&mut payload);
-            assert!(payload.validate().is_err(), "mutation {index} should be rejected");
+            assert!(
+                payload.validate().is_err(),
+                "mutation {index} should be rejected"
+            );
         }
         let mut edge = current_fixture_payload();
         group(&mut edge).name = "x".repeat(crate::db::contact_groups::MAX_GROUP_NAME);
@@ -2661,7 +3345,10 @@ mod tests {
         let (_, result) = import_fixture(fixtures::V5_0_170);
         result.preferences.validate().unwrap();
         assert!(result.preferences.writing_profiles.is_empty());
-        assert_eq!(result.preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
+        assert_eq!(
+            result.preferences.calendar_colors,
+            current_fixture_payload().preferences.calendar_colors
+        );
     }
 
     #[test]
@@ -2674,7 +3361,10 @@ mod tests {
         let availability = &result.preferences.availability_preferences;
         assert_eq!(availability.time_zone, "Asia/Tokyo");
         assert_eq!(availability.working_windows[0].start, "07:00");
-        assert_eq!(result.preferences.writing_profiles, current_fixture_payload().preferences.writing_profiles);
+        assert_eq!(
+            result.preferences.writing_profiles,
+            current_fixture_payload().preferences.writing_profiles
+        );
     }
 
     #[test]
@@ -2686,9 +3376,16 @@ mod tests {
         assert!(serialized.get("availabilityPreferences").is_some());
 
         // Renaming the default profile alone is worth carrying.
-        payload.preferences.availability_profiles.default_profile.name = "Work".to_string();
+        payload
+            .preferences
+            .availability_profiles
+            .default_profile
+            .name = "Work".to_string();
         let serialized = serde_json::to_value(&payload.preferences).unwrap();
-        assert_eq!(serialized["availabilityProfiles"]["defaultProfile"]["name"], "Work");
+        assert_eq!(
+            serialized["availabilityProfiles"]["defaultProfile"]["name"],
+            "Work"
+        );
     }
 
     #[test]
@@ -2697,15 +3394,33 @@ mod tests {
             |profiles| profiles.other_profiles[0].name = "work".to_string(),
             |profiles| profiles.other_profiles[0].name = " Church".to_string(),
             |profiles| profiles.other_profiles[0].name = String::new(),
-            |profiles| profiles.other_profiles[0].name = "C".repeat(crate::availability::MAX_AVAILABILITY_PROFILE_NAME_CHARS + 1),
+            |profiles| {
+                profiles.other_profiles[0].name =
+                    "C".repeat(crate::availability::MAX_AVAILABILITY_PROFILE_NAME_CHARS + 1)
+            },
             |profiles| profiles.other_profiles[0].id = "default".to_string(),
-            |profiles| profiles.other_profiles[0].drive_time_buffer_minutes = crate::availability::MAX_DRIVE_TIME_BUFFER_MINUTES + 1,
-            |profiles| { profiles.account_defaults.insert("other@example.net".to_string(), "deleted".to_string()); },
-            |profiles| { profiles.account_defaults.insert("Upper@Example.net".to_string(), "church".to_string()); },
+            |profiles| {
+                profiles.other_profiles[0].drive_time_buffer_minutes =
+                    crate::availability::MAX_DRIVE_TIME_BUFFER_MINUTES + 1
+            },
+            |profiles| {
+                profiles
+                    .account_defaults
+                    .insert("other@example.net".to_string(), "deleted".to_string());
+            },
+            |profiles| {
+                profiles
+                    .account_defaults
+                    .insert("Upper@Example.net".to_string(), "church".to_string());
+            },
             |profiles| {
                 let template = profiles.other_profiles[0].clone();
                 profiles.other_profiles = (0..crate::availability::MAX_AVAILABILITY_PROFILES)
-                    .map(|index| AvailabilityProfile { id: format!("p{index}"), name: format!("Profile {index}"), ..template.clone() })
+                    .map(|index| AvailabilityProfile {
+                        id: format!("p{index}"),
+                        name: format!("Profile {index}"),
+                        ..template.clone()
+                    })
                     .collect();
                 profiles.account_defaults.clear();
             },
@@ -2713,7 +3428,11 @@ mod tests {
         for change in invalid {
             let mut payload = current_fixture_payload();
             change(&mut payload.preferences.availability_profiles);
-            assert!(payload.validate().is_err(), "{:?}", payload.preferences.availability_profiles);
+            assert!(
+                payload.validate().is_err(),
+                "{:?}",
+                payload.preferences.availability_profiles
+            );
         }
     }
 
@@ -2726,11 +3445,15 @@ mod tests {
             .map(|index| AvailabilityProfile {
                 id: format!("p{index}"),
                 // Multi-byte characters count once, as they do in the name field.
-                name: format!("{index}{}", "é".repeat(crate::availability::MAX_AVAILABILITY_PROFILE_NAME_CHARS - 1)),
+                name: format!(
+                    "{index}{}",
+                    "é".repeat(crate::availability::MAX_AVAILABILITY_PROFILE_NAME_CHARS - 1)
+                ),
                 ..template.clone()
             })
             .collect();
-        profiles.account_defaults = BTreeMap::from([("other@example.net".to_string(), "p1".to_string())]);
+        profiles.account_defaults =
+            BTreeMap::from([("other@example.net".to_string(), "p1".to_string())]);
         payload.validate().unwrap();
     }
 
@@ -2747,38 +3470,78 @@ mod tests {
     fn transfer_bounds_writing_profiles() {
         let about = crate::ai::MAX_WRITING_PROFILE_ABOUT_CHARS;
         let instructions = crate::ai::MAX_WRITING_PROFILE_INSTRUCTIONS_CHARS;
-        let profile = |about_you: String, review_instructions: String| WritingProfile { about_you, review_instructions };
+        let profile = |about_you: String, review_instructions: String| WritingProfile {
+            about_you,
+            review_instructions,
+        };
         for (length, ok) in [(about - 1, true), (about, true), (about + 1, false)] {
             let mut payload = current_fixture_payload();
-            payload.preferences.writing_profiles = WritingProfiles::from([("a@example.com".into(), profile("é".repeat(length), String::new()))]);
+            payload.preferences.writing_profiles = WritingProfiles::from([(
+                "a@example.com".into(),
+                profile("é".repeat(length), String::new()),
+            )]);
             assert_eq!(payload.preferences.validate().is_ok(), ok, "about {length}");
         }
-        for (length, ok) in [(instructions - 1, true), (instructions, true), (instructions + 1, false)] {
+        for (length, ok) in [
+            (instructions - 1, true),
+            (instructions, true),
+            (instructions + 1, false),
+        ] {
             let mut payload = current_fixture_payload();
-            payload.preferences.writing_profiles = WritingProfiles::from([("a@example.com".into(), profile(String::new(), "é".repeat(length)))]);
-            assert_eq!(payload.preferences.validate().is_ok(), ok, "instructions {length}");
+            payload.preferences.writing_profiles = WritingProfiles::from([(
+                "a@example.com".into(),
+                profile(String::new(), "é".repeat(length)),
+            )]);
+            assert_eq!(
+                payload.preferences.validate().is_ok(),
+                ok,
+                "instructions {length}"
+            );
         }
-        for (count, ok) in [(MAX_WRITING_PROFILES, true), (MAX_WRITING_PROFILES + 1, false)] {
+        for (count, ok) in [
+            (MAX_WRITING_PROFILES, true),
+            (MAX_WRITING_PROFILES + 1, false),
+        ] {
             let mut payload = current_fixture_payload();
             payload.preferences.writing_profiles = (0..count)
-                .map(|index| (format!("account-{index}@example.com"), profile("CEO".into(), String::new())))
+                .map(|index| {
+                    (
+                        format!("account-{index}@example.com"),
+                        profile("CEO".into(), String::new()),
+                    )
+                })
                 .collect();
-            assert_eq!(payload.preferences.validate().is_ok(), ok, "{count} profiles");
+            assert_eq!(
+                payload.preferences.validate().is_ok(),
+                ok,
+                "{count} profiles"
+            );
         }
         let invalid: [(String, WritingProfile); 5] = [
-            ("Upper@Example.com".into(), profile("CEO".into(), String::new())),
+            (
+                "Upper@Example.com".into(),
+                profile("CEO".into(), String::new()),
+            ),
             (" ".into(), profile("CEO".into(), String::new())),
-            ("x".repeat(MAX_WRITING_PROFILE_ACCOUNT_LENGTH + 1), profile("CEO".into(), String::new())),
+            (
+                "x".repeat(MAX_WRITING_PROFILE_ACCOUNT_LENGTH + 1),
+                profile("CEO".into(), String::new()),
+            ),
             ("a@example.com".into(), profile(" \n".into(), " ".into())),
-            ("a@example.com".into(), profile("CEO\u{0}".into(), String::new())),
+            (
+                "a@example.com".into(),
+                profile("CEO\u{0}".into(), String::new()),
+            ),
         ];
         for (account, value) in invalid {
             let mut payload = current_fixture_payload();
-            payload.preferences.writing_profiles = WritingProfiles::from([(account.clone(), value)]);
+            payload.preferences.writing_profiles =
+                WritingProfiles::from([(account.clone(), value)]);
             assert!(payload.preferences.validate().is_err(), "{account}");
         }
         let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
-        unknown["preferences"]["writingProfiles"]["current@example.com"]["persona"] = serde_json::json!("x");
+        unknown["preferences"]["writingProfiles"]["current@example.com"]["persona"] =
+            serde_json::json!("x");
         assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
     }
 
@@ -2796,13 +3559,22 @@ mod tests {
     fn transfer_accepts_calendar_colors_up_to_the_limit() {
         let mut payload = current_fixture_payload();
         let calendars = (0..MAX_CALENDAR_COLORS)
-            .map(|index| (format!("calendar-{index}"), CALENDAR_COLOR_IDS[index % 16].to_string()))
+            .map(|index| {
+                (
+                    format!("calendar-{index}"),
+                    CALENDAR_COLOR_IDS[index % 16].to_string(),
+                )
+            })
             .collect();
-        payload.preferences.calendar_colors = CalendarColors::from([("current@example.com".to_string(), calendars)]);
+        payload.preferences.calendar_colors =
+            CalendarColors::from([("current@example.com".to_string(), calendars)]);
         payload.preferences.validate().unwrap();
 
-        payload.preferences.calendar_colors
-            .get_mut("current@example.com").unwrap()
+        payload
+            .preferences
+            .calendar_colors
+            .get_mut("current@example.com")
+            .unwrap()
             .insert("one-too-many".to_string(), "red".to_string());
         assert!(payload.preferences.validate().is_err());
 
@@ -2812,9 +3584,15 @@ mod tests {
             let calendars = (0..MAX_CALENDAR_COLORS / 2 + account)
                 .map(|index| (format!("calendar-{index}"), "red".to_string()))
                 .collect();
-            split.preferences.calendar_colors.insert(format!("account-{account}@example.com"), calendars);
+            split
+                .preferences
+                .calendar_colors
+                .insert(format!("account-{account}@example.com"), calendars);
         }
-        assert!(split.preferences.validate().is_err(), "the limit counts calendars across every account");
+        assert!(
+            split.preferences.validate().is_err(),
+            "the limit counts calendars across every account"
+        );
     }
 
     #[test]
@@ -2822,20 +3600,36 @@ mod tests {
         let account = "current@example.com".to_string();
         let invalid: [(String, String, String); 7] = [
             (account.clone(), "primary".into(), "#123456".into()),
-            (account.clone(), "primary".into(), "red; background-image: url(https://tracker.example/x)".into()),
+            (
+                account.clone(),
+                "primary".into(),
+                "red; background-image: url(https://tracker.example/x)".into(),
+            ),
             (account.clone(), "primary".into(), "Red".into()),
             (account.clone(), "primary".into(), String::new()),
             (account.clone(), " ".into(), "red".into()),
-            (account.clone(), "x".repeat(MAX_CALENDAR_ID_LENGTH + 1), "red".into()),
-            ("x".repeat(MAX_CALENDAR_ACCOUNT_LENGTH + 1), "primary".into(), "red".into()),
+            (
+                account.clone(),
+                "x".repeat(MAX_CALENDAR_ID_LENGTH + 1),
+                "red".into(),
+            ),
+            (
+                "x".repeat(MAX_CALENDAR_ACCOUNT_LENGTH + 1),
+                "primary".into(),
+                "red".into(),
+            ),
         ];
         for (account_id, calendar_id, color_id) in invalid {
             let mut payload = current_fixture_payload();
-            payload.preferences.calendar_colors = CalendarColors::from([(account_id, BTreeMap::from([(calendar_id, color_id)]))]);
+            payload.preferences.calendar_colors =
+                CalendarColors::from([(account_id, BTreeMap::from([(calendar_id, color_id)]))]);
             assert!(payload.preferences.validate().is_err());
         }
         let mut empty_account = current_fixture_payload();
-        empty_account.preferences.calendar_colors.insert("empty@example.com".into(), BTreeMap::new());
+        empty_account
+            .preferences
+            .calendar_colors
+            .insert("empty@example.com".into(), BTreeMap::new());
         assert!(empty_account.preferences.validate().is_err());
 
         let mut edge = current_fixture_payload();
@@ -2854,7 +3648,10 @@ mod tests {
             |contact| contact.birthday = Some("13-01".into()),
             |contact| contact.birthday = Some("1850-01-01".into()),
             |contact| contact.keep_in_touch.interval_days = Some(0),
-            |contact| contact.keep_in_touch.interval_days = Some(crate::db::contacts::MAX_KEEP_IN_TOUCH_DAYS + 1),
+            |contact| {
+                contact.keep_in_touch.interval_days =
+                    Some(crate::db::contacts::MAX_KEEP_IN_TOUCH_DAYS + 1)
+            },
             |contact| contact.keep_in_touch.snoozed_until = Some("next week".into()),
         ];
         for mutate in invalid {
@@ -2864,7 +3661,8 @@ mod tests {
         }
         let mut edge = current_fixture_payload();
         edge.contacts[0].birthday = Some("02-29".into());
-        edge.contacts[0].keep_in_touch.interval_days = Some(crate::db::contacts::MAX_KEEP_IN_TOUCH_DAYS);
+        edge.contacts[0].keep_in_touch.interval_days =
+            Some(crate::db::contacts::MAX_KEEP_IN_TOUCH_DAYS);
         edge.validate().unwrap();
         let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
         unknown["contacts"][0]["keepInTouch"]["unexpected"] = serde_json::json!(1);
@@ -2884,22 +3682,37 @@ mod tests {
         let features = &preferences.ai_features;
         assert!(features.contact_enrichment && features.thread_chat && features.proactive_briefs);
         assert_eq!(preferences.availability_preferences.time_zone, "Asia/Tokyo");
-        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (2, 1, 1, 1));
+        assert_eq!(
+            (
+                result.account_count,
+                result.split_inbox_count,
+                result.snippet_count,
+                result.contact_count
+            ),
+            (2, 1, 1, 1)
+        );
         assert_eq!(database.retention_days().unwrap(), Some(365));
     }
 
     #[test]
     fn frozen_v5_0_121_export_imports_without_sender_rules_and_keeps_local_ones() {
-        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v5-0.121.dispatch-settings");
+        let bytes =
+            include_bytes!("../tests/fixtures/settings-transfer/v5-0.121.dispatch-settings");
         assert_eq!(envelope_version(bytes), VERSION);
         let database = Database::open_memory();
         database.adopt_account("current@example.com").unwrap();
-        let local = database.mute_sender("current@example.com", "domain", "local.example", &[]).unwrap().rule;
+        let local = database
+            .mute_sender("current@example.com", "domain", "local.example", &[])
+            .unwrap()
+            .rule;
         let payload = decrypt(bytes, fixtures::PASSWORD).unwrap();
         assert!(payload.sender_rules.is_none());
         let result = apply_import(&database, payload).unwrap();
         assert_eq!(result.sender_rule_count, 0);
-        assert_eq!(result.contact_group_count, 1, "every earlier field still imports");
+        assert_eq!(
+            result.contact_group_count, 1,
+            "every earlier field still imports"
+        );
         assert_eq!(database.list_sender_rules().unwrap(), vec![local]);
     }
 
@@ -2907,9 +3720,16 @@ mod tests {
     fn importing_sender_rules_replaces_the_local_ones() {
         let database = Database::open_memory();
         database.adopt_account("current@example.com").unwrap();
-        database.mute_sender("current@example.com", "domain", "local.example", &[]).unwrap();
+        database
+            .mute_sender("current@example.com", "domain", "local.example", &[])
+            .unwrap();
         apply_import(&database, current_fixture_payload()).unwrap();
-        let values = database.list_sender_rules().unwrap().into_iter().map(|rule| rule.match_value).collect::<Vec<_>>();
+        let values = database
+            .list_sender_rules()
+            .unwrap()
+            .into_iter()
+            .map(|rule| rule.match_value)
+            .collect::<Vec<_>>();
         assert_eq!(values, vec!["news@launch.example"]);
         let mut empty = current_fixture_payload();
         empty.sender_rules = Some(Vec::new());
@@ -2926,12 +3746,18 @@ mod tests {
             |p| p.sender_rules.as_mut().unwrap()[0].match_value = "not an address".into(),
             |p| p.sender_rules.as_mut().unwrap()[0].action = "delete".into(),
             |p| p.sender_rules.as_mut().unwrap()[0].created_at = "yesterday".into(),
-            |p| { let copy = p.sender_rules.as_ref().unwrap()[0].clone(); p.sender_rules.as_mut().unwrap().push(copy); },
+            |p| {
+                let copy = p.sender_rules.as_ref().unwrap()[0].clone();
+                p.sender_rules.as_mut().unwrap().push(copy);
+            },
         ];
         for (index, mutate) in mutations.iter().enumerate() {
             let mut payload = current_fixture_payload();
             mutate(&mut payload);
-            assert!(payload.validate().is_err(), "mutation {index} should be rejected");
+            assert!(
+                payload.validate().is_err(),
+                "mutation {index} should be rejected"
+            );
         }
         let mut domain = current_fixture_payload();
         let rule = &mut domain.sender_rules.as_mut().unwrap()[0];
@@ -2944,13 +3770,29 @@ mod tests {
 
     #[test]
     fn frozen_pre_nickname_v5_export_imports_with_no_nicknames() {
-        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v5-0.101.dispatch-settings");
+        let bytes =
+            include_bytes!("../tests/fixtures/settings-transfer/v5-0.101.dispatch-settings");
         assert_eq!(envelope_version(bytes), VERSION);
         let (database, result) = import_fixture(bytes);
         assert_eq!(result.account_count, 3);
-        assert!(database.list_accounts().unwrap().iter().all(|account| account.nickname.is_none()));
-        assert_eq!(database.get_account("current@example.com").unwrap().unwrap().display_name.as_deref(), Some("Current"));
-        assert!(database.imap_account_settings("me@proton.me").unwrap().is_some());
+        assert!(database
+            .list_accounts()
+            .unwrap()
+            .iter()
+            .all(|account| account.nickname.is_none()));
+        assert_eq!(
+            database
+                .get_account("current@example.com")
+                .unwrap()
+                .unwrap()
+                .display_name
+                .as_deref(),
+            Some("Current")
+        );
+        assert!(database
+            .imap_account_settings("me@proton.me")
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -2961,10 +3803,23 @@ mod tests {
             payload.validate().unwrap();
         }
         let plaintext = serde_json::to_vec(&payload).unwrap();
-        let sealed = seal(&plaintext, fixtures::PASSWORD, &fixtures::V5_CURRENT_SALT, &fixtures::V5_CURRENT_NONCE).unwrap();
+        let sealed = seal(
+            &plaintext,
+            fixtures::PASSWORD,
+            &fixtures::V5_CURRENT_SALT,
+            &fixtures::V5_CURRENT_NONCE,
+        )
+        .unwrap();
         let database = Database::open_memory();
         apply_import(&database, decrypt(&sealed, fixtures::PASSWORD).unwrap()).unwrap();
-        assert_eq!(database.get_account("current@example.com").unwrap().unwrap().nickname, payload.accounts[0].nickname);
+        assert_eq!(
+            database
+                .get_account("current@example.com")
+                .unwrap()
+                .unwrap()
+                .nickname,
+            payload.accounts[0].nickname
+        );
         for invalid in ["é".repeat(201), "Work\nPersonal".into(), "   ".into()] {
             payload.accounts[0].nickname = Some(invalid);
             assert!(payload.validate().is_err());
@@ -3004,8 +3859,16 @@ mod tests {
             .replace_account_labels(
                 "current@example.com",
                 &[
-                    crate::models::Label { id: "Label_18".into(), name: "Work".into(), kind: "user".into() },
-                    crate::models::Label { id: "lf:Clients/Acme".into(), name: "Clients/Acme".into(), kind: "user".into() },
+                    crate::models::Label {
+                        id: "Label_18".into(),
+                        name: "Work".into(),
+                        kind: "user".into(),
+                    },
+                    crate::models::Label {
+                        id: "lf:Clients/Acme".into(),
+                        name: "Clients/Acme".into(),
+                        kind: "user".into(),
+                    },
                 ],
             )
             .unwrap();
@@ -3027,15 +3890,43 @@ mod tests {
 
     #[test]
     fn research_jobs_evidence_and_configuration_stay_out_of_settings_transfer() {
-        let db=Database::open_memory();db.adopt_account("current@example.com").unwrap();
-        let prefs=current_fixture_payload().preferences;
-        let before=build_export_payload(&db,prefs.clone()).unwrap();
-        db.set_agent_runner_enabled(true,0).unwrap();
-        db.set_research_config(&crate::agents::research::ResearchConfig {enabled:true,search_enabled:true,verified:false},true,0).unwrap();
-        db.create_research_task(&crate::agents::research::ResearchRequest {task:crate::agents::CreateAgentTask {account_id:"current@example.com".into(),objective:"Private research objective".into(),source_thread_id:None,linked_task_id:None,workflow:crate::agents::policy::RESEARCH_WORKFLOW.into()},subjects:vec!["Public Show".into()],consent:true},0).unwrap();
-        let after=build_export_payload(&db,prefs).unwrap();
-        let normalized=|p:TransferPayload| {let mut v=serde_json::to_value(p).unwrap();v["exportedAt"]=serde_json::Value::Null;v};
-        assert_eq!(normalized(before),normalized(after));
+        let db = Database::open_memory();
+        db.adopt_account("current@example.com").unwrap();
+        let prefs = current_fixture_payload().preferences;
+        let before = build_export_payload(&db, prefs.clone()).unwrap();
+        db.set_agent_runner_enabled(true, 0).unwrap();
+        db.set_research_config(
+            &crate::agents::research::ResearchConfig {
+                enabled: true,
+                search_enabled: true,
+                verified: false,
+            },
+            true,
+            0,
+        )
+        .unwrap();
+        db.create_research_task(
+            &crate::agents::research::ResearchRequest {
+                task: crate::agents::CreateAgentTask {
+                    account_id: "current@example.com".into(),
+                    objective: "Private research objective".into(),
+                    source_thread_id: None,
+                    linked_task_id: None,
+                    workflow: crate::agents::policy::RESEARCH_WORKFLOW.into(),
+                },
+                subjects: vec!["Public Show".into()],
+                consent: true,
+            },
+            0,
+        )
+        .unwrap();
+        let after = build_export_payload(&db, prefs).unwrap();
+        let normalized = |p: TransferPayload| {
+            let mut v = serde_json::to_value(p).unwrap();
+            v["exportedAt"] = serde_json::Value::Null;
+            v
+        };
+        assert_eq!(normalized(before), normalized(after));
     }
 
     /// Regenerates only `v5-current`. Run deliberately, after freezing the
@@ -3051,7 +3942,11 @@ mod tests {
 
     #[test]
     fn frozen_fixtures_reject_the_wrong_password() {
-        for fixture in [fixtures::V1_INITIAL, fixtures::V2_FINAL, fixtures::V4_CURRENT] {
+        for fixture in [
+            fixtures::V1_INITIAL,
+            fixtures::V2_FINAL,
+            fixtures::V4_CURRENT,
+        ] {
             assert_eq!(
                 decrypt(fixture, "not the fixture password").unwrap_err(),
                 "The password is incorrect or the settings export is damaged"
@@ -3093,16 +3988,27 @@ mod tests {
             apply_import(&database, payload).unwrap_err(),
             format!("Unsupported transfer version {}", VERSION + 1)
         );
-        assert!(database.list_accounts().unwrap().is_empty(), "a rejected import must not write");
+        assert!(
+            database.list_accounts().unwrap().is_empty(),
+            "a rejected import must not write"
+        );
     }
 
     /// Keys of a JSON object tree as dotted paths, e.g. `aiFeatures.summarize`.
     /// Arrays contribute the keys of their first element under `path[]`.
-    fn key_paths(value: &serde_json::Value, prefix: &str, out: &mut std::collections::BTreeSet<String>) {
+    fn key_paths(
+        value: &serde_json::Value,
+        prefix: &str,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
         match value {
             serde_json::Value::Object(map) => {
                 for (key, child) in map {
-                    let path = if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
+                    let path = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{prefix}.{key}")
+                    };
                     out.insert(path.clone());
                     key_paths(child, &path, out);
                 }
@@ -3118,7 +4024,8 @@ mod tests {
 
     #[test]
     fn webview_preferences_fixture_matches_the_native_transfer_preferences() {
-        let fixture: serde_json::Value = serde_json::from_str(fixtures::WEBVIEW_PREFERENCES).unwrap();
+        let fixture: serde_json::Value =
+            serde_json::from_str(fixtures::WEBVIEW_PREFERENCES).unwrap();
         // deny_unknown_fields: the webview may not send a key the native
         // side would reject, and every required native key must be present.
         let preferences: TransferPreferences = serde_json::from_value(fixture.clone()).unwrap();
@@ -3127,10 +4034,17 @@ mod tests {
         let mut sent = std::collections::BTreeSet::new();
         key_paths(&fixture, "", &mut sent);
         let mut native = std::collections::BTreeSet::new();
-        key_paths(&serde_json::to_value(&preferences).unwrap(), "", &mut native);
+        key_paths(
+            &serde_json::to_value(&preferences).unwrap(),
+            "",
+            &mut native,
+        );
         // `classify` is the one native-only key: kept for version 1
         // compatibility, no longer read or written by the webview.
         native.remove("aiFeatures.classify");
-        assert_eq!(sent, native, "a native transfer preference is missing from the webview export (or vice versa)");
+        assert_eq!(
+            sent, native,
+            "a native transfer preference is missing from the webview export (or vice versa)"
+        );
     }
 }

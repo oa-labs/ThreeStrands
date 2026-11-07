@@ -20,8 +20,13 @@ impl Database {
         messages: &[NormalizedMessage],
     ) -> DbResult<()> {
         let mut unique = std::collections::HashSet::new();
-        if messages.iter().any(|message| !unique.insert(message.id.as_str())) {
-            return Err(DatabaseError::invalid("Duplicate message in ingested thread"));
+        if messages
+            .iter()
+            .any(|message| !unique.insert(message.id.as_str()))
+        {
+            return Err(DatabaseError::invalid(
+                "Duplicate message in ingested thread",
+            ));
         }
         let Some(latest) = messages
             .iter()
@@ -96,7 +101,9 @@ impl Database {
             .unwrap_or_else(|| latest.date.clone());
         let mut chronological: Vec<&NormalizedMessage> = messages.iter().collect();
         chronological.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)));
-        let latest_html = chronological.last().map(|message| message.body_html.as_str());
+        let latest_html = chronological
+            .last()
+            .map(|message| message.body_html.as_str());
         let mut text = crate::quoted_history::searchable_thread_text_with(
             chronological
                 .iter()
@@ -140,9 +147,13 @@ impl Database {
         // attachment stars survive. Remove only messages absent from the new
         // thread, then update existing rows in place below.
         let incoming_ids: Vec<&str> = messages.iter().map(|message| message.id.as_str()).collect();
-        let incoming_json=serde_json::to_string(&incoming_ids).map_err(serialization_error)?;
+        let incoming_json = serde_json::to_string(&incoming_ids).map_err(serialization_error)?;
         let foreign_message:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM messages m JOIN threads t ON t.id=m.thread_id WHERE m.id IN (SELECT value FROM json_each(?1)) AND (t.account_id<>?2 OR m.thread_id<>?3))",params![incoming_json,account_id,thread_id],|row|row.get(0))?;
-        if foreign_message { return Err(DatabaseError::invalid("Message belongs to another thread or account")); }
+        if foreign_message {
+            return Err(DatabaseError::invalid(
+                "Message belongs to another thread or account",
+            ));
+        }
         transaction.execute("DELETE FROM messages WHERE thread_id = ?1 AND id NOT IN (SELECT value FROM json_each(?2))", params![thread_id,incoming_json])?;
         // The account's "sent by me" identity set, loaded ONCE per thread and
         // reused for every message below — not once per message (no N+1).
@@ -186,7 +197,10 @@ impl Database {
                     serde_json::to_string(&message.cc).map_err(serialization_error)?,
                 ],
             )?;
-            transaction.execute("DELETE FROM contact_interactions WHERE message_id=?1", [&message.id])?;
+            transaction.execute(
+                "DELETE FROM contact_interactions WHERE message_id=?1",
+                [&message.id],
+            )?;
             contacts::index_contact_message(transaction, account_id, &thread_id, message, &mine)?;
             super::co_recipients::index_message(transaction, account_id, message)?;
         }

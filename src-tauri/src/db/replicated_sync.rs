@@ -9,7 +9,8 @@ use rusqlite::{params, OptionalExtension, Transaction};
 use serde_json::Value;
 use threestrands_sync_core::EntityType;
 use threestrands_sync_envelope::{
-    compute_cid, protocol_marker_cid, DeviceHead, DeviceId as EnvelopeDeviceId, VerifyingKey, PROTOCOL_MARKER,
+    compute_cid, protocol_marker_cid, DeviceHead, DeviceId as EnvelopeDeviceId, VerifyingKey,
+    PROTOCOL_MARKER,
 };
 use threestrands_sync_transport::TransportInstanceId;
 
@@ -26,7 +27,11 @@ pub(crate) fn ensure_space_and_device(tx: &Transaction) -> DbResult<[u8; 16]> {
     // `is_self` — not "the first row" — is what identifies this device's
     // own entry once enrollment means `sync_devices` also holds peers.
     let existing: Option<String> = tx
-        .query_row("SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1", [], |row| row.get(0))
+        .query_row(
+            "SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
         .optional()?;
     if let Some(hex) = existing {
         return decode_id(&hex).map_err(DatabaseError::Corrupt);
@@ -46,7 +51,11 @@ impl Database {
     pub fn beta_features_enabled(&self) -> DbResult<bool> {
         let enabled: Option<bool> = self.with_connection(|connection| {
             Ok(connection
-                .query_row("SELECT enabled FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
+                .query_row(
+                    "SELECT enabled FROM sync_spaces WHERE id=?1",
+                    params![SPACE_ID],
+                    |row| row.get(0),
+                )
                 .optional()?)
         })?;
         Ok(enabled.unwrap_or(false))
@@ -68,7 +77,6 @@ impl Database {
         })
     }
 
-
     // ---- Device roster ----
 
     /// Records a device's public key as trusted for signature verification,
@@ -77,7 +85,11 @@ impl Database {
     /// [`Self::trust_device_keys`] instead. Tests call this directly to
     /// simulate an already-trusted peer that only needs Ed25519 material.
     #[cfg(test)]
-    pub fn trust_device_public_key(&self, device_id: &[u8; 16], verifying_key: &VerifyingKey) -> DbResult<()> {
+    pub fn trust_device_public_key(
+        &self,
+        device_id: &[u8; 16],
+        verifying_key: &VerifyingKey,
+    ) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO sync_devices(device_id, public_key, status) VALUES (?1,?2,'active')
@@ -159,7 +171,9 @@ impl Database {
         })?;
         rows.into_iter()
             .map(|(device_id_hex, key_bytes)| {
-                let device_id = EnvelopeDeviceId::from_bytes(decode_id(&device_id_hex).map_err(DatabaseError::Corrupt)?);
+                let device_id = EnvelopeDeviceId::from_bytes(
+                    decode_id(&device_id_hex).map_err(DatabaseError::Corrupt)?,
+                );
                 let key_array: [u8; 32] = key_bytes
                     .try_into()
                     .map_err(|_| DatabaseError::corrupt("Stored device public key is invalid"))?;
@@ -170,7 +184,6 @@ impl Database {
             .collect()
     }
 
-
     // ---- Snapshots, heads, and merges ----
 
     /// The snapshot `transport_instance_id` can honestly be pointed at: this
@@ -178,7 +191,10 @@ impl Database {
     /// that transport. `None` while it hasn't, and the transport's head then
     /// keeps naming the previous snapshot, which stays there until it's
     /// replaced.
-    pub(crate) fn delivered_state_head(&self, transport_instance_id: &str) -> DbResult<Option<(u64, String)>> {
+    pub(crate) fn delivered_state_head(
+        &self,
+        transport_instance_id: &str,
+    ) -> DbResult<Option<(u64, String)>> {
         self.with_connection(|connection| {
             let row: Option<(i64, i64, Option<String>)> = connection
                 .query_row(
@@ -214,7 +230,11 @@ impl Database {
         })
     }
 
-    pub(crate) fn record_merged_state(&self, device_id_hex: &str, state_sequence: u64) -> DbResult<()> {
+    pub(crate) fn record_merged_state(
+        &self,
+        device_id_hex: &str,
+        state_sequence: u64,
+    ) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO sync_remote_states(device_id, state_sequence, merged_at) VALUES (?1, ?2, ?3)
@@ -230,7 +250,11 @@ impl Database {
     /// device first saw it, and which key epoch the peer is on. Only a head newer than the one on record
     /// (by its own publication time) replaces it, so a stale copy on a
     /// lagging transport never rolls the record back.
-    pub(crate) fn record_head_observation(&self, head: &DeviceHead, seen_at_ms: i64) -> DbResult<()> {
+    pub(crate) fn record_head_observation(
+        &self,
+        head: &DeviceHead,
+        seen_at_ms: i64,
+    ) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO sync_remote_states(device_id, last_head_published_at_ms, last_head_seen_at_ms, last_head_epoch) VALUES (?1, ?2, ?3, ?4)
@@ -247,7 +271,12 @@ impl Database {
     /// Whether `head_content` (a head's content minus its publication time)
     /// should be published to `transport_instance_id` now: it changed since
     /// the last publication there, or the heartbeat is due.
-    pub(crate) fn head_publication_due(&self, transport_instance_id: &str, head_content: &str, now_ms: i64) -> DbResult<bool> {
+    pub(crate) fn head_publication_due(
+        &self,
+        transport_instance_id: &str,
+        head_content: &str,
+        now_ms: i64,
+    ) -> DbResult<bool> {
         let last: Option<(String, i64)> = self.with_connection(|connection| {
             Ok(connection
                 .query_row(
@@ -260,12 +289,18 @@ impl Database {
         Ok(match last {
             None => true,
             Some((content, published_at_ms)) => {
-                content != head_content || now_ms - published_at_ms >= crate::sync_policy::HEAD_HEARTBEAT_MS
+                content != head_content
+                    || now_ms - published_at_ms >= crate::sync_policy::HEAD_HEARTBEAT_MS
             }
         })
     }
 
-    pub(crate) fn record_head_publication(&self, transport_instance_id: &str, head_content: &str, now_ms: i64) -> DbResult<()> {
+    pub(crate) fn record_head_publication(
+        &self,
+        transport_instance_id: &str,
+        head_content: &str,
+        now_ms: i64,
+    ) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO sync_head_publications(transport_instance_id, head_content, published_at_ms) VALUES (?1,?2,?3)
@@ -275,7 +310,6 @@ impl Database {
             Ok(())
         })
     }
-
 
     // ---- Notices and cleanup markers ----
 
@@ -296,7 +330,11 @@ impl Database {
     /// a group created by an earlier, incompatible build.
     pub fn protocol_reset_notice(&self) -> DbResult<bool> {
         self.with_connection(|connection| {
-            Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM sync_notices WHERE kind='protocol_reset')", [], |row| row.get(0))?)
+            Ok(connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_notices WHERE kind='protocol_reset')",
+                [],
+                |row| row.get(0),
+            )?)
         })
     }
 
@@ -312,7 +350,11 @@ impl Database {
     pub(crate) fn pending_keychain_cleanup(&self) -> DbResult<Option<u32>> {
         self.with_connection(|connection| {
             Ok(connection
-                .query_row("SELECT highest_epoch FROM sync_pending_keychain_cleanup WHERE id=1", [], |row| row.get(0))
+                .query_row(
+                    "SELECT highest_epoch FROM sync_pending_keychain_cleanup WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )
                 .optional()?)
         })
     }
@@ -324,10 +366,12 @@ impl Database {
         })
     }
 
-
     // ---- Delivery ledger ----
 
-    pub(crate) fn pending_delivery_items(&self, transport_instance_id: &str) -> DbResult<Vec<DeliveryItem>> {
+    pub(crate) fn pending_delivery_items(
+        &self,
+        transport_instance_id: &str,
+    ) -> DbResult<Vec<DeliveryItem>> {
         self.with_connection(|connection| {
             let now = Utc::now().to_rfc3339();
             let mut statement = connection.prepare(
@@ -349,7 +393,12 @@ impl Database {
         })
     }
 
-    pub(crate) fn record_delivery_success(&self, cid: &str, transport_instance_id: &str, remote_id: Option<&str>) -> DbResult<()> {
+    pub(crate) fn record_delivery_success(
+        &self,
+        cid: &str,
+        transport_instance_id: &str,
+        remote_id: Option<&str>,
+    ) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "UPDATE sync_deliveries SET state='delivered', remote_id=?3, last_error=NULL, retry_at=NULL
@@ -365,7 +414,10 @@ impl Database {
     /// (pending, delivered, or failed) — the anti-entropy behavior that
     /// turns transport union into replication. Cheap to call repeatedly:
     /// `INSERT OR IGNORE` only ever adds rows for a truly new pairing.
-    pub fn enqueue_repair_deliveries(&self, transport_ids: &[TransportInstanceId]) -> DbResult<usize> {
+    pub fn enqueue_repair_deliveries(
+        &self,
+        transport_ids: &[TransportInstanceId],
+    ) -> DbResult<usize> {
         self.with_connection(|connection| {
             let cids: Vec<String> = {
                 let mut statement = connection.prepare("SELECT cid FROM sync_objects")?;
@@ -402,10 +454,9 @@ impl Database {
         })
     }
 
-
     // ---- Pending materializations ----
 
-    pub(crate) fn pending_entity_materializations(&self)->DbResult<Vec<(EntityType,String)>>{
+    pub(crate) fn pending_entity_materializations(&self) -> DbResult<Vec<(EntityType, String)>> {
         let rows=self.with_connection(|connection|{
             let mut statement=connection.prepare("SELECT entity_type,entity_id FROM pending_entity_materializations ORDER BY updated_at")?;
             let rows=statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?;
@@ -419,21 +470,32 @@ impl Database {
         }).collect())
     }
 
-    pub(crate) fn remember_pending_entity_materialization(&self,entity_type:EntityType,entity_id:&str,reason:&str)->DbResult<()>{
-        let reason=reason.chars().take(2_000).collect::<String>();
+    pub(crate) fn remember_pending_entity_materialization(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+        reason: &str,
+    ) -> DbResult<()> {
+        let reason = reason.chars().take(2_000).collect::<String>();
         self.with_connection(|connection|{
             connection.execute("INSERT INTO pending_entity_materializations(entity_type,entity_id,reason,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(entity_type,entity_id) DO UPDATE SET reason=excluded.reason,updated_at=excluded.updated_at",params![entity_type.as_str(),entity_id,reason,Utc::now().to_rfc3339()])?;
             Ok(())
         })
     }
 
-    pub(crate) fn clear_pending_entity_materialization(&self,entity_type:EntityType,entity_id:&str)->DbResult<()>{
-        self.with_connection(|connection|{
-            connection.execute("DELETE FROM pending_entity_materializations WHERE entity_type=?1 AND entity_id=?2",params![entity_type.as_str(),entity_id])?;
+    pub(crate) fn clear_pending_entity_materialization(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+    ) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM pending_entity_materializations WHERE entity_type=?1 AND entity_id=?2",
+                params![entity_type.as_str(), entity_id],
+            )?;
             Ok(())
         })
     }
-
 
     // ---- Transport rows ----
 
@@ -500,8 +562,9 @@ impl Database {
     /// Every recorded key epoch older than `key_epoch`, oldest first.
     pub(crate) fn epochs_before(&self, key_epoch: u32) -> DbResult<Vec<u32>> {
         self.with_connection(|connection| {
-            let mut statement =
-                connection.prepare("SELECT key_epoch FROM sync_epoch_history WHERE key_epoch < ?1 ORDER BY key_epoch")?;
+            let mut statement = connection.prepare(
+                "SELECT key_epoch FROM sync_epoch_history WHERE key_epoch < ?1 ORDER BY key_epoch",
+            )?;
             let rows = statement
                 .query_map(params![key_epoch], |row| row.get(0))?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -577,7 +640,11 @@ impl Database {
 
     /// Superseded snapshot objects still on `transport_instance_id` from
     /// before state sequence `head_sequence`.
-    pub(crate) fn retired_objects(&self, transport_instance_id: &str, head_sequence: u64) -> DbResult<Vec<String>> {
+    pub(crate) fn retired_objects(
+        &self,
+        transport_instance_id: &str,
+        head_sequence: u64,
+    ) -> DbResult<Vec<String>> {
         self.with_connection(|connection| {
             let mut statement = connection
                 .prepare("SELECT cid FROM sync_retired_objects WHERE transport_instance_id=?1 AND state_sequence < ?2")?;
@@ -589,7 +656,11 @@ impl Database {
     }
 
     /// Forgets a retired object once it is gone from `transport_instance_id`.
-    pub(crate) fn forget_retired_object(&self, cid: &str, transport_instance_id: &str) -> DbResult<()> {
+    pub(crate) fn forget_retired_object(
+        &self,
+        cid: &str,
+        transport_instance_id: &str,
+    ) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "DELETE FROM sync_retired_objects WHERE cid=?1 AND transport_instance_id=?2",
@@ -621,7 +692,12 @@ impl Database {
     }
 
     /// Writes a connector's non-secret config, enabling it.
-    pub(crate) fn upsert_transport_row(&self, instance_id: &str, kind: &str, config_json: &str) -> DbResult<()> {
+    pub(crate) fn upsert_transport_row(
+        &self,
+        instance_id: &str,
+        kind: &str,
+        config_json: &str,
+    ) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,?2,?3,1,1)
@@ -632,7 +708,11 @@ impl Database {
         })
     }
 
-    pub(crate) fn set_transport_config_json(&self, instance_id: &str, config_json: &str) -> DbResult<()> {
+    pub(crate) fn set_transport_config_json(
+        &self,
+        instance_id: &str,
+        config_json: &str,
+    ) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "UPDATE sync_transports SET config_json=?2 WHERE instance_id=?1",
@@ -645,10 +725,22 @@ impl Database {
     /// Forgets a connector's row and every ledger row that names it.
     pub(crate) fn delete_transport_rows(&self, instance_id: &str) -> DbResult<()> {
         self.with_connection(|connection| {
-            connection.execute("DELETE FROM sync_transports WHERE instance_id=?1", params![instance_id])?;
-            connection.execute("DELETE FROM sync_deliveries WHERE transport_instance_id=?1", params![instance_id])?;
-            connection.execute("DELETE FROM sync_head_publications WHERE transport_instance_id=?1", params![instance_id])?;
-            connection.execute("DELETE FROM sync_retired_objects WHERE transport_instance_id=?1", params![instance_id])?;
+            connection.execute(
+                "DELETE FROM sync_transports WHERE instance_id=?1",
+                params![instance_id],
+            )?;
+            connection.execute(
+                "DELETE FROM sync_deliveries WHERE transport_instance_id=?1",
+                params![instance_id],
+            )?;
+            connection.execute(
+                "DELETE FROM sync_head_publications WHERE transport_instance_id=?1",
+                params![instance_id],
+            )?;
+            connection.execute(
+                "DELETE FROM sync_retired_objects WHERE transport_instance_id=?1",
+                params![instance_id],
+            )?;
             Ok(())
         })
     }

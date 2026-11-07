@@ -61,7 +61,11 @@ impl Database {
                 |r| r.get::<_, String>(0),
             )
             .optional()?
-            .map(|value| value.parse::<i64>().map_err(|e| DatabaseError::corrupt(e.to_string())))
+            .map(|value| {
+                value
+                    .parse::<i64>()
+                    .map_err(|e| DatabaseError::corrupt(e.to_string()))
+            })
             .transpose()
     }
     pub fn set_retention_days(&self, days: Option<i64>) -> DbResult<()> {
@@ -73,8 +77,14 @@ impl Database {
 /// Stores the retention choice, `None` for Forever, and drops the new
 /// installation default so it cannot reappear underneath the choice. Used
 /// by Settings and by settings import, which does not validate first.
-pub(super) fn write_retention_days(connection: &rusqlite::Connection, days: Option<i64>) -> DbResult<()> {
-    connection.execute("DELETE FROM compose_settings WHERE key='retention_days_default'", [])?;
+pub(super) fn write_retention_days(
+    connection: &rusqlite::Connection,
+    days: Option<i64>,
+) -> DbResult<()> {
+    connection.execute(
+        "DELETE FROM compose_settings WHERE key='retention_days_default'",
+        [],
+    )?;
     match days {
         Some(days) => connection.execute(
             "INSERT INTO compose_settings VALUES ('retention_days',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",

@@ -41,32 +41,36 @@ pub use device_head::{
 };
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
 pub use enrollment::{
-    decode_signed_enrollment_grant, decode_signed_enrollment_rejection, decode_signed_enrollment_request, decode_signed_key_rotation,
-    encode_signed_enrollment_grant, encode_signed_enrollment_rejection, encode_signed_enrollment_request, encode_signed_key_rotation,
-    enrollment_fingerprint, sign_enrollment_grant, sign_enrollment_rejection, sign_enrollment_request, sign_key_rotation,
-    verify_enrollment_grant, verify_enrollment_rejection, verify_enrollment_request, verify_key_rotation, EnrollmentGrant,
-    EnrollmentRejection, EnrollmentRequest, KeyRotation, RosterEntry, SealedEpochKey, SignedEnrollmentGrant, SignedEnrollmentRejection,
-    SignedEnrollmentRequest, SignedKeyRotation,
+    decode_signed_enrollment_grant, decode_signed_enrollment_rejection,
+    decode_signed_enrollment_request, decode_signed_key_rotation, encode_signed_enrollment_grant,
+    encode_signed_enrollment_rejection, encode_signed_enrollment_request,
+    encode_signed_key_rotation, enrollment_fingerprint, sign_enrollment_grant,
+    sign_enrollment_rejection, sign_enrollment_request, sign_key_rotation, verify_enrollment_grant,
+    verify_enrollment_rejection, verify_enrollment_request, verify_key_rotation, EnrollmentGrant,
+    EnrollmentRejection, EnrollmentRequest, KeyRotation, RosterEntry, SealedEpochKey,
+    SignedEnrollmentGrant, SignedEnrollmentRejection, SignedEnrollmentRequest, SignedKeyRotation,
 };
 pub use error::EnvelopeError;
-pub use join_code::{
-    decode_join_code, decode_signed_invitation, decode_signed_invitation_redemption, encode_join_code,
-    encode_signed_invitation, encode_signed_invitation_redemption, generate_invite_secret, invite_ed25519_signing_key,
-    invite_x25519_secret, sign_invitation, sign_invitation_redemption, verify_invitation, verify_invitation_redemption,
-    Invitation, InvitationRedemption, JoinCode, JoinCodeError, JoinConnector, SignedInvitation,
-    SignedInvitationRedemption, INVITE_SECRET_LEN, JOIN_CODE_PREFIX, JOIN_CODE_VERSION,
-};
 pub use header::{CipherSuite, ObjectKind};
 pub use ids::{DeviceId, RequestId, Signature};
+pub use join_code::{
+    decode_join_code, decode_signed_invitation, decode_signed_invitation_redemption,
+    encode_join_code, encode_signed_invitation, encode_signed_invitation_redemption,
+    generate_invite_secret, invite_ed25519_signing_key, invite_x25519_secret, sign_invitation,
+    sign_invitation_redemption, verify_invitation, verify_invitation_redemption, Invitation,
+    InvitationRedemption, JoinCode, JoinCodeError, JoinConnector, SignedInvitation,
+    SignedInvitationRedemption, INVITE_SECRET_LEN, JOIN_CODE_PREFIX, JOIN_CODE_VERSION,
+};
 pub use recovery::{
-    check_recovery_phrase, generate_recovery_seed, recovery_ed25519_signing_key, recovery_phrase_from_seed,
-    recovery_seed_from_phrase, recovery_x25519_secret, RecoveryPhraseCheck, RECOVERY_PHRASE_WORDS, RECOVERY_SEED_LEN,
+    check_recovery_phrase, generate_recovery_seed, recovery_ed25519_signing_key,
+    recovery_phrase_from_seed, recovery_seed_from_phrase, recovery_x25519_secret,
+    RecoveryPhraseCheck, RECOVERY_PHRASE_WORDS, RECOVERY_SEED_LEN,
+};
+pub use snapshot::{
+    message_id_for_snapshot, open_snapshot, seal_snapshot, seal_snapshot_with_nonces,
+    validate_snapshot, ReplicaSnapshot, SnapshotField, SnapshotValue, PROTOCOL_VERSION,
 };
 pub use threestrands_sync_protocol::EntityType;
-pub use snapshot::{
-    message_id_for_snapshot, open_snapshot, seal_snapshot, seal_snapshot_with_nonces, validate_snapshot, ReplicaSnapshot,
-    SnapshotField, SnapshotValue, PROTOCOL_VERSION,
-};
 pub use vector::{validate_sequence_vector, SequenceEntry};
 pub use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 
@@ -387,8 +391,8 @@ mod canonicality_tests {
                     A: serde::de::MapAccess<'de>,
                 {
                     let mut keys = Vec::new();
-                    while let Some((key, _value)) = access
-                        .next_entry::<String, serde_json::Value>()?
+                    while let Some((key, _value)) =
+                        access.next_entry::<String, serde_json::Value>()?
                     {
                         keys.push(key);
                     }
@@ -433,7 +437,10 @@ mod canonicality_tests {
 
     #[test]
     fn cid_reference_validation_rejects_non_cid_strings() {
-        assert!(validate_cid_reference("bafkreihyp2mdkcvn2et4tbcjqsirtmpevqgemx5ab2ac5oioyzmfkwlhlu").is_ok());
+        assert!(validate_cid_reference(
+            "bafkreihyp2mdkcvn2et4tbcjqsirtmpevqgemx5ab2ac5oioyzmfkwlhlu"
+        )
+        .is_ok());
         assert!(matches!(
             validate_cid_reference("not-a-cid"),
             Err(EnvelopeError::InvalidCidReference)

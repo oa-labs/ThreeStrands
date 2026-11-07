@@ -36,7 +36,8 @@ fn targets(args: &[String], cwd: &Path) -> Vec<LaunchTarget> {
                 Ok(url) if url.scheme().len() > 1 => return None,
                 _ => PathBuf::from(arg),
             };
-            calendar_files::is_calendar_file(&path).then(|| LaunchTarget::CalendarFile(cwd.join(path)))
+            calendar_files::is_calendar_file(&path)
+                .then(|| LaunchTarget::CalendarFile(cwd.join(path)))
         })
         .collect()
 }
@@ -57,7 +58,10 @@ mod tests {
     use super::*;
 
     fn args(rest: &[&str]) -> Vec<String> {
-        std::iter::once("threestrands").chain(rest.iter().copied()).map(String::from).collect()
+        std::iter::once("threestrands")
+            .chain(rest.iter().copied())
+            .map(String::from)
+            .collect()
     }
 
     fn cwd() -> PathBuf {
@@ -78,7 +82,13 @@ mod tests {
     #[test]
     fn opens_mailto_links_as_given() {
         assert_eq!(
-            targets(&args(&["mailto:jane@example.com?subject=Hi", "MAILTO:sam@example.com"]), &cwd()),
+            targets(
+                &args(&[
+                    "mailto:jane@example.com?subject=Hi",
+                    "MAILTO:sam@example.com"
+                ]),
+                &cwd()
+            ),
             vec![
                 LaunchTarget::MailLink("mailto:jane@example.com?subject=Hi".into()),
                 LaunchTarget::MailLink("MAILTO:sam@example.com".into()),
@@ -101,7 +111,10 @@ mod tests {
     #[test]
     fn accepts_windows_drive_paths() {
         let path = r"C:\Users\sam\Downloads\invite.ics";
-        assert_eq!(targets(&args(&[path]), &cwd()), vec![LaunchTarget::CalendarFile(cwd().join(path))]);
+        assert_eq!(
+            targets(&args(&[path]), &cwd()),
+            vec![LaunchTarget::CalendarFile(cwd().join(path))]
+        );
     }
 
     #[test]

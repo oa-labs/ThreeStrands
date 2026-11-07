@@ -140,14 +140,22 @@ mod tests {
 
     #[test]
     fn plain_language_maps_each_error_category_to_guidance() {
-        assert!(plain_language(&ProviderError::ReauthenticationRequired("x".into()))
-            .contains("password was rejected"));
-        assert!(plain_language(&ProviderError::TransientTransport("refused".into()))
-            .contains("Could not reach the server"));
-        assert!(plain_language(&ProviderError::PermanentClientRejection("over quota".into()))
-            .contains("over quota"));
-        assert!(plain_language(&ProviderError::InvalidOperation("bad".into()))
-            .contains("rejected the request"));
+        assert!(
+            plain_language(&ProviderError::ReauthenticationRequired("x".into()))
+                .contains("password was rejected")
+        );
+        assert!(
+            plain_language(&ProviderError::TransientTransport("refused".into()))
+                .contains("Could not reach the server")
+        );
+        assert!(plain_language(&ProviderError::PermanentClientRejection(
+            "over quota".into()
+        ))
+        .contains("over quota"));
+        assert!(
+            plain_language(&ProviderError::InvalidOperation("bad".into()))
+                .contains("rejected the request")
+        );
         // A changed certificate is not reported as a password problem.
         let changed = plain_language(&ProviderError::CertificateChanged("IMAP".into()));
         assert!(changed.contains("certificate has changed"), "{changed}");

@@ -27,7 +27,10 @@ impl MailLinkInbox {
         if !is_mailto(url) || url.len() > MAX_MAIL_LINK_BYTES {
             return false;
         }
-        let mut pending = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut pending = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if pending.len() >= MAX_PENDING_MAIL_LINKS {
             return false;
         }
@@ -36,12 +39,18 @@ impl MailLinkInbox {
     }
 
     fn take(&self) -> Vec<String> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
     }
 }
 
 pub fn is_mailto(url: &str) -> bool {
-    url.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("mailto:"))
+    url.get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("mailto:"))
 }
 
 /// Queues a mailto link for the composer, tells the webview, and brings the
@@ -91,7 +100,10 @@ mod tests {
         }
         assert_eq!(
             inbox.take(),
-            vec!["mailto:jane@example.com?subject=Hi", "MAILTO:jane@example.com"]
+            vec![
+                "mailto:jane@example.com?subject=Hi",
+                "MAILTO:jane@example.com"
+            ]
         );
         assert!(inbox.take().is_empty());
     }

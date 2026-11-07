@@ -38,7 +38,10 @@ mod tests {
     use super::*;
 
     fn entry(byte: u8, sequence: u64) -> SequenceEntry {
-        SequenceEntry { device_id: DeviceId::from_bytes([byte; 16]), sequence }
+        SequenceEntry {
+            device_id: DeviceId::from_bytes([byte; 16]),
+            sequence,
+        }
     }
 
     #[test]
@@ -61,7 +64,10 @@ mod tests {
                 .map(|index| {
                     let mut bytes = [0u8; 16];
                     bytes[..8].copy_from_slice(&(index as u64).to_be_bytes());
-                    SequenceEntry { device_id: DeviceId::from_bytes(bytes), sequence: 1 }
+                    SequenceEntry {
+                        device_id: DeviceId::from_bytes(bytes),
+                        sequence: 1,
+                    }
                 })
                 .collect()
         };

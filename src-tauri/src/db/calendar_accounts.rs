@@ -63,7 +63,9 @@ impl Database {
                 [email],
             )?)
         })?;
-        if changed == 0 { return Err(DatabaseError::NotFound("Calendar account")); }
+        if changed == 0 {
+            return Err(DatabaseError::NotFound("Calendar account"));
+        }
         Ok(())
     }
 
@@ -96,17 +98,33 @@ impl Database {
     /// checks for this account without changing the visible calendars.
     pub fn availability_calendar_selection(&self, email: &str) -> DbResult<Option<Vec<String>>> {
         self.with_connection(|connection| {
-            let value: Option<String> = connection.query_row(
-                "SELECT availability_calendar_ids FROM calendar_accounts WHERE email=?1", [email], |row| row.get(0),
-            ).optional()?.ok_or(DatabaseError::NotFound("Calendar account"))?;
-            value.map(|value| serde_json::from_str(&value).map_err(|_| DatabaseError::corrupt("Invalid availability calendar selection"))).transpose()
+            let value: Option<String> = connection
+                .query_row(
+                    "SELECT availability_calendar_ids FROM calendar_accounts WHERE email=?1",
+                    [email],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or(DatabaseError::NotFound("Calendar account"))?;
+            value
+                .map(|value| {
+                    serde_json::from_str(&value).map_err(|_| {
+                        DatabaseError::corrupt("Invalid availability calendar selection")
+                    })
+                })
+                .transpose()
         })
     }
 
     pub fn set_availability_calendar_selection(&self, email: &str, ids: &[String]) -> DbResult<()> {
-        let value = serde_json::to_string(ids).map_err(|_| DatabaseError::invalid("Invalid availability calendar selection"))?;
+        let value = serde_json::to_string(ids)
+            .map_err(|_| DatabaseError::invalid("Invalid availability calendar selection"))?;
         self.with_connection(|connection| {
-            if connection.execute("UPDATE calendar_accounts SET availability_calendar_ids=?1 WHERE email=?2", params![value, email])? == 0 {
+            if connection.execute(
+                "UPDATE calendar_accounts SET availability_calendar_ids=?1 WHERE email=?2",
+                params![value, email],
+            )? == 0
+            {
                 return Err(DatabaseError::NotFound("Calendar account"));
             }
             Ok(())
@@ -121,11 +139,7 @@ impl Database {
         Ok(payload)
     }
 
-    pub fn set_calendar_selection(
-        &self,
-        email: &str,
-        calendar_ids: &[String],
-    ) -> DbResult<()> {
+    pub fn set_calendar_selection(&self, email: &str, calendar_ids: &[String]) -> DbResult<()> {
         self.with_transaction(|transaction| {
             let changed = transaction.execute(
                 "UPDATE calendar_accounts SET selection_initialized = 1 WHERE email = ?1",
@@ -152,7 +166,10 @@ impl Database {
 impl Database {
     /// Stores a calendar account another device added or reordered.
     pub(crate) fn upsert_synced_calendar(&self, value: &Value) -> DbResult<()> {
-        let email = value.get("email").and_then(Value::as_str).ok_or_else(|| DatabaseError::corrupt("Invalid calendar account"))?;
+        let email = value
+            .get("email")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DatabaseError::corrupt("Invalid calendar account"))?;
         // Devices from before calendar ordering send no sortOrder: a new
         // account then goes last and an existing one keeps its place.
         let sort_order = value.get("sortOrder").and_then(Value::as_i64);
@@ -175,7 +192,9 @@ mod tests {
     #[test]
     fn calendar_accounts_are_independent_from_mail_accounts() {
         let database = Database::open_memory();
-        database.adopt_calendar_account("calendar@example.com").unwrap();
+        database
+            .adopt_calendar_account("calendar@example.com")
+            .unwrap();
 
         assert!(database.list_accounts().unwrap().is_empty());
         assert_eq!(
@@ -183,7 +202,9 @@ mod tests {
             "calendar@example.com"
         );
 
-        database.remove_calendar_account("calendar@example.com").unwrap();
+        database
+            .remove_calendar_account("calendar@example.com")
+            .unwrap();
         assert!(database.list_calendar_accounts().unwrap().is_empty());
     }
 
@@ -194,54 +215,117 @@ mod tests {
             database.adopt_calendar_account(email).unwrap();
         }
         let emails = |database: &Database| -> Vec<String> {
-            database.list_calendar_accounts().unwrap().into_iter().map(|account| account.email).collect()
+            database
+                .list_calendar_accounts()
+                .unwrap()
+                .into_iter()
+                .map(|account| account.email)
+                .collect()
         };
-        assert_eq!(emails(&database), ["home@example.com", "side@example.com", "work@example.com"]);
+        assert_eq!(
+            emails(&database),
+            ["home@example.com", "side@example.com", "work@example.com"]
+        );
 
         database
-            .reorder_calendar_accounts(&["work@example.com".into(), "home@example.com".into(), "side@example.com".into()])
+            .reorder_calendar_accounts(&[
+                "work@example.com".into(),
+                "home@example.com".into(),
+                "side@example.com".into(),
+            ])
             .unwrap();
-        assert_eq!(emails(&database), ["work@example.com", "home@example.com", "side@example.com"]);
+        assert_eq!(
+            emails(&database),
+            ["work@example.com", "home@example.com", "side@example.com"]
+        );
 
         // Reconnecting refreshes the connection without moving the account.
-        database.disconnect_calendar_account_locally("work@example.com").unwrap();
+        database
+            .disconnect_calendar_account_locally("work@example.com")
+            .unwrap();
         database.adopt_calendar_account("work@example.com").unwrap();
-        assert_eq!(emails(&database), ["work@example.com", "home@example.com", "side@example.com"]);
+        assert_eq!(
+            emails(&database),
+            ["work@example.com", "home@example.com", "side@example.com"]
+        );
 
         database.adopt_calendar_account("new@example.com").unwrap();
-        assert_eq!(emails(&database).last().map(String::as_str), Some("new@example.com"));
+        assert_eq!(
+            emails(&database).last().map(String::as_str),
+            Some("new@example.com")
+        );
     }
 
     #[test]
     fn availability_selection_is_independent_persistent_and_preserved_on_reconnect() {
         let database = Database::open_memory();
-        database.adopt_calendar_account("calendar@example.com").unwrap();
-        database.set_calendar_selection("calendar@example.com", &["holidays".into(), "shared".into()]).unwrap();
-        assert_eq!(database.availability_calendar_selection("calendar@example.com").unwrap(), None);
-        database.set_availability_calendar_selection("calendar@example.com", &["calendar@example.com".into()]).unwrap();
-        database.set_calendar_selection("calendar@example.com", &[]).unwrap();
-        database.adopt_calendar_account("calendar@example.com").unwrap();
-        assert_eq!(database.availability_calendar_selection("calendar@example.com").unwrap(), Some(vec!["calendar@example.com".into()]));
-        assert_eq!(database.calendar_selection("calendar@example.com").unwrap(), Some(vec![]));
-        database.set_availability_calendar_selection("calendar@example.com", &[]).unwrap();
-        assert_eq!(database.availability_calendar_selection("calendar@example.com").unwrap(), Some(vec![]));
-        assert_eq!(database.calendar_selection_payload("calendar@example.com").unwrap()["availabilityCalendarIds"], serde_json::json!([]));
+        database
+            .adopt_calendar_account("calendar@example.com")
+            .unwrap();
+        database
+            .set_calendar_selection(
+                "calendar@example.com",
+                &["holidays".into(), "shared".into()],
+            )
+            .unwrap();
+        assert_eq!(
+            database
+                .availability_calendar_selection("calendar@example.com")
+                .unwrap(),
+            None
+        );
+        database
+            .set_availability_calendar_selection(
+                "calendar@example.com",
+                &["calendar@example.com".into()],
+            )
+            .unwrap();
+        database
+            .set_calendar_selection("calendar@example.com", &[])
+            .unwrap();
+        database
+            .adopt_calendar_account("calendar@example.com")
+            .unwrap();
+        assert_eq!(
+            database
+                .availability_calendar_selection("calendar@example.com")
+                .unwrap(),
+            Some(vec!["calendar@example.com".into()])
+        );
+        assert_eq!(
+            database.calendar_selection("calendar@example.com").unwrap(),
+            Some(vec![])
+        );
+        database
+            .set_availability_calendar_selection("calendar@example.com", &[])
+            .unwrap();
+        assert_eq!(
+            database
+                .availability_calendar_selection("calendar@example.com")
+                .unwrap(),
+            Some(vec![])
+        );
+        assert_eq!(
+            database
+                .calendar_selection_payload("calendar@example.com")
+                .unwrap()["availabilityCalendarIds"],
+            serde_json::json!([])
+        );
     }
 
     #[test]
     fn calendar_selection_distinguishes_default_from_explicitly_empty() {
         let database = Database::open_memory();
-        database.adopt_calendar_account("calendar@example.com").unwrap();
+        database
+            .adopt_calendar_account("calendar@example.com")
+            .unwrap();
         assert_eq!(
             database.calendar_selection("calendar@example.com").unwrap(),
             None
         );
 
         database
-            .set_calendar_selection(
-                "calendar@example.com",
-                &["primary@example.com".to_string()],
-            )
+            .set_calendar_selection("calendar@example.com", &["primary@example.com".to_string()])
             .unwrap();
         assert_eq!(
             database.calendar_selection("calendar@example.com").unwrap(),

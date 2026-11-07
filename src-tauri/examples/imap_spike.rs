@@ -36,7 +36,9 @@ use tokio::net::TcpStream;
 use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
 };
-use tokio_rustls::rustls::crypto::{ring as ring_provider, verify_tls12_signature, verify_tls13_signature};
+use tokio_rustls::rustls::crypto::{
+    ring as ring_provider, verify_tls12_signature, verify_tls13_signature,
+};
 use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 use tokio_rustls::TlsConnector;
 
@@ -87,7 +89,12 @@ impl ServerCertVerifier for PinnedCertVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, tokio_rustls::rustls::Error> {
-        verify_tls12_signature(message, cert, dss, &ring_provider::default_provider().signature_verification_algorithms)
+        verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &ring_provider::default_provider().signature_verification_algorithms,
+        )
     }
 
     fn verify_tls13_signature(
@@ -96,7 +103,12 @@ impl ServerCertVerifier for PinnedCertVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, tokio_rustls::rustls::Error> {
-        verify_tls13_signature(message, cert, dss, &ring_provider::default_provider().signature_verification_algorithms)
+        verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &ring_provider::default_provider().signature_verification_algorithms,
+        )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -107,7 +119,11 @@ impl ServerCertVerifier for PinnedCertVerifier {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
+    bytes
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 /// Parse a colon- or space-separated SHA-256 fingerprint string into 32 bytes.
@@ -188,14 +204,17 @@ where
                 }
                 let _ = status;
             }
-            Response::Done { tag, status, outcome }
-                if tag.as_bytes() == id.as_bytes() => {
-                    if let Some(c) = outcome.code.as_ref().and_then(OwnedCode::from_code) {
-                        captured = Some(c);
-                    }
-                    final_status = format!("{status:?}");
-                    break;
+            Response::Done {
+                tag,
+                status,
+                outcome,
+            } if tag.as_bytes() == id.as_bytes() => {
+                if let Some(c) = outcome.code.as_ref().and_then(OwnedCode::from_code) {
+                    captured = Some(c);
                 }
+                final_status = format!("{status:?}");
+                break;
+            }
             _ => {}
         }
     }
@@ -208,8 +227,15 @@ where
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 enum OwnedCode {
-    CopyUid { validity: u32, from: String, to: String },
-    AppendUid { validity: u32, uids: String },
+    CopyUid {
+        validity: u32,
+        from: String,
+        to: String,
+    },
+    AppendUid {
+        validity: u32,
+        uids: String,
+    },
     Other(String),
 }
 
@@ -241,7 +267,9 @@ struct Report {
 }
 impl Report {
     fn new() -> Self {
-        Report { results: Vec::new() }
+        Report {
+            results: Vec::new(),
+        }
     }
     fn record(&mut self, n: usize, name: &str, pass: bool, evidence: String) {
         println!(
@@ -438,7 +466,9 @@ async fn check2_idle_reconnect(report: &mut Report, pin: [u8; 32]) {
             }
         },
         Err(e) => {
-            evidence.push_str(&format!("fingerprint re-read failed ({e}); reusing old pin\n"));
+            evidence.push_str(&format!(
+                "fingerprint re-read failed ({e}); reusing old pin\n"
+            ));
             pin
         }
     };
@@ -468,7 +498,12 @@ async fn check2_idle_reconnect(report: &mut Report, pin: [u8; 32]) {
         evidence.push_str("did NOT reconnect after drop\n");
     }
 
-    report.record(2, "IDLE enter/done + clean reconnect after drop", pass, evidence);
+    report.record(
+        2,
+        "IDLE enter/done + clean reconnect after drop",
+        pass,
+        evidence,
+    );
 }
 
 // Check 3: UID MOVE + APPEND via run_command yield COPYUID / APPENDUID codes.
@@ -486,14 +521,24 @@ async fn check3_copyuid_appenduid(report: &mut Report, pin: [u8; 32]) {
     let client = match starttls_connect(pin).await {
         Ok(c) => c,
         Err(e) => {
-            report.record(3, "UID MOVE/APPEND return COPYUID/APPENDUID via run_command", false, format!("connect failed: {e}"));
+            report.record(
+                3,
+                "UID MOVE/APPEND return COPYUID/APPENDUID via run_command",
+                false,
+                format!("connect failed: {e}"),
+            );
             return;
         }
     };
     let mut session = match client.login(USER, PASS).await {
         Ok(s) => s,
         Err((e, _)) => {
-            report.record(3, "UID MOVE/APPEND return COPYUID/APPENDUID via run_command", false, format!("login failed: {e}"));
+            report.record(
+                3,
+                "UID MOVE/APPEND return COPYUID/APPENDUID via run_command",
+                false,
+                format!("login failed: {e}"),
+            );
             return;
         }
     };
@@ -598,14 +643,24 @@ async fn check4_keyword_store(report: &mut Report, pin: [u8; 32]) {
     let client = match starttls_connect(pin).await {
         Ok(c) => c,
         Err(e) => {
-            report.record(4, "Keyword STORE result is detectable + consistent with PERMANENTFLAGS", false, format!("connect failed: {e}"));
+            report.record(
+                4,
+                "Keyword STORE result is detectable + consistent with PERMANENTFLAGS",
+                false,
+                format!("connect failed: {e}"),
+            );
             return;
         }
     };
     let mut session = match client.login(USER, PASS).await {
         Ok(s) => s,
         Err((e, _)) => {
-            report.record(4, "Keyword STORE result is detectable + consistent with PERMANENTFLAGS", false, format!("login failed: {e}"));
+            report.record(
+                4,
+                "Keyword STORE result is detectable + consistent with PERMANENTFLAGS",
+                false,
+                format!("login failed: {e}"),
+            );
             return;
         }
     };
@@ -618,7 +673,12 @@ async fn check4_keyword_store(report: &mut Report, pin: [u8; 32]) {
     let mb = match session.select("INBOX").await {
         Ok(mb) => mb,
         Err(e) => {
-            report.record(4, "Keyword STORE result is detectable + consistent with PERMANENTFLAGS", false, format!("select failed: {e}"));
+            report.record(
+                4,
+                "Keyword STORE result is detectable + consistent with PERMANENTFLAGS",
+                false,
+                format!("select failed: {e}"),
+            );
             return;
         }
     };
@@ -647,7 +707,12 @@ async fn check4_keyword_store(report: &mut Report, pin: [u8; 32]) {
     let uid = match uid {
         Some(u) => u,
         None => {
-            report.record(4, "Keyword STORE result is detectable + consistent with PERMANENTFLAGS", false, "no message in INBOX to STORE".into());
+            report.record(
+                4,
+                "Keyword STORE result is detectable + consistent with PERMANENTFLAGS",
+                false,
+                "no message in INBOX to STORE".into(),
+            );
             return;
         }
     };
@@ -740,7 +805,9 @@ async fn live_pin(fallback: [u8; 32], evidence: &mut String) -> [u8; 32] {
             }
         },
         Err(e) => {
-            evidence.push_str(&format!("live pin re-read failed ({e}); using passed pin\n"));
+            evidence.push_str(&format!(
+                "live pin re-read failed ({e}); using passed pin\n"
+            ));
             fallback
         }
     }
@@ -761,7 +828,10 @@ async fn run_script_capture(script: &str, arg: &str) -> Result<String, String> {
     let arg = arg.to_string();
     tokio::task::spawn_blocking(move || {
         let home = std::env::var("HOME").unwrap_or_default();
-        let path = format!("{home}/.rd/bin:{}", std::env::var("PATH").unwrap_or_default());
+        let path = format!(
+            "{home}/.rd/bin:{}",
+            std::env::var("PATH").unwrap_or_default()
+        );
         let out = std::process::Command::new("bash")
             .arg(&script)
             .arg(&arg)

@@ -22,7 +22,10 @@ pub(super) enum OutputDecodeError {
     Malformed,
 }
 
-pub(super) fn decode_json_output(content: &str, target: &str) -> Result<serde_json::Value, OutputDecodeError> {
+pub(super) fn decode_json_output(
+    content: &str,
+    target: &str,
+) -> Result<serde_json::Value, OutputDecodeError> {
     if content.chars().count() > MAX_ACTION_OUTPUT_CHARS {
         log::error!(target: "ai_analyze_thread", "oversized {target} output ({} chars)", content.chars().count());
         return Err(OutputDecodeError::Oversized);

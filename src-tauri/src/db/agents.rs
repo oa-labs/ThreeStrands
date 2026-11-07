@@ -73,7 +73,7 @@ fn records<T: DeserializeOwned>(c: &Connection, sql: &str, id: &str) -> DbResult
 }
 fn detail(c: &Connection, id: &str) -> DbResult<AgentDetail> {
     Ok(AgentDetail {
-        research: research::summary(c,id)?,
+        research: research::summary(c, id)?,
         task: task(c, id)?,
         run: run(c, id)?,
         turns: records(
@@ -119,7 +119,13 @@ fn invalidate(r: &mut AgentRun, state: RunState, reason: Option<&str>) {
     r.lease_until = None;
     r.started_at = None;
 }
-fn dispatch_limit(c:&Connection,id:&str)->DbResult<i64> {Ok(if task(c,id)?.workflow==RESEARCH_WORKFLOW {MAX_RESEARCH_DISPATCHES} else {MAX_DISPATCHES})}
+fn dispatch_limit(c: &Connection, id: &str) -> DbResult<i64> {
+    Ok(if task(c, id)?.workflow == RESEARCH_WORKFLOW {
+        MAX_RESEARCH_DISPATCHES
+    } else {
+        MAX_DISPATCHES
+    })
+}
 fn charge_time(r: &mut AgentRun, now: i64) {
     if let Some(start) = r.started_at {
         let reserved = (r.lease_until.unwrap_or(start + LEASE_SECONDS) - start).max(0);
@@ -127,30 +133,91 @@ fn charge_time(r: &mut AgentRun, now: i64) {
     }
 }
 
-fn create_task(c:&Connection,request:&CreateAgentTask,now:i64)->DbResult<AgentDetail> {
-            if !enabled(c)? { return Err(DatabaseError::invalid("Delegated work is disabled")); }
-            let exists: bool=c.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE email=?1 AND on_this_device=1)",[&request.account_id],|r|r.get(0))?;
-            if !exists { return Err(DatabaseError::invalid("Account is not available on this device")); }
-            if let Some(id)=&request.source_thread_id {
-                let account:Option<String>=c.query_row("SELECT account_id FROM threads WHERE id=?1",[id],|r|r.get(0)).optional()?;
-                if account.as_deref()!=Some(&request.account_id) { return Err(DatabaseError::invalid("Source conversation must belong to the account")); }
-            }
-            if let Some(id)=&request.linked_task_id {
-                let account:Option<String>=c.query_row("SELECT account_id FROM tasks WHERE id=?1",[id],|r|r.get(0)).optional()?;
-                if account.as_deref()!=Some(&request.account_id) { return Err(DatabaseError::invalid("Linked task must belong to the account")); }
-            }
-            let t=AgentTask { id:Uuid::new_v4().to_string(),account_id:request.account_id.clone(),objective:request.objective.trim().into(),source_thread_id:request.source_thread_id.clone(),linked_task_id:request.linked_task_id.clone(),workflow:request.workflow.clone(),revision:1,created_at:now,archived:false,unread:false };
-            c.execute("INSERT INTO agent_tasks(id,account_id,source_thread_id,linked_task_id,record_json) VALUES (?1,?2,?3,?4,?5)",params![t.id,t.account_id,t.source_thread_id,t.linked_task_id,encode(&t)?])?;
-            let r=AgentRun { id:Uuid::new_v4().to_string(),task_id:t.id.clone(),state:RunState::Queued,reason:None,generation:0,checkpoint:0,owner:None,lease_until:None,started_at:None,not_before:now,dispatches:0,attempts:0,active_seconds:0,question_id:None };
-            c.execute("INSERT INTO agent_runs(id,task_id,state,generation,not_before,record_json) VALUES (?1,?2,'queued',0,?3,?4)",params![r.id,t.id,now,encode(&r)?])?;
-            turn(c,&t.id,"user",&t.objective,None,None,now)?;
-            detail(c,&t.id)
+fn create_task(c: &Connection, request: &CreateAgentTask, now: i64) -> DbResult<AgentDetail> {
+    if !enabled(c)? {
+        return Err(DatabaseError::invalid("Delegated work is disabled"));
+    }
+    let exists: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE email=?1 AND on_this_device=1)",
+        [&request.account_id],
+        |r| r.get(0),
+    )?;
+    if !exists {
+        return Err(DatabaseError::invalid(
+            "Account is not available on this device",
+        ));
+    }
+    if let Some(id) = &request.source_thread_id {
+        let account: Option<String> = c
+            .query_row("SELECT account_id FROM threads WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if account.as_deref() != Some(&request.account_id) {
+            return Err(DatabaseError::invalid(
+                "Source conversation must belong to the account",
+            ));
+        }
+    }
+    if let Some(id) = &request.linked_task_id {
+        let account: Option<String> = c
+            .query_row("SELECT account_id FROM tasks WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if account.as_deref() != Some(&request.account_id) {
+            return Err(DatabaseError::invalid(
+                "Linked task must belong to the account",
+            ));
+        }
+    }
+    let t = AgentTask {
+        id: Uuid::new_v4().to_string(),
+        account_id: request.account_id.clone(),
+        objective: request.objective.trim().into(),
+        source_thread_id: request.source_thread_id.clone(),
+        linked_task_id: request.linked_task_id.clone(),
+        workflow: request.workflow.clone(),
+        revision: 1,
+        created_at: now,
+        archived: false,
+        unread: false,
+    };
+    c.execute("INSERT INTO agent_tasks(id,account_id,source_thread_id,linked_task_id,record_json) VALUES (?1,?2,?3,?4,?5)",params![t.id,t.account_id,t.source_thread_id,t.linked_task_id,encode(&t)?])?;
+    let r = AgentRun {
+        id: Uuid::new_v4().to_string(),
+        task_id: t.id.clone(),
+        state: RunState::Queued,
+        reason: None,
+        generation: 0,
+        checkpoint: 0,
+        owner: None,
+        lease_until: None,
+        started_at: None,
+        not_before: now,
+        dispatches: 0,
+        attempts: 0,
+        active_seconds: 0,
+        question_id: None,
+    };
+    c.execute("INSERT INTO agent_runs(id,task_id,state,generation,not_before,record_json) VALUES (?1,?2,'queued',0,?3,?4)",params![r.id,t.id,now,encode(&r)?])?;
+    turn(c, &t.id, "user", &t.objective, None, None, now)?;
+    detail(c, &t.id)
 }
 
 impl Database {
-    pub(crate) fn agent_workflow(&self,id:&str)->DbResult<String> {self.with_connection(|c|Ok(task(c,id)?.workflow))}
-    pub(crate) fn agent_lease_current(&self,l:&Lease,now:i64)->DbResult<bool> {
-        self.with_connection(|c|Ok(run(c,&l.run.task_id).is_ok_and(|r|r.state==RunState::Running && r.generation==l.run.generation && r.owner==l.run.owner && r.lease_until.is_some_and(|end|end>now))))
+    pub(crate) fn agent_workflow(&self, id: &str) -> DbResult<String> {
+        self.with_connection(|c| Ok(task(c, id)?.workflow))
+    }
+    pub(crate) fn agent_lease_current(&self, l: &Lease, now: i64) -> DbResult<bool> {
+        self.with_connection(|c| {
+            Ok(run(c, &l.run.task_id).is_ok_and(|r| {
+                r.state == RunState::Running
+                    && r.generation == l.run.generation
+                    && r.owner == l.run.owner
+                    && r.lease_until.is_some_and(|end| end > now)
+            }))
+        })
     }
     pub(crate) fn agent_runner_enabled(&self) -> DbResult<bool> {
         self.with_connection(enabled)
@@ -176,9 +243,7 @@ impl Database {
                 "Only the fixture workflow is available",
             ));
         }
-        self.with_transaction(|c| {
-            create_task(c,request,now)
-        })
+        self.with_transaction(|c| create_task(c, request, now))
     }
     pub(crate) fn get_agent_task(&self, id: &str) -> DbResult<AgentDetail> {
         self.with_connection(|c| detail(c, id))
@@ -315,7 +380,7 @@ impl Database {
                 Some(question_id.into()),
                 now,
             )?;
-            research::answer(c,id,answer)?;
+            research::answer(c, id, answer)?;
             r.question_id = None;
             // A user may answer during the independent evidence step. Leave its
             // lease intact; its commit checks whether more input is still needed.
@@ -368,10 +433,14 @@ impl Database {
                     if !enabled(c)? {
                         return Err(DatabaseError::invalid("Delegated work is disabled"));
                     }
-                    if r.dispatches >= dispatch_limit(c,id)? || r.active_seconds >= MAX_ACTIVE_SECONDS {
+                    if r.dispatches >= dispatch_limit(c, id)?
+                        || r.active_seconds >= MAX_ACTIVE_SECONDS
+                    {
                         return Err(DatabaseError::invalid("Agent allowance exhausted"));
                     }
-                    let next = if r.question_id.is_some() && (r.checkpoint == 2 || t.workflow==RESEARCH_WORKFLOW) {
+                    let next = if r.question_id.is_some()
+                        && (r.checkpoint == 2 || t.workflow == RESEARCH_WORKFLOW)
+                    {
                         RunState::WaitingForInput
                     } else {
                         RunState::Queued

@@ -31,15 +31,17 @@ use std::time::Duration;
 use async_trait::async_trait;
 use base64::Engine;
 use md5::{Digest, Md5};
-use threestrands_sync_envelope::os_rng;
 use rand::Rng;
 use rusty_s3::{S3Action, UrlStyle};
 use serde::{Deserialize, Serialize};
+use threestrands_sync_envelope::os_rng;
 
-use threestrands_sync_envelope::{compute_cid, decode_signed_head, encode_signed_head, DeviceId, SignedDeviceHead};
+use threestrands_sync_envelope::{
+    compute_cid, decode_signed_head, encode_signed_head, DeviceId, SignedDeviceHead,
+};
 use threestrands_sync_transport::{
-    Cid, HeadLocator, ObjectLocator, ScanPage, SyncTransport, TransportCapabilities, TransportError,
-    TransportHealth, TransportInstanceId,
+    Cid, HeadLocator, ObjectLocator, ScanPage, SyncTransport, TransportCapabilities,
+    TransportError, TransportHealth, TransportInstanceId,
 };
 
 use crate::endpoint_origin::{is_loopback_host, EndpointOrigin};
@@ -88,7 +90,12 @@ impl S3Config {
         if prefix.is_empty() {
             format!("{} · {}", self.endpoint.trim_end_matches('/'), self.bucket)
         } else {
-            format!("{} · {}/{}", self.endpoint.trim_end_matches('/'), self.bucket, prefix)
+            format!(
+                "{} · {}/{}",
+                self.endpoint.trim_end_matches('/'),
+                self.bucket,
+                prefix
+            )
         }
     }
 }
@@ -109,7 +116,10 @@ impl std::fmt::Debug for S3Credentials {
         f.debug_struct("S3Credentials")
             .field("access_key_id", &"<redacted>")
             .field("secret_access_key", &"<redacted>")
-            .field("session_token", &self.session_token.as_ref().map(|_| "<redacted>"))
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -130,9 +140,16 @@ fn validate_config(config: &S3Config) -> Result<ValidatedConfig, String> {
     let bucket = validate_bucket(&config.bucket)?;
     let prefix = validate_prefix(&config.prefix)?;
     let host_is_address = is_loopback_host(&origin.host)
-        || origin.host.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>().is_ok();
+        || origin
+            .host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok();
     if !config.path_style && host_is_address {
-        return Err("Use path-style addressing for an IP address or localhost endpoint".to_string());
+        return Err(
+            "Use path-style addressing for an IP address or localhost endpoint".to_string(),
+        );
     }
     Ok(ValidatedConfig {
         origin,
@@ -149,9 +166,13 @@ fn validate_region(region: &str) -> Result<String, String> {
         return Err("Region is required (use \"auto\" if your provider says so)".to_string());
     }
     if region.len() > MAX_REGION_CHARS
-        || !region.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        || !region
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
-        return Err("Region may contain only letters, digits, hyphens, and underscores".to_string());
+        return Err(
+            "Region may contain only letters, digits, hyphens, and underscores".to_string(),
+        );
     }
     Ok(region.to_string())
 }
@@ -164,8 +185,14 @@ fn validate_bucket(bucket: &str) -> Result<String, String> {
     let valid_chars = bucket
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-');
-    let valid_ends = bucket.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
-        && bucket.chars().last().is_some_and(|c| c.is_ascii_alphanumeric());
+    let valid_ends = bucket
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        && bucket
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_alphanumeric());
     if !(3..=63).contains(&bucket.len()) || !valid_chars || !valid_ends || bucket.contains("..") {
         return Err(
             "Bucket names are 3–63 lowercase letters, digits, dots, or hyphens, starting and ending with a letter or digit"
@@ -187,7 +214,9 @@ fn validate_prefix(prefix: &str) -> Result<String, String> {
         return Ok(String::new());
     }
     if trimmed.len() > MAX_PREFIX_CHARS {
-        return Err(format!("Folder prefix must be at most {MAX_PREFIX_CHARS} characters"));
+        return Err(format!(
+            "Folder prefix must be at most {MAX_PREFIX_CHARS} characters"
+        ));
     }
     if trimmed.starts_with('/') {
         return Err("Folder prefix must not start with a slash".to_string());
@@ -199,8 +228,14 @@ fn validate_prefix(prefix: &str) -> Result<String, String> {
         if segment == "." || segment == ".." {
             return Err("Folder prefix must not contain \".\" or \"..\" segments".to_string());
         }
-        if !segment.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-') {
-            return Err("Folder prefix may contain only letters, digits, \".\", \"_\", \"-\", and \"/\"".to_string());
+        if !segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+        {
+            return Err(
+                "Folder prefix may contain only letters, digits, \".\", \"_\", \"-\", and \"/\""
+                    .to_string(),
+            );
         }
     }
     Ok(trimmed.to_string())
@@ -209,13 +244,21 @@ fn validate_prefix(prefix: &str) -> Result<String, String> {
 fn validate_credentials(credentials: &S3Credentials) -> Result<rusty_s3::Credentials, String> {
     let key = credentials.access_key_id.trim();
     let secret = credentials.secret_access_key.trim();
-    let token = credentials.session_token.as_deref().map(str::trim).filter(|token| !token.is_empty());
+    let token = credentials
+        .session_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
     let printable = |value: &str| value.chars().all(|c| c.is_ascii_graphic());
     if key.is_empty() || key.len() > MAX_ACCESS_KEY_CHARS || !printable(key) || key.contains('/') {
-        return Err("Access key ID is missing or contains characters an access key never has".to_string());
+        return Err(
+            "Access key ID is missing or contains characters an access key never has".to_string(),
+        );
     }
     if secret.is_empty() || secret.len() > MAX_SECRET_CHARS || !printable(secret) {
-        return Err("Secret access key is missing or contains spaces or control characters".to_string());
+        return Err(
+            "Secret access key is missing or contains spaces or control characters".to_string(),
+        );
     }
     if let Some(token) = token {
         if token.len() > MAX_SESSION_TOKEN_CHARS || !printable(token) {
@@ -331,14 +374,26 @@ impl S3Transport {
         credentials: &S3Credentials,
     ) -> Result<Self, TransportError> {
         let validated = validate_config(config).map_err(TransportError::Permanent)?;
-        let credentials = validate_credentials(credentials).map_err(TransportError::Authentication)?;
+        let credentials =
+            validate_credentials(credentials).map_err(TransportError::Authentication)?;
         // A trailing slash makes `Url::join` append the bucket to any path
         // prefix instead of replacing it.
         let endpoint = url::Url::parse(&format!("{}/", validated.origin.base_url()))
             .map_err(|error| TransportError::Permanent(format!("Invalid endpoint URL: {error}")))?;
-        let style = if validated.path_style { UrlStyle::Path } else { UrlStyle::VirtualHost };
-        let bucket = rusty_s3::Bucket::new(endpoint, style, validated.bucket.clone(), validated.region.clone())
-            .map_err(|error| TransportError::Permanent(format!("Invalid bucket endpoint: {error:?}")))?;
+        let style = if validated.path_style {
+            UrlStyle::Path
+        } else {
+            UrlStyle::VirtualHost
+        };
+        let bucket = rusty_s3::Bucket::new(
+            endpoint,
+            style,
+            validated.bucket.clone(),
+            validated.region.clone(),
+        )
+        .map_err(|error| {
+            TransportError::Permanent(format!("Invalid bucket endpoint: {error:?}"))
+        })?;
         let root = if validated.prefix.is_empty() {
             CORPUS_DIR_NAME.to_string()
         } else {
@@ -367,7 +422,11 @@ impl S3Transport {
     }
 
     fn head_key(&self, device_id: &DeviceId) -> String {
-        let tag: String = device_id.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
+        let tag: String = device_id
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         format!("{}/heads/{tag}.head", self.root)
     }
 
@@ -417,7 +476,9 @@ impl S3Transport {
 
     async fn put_key(&self, key: &str, bytes: &[u8]) -> Result<(), TransportError> {
         if bytes.len() as u64 > MAX_OBJECT_BYTES {
-            return Err(TransportError::Permanent("object exceeds the S3 adapter's size limit".to_string()));
+            return Err(TransportError::Permanent(
+                "object exceeds the S3 adapter's size limit".to_string(),
+            ));
         }
         // Content-MD5 is the integrity check every S3-compatible service
         // honors: the server rejects a body corrupted in transit. Reads are
@@ -430,7 +491,10 @@ impl S3Transport {
             .send(
                 reqwest::Method::PUT,
                 url,
-                &[("content-md5", md5), ("content-type", "application/octet-stream".to_string())],
+                &[
+                    ("content-md5", md5),
+                    ("content-type", "application/octet-stream".to_string()),
+                ],
                 Some(bytes.to_vec()),
             )
             .await?;
@@ -442,7 +506,10 @@ impl S3Transport {
 
     /// Fetches one key with a hard size cap. `NotFound` for a missing key.
     async fn get_key(&self, key: &str) -> Result<Vec<u8>, TransportError> {
-        let url = self.bucket.get_object(Some(&self.credentials), key).sign(PRESIGN_EXPIRY);
+        let url = self
+            .bucket
+            .get_object(Some(&self.credentials), key)
+            .sign(PRESIGN_EXPIRY);
         let mut response = self.send(reqwest::Method::GET, url, &[], None).await?;
         let status = response.status();
         if !status.is_success() {
@@ -452,13 +519,20 @@ impl S3Transport {
             }
             return Err(map_status_error(status, &body));
         }
-        if response.content_length().is_some_and(|length| length > MAX_OBJECT_BYTES) {
-            return Err(TransportError::Corruption("stored object exceeds the size limit".to_string()));
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_OBJECT_BYTES)
+        {
+            return Err(TransportError::Corruption(
+                "stored object exceeds the size limit".to_string(),
+            ));
         }
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(map_reqwest_error)? {
             if (bytes.len() + chunk.len()) as u64 > MAX_OBJECT_BYTES {
-                return Err(TransportError::Corruption("stored object exceeds the size limit".to_string()));
+                return Err(TransportError::Corruption(
+                    "stored object exceeds the size limit".to_string(),
+                ));
             }
             bytes.extend_from_slice(&chunk);
         }
@@ -466,7 +540,10 @@ impl S3Transport {
     }
 
     async fn delete_key(&self, key: &str) -> Result<(), TransportError> {
-        let url = self.bucket.delete_object(Some(&self.credentials), key).sign(PRESIGN_EXPIRY);
+        let url = self
+            .bucket
+            .delete_object(Some(&self.credentials), key)
+            .sign(PRESIGN_EXPIRY);
         let response = self.send(reqwest::Method::DELETE, url, &[], None).await?;
         let status = response.status();
         if status.is_success() {
@@ -502,8 +579,11 @@ impl S3Transport {
             return Err(Self::error_from(response).await);
         }
         let body = response.text().await.map_err(map_reqwest_error)?;
-        let parsed = rusty_s3::actions::ListObjectsV2::parse_response(&body)
-            .map_err(|_| TransportError::Corruption("the storage server returned an unreadable object listing".to_string()))?;
+        let parsed = rusty_s3::actions::ListObjectsV2::parse_response(&body).map_err(|_| {
+            TransportError::Corruption(
+                "the storage server returned an unreadable object listing".to_string(),
+            )
+        })?;
         let truncated = parsed.next_continuation_token.is_some();
         let keys = parsed
             .contents
@@ -519,7 +599,9 @@ impl S3Transport {
         let mut all = Vec::new();
         let mut start_after: Option<String> = None;
         loop {
-            let (keys, truncated) = self.list_page(&prefix, start_after.as_deref(), 1000).await?;
+            let (keys, truncated) = self
+                .list_page(&prefix, start_after.as_deref(), 1000)
+                .await?;
             let last = keys.last().map(|(key, _)| key.clone());
             all.extend(keys.into_iter().filter(|(key, _)| key.starts_with(&prefix)));
             match (truncated, last) {
@@ -554,7 +636,12 @@ impl S3Transport {
     /// Total bytes stored under this connector's corpus root, for the
     /// Settings storage estimate.
     pub async fn corpus_size_bytes(&self) -> Result<u64, TransportError> {
-        Ok(self.list_all_corpus_keys().await?.iter().map(|(_, size)| size).sum())
+        Ok(self
+            .list_all_corpus_keys()
+            .await?
+            .iter()
+            .map(|(_, size)| size)
+            .sum())
     }
 
     /// Checks what this key may do: list, then write, read back, and
@@ -567,7 +654,10 @@ impl S3Transport {
         let mut list = self.bucket.list_objects_v2(Some(&self.credentials));
         list.with_prefix(format!("{}/", self.root));
         list.with_max_keys(1);
-        let response = match self.send(reqwest::Method::GET, list.sign(PRESIGN_EXPIRY), &[], None).await {
+        let response = match self
+            .send(reqwest::Method::GET, list.sign(PRESIGN_EXPIRY), &[], None)
+            .await
+        {
             Ok(response) => response,
             Err(error) => {
                 report.error = Some(error.to_string());
@@ -596,7 +686,9 @@ impl S3Transport {
         match self.get_key(&key).await {
             Ok(bytes) if bytes == payload => report.can_read = true,
             Ok(_) => {
-                report.error = Some("The storage server returned different bytes than were written".to_string());
+                report.error = Some(
+                    "The storage server returned different bytes than were written".to_string(),
+                );
             }
             Err(error) => report.error = Some(error.to_string()),
         }
@@ -678,7 +770,8 @@ impl SyncTransport for S3Transport {
 
     async fn publish_head(&self, head: &SignedDeviceHead) -> Result<HeadLocator, TransportError> {
         let key = self.head_key(&head.head.device_id);
-        let bytes = encode_signed_head(head).map_err(|error| TransportError::Permanent(error.to_string()))?;
+        let bytes = encode_signed_head(head)
+            .map_err(|error| TransportError::Permanent(error.to_string()))?;
         self.put_key(&key, &bytes).await?;
         Ok(HeadLocator {
             device_id: head.head.device_id,
@@ -686,7 +779,10 @@ impl SyncTransport for S3Transport {
         })
     }
 
-    async fn resolve_heads(&self, known: &[HeadLocator]) -> Result<Vec<SignedDeviceHead>, TransportError> {
+    async fn resolve_heads(
+        &self,
+        known: &[HeadLocator],
+    ) -> Result<Vec<SignedDeviceHead>, TransportError> {
         let mut heads = Vec::new();
         for locator in known {
             match self.get_key(&self.head_key(&locator.device_id)).await {
@@ -716,8 +812,14 @@ impl SyncTransport for S3Transport {
                 return Ok(None);
             }
         }
-        let (keys, truncated) = self.list_page(&self.objects_prefix(), cursor, SCAN_PAGE_SIZE).await?;
-        let next_cursor = if truncated { keys.last().map(|(key, _)| key.clone()) } else { None };
+        let (keys, truncated) = self
+            .list_page(&self.objects_prefix(), cursor, SCAN_PAGE_SIZE)
+            .await?;
+        let next_cursor = if truncated {
+            keys.last().map(|(key, _)| key.clone())
+        } else {
+            None
+        };
         let objects = keys
             .iter()
             .filter_map(|(key, _)| {
@@ -727,7 +829,10 @@ impl SyncTransport for S3Transport {
                 })
             })
             .collect();
-        Ok(Some(ScanPage { objects, next_cursor }))
+        Ok(Some(ScanPage {
+            objects,
+            next_cursor,
+        }))
     }
 
     async fn delete_object(&self, cid: &Cid) -> Result<(), TransportError> {
@@ -800,7 +905,18 @@ mod config_tests {
         for good in ["abc", "my-sync.bucket", "a1b2c3", &"a".repeat(63)] {
             assert!(validate_bucket(good).is_ok(), "{good}");
         }
-        for bad in ["ab", &"a".repeat(64), "Upper", "-leading", "trailing-", "dot..dot", "192.168.1.1", "under_score", "sp ace", ""] {
+        for bad in [
+            "ab",
+            &"a".repeat(64),
+            "Upper",
+            "-leading",
+            "trailing-",
+            "dot..dot",
+            "192.168.1.1",
+            "under_score",
+            "sp ace",
+            "",
+        ] {
             assert!(validate_bucket(bad).is_err(), "{bad}");
         }
     }
@@ -810,7 +926,18 @@ mod config_tests {
         assert_eq!(validate_prefix("").unwrap(), "");
         assert_eq!(validate_prefix("threestrands/").unwrap(), "threestrands");
         assert_eq!(validate_prefix("a/b_c/d-e.f").unwrap(), "a/b_c/d-e.f");
-        for bad in ["/leading", "a//b", "../escape", "a/../b", "a/./b", ".", "a b", "a?b", "a%2fb", &"a".repeat(257)] {
+        for bad in [
+            "/leading",
+            "a//b",
+            "../escape",
+            "a/../b",
+            "a/./b",
+            ".",
+            "a b",
+            "a?b",
+            "a%2fb",
+            &"a".repeat(257),
+        ] {
             assert!(validate_prefix(bad).is_err(), "{bad}");
         }
         assert!(validate_prefix(&"a".repeat(256)).is_ok());
@@ -854,8 +981,10 @@ mod config_tests {
 
     #[test]
     fn config_json_round_trips_with_defaults() {
-        let parsed: S3Config =
-            serde_json::from_str(r#"{"endpoint":"https://s3.example.com","region":"auto","bucket":"b-1"}"#).unwrap();
+        let parsed: S3Config = serde_json::from_str(
+            r#"{"endpoint":"https://s3.example.com","region":"auto","bucket":"b-1"}"#,
+        )
+        .unwrap();
         assert_eq!(parsed.prefix, "");
         assert!(!parsed.path_style);
         assert_eq!(parsed.label, None);
@@ -870,22 +999,37 @@ mod config_tests {
         let transport = S3Transport::new("s3-a", &with_prefix, &credentials()).unwrap();
         let cid = Cid::for_bytes(b"layout");
         let key = transport.object_key(&cid).unwrap();
-        assert_eq!(key, format!("team/threestrands/threestrands-sync/objects/{}/{}.block", &cid.0[..2], cid.0));
+        assert_eq!(
+            key,
+            format!(
+                "team/threestrands/threestrands-sync/objects/{}/{}.block",
+                &cid.0[..2],
+                cid.0
+            )
+        );
         assert_eq!(transport.cid_from_object_key(&key), Some(cid.clone()));
 
         let device = DeviceId::from_bytes([0xab; 16]);
         assert_eq!(
             transport.head_key(&device),
-            format!("team/threestrands/threestrands-sync/heads/{}.head", "ab".repeat(16))
+            format!(
+                "team/threestrands/threestrands-sync/heads/{}.head",
+                "ab".repeat(16)
+            )
         );
 
-        let bare = S3Transport::new("s3-b", &config("https://s3.example.com"), &credentials()).unwrap();
-        assert!(bare.object_key(&cid).unwrap().starts_with("threestrands-sync/objects/"));
+        let bare =
+            S3Transport::new("s3-b", &config("https://s3.example.com"), &credentials()).unwrap();
+        assert!(bare
+            .object_key(&cid)
+            .unwrap()
+            .starts_with("threestrands-sync/objects/"));
     }
 
     #[test]
     fn object_key_parsing_rejects_anything_but_the_exact_shape() {
-        let transport = S3Transport::new("s3", &config("https://s3.example.com"), &credentials()).unwrap();
+        let transport =
+            S3Transport::new("s3", &config("https://s3.example.com"), &credentials()).unwrap();
         let cid = Cid::for_bytes(b"shape");
         let prefix = transport.objects_prefix();
         let wrong_shard = format!("{prefix}zz/{}.block", cid.0);
@@ -901,19 +1045,48 @@ mod config_tests {
     fn error_codes_map_to_typed_errors() {
         use reqwest::StatusCode;
         let body = |code: &str| format!("<Error><Code>{code}</Code><Message>msg</Message></Error>");
-        assert!(matches!(map_status_error(StatusCode::FORBIDDEN, &body("AccessDenied")), TransportError::Authentication(_)));
-        assert!(matches!(map_status_error(StatusCode::FORBIDDEN, &body("SignatureDoesNotMatch")), TransportError::Authentication(_)));
-        assert!(matches!(map_status_error(StatusCode::FORBIDDEN, &body("InvalidAccessKeyId")), TransportError::Authentication(_)));
+        assert!(matches!(
+            map_status_error(StatusCode::FORBIDDEN, &body("AccessDenied")),
+            TransportError::Authentication(_)
+        ));
+        assert!(matches!(
+            map_status_error(StatusCode::FORBIDDEN, &body("SignatureDoesNotMatch")),
+            TransportError::Authentication(_)
+        ));
+        assert!(matches!(
+            map_status_error(StatusCode::FORBIDDEN, &body("InvalidAccessKeyId")),
+            TransportError::Authentication(_)
+        ));
         match map_status_error(StatusCode::FORBIDDEN, &body("RequestTimeTooSkewed")) {
-            TransportError::Authentication(message) => assert!(message.contains("clock"), "{message}"),
+            TransportError::Authentication(message) => {
+                assert!(message.contains("clock"), "{message}")
+            }
             other => panic!("unexpected {other:?}"),
         }
-        assert!(matches!(map_status_error(StatusCode::SERVICE_UNAVAILABLE, &body("SlowDown")), TransportError::Quota(_)));
-        assert!(matches!(map_status_error(StatusCode::TOO_MANY_REQUESTS, ""), TransportError::Quota(_)));
-        assert!(matches!(map_status_error(StatusCode::INTERNAL_SERVER_ERROR, &body("InternalError")), TransportError::Transient(_)));
-        assert!(matches!(map_status_error(StatusCode::MOVED_PERMANENTLY, ""), TransportError::Permanent(_)));
-        assert!(matches!(map_status_error(StatusCode::NOT_FOUND, &body("NoSuchBucket")), TransportError::Permanent(_)));
-        assert!(matches!(map_status_error(StatusCode::BAD_REQUEST, &body("InvalidArgument")), TransportError::Permanent(_)));
+        assert!(matches!(
+            map_status_error(StatusCode::SERVICE_UNAVAILABLE, &body("SlowDown")),
+            TransportError::Quota(_)
+        ));
+        assert!(matches!(
+            map_status_error(StatusCode::TOO_MANY_REQUESTS, ""),
+            TransportError::Quota(_)
+        ));
+        assert!(matches!(
+            map_status_error(StatusCode::INTERNAL_SERVER_ERROR, &body("InternalError")),
+            TransportError::Transient(_)
+        ));
+        assert!(matches!(
+            map_status_error(StatusCode::MOVED_PERMANENTLY, ""),
+            TransportError::Permanent(_)
+        ));
+        assert!(matches!(
+            map_status_error(StatusCode::NOT_FOUND, &body("NoSuchBucket")),
+            TransportError::Permanent(_)
+        ));
+        assert!(matches!(
+            map_status_error(StatusCode::BAD_REQUEST, &body("InvalidArgument")),
+            TransportError::Permanent(_)
+        ));
     }
 
     #[test]
@@ -930,8 +1103,16 @@ mod config_tests {
 
     #[test]
     fn provider_messages_are_bounded() {
-        let long = format!("<Error><Code>X</Code><Message>{}</Message></Error>", "m".repeat(5000));
-        assert!(provider_message(reqwest::StatusCode::BAD_REQUEST, &long).chars().count() <= MAX_ERROR_MESSAGE_CHARS);
+        let long = format!(
+            "<Error><Code>X</Code><Message>{}</Message></Error>",
+            "m".repeat(5000)
+        );
+        assert!(
+            provider_message(reqwest::StatusCode::BAD_REQUEST, &long)
+                .chars()
+                .count()
+                <= MAX_ERROR_MESSAGE_CHARS
+        );
     }
 }
 
@@ -1048,17 +1229,30 @@ pub(crate) mod fake_server {
 
     fn query_pairs(uri: &Uri) -> Vec<(String, String)> {
         uri.query()
-            .map(|query| url::form_urlencoded::parse(query.as_bytes()).into_owned().collect())
+            .map(|query| {
+                url::form_urlencoded::parse(query.as_bytes())
+                    .into_owned()
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
     fn query_one<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
-        pairs.iter().find(|(candidate, _)| candidate == key).map(|(_, value)| value.as_str())
+        pairs
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value.as_str())
     }
 
     /// Recomputes the presigned SigV4 signature with the server's own copy
     /// of the credentials and compares it to the one the client sent.
-    fn verify_signature(state: &ServerState, addr: std::net::SocketAddr, method: &Method, uri: &Uri, headers: &HeaderMap) -> bool {
+    fn verify_signature(
+        state: &ServerState,
+        addr: std::net::SocketAddr,
+        method: &Method,
+        uri: &Uri,
+        headers: &HeaderMap,
+    ) -> bool {
         let pairs = query_pairs(uri);
         let (Some(date), Some(signature), Some(credential), Some(expires), Some(signed_headers)) = (
             query_one(&pairs, "X-Amz-Date"),
@@ -1088,11 +1282,16 @@ pub(crate) mod fake_server {
             Method::DELETE => rusty_s3::Method::Delete,
             _ => return false,
         };
-        let other_query: Vec<(String, String)> =
-            pairs.iter().filter(|(key, _)| !key.starts_with("X-Amz-")).cloned().collect();
+        let other_query: Vec<(String, String)> = pairs
+            .iter()
+            .filter(|(key, _)| !key.starts_with("X-Amz-"))
+            .cloned()
+            .collect();
         let mut header_values = Vec::new();
         for name in signed_headers.split(';').filter(|name| *name != "host") {
-            let Some(value) = headers.get(name).and_then(|value| value.to_str().ok()) else { return false };
+            let Some(value) = headers.get(name).and_then(|value| value.to_str().ok()) else {
+                return false;
+            };
             header_values.push((name.to_string(), value.to_string()));
         }
         let url = url::Url::parse(&format!("http://{addr}{}", uri.path())).unwrap();
@@ -1105,8 +1304,12 @@ pub(crate) mod fake_server {
             state.session_token.as_deref(),
             REGION,
             expires.parse().unwrap_or(0),
-            other_query.iter().map(|(key, value)| (key.as_str(), value.as_str())),
-            header_values.iter().map(|(key, value)| (key.as_str(), value.as_str())),
+            other_query
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+            header_values
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
         );
         expected
             .query_pairs()
@@ -1117,7 +1320,13 @@ pub(crate) mod fake_server {
     /// Shared per-request gatekeeping: counts the request, applies
     /// injected faults, and checks the signature.
     #[allow(clippy::result_large_err)]
-    fn gate(guard: &mut ServerState, addr: std::net::SocketAddr, method: &Method, uri: &Uri, headers: &HeaderMap) -> Result<(), Response> {
+    fn gate(
+        guard: &mut ServerState,
+        addr: std::net::SocketAddr,
+        method: &Method,
+        uri: &Uri,
+        headers: &HeaderMap,
+    ) -> Result<(), Response> {
         guard.faults.requests += 1;
         let extra = if guard.faults.echo_request_in_errors {
             format!("<CanonicalRequest>{uri}</CanonicalRequest>")
@@ -1126,16 +1335,29 @@ pub(crate) mod fake_server {
         };
         if guard.faults.redirect_next {
             guard.faults.redirect_next = false;
-            return Err((StatusCode::MOVED_PERMANENTLY, [("location", "https://elsewhere.example/")], "").into_response());
+            return Err((
+                StatusCode::MOVED_PERMANENTLY,
+                [("location", "https://elsewhere.example/")],
+                "",
+            )
+                .into_response());
         }
         if let Some((remaining, status, code)) = guard.faults.fail_next {
             if remaining > 0 {
-                guard.faults.fail_next = if remaining > 1 { Some((remaining - 1, status, code)) } else { None };
+                guard.faults.fail_next = if remaining > 1 {
+                    Some((remaining - 1, status, code))
+                } else {
+                    None
+                };
                 return Err(s3_error(status, code, &extra));
             }
         }
         if !verify_signature(guard, addr, method, uri, headers) {
-            return Err(s3_error(StatusCode::FORBIDDEN, "SignatureDoesNotMatch", &extra));
+            return Err(s3_error(
+                StatusCode::FORBIDDEN,
+                "SignatureDoesNotMatch",
+                &extra,
+            ));
         }
         Ok(())
     }
@@ -1171,7 +1393,9 @@ pub(crate) mod fake_server {
         }
         let prefix = query_one(&pairs, "prefix").unwrap_or("");
         let start_after = query_one(&pairs, "start-after");
-        let max_keys: usize = query_one(&pairs, "max-keys").and_then(|value| value.parse().ok()).unwrap_or(1000);
+        let max_keys: usize = query_one(&pairs, "max-keys")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1000);
         let matching: Vec<(&String, &Vec<u8>)> = guard
             .objects
             .iter()
@@ -1214,7 +1438,9 @@ pub(crate) mod fake_server {
                 if guard.faults.deny_put {
                     return s3_error(StatusCode::FORBIDDEN, "AccessDenied", "");
                 }
-                let provided = headers.get("content-md5").and_then(|value| value.to_str().ok());
+                let provided = headers
+                    .get("content-md5")
+                    .and_then(|value| value.to_str().ok());
                 if provided != Some(content_md5(&body).as_str()) {
                     return s3_error(StatusCode::BAD_REQUEST, "BadDigest", "");
                 }
@@ -1227,7 +1453,11 @@ pub(crate) mod fake_server {
                 };
                 if guard.faults.oversize_next_get {
                     guard.faults.oversize_next_get = false;
-                    return (StatusCode::OK, vec![0u8; (super::MAX_OBJECT_BYTES + 1) as usize]).into_response();
+                    return (
+                        StatusCode::OK,
+                        vec![0u8; (super::MAX_OBJECT_BYTES + 1) as usize],
+                    )
+                        .into_response();
                 }
                 if guard.faults.corrupt_next_get {
                     guard.faults.corrupt_next_get = false;
@@ -1274,7 +1504,12 @@ mod transport_tests {
     use threestrands_sync_transport::conformance;
 
     fn open(server: &FakeS3Server, instance_id: &str, prefix: &str) -> S3Transport {
-        S3Transport::new(instance_id, &server.config(prefix), &FakeS3Server::credentials()).unwrap()
+        S3Transport::new(
+            instance_id,
+            &server.config(prefix),
+            &FakeS3Server::credentials(),
+        )
+        .unwrap()
     }
 
     fn signed_head(signing_key: &SigningKey, device: [u8; 16], sequence: u64) -> SignedDeviceHead {
@@ -1283,7 +1518,9 @@ mod transport_tests {
             device_id: DeviceId::from_bytes(device),
             epoch: 1,
             state_sequence: sequence,
-            state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
+            state_cid: Some(
+                "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string(),
+            ),
             published_at_ms: 0,
         };
         sign_device_head(signing_key, head).unwrap()
@@ -1292,8 +1529,14 @@ mod transport_tests {
     /// Asserts nothing secret or signature-bearing leaked into `text`.
     fn assert_no_secrets(text: &str, token: Option<&str>) {
         assert!(!text.contains(SECRET_KEY), "secret leaked: {text}");
-        assert!(!text.contains("X-Amz-Signature"), "signature leaked: {text}");
-        assert!(!text.contains("X-Amz-Credential"), "credential scope leaked: {text}");
+        assert!(
+            !text.contains("X-Amz-Signature"),
+            "signature leaked: {text}"
+        );
+        assert!(
+            !text.contains("X-Amz-Credential"),
+            "credential scope leaked: {text}"
+        );
         if let Some(token) = token {
             assert!(!text.contains(token), "session token leaked: {text}");
         }
@@ -1309,8 +1552,16 @@ mod transport_tests {
     #[tokio::test]
     async fn passes_the_shared_conformance_suite_under_a_prefix() {
         let server = FakeS3Server::spawn().await;
-        conformance::run_all(&open(&server, "a", "team/one"), &open(&server, "b", "team/two")).await;
-        assert!(server.state().objects.keys().all(|key| key.starts_with("team/")));
+        conformance::run_all(
+            &open(&server, "a", "team/one"),
+            &open(&server, "b", "team/two"),
+        )
+        .await;
+        assert!(server
+            .state()
+            .objects
+            .keys()
+            .all(|key| key.starts_with("team/")));
     }
 
     #[tokio::test]
@@ -1320,8 +1571,14 @@ mod transport_tests {
         let mut credentials = FakeS3Server::credentials();
         credentials.secret_access_key = "the-wrong-secret".to_string();
         let transport = S3Transport::new("s3", &server.config(""), &credentials).unwrap();
-        let error = transport.put_object(&Cid::for_bytes(b"x"), b"x").await.unwrap_err();
-        assert!(matches!(error, TransportError::Authentication(_)), "{error:?}");
+        let error = transport
+            .put_object(&Cid::for_bytes(b"x"), b"x")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, TransportError::Authentication(_)),
+            "{error:?}"
+        );
         let text = error.to_string();
         assert_no_secrets(&text, None);
         assert!(!text.contains("the-wrong-secret"));
@@ -1335,7 +1592,10 @@ mod transport_tests {
         let cid = Cid::for_bytes(b"with token");
 
         let without = open(&server, "s3", "");
-        assert!(matches!(without.put_object(&cid, b"with token").await, Err(TransportError::Authentication(_))));
+        assert!(matches!(
+            without.put_object(&cid, b"with token").await,
+            Err(TransportError::Authentication(_))
+        ));
 
         let mut credentials = FakeS3Server::credentials();
         credentials.session_token = Some("session-token-abc".to_string());
@@ -1361,8 +1621,16 @@ mod transport_tests {
         ] {
             server.state().faults.fail_next = Some((3, status, code));
             let errors = [
-                transport.put_object(&Cid::for_bytes(b"e"), b"e").await.unwrap_err().to_string(),
-                transport.get_object(&Cid::for_bytes(b"e")).await.unwrap_err().to_string(),
+                transport
+                    .put_object(&Cid::for_bytes(b"e"), b"e")
+                    .await
+                    .unwrap_err()
+                    .to_string(),
+                transport
+                    .get_object(&Cid::for_bytes(b"e"))
+                    .await
+                    .unwrap_err()
+                    .to_string(),
                 transport.scan(None).await.unwrap_err().to_string(),
             ];
             for text in errors {
@@ -1373,7 +1641,10 @@ mod transport_tests {
             server.state().faults.fail_next = Some((1, StatusCode::FORBIDDEN, "AccessDenied"));
             transport.probe().await
         };
-        assert_no_secrets(report.error.as_deref().unwrap_or_default(), Some("session-token-abc"));
+        assert_no_secrets(
+            report.error.as_deref().unwrap_or_default(),
+            Some("session-token-abc"),
+        );
     }
 
     #[tokio::test]
@@ -1388,10 +1659,16 @@ mod transport_tests {
         credentials.session_token = Some("session-token-abc".to_string());
         let transport = S3Transport::new("s3", &config, &credentials).unwrap();
 
-        let error = transport.get_object(&Cid::for_bytes(b"n")).await.unwrap_err();
+        let error = transport
+            .get_object(&Cid::for_bytes(b"n"))
+            .await
+            .unwrap_err();
         assert!(matches!(error, TransportError::Transient(_)), "{error:?}");
         assert_no_secrets(&error.to_string(), Some("session-token-abc"));
-        assert!(!error.to_string().contains("127.0.0.1"), "URL leaked: {error}");
+        assert!(
+            !error.to_string().contains("127.0.0.1"),
+            "URL leaked: {error}"
+        );
 
         let report = transport.probe().await;
         assert!(!report.reachable);
@@ -1404,10 +1681,17 @@ mod transport_tests {
         let transport = open(&server, "s3", "");
         server.state().faults.redirect_next = true;
         let before = server.state().faults.requests;
-        let error = transport.get_object(&Cid::for_bytes(b"r")).await.unwrap_err();
+        let error = transport
+            .get_object(&Cid::for_bytes(b"r"))
+            .await
+            .unwrap_err();
         assert!(matches!(error, TransportError::Permanent(_)), "{error:?}");
         assert!(error.to_string().contains("redirect"));
-        assert_eq!(server.state().faults.requests, before + 1, "the redirect must not be followed");
+        assert_eq!(
+            server.state().faults.requests,
+            before + 1,
+            "the redirect must not be followed"
+        );
     }
 
     #[tokio::test]
@@ -1418,10 +1702,16 @@ mod transport_tests {
         transport.put_object(&cid, b"integrity").await.unwrap();
 
         server.state().faults.corrupt_next_get = true;
-        assert!(matches!(transport.get_object(&cid).await, Err(TransportError::Corruption(_))));
+        assert!(matches!(
+            transport.get_object(&cid).await,
+            Err(TransportError::Corruption(_))
+        ));
 
         server.state().faults.oversize_next_get = true;
-        assert!(matches!(transport.get_object(&cid).await, Err(TransportError::Corruption(_))));
+        assert!(matches!(
+            transport.get_object(&cid).await,
+            Err(TransportError::Corruption(_))
+        ));
 
         assert_eq!(transport.get_object(&cid).await.unwrap(), b"integrity");
     }
@@ -1431,7 +1721,10 @@ mod transport_tests {
         let server = FakeS3Server::spawn().await;
         let transport = open(&server, "s3", "");
         let bytes = vec![0u8; (MAX_OBJECT_BYTES + 1) as usize];
-        assert!(matches!(transport.put_object(&Cid::for_bytes(&bytes), &bytes).await, Err(TransportError::Permanent(_))));
+        assert!(matches!(
+            transport.put_object(&Cid::for_bytes(&bytes), &bytes).await,
+            Err(TransportError::Permanent(_))
+        ));
         assert!(server.state().objects.is_empty());
     }
 
@@ -1442,9 +1735,16 @@ mod transport_tests {
         let cid = Cid::for_bytes(b"retry");
 
         server.state().faults.fail_next = Some((1, StatusCode::SERVICE_UNAVAILABLE, "SlowDown"));
-        assert!(matches!(transport.put_object(&cid, b"retry").await, Err(TransportError::Quota(_))));
-        server.state().faults.fail_next = Some((1, StatusCode::INTERNAL_SERVER_ERROR, "InternalError"));
-        assert!(matches!(transport.put_object(&cid, b"retry").await, Err(TransportError::Transient(_))));
+        assert!(matches!(
+            transport.put_object(&cid, b"retry").await,
+            Err(TransportError::Quota(_))
+        ));
+        server.state().faults.fail_next =
+            Some((1, StatusCode::INTERNAL_SERVER_ERROR, "InternalError"));
+        assert!(matches!(
+            transport.put_object(&cid, b"retry").await,
+            Err(TransportError::Transient(_))
+        ));
         server.state().faults.fail_next = Some((1, StatusCode::FORBIDDEN, "RequestTimeTooSkewed"));
         match transport.put_object(&cid, b"retry").await {
             Err(TransportError::Authentication(message)) => assert!(message.contains("clock")),
@@ -1466,12 +1766,24 @@ mod transport_tests {
         transport.publish_head(&newer).await.unwrap();
 
         let malformed = DeviceId::from_bytes([2; 16]);
-        server.state().objects.insert(transport.head_key(&malformed), b"not a head".to_vec());
+        server
+            .state()
+            .objects
+            .insert(transport.head_key(&malformed), b"not a head".to_vec());
 
         let known = [
-            HeadLocator { device_id: DeviceId::from_bytes([1; 16]), remote_id: None },
-            HeadLocator { device_id: malformed, remote_id: None },
-            HeadLocator { device_id: DeviceId::from_bytes([3; 16]), remote_id: None },
+            HeadLocator {
+                device_id: DeviceId::from_bytes([1; 16]),
+                remote_id: None,
+            },
+            HeadLocator {
+                device_id: malformed,
+                remote_id: None,
+            },
+            HeadLocator {
+                device_id: DeviceId::from_bytes([3; 16]),
+                remote_id: None,
+            },
         ];
         let heads = transport.resolve_heads(&known).await.unwrap();
         assert_eq!(heads.len(), 1);
@@ -1488,13 +1800,23 @@ mod transport_tests {
             for index in 0..(SCAN_PAGE_SIZE + 17) {
                 let bytes = format!("scan {index}").into_bytes();
                 let cid = Cid::for_bytes(&bytes);
-                state.objects.insert(transport.object_key(&cid).unwrap(), bytes);
+                state
+                    .objects
+                    .insert(transport.object_key(&cid).unwrap(), bytes);
                 expected.push(cid);
             }
             // Keys that must never surface as objects.
-            state.objects.insert("threestrands-sync/objects/zz/not-a-cid.block".to_string(), vec![1]);
-            state.objects.insert("threestrands-sync/objects/ab/abcdefghij.tmp".to_string(), vec![1]);
-            state.objects.insert("threestrands-sync/heads/00.head".to_string(), vec![1]);
+            state.objects.insert(
+                "threestrands-sync/objects/zz/not-a-cid.block".to_string(),
+                vec![1],
+            );
+            state.objects.insert(
+                "threestrands-sync/objects/ab/abcdefghij.tmp".to_string(),
+                vec![1],
+            );
+            state
+                .objects
+                .insert("threestrands-sync/heads/00.head".to_string(), vec![1]);
             state.objects.insert("unrelated/file".to_string(), vec![1]);
         }
 
@@ -1515,8 +1837,20 @@ mod transport_tests {
         expected.sort();
         assert_eq!(seen, expected);
 
-        assert_eq!(transport.scan(Some("opaque-continuation-token")).await.unwrap(), None);
-        assert_eq!(transport.scan(Some("threestrands-sync/heads/x")).await.unwrap(), None);
+        assert_eq!(
+            transport
+                .scan(Some("opaque-continuation-token"))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            transport
+                .scan(Some("threestrands-sync/heads/x"))
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -1525,14 +1859,30 @@ mod transport_tests {
         let transport = open(&server, "s3", "mine");
         for index in 0..3 {
             let bytes = format!("corpus {index}").into_bytes();
-            transport.put_object(&Cid::for_bytes(&bytes), &bytes).await.unwrap();
+            transport
+                .put_object(&Cid::for_bytes(&bytes), &bytes)
+                .await
+                .unwrap();
         }
-        transport.publish_head(&signed_head(&SigningKey::generate(&mut os_rng()), [9; 16], 1)).await.unwrap();
+        transport
+            .publish_head(&signed_head(
+                &SigningKey::generate(&mut os_rng()),
+                [9; 16],
+                1,
+            ))
+            .await
+            .unwrap();
         {
             let mut state = server.state();
-            state.objects.insert("mine/other-app/file".to_string(), vec![1]);
-            state.objects.insert("mine-too/threestrands-sync/objects/x".to_string(), vec![1]);
-            state.objects.insert("threestrands-sync/heads/root.head".to_string(), vec![1]);
+            state
+                .objects
+                .insert("mine/other-app/file".to_string(), vec![1]);
+            state
+                .objects
+                .insert("mine-too/threestrands-sync/objects/x".to_string(), vec![1]);
+            state
+                .objects
+                .insert("threestrands-sync/heads/root.head".to_string(), vec![1]);
         }
         let size = transport.corpus_size_bytes().await.unwrap();
         assert!(size > 0);
@@ -1575,9 +1925,15 @@ mod transport_tests {
     async fn probe_reports_versioning_when_enabled_and_unknown_when_denied() {
         let server = FakeS3Server::spawn().await;
         server.state().faults.versioning_status = Some("Enabled");
-        assert_eq!(open(&server, "s3", "").probe().await.versioning_enabled, Some(true));
+        assert_eq!(
+            open(&server, "s3", "").probe().await.versioning_enabled,
+            Some(true)
+        );
         server.state().faults.versioning_status = None;
-        assert_eq!(open(&server, "s3", "").probe().await.versioning_enabled, None);
+        assert_eq!(
+            open(&server, "s3", "").probe().await.versioning_enabled,
+            None
+        );
     }
 
     #[tokio::test]
@@ -1597,7 +1953,10 @@ mod transport_tests {
 
         let mut credentials = FakeS3Server::credentials();
         credentials.secret_access_key = "wrong".to_string();
-        let report = S3Transport::new("s3", &server.config(""), &credentials).unwrap().probe().await;
+        let report = S3Transport::new("s3", &server.config(""), &credentials)
+            .unwrap()
+            .probe()
+            .await;
         assert!(report.reachable);
         assert!(!report.can_list);
     }
@@ -1605,30 +1964,51 @@ mod transport_tests {
     #[tokio::test]
     async fn health_reflects_whether_the_key_can_list() {
         let server = FakeS3Server::spawn().await;
-        assert_eq!(open(&server, "s3", "").health().await.unwrap(), TransportHealth::Healthy);
+        assert_eq!(
+            open(&server, "s3", "").health().await.unwrap(),
+            TransportHealth::Healthy
+        );
         let mut credentials = FakeS3Server::credentials();
         credentials.secret_access_key = "wrong".to_string();
         let transport = S3Transport::new("s3", &server.config(""), &credentials).unwrap();
-        assert!(matches!(transport.health().await.unwrap(), TransportHealth::Unavailable(_)));
+        assert!(matches!(
+            transport.health().await.unwrap(),
+            TransportHealth::Unavailable(_)
+        ));
     }
 
     #[tokio::test]
     async fn one_failing_connector_never_blocks_another() {
         let healthy = FakeS3Server::spawn().await;
         let failing = FakeS3Server::spawn().await;
-        failing.state().faults.fail_next = Some((usize::MAX, StatusCode::INTERNAL_SERVER_ERROR, "InternalError"));
+        failing.state().faults.fail_next = Some((
+            usize::MAX,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+        ));
         let cid = Cid::for_bytes(b"independent");
-        assert!(open(&failing, "bad", "").put_object(&cid, b"independent").await.is_err());
-        open(&healthy, "good", "").put_object(&cid, b"independent").await.unwrap();
+        assert!(open(&failing, "bad", "")
+            .put_object(&cid, b"independent")
+            .await
+            .is_err());
+        open(&healthy, "good", "")
+            .put_object(&cid, b"independent")
+            .await
+            .unwrap();
     }
 
     /// A corpus written by the folder adapter, copied byte for byte into a
     /// bucket, reads back through the S3 adapter — the layouts match.
     #[tokio::test]
     async fn reads_a_corpus_copied_from_a_sync_folder() {
-        let folder_path = std::env::temp_dir().join(format!("threestrands-s3-portability-{}", uuid::Uuid::new_v4()));
+        let folder_path = std::env::temp_dir().join(format!(
+            "threestrands-s3-portability-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&folder_path).unwrap();
-        let folder = crate::sync_folder::SyncFolderTransport::open("folder", &folder_path).await.unwrap();
+        let folder = crate::sync_folder::SyncFolderTransport::open("folder", &folder_path)
+            .await
+            .unwrap();
         let mut cids = Vec::new();
         for index in 0..5 {
             let bytes = format!("portable {index}").into_bytes();
@@ -1637,16 +2017,27 @@ mod transport_tests {
             cids.push(cid);
         }
         let signing_key = SigningKey::generate(&mut os_rng());
-        folder.publish_head(&signed_head(&signing_key, [7; 16], 3)).await.unwrap();
+        folder
+            .publish_head(&signed_head(&signing_key, [7; 16], 3))
+            .await
+            .unwrap();
 
         let server = FakeS3Server::spawn().await;
-        fn copy_tree(dir: &std::path::Path, base: &std::path::Path, objects: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        fn copy_tree(
+            dir: &std::path::Path,
+            base: &std::path::Path,
+            objects: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        ) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     copy_tree(&path, base, objects);
                 } else {
-                    let key = path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+                    let key = path
+                        .strip_prefix(base)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
                     objects.insert(key, std::fs::read(&path).unwrap());
                 }
             }
@@ -1658,12 +2049,23 @@ mod transport_tests {
         for cid in &cids {
             transport.get_object(cid).await.unwrap();
         }
-        let mut scanned: Vec<Cid> = transport.scan(None).await.unwrap().unwrap().objects.into_iter().map(|object| object.cid).collect();
+        let mut scanned: Vec<Cid> = transport
+            .scan(None)
+            .await
+            .unwrap()
+            .unwrap()
+            .objects
+            .into_iter()
+            .map(|object| object.cid)
+            .collect();
         scanned.sort();
         cids.sort();
         assert_eq!(scanned, cids);
         let heads = transport
-            .resolve_heads(&[HeadLocator { device_id: DeviceId::from_bytes([7; 16]), remote_id: None }])
+            .resolve_heads(&[HeadLocator {
+                device_id: DeviceId::from_bytes([7; 16]),
+                remote_id: None,
+            }])
             .await
             .unwrap();
         assert_eq!(heads.len(), 1);

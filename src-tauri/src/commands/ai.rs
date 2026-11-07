@@ -3,9 +3,9 @@
 use std::collections::HashSet;
 
 use crate::models::{
-    ActionAnalysis, ActionProposal, AiActivity, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource,
-    ChatSource, ReplyAssistContext, ReplyAssistResult, SummaryResult, ThreadBriefResult,
-    ThreadChatReply, ThreadChatRequest, ThreadDetail, ThreadTask,
+    ActionAnalysis, ActionProposal, AiActivity, AiUsageDay, ChatAttachmentRef,
+    ChatAttachmentSource, ChatSource, ReplyAssistContext, ReplyAssistResult, SummaryResult,
+    ThreadBriefResult, ThreadChatReply, ThreadChatRequest, ThreadDetail, ThreadTask,
 };
 use chrono::Utc;
 use tauri::State;
@@ -61,7 +61,11 @@ pub(crate) async fn ai_summarize_thread(
     let revision = detail.thread.last_message_at.clone();
     let user_addresses = account_addresses(&state, &detail.thread.account_id)?;
     let focus_from = brief_focus(&state, &detail, &user_addresses)?;
-    let purpose = ai::RequestPurpose::about("summary", &detail.thread.subject, Some(ai::sent_message_count(detail.messages.len())));
+    let purpose = ai::RequestPurpose::about(
+        "summary",
+        &detail.thread.subject,
+        Some(ai::sent_message_count(detail.messages.len())),
+    );
     let request = ai::SummarizeRequest {
         provider,
         model,
@@ -80,7 +84,13 @@ pub(crate) async fn ai_summarize_thread(
         focus_from: focus_from.clone(),
     };
     let summary = ai::with_purpose(purpose, ai::summarize(request, &api_key)).await?;
-    save_thread_summary(&state, &thread_id, summary, &revision, focus_from.as_deref())
+    save_thread_summary(
+        &state,
+        &thread_id,
+        summary,
+        &revision,
+        focus_from.as_deref(),
+    )
 }
 
 /// The account's own sending addresses, bounded for a prompt.
@@ -96,34 +106,62 @@ fn account_addresses(state: &AppState, account_id: &str) -> AppResult<Vec<String
 
 /// The names the user goes by in this thread's account, so a brief can tell
 /// when a message names the reader; see `ai::user_names`.
-fn account_names(state: &AppState, detail: &ThreadDetail, user_addresses: &[String]) -> AppResult<Vec<String>> {
+fn account_names(
+    state: &AppState,
+    detail: &ThreadDetail,
+    user_addresses: &[String],
+) -> AppResult<Vec<String>> {
     let account = state.database.get_account(&detail.thread.account_id)?;
-    let identities = state.database.account_sending_identities(&detail.thread.account_id)?;
+    let identities = state
+        .database
+        .account_sending_identities(&detail.thread.account_id)?;
     let known = account
         .iter()
         .filter_map(|account| account.display_name.as_deref())
-        .chain(identities.iter().filter_map(|identity| identity.display_name.as_deref()));
-    let senders = detail.messages.iter().map(|message| message.sender.as_str());
+        .chain(
+            identities
+                .iter()
+                .filter_map(|identity| identity.display_name.as_deref()),
+        );
+    let senders = detail
+        .messages
+        .iter()
+        .map(|message| message.sender.as_str());
     Ok(ai::user_names(known, senders, user_addresses))
 }
 
 /// Where the messages a brief, summary, or suggestions should focus on
 /// start; see `ai::brief_focus_start`.
-fn brief_focus(state: &AppState, detail: &ThreadDetail, user_addresses: &[String]) -> AppResult<Option<String>> {
+fn brief_focus(
+    state: &AppState,
+    detail: &ThreadDetail,
+    user_addresses: &[String],
+) -> AppResult<Option<String>> {
     let analysis = state.database.thread_analysis_coverage(&detail.thread.id)?;
     let mut prior = Vec::new();
     if let Some(revision) = detail.thread.summary_revision.as_deref() {
-        prior.push(ai::PriorCoverage { revision, focus_from: detail.thread.summary_focus_from.as_deref() });
+        prior.push(ai::PriorCoverage {
+            revision,
+            focus_from: detail.thread.summary_focus_from.as_deref(),
+        });
     }
     if let Some((revision, focus_from)) = &analysis {
-        prior.push(ai::PriorCoverage { revision, focus_from: focus_from.as_deref() });
+        prior.push(ai::PriorCoverage {
+            revision,
+            focus_from: focus_from.as_deref(),
+        });
     }
     let messages: Vec<(&str, &str)> = detail
         .messages
         .iter()
         .map(|message| (message.sent_at.as_str(), message.sender.as_str()))
         .collect();
-    Ok(ai::brief_focus_start(&messages, user_addresses, &detail.thread.last_message_at, &prior))
+    Ok(ai::brief_focus_start(
+        &messages,
+        user_addresses,
+        &detail.thread.last_message_at,
+        &prior,
+    ))
 }
 
 /// Saves a summary written from the thread as of `revision`. When a request
@@ -137,13 +175,26 @@ fn save_thread_summary(
     focus_from: Option<&str>,
 ) -> AppResult<SummaryResult> {
     let generated_at = Utc::now().to_rfc3339();
-    if !state.database.set_thread_summary(thread_id, &summary, &generated_at, revision, focus_from)? {
+    if !state.database.set_thread_summary(
+        thread_id,
+        &summary,
+        &generated_at,
+        revision,
+        focus_from,
+    )? {
         if let Ok(detail) = state.database.get_thread(thread_id) {
             let thread = detail.thread;
-            if let (Some(summary), Some(generated_at), Some(revision)) =
-                (thread.summary, thread.summary_generated_at, thread.summary_revision)
-            {
-                return Ok(SummaryResult { summary, generated_at, revision, focus_from: thread.summary_focus_from });
+            if let (Some(summary), Some(generated_at), Some(revision)) = (
+                thread.summary,
+                thread.summary_generated_at,
+                thread.summary_revision,
+            ) {
+                return Ok(SummaryResult {
+                    summary,
+                    generated_at,
+                    revision,
+                    focus_from: thread.summary_focus_from,
+                });
             }
         }
     }
@@ -182,7 +233,12 @@ async fn thread_analysis_request(
         .into_iter()
         .filter(|goal| goal.status == "active")
         .take(ai::MAX_PROMPT_GOALS)
-        .map(|goal| ai::GoalPromptInput { id: goal.id, title: goal.title, horizon: goal.horizon, period: goal.period })
+        .map(|goal| ai::GoalPromptInput {
+            id: goal.id,
+            title: goal.title,
+            horizon: goal.horizon,
+            period: goal.period,
+        })
         .collect();
     let user_addresses = account_addresses(state, &detail.thread.account_id)?;
     let focus_from = brief_focus(state, &detail, &user_addresses)?;
@@ -240,21 +296,42 @@ fn cache_thread_analysis(
     if saved {
         return Ok(analysis);
     }
-    Ok(without_invitation_meetings(state.database.thread_analysis(thread_id, revision)?.unwrap_or(analysis), &messages))
+    Ok(without_invitation_meetings(
+        state
+            .database
+            .thread_analysis(thread_id, revision)?
+            .unwrap_or(analysis),
+        &messages,
+    ))
 }
 
 /// A calendar invitation already defines its event. This applies to fresh
 /// briefs, saved analyses from older builds, and chat, independently of what
 /// the model calls the event. Tasks and meetings from other messages remain.
-fn without_invitation_meetings(mut analysis: ActionAnalysis, messages: &[crate::models::Message]) -> ActionAnalysis {
-    let invitations: HashSet<&str> = messages.iter().filter(|message| {
-        message.attachments.iter().any(|attachment| {
-            attachment.mime_type.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case("text/calendar")
-                || attachment.filename.to_ascii_lowercase().ends_with(".ics")
+fn without_invitation_meetings(
+    mut analysis: ActionAnalysis,
+    messages: &[crate::models::Message],
+) -> ActionAnalysis {
+    let invitations: HashSet<&str> = messages
+        .iter()
+        .filter(|message| {
+            message.attachments.iter().any(|attachment| {
+                attachment
+                    .mime_type
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .eq_ignore_ascii_case("text/calendar")
+                    || attachment.filename.to_ascii_lowercase().ends_with(".ics")
+            })
         })
-    }).map(|message| message.id.as_str()).collect();
+        .map(|message| message.id.as_str())
+        .collect();
     analysis.proposals.retain(|proposal| match proposal {
-        ActionProposal::Meeting(meeting) => !invitations.contains(meeting.evidence.source_message_id.as_str()),
+        ActionProposal::Meeting(meeting) => {
+            !invitations.contains(meeting.evidence.source_message_id.as_str())
+        }
         ActionProposal::Task(_) => true,
     });
     analysis
@@ -279,7 +356,10 @@ pub(crate) async fn ai_analyze_thread(
     )
     .await?;
     if let Some(saved) = state.database.thread_analysis(&thread_id, &revision)? {
-        return Ok(without_invitation_meetings(saved, &state.database.get_thread(&thread_id)?.messages));
+        return Ok(without_invitation_meetings(
+            saved,
+            &state.database.get_thread(&thread_id)?.messages,
+        ));
     }
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     log::info!(
@@ -287,8 +367,20 @@ pub(crate) async fn ai_analyze_thread(
         "starting analysis for thread {thread_id} with provider {provider:?} model {model}"
     );
     let focus_from = request.focus_from.clone();
-    let purpose = ai::RequestPurpose::about("suggestions", &request.subject, Some(ai::sent_message_count(request.messages.len())));
-    let analysis = match ai::diagnostics::with_request("suggestions", &thread_id, provider, &model, ai::with_purpose(purpose, ai::analyze(request, &api_key))).await {
+    let purpose = ai::RequestPurpose::about(
+        "suggestions",
+        &request.subject,
+        Some(ai::sent_message_count(request.messages.len())),
+    );
+    let analysis = match ai::diagnostics::with_request(
+        "suggestions",
+        &thread_id,
+        provider,
+        &model,
+        ai::with_purpose(purpose, ai::analyze(request, &api_key)),
+    )
+    .await
+    {
         Ok(analysis) => analysis,
         Err(error) => {
             log::error!(target: "ai_analyze_thread", "analysis failed for thread {thread_id}: {error}");
@@ -301,7 +393,14 @@ pub(crate) async fn ai_analyze_thread(
         analysis.proposals.len(),
         analysis.hidden_count
     );
-    cache_thread_analysis(&state, &thread_id, &revision, analysis, false, focus_from.as_deref())
+    cache_thread_analysis(
+        &state,
+        &thread_id,
+        &revision,
+        analysis,
+        false,
+        focus_from.as_deref(),
+    )
 }
 
 /// Drops a handled suggestion from the thread's saved suggestions for
@@ -314,7 +413,8 @@ pub(crate) async fn remove_thread_suggestion(
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
     let database = state.database.clone();
-    run_database_task(move || database.remove_thread_suggestion(&thread_id, &revision, &proposal)).await
+    run_database_task(move || database.remove_thread_suggestion(&thread_id, &revision, &proposal))
+        .await
 }
 
 /// One line per open task for chat context: its title and due value.
@@ -344,7 +444,10 @@ fn chat_attachment_refs(
         )
         .into());
     }
-    if unique.iter().any(|reference| !thread_message_ids.contains(&reference.message_id.as_str())) {
+    if unique
+        .iter()
+        .any(|reference| !thread_message_ids.contains(&reference.message_id.as_str()))
+    {
         return Err("That attachment isn't in this conversation".into());
     }
     Ok(unique)
@@ -361,7 +464,10 @@ async fn extract_chat_attachment(
     let kind = attachment_text::kind_for(filename, mime_type).ok_or_else(|| {
         format!("Thread Chat can't read {filename}; it reads text, PDF, Word, Excel, and PowerPoint files")
     })?;
-    run_attachment_extraction(filename, timeout, move || attachment_text::extract(kind, &bytes)).await
+    run_attachment_extraction(filename, timeout, move || {
+        attachment_text::extract(kind, &bytes)
+    })
+    .await
 }
 
 async fn run_attachment_extraction(
@@ -387,14 +493,27 @@ async fn chat_attachments(
     let mut sources = Vec::new();
     let mut inputs = Vec::new();
     for reference in references {
-        let (filename, mime_type, extracted) = match state.attachment_text.get(&reference.message_id, &reference.attachment_id) {
+        let (filename, mime_type, extracted) = match state
+            .attachment_text
+            .get(&reference.message_id, &reference.attachment_id)
+        {
             Some(cached) => cached,
             None => {
                 let (filename, mime_type, bytes) =
                     load_attachment(&reference.message_id, &reference.attachment_id, state).await?;
-                let text = extract_chat_attachment(&filename, &mime_type, bytes, attachment_text::ATTACHMENT_EXTRACT_TIMEOUT).await?;
+                let text = extract_chat_attachment(
+                    &filename,
+                    &mime_type,
+                    bytes,
+                    attachment_text::ATTACHMENT_EXTRACT_TIMEOUT,
+                )
+                .await?;
                 let entry = (filename, mime_type, text);
-                state.attachment_text.insert(&reference.message_id, &reference.attachment_id, entry.clone());
+                state.attachment_text.insert(
+                    &reference.message_id,
+                    &reference.attachment_id,
+                    entry.clone(),
+                );
                 entry
             }
         };
@@ -421,16 +540,29 @@ mod chat_attachment_tests {
     use std::time::Duration;
 
     fn reference(message_id: &str, attachment_id: &str) -> ChatAttachmentRef {
-        ChatAttachmentRef { message_id: message_id.into(), attachment_id: attachment_id.into() }
+        ChatAttachmentRef {
+            message_id: message_id.into(),
+            attachment_id: attachment_id.into(),
+        }
     }
 
     #[test]
     fn shares_each_attachment_once_and_only_from_the_open_conversation() {
         let ids = ["m1", "m2"];
-        let shared = chat_attachment_refs(&[reference("m1", "a"), reference("m2", "b"), reference("m1", "a")], &ids).unwrap();
+        let shared = chat_attachment_refs(
+            &[
+                reference("m1", "a"),
+                reference("m2", "b"),
+                reference("m1", "a"),
+            ],
+            &ids,
+        )
+        .unwrap();
         assert_eq!(shared, vec![reference("m1", "a"), reference("m2", "b")]);
         assert_eq!(
-            chat_attachment_refs(&[reference("m1", "a"), reference("elsewhere", "a")], &ids).unwrap_err().to_string(),
+            chat_attachment_refs(&[reference("m1", "a"), reference("elsewhere", "a")], &ids)
+                .unwrap_err()
+                .to_string(),
             "That attachment isn't in this conversation"
         );
         assert!(chat_attachment_refs(&[], &ids).unwrap().is_empty());
@@ -439,25 +571,55 @@ mod chat_attachment_tests {
     #[test]
     fn limits_how_many_attachments_one_question_shares() {
         let ids = ["m1"];
-        let refs: Vec<ChatAttachmentRef> = (0..=attachment_text::MAX_CHAT_ATTACHMENTS).map(|index| reference("m1", &index.to_string())).collect();
-        assert_eq!(chat_attachment_refs(&refs[..attachment_text::MAX_CHAT_ATTACHMENTS - 1], &ids).unwrap().len(), attachment_text::MAX_CHAT_ATTACHMENTS - 1);
-        assert_eq!(chat_attachment_refs(&refs[..attachment_text::MAX_CHAT_ATTACHMENTS], &ids).unwrap().len(), attachment_text::MAX_CHAT_ATTACHMENTS);
+        let refs: Vec<ChatAttachmentRef> = (0..=attachment_text::MAX_CHAT_ATTACHMENTS)
+            .map(|index| reference("m1", &index.to_string()))
+            .collect();
+        assert_eq!(
+            chat_attachment_refs(&refs[..attachment_text::MAX_CHAT_ATTACHMENTS - 1], &ids)
+                .unwrap()
+                .len(),
+            attachment_text::MAX_CHAT_ATTACHMENTS - 1
+        );
+        assert_eq!(
+            chat_attachment_refs(&refs[..attachment_text::MAX_CHAT_ATTACHMENTS], &ids)
+                .unwrap()
+                .len(),
+            attachment_text::MAX_CHAT_ATTACHMENTS
+        );
         assert_eq!(
             chat_attachment_refs(&refs, &ids).unwrap_err().to_string(),
-            format!("Share up to {} attachments at a time", attachment_text::MAX_CHAT_ATTACHMENTS)
+            format!(
+                "Share up to {} attachments at a time",
+                attachment_text::MAX_CHAT_ATTACHMENTS
+            )
         );
     }
 
     #[tokio::test]
     async fn names_the_file_when_it_cannot_be_read() {
-        let text = extract_chat_attachment("notes.txt", "text/plain", b"Ship Friday".to_vec(), Duration::from_secs(5)).await.unwrap();
+        let text = extract_chat_attachment(
+            "notes.txt",
+            "text/plain",
+            b"Ship Friday".to_vec(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
         assert_eq!(text.text, "Ship Friday");
         assert_eq!(
             extract_chat_attachment("photo.jpg", "image/jpeg", vec![1, 2, 3], Duration::from_secs(5)).await.unwrap_err().to_string(),
             "Thread Chat can't read photo.jpg; it reads text, PDF, Word, Excel, and PowerPoint files"
         );
         assert_eq!(
-            extract_chat_attachment("contract.docx", "", b"not a zip".to_vec(), Duration::from_secs(5)).await.unwrap_err().to_string(),
+            extract_chat_attachment(
+                "contract.docx",
+                "",
+                b"not a zip".to_vec(),
+                Duration::from_secs(5)
+            )
+            .await
+            .unwrap_err()
+            .to_string(),
             "Couldn't read contract.docx: it isn't a readable Office file"
         );
     }
@@ -466,13 +628,24 @@ mod chat_attachment_tests {
     async fn a_parser_that_hangs_or_panics_fails_only_the_question() {
         let slow = run_attachment_extraction("slow.pdf", Duration::from_millis(10), || {
             std::thread::sleep(Duration::from_millis(300));
-            Ok(attachment_text::ExtractedText { text: "late".into(), truncated: false })
+            Ok(attachment_text::ExtractedText {
+                text: "late".into(),
+                truncated: false,
+            })
         })
         .await;
-        assert_eq!(slow.unwrap_err().to_string(), "Couldn't read slow.pdf: it took too long to read");
+        assert_eq!(
+            slow.unwrap_err().to_string(),
+            "Couldn't read slow.pdf: it took too long to read"
+        );
 
-        let panicked = run_attachment_extraction("bad.pdf", Duration::from_secs(5), || panic!("hostile file")).await;
-        assert_eq!(panicked.unwrap_err().to_string(), "Couldn't read bad.pdf: it isn't a readable file");
+        let panicked =
+            run_attachment_extraction("bad.pdf", Duration::from_secs(5), || panic!("hostile file"))
+                .await;
+        assert_eq!(
+            panicked.unwrap_err().to_string(),
+            "Couldn't read bad.pdf: it isn't a readable file"
+        );
     }
 }
 
@@ -485,12 +658,23 @@ mod invitation_proposal_tests {
     fn message(id: &str, filename: &str, mime_type: &str) -> Message {
         Message {
             sent_by_account: None,
-            id: id.into(), thread_id: "thread".into(), sender: "organizer@example.com".into(),
-            recipients: vec!["you@example.com".into()], cc: vec![], sent_at: "2026-10-23T12:00:00Z".into(),
-            body_html: String::new(), body_text: "You are invited".into(), unread: false, unsubscribe: None,
+            id: id.into(),
+            thread_id: "thread".into(),
+            sender: "organizer@example.com".into(),
+            recipients: vec!["you@example.com".into()],
+            cc: vec![],
+            sent_at: "2026-10-23T12:00:00Z".into(),
+            body_html: String::new(),
+            body_text: "You are invited".into(),
+            unread: false,
+            unsubscribe: None,
             attachments: vec![MessageAttachment {
-                id: "attachment".into(), filename: filename.into(), mime_type: mime_type.into(),
-                size: 100, content_id: None, inline: false,
+                id: "attachment".into(),
+                filename: filename.into(),
+                mime_type: mime_type.into(),
+                size: 100,
+                content_id: None,
+                inline: false,
             }],
         }
     }
@@ -512,22 +696,40 @@ mod invitation_proposal_tests {
 
     #[test]
     fn invitations_never_produce_ai_events_but_tasks_and_other_messages_remain() {
-        for (filename, mime_type) in [("INVITE.ICS", "application/octet-stream"), ("", " TEXT/CALENDAR ; method=REQUEST")] {
-            let messages = [message("invite", filename, mime_type), message("follow-up", "notes.txt", "text/plain")];
+        for (filename, mime_type) in [
+            ("INVITE.ICS", "application/octet-stream"),
+            ("", " TEXT/CALENDAR ; method=REQUEST"),
+        ] {
+            let messages = [
+                message("invite", filename, mime_type),
+                message("follow-up", "notes.txt", "text/plain"),
+            ];
             let filtered = without_invitation_meetings(analysis(), &messages);
             assert_eq!(filtered.proposals.len(), 2);
-            assert!(matches!(&filtered.proposals[0], ActionProposal::Task(task) if task.title == "Prepare agenda"));
-            assert!(matches!(&filtered.proposals[1], ActionProposal::Meeting(meeting) if meeting.title == "Separate follow-up"));
+            assert!(
+                matches!(&filtered.proposals[0], ActionProposal::Task(task) if task.title == "Prepare agenda")
+            );
+            assert!(
+                matches!(&filtered.proposals[1], ActionProposal::Meeting(meeting) if meeting.title == "Separate follow-up")
+            );
             assert_eq!(filtered.hidden_count, 2);
             assert_eq!(filtered.extra_count, 1);
             // The same rule applies when an old cached analysis is filtered again.
-            assert_eq!(without_invitation_meetings(filtered, &messages).proposals.len(), 2);
+            assert_eq!(
+                without_invitation_meetings(filtered, &messages)
+                    .proposals
+                    .len(),
+                2
+            );
         }
     }
 
     #[test]
     fn ordinary_email_keeps_its_meeting_suggestions() {
-        let filtered = without_invitation_meetings(analysis(), &[message("invite", "invite.txt", "text/plain")]);
+        let filtered = without_invitation_meetings(
+            analysis(),
+            &[message("invite", "invite.txt", "text/plain")],
+        );
         assert_eq!(filtered.proposals.len(), 3);
     }
 }
@@ -550,7 +752,11 @@ pub(crate) async fn ai_thread_chat(
         return Err("Ask a question first".into());
     }
     if question.chars().count() > ai::MAX_CHAT_TURN_CHARS {
-        return Err(format!("Questions can be up to {} characters", ai::MAX_CHAT_TURN_CHARS).into());
+        return Err(format!(
+            "Questions can be up to {} characters",
+            ai::MAX_CHAT_TURN_CHARS
+        )
+        .into());
     }
     let thread_id = request.thread_id.clone();
     let (_revision, analysis_request) = thread_analysis_request(
@@ -562,19 +768,28 @@ pub(crate) async fn ai_thread_chat(
         &state,
     )
     .await?;
-    let message_ids: Vec<&str> = analysis_request.messages.iter().map(|message| message.id.as_str()).collect();
+    let message_ids: Vec<&str> = analysis_request
+        .messages
+        .iter()
+        .map(|message| message.id.as_str())
+        .collect();
     let attachment_refs = chat_attachment_refs(&request.attachments, &message_ids)?;
     let (shared_attachments, attachment_inputs) = chat_attachments(attachment_refs, &state).await?;
 
     let database = state.database.clone();
     let contact_id = request.contact_id.clone();
-    let search_terms = request.search_mailbox.then(|| ai::chat_search_terms(&question));
+    let search_terms = request
+        .search_mailbox
+        .then(|| ai::chat_search_terms(&question));
     let lookup_thread_id = thread_id.clone();
     let (open_tasks, other_threads) = run_database_task(move || {
         let mut tasks: Vec<ThreadTask> = database
             .list_tasks(None, None)?
             .into_iter()
-            .filter(|task| task.thread_id.as_deref() == Some(lookup_thread_id.as_str()) && matches!(task.status.as_str(), "open" | "in_progress"))
+            .filter(|task| {
+                task.thread_id.as_deref() == Some(lookup_thread_id.as_str())
+                    && matches!(task.status.as_str(), "open" | "in_progress")
+            })
             .collect();
         if let Some(contact_id) = contact_id {
             for task in database.list_contact_tasks(&contact_id)? {
@@ -585,7 +800,11 @@ pub(crate) async fn ai_thread_chat(
         }
         let mut others = Vec::new();
         if let Some(terms) = search_terms {
-            for id in database.chat_search_thread_ids(&terms, &lookup_thread_id, ai::MAX_MAILBOX_CHAT_THREADS)? {
+            for id in database.chat_search_thread_ids(
+                &terms,
+                &lookup_thread_id,
+                ai::MAX_MAILBOX_CHAT_THREADS,
+            )? {
                 others.push(database.get_thread(&id)?);
             }
         }
@@ -639,8 +858,20 @@ pub(crate) async fn ai_thread_chat(
         searched.len(),
         shared_attachments.len()
     );
-    let purpose = ai::RequestPurpose::about("chat", &chat_request.subject, Some(ai::sent_message_count(chat_request.messages.len())));
-    let answer = match ai::diagnostics::with_request("chat", &thread_id, provider, &model, ai::with_purpose(purpose, ai::chat(chat_request, &api_key))).await {
+    let purpose = ai::RequestPurpose::about(
+        "chat",
+        &chat_request.subject,
+        Some(ai::sent_message_count(chat_request.messages.len())),
+    );
+    let answer = match ai::diagnostics::with_request(
+        "chat",
+        &thread_id,
+        provider,
+        &model,
+        ai::with_purpose(purpose, ai::chat(chat_request, &api_key)),
+    )
+    .await
+    {
         Ok(answer) => answer,
         Err(error) => {
             log::error!(target: "ai_thread_chat", "chat failed for thread {thread_id}: {error}");
@@ -650,11 +881,19 @@ pub(crate) async fn ai_thread_chat(
     let sources = answer
         .source_thread_ids
         .iter()
-        .filter_map(|id| searched.iter().find(|source| &source.thread_id == id).cloned())
+        .filter_map(|id| {
+            searched
+                .iter()
+                .find(|source| &source.thread_id == id)
+                .cloned()
+        })
         .collect();
     Ok(ThreadChatReply {
         answer: answer.answer,
-        analysis: without_invitation_meetings(answer.analysis, &state.database.get_thread(&thread_id)?.messages),
+        analysis: without_invitation_meetings(
+            answer.analysis,
+            &state.database.get_thread(&thread_id)?.messages,
+        ),
         reply_draft: answer.reply_draft,
         sources,
         searched,
@@ -668,12 +907,19 @@ const MAX_AI_USAGE_SUMMARY_DAYS: u32 = 31;
 
 /// AI provider usage for the last `days` local days, including today.
 #[tauri::command(async)]
-pub(crate) fn ai_usage_summary(days: u32, state: State<'_, AppState>) -> AppResult<Vec<AiUsageDay>> {
+pub(crate) fn ai_usage_summary(
+    days: u32,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AiUsageDay>> {
     if days == 0 || days > MAX_AI_USAGE_SUMMARY_DAYS {
         return Err(format!("Usage can be shown for 1 to {MAX_AI_USAGE_SUMMARY_DAYS} days").into());
     }
     let since = chrono::Local::now().date_naive() - chrono::Days::new(u64::from(days - 1));
-    database_result(state.database.ai_usage_since(&since.format("%Y-%m-%d").to_string()))
+    database_result(
+        state
+            .database
+            .ai_usage_since(&since.format("%Y-%m-%d").to_string()),
+    )
 }
 
 /// Summarizes the thread and extracts proposals in one provider call. Always
@@ -703,8 +949,20 @@ pub(crate) async fn ai_brief_thread(
         "starting brief for thread {thread_id} with provider {provider:?} model {model}"
     );
     let focus_from = request.focus_from.clone();
-    let purpose = ai::RequestPurpose::about("brief", &request.subject, Some(ai::sent_message_count(request.messages.len())));
-    let brief = match ai::diagnostics::with_request("brief", &thread_id, provider, &model, ai::with_purpose(purpose, ai::brief(request, &api_key))).await {
+    let purpose = ai::RequestPurpose::about(
+        "brief",
+        &request.subject,
+        Some(ai::sent_message_count(request.messages.len())),
+    );
+    let brief = match ai::diagnostics::with_request(
+        "brief",
+        &thread_id,
+        provider,
+        &model,
+        ai::with_purpose(purpose, ai::brief(request, &api_key)),
+    )
+    .await
+    {
         Ok(brief) => brief,
         Err(error) => {
             log::error!(target: "ai_analyze_thread", "brief failed for thread {thread_id}: {error}");
@@ -717,9 +975,27 @@ pub(crate) async fn ai_brief_thread(
         brief.analysis.proposals.len(),
         brief.analysis.hidden_count
     );
-    let summary = save_thread_summary(&state, &thread_id, brief.summary, &revision, focus_from.as_deref())?;
-    let analysis = cache_thread_analysis(&state, &thread_id, &revision, brief.analysis, true, focus_from.as_deref())?;
-    Ok(ThreadBriefResult { summary, analysis, offered_times: brief.offered_times, offered_times_error: brief.offered_times_error })
+    let summary = save_thread_summary(
+        &state,
+        &thread_id,
+        brief.summary,
+        &revision,
+        focus_from.as_deref(),
+    )?;
+    let analysis = cache_thread_analysis(
+        &state,
+        &thread_id,
+        &revision,
+        brief.analysis,
+        true,
+        focus_from.as_deref(),
+    )?;
+    Ok(ThreadBriefResult {
+        summary,
+        analysis,
+        offered_times: brief.offered_times,
+        offered_times_error: brief.offered_times_error,
+    })
 }
 
 #[tauri::command]
@@ -741,7 +1017,10 @@ pub(crate) async fn ai_enrich_contact(
         .ok_or_else(|| "Contact could not be found".to_string())?;
     // Inspect more conversations locally so the first provider batch can
     // favor messages that the contact opened, even if those are less recent.
-    let timeline = state.database.contact_timeline_for_account(&id, 0, 30, account_id.as_deref())?;
+    let timeline =
+        state
+            .database
+            .contact_timeline_for_account(&id, 0, 30, account_id.as_deref())?;
     let addresses = profile
         .addresses
         .iter()
@@ -774,20 +1053,26 @@ pub(crate) async fn ai_enrich_contact(
         }
     }
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
-    let purpose = ai::RequestPurpose { message_count: Some(messages.len()), ..ai::RequestPurpose::new("contact") };
-    ai::with_purpose(purpose, ai::enrich_contact(
-        ai::ContactEnrichmentRequest {
-            provider,
-            model,
-            endpoint,
-            reasoning: reasoning.unwrap_or_default(),
-            profile,
-            messages,
-            search_more: search_more.unwrap_or(false),
-            empty_fields,
-        },
-        &api_key,
-    ))
+    let purpose = ai::RequestPurpose {
+        message_count: Some(messages.len()),
+        ..ai::RequestPurpose::new("contact")
+    };
+    ai::with_purpose(
+        purpose,
+        ai::enrich_contact(
+            ai::ContactEnrichmentRequest {
+                provider,
+                model,
+                endpoint,
+                reasoning: reasoning.unwrap_or_default(),
+                profile,
+                messages,
+                search_more: search_more.unwrap_or(false),
+                empty_fields,
+            },
+            &api_key,
+        ),
+    )
     .await
     .map_err(AppError::from)
 }
@@ -854,7 +1139,8 @@ pub(crate) async fn ai_find_times(
     let (subject, messages, user_addresses) = match request.source_message_id {
         Some(source_id) => {
             let database = state.database.clone();
-            let detail = run_database_task(move || database.get_thread_for_message(&source_id)).await?;
+            let detail =
+                run_database_task(move || database.get_thread_for_message(&source_id)).await?;
             let user_addresses = account_addresses(&state, &detail.thread.account_id)?;
             let messages = detail
                 .messages
@@ -874,22 +1160,25 @@ pub(crate) async fn ai_find_times(
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     log::info!(target: "ai_find_times", "finding times with provider {provider:?} model {model}, {} message(s)", messages.len());
     let purpose = ai::RequestPurpose::about("find_times", &subject, Some(messages.len()));
-    ai::with_purpose(purpose, ai::find_times::find_times(
-        ai::find_times::FindTimesRequest {
-            provider,
-            model,
-            endpoint,
-            subject,
-            messages,
-            draft_text: request.draft_text,
-            instruction,
-            current: request.current,
-            current_time: Utc::now().with_timezone(&zone).to_rfc3339(),
-            user_time_zone: request.user_time_zone,
-            user_addresses,
-        },
-        &api_key,
-    ))
+    ai::with_purpose(
+        purpose,
+        ai::find_times::find_times(
+            ai::find_times::FindTimesRequest {
+                provider,
+                model,
+                endpoint,
+                subject,
+                messages,
+                draft_text: request.draft_text,
+                instruction,
+                current: request.current,
+                current_time: Utc::now().with_timezone(&zone).to_rfc3339(),
+                user_time_zone: request.user_time_zone,
+                user_addresses,
+            },
+            &api_key,
+        ),
+    )
     .await
     .inspect_err(|error| log::error!(target: "ai_find_times", "find times failed: {error}"))
     .map_err(AppError::from)
@@ -904,14 +1193,20 @@ pub(crate) async fn ai_review_draft(
 ) -> AppResult<ai::DraftReviewResult> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     let purpose = ai::RequestPurpose::about("draft_review", &request.subject, None);
-    ai::with_purpose(purpose, ai::review_draft(request, provider, &model, endpoint.as_deref(), &api_key))
-        .await
-        .map_err(AppError::from)
+    ai::with_purpose(
+        purpose,
+        ai::review_draft(request, provider, &model, endpoint.as_deref(), &api_key),
+    )
+    .await
+    .map_err(AppError::from)
 }
 
 /// Recent AI provider requests, newest first, for Settings → AI.
 #[tauri::command(async)]
-pub(crate) fn ai_activity(limit: Option<u32>, state: State<'_, AppState>) -> AppResult<Vec<AiActivity>> {
+pub(crate) fn ai_activity(
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AiActivity>> {
     let limit = limit.unwrap_or(100).min(500) as usize;
     Ok(state.database.ai_activity(limit)?)
 }
@@ -941,16 +1236,20 @@ pub(crate) async fn ai_generate_reply(
             })
             .collect(),
     );
-    let purpose = ai::RequestPurpose::about("reply", &bounded.subject, Some(bounded.messages.len()));
-    let body = ai::with_purpose(purpose, ai::generate_reply(
-        &bounded,
-        &instruction,
-        provider,
-        &model,
-        endpoint.as_deref(),
-        reasoning.unwrap_or_default(),
-        &api_key,
-    ))
+    let purpose =
+        ai::RequestPurpose::about("reply", &bounded.subject, Some(bounded.messages.len()));
+    let body = ai::with_purpose(
+        purpose,
+        ai::generate_reply(
+            &bounded,
+            &instruction,
+            provider,
+            &model,
+            endpoint.as_deref(),
+            reasoning.unwrap_or_default(),
+            &api_key,
+        ),
+    )
     .await?;
     Ok(ReplyAssistResult { body })
 }
@@ -976,6 +1275,8 @@ pub(crate) fn open_logs_folder(app: tauri::AppHandle) -> AppResult<()> {
     use tauri_plugin_opener::OpenerExt;
     let path = app.path().app_log_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    app.opener().open_path(path.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }

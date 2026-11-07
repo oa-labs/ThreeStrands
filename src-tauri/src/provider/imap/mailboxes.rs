@@ -121,7 +121,13 @@ impl MailboxRole {
             MailboxRole::Sent => &["sent", "sent mail", "sent items", "sent messages"],
             MailboxRole::Archive => &["archive", "archives"],
             MailboxRole::Drafts => &["drafts", "draft"],
-            MailboxRole::Trash => &["trash", "deleted", "deleted items", "deleted messages", "bin"],
+            MailboxRole::Trash => &[
+                "trash",
+                "deleted",
+                "deleted items",
+                "deleted messages",
+                "bin",
+            ],
             MailboxRole::Junk => &["junk", "spam", "junk email", "junk e-mail", "bulk mail"],
             MailboxRole::All => &["all mail", "all"],
         }
@@ -197,9 +203,7 @@ impl MailboxMapping {
 /// is stripped — no container name is special-cased.
 fn leaf<'a>(name: &'a str, delimiter: Option<&str>) -> &'a str {
     match delimiter {
-        Some(delimiter) if !delimiter.is_empty() => {
-            name.rsplit(delimiter).next().unwrap_or(name)
-        }
+        Some(delimiter) if !delimiter.is_empty() => name.rsplit(delimiter).next().unwrap_or(name),
         _ => name,
     }
 }
@@ -236,8 +240,10 @@ pub fn propose_mapping(entries: &[MailboxEntry]) -> MailboxMapping {
     }
 
     // Each mailbox can supply at most one proposed role, including name guesses.
-    let mut claimed: std::collections::BTreeSet<String> =
-        by_role.values().map(|proposal| proposal.mailbox.clone()).collect();
+    let mut claimed: std::collections::BTreeSet<String> = by_role
+        .values()
+        .map(|proposal| proposal.mailbox.clone())
+        .collect();
 
     // Pass 2: name matching for roles no attribute claimed.
     for role in MailboxRole::ALL {
@@ -247,8 +253,7 @@ pub fn propose_mapping(entries: &[MailboxEntry]) -> MailboxMapping {
         if let Some(entry) = selectable.iter().find(|entry| {
             !claimed.contains(&entry.name)
                 && role.name_candidates().iter().any(|candidate| {
-                    leaf(&entry.name, entry.delimiter.as_deref())
-                        .eq_ignore_ascii_case(candidate)
+                    leaf(&entry.name, entry.delimiter.as_deref()).eq_ignore_ascii_case(candidate)
                 })
         }) {
             claimed.insert(entry.name.clone());
@@ -287,7 +292,12 @@ pub fn propose_mapping(entries: &[MailboxEntry]) -> MailboxMapping {
         })
         .collect();
 
-    MailboxMapping { label_archive: false, proposals, selectable, label_containers }
+    MailboxMapping {
+        label_archive: false,
+        proposals,
+        selectable,
+        label_containers,
+    }
 }
 
 /// Discover an account's mailboxes end to end over an authenticated session:
@@ -330,12 +340,12 @@ pub async fn discover_and_persist(
             permanent_flags_json: None,
             permanent_keywords: None,
         };
-        store
-            .upsert_mailbox(&row)
-            .map_err(|e| crate::provider::ProviderError::InvalidOperation(format!(
+        store.upsert_mailbox(&row).map_err(|e| {
+            crate::provider::ProviderError::InvalidOperation(format!(
                 "failed to persist mailbox catalog row for {}: {e}",
                 entry.name
-            )))?;
+            ))
+        })?;
     }
     Ok(propose_mapping(&entries))
 }
@@ -373,7 +383,9 @@ pub async fn create_mailbox_tolerant(
 }
 
 fn mentions_trycreate(error: &crate::provider::ProviderError) -> bool {
-    error_message(error).to_ascii_uppercase().contains("TRYCREATE")
+    error_message(error)
+        .to_ascii_uppercase()
+        .contains("TRYCREATE")
 }
 
 fn mentions_already_exists(error: &crate::provider::ProviderError) -> bool {
@@ -399,7 +411,12 @@ fn error_message(error: &crate::provider::ProviderError) -> &str {
 mod tests {
     use super::*;
 
-    fn entry(name: &str, delimiter: &str, special_use: Option<&str>, no_select: bool) -> MailboxEntry {
+    fn entry(
+        name: &str,
+        delimiter: &str,
+        special_use: Option<&str>,
+        no_select: bool,
+    ) -> MailboxEntry {
         MailboxEntry {
             name: name.to_string(),
             delimiter: Some(delimiter.to_string()),
@@ -439,10 +456,19 @@ mod tests {
             .iter()
             .all(|proposal| proposal.source == MappingSource::SpecialUse));
         // \Noselect containers never appear as selectable mailboxes.
-        assert!(mapping.selectable.iter().all(|mailbox| mailbox.name != "Folders"));
-        assert!(mapping.selectable.iter().all(|mailbox| mailbox.name != "Labels"));
+        assert!(mapping
+            .selectable
+            .iter()
+            .all(|mailbox| mailbox.name != "Folders"));
+        assert!(mapping
+            .selectable
+            .iter()
+            .all(|mailbox| mailbox.name != "Labels"));
         // INBOX is selectable but maps to no special-use role.
-        assert!(mapping.selectable.iter().any(|mailbox| mailbox.name == "INBOX"));
+        assert!(mapping
+            .selectable
+            .iter()
+            .any(|mailbox| mailbox.name == "INBOX"));
     }
 
     /// A server that returns no attributes at all: every role falls back to a
@@ -460,7 +486,10 @@ mod tests {
         let mapping = propose_mapping(&entries);
 
         assert_eq!(mapping.mailbox_for(MailboxRole::Sent), Some("Sent Items"));
-        assert_eq!(mapping.mailbox_for(MailboxRole::Trash), Some("Deleted Items"));
+        assert_eq!(
+            mapping.mailbox_for(MailboxRole::Trash),
+            Some("Deleted Items")
+        );
         assert_eq!(mapping.mailbox_for(MailboxRole::Junk), Some("Junk Email"));
         assert_eq!(mapping.mailbox_for(MailboxRole::Archive), Some("Archive"));
         assert_eq!(mapping.mailbox_for(MailboxRole::Drafts), Some("DRAFTS"));
@@ -506,9 +535,18 @@ mod tests {
             entry("[Gmail]/Trash", "/", None, false),
         ];
         let mapping = propose_mapping(&slash);
-        assert_eq!(mapping.mailbox_for(MailboxRole::Sent), Some("[Gmail]/Sent Mail"));
-        assert_eq!(mapping.mailbox_for(MailboxRole::All), Some("[Gmail]/All Mail"));
-        assert_eq!(mapping.mailbox_for(MailboxRole::Trash), Some("[Gmail]/Trash"));
+        assert_eq!(
+            mapping.mailbox_for(MailboxRole::Sent),
+            Some("[Gmail]/Sent Mail")
+        );
+        assert_eq!(
+            mapping.mailbox_for(MailboxRole::All),
+            Some("[Gmail]/All Mail")
+        );
+        assert_eq!(
+            mapping.mailbox_for(MailboxRole::Trash),
+            Some("[Gmail]/Trash")
+        );
 
         // A dot-delimited hierarchy matches the same way.
         let dot = vec![entry("INBOX.Sent", ".", None, false)];
@@ -526,9 +564,18 @@ mod tests {
         ];
         let mapping = propose_mapping(&entries);
         assert_eq!(mapping.mailbox_for(MailboxRole::Archive), None);
-        assert!(mapping.selectable.iter().all(|mailbox| mailbox.name != "Archive"));
-        assert!(mapping.label_containers.iter().any(|mailbox| mailbox.name == "Archive"));
-        assert!(mapping.label_containers.iter().any(|mailbox| mailbox.name == "INBOX"));
+        assert!(mapping
+            .selectable
+            .iter()
+            .all(|mailbox| mailbox.name != "Archive"));
+        assert!(mapping
+            .label_containers
+            .iter()
+            .any(|mailbox| mailbox.name == "Archive"));
+        assert!(mapping
+            .label_containers
+            .iter()
+            .any(|mailbox| mailbox.name == "INBOX"));
     }
 
     #[test]
@@ -578,7 +625,11 @@ mod tests {
         ];
         let mapping = propose_mapping(&entries);
         for role in MailboxRole::ALL {
-            assert_eq!(mapping.mailbox_for(role), None, "{role:?} should be unmatched");
+            assert_eq!(
+                mapping.mailbox_for(role),
+                None,
+                "{role:?} should be unmatched"
+            );
         }
         // But the user's own folders are still selectable for an override.
         assert_eq!(mapping.selectable.len(), 3);
@@ -619,8 +670,8 @@ mod discovery_tests {
     use crate::provider::imap::session::{ImapSession, MailboxStatus};
     use crate::provider::imap::ImapStateStore;
     use crate::provider::ProviderError;
-    use async_trait::async_trait;
     use async_imap::types::Fetch;
+    use async_trait::async_trait;
     use std::sync::Arc;
 
     /// A scripted `ImapSession` with no network: a LIST result, a per-mailbox
@@ -656,7 +707,9 @@ mod discovery_tests {
         async fn examine(&mut self, mailbox: &str) -> Result<MailboxStatus, ProviderError> {
             match self.examine.get(mailbox) {
                 Some(Ok(status)) => Ok(status.clone()),
-                Some(Err(())) => Err(ProviderError::TransientTransport("scripted examine failure".into())),
+                Some(Err(())) => Err(ProviderError::TransientTransport(
+                    "scripted examine failure".into(),
+                )),
                 None => Err(ProviderError::InvalidOperation("no script".into())),
             }
         }
@@ -672,7 +725,10 @@ mod discovery_tests {
         async fn list_mailboxes(&mut self) -> Result<Vec<MailboxEntry>, ProviderError> {
             Ok(self.list.clone())
         }
-        async fn run_command_capture_code(&mut self, _: &str) -> Result<Option<String>, ProviderError> {
+        async fn run_command_capture_code(
+            &mut self,
+            _: &str,
+        ) -> Result<Option<String>, ProviderError> {
             unreachable!()
         }
         async fn create_mailbox(&mut self, mailbox: &str) -> Result<(), ProviderError> {
@@ -713,7 +769,10 @@ mod discovery_tests {
             entry("Labels", None, true), // \Noselect container
         ];
         let mut examine = std::collections::BTreeMap::new();
-        examine.insert("INBOX".to_string(), Ok(status(95479608, 979, &["\\Seen", "$Forwarded"], false)));
+        examine.insert(
+            "INBOX".to_string(),
+            Ok(status(95479608, 979, &["\\Seen", "$Forwarded"], false)),
+        );
         examine.insert("Sent".to_string(), Ok(status(1, 10, &["\\Seen"], false)));
         examine.insert("Archive".to_string(), Ok(status(2, 20, &["\\Seen"], false)));
         let mut session = FakeSession {
@@ -745,7 +804,10 @@ mod discovery_tests {
     /// discovery still persists the others and returns a mapping.
     #[tokio::test]
     async fn a_single_examine_failure_does_not_sink_discovery() {
-        let list = vec![entry("INBOX", None, false), entry("Sent", Some("\\Sent"), false)];
+        let list = vec![
+            entry("INBOX", None, false),
+            entry("Sent", Some("\\Sent"), false),
+        ];
         let mut examine = std::collections::BTreeMap::new();
         examine.insert("INBOX".to_string(), Ok(status(1, 2, &["\\Seen"], false)));
         examine.insert("Sent".to_string(), Err(()));
@@ -760,7 +822,12 @@ mod discovery_tests {
         // The mapping still proposes Sent from its attribute (LIST), even
         // though its catalog row could not be refreshed this round.
         assert_eq!(mapping.mailbox_for(MailboxRole::Sent), Some("Sent"));
-        let names: Vec<_> = store.mailboxes().unwrap().iter().map(|m| m.name.clone()).collect();
+        let names: Vec<_> = store
+            .mailboxes()
+            .unwrap()
+            .iter()
+            .map(|m| m.name.clone())
+            .collect();
         assert_eq!(names, vec!["INBOX".to_string()]);
     }
 
@@ -809,7 +876,9 @@ mod discovery_tests {
             creates: std::cell::RefCell::new(vec![Ok(())]),
             create_calls: Default::default(),
         };
-        create_mailbox_tolerant(&mut session, "Archive").await.unwrap();
+        create_mailbox_tolerant(&mut session, "Archive")
+            .await
+            .unwrap();
         assert_eq!(session.create_calls.borrow().len(), 1);
     }
 
@@ -827,7 +896,9 @@ mod discovery_tests {
             ]),
             create_calls: Default::default(),
         };
-        create_mailbox_tolerant(&mut session, "Archive").await.unwrap();
+        create_mailbox_tolerant(&mut session, "Archive")
+            .await
+            .unwrap();
         assert_eq!(session.create_calls.borrow().len(), 2, "exactly one retry");
     }
 
@@ -843,8 +914,14 @@ mod discovery_tests {
             ))]),
             create_calls: Default::default(),
         };
-        create_mailbox_tolerant(&mut session, "Archive").await.unwrap();
-        assert_eq!(session.create_calls.borrow().len(), 1, "no retry for already-exists");
+        create_mailbox_tolerant(&mut session, "Archive")
+            .await
+            .unwrap();
+        assert_eq!(
+            session.create_calls.borrow().len(),
+            1,
+            "no retry for already-exists"
+        );
     }
 
     /// A hard CREATE failure that is neither TRYCREATE nor already-exists
@@ -859,9 +936,15 @@ mod discovery_tests {
             ))]),
             create_calls: Default::default(),
         };
-        let err = create_mailbox_tolerant(&mut session, "Archive").await.unwrap_err();
+        let err = create_mailbox_tolerant(&mut session, "Archive")
+            .await
+            .unwrap_err();
         assert!(matches!(err, ProviderError::PermanentClientRejection(_)));
-        assert_eq!(session.create_calls.borrow().len(), 1, "no retry on a hard failure");
+        assert_eq!(
+            session.create_calls.borrow().len(),
+            1,
+            "no retry on a hard failure"
+        );
     }
 
     // Optional live coverage of mailbox discovery against the Dovecot test
@@ -877,7 +960,9 @@ mod discovery_tests {
     // tests above cover the NAME-match fallback the primary account needs.
     #[tokio::test]
     async fn live_discovery_persists_and_maps_against_dovecot() {
-        use crate::provider::imap::connection::{ConnectionConfig, ImapConnectionManager, ConnectionRole, TlsMode};
+        use crate::provider::imap::connection::{
+            ConnectionConfig, ConnectionRole, ImapConnectionManager, TlsMode,
+        };
         let Ok(fp_str) = std::env::var("DOVECOT_TEST_FP") else {
             eprintln!("skipping: DOVECOT_TEST_FP not set (Dovecot container absent)");
             return;
@@ -892,7 +977,11 @@ mod discovery_tests {
         };
         let mgr = ImapConnectionManager::new(cfg);
         let (mut session, _lease) = mgr
-            .connect_leased(ConnectionRole::Command, "test@threestrands.test", "testpassword")
+            .connect_leased(
+                ConnectionRole::Command,
+                "test@threestrands.test",
+                "testpassword",
+            )
             .await
             .expect("live connect should succeed");
         let store = store();

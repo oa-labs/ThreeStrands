@@ -49,7 +49,7 @@ pub(crate) const MAX_EVIDENCE: usize = 5242880;
 pub(crate) const MAX_REDIRECTS: usize = 3;
 pub(crate) const CONNECT_SECONDS: u64 = 10;
 pub(crate) const REQUEST_SECONDS: u64 = 60;
-pub(crate) const RAW_RETENTION_SECONDS: i64 = 7*24*60*60;
+pub(crate) const RAW_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
 pub(crate) const MAX_RETRY_DELAY: u64 = 300;
 pub(crate) const MAX_SUBJECTS: usize = 5;
 pub(crate) const MAX_SUBJECT: usize = 200;
@@ -71,6 +71,9 @@ pub(crate) const MAX_CLEANUP_BATCH: i64 = 10;
 
 /// Public, non-secret contract returned to the UI; native parity tests bind
 /// execution limits to these frozen values rather than duplicating UI numbers.
-pub(crate) fn client_contract()->serde_json::Value {
-    serde_json::from_str(include_str!("../../../docs/agent-integrations/contract-v1.json")).expect("embedded research contract is valid JSON")
+pub(crate) fn client_contract() -> serde_json::Value {
+    serde_json::from_str(include_str!(
+        "../../../docs/agent-integrations/contract-v1.json"
+    ))
+    .expect("embedded research contract is valid JSON")
 }

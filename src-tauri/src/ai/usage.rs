@@ -33,11 +33,19 @@ pub struct RequestPurpose {
 
 impl RequestPurpose {
     pub fn new(feature: &'static str) -> Self {
-        Self { feature, subject: None, message_count: None }
+        Self {
+            feature,
+            subject: None,
+            message_count: None,
+        }
     }
 
     pub fn about(feature: &'static str, subject: &str, message_count: Option<usize>) -> Self {
-        Self { feature, subject: Some(subject.to_string()), message_count }
+        Self {
+            feature,
+            subject: Some(subject.to_string()),
+            message_count,
+        }
     }
 }
 
@@ -189,8 +197,9 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
         let purpose = RequestPurpose::about("brief", "Lunch", Some(3));
-        let content = with_purpose(purpose.clone(), call_provider(
-            AiCall {
+        let content = with_purpose(
+            purpose.clone(),
+            call_provider(AiCall {
                 provider: AiProvider::Custom,
                 model: "usage-test-model",
                 endpoint: Some(&endpoint),
@@ -200,8 +209,8 @@ mod tests {
                 temperature: 0.1,
                 schema: None,
                 api_key: "key",
-            },
-        ))
+            }),
+        )
         .await
         .unwrap();
         assert!(parse_action_proposals(&content, &[]).is_err());

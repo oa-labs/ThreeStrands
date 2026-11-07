@@ -1,5 +1,5 @@
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use crate::html_plain_text::{after_leading_stylesheet, html_to_text};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -504,7 +504,9 @@ fn is_html_markup(text: &str) -> bool {
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '!'))
         .unwrap_or(rest.len());
     let (name, after) = rest.split_at(name_end);
-    HTML_OPENING_TAGS.iter().any(|tag| tag.eq_ignore_ascii_case(name))
+    HTML_OPENING_TAGS
+        .iter()
+        .any(|tag| tag.eq_ignore_ascii_case(name))
         && after.starts_with(|c: char| c == '>' || c == '/' || c.is_ascii_whitespace())
         && after.contains('>')
 }
@@ -517,7 +519,10 @@ fn line_break_tag_len(text: &str) -> Option<usize> {
     }
     let rest = text[3..].trim_start_matches([' ', '\t']);
     let rest = rest.strip_prefix('/').unwrap_or(rest).strip_prefix('>')?;
-    let rest = rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n')).unwrap_or(rest);
+    let rest = rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))
+        .unwrap_or(rest);
     Some(text.len() - rest.len())
 }
 
@@ -586,7 +591,9 @@ fn plain_coverage(plain: &str, html_text: &str) -> f64 {
 fn content_words(text: &str) -> HashSet<String> {
     text.split_whitespace()
         .map(str::to_lowercase)
-        .filter(|piece| !(piece.contains("://") || piece.starts_with("www.") || piece.contains("mailto:")))
+        .filter(|piece| {
+            !(piece.contains("://") || piece.starts_with("www.") || piece.contains("mailto:"))
+        })
         .flat_map(|piece| {
             piece
                 .split(|c: char| !c.is_alphanumeric())
@@ -600,7 +607,8 @@ fn content_words(text: &str) -> HashSet<String> {
 /// Delimiters of common template merge fields (`${name}`, `{{name}}`,
 /// `%%name%%`, `*|NAME|*`) that a mailing system replaces before sending.
 /// `%name%` is matched separately by [`template_fields`].
-const TEMPLATE_FIELD_DELIMITERS: [(&str, &str); 4] = [("${", "}"), ("{{", "}}"), ("%%", "%%"), ("*|", "|*")];
+const TEMPLATE_FIELD_DELIMITERS: [(&str, &str); 4] =
+    [("${", "}"), ("{{", "}}"), ("%%", "%%"), ("*|", "|*")];
 
 /// The merge fields left in `text`, each as its opening delimiter and name.
 /// A name is one word of letters, digits, `_`, `-`, or `.` that starts with
@@ -615,7 +623,9 @@ fn template_fields(text: &str) -> HashSet<(&'static str, &str)> {
             let name = rest[..end].trim_matches(' ');
             if (1..=64).contains(&name.len())
                 && name.starts_with(|c: char| c.is_ascii_alphabetic())
-                && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
             {
                 fields.insert((open, name));
                 rest = &rest[end + close.len()..];
@@ -625,13 +635,18 @@ fn template_fields(text: &str) -> HashSet<(&'static str, &str)> {
     // `%name%`, held to a stricter name: three or more letters or `_`, in a
     // word that is not a link, so percent-encoding (`%C2%A0text%20`) and
     // percentages never match.
-    for word in text.split_whitespace().filter(|word| !(word.contains("://") || word.starts_with("www."))) {
+    for word in text
+        .split_whitespace()
+        .filter(|word| !(word.contains("://") || word.starts_with("www.")))
+    {
         let mut rest = word;
         while let Some(start) = rest.find('%') {
             rest = &rest[start + 1..];
             let Some(end) = rest.find('%') else { break };
             let name = &rest[..end];
-            if (3..=64).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphabetic() || c == '_') {
+            if (3..=64).contains(&name.len())
+                && name.chars().all(|c| c.is_ascii_alphabetic() || c == '_')
+            {
                 fields.insert(("%", name));
                 rest = &rest[end + 1..];
             }
@@ -1041,9 +1056,15 @@ mod tests {
     fn reads_an_html_document_in_the_plain_part_as_html() {
         let document = "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html\"><style>p { color: red; }</style></head><body><p>Hi Parents, we need help.</p></body></html>";
         let fragment = "\n<div dir=\"ltr\">Lunch at <b>noon</b>?<br>Thanks</div>";
-        for (plain, expected) in [(document, "Hi Parents, we need help."), (fragment, "Lunch at noon?")] {
+        for (plain, expected) in [
+            (document, "Hi Parents, we need help."),
+            (fragment, "Lunch at noon?"),
+        ] {
             let mut payload = part("multipart/alternative", "");
-            payload.parts = vec![part("text/plain", plain), part("text/html", "<p>html part</p>")];
+            payload.parts = vec![
+                part("text/plain", plain),
+                part("text/html", "<p>html part</p>"),
+            ];
             let message = RawMessage {
                 id: "m".into(),
                 thread_id: "t".into(),
@@ -1054,7 +1075,10 @@ mod tests {
             };
             let text = normalize(&message).unwrap().body_text;
             assert!(text.contains(expected), "{text}");
-            assert!(!text.contains('<') && !text.contains("color: red"), "{text}");
+            assert!(
+                !text.contains('<') && !text.contains("color: red"),
+                "{text}"
+            );
         }
     }
 
@@ -1193,7 +1217,10 @@ mod tests {
     fn turns_line_break_tags_in_a_plain_only_body_into_newlines() {
         for (plain, expected) in [
             ("Hi Sam,<br><br>See you at 6.", "Hi Sam,\n\nSee you at 6."),
-            ("One<BR/>\nTwo<br />\r\nThree<br\t>Four", "One\nTwo\nThree\nFour"),
+            (
+                "One<BR/>\nTwo<br />\r\nThree<br\t>Four",
+                "One\nTwo\nThree\nFour",
+            ),
         ] {
             assert_eq!(body_text_of(part("text/plain", plain)), expected);
             assert_eq!(readable_body_text(plain.to_string()), expected);
@@ -1208,9 +1235,16 @@ mod tests {
         for (count, keeps_plain) in [(half - 1, false), (half, true), (half + 1, true)] {
             let plain = words[..count].join(" ");
             let text = body_text_of(alternative(&plain, &html));
-            assert_eq!(text == plain, keeps_plain, "{count} of {MIN_COMPARED_WORDS}");
+            assert_eq!(
+                text == plain,
+                keeps_plain,
+                "{count} of {MIN_COMPARED_WORDS}"
+            );
         }
-        assert_eq!(plain_coverage("w0 W1! https://w2.example", &words.join(" ")), 0.1);
+        assert_eq!(
+            plain_coverage("w0 W1! https://w2.example", &words.join(" ")),
+            0.1
+        );
     }
 
     #[test]
@@ -1242,7 +1276,9 @@ mod tests {
             readable_body_text(".title { margin: 0; }\n\nSee you Thursday.".to_string()),
             "See you Thursday."
         );
-        assert!(is_html_markup("  <!DOCTYPE html><html><body>x</body></html>"));
+        assert!(is_html_markup(
+            "  <!DOCTYPE html><html><body>x</body></html>"
+        ));
         assert!(is_html_markup("<BR/>x"));
     }
 
@@ -1250,10 +1286,7 @@ mod tests {
     fn keeps_quoted_display_name_commas_inside_one_address() {
         assert_eq!(
             split_addresses("\"Bates, Daniel R\" <daniel@example.com>, bethgold@gmail.com"),
-            vec![
-                "Bates, Daniel R <daniel@example.com>",
-                "bethgold@gmail.com",
-            ]
+            vec!["Bates, Daniel R <daniel@example.com>", "bethgold@gmail.com",]
         );
     }
 
@@ -1328,7 +1361,10 @@ mod tests {
             provider_attachment_id_from_payload(&refreshed, &shown).unwrap(),
             Some("gmail-token-second".into())
         );
-        assert_eq!(attachment_bytes_from_payload(&refreshed, &shown).unwrap(), None);
+        assert_eq!(
+            attachment_bytes_from_payload(&refreshed, &shown).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -1523,9 +1559,18 @@ mod tests {
             payload: part("text/plain", "ok"),
         };
         message.payload.headers = vec![
-            MimeHeader { name: "List-Unsubscribe".into(), value: list_unsubscribe.into() },
-            MimeHeader { name: "List-Unsubscribe-Post".into(), value: "List-Unsubscribe=One-Click".into() },
-            MimeHeader { name: "Authentication-Results".into(), value: format!("mx.example; {dkim} header.i=@example") },
+            MimeHeader {
+                name: "List-Unsubscribe".into(),
+                value: list_unsubscribe.into(),
+            },
+            MimeHeader {
+                name: "List-Unsubscribe-Post".into(),
+                value: "List-Unsubscribe=One-Click".into(),
+            },
+            MimeHeader {
+                name: "Authentication-Results".into(),
+                value: format!("mx.example; {dkim} header.i=@example"),
+            },
         ];
         normalize(&message).unwrap().unsubscribe
     }
@@ -1535,32 +1580,52 @@ mod tests {
         assert!(unsubscribe_of("<http://list.example/one>", "dkim=pass").is_none());
         // Parsing stops at the first unsupported scheme rather than
         // skipping past it to later entries.
-        assert!(unsubscribe_of("<http://list.example/one>, <https://list.example/two>", "dkim=pass").is_none());
+        assert!(unsubscribe_of(
+            "<http://list.example/one>, <https://list.example/two>",
+            "dkim=pass"
+        )
+        .is_none());
     }
 
     #[test]
     fn never_offers_an_unsubscribe_url_carrying_userinfo() {
         assert!(unsubscribe_of("<https://user@list.example/one>", "dkim=pass").is_none());
         assert!(unsubscribe_of("<https://user:secret@list.example/one>", "dkim=pass").is_none());
-        let metadata =
-            unsubscribe_of("<https://user:secret@list.example/one>, <https://list.example/safe>", "dkim=pass").unwrap();
-        assert_eq!(metadata.one_click_url.as_deref(), Some("https://list.example/safe"));
+        let metadata = unsubscribe_of(
+            "<https://user:secret@list.example/one>, <https://list.example/safe>",
+            "dkim=pass",
+        )
+        .unwrap();
+        assert_eq!(
+            metadata.one_click_url.as_deref(),
+            Some("https://list.example/safe")
+        );
         assert!(metadata.web_url.is_none());
     }
 
     #[test]
     fn never_offers_an_https_unsubscribe_url_on_a_non_default_port() {
         assert!(unsubscribe_of("<https://list.example:8443/one>", "dkim=pass").is_none());
-        let metadata = unsubscribe_of("<https://list.example:8443/one>, <mailto:list@example.com>", "dkim=pass").unwrap();
+        let metadata = unsubscribe_of(
+            "<https://list.example:8443/one>, <mailto:list@example.com>",
+            "dkim=pass",
+        )
+        .unwrap();
         assert!(metadata.one_click_url.is_none());
         assert!(metadata.web_url.is_none());
-        assert_eq!(metadata.mailto_url.as_deref(), Some("mailto:list@example.com"));
+        assert_eq!(
+            metadata.mailto_url.as_deref(),
+            Some("mailto:list@example.com")
+        );
     }
 
     #[test]
     fn a_failed_dkim_verdict_downgrades_one_click_to_a_web_link() {
         let metadata = unsubscribe_of("<https://list.example/one>", "dkim=fail").unwrap();
         assert!(metadata.one_click_url.is_none());
-        assert_eq!(metadata.web_url.as_deref(), Some("https://list.example/one"));
+        assert_eq!(
+            metadata.web_url.as_deref(),
+            Some("https://list.example/one")
+        );
     }
 }

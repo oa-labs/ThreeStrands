@@ -15,21 +15,65 @@ fn unread(id: &str, thread_id: &str, date: &str, from: &str, to: &[&str]) -> Nor
 fn today_mail_lists_only_unread_conversations_newest_first_with_a_total() {
     let database = database();
     clear_seed_threads(&database);
-    database.upsert_thread(ME, &[unread("a", "older", "2026-10-20T09:00:00Z", "Ann <ann@example.org>", &[ME])]).unwrap();
-    database.upsert_thread(ME, &[unread("b", "newer", "2026-10-22T09:00:00Z", "Bo <bo@example.org>", &[ME])]).unwrap();
-    let mut read = unread("c", "read", "2026-10-23T09:00:00Z", "Cy <cy@example.org>", &[ME]);
+    database
+        .upsert_thread(
+            ME,
+            &[unread(
+                "a",
+                "older",
+                "2026-10-20T09:00:00Z",
+                "Ann <ann@example.org>",
+                &[ME],
+            )],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[unread(
+                "b",
+                "newer",
+                "2026-10-22T09:00:00Z",
+                "Bo <bo@example.org>",
+                &[ME],
+            )],
+        )
+        .unwrap();
+    let mut read = unread(
+        "c",
+        "read",
+        "2026-10-23T09:00:00Z",
+        "Cy <cy@example.org>",
+        &[ME],
+    );
     read.labels = vec!["INBOX".into()];
     database.upsert_thread(ME, &[read]).unwrap();
-    let mut archived = unread("d", "archived", "2026-10-23T10:00:00Z", "Di <di@example.org>", &[ME]);
+    let mut archived = unread(
+        "d",
+        "archived",
+        "2026-10-23T10:00:00Z",
+        "Di <di@example.org>",
+        &[ME],
+    );
     archived.labels = vec!["UNREAD".into()];
     database.upsert_thread(ME, &[archived]).unwrap();
 
     let page = database.list_today_mail(None).unwrap();
-    let ids: Vec<&str> = page.threads.iter().map(|item| item.thread.id.as_str()).collect();
+    let ids: Vec<&str> = page
+        .threads
+        .iter()
+        .map(|item| item.thread.id.as_str())
+        .collect();
     assert_eq!(ids.len(), 2);
     assert_eq!(page.total, 2);
     assert!(page.threads[0].thread.last_received_at > page.threads[1].thread.last_received_at);
-    assert_eq!(database.list_today_mail(Some("other@example.com")).unwrap().total, 0);
+    assert_eq!(
+        database
+            .list_today_mail(Some("other@example.com"))
+            .unwrap()
+            .total,
+        0
+    );
 }
 
 #[test]
@@ -37,23 +81,70 @@ fn today_mail_reads_signals_from_the_newest_message_someone_else_sent() {
     let database = database();
     clear_seed_threads(&database);
     // The user replied last and marked it unread; the signals still come from Ann's message.
-    let mut reply = unread("a2", "replied", "2026-10-22T10:00:00Z", ME, &["ann@example.org"]);
+    let mut reply = unread(
+        "a2",
+        "replied",
+        "2026-10-22T10:00:00Z",
+        ME,
+        &["ann@example.org"],
+    );
     reply.labels = vec!["INBOX".into(), "SENT".into(), "UNREAD".into()];
-    database.upsert_thread(ME, &[
-        unread("a1", "replied", "2026-10-22T09:00:00Z", "Ann <ann@example.org>", &["Me <ME@example.com>"]),
-        reply,
-    ]).unwrap();
-    let mut list = unread("n1", "newsletter", "2026-10-22T08:00:00Z", "News <news@example.net>", &["list@example.net"]);
-    list.unsubscribe = Some(UnsubscribeMetadata { one_click_url: Some("https://example.net/u".into()), mailto_url: None, web_url: None, list_id: None });
+    database
+        .upsert_thread(
+            ME,
+            &[
+                unread(
+                    "a1",
+                    "replied",
+                    "2026-10-22T09:00:00Z",
+                    "Ann <ann@example.org>",
+                    &["Me <ME@example.com>"],
+                ),
+                reply,
+            ],
+        )
+        .unwrap();
+    let mut list = unread(
+        "n1",
+        "newsletter",
+        "2026-10-22T08:00:00Z",
+        "News <news@example.net>",
+        &["list@example.net"],
+    );
+    list.unsubscribe = Some(UnsubscribeMetadata {
+        one_click_url: Some("https://example.net/u".into()),
+        mailto_url: None,
+        web_url: None,
+        list_id: None,
+    });
     database.upsert_thread(ME, &[list]).unwrap();
-    database.upsert_thread(ME, &[unread("s1", "stranger", "2026-10-22T07:00:00Z", "Sam <sam@example.org>", &[ME])]).unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[unread(
+                "s1",
+                "stranger",
+                "2026-10-22T07:00:00Z",
+                "Sam <sam@example.org>",
+                &[ME],
+            )],
+        )
+        .unwrap();
 
     let page = database.list_today_mail(Some(ME)).unwrap();
-    let find = |id: &str| page.threads.iter().find(|item| item.thread.provider_thread_id == id).unwrap();
+    let find = |id: &str| {
+        page.threads
+            .iter()
+            .find(|item| item.thread.provider_thread_id == id)
+            .unwrap()
+    };
 
     let replied = find("replied");
     assert_eq!(replied.sender.as_deref(), Some("Ann <ann@example.org>"));
-    assert!(replied.addressed_to_me, "own address matches regardless of case or display name");
+    assert!(
+        replied.addressed_to_me,
+        "own address matches regardless of case or display name"
+    );
     assert!(replied.corresponded);
     assert!(!replied.list_unsubscribe);
 
@@ -76,7 +167,18 @@ fn today_mail_counts_mail_the_user_sent_the_sender_elsewhere_as_corresponded() {
     sent.to = vec!["Pat <pat@example.org>".into()];
     sent.labels = vec!["SENT".into()];
     database.upsert_thread(ME, &[sent]).unwrap();
-    database.upsert_thread(ME, &[unread("p1", "fresh", "2026-10-22T09:00:00Z", "Pat <PAT@example.org>", &[ME])]).unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[unread(
+                "p1",
+                "fresh",
+                "2026-10-22T09:00:00Z",
+                "Pat <PAT@example.org>",
+                &[ME],
+            )],
+        )
+        .unwrap();
 
     let page = database.list_today_mail(None).unwrap();
     assert_eq!(page.threads.len(), 1);
@@ -84,7 +186,14 @@ fn today_mail_counts_mail_the_user_sent_the_sender_elsewhere_as_corresponded() {
 }
 
 fn attachment(filename: &str, mime_type: &str) -> crate::models::MessageAttachment {
-    crate::models::MessageAttachment { id: filename.into(), filename: filename.into(), mime_type: mime_type.into(), size: 10, content_id: None, inline: false }
+    crate::models::MessageAttachment {
+        id: filename.into(),
+        filename: filename.into(),
+        mime_type: mime_type.into(),
+        size: 10,
+        content_id: None,
+        inline: false,
+    }
 }
 
 #[test]
@@ -92,18 +201,44 @@ fn today_mail_reports_invitations_and_the_size_of_the_to_line() {
     let database = database();
     clear_seed_threads(&database);
     // A request sent as a calendar part with parameters, and one sent as a plain .ics file.
-    let mut part = unread("i1", "part", "2026-10-22T09:00:00Z", "Meredith <m@example.org>", &[ME]);
-    part.attachments = vec![attachment("invite", "text/calendar; method=REQUEST; charset=UTF-8")];
+    let mut part = unread(
+        "i1",
+        "part",
+        "2026-10-22T09:00:00Z",
+        "Meredith <m@example.org>",
+        &[ME],
+    );
+    part.attachments = vec![attachment(
+        "invite",
+        "text/calendar; method=REQUEST; charset=UTF-8",
+    )];
     database.upsert_thread(ME, &[part]).unwrap();
-    let mut file = unread("i2", "file", "2026-10-22T08:00:00Z", "Organizer <o@example.net>", &[ME, "a@example.org"]);
+    let mut file = unread(
+        "i2",
+        "file",
+        "2026-10-22T08:00:00Z",
+        "Organizer <o@example.net>",
+        &[ME, "a@example.org"],
+    );
     file.attachments = vec![attachment("Meeting.ICS", "application/octet-stream")];
     database.upsert_thread(ME, &[file]).unwrap();
-    let mut pdf = unread("p1", "pdf", "2026-10-22T07:00:00Z", "Pat <p@example.org>", &[ME, "a@example.org", "b@example.org", "c@example.org"]);
+    let mut pdf = unread(
+        "p1",
+        "pdf",
+        "2026-10-22T07:00:00Z",
+        "Pat <p@example.org>",
+        &[ME, "a@example.org", "b@example.org", "c@example.org"],
+    );
     pdf.attachments = vec![attachment("agenda.pdf", "application/pdf")];
     database.upsert_thread(ME, &[pdf]).unwrap();
 
     let page = database.list_today_mail(Some(ME)).unwrap();
-    let find = |id: &str| page.threads.iter().find(|item| item.thread.provider_thread_id == id).unwrap();
+    let find = |id: &str| {
+        page.threads
+            .iter()
+            .find(|item| item.thread.provider_thread_id == id)
+            .unwrap()
+    };
     assert!(find("part").has_invitation);
     assert!(find("file").has_invitation);
     assert!(!find("pdf").has_invitation);
@@ -123,7 +258,12 @@ fn sent(id: &str, thread_id: &str, date: &str, to: &[&str], body: &str) -> Norma
 const SINCE: &str = "2026-10-12T00:00:00Z";
 
 fn promise_threads(database: &crate::db::Database) -> Vec<String> {
-    database.list_open_promises(Some(ME), SINCE).unwrap().into_iter().map(|promise| promise.thread.provider_thread_id).collect()
+    database
+        .list_open_promises(Some(ME), SINCE)
+        .unwrap()
+        .into_iter()
+        .map(|promise| promise.thread.provider_thread_id)
+        .collect()
 }
 
 #[test]
@@ -138,10 +278,20 @@ fn open_promises_quote_the_newest_sent_message_and_its_recipients() {
 
     let promises = database.list_open_promises(Some(ME), SINCE).unwrap();
     assert_eq!(promises.len(), 1);
-    assert_eq!(promises[0].excerpt, "I'll reconnect your server, run the report and send it over");
-    assert_eq!(promises[0].recipients, vec!["Jill <jill@example.org>".to_string()], "the user's own address is left off");
+    assert_eq!(
+        promises[0].excerpt,
+        "I'll reconnect your server, run the report and send it over"
+    );
+    assert_eq!(
+        promises[0].recipients,
+        vec!["Jill <jill@example.org>".to_string()],
+        "the user's own address is left off"
+    );
     assert_eq!(promises[0].message_id, "j2");
-    assert!(database.list_open_promises(Some("other@example.com"), SINCE).unwrap().is_empty());
+    assert!(database
+        .list_open_promises(Some("other@example.com"), SINCE)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -149,10 +299,31 @@ fn open_promises_read_only_the_users_own_text() {
     let database = database();
     clear_seed_threads(&database);
     // The promise is only in the quoted message under the user's reply.
-    database.upsert_thread(ME, &[sent("q1", "quoted", "2026-10-22T10:00:00Z", &["ann@example.org"],
-        "Thanks, that works.\n\nOn Oct 21, Ann wrote:\n> I'll send the contract over.")]).unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[sent(
+                "q1",
+                "quoted",
+                "2026-10-22T10:00:00Z",
+                &["ann@example.org"],
+                "Thanks, that works.\n\nOn Oct 21, Ann wrote:\n> I'll send the contract over.",
+            )],
+        )
+        .unwrap();
     // Someone else made the promise.
-    database.upsert_thread(ME, &[unread("o1", "theirs", "2026-10-22T10:00:00Z", "Bo <bo@example.org>", &[ME])]).unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[unread(
+                "o1",
+                "theirs",
+                "2026-10-22T10:00:00Z",
+                "Bo <bo@example.org>",
+                &[ME],
+            )],
+        )
+        .unwrap();
     assert!(promise_threads(&database).is_empty());
 }
 
@@ -160,12 +331,45 @@ fn open_promises_read_only_the_users_own_text() {
 fn a_later_message_to_the_same_person_keeps_the_promise() {
     let database = database();
     clear_seed_threads(&database);
-    database.upsert_thread(ME, &[sent("p1", "promise", "2026-10-20T10:00:00Z", &["dana@example.org"], "I'll send the deck Friday.")]).unwrap();
-    database.upsert_thread(ME, &[sent("w1", "waiting", "2026-10-20T10:00:00Z", &["eli@example.org"], "Let me check with Pete.")]).unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[sent(
+                "p1",
+                "promise",
+                "2026-10-20T10:00:00Z",
+                &["dana@example.org"],
+                "I'll send the deck Friday.",
+            )],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[sent(
+                "w1",
+                "waiting",
+                "2026-10-20T10:00:00Z",
+                &["eli@example.org"],
+                "Let me check with Pete.",
+            )],
+        )
+        .unwrap();
     assert_eq!(promise_threads(&database), vec!["promise", "waiting"]);
 
     // Sent in another conversation, after the promise.
-    database.upsert_thread(ME, &[sent("p2", "deck", "2026-10-23T10:00:00Z", &["Dana <DANA@example.org>"], "Here's the deck.")]).unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[sent(
+                "p2",
+                "deck",
+                "2026-10-23T10:00:00Z",
+                &["Dana <DANA@example.org>"],
+                "Here's the deck.",
+            )],
+        )
+        .unwrap();
     assert_eq!(promise_threads(&database), vec!["waiting"]);
 }
 
@@ -173,15 +377,57 @@ fn a_later_message_to_the_same_person_keeps_the_promise() {
 fn open_promises_skip_old_trashed_and_tracked_conversations() {
     let database = database();
     clear_seed_threads(&database);
-    database.upsert_thread(ME, &[sent("old", "old", "2026-10-01T10:00:00Z", &["a@example.org"], "I'll send it.")]).unwrap();
-    let mut trashed = sent("tr", "trashed", "2026-10-22T10:00:00Z", &["b@example.org"], "I'll send it.");
+    database
+        .upsert_thread(
+            ME,
+            &[sent(
+                "old",
+                "old",
+                "2026-10-01T10:00:00Z",
+                &["a@example.org"],
+                "I'll send it.",
+            )],
+        )
+        .unwrap();
+    let mut trashed = sent(
+        "tr",
+        "trashed",
+        "2026-10-22T10:00:00Z",
+        &["b@example.org"],
+        "I'll send it.",
+    );
     trashed.labels = vec!["SENT".into(), "TRASH".into()];
     database.upsert_thread(ME, &[trashed]).unwrap();
-    database.upsert_thread(ME, &[sent("tk", "tracked", "2026-10-22T10:00:00Z", &["c@example.org"], "I'll send it.")]).unwrap();
-    database.upsert_thread(ME, &[sent("no", "plain", "2026-10-22T10:00:00Z", &["d@example.org"], "Sounds good, see you then.")]).unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[sent(
+                "tk",
+                "tracked",
+                "2026-10-22T10:00:00Z",
+                &["c@example.org"],
+                "I'll send it.",
+            )],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[sent(
+                "no",
+                "plain",
+                "2026-10-22T10:00:00Z",
+                &["d@example.org"],
+                "Sounds good, see you then.",
+            )],
+        )
+        .unwrap();
     assert_eq!(promise_threads(&database), vec!["tracked"]);
 
-    let thread_id = database.list_open_promises(Some(ME), SINCE).unwrap()[0].thread.id.clone();
+    let thread_id = database.list_open_promises(Some(ME), SINCE).unwrap()[0]
+        .thread
+        .id
+        .clone();
     let request: crate::models::CreateTaskRequest = serde_json::from_value(serde_json::json!({
         "accountId": ME, "threadId": thread_id, "subjectSnapshot": "Subject", "title": "Send it", "kind": "follow_up",
     })).unwrap();

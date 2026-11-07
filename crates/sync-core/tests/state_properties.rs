@@ -68,13 +68,29 @@ fn run(seed: u64, replica_count: usize, steps: usize) -> History {
         match rng.random_range(0..10) {
             0..=4 => {
                 lamport += 1;
-                let fields: Vec<&str> = FIELDS.iter().copied().filter(|_| rng.random_bool(0.6)).collect();
-                let fields = if fields.is_empty() { vec![FIELDS[0]] } else { fields };
+                let fields: Vec<&str> = FIELDS
+                    .iter()
+                    .copied()
+                    .filter(|_| rng.random_bool(0.6))
+                    .collect();
+                let fields = if fields.is_empty() {
+                    vec![FIELDS[0]]
+                } else {
+                    fields
+                };
                 let parents: BTreeMap<FieldKey, Vec<OperationId>> = fields
                     .iter()
                     .map(|field| {
-                        let key = FieldKey { entity_type: EntityType::Task, entity_id: entity.to_string(), field: field.to_string() };
-                        let parents = replicas[replica].values(&key).iter().map(|value| operation_id(value.dot, &key)).collect();
+                        let key = FieldKey {
+                            entity_type: EntityType::Task,
+                            entity_id: entity.to_string(),
+                            field: field.to_string(),
+                        };
+                        let parents = replicas[replica]
+                            .values(&key)
+                            .iter()
+                            .map(|value| operation_id(value.dot, &key))
+                            .collect();
                         (key, parents)
                     })
                     .collect();
@@ -83,7 +99,9 @@ fn run(seed: u64, replica_count: usize, steps: usize) -> History {
                     lamport,
                     EntityType::Task,
                     entity,
-                    fields.iter().map(|field| (field.to_string(), Some(json!(format!("{field} {lamport}"))))),
+                    fields.iter().map(|field| {
+                        (field.to_string(), Some(json!(format!("{field} {lamport}"))))
+                    }),
                 );
                 for (key, parents) in parents {
                     graph.apply(Operation {
@@ -111,7 +129,15 @@ fn run(seed: u64, replica_count: usize, steps: usize) -> History {
                     .fields()
                     .iter()
                     .filter(|(key, _)| key.entity_id == entity)
-                    .map(|(key, values)| (key.clone(), values.iter().map(|value| operation_id(value.dot, key)).collect()))
+                    .map(|(key, values)| {
+                        (
+                            key.clone(),
+                            values
+                                .iter()
+                                .map(|value| operation_id(value.dot, key))
+                                .collect(),
+                        )
+                    })
                     .collect();
                 replicas[replica].remove_entity(EntityType::Task, entity);
                 for (key, parents) in held {
@@ -126,7 +152,12 @@ fn run(seed: u64, replica_count: usize, steps: usize) -> History {
                         field: key.field,
                         value: None,
                         parents,
-                        stamp: WinnerStamp { lamport: 0, device_id: [0u8; 16], event_id: [0u8; 16], operation_id: marker },
+                        stamp: WinnerStamp {
+                            lamport: 0,
+                            device_id: [0u8; 16],
+                            event_id: [0u8; 16],
+                            operation_id: marker,
+                        },
                     });
                 }
             }
@@ -140,7 +171,12 @@ fn run(seed: u64, replica_count: usize, steps: usize) -> History {
             snapshots.push(replicas[rng.random_range(0..replica_count)].clone());
         }
     }
-    History { replicas, snapshots, graph, markers }
+    History {
+        replicas,
+        snapshots,
+        graph,
+        markers,
+    }
 }
 
 fn merged(left: &ReplicaState, right: &ReplicaState) -> ReplicaState {

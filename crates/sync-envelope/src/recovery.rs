@@ -6,10 +6,10 @@
 //! "the seed exists in the recovery phrase... normal device operation does
 //! not require or persist it."
 
+use crate::os_rng;
 use bip39::Mnemonic;
 use ed25519_dalek::SigningKey;
 use hkdf::Hkdf;
-use crate::os_rng;
 use rand::Rng;
 use sha2::Sha256;
 use x25519_dalek::StaticSecret as X25519StaticSecret;
@@ -39,7 +39,11 @@ pub fn recovery_phrase_from_seed(seed: &[u8; RECOVERY_SEED_LEN]) -> String {
 /// applies, so a phrase it reports valid always decodes; rejects an invalid
 /// checksum or word list membership.
 pub fn recovery_seed_from_phrase(phrase: &str) -> Result<[u8; RECOVERY_SEED_LEN], String> {
-    let normalized = phrase.split_whitespace().map(str::to_lowercase).collect::<Vec<_>>().join(" ");
+    let normalized = phrase
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ");
     let mnemonic = Mnemonic::parse_normalized(&normalized).map_err(|error| error.to_string())?;
     let entropy = mnemonic.to_entropy();
     entropy
@@ -76,7 +80,11 @@ pub fn check_recovery_phrase(phrase: &str) -> RecoveryPhraseCheck {
     let valid = words.len() == RECOVERY_PHRASE_WORDS
         && unknown_word_positions.is_empty()
         && recovery_seed_from_phrase(&words.join(" ")).is_ok();
-    RecoveryPhraseCheck { word_count: words.len(), unknown_word_positions, valid }
+    RecoveryPhraseCheck {
+        word_count: words.len(),
+        unknown_word_positions,
+        valid,
+    }
 }
 
 fn hkdf_derive(seed: &[u8; RECOVERY_SEED_LEN], domain: &[u8]) -> [u8; 32] {
@@ -125,11 +133,18 @@ mod tests {
         let capitalized = {
             let mut first = words[0].to_string();
             first[..1].make_ascii_uppercase();
-            std::iter::once(first.as_str()).chain(words[1..].iter().copied()).collect::<Vec<_>>().join(" ")
+            std::iter::once(first.as_str())
+                .chain(words[1..].iter().copied())
+                .collect::<Vec<_>>()
+                .join(" ")
         };
         for variant in [shouted, capitalized] {
             assert!(check_recovery_phrase(&variant).valid, "{variant}");
-            assert_eq!(recovery_seed_from_phrase(&variant).unwrap(), seed, "{variant}");
+            assert_eq!(
+                recovery_seed_from_phrase(&variant).unwrap(),
+                seed,
+                "{variant}"
+            );
         }
     }
 
@@ -162,7 +177,10 @@ mod tests {
         let phrase = recovery_phrase_from_seed(&SWAP_TAMPER_SEED);
         let tampered = swap_first_and_last_words(&phrase);
         let error = recovery_seed_from_phrase(&tampered).unwrap_err();
-        assert!(error.to_lowercase().contains("checksum"), "unexpected error: {error}");
+        assert!(
+            error.to_lowercase().contains("checksum"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
@@ -178,7 +196,14 @@ mod tests {
     fn only_a_complete_checksummed_phrase_is_valid() {
         let phrase = recovery_phrase_from_seed(&SWAP_TAMPER_SEED);
         let check = check_recovery_phrase(&phrase.to_uppercase());
-        assert_eq!(check, RecoveryPhraseCheck { word_count: 24, unknown_word_positions: vec![], valid: true });
+        assert_eq!(
+            check,
+            RecoveryPhraseCheck {
+                word_count: 24,
+                unknown_word_positions: vec![],
+                valid: true
+            }
+        );
 
         let swapped = check_recovery_phrase(&swap_first_and_last_words(&phrase));
         assert!(swapped.unknown_word_positions.is_empty());
@@ -194,7 +219,10 @@ mod tests {
         let seed = generate_recovery_seed();
         let x25519_a = recovery_x25519_secret(&seed);
         let x25519_b = recovery_x25519_secret(&seed);
-        assert_eq!(X25519PublicKey::from(&x25519_a).to_bytes(), X25519PublicKey::from(&x25519_b).to_bytes());
+        assert_eq!(
+            X25519PublicKey::from(&x25519_a).to_bytes(),
+            X25519PublicKey::from(&x25519_b).to_bytes()
+        );
 
         let ed25519_a = recovery_ed25519_signing_key(&seed);
         let ed25519_b = recovery_ed25519_signing_key(&seed);
@@ -202,13 +230,19 @@ mod tests {
 
         // Different domains must not collide: an X25519 public key derived
         // from the same seed differs from the Ed25519 verifying key bytes.
-        assert_ne!(X25519PublicKey::from(&x25519_a).to_bytes(), ed25519_a.verifying_key().to_bytes());
+        assert_ne!(
+            X25519PublicKey::from(&x25519_a).to_bytes(),
+            ed25519_a.verifying_key().to_bytes()
+        );
     }
 
     #[test]
     fn different_seeds_derive_different_keys() {
         let a = recovery_x25519_secret(&generate_recovery_seed());
         let b = recovery_x25519_secret(&generate_recovery_seed());
-        assert_ne!(X25519PublicKey::from(&a).to_bytes(), X25519PublicKey::from(&b).to_bytes());
+        assert_ne!(
+            X25519PublicKey::from(&a).to_bytes(),
+            X25519PublicKey::from(&b).to_bytes()
+        );
     }
 }

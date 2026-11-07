@@ -35,13 +35,15 @@ mod tests;
 pub(crate) use crypto::{roster_entry_x25519, KeychainEpochKeyStore};
 pub(crate) use error::{EnrollmentError, EnrollmentResult};
 pub(crate) use join_codes::{
-    cancel_join_code, create_join_code, join_with_code, preview_join_code, process_join_codes, JoinCodeConnectorChoice,
-    JoinCodeNotice, JoinCodePreview, JoinCredentialsChoice, JoinFolderChoice, OutstandingJoinCode,
+    cancel_join_code, create_join_code, join_with_code, preview_join_code, process_join_codes,
+    JoinCodeConnectorChoice, JoinCodeNotice, JoinCodePreview, JoinCredentialsChoice,
+    JoinFolderChoice, OutstandingJoinCode,
 };
 pub(crate) use service::share_keys_with_lagging_peers;
 pub use service::{
-    approve_enrollment_request, begin_genesis, confirm_and_import_grant, inspect_sync_space, join_with_recovery_phrase,
-    publish_enrollment_request, reject_enrollment_request, rotate_epoch, run_enrollment_sweep, SyncSpacePresence,
+    approve_enrollment_request, begin_genesis, confirm_and_import_grant, inspect_sync_space,
+    join_with_recovery_phrase, publish_enrollment_request, reject_enrollment_request, rotate_epoch,
+    run_enrollment_sweep, SyncSpacePresence,
 };
 
 use serde::Serialize;
@@ -49,12 +51,27 @@ use serde::Serialize;
 // ============================ Status and listing ============================
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "state")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "state"
+)]
 pub enum EnrollmentStatus {
     NotStarted,
-    AwaitingGrant { request_id: String, fingerprint: String, created_at: String },
-    AwaitingConfirmation { request_id: String, fingerprint: String, approver_fingerprint: String },
-    Rejected { request_id: String, fingerprint: String },
+    AwaitingGrant {
+        request_id: String,
+        fingerprint: String,
+        created_at: String,
+    },
+    AwaitingConfirmation {
+        request_id: String,
+        fingerprint: String,
+        approver_fingerprint: String,
+    },
+    Rejected {
+        request_id: String,
+        fingerprint: String,
+    },
     Enrolled {
         device_count: usize,
         /// The inviter's name while this device, having joined with a join

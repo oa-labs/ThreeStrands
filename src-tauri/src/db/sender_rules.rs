@@ -27,25 +27,33 @@ pub(crate) fn normalize_rule_match(match_kind: &str, match_value: &str) -> DbRes
             && domain.contains('.')
             && !domain.starts_with('.')
             && !domain.ends_with('.')
-            && domain.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-'))
+            && domain.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '.' | '-')
+            })
     };
     match match_kind {
         "address" => {
             let valid = value.len() <= MAX_ADDRESS_LEN
                 && value.split_once('@').is_some_and(|(local, domain)| {
                     !local.is_empty()
-                        && !local.chars().any(|character| character.is_whitespace() || matches!(character, '<' | '>' | ','))
+                        && !local.chars().any(|character| {
+                            character.is_whitespace() || matches!(character, '<' | '>' | ',')
+                        })
                         && valid_domain(domain)
                 });
             if !valid {
-                return Err(DatabaseError::invalid("Mute needs a complete email address"));
+                return Err(DatabaseError::invalid(
+                    "Mute needs a complete email address",
+                ));
             }
             Ok(value)
         }
         "domain" => {
             let domain = value.strip_prefix('@').unwrap_or(&value).to_string();
             if !valid_domain(&domain) {
-                return Err(DatabaseError::invalid("Mute needs a domain such as example.com"));
+                return Err(DatabaseError::invalid(
+                    "Mute needs a domain such as example.com",
+                ));
             }
             Ok(domain)
         }
@@ -64,7 +72,10 @@ fn rule_matches(rule: &SenderRule, email: &str, domain: &str) -> bool {
 /// Whether a message dated `sent_at` arrived at or after the rule was made.
 /// An unreadable date never counts, so a rule cannot act on it.
 fn arrived_since(sent_at: &str, created_at: &str) -> bool {
-    match (DateTime::parse_from_rfc3339(sent_at), DateTime::parse_from_rfc3339(created_at)) {
+    match (
+        DateTime::parse_from_rfc3339(sent_at),
+        DateTime::parse_from_rfc3339(created_at),
+    ) {
         (Ok(sent), Ok(created)) => sent >= created,
         _ => false,
     }
@@ -89,7 +100,9 @@ impl Database {
             let mut statement = connection.prepare(&format!(
                 "SELECT {RULE_COLUMNS} FROM sender_rules ORDER BY account_id, match_value, id"
             ))?;
-            let rules = statement.query_map([], rule_from_row)?.collect::<Result<Vec<_>, _>>()?;
+            let rules = statement
+                .query_map([], rule_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(rules)
         })
     }
@@ -215,19 +228,30 @@ impl Database {
         mine: &BTreeSet<String>,
     ) -> DbResult<()> {
         let (email, domain) = normalize_sender(&latest.from);
-        if email.is_empty() || mine.contains(&email) || !latest.labels.iter().any(|label| label == "UNREAD") {
+        if email.is_empty()
+            || mine.contains(&email)
+            || !latest.labels.iter().any(|label| label == "UNREAD")
+        {
             return Ok(());
         }
         let rule = {
             let mut statement = transaction.prepare_cached(&format!(
                 "SELECT {RULE_COLUMNS} FROM sender_rules WHERE lower(account_id) = lower(?1) ORDER BY created_at, id"
             ))?;
-            let rules = statement.query_map([account_id], rule_from_row)?.collect::<Result<Vec<_>, _>>()?;
-            rules.into_iter().find(|rule| rule_matches(rule, &email, &domain) && arrived_since(&latest.date, &rule.created_at))
+            let rules = statement
+                .query_map([account_id], rule_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            rules.into_iter().find(|rule| {
+                rule_matches(rule, &email, &domain) && arrived_since(&latest.date, &rule.created_at)
+            })
         };
         let Some(rule) = rule else { return Ok(()) };
         let in_inbox: bool = transaction
-            .query_row("SELECT archived = 0 AND trashed = 0 FROM threads WHERE id = ?1", [thread_id], |row| row.get(0))
+            .query_row(
+                "SELECT archived = 0 AND trashed = 0 FROM threads WHERE id = ?1",
+                [thread_id],
+                |row| row.get(0),
+            )
             .optional()?
             .unwrap_or(false);
         if !in_inbox {
@@ -240,8 +264,20 @@ impl Database {
         if !first_time {
             return Ok(());
         }
-        Self::apply_mutation(transaction, &ThreadMutation::Read { thread_id: thread_id.to_string(), value: true })?;
-        Self::apply_mutation(transaction, &ThreadMutation::Archive { thread_id: thread_id.to_string(), value: true })
+        Self::apply_mutation(
+            transaction,
+            &ThreadMutation::Read {
+                thread_id: thread_id.to_string(),
+                value: true,
+            },
+        )?;
+        Self::apply_mutation(
+            transaction,
+            &ThreadMutation::Archive {
+                thread_id: thread_id.to_string(),
+                value: true,
+            },
+        )
     }
 }
 

@@ -199,21 +199,26 @@ fn parse_autoconfig(xml: &str, email: &str, source: &str) -> Option<DiscoveryRes
                 let name = local_name(tag.name().as_ref());
                 match name.as_str() {
                     "incomingServer" => {
-                        server = Some(("incoming", ParsedServer {
-                            kind: attr(&tag, "type"),
-                            ..ParsedServer::default()
-                        }));
+                        server = Some((
+                            "incoming",
+                            ParsedServer {
+                                kind: attr(&tag, "type"),
+                                ..ParsedServer::default()
+                            },
+                        ));
                     }
                     "outgoingServer" => {
-                        server = Some(("outgoing", ParsedServer {
-                            kind: attr(&tag, "type"),
-                            ..ParsedServer::default()
-                        }));
+                        server = Some((
+                            "outgoing",
+                            ParsedServer {
+                                kind: attr(&tag, "type"),
+                                ..ParsedServer::default()
+                            },
+                        ));
                     }
-                    "hostname" | "port" | "socketType" | "username"
-                        if server.is_some() => {
-                            field = Some(name);
-                        }
+                    "hostname" | "port" | "socketType" | "username" if server.is_some() => {
+                        field = Some(name);
+                    }
                     _ => {}
                 }
             }

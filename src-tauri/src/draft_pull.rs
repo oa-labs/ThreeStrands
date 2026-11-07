@@ -43,13 +43,15 @@ fn format_addresses(address: Option<&Address>) -> String {
         .flat_map(|list| list.iter())
         .filter_map(|addr| {
             let email = addr.address()?;
-            Some(match addr.name().map(str::trim).filter(|name| !name.is_empty()) {
-                Some(name) if name.contains([',', ';', '<', '>', '@', '"', '(', ')']) => {
-                    format!("\"{}\" <{email}>", name.replace(['"', '\\'], ""))
-                }
-                Some(name) => format!("{name} <{email}>"),
-                None => email.to_string(),
-            })
+            Some(
+                match addr.name().map(str::trim).filter(|name| !name.is_empty()) {
+                    Some(name) if name.contains([',', ';', '<', '>', '@', '"', '(', ')']) => {
+                        format!("\"{}\" <{email}>", name.replace(['"', '\\'], ""))
+                    }
+                    Some(name) => format!("{name} <{email}>"),
+                    None => email.to_string(),
+                },
+            )
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -70,8 +72,14 @@ pub(crate) fn draft_from_server_copy(
     let message = MessageParser::default()
         .parse(&fetched.raw)
         .ok_or("The server returned a draft that isn't a valid message")?;
-    let subject = message.subject().unwrap_or_default().replace(['\r', '\n'], " ");
-    let body = message.body_text(0).map(|text| text.into_owned()).unwrap_or_default();
+    let subject = message
+        .subject()
+        .unwrap_or_default()
+        .replace(['\r', '\n'], " ");
+    let body = message
+        .body_text(0)
+        .map(|text| text.into_owned())
+        .unwrap_or_default();
     // Only an authored HTML part: mail-parser renders plain text as HTML when
     // there is none, which would turn a plain draft into a formatted one.
     let body_html = match message.html_part(0).map(|part| &part.body) {
@@ -89,7 +97,12 @@ pub(crate) fn draft_from_server_copy(
     let references = message
         .references()
         .as_text_list()
-        .map(|ids| ids.iter().map(|id| id.to_string()).filter(|id| !id.contains(['\r', '\n'])).collect())
+        .map(|ids| {
+            ids.iter()
+                .map(|id| id.to_string())
+                .filter(|id| !id.contains(['\r', '\n']))
+                .collect()
+        })
         .unwrap_or_default();
     let sender = message
         .from()
@@ -116,7 +129,9 @@ pub(crate) fn draft_from_server_copy(
                 None => kind.ctype().to_string(),
             })
             .unwrap_or_else(|| "application/octet-stream".into());
-        let content_id = part.content_id().map(|cid| cid.trim_matches(['<', '>']).to_string());
+        let content_id = part
+            .content_id()
+            .map(|cid| cid.trim_matches(['<', '>']).to_string());
         let inline = content_id
             .as_deref()
             .is_some_and(|cid| body_html.contains(&format!("cid:{cid}")));
@@ -140,9 +155,13 @@ pub(crate) fn draft_from_server_copy(
         revision: base.map_or(1, |base| base.revision + 1),
         account: account.to_string(),
         from,
-        mode: base
-            .map(|base| base.mode.clone())
-            .unwrap_or_else(|| if reply_id.is_some() { "reply".into() } else { "new".into() }),
+        mode: base.map(|base| base.mode.clone()).unwrap_or_else(|| {
+            if reply_id.is_some() {
+                "reply".into()
+            } else {
+                "new".into()
+            }
+        }),
         source_id: base.and_then(|base| base.source_id.clone()),
         thread_id: fetched.thread_id.clone(),
         reply_id,
@@ -237,7 +256,9 @@ impl Correspondence {
         let mut changed = false;
         for server in listed {
             let link = by_server.get(server.id.as_str()).copied();
-            if link.is_some_and(|link| link.server_version.is_some() && link.server_version == server.version) {
+            if link.is_some_and(|link| {
+                link.server_version.is_some() && link.server_version == server.version
+            }) {
                 continue;
             }
             match self.pull_one(account, provider, server, link).await {
@@ -245,15 +266,24 @@ impl Correspondence {
                 Ok(Applied::Changed) => changed = true,
                 Ok(Applied::Conflict) => {
                     changed = true;
-                    if let Some(draft) = link.and_then(|link| self.database.local_draft(&link.draft_id).ok().flatten()) {
+                    if let Some(draft) = link
+                        .and_then(|link| self.database.local_draft(&link.draft_id).ok().flatten())
+                    {
                         self.notify_conflict(&draft);
                     }
                 }
-                Err(error) => log::warn!(target: "drafts", "importing a server draft failed: {error}"),
+                Err(error) => {
+                    log::warn!(target: "drafts", "importing a server draft failed: {error}")
+                }
             }
         }
-        let listed_ids: std::collections::HashSet<&str> = listed.iter().map(|server| server.id.as_str()).collect();
-        for link in links.iter().filter(|link| link.server_id.as_deref().is_some_and(|id| !listed_ids.contains(id))) {
+        let listed_ids: std::collections::HashSet<&str> =
+            listed.iter().map(|server| server.id.as_str()).collect();
+        for link in links.iter().filter(|link| {
+            link.server_id
+                .as_deref()
+                .is_some_and(|id| !listed_ids.contains(id))
+        }) {
             changed |= self.database.server_copy_deleted(link)?;
         }
         Ok(changed)
@@ -279,7 +309,9 @@ impl Correspondence {
                     .parse_headers(&fetched.raw)
                     .and_then(|message| message.message_id().and_then(draft_id_from_message_id));
                 match named {
-                    Some(id) if self.database.draft_left_this_device(&id)? => return Ok(Applied::Unchanged),
+                    Some(id) if self.database.draft_left_this_device(&id)? => {
+                        return Ok(Applied::Unchanged)
+                    }
                     Some(id) => {
                         // This device's draft, created before it learned the server id.
                         if self.database.local_draft(&id)?.is_some() {
@@ -299,8 +331,11 @@ impl Correspondence {
         if base.as_ref().is_some_and(|base| base.account != account) {
             return Ok(Applied::Unchanged);
         }
-        let imported = draft_from_server_copy(&fetched, account, &draft_id, base.as_ref(), &self.root)?;
-        Ok(self.database.apply_server_draft(&imported, &fetched.draft)?)
+        let imported =
+            draft_from_server_copy(&fetched, account, &draft_id, base.as_ref(), &self.root)?;
+        Ok(self
+            .database
+            .apply_server_draft(&imported, &fetched.draft)?)
     }
 
     /// Fetches the server's version of `draft` and holds it for the user,
@@ -312,8 +347,9 @@ impl Correspondence {
         server_id: &str,
     ) -> ProviderResult<()> {
         let fetched = provider.fetch_server_draft(server_id).await?;
-        let imported = draft_from_server_copy(&fetched, &draft.account, &draft.id, Some(draft), &self.root)
-            .map_err(ProviderError::Other)?;
+        let imported =
+            draft_from_server_copy(&fetched, &draft.account, &draft.id, Some(draft), &self.root)
+                .map_err(ProviderError::Other)?;
         self.database
             .apply_server_draft(&imported, &fetched.draft)
             .map_err(|error| ProviderError::Other(error.to_string()))?;
@@ -325,7 +361,10 @@ impl Correspondence {
         (self.draft_events)(DraftEvent::Status(crate::draft_push::ServerDraftEvent {
             id: draft.id.clone(),
             revision: draft.revision,
-            status: crate::draft_push::ServerDraftStatus { state: "conflict".into(), error: None },
+            status: crate::draft_push::ServerDraftStatus {
+                state: "conflict".into(),
+                error: None,
+            },
         }));
     }
 
@@ -364,7 +403,9 @@ impl Correspondence {
                     continue;
                 }
             };
-            changed |= self.apply_listed_drafts(account, provider.as_ref(), &listed).await?;
+            changed |= self
+                .apply_listed_drafts(account, provider.as_ref(), &listed)
+                .await?;
         }
         if changed {
             (self.draft_events)(DraftEvent::ListChanged);
@@ -404,59 +445,119 @@ mod tests {
     }
 
     fn fetches(harness: &Harness) -> usize {
-        harness.server.calls().iter().filter(|call| call.starts_with("fetch")).count()
+        harness
+            .server
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("fetch"))
+            .count()
     }
 
     #[test]
     fn a_new_server_draft_preserves_its_sending_alias_for_review_and_later_validation() {
-        let raw = message("alias-draft@example.org", "Alias draft", "body").replacen("From: you@example.com", "From: Work <work@example.org>", 1);
-        let fetched = FetchedServerDraft { raw: raw.into_bytes(), draft: crate::provider::ServerDraft { id:"server-alias".into(), version:Some("version".into()) }, thread_id: None };
-        let imported = draft_from_server_copy(&fetched, "you@example.com", "local-id", None, &std::env::temp_dir()).unwrap();
+        let raw = message("alias-draft@example.org", "Alias draft", "body").replacen(
+            "From: you@example.com",
+            "From: Work <work@example.org>",
+            1,
+        );
+        let fetched = FetchedServerDraft {
+            raw: raw.into_bytes(),
+            draft: crate::provider::ServerDraft {
+                id: "server-alias".into(),
+                version: Some("version".into()),
+            },
+            thread_id: None,
+        };
+        let imported = draft_from_server_copy(
+            &fetched,
+            "you@example.com",
+            "local-id",
+            None,
+            &std::env::temp_dir(),
+        )
+        .unwrap();
         assert_eq!(imported.from.as_deref(), Some("work@example.org"));
     }
 
     #[test]
     fn only_message_ids_threestrands_wrote_name_a_local_draft() {
         let id = "8a7c4c4e-3d1f-4a43-9f3e-2b1d7c8e9f00";
-        assert_eq!(draft_id_from_message_id(&format!("<draft-{id}@threestrands.local>")).as_deref(), Some(id));
-        assert_eq!(draft_id_from_message_id(&format!("draft-{id}@example.org")).as_deref(), Some(id));
-        assert_eq!(draft_id_from_message_id("draft-not-a-uuid@threestrands.local"), None);
+        assert_eq!(
+            draft_id_from_message_id(&format!("<draft-{id}@threestrands.local>")).as_deref(),
+            Some(id)
+        );
+        assert_eq!(
+            draft_id_from_message_id(&format!("draft-{id}@example.org")).as_deref(),
+            Some(id)
+        );
+        assert_eq!(
+            draft_id_from_message_id("draft-not-a-uuid@threestrands.local"),
+            None
+        );
         assert_eq!(draft_id_from_message_id("CAF1234@mail.gmail.com"), None);
-        assert_eq!(draft_id_from_message_id(&format!("op-draft-{id}@threestrands.local")), None);
+        assert_eq!(
+            draft_id_from_message_id(&format!("op-draft-{id}@threestrands.local")),
+            None
+        );
     }
 
     #[tokio::test]
     async fn a_draft_written_in_another_app_appears_with_its_headers_and_thread() {
         let harness = Harness::new();
-        harness.server.write_elsewhere("g-1", &message("CAF1@mail.gmail.com", "Lunch?", "Are you free Friday?"), Some("t-9"));
+        harness.server.write_elsewhere(
+            "g-1",
+            &message("CAF1@mail.gmail.com", "Lunch?", "Are you free Friday?"),
+            Some("t-9"),
+        );
         assert!(harness.pull().await);
         let draft = only_local(&harness);
         assert_eq!(draft.account, ACCOUNT);
         assert_eq!(draft.subject, "Lunch?");
         assert!(draft.body.contains("Are you free Friday?"));
-        assert_eq!(draft.to, "\"Doe, Jane\" <jane@example.com>, sam@example.com");
+        assert_eq!(
+            draft.to,
+            "\"Doe, Jane\" <jane@example.com>, sam@example.com"
+        );
         assert_eq!(draft.cc, "lee@example.com");
         assert_eq!(draft.bcc, "hidden@example.com");
         assert_eq!(draft.reply_id.as_deref(), Some("original@example.com"));
-        assert_eq!(draft.references, ["root@example.com", "original@example.com"]);
+        assert_eq!(
+            draft.references,
+            ["root@example.com", "original@example.com"]
+        );
         assert_eq!(draft.thread_id.as_deref(), Some("t-9"));
         assert_eq!(draft.mode, "reply");
         assert_eq!(harness.state(&draft), "saved");
 
-        assert!(!harness.pull().await, "an unchanged copy is not fetched again");
+        assert!(
+            !harness.pull().await,
+            "an unchanged copy is not fetched again"
+        );
         assert_eq!(fetches(&harness), 1);
     }
 
     #[tokio::test]
     async fn a_plain_draft_stays_plain_and_a_formatted_one_keeps_its_html() {
         let harness = Harness::new();
-        harness.server.write_elsewhere("g-1", &message("CAF6@mail.gmail.com", "Plain", "Just text"), None);
-        harness.server.write_elsewhere("g-2", &html_message("CAF7@mail.gmail.com"), None);
+        harness.server.write_elsewhere(
+            "g-1",
+            &message("CAF6@mail.gmail.com", "Plain", "Just text"),
+            None,
+        );
+        harness
+            .server
+            .write_elsewhere("g-2", &html_message("CAF7@mail.gmail.com"), None);
         harness.pull().await;
         let drafts = harness.db().drafts().unwrap();
-        let plain = drafts.iter().find(|draft| draft.subject == "Plain").unwrap();
+        let plain = drafts
+            .iter()
+            .find(|draft| draft.subject == "Plain")
+            .unwrap();
         assert_eq!(plain.body_html, "");
-        let styled = drafts.iter().find(|draft| draft.subject == "Styled").unwrap();
+        let styled = drafts
+            .iter()
+            .find(|draft| draft.subject == "Styled")
+            .unwrap();
         assert!(styled.body_html.contains("<b>there</b>"));
         assert!(styled.body.contains("Hello there"));
     }
@@ -464,13 +565,27 @@ mod tests {
     #[tokio::test]
     async fn attachments_on_a_server_draft_become_local_files() {
         let harness = Harness::new();
-        harness.server.write_elsewhere("g-1", &with_attachment("CAF2@mail.gmail.com"), None);
+        harness
+            .server
+            .write_elsewhere("g-1", &with_attachment("CAF2@mail.gmail.com"), None);
         harness.pull().await;
         let draft = only_local(&harness);
         assert_eq!(draft.mode, "new");
-        let [attachment] = draft.attachments.as_slice() else { panic!("expected one attachment") };
-        assert_eq!((attachment.name.as_str(), attachment.mime.as_str(), attachment.ready), ("notes.pdf", "application/pdf", true));
-        assert_eq!(std::fs::read(harness.root.0.join(&attachment.id)).unwrap(), b"%PDF-1");
+        let [attachment] = draft.attachments.as_slice() else {
+            panic!("expected one attachment")
+        };
+        assert_eq!(
+            (
+                attachment.name.as_str(),
+                attachment.mime.as_str(),
+                attachment.ready
+            ),
+            ("notes.pdf", "application/pdf", true)
+        );
+        assert_eq!(
+            std::fs::read(harness.root.0.join(&attachment.id)).unwrap(),
+            b"%PDF-1"
+        );
     }
 
     #[tokio::test]
@@ -480,7 +595,10 @@ mod tests {
         harness.run_after(PAST_DELAY).await;
         assert!(!harness.pull().await);
         assert_eq!(fetches(&harness), 0);
-        assert_eq!(harness.db().draft(&draft.id).unwrap().revision, draft.revision);
+        assert_eq!(
+            harness.db().draft(&draft.id).unwrap().revision,
+            draft.revision
+        );
     }
 
     #[tokio::test]
@@ -491,17 +609,38 @@ mod tests {
         let draft = harness.edit(draft, "Mine");
         harness.run_after(PAST_DELAY).await;
         let message_id = format!("draft-{}@threestrands.local", draft.id);
-        harness.server.write_elsewhere("server-1", &message(&message_id, "Plans", "Edited on my phone"), None);
+        harness.server.write_elsewhere(
+            "server-1",
+            &message(&message_id, "Plans", "Edited on my phone"),
+            None,
+        );
 
         assert!(harness.pull().await);
         let pulled = harness.db().draft(&draft.id).unwrap();
         assert!(pulled.body.contains("Edited on my phone"));
-        assert!(pulled.revision > draft.revision, "an open composer can tell the draft changed");
-        assert_eq!(pulled.follow_up_task_id.as_deref(), Some("task-1"), "ThreeStrands-only fields survive");
-        assert!(pulled.signature.is_none(), "the server copy's signature is part of its body");
+        assert!(
+            pulled.revision > draft.revision,
+            "an open composer can tell the draft changed"
+        );
+        assert_eq!(
+            pulled.follow_up_task_id.as_deref(),
+            Some("task-1"),
+            "ThreeStrands-only fields survive"
+        );
+        assert!(
+            pulled.signature.is_none(),
+            "the server copy's signature is part of its body"
+        );
         assert_eq!(harness.state(&pulled), "saved");
         harness.run_after(PAST_DELAY).await;
-        assert!(!harness.server.calls().iter().any(|call| call.starts_with("update")), "nothing to push back");
+        assert!(
+            !harness
+                .server
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("update")),
+            "nothing to push back"
+        );
     }
 
     #[tokio::test]
@@ -510,22 +649,52 @@ mod tests {
         let draft = harness.edit(harness.new_draft(), "One");
         harness.run_after(PAST_DELAY).await;
         let message_id = format!("draft-{}@threestrands.local", draft.id);
-        harness.server.write_elsewhere("server-1", &message(&message_id, "Plans", "Edited on my phone"), None);
+        harness.server.write_elsewhere(
+            "server-1",
+            &message(&message_id, "Plans", "Edited on my phone"),
+            None,
+        );
         let draft = harness.edit(draft, "Edited here, offline");
 
         assert!(harness.pull().await);
         assert_eq!(harness.state(&draft), "conflict");
-        assert!(harness.db().draft(&draft.id).unwrap().body.contains("Edited here"), "this device's edits stay");
+        assert!(
+            harness
+                .db()
+                .draft(&draft.id)
+                .unwrap()
+                .body
+                .contains("Edited here"),
+            "this device's edits stay"
+        );
         harness.run_after(PAST_DELAY).await;
-        assert!(harness.server.drafts()["server-1"].0.contains("Edited on my phone"), "nothing overwrites while the user decides");
+        assert!(
+            harness.server.drafts()["server-1"]
+                .0
+                .contains("Edited on my phone"),
+            "nothing overwrites while the user decides"
+        );
 
-        let kept = harness.db().resolve_draft_conflict(&draft.id, true).unwrap();
+        let kept = harness
+            .db()
+            .resolve_draft_conflict(&draft.id, true)
+            .unwrap();
         assert!(kept.body.contains("Edited on my phone"));
         assert!(kept.revision > draft.revision);
         assert_eq!(kept.server_draft.unwrap().state, "saved");
         harness.run_after(PAST_DELAY).await;
-        assert!(!harness.server.calls().iter().any(|call| call.starts_with("update")));
-        assert!(harness.db().resolve_draft_conflict(&draft.id, true).is_err(), "nothing left to resolve");
+        assert!(!harness
+            .server
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("update")));
+        assert!(
+            harness
+                .db()
+                .resolve_draft_conflict(&draft.id, true)
+                .is_err(),
+            "nothing left to resolve"
+        );
     }
 
     #[tokio::test]
@@ -534,15 +703,24 @@ mod tests {
         let draft = harness.edit(harness.new_draft(), "One");
         harness.run_after(PAST_DELAY).await;
         let message_id = format!("draft-{}@threestrands.local", draft.id);
-        harness.server.write_elsewhere("server-1", &message(&message_id, "Plans", "Edited on my phone"), None);
+        harness.server.write_elsewhere(
+            "server-1",
+            &message(&message_id, "Plans", "Edited on my phone"),
+            None,
+        );
         let draft = harness.edit(draft, "Edited here, offline");
         harness.pull().await;
 
-        let kept = harness.db().resolve_draft_conflict(&draft.id, false).unwrap();
+        let kept = harness
+            .db()
+            .resolve_draft_conflict(&draft.id, false)
+            .unwrap();
         assert!(kept.body.contains("Edited here"));
         assert_eq!(kept.server_draft.unwrap().state, "pending");
         harness.run_after(0).await;
-        assert!(harness.server.drafts()["server-1"].0.contains("Edited here"));
+        assert!(harness.server.drafts()["server-1"]
+            .0
+            .contains("Edited here"));
         assert_eq!(harness.state(&draft), "saved");
     }
 
@@ -552,13 +730,24 @@ mod tests {
         let draft = harness.edit(harness.new_draft(), "One");
         harness.run_after(PAST_DELAY).await;
         let message_id = format!("draft-{}@threestrands.local", draft.id);
-        harness.server.write_elsewhere("server-1", &message(&message_id, "Plans", "Edited on my phone"), None);
+        harness.server.write_elsewhere(
+            "server-1",
+            &message(&message_id, "Plans", "Edited on my phone"),
+            None,
+        );
         let draft = harness.edit(draft, "Two");
         harness.run_after(PAST_DELAY).await;
-        assert!(harness.server.drafts()["server-1"].0.contains("Edited on my phone"), "the other edit isn't overwritten");
+        assert!(
+            harness.server.drafts()["server-1"]
+                .0
+                .contains("Edited on my phone"),
+            "the other edit isn't overwritten"
+        );
         assert_eq!(harness.state(&draft), "conflict");
         let events = harness.events.lock().unwrap().clone();
-        assert!(events.iter().any(|event| matches!(event, DraftEvent::Status(status) if status.status.state == "conflict")));
+        assert!(events.iter().any(
+            |event| matches!(event, DraftEvent::Status(status) if status.status.state == "conflict")
+        ));
     }
 
     #[tokio::test]
@@ -572,10 +761,19 @@ mod tests {
         harness.server.drafts().clear();
 
         assert!(harness.pull().await);
-        assert!(harness.db().draft(&kept.id).is_err(), "sent or discarded elsewhere");
-        assert!(harness.db().draft(&editing.id).is_ok(), "unsent edits are never dropped");
+        assert!(
+            harness.db().draft(&kept.id).is_err(),
+            "sent or discarded elsewhere"
+        );
+        assert!(
+            harness.db().draft(&editing.id).is_ok(),
+            "unsent edits are never dropped"
+        );
         harness.run_after(0).await;
-        assert!(harness.only_server_body().contains("Still typing, more"), "pushed again as a new copy");
+        assert!(
+            harness.only_server_body().contains("Still typing, more"),
+            "pushed again as a new copy"
+        );
     }
 
     #[tokio::test]
@@ -587,7 +785,14 @@ mod tests {
         harness.run_after(PAST_DELAY).await;
         harness
             .db()
-            .queue(&draft.id, draft.revision, false, &[], None, std::path::Path::new("/unused"))
+            .queue(
+                &draft.id,
+                draft.revision,
+                false,
+                &[],
+                None,
+                std::path::Path::new("/unused"),
+            )
             .unwrap();
         // As if this device had never learned the copy's server id.
         harness.db().forget_server_draft_link(&draft.id).unwrap();
@@ -600,7 +805,9 @@ mod tests {
         let harness = Harness::new();
         let draft = harness.edit(harness.new_draft(), "One");
         let message_id = format!("draft-{}@threestrands.local", draft.id);
-        harness.server.write_elsewhere("g-5", &message(&message_id, "Plans", "One"), None);
+        harness
+            .server
+            .write_elsewhere("g-5", &message(&message_id, "Plans", "One"), None);
         harness.run_after(PAST_DELAY).await;
         harness.pull().await;
         assert_eq!(harness.db().drafts().unwrap().len(), 1);
@@ -610,9 +817,15 @@ mod tests {
     #[tokio::test]
     async fn one_unreadable_server_draft_does_not_stop_the_others() {
         let harness = Harness::new();
-        let huge = message("CAF3@mail.gmail.com", "Huge", &"x".repeat(MAX_IMPORTED_BODY_BYTES + 1));
+        let huge = message(
+            "CAF3@mail.gmail.com",
+            "Huge",
+            &"x".repeat(MAX_IMPORTED_BODY_BYTES + 1),
+        );
         harness.server.write_elsewhere("g-1", &huge, None);
-        harness.server.write_elsewhere("g-2", &message("CAF4@mail.gmail.com", "Small", "Hi"), None);
+        harness
+            .server
+            .write_elsewhere("g-2", &message("CAF4@mail.gmail.com", "Small", "Hi"), None);
         assert!(harness.pull().await);
         assert_eq!(only_local(&harness).subject, "Small");
     }
@@ -621,7 +834,11 @@ mod tests {
     async fn imported_bodies_at_the_limit_are_accepted() {
         let harness = Harness::new();
         let body = "x".repeat(MAX_IMPORTED_BODY_BYTES - 2);
-        harness.server.write_elsewhere("g-1", &message("CAF5@mail.gmail.com", "Exact", &body), None);
+        harness.server.write_elsewhere(
+            "g-1",
+            &message("CAF5@mail.gmail.com", "Exact", &body),
+            None,
+        );
         harness.pull().await;
         assert_eq!(only_local(&harness).subject, "Exact");
     }
@@ -630,22 +847,39 @@ mod tests {
     async fn replying_in_the_conversation_reopens_a_reply_written_elsewhere() {
         use base64::Engine;
         let harness = Harness::new();
-        harness.server.write_elsewhere("g-1", &message("CAF8@mail.gmail.com", "Re: Topic", "Half a reply"), Some("t-9"));
+        harness.server.write_elsewhere(
+            "g-1",
+            &message("CAF8@mail.gmail.com", "Re: Topic", "Half a reply"),
+            Some("t-9"),
+        );
         harness.pull().await;
         let imported = only_local(&harness);
         let source = serde_json::json!({"id":"source","threadId":"t-9","payload":{"mimeType":"text/plain","headers":[
             {"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},
             {"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<original@example.com>"}],
             "body":{"data":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("Hello")}}});
-        harness.db().put_message_metadata("source", &source.to_string()).unwrap();
+        harness
+            .db()
+            .put_message_metadata("source", &source.to_string())
+            .unwrap();
 
-        let reopened = harness.db().create_draft("reply", Some("source".into()), ACCOUNT, &[]).unwrap();
+        let reopened = harness
+            .db()
+            .create_draft("reply", Some("source".into()), ACCOUNT, &[])
+            .unwrap();
         assert_eq!(reopened.id, imported.id);
         assert!(reopened.body.contains("Half a reply"));
         assert_eq!(reopened.source_id.as_deref(), Some("source"));
-        assert_eq!(harness.state(&reopened), "saved", "linking the source changes nothing on the server");
+        assert_eq!(
+            harness.state(&reopened),
+            "saved",
+            "linking the source changes nothing on the server"
+        );
         assert_eq!(harness.db().drafts().unwrap().len(), 1);
-        let again = harness.db().create_draft("reply", Some("source".into()), ACCOUNT, &[]).unwrap();
+        let again = harness
+            .db()
+            .create_draft("reply", Some("source".into()), ACCOUNT, &[])
+            .unwrap();
         assert_eq!(again.id, imported.id);
     }
 
@@ -657,10 +891,17 @@ mod tests {
         harness.run_after(PAST_DELAY).await;
         let message_id = format!("draft-{}@threestrands.local", draft.id);
         harness.server.drafts().clear();
-        harness.server.write_elsewhere("server-9", &message(&message_id, "Plans", "Edited on the laptop"), None);
+        harness.server.write_elsewhere(
+            "server-9",
+            &message(&message_id, "Plans", "Edited on the laptop"),
+            None,
+        );
 
         assert!(harness.pull().await);
-        let pulled = harness.db().draft(&draft.id).expect("a replaced copy is not a deletion");
+        let pulled = harness
+            .db()
+            .draft(&draft.id)
+            .expect("a replaced copy is not a deletion");
         assert!(pulled.body.contains("Edited on the laptop"));
         assert_eq!(harness.state(&pulled), "saved");
     }
@@ -672,11 +913,17 @@ mod tests {
         harness.run_after(PAST_DELAY).await;
         let message_id = format!("draft-{}@threestrands.local", draft.id);
         harness.server.drafts().clear();
-        harness.server.write_elsewhere("server-9", &message(&message_id, "Plans", "Edited on the laptop"), None);
+        harness.server.write_elsewhere(
+            "server-9",
+            &message(&message_id, "Plans", "Edited on the laptop"),
+            None,
+        );
         let draft = harness.edit(draft, "Edited here");
         harness.run_after(PAST_DELAY).await;
         assert_eq!(harness.state(&draft), "conflict");
-        assert!(harness.server.drafts()["server-9"].0.contains("Edited on the laptop"));
+        assert!(harness.server.drafts()["server-9"]
+            .0
+            .contains("Edited on the laptop"));
         assert_eq!(harness.server.drafts().len(), 1, "no second copy");
     }
 
@@ -687,17 +934,35 @@ mod tests {
         harness.run_after(PAST_DELAY).await;
         harness.db().discard_draft(&draft.id).unwrap();
         let message_id = format!("draft-{}@threestrands.local", draft.id);
-        harness.server.write_elsewhere("server-1", &message(&message_id, "Plans", "Edited on my phone"), None);
+        harness.server.write_elsewhere(
+            "server-1",
+            &message(&message_id, "Plans", "Edited on my phone"),
+            None,
+        );
         harness.pull().await;
         assert!(harness.db().drafts().unwrap().is_empty());
     }
 
-    async fn pull_at(harness: &Harness, schedules: &mut HashMap<String, DraftPullSchedule>, at: i64, force: bool) {
-        harness.service.pull_due_accounts(at, &harness.providers(), schedules, force).await.unwrap();
+    async fn pull_at(
+        harness: &Harness,
+        schedules: &mut HashMap<String, DraftPullSchedule>,
+        at: i64,
+        force: bool,
+    ) {
+        harness
+            .service
+            .pull_due_accounts(at, &harness.providers(), schedules, force)
+            .await
+            .unwrap();
     }
 
     fn lists(harness: &Harness) -> usize {
-        harness.server.calls().iter().filter(|call| *call == "list").count()
+        harness
+            .server
+            .calls()
+            .iter()
+            .filter(|call| *call == "list")
+            .count()
     }
 
     #[tokio::test]
@@ -706,14 +971,36 @@ mod tests {
         let mut schedules = HashMap::new();
         let at = unix_millis();
         pull_at(&harness, &mut schedules, at, false).await;
-        pull_at(&harness, &mut schedules, at + DRAFT_PULL_INTERVAL_MS - 1, false).await;
+        pull_at(
+            &harness,
+            &mut schedules,
+            at + DRAFT_PULL_INTERVAL_MS - 1,
+            false,
+        )
+        .await;
         assert_eq!(lists(&harness), 1);
         let last = at + DRAFT_PULL_INTERVAL_MS;
         pull_at(&harness, &mut schedules, last, false).await;
         assert_eq!(lists(&harness), 2);
-        pull_at(&harness, &mut schedules, last + FOCUS_PULL_MIN_INTERVAL_MS - 1, true).await;
-        assert_eq!(lists(&harness), 2, "switching back to the window right after a pull doesn't list again");
-        pull_at(&harness, &mut schedules, last + FOCUS_PULL_MIN_INTERVAL_MS, true).await;
+        pull_at(
+            &harness,
+            &mut schedules,
+            last + FOCUS_PULL_MIN_INTERVAL_MS - 1,
+            true,
+        )
+        .await;
+        assert_eq!(
+            lists(&harness),
+            2,
+            "switching back to the window right after a pull doesn't list again"
+        );
+        pull_at(
+            &harness,
+            &mut schedules,
+            last + FOCUS_PULL_MIN_INTERVAL_MS,
+            true,
+        )
+        .await;
         assert_eq!(lists(&harness), 3, "focusing the window pulls right away");
     }
 
@@ -740,7 +1027,9 @@ mod tests {
 
     #[test]
     fn the_backoff_doubles_up_to_five_minutes() {
-        let minutes: Vec<_> = (1..=5).map(|failures| draft_pull_backoff(failures) / 60_000).collect();
+        let minutes: Vec<_> = (1..=5)
+            .map(|failures| draft_pull_backoff(failures) / 60_000)
+            .collect();
         assert_eq!(minutes, [2, 4, 5, 5, 5]);
         assert_eq!(draft_pull_backoff(u32::MAX), MAX_DRAFT_PULL_BACKOFF_MS);
     }
@@ -748,7 +1037,10 @@ mod tests {
     #[tokio::test]
     async fn an_account_waiting_to_be_reconnected_is_not_pulled() {
         let harness = Harness::new();
-        harness.db().mark_account_needs_reauth(ACCOUNT, "revoked").unwrap();
+        harness
+            .db()
+            .mark_account_needs_reauth(ACCOUNT, "revoked")
+            .unwrap();
         pull_at(&harness, &mut HashMap::new(), unix_millis(), true).await;
         assert!(harness.server.calls().is_empty());
     }

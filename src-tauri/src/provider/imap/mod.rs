@@ -46,13 +46,13 @@ mod tls;
 mod write;
 
 // Connection layer and certificate pinning, used by account setup.
-pub use connection::{CertificateProbe, ConnectionConfig, ImapConnectionManager};
 #[cfg(test)]
 pub(crate) use connection::ConnectionRole;
+pub use connection::{CertificateProbe, ConnectionConfig, ImapConnectionManager};
 pub use session::ImapSession;
-pub use tls::{parse_sha256_fingerprint, Sha256Fingerprint};
 #[cfg(test)]
 pub use tls::CertificateInfo;
+pub use tls::{parse_sha256_fingerprint, Sha256Fingerprint};
 
 // Account-setup surface, consumed by the tauri commands: autodiscovery, the
 // non-secret settings, and the test-and-save / cert-probe orchestration.
@@ -62,8 +62,8 @@ pub use settings::{Identity, ImapAccountSettings, LabelStorage, SecurityMode};
 pub use setup::{
     connect_with_settings, plain_language, probe_imap_certificate, test_imap, TestReport,
 };
-pub use smtp::{probe_smtp_certificate, test_smtp};
 pub(crate) use smtp::validate_envelope_address;
+pub use smtp::{probe_smtp_certificate, test_smtp};
 // Mailbox-discovery surface: the mapping types the frontend renders and the
 // discovery/create orchestration.
 pub use mailboxes::{create_mailbox_tolerant, discover_and_persist, MailboxMapping, MailboxRole};
@@ -79,9 +79,8 @@ pub use provider::{label_model_for, ImapProvider, ImapProviderConfig};
 // MailSend seam (`identities`, `message_id_domain`) and the correspondence
 // reply/compose path consume these.
 pub use sending_identity::{
-    account_identities, choose_reply_identity, identity_normalized,
-    message_id_domain_for_address, normalize_identity_address, ReplyHeaders, SendingIdentity,
-    validate_identity_edit,
+    account_identities, choose_reply_identity, identity_normalized, message_id_domain_for_address,
+    normalize_identity_address, validate_identity_edit, ReplyHeaders, SendingIdentity,
 };
 // Phase 4 run 3 SMTP prepare-retry gate: the engine's outbox tick reads the
 // predicate.

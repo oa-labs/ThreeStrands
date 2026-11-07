@@ -1082,7 +1082,6 @@ fn contact_files_list_one_file_once_from_its_newest_message() {
     assert_eq!((first.total, first.files.len()), (2, 1));
 }
 
-
 #[test]
 fn contact_tasks_span_every_conversation_with_the_person_and_only_open_work() {
     let database = database();
@@ -1276,7 +1275,6 @@ fn contact_request(name: &str, email: &str) -> SaveContactRequest {
     }
 }
 
-
 /// Phase 4 run 2 (B): a message From a SECONDARY sending identity is indexed
 /// as an outbound ("sent") interaction with its recipient, not as a "received"
 /// interaction from the identity itself — because any identity counts as "sent
@@ -1301,8 +1299,14 @@ fn a_message_from_a_secondary_identity_is_indexed_as_sent() {
         label_storage: LabelStorage::None,
         label_container: None,
         identities: vec![
-            Identity { address: "me@proton.me".into(), display_name: None },
-            Identity { address: "work@proton.me".into(), display_name: Some("Work".into()) },
+            Identity {
+                address: "me@proton.me".into(),
+                display_name: None,
+            },
+            Identity {
+                address: "work@proton.me".into(),
+                display_name: Some("Work".into()),
+            },
         ],
         pinned_fingerprints: Default::default(),
         server_saves_sent: false,
@@ -1336,7 +1340,10 @@ fn a_message_from_a_secondary_identity_is_indexed_as_sent() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(identity_rows, 0, "my own identity is not a received contact");
+    assert_eq!(
+        identity_rows, 0,
+        "my own identity is not a received contact"
+    );
 }
 
 #[test]
@@ -1347,7 +1354,9 @@ fn a_gmail_message_from_a_non_login_address_is_received_as_before() {
     let mut inbound = message("g-m", "g-t", "2026-01-01T00:00:00Z", "hi");
     inbound.from = "Someone <someone@else.com>".into();
     inbound.to = vec!["you@example.com".into()];
-    database.upsert_thread("you@example.com", &[inbound]).unwrap();
+    database
+        .upsert_thread("you@example.com", &[inbound])
+        .unwrap();
     let direction: String = database
         .connection()
         .unwrap()

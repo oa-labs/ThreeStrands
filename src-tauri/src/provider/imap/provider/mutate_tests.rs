@@ -49,11 +49,7 @@ impl MutFolder {
         Self {
             uidvalidity,
             uidnext: 1,
-            permanent_flags: vec![
-                "\\Seen".into(),
-                "\\Flagged".into(),
-                "\\Deleted".into(),
-            ],
+            permanent_flags: vec!["\\Seen".into(), "\\Flagged".into(), "\\Deleted".into()],
             select_fails: false,
             select_busy: false,
             read_only: false,
@@ -125,11 +121,7 @@ impl MutServer {
             delimiter: "/".into(),
             drop_label_response_once: false,
             reset_label_validity_once: false,
-            capabilities: vec![
-                "IMAP4REV1".into(),
-                "MOVE".into(),
-                "UIDPLUS".into(),
-            ],
+            capabilities: vec!["IMAP4REV1".into(), "MOVE".into(), "UIDPLUS".into()],
             folders: BTreeMap::new(),
             commands: Arc::new(Mutex::new(Vec::new())),
             silently_ignore_flag: None,
@@ -222,7 +214,8 @@ fn build_response(
     } else if upper.starts_with("CAPABILITY") {
         let caps = state.capabilities.join(" ");
         (format!("* CAPABILITY {caps}\r\n{tag} OK done\r\n"), false)
-    } else if upper.starts_with("LIST") && state.capabilities.iter().any(|cap| cap == "X-GM-EXT-1") {
+    } else if upper.starts_with("LIST") && state.capabilities.iter().any(|cap| cap == "X-GM-EXT-1")
+    {
         native_creation::list_response(state, tag)
     } else if upper.starts_with("SELECT") || upper.starts_with("EXAMINE") {
         let is_select = upper.starts_with("SELECT");
@@ -258,13 +251,24 @@ fn build_response(
             false,
         )
     } else if upper.starts_with("UID SEARCH") {
-        let server_id = upper.strip_prefix("UID SEARCH X-GM-MSGID ").and_then(|value| value.parse::<u64>().ok());
+        let server_id = upper
+            .strip_prefix("UID SEARCH X-GM-MSGID ")
+            .and_then(|value| value.parse::<u64>().ok());
         let uids: Vec<String> = state
             .folders
             .get(selected.as_str())
-            .map(|f| f.messages.iter().filter(|m| server_id.is_none() || m.gmail_message_id == server_id).map(|m| m.uid.to_string()).collect())
+            .map(|f| {
+                f.messages
+                    .iter()
+                    .filter(|m| server_id.is_none() || m.gmail_message_id == server_id)
+                    .map(|m| m.uid.to_string())
+                    .collect()
+            })
             .unwrap_or_default();
-        (format!("* SEARCH {}\r\n{tag} OK done\r\n", uids.join(" ")), false)
+        (
+            format!("* SEARCH {}\r\n{tag} OK done\r\n", uids.join(" ")),
+            false,
+        )
     } else if upper.starts_with("UID STORE") && upper.contains("X-GM-LABELS") {
         let set = parse_uid_set(rest);
         let changing = all_mail::label_arguments(rest);
@@ -272,12 +276,16 @@ fn build_response(
         all_mail::update_membership(state, selected, &set, &changing, is_add);
         if state.reset_label_validity_once {
             state.reset_label_validity_once = false;
-            if let Some(folder) = state.folders.get_mut(selected.as_str()) { folder.uidvalidity += 1; }
+            if let Some(folder) = state.folders.get_mut(selected.as_str()) {
+                folder.uidvalidity += 1;
+            }
         }
         if state.drop_label_response_once {
             state.drop_label_response_once = false;
             (String::new(), true)
-        } else { (format!("{tag} OK STORE done\r\n"), false) }
+        } else {
+            (format!("{tag} OK STORE done\r\n"), false)
+        }
     } else if upper.starts_with("UID STORE") {
         let flags = store_flags(rest);
         let is_add = upper.contains("+FLAGS");
@@ -320,7 +328,14 @@ fn build_response(
         let mut out = String::new();
         for (seq, uid) in set.iter().enumerate() {
             if let Some(message) = messages.iter().find(|m| &m.uid == uid) {
-                out.push_str(&fetch_line(seq as u32 + 1, message, wants_body, is_identity, upper.contains("X-GM-LABELS"), upper.contains("X-GM-MSGID")));
+                out.push_str(&fetch_line(
+                    seq as u32 + 1,
+                    message,
+                    wants_body,
+                    is_identity,
+                    upper.contains("X-GM-LABELS"),
+                    upper.contains("X-GM-MSGID"),
+                ));
             }
         }
         out.push_str(&format!("{tag} OK done\r\n"));
@@ -367,7 +382,10 @@ fn build_response(
         // name. Absent source -> NO; existing target -> NO. The provider
         // never issues RENAME (run 4 refuses rename), so this exists only
         // for completeness / future use.
-        let args: Vec<&str> = rest["RENAME".len().min(rest.len())..].trim().split('"').collect();
+        let args: Vec<&str> = rest["RENAME".len().min(rest.len())..]
+            .trim()
+            .split('"')
+            .collect();
         // Tokens are "from" "to"; split on quotes yields ["", from, " ", to, ""].
         let from = args.get(1).unwrap_or(&"").to_string();
         let to = args.get(3).unwrap_or(&"").to_string();
@@ -398,7 +416,13 @@ fn build_response(
         let source_msgs: Vec<MutMessage> = state
             .folders
             .get(selected.as_str())
-            .map(|f| f.messages.iter().filter(|m| set.contains(&m.uid)).cloned().collect())
+            .map(|f| {
+                f.messages
+                    .iter()
+                    .filter(|m| set.contains(&m.uid))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         let dest_uidvalidity = state.folders.get(&dest).map(|f| f.uidvalidity).unwrap_or(0);
         let mut src_uids = Vec::new();
@@ -447,7 +471,13 @@ fn build_response(
         let moved: Vec<MutMessage> = state
             .folders
             .get(selected.as_str())
-            .map(|f| f.messages.iter().filter(|m| set.contains(&m.uid)).cloned().collect())
+            .map(|f| {
+                f.messages
+                    .iter()
+                    .filter(|m| set.contains(&m.uid))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         let dest_uidvalidity = state.folders.get(&dest).map(|f| f.uidvalidity).unwrap_or(0);
         let mut src_uids = Vec::new();
@@ -472,8 +502,16 @@ fn build_response(
         if let Some(folder) = state.folders.get_mut(selected.as_str()) {
             folder.messages.retain(|m| !set.contains(&m.uid));
         }
-        let src = src_uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-        let dst = dst_uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+        let src = src_uids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let dst = dst_uids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
         let expunges: String = set.iter().map(|_| "* 1 EXPUNGE\r\n".to_string()).collect();
         (
             format!(
@@ -493,9 +531,10 @@ fn build_response(
         }
         let set = parse_uid_set(rest);
         if let Some(folder) = state.folders.get_mut(selected.as_str()) {
-            folder
-                .messages
-                .retain(|m| !(set.contains(&m.uid) && m.flags.iter().any(|f| f.eq_ignore_ascii_case("\\Deleted"))));
+            folder.messages.retain(|m| {
+                !(set.contains(&m.uid)
+                    && m.flags.iter().any(|f| f.eq_ignore_ascii_case("\\Deleted")))
+            });
         }
         (format!("{tag} OK EXPUNGE done\r\n"), false)
     } else if upper.starts_with("LOGOUT") {
@@ -511,14 +550,24 @@ async fn reply(server: &mut BufReader<DuplexStream>, text: &str) {
 
 /// The mailbox name after `SELECT`/`EXAMINE`, unquoted.
 fn select_name(rest: &str, is_select: bool) -> String {
-    let verb_len = if is_select { "SELECT".len() } else { "EXAMINE".len() };
-    all_mail::parse_astrings(rest[verb_len.min(rest.len())..].trim()).into_iter().next().unwrap_or_default()
+    let verb_len = if is_select {
+        "SELECT".len()
+    } else {
+        "EXAMINE".len()
+    };
+    all_mail::parse_astrings(rest[verb_len.min(rest.len())..].trim())
+        .into_iter()
+        .next()
+        .unwrap_or_default()
 }
 
 /// The parenthesised flag list of a STORE command.
 fn store_flags(cmd: &str) -> Vec<String> {
     if let (Some(open), Some(close)) = (cmd.find('('), cmd.rfind(')')) {
-        cmd[open + 1..close].split_whitespace().map(str::to_string).collect()
+        cmd[open + 1..close]
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
     } else {
         Vec::new()
     }
@@ -552,12 +601,32 @@ fn parse_uid_set(cmd: &str) -> Vec<u32> {
     uids
 }
 
-fn fetch_line(seq: u32, message: &MutMessage, wants_body: bool, is_identity: bool, wants_labels: bool, wants_id: bool) -> String {
+fn fetch_line(
+    seq: u32,
+    message: &MutMessage,
+    wants_body: bool,
+    is_identity: bool,
+    wants_labels: bool,
+    wants_id: bool,
+) -> String {
     let flags = message.flags.join(" ");
     let mut attrs = String::new();
-    if let Some(id) = message.gmail_message_id.filter(|_| wants_id) { attrs.push_str(&format!(" X-GM-MSGID {id}")); }
+    if let Some(id) = message.gmail_message_id.filter(|_| wants_id) {
+        attrs.push_str(&format!(" X-GM-MSGID {id}"));
+    }
     if let Some(labels) = message.labels.as_ref().filter(|_| wants_labels) {
-        attrs.push_str(&format!(" X-GM-LABELS ({})", labels.iter().map(|label| if label.starts_with('\\') { label.clone() } else { crate::provider::imap::search::quote_search_string(label) }).collect::<Vec<_>>().join(" ")));
+        attrs.push_str(&format!(
+            " X-GM-LABELS ({})",
+            labels
+                .iter()
+                .map(|label| if label.starts_with('\\') {
+                    label.clone()
+                } else {
+                    crate::provider::imap::search::quote_search_string(label)
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
     }
     if wants_body {
         format!(
@@ -581,7 +650,10 @@ fn fetch_line(seq: u32, message: &MutMessage, wants_body: bool, is_identity: boo
         )
     } else {
         // FLAGS-only (verify + sweep).
-        format!("* {seq} FETCH (UID {} FLAGS ({flags}){attrs})\r\n", message.uid)
+        format!(
+            "* {seq} FETCH (UID {} FLAGS ({flags}){attrs})\r\n",
+            message.uid
+        )
     }
 }
 
@@ -600,7 +672,14 @@ impl ImapSessionSource for MutSource {
             .await
             .map_err(|(error, _)| super::super::error::map_imap_error(&error))?;
         let mut session = super::super::session::AsyncImapSession::new(session);
-        if self.server.lock().unwrap().capabilities.iter().any(|cap| cap == "X-GM-EXT-1") {
+        if self
+            .server
+            .lock()
+            .unwrap()
+            .capabilities
+            .iter()
+            .any(|cap| cap == "X-GM-EXT-1")
+        {
             session.capabilities().await?;
         }
         Ok(Box::new(session))
@@ -766,8 +845,15 @@ async fn mark_read_adds_seen_and_updates_local_flags() {
         .expect("mark read");
 
     // The server now holds \Seen, and the local flags agree.
-    assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Seen"));
-    assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Seen"));
+    assert!(server
+        .lock()
+        .unwrap()
+        .flags_of("INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Seen"));
+    assert!(local_flags(&store, "INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Seen"));
 }
 
 #[tokio::test]
@@ -786,8 +872,15 @@ async fn mark_unread_removes_seen() {
         .await
         .expect("mark unread");
 
-    assert!(!server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Seen"));
-    assert!(!local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Seen"));
+    assert!(!server
+        .lock()
+        .unwrap()
+        .flags_of("INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Seen"));
+    assert!(!local_flags(&store, "INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Seen"));
 }
 
 // --- star / unstar -----------------------------------------------------
@@ -802,13 +895,33 @@ async fn star_adds_flagged_and_unstar_removes_it() {
     let (provider, store) = provider_with(server.clone());
     let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &["\\Seen"]);
 
-    provider.modify_messages(std::slice::from_ref(&id), &["STARRED".into()], &[]).await.expect("star");
-    assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
-    assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Flagged"));
+    provider
+        .modify_messages(std::slice::from_ref(&id), &["STARRED".into()], &[])
+        .await
+        .expect("star");
+    assert!(server
+        .lock()
+        .unwrap()
+        .flags_of("INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
+    assert!(local_flags(&store, "INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
 
-    provider.modify_messages(&[id], &[], &["STARRED".into()]).await.expect("unstar");
-    assert!(!server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
-    assert!(!local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Flagged"));
+    provider
+        .modify_messages(&[id], &[], &["STARRED".into()])
+        .await
+        .expect("unstar");
+    assert!(!server
+        .lock()
+        .unwrap()
+        .flags_of("INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
+    assert!(!local_flags(&store, "INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
 }
 
 // --- thread-level mark-read across messages and two mailboxes ----------
@@ -827,19 +940,34 @@ async fn thread_mark_read_touches_every_message_in_every_mailbox() {
     // Seed both messages into ONE thread.
     store
         .upsert_location(&ImapLocation {
-            mailbox: "INBOX".into(), uidvalidity: 100, uid: 1,
-            message_id: "imap:me@example.com:a".into(), flags_json: "[]".into(), modseq: None,
-        }).unwrap();
+            mailbox: "INBOX".into(),
+            uidvalidity: 100,
+            uid: 1,
+            message_id: "imap:me@example.com:a".into(),
+            flags_json: "[]".into(),
+            modseq: None,
+        })
+        .unwrap();
     store
         .upsert_location(&ImapLocation {
-            mailbox: "INBOX".into(), uidvalidity: 100, uid: 2,
-            message_id: "imap:me@example.com:b".into(), flags_json: "[]".into(), modseq: None,
-        }).unwrap();
+            mailbox: "INBOX".into(),
+            uidvalidity: 100,
+            uid: 2,
+            message_id: "imap:me@example.com:b".into(),
+            flags_json: "[]".into(),
+            modseq: None,
+        })
+        .unwrap();
     store
         .upsert_location(&ImapLocation {
-            mailbox: "Archive".into(), uidvalidity: 95, uid: 1,
-            message_id: "imap:me@example.com:b".into(), flags_json: "[]".into(), modseq: None,
-        }).unwrap();
+            mailbox: "Archive".into(),
+            uidvalidity: 95,
+            uid: 1,
+            message_id: "imap:me@example.com:b".into(),
+            flags_json: "[]".into(),
+            modseq: None,
+        })
+        .unwrap();
     store
         .commit_sync_round(&SyncRoundWrite {
             thread_assignments: vec![
@@ -848,7 +976,8 @@ async fn thread_mark_read_touches_every_message_in_every_mailbox() {
             ],
             changed_threads: vec!["imap:t:thread".into()],
             ..Default::default()
-        }).unwrap();
+        })
+        .unwrap();
 
     provider
         .modify_thread("imap:t:thread", &[], &["UNREAD".into()])
@@ -861,9 +990,15 @@ async fn thread_mark_read_touches_every_message_in_every_mailbox() {
     assert!(g.flags_of("INBOX", 2).iter().any(|f| f == "\\Seen"));
     assert!(g.flags_of("Archive", 1).iter().any(|f| f == "\\Seen"));
     drop(g);
-    assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Seen"));
-    assert!(local_flags(&store, "INBOX", 2).iter().any(|f| f == "\\Seen"));
-    assert!(local_flags(&store, "Archive", 1).iter().any(|f| f == "\\Seen"));
+    assert!(local_flags(&store, "INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Seen"));
+    assert!(local_flags(&store, "INBOX", 2)
+        .iter()
+        .any(|f| f == "\\Seen"));
+    assert!(local_flags(&store, "Archive", 1)
+        .iter()
+        .any(|f| f == "\\Seen"));
 }
 
 // --- alias thread id ---------------------------------------------------
@@ -878,21 +1013,34 @@ async fn modify_thread_resolves_an_alias_to_the_survivor() {
     let (provider, store) = provider_with(server.clone());
     store
         .upsert_location(&ImapLocation {
-            mailbox: "INBOX".into(), uidvalidity: 100, uid: 1,
-            message_id: "imap:me@example.com:m1".into(), flags_json: r#"["\\Seen"]"#.into(),
+            mailbox: "INBOX".into(),
+            uidvalidity: 100,
+            uid: 1,
+            message_id: "imap:me@example.com:m1".into(),
+            flags_json: r#"["\\Seen"]"#.into(),
             modseq: None,
-        }).unwrap();
+        })
+        .unwrap();
     store
         .commit_sync_round(&SyncRoundWrite {
             thread_assignments: vec![("imap:me@example.com:m1".into(), "imap:t:survivor".into())],
             aliases: vec![("imap:t:old".into(), "imap:t:survivor".into())],
             changed_threads: vec!["imap:t:survivor".into()],
             ..Default::default()
-        }).unwrap();
+        })
+        .unwrap();
 
     // Star via the OLD (aliased) id: it resolves to the survivor's message.
-    provider.modify_thread("imap:t:old", &["STARRED".into()], &[]).await.expect("star via alias");
-    assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
+    provider
+        .modify_thread("imap:t:old", &["STARRED".into()], &[])
+        .await
+        .expect("star via alias");
+    assert!(server
+        .lock()
+        .unwrap()
+        .flags_of("INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
 }
 
 // --- a thread keeps rows for messages expunged elsewhere ---------------
@@ -908,8 +1056,12 @@ async fn modify_thread_skips_messages_with_no_remaining_location() {
     let live = "imap:me@example.com:m1".to_string();
     store
         .upsert_location(&ImapLocation {
-            mailbox: "INBOX".into(), uidvalidity: 100, uid: 1,
-            message_id: live.clone(), flags_json: "[]".into(), modseq: None,
+            mailbox: "INBOX".into(),
+            uidvalidity: 100,
+            uid: 1,
+            message_id: live.clone(),
+            flags_json: "[]".into(),
+            modseq: None,
         })
         .unwrap();
     // m2 is in the same thread but was expunged on the server: its
@@ -929,7 +1081,12 @@ async fn modify_thread_skips_messages_with_no_remaining_location() {
         .modify_thread("imap:t:shared", &[], &["UNREAD".into()])
         .await
         .expect("an expunged sibling must not fail a thread-level mark-read");
-    assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Seen"));
+    assert!(server
+        .lock()
+        .unwrap()
+        .flags_of("INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Seen"));
 
     // A thread whose messages ALL lost their locations is still refused.
     let err = provider
@@ -953,9 +1110,16 @@ async fn an_already_satisfied_request_sends_no_write_command() {
 
     // Mark-read on an already-read message: Ok(()) and ZERO commands sent
     // (not even a SELECT), because the local flags already satisfy it.
-    provider.modify_messages(&[id], &[], &["UNREAD".into()]).await.expect("no-op ok");
+    provider
+        .modify_messages(&[id], &[], &["UNREAD".into()])
+        .await
+        .expect("no-op ok");
     let g = server.lock().unwrap();
-    assert_eq!(g.count_starting("SELECT"), 0, "an idempotent no-op selects nothing");
+    assert_eq!(
+        g.count_starting("SELECT"),
+        0,
+        "an idempotent no-op selects nothing"
+    );
     assert_eq!(g.count_starting("UID STORE"), 0, "and sends no STORE");
 }
 
@@ -1013,7 +1177,12 @@ async fn a_flag_outside_permanentflags_is_a_permanent_error_naming_it() {
         other => panic!("expected a permanent InvalidOperation, got {other:?}"),
     }
     // No \Flagged was stored.
-    assert!(!server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
+    assert!(!server
+        .lock()
+        .unwrap()
+        .flags_of("INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
 }
 
 // --- a silently-ignored STORE is caught --------------------------------
@@ -1053,7 +1222,11 @@ async fn an_unsupported_or_mixed_request_is_rejected_before_any_command() {
 
     // STARRED + INBOX (an unsupported location id) is rejected permanently.
     let err = provider
-        .modify_messages(std::slice::from_ref(&id), &["STARRED".into(), "INBOX".into()], &[])
+        .modify_messages(
+            std::slice::from_ref(&id),
+            &["STARRED".into(), "INBOX".into()],
+            &[],
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
@@ -1067,8 +1240,16 @@ async fn an_unsupported_or_mixed_request_is_rejected_before_any_command() {
 
     // Not one command reached the wire for either rejected request.
     let g = server.lock().unwrap();
-    assert_eq!(g.count_starting("SELECT"), 0, "no SELECT for a rejected request");
-    assert_eq!(g.count_starting("UID STORE"), 0, "no STORE for a rejected request");
+    assert_eq!(
+        g.count_starting("SELECT"),
+        0,
+        "no SELECT for a rejected request"
+    );
+    assert_eq!(
+        g.count_starting("UID STORE"),
+        0,
+        "no STORE for a rejected request"
+    );
 }
 
 // --- a message with no location at all is a permanent error naming it ---
@@ -1083,10 +1264,15 @@ async fn a_message_with_no_location_is_a_permanent_error_naming_it() {
             thread_assignments: vec![("imap:me@example.com:gone".into(), "imap:t:gone".into())],
             changed_threads: vec!["imap:t:gone".into()],
             ..Default::default()
-        }).unwrap();
+        })
+        .unwrap();
 
     let err = provider
-        .modify_messages(&["imap:me@example.com:gone".into()], &["STARRED".into()], &[])
+        .modify_messages(
+            &["imap:me@example.com:gone".into()],
+            &["STARRED".into()],
+            &[],
+        )
         .await
         .unwrap_err();
     match err {
@@ -1114,17 +1300,22 @@ async fn a_partial_failure_persists_the_succeeded_mailbox_and_a_retry_touches_on
     for (mailbox, uidvalidity, uid) in [("INBOX", 100, 1), ("Trash", 95, 1)] {
         store
             .upsert_location(&ImapLocation {
-                mailbox: mailbox.into(), uidvalidity, uid,
+                mailbox: mailbox.into(),
+                uidvalidity,
+                uid,
                 message_id: "imap:me@example.com:m1".into(),
-                flags_json: r#"["\\Seen"]"#.into(), modseq: None,
-            }).unwrap();
+                flags_json: r#"["\\Seen"]"#.into(),
+                modseq: None,
+            })
+            .unwrap();
     }
     store
         .commit_sync_round(&SyncRoundWrite {
             thread_assignments: vec![("imap:me@example.com:m1".into(), "imap:t:m1".into())],
             changed_threads: vec!["imap:t:m1".into()],
             ..Default::default()
-        }).unwrap();
+        })
+        .unwrap();
 
     // Star: INBOX (visited first) succeeds and persists; Trash SELECT
     // transiently fails and the mutation returns that error.
@@ -1132,14 +1323,31 @@ async fn a_partial_failure_persists_the_succeeded_mailbox_and_a_retry_touches_on
         .modify_messages(&["imap:me@example.com:m1".into()], &["STARRED".into()], &[])
         .await
         .unwrap_err();
-    assert!(matches!(err, ProviderError::TransientTransport(_)), "Trash select busy: {err:?}");
+    assert!(
+        matches!(err, ProviderError::TransientTransport(_)),
+        "Trash select busy: {err:?}"
+    );
     assert!(err.retry_mutation(), "transient so the engine retries");
 
     // INBOX's copy IS starred (server + local); Trash's is NOT yet.
-    assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
-    assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Flagged"));
-    assert!(!server.lock().unwrap().flags_of("Trash", 1).iter().any(|f| f == "\\Flagged"));
-    assert!(!local_flags(&store, "Trash", 1).iter().any(|f| f == "\\Flagged"));
+    assert!(server
+        .lock()
+        .unwrap()
+        .flags_of("INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
+    assert!(local_flags(&store, "INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
+    assert!(!server
+        .lock()
+        .unwrap()
+        .flags_of("Trash", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
+    assert!(!local_flags(&store, "Trash", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
 
     // Heal Trash and retry. INBOX is already satisfied (local flags say
     // starred), so the retry touches ONLY Trash: exactly one SELECT and
@@ -1150,12 +1358,24 @@ async fn a_partial_failure_persists_the_succeeded_mailbox_and_a_retry_touches_on
         .modify_messages(&["imap:me@example.com:m1".into()], &["STARRED".into()], &[])
         .await
         .expect("retry succeeds");
-    assert!(server.lock().unwrap().flags_of("Trash", 1).iter().any(|f| f == "\\Flagged"));
+    assert!(server
+        .lock()
+        .unwrap()
+        .flags_of("Trash", 1)
+        .iter()
+        .any(|f| f == "\\Flagged"));
     let g = server.lock().unwrap();
-    assert_eq!(g.count_starting("UID STORE"), 1, "retry stores once (Trash only)");
+    assert_eq!(
+        g.count_starting("UID STORE"),
+        1,
+        "retry stores once (Trash only)"
+    );
     // The single SELECT was Trash, never INBOX (INBOX was already done).
     assert!(g.wire().iter().any(|c| c.contains("Trash")));
-    assert!(!g.wire().iter().any(|c| c.to_ascii_uppercase().starts_with("SELECT \"INBOX\"")));
+    assert!(!g
+        .wire()
+        .iter()
+        .any(|c| c.to_ascii_uppercase().starts_with("SELECT \"INBOX\"")));
 }
 
 // --- local flags_json updated; a following sync sweep reports no change -
@@ -1174,17 +1394,24 @@ async fn after_a_mutation_a_following_sweep_sees_no_change() {
 
     // A baseline sweep ingests m1 so the local store knows its id/thread.
     provider.baseline_cursor().await.unwrap();
-    let id = store.locations_in_mailbox("INBOX").unwrap()[0].message_id.clone();
+    let id = store.locations_in_mailbox("INBOX").unwrap()[0]
+        .message_id
+        .clone();
     let gen_before = store.generation().unwrap();
 
     // Mark it read through the mutation path.
-    provider.modify_messages(&[id], &[], &["UNREAD".into()]).await.expect("mark read");
+    provider
+        .modify_messages(&[id], &[], &["UNREAD".into()])
+        .await
+        .expect("mark read");
     let gen_after_mutation = store.generation().unwrap();
     assert_eq!(
         gen_after_mutation, gen_before,
         "the mutation itself does not bump the generation"
     );
-    assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Seen"));
+    assert!(local_flags(&store, "INBOX", 1)
+        .iter()
+        .any(|f| f == "\\Seen"));
 
     // A following sweep over the same (now \Seen) server state sees the
     // local flags already agree: no content change, no generation bump.
@@ -1282,9 +1509,22 @@ fn local_mailboxes_of(store: &ImapStateStore, message_id: &str) -> Vec<String> {
 #[tokio::test]
 async fn archive_moves_the_inbox_copy_to_archive_via_move() {
     let server = server_with_system_mailboxes();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>")); // uid 1
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     // archive == add [], remove [INBOX].
     provider
@@ -1309,9 +1549,22 @@ async fn archive_moves_the_inbox_copy_to_archive_via_move() {
 #[tokio::test]
 async fn unarchive_moves_the_archive_copy_to_inbox() {
     let server = server_with_system_mailboxes();
-    server.lock().unwrap().folder("Archive", 200).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+    server
+        .lock()
+        .unwrap()
+        .folder("Archive", 200)
+        .add(&["\\Seen"], &message("<m1@x>")); // uid 1
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Archive", 200, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "Archive",
+        200,
+        1,
+        &["\\Seen"],
+    );
 
     // unarchive == add [INBOX], remove [].
     provider
@@ -1329,9 +1582,22 @@ async fn unarchive_moves_the_archive_copy_to_inbox() {
 #[tokio::test]
 async fn trash_then_untrash_round_trips_inbox_and_trash() {
     let server = server_with_system_mailboxes();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>")); // uid 1
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     // trash == add [TRASH], remove [INBOX].
     provider
@@ -1350,7 +1616,10 @@ async fn trash_then_untrash_round_trips_inbox_and_trash() {
         .modify_thread("imap:t:m1", &["INBOX".into()], &["TRASH".into()])
         .await
         .expect("untrash");
-    assert!(uids_in(&server, "Trash").is_empty(), "trash uid {trash_uid} moved out");
+    assert!(
+        uids_in(&server, "Trash").is_empty(),
+        "trash uid {trash_uid} moved out"
+    );
     assert_eq!(uids_in(&server, "INBOX").len(), 1);
     assert_eq!(local_mailboxes_of(&store, &id), vec!["INBOX".to_string()]);
 }
@@ -1360,9 +1629,22 @@ async fn trash_then_untrash_round_trips_inbox_and_trash() {
 #[tokio::test]
 async fn spam_then_not_spam_round_trips_inbox_and_junk() {
     let server = server_with_system_mailboxes();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     provider
         .modify_thread("imap:t:m1", &["SPAM".into()], &["INBOX".into()])
@@ -1389,13 +1671,35 @@ async fn archive_moves_inbox_copies_and_leaves_sent_untouched() {
     let server = Arc::new(Mutex::new(s));
     let (provider, store) = provider_with(server.clone());
 
-    let a = seed_loc(&store, &provider, "a", "imap:t:th", "INBOX", 100, 1, &["\\Seen"]);
-    let b = seed_loc(&store, &provider, "b", "imap:t:th", "INBOX", 100, 2, &["\\Seen"]);
+    let a = seed_loc(
+        &store,
+        &provider,
+        "a",
+        "imap:t:th",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
+    let b = seed_loc(
+        &store,
+        &provider,
+        "b",
+        "imap:t:th",
+        "INBOX",
+        100,
+        2,
+        &["\\Seen"],
+    );
     // b also has a Sent copy.
     store
         .upsert_location(&ImapLocation {
-            mailbox: "Sent".into(), uidvalidity: 500, uid: 1,
-            message_id: b.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            mailbox: "Sent".into(),
+            uidvalidity: 500,
+            uid: 1,
+            message_id: b.clone(),
+            flags_json: r#"["\\Seen"]"#.into(),
+            modseq: None,
         })
         .unwrap();
 
@@ -1409,7 +1713,10 @@ async fn archive_moves_inbox_copies_and_leaves_sent_untouched() {
     assert_eq!(uids_in(&server, "Archive").len(), 2);
     assert_eq!(uids_in(&server, "Sent"), vec![1], "Sent copy left in place");
     assert_eq!(local_mailboxes_of(&store, &a), vec!["Archive".to_string()]);
-    assert_eq!(local_mailboxes_of(&store, &b), vec!["Archive".to_string(), "Sent".to_string()]);
+    assert_eq!(
+        local_mailboxes_of(&store, &b),
+        vec!["Archive".to_string(), "Sent".to_string()]
+    );
 }
 
 // --- a dead sibling (no location) is skipped ---------------------------
@@ -1417,9 +1724,22 @@ async fn archive_moves_inbox_copies_and_leaves_sent_untouched() {
 #[tokio::test]
 async fn archive_skips_a_dead_sibling_and_moves_the_live_one() {
     let server = server_with_system_mailboxes();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<live@x>")); // uid 1
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<live@x>")); // uid 1
     let (provider, store) = provider_with(server.clone());
-    let live = seed_loc(&store, &provider, "live", "imap:t:th", "INBOX", 100, 1, &["\\Seen"]);
+    let live = seed_loc(
+        &store,
+        &provider,
+        "live",
+        "imap:t:th",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
     // A dead sibling: thread row only, no location.
     store
         .commit_sync_round(&SyncRoundWrite {
@@ -1433,7 +1753,10 @@ async fn archive_skips_a_dead_sibling_and_moves_the_live_one() {
         .modify_thread("imap:t:th", &[], &["INBOX".into()])
         .await
         .expect("the dead sibling must not fail the archive");
-    assert_eq!(local_mailboxes_of(&store, &live), vec!["Archive".to_string()]);
+    assert_eq!(
+        local_mailboxes_of(&store, &live),
+        vec!["Archive".to_string()]
+    );
 }
 
 // --- an alias thread id resolves ---------------------------------------
@@ -1441,9 +1764,22 @@ async fn archive_skips_a_dead_sibling_and_moves_the_live_one() {
 #[tokio::test]
 async fn system_move_resolves_an_alias_thread_id() {
     let server = server_with_system_mailboxes();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:survivor", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:survivor",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
     store
         .commit_sync_round(&SyncRoundWrite {
             aliases: vec![("imap:t:old".into(), "imap:t:survivor".into())],
@@ -1486,7 +1822,16 @@ async fn archive_creates_a_missing_archive_mailbox_then_moves() {
             permanent_keywords: None,
         })
         .unwrap();
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     provider
         .modify_thread("imap:t:m1", &[], &["INBOX".into()])
@@ -1511,9 +1856,22 @@ async fn archive_creates_a_missing_archive_mailbox_then_moves() {
 async fn trash_with_no_trash_mailbox_is_a_permanent_error_naming_the_role() {
     // INBOX only — no Trash configured.
     let server = server_with_inbox();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
-    let _id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let _id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider
         .modify_thread("imap:t:m1", &["TRASH".into()], &["INBOX".into()])
@@ -1521,7 +1879,10 @@ async fn trash_with_no_trash_mailbox_is_a_permanent_error_naming_the_role() {
         .unwrap_err();
     match err {
         ProviderError::InvalidOperation(m) => {
-            assert!(m.to_ascii_lowercase().contains("trash"), "names the role: {m}");
+            assert!(
+                m.to_ascii_lowercase().contains("trash"),
+                "names the role: {m}"
+            );
         }
         other => panic!("expected permanent InvalidOperation, got {other:?}"),
     }
@@ -1543,7 +1904,16 @@ async fn archive_uses_copy_delete_expunge_when_only_uidplus() {
     s.folder("Archive", 200);
     let server = Arc::new(Mutex::new(s));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     provider
         .modify_thread("imap:t:m1", &[], &["INBOX".into()])
@@ -1552,7 +1922,11 @@ async fn archive_uses_copy_delete_expunge_when_only_uidplus() {
 
     let g = server.lock().unwrap();
     assert_eq!(g.count_starting("UID COPY"), 1);
-    assert_eq!(g.count_starting("UID MOVE"), 0, "no MOVE without the capability");
+    assert_eq!(
+        g.count_starting("UID MOVE"),
+        0,
+        "no MOVE without the capability"
+    );
     assert_eq!(g.count_starting("UID EXPUNGE"), 1, "targeted expunge");
     drop(g);
     assert!(uids_in(&server, "INBOX").is_empty());
@@ -1570,14 +1944,25 @@ async fn archive_with_no_move_or_uidplus_is_permanent_and_sends_no_write() {
     s.folder("Archive", 200);
     let server = Arc::new(Mutex::new(s));
     let (provider, store) = provider_with(server.clone());
-    let _id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let _id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider
         .modify_thread("imap:t:m1", &[], &["INBOX".into()])
         .await
         .unwrap_err();
     match err {
-        ProviderError::InvalidOperation(m) => assert!(m.contains("EXPUNGE"), "names the hazard: {m}"),
+        ProviderError::InvalidOperation(m) => {
+            assert!(m.contains("EXPUNGE"), "names the hazard: {m}")
+        }
         other => panic!("expected Unsupported InvalidOperation, got {other:?}"),
     }
     // The guard SELECTed to read capabilities, but issued no relocation.
@@ -1594,9 +1979,22 @@ async fn archive_of_a_thread_with_no_inbox_copy_sends_nothing() {
     // The message is already in Archive (archived), not in INBOX. Archive
     // again is a no-op: Ok and NOT A SINGLE command (not even SELECT).
     let server = server_with_system_mailboxes();
-    server.lock().unwrap().folder("Archive", 200).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("Archive", 200)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Archive", 200, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "Archive",
+        200,
+        1,
+        &["\\Seen"],
+    );
 
     provider
         .modify_thread("imap:t:m1", &[], &["INBOX".into()])
@@ -1605,7 +2003,11 @@ async fn archive_of_a_thread_with_no_inbox_copy_sends_nothing() {
     // archive's dest is Archive and the message is already there, so it is
     // already satisfied: nothing sent.
     let g = server.lock().unwrap();
-    assert_eq!(g.count_starting("SELECT"), 0, "no SELECT for a satisfied archive");
+    assert_eq!(
+        g.count_starting("SELECT"),
+        0,
+        "no SELECT for a satisfied archive"
+    );
     assert_eq!(g.count_starting("UID MOVE"), 0);
     assert_eq!(g.count_starting("UID COPY"), 0);
     drop(g);
@@ -1622,18 +2024,32 @@ async fn trash_of_a_sent_only_thread_is_permanent_and_sends_nothing() {
     s.folder("Sent", 500).add(&["\\Seen"], &message("<m1@x>"));
     let server = Arc::new(Mutex::new(s));
     let (provider, store) = provider_with(server.clone());
-    let _id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Sent", 500, 1, &["\\Seen"]);
+    let _id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "Sent",
+        500,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider
         .modify_thread("imap:t:m1", &["TRASH".into()], &["INBOX".into()])
         .await
         .unwrap_err();
     match err {
-        ProviderError::InvalidOperation(m) => assert!(m.to_ascii_lowercase().contains("sent"), "{m}"),
+        ProviderError::InvalidOperation(m) => {
+            assert!(m.to_ascii_lowercase().contains("sent"), "{m}")
+        }
         other => panic!("expected permanent InvalidOperation, got {other:?}"),
     }
     let g = server.lock().unwrap();
-    assert_eq!(g.count_starting("UID MOVE") + g.count_starting("UID COPY"), 0);
+    assert_eq!(
+        g.count_starting("UID MOVE") + g.count_starting("UID COPY"),
+        0
+    );
 }
 
 // --- stale UIDVALIDITY on the source sends nothing and is transient ----
@@ -1647,7 +2063,16 @@ async fn system_move_with_a_stale_source_uidvalidity_is_transient_and_sends_no_w
         g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
     }
     let (provider, store) = provider_with(server.clone());
-    let _id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]); // stored 100
+    let _id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    ); // stored 100
 
     let err = provider
         .modify_thread("imap:t:m1", &[], &["INBOX".into()])
@@ -1679,17 +2104,37 @@ async fn a_half_applied_move_then_retry_yields_exactly_one_destination_copy() {
     s.fail_expunge_once = Some("expunge refused".into());
     let server = Arc::new(Mutex::new(s));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     // First attempt: COPY + \Deleted ok, EXPUNGE fails -> partial error.
     let err = provider
         .modify_thread("imap:t:m1", &[], &["INBOX".into()])
         .await
         .unwrap_err();
-    assert!(matches!(err, ProviderError::InvalidOperation(ref m) if m.contains("BOTH")), "{err:?}");
+    assert!(
+        matches!(err, ProviderError::InvalidOperation(ref m) if m.contains("BOTH")),
+        "{err:?}"
+    );
     // The server now has the copy in BOTH mailboxes...
-    assert_eq!(uids_in(&server, "Archive").len(), 1, "copy landed in Archive");
-    assert_eq!(uids_in(&server, "INBOX").len(), 1, "source \\Deleted but not yet expunged");
+    assert_eq!(
+        uids_in(&server, "Archive").len(),
+        1,
+        "copy landed in Archive"
+    );
+    assert_eq!(
+        uids_in(&server, "INBOX").len(),
+        1,
+        "source \\Deleted but not yet expunged"
+    );
     // ...and the local store already records the Archive destination.
     assert!(local_mailboxes_of(&store, &id).contains(&"Archive".to_string()));
 
@@ -1707,7 +2152,11 @@ async fn a_half_applied_move_then_retry_yields_exactly_one_destination_copy() {
         "the retry copies NOTHING again"
     );
     drop(g);
-    assert_eq!(uids_in(&server, "Archive").len(), 1, "exactly one destination copy");
+    assert_eq!(
+        uids_in(&server, "Archive").len(),
+        1,
+        "exactly one destination copy"
+    );
     assert!(uids_in(&server, "INBOX").is_empty(), "source now expunged");
     assert_eq!(local_mailboxes_of(&store, &id), vec!["Archive".to_string()]);
 }
@@ -1723,7 +2172,16 @@ async fn a_transient_expunge_failure_after_the_copy_is_retryable_and_the_retry_c
     s.fail_expunge_once = Some("[UNAVAILABLE] try later".into());
     let server = Arc::new(Mutex::new(s));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     // The engine retries only retry_mutation() errors; a permanent class
     // here would roll the archive back and leave the message in BOTH
@@ -1732,15 +2190,25 @@ async fn a_transient_expunge_failure_after_the_copy_is_retryable_and_the_retry_c
         .modify_thread("imap:t:m1", &[], &["INBOX".into()])
         .await
         .unwrap_err();
-    assert!(err.retry_mutation(), "a transient cause must stay retryable: {err:?}");
-    assert!(err.to_string().contains("BOTH"), "still names the partial state: {err}");
+    assert!(
+        err.retry_mutation(),
+        "a transient cause must stay retryable: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("BOTH"),
+        "still names the partial state: {err}"
+    );
     assert!(local_mailboxes_of(&store, &id).contains(&"Archive".to_string()));
 
     provider
         .modify_thread("imap:t:m1", &[], &["INBOX".into()])
         .await
         .expect("the engine's retry finishes the move");
-    assert_eq!(uids_in(&server, "Archive").len(), 1, "exactly one destination copy");
+    assert_eq!(
+        uids_in(&server, "Archive").len(),
+        1,
+        "exactly one destination copy"
+    );
     assert!(uids_in(&server, "INBOX").is_empty());
     assert_eq!(local_mailboxes_of(&store, &id), vec!["Archive".to_string()]);
 }
@@ -1761,14 +2229,35 @@ async fn trash_partial_failure_persists_first_source_and_retry_touches_only_the_
     s.folder("INBOX", 100).select_busy = true;
     let server = Arc::new(Mutex::new(s));
     let (provider, store) = provider_with(server.clone());
-    let a = seed_loc(&store, &provider, "a", "imap:t:th", "Archive", 200, 1, &["\\Seen"]);
-    let b = seed_loc(&store, &provider, "b", "imap:t:th", "INBOX", 100, 1, &["\\Seen"]);
+    let a = seed_loc(
+        &store,
+        &provider,
+        "a",
+        "imap:t:th",
+        "Archive",
+        200,
+        1,
+        &["\\Seen"],
+    );
+    let b = seed_loc(
+        &store,
+        &provider,
+        "b",
+        "imap:t:th",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider
         .modify_thread("imap:t:th", &["TRASH".into()], &["INBOX".into()])
         .await
         .unwrap_err();
-    assert!(matches!(err, ProviderError::TransientTransport(_)), "{err:?}");
+    assert!(
+        matches!(err, ProviderError::TransientTransport(_)),
+        "{err:?}"
+    );
     // a (Archive, processed first) moved to Trash and is persisted; b is
     // still only in INBOX.
     assert_eq!(local_mailboxes_of(&store, &a), vec!["Trash".to_string()]);
@@ -1786,7 +2275,10 @@ async fn trash_partial_failure_persists_first_source_and_retry_touches_only_the_
     assert_eq!(local_mailboxes_of(&store, &b), vec!["Trash".to_string()]);
     // The retry SELECTed INBOX (b's source), never Archive again.
     let g = server.lock().unwrap();
-    assert!(g.wire().iter().any(|c| c.to_ascii_uppercase().contains("SELECT \"INBOX\"")));
+    assert!(g
+        .wire()
+        .iter()
+        .any(|c| c.to_ascii_uppercase().contains("SELECT \"INBOX\"")));
     assert!(!g.wire().iter().any(|c| c.contains("Archive")));
 }
 
@@ -1795,9 +2287,22 @@ async fn trash_partial_failure_persists_first_source_and_retry_touches_only_the_
 #[tokio::test]
 async fn a_system_id_mixed_or_via_modify_messages_is_rejected_with_zero_commands() {
     let server = server_with_system_mailboxes();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     // INBOX combined with UNREAD (a flag) — not an engine move shape.
     let err = provider
@@ -1808,7 +2313,11 @@ async fn a_system_id_mixed_or_via_modify_messages_is_rejected_with_zero_commands
 
     // TRASH combined with a label-folder id.
     let err = provider
-        .modify_thread("imap:t:m1", &["TRASH".into(), "lf:Work".into()], &["INBOX".into()])
+        .modify_thread(
+            "imap:t:m1",
+            &["TRASH".into(), "lf:Work".into()],
+            &["INBOX".into()],
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
@@ -1837,12 +2346,18 @@ async fn after_a_move_a_following_sweep_sees_no_change_and_no_duplicate() {
     // location already recorded (same UID) — so no new message, no label
     // flap.
     let server = server_with_system_mailboxes();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
 
     // Baseline so the local store knows m1 (in INBOX) and its thread.
     provider.baseline_cursor().await.unwrap();
-    let id = store.locations_in_mailbox("INBOX").unwrap()[0].message_id.clone();
+    let id = store.locations_in_mailbox("INBOX").unwrap()[0]
+        .message_id
+        .clone();
 
     // Archive it.
     provider
@@ -1904,9 +2419,22 @@ fn local_count_in(store: &ImapStateStore, mailbox: &str) -> usize {
 #[tokio::test]
 async fn add_label_copies_the_inbox_message_into_the_label_mailbox() {
     let server = server_with_label_folder();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>")); // uid 1
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     provider
         .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
@@ -1915,7 +2443,11 @@ async fn add_label_copies_the_inbox_message_into_the_label_mailbox() {
 
     // The server now holds a copy in Labels/Clients, and the local store
     // recorded that destination location (from COPYUID) with the same flags.
-    assert_eq!(uids_in(&server, "Labels/Clients").len(), 1, "one copy on the server");
+    assert_eq!(
+        uids_in(&server, "Labels/Clients").len(),
+        1,
+        "one copy on the server"
+    );
     let boxes = local_mailboxes_of(&store, &id);
     assert!(boxes.contains(&"INBOX".to_string()));
     assert!(boxes.contains(&"Labels/Clients".to_string()), "{boxes:?}");
@@ -1935,15 +2467,37 @@ async fn add_label_to_several_messages_copies_each() {
         g.folder("INBOX", 100).add(&["\\Seen"], &message("<b@x>")); // uid 2
     }
     let (provider, store) = provider_with(server.clone());
-    let a = seed_loc(&store, &provider, "a", "imap:t:a", "INBOX", 100, 1, &["\\Seen"]);
-    let b = seed_loc(&store, &provider, "b", "imap:t:b", "INBOX", 100, 2, &["\\Seen"]);
+    let a = seed_loc(
+        &store,
+        &provider,
+        "a",
+        "imap:t:a",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
+    let b = seed_loc(
+        &store,
+        &provider,
+        "b",
+        "imap:t:b",
+        "INBOX",
+        100,
+        2,
+        &["\\Seen"],
+    );
 
     provider
         .modify_messages(&[a.clone(), b.clone()], &["lf:Clients".into()], &[])
         .await
         .expect("add label to two");
 
-    assert_eq!(uids_in(&server, "Labels/Clients").len(), 2, "two copies on the server");
+    assert_eq!(
+        uids_in(&server, "Labels/Clients").len(),
+        2,
+        "two copies on the server"
+    );
     assert!(local_mailboxes_of(&store, &a).contains(&"Labels/Clients".to_string()));
     assert!(local_mailboxes_of(&store, &b).contains(&"Labels/Clients".to_string()));
 }
@@ -1953,16 +2507,39 @@ async fn add_label_to_several_messages_copies_each() {
 #[tokio::test]
 async fn add_label_is_idempotent_and_sends_no_command_the_second_time() {
     let server = server_with_label_folder();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
-    provider.modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[]).await.expect("add 1");
+    provider
+        .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
+        .await
+        .expect("add 1");
     server.lock().unwrap().commands.lock().unwrap().clear();
     // Second add: already satisfied — ZERO commands (not even a SELECT).
-    provider.modify_messages(&[id], &["lf:Clients".into()], &[]).await.expect("add 2 no-op");
+    provider
+        .modify_messages(&[id], &["lf:Clients".into()], &[])
+        .await
+        .expect("add 2 no-op");
     let g = server.lock().unwrap();
-    assert_eq!(g.count_starting("SELECT"), 0, "idempotent add selects nothing");
+    assert_eq!(
+        g.count_starting("SELECT"),
+        0,
+        "idempotent add selects nothing"
+    );
     assert_eq!(g.count_starting("UID COPY"), 0, "and copies nothing");
 }
 
@@ -1974,27 +2551,50 @@ async fn add_label_source_priority_prefers_inbox_then_archive() {
     let server = server_with_label_folder();
     {
         let mut g = server.lock().unwrap();
-        g.folder("Archive", 200).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+        g.folder("Archive", 200)
+            .add(&["\\Seen"], &message("<m1@x>")); // uid 1
         g.folder("Sent", 500).add(&["\\Seen"], &message("<m1@x>")); // uid 1
     }
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Archive", 200, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "Archive",
+        200,
+        1,
+        &["\\Seen"],
+    );
     store
         .upsert_location(&ImapLocation {
-            mailbox: "Sent".into(), uidvalidity: 500, uid: 1,
-            message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            mailbox: "Sent".into(),
+            uidvalidity: 500,
+            uid: 1,
+            message_id: id.clone(),
+            flags_json: r#"["\\Seen"]"#.into(),
+            modseq: None,
         })
         .unwrap();
 
-    provider.modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[]).await.expect("add");
+    provider
+        .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
+        .await
+        .expect("add");
 
     // The COPY was issued from Archive, not Sent.
     let g = server.lock().unwrap();
     assert!(
-        g.wire().iter().any(|c| c.to_ascii_uppercase().starts_with("SELECT \"ARCHIVE\"")),
-        "selected Archive as the source: {:?}", g.wire()
+        g.wire()
+            .iter()
+            .any(|c| c.to_ascii_uppercase().starts_with("SELECT \"ARCHIVE\"")),
+        "selected Archive as the source: {:?}",
+        g.wire()
     );
-    assert!(!g.wire().iter().any(|c| c.to_ascii_uppercase().starts_with("SELECT \"SENT\"")));
+    assert!(!g
+        .wire()
+        .iter()
+        .any(|c| c.to_ascii_uppercase().starts_with("SELECT \"SENT\"")));
 }
 
 // --- a message whose only copy is in Trash is refused ------------------
@@ -2007,7 +2607,16 @@ async fn add_label_from_a_trash_only_message_is_a_permanent_error() {
     s.folder("Labels/Clients", 600);
     let server = Arc::new(Mutex::new(s));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Trash", 300, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "Trash",
+        300,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider
         .modify_messages(&[id], &["lf:Clients".into()], &[])
@@ -2015,10 +2624,16 @@ async fn add_label_from_a_trash_only_message_is_a_permanent_error() {
         .unwrap_err();
     assert!(!err.retry_mutation());
     match err {
-        ProviderError::InvalidOperation(m) => assert!(m.contains("no synced copy outside Trash"), "{m}"),
+        ProviderError::InvalidOperation(m) => {
+            assert!(m.contains("no synced copy outside Trash"), "{m}")
+        }
         other => panic!("expected permanent InvalidOperation, got {other:?}"),
     }
-    assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0, "nothing copied");
+    assert_eq!(
+        server.lock().unwrap().count_starting("UID COPY"),
+        0,
+        "nothing copied"
+    );
 }
 
 // --- a missing label mailbox is a permanent error ----------------------
@@ -2030,7 +2645,16 @@ async fn add_label_to_a_missing_label_mailbox_is_permanent() {
     s.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
     let server = Arc::new(Mutex::new(s));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider
         .modify_messages(&[id], &["lf:Clients".into()], &[])
@@ -2055,7 +2679,16 @@ async fn add_label_with_a_stale_source_uidvalidity_is_transient_and_sends_no_cop
     }
     let (provider, store) = provider_with(server.clone());
     // Local location says UIDVALIDITY 100 (stale).
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider
         .modify_messages(&[id], &["lf:Clients".into()], &[])
@@ -2066,7 +2699,11 @@ async fn add_label_with_a_stale_source_uidvalidity_is_transient_and_sends_no_cop
         "{err:?}"
     );
     assert!(err.retry_mutation());
-    assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0, "nothing copied");
+    assert_eq!(
+        server.lock().unwrap().count_starting("UID COPY"),
+        0,
+        "nothing copied"
+    );
 }
 
 // --- remove a label: expunge only that copy, keep the others -----------
@@ -2077,14 +2714,28 @@ async fn remove_label_expunges_only_the_label_copy_and_keeps_the_inbox_copy() {
     {
         let mut g = server.lock().unwrap();
         g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>")); // uid 1
-        g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+        g.folder("Labels/Clients", 600)
+            .add(&["\\Seen"], &message("<m1@x>")); // uid 1
     }
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
     store
         .upsert_location(&ImapLocation {
-            mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
-            message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            mailbox: "Labels/Clients".into(),
+            uidvalidity: 600,
+            uid: 1,
+            message_id: id.clone(),
+            flags_json: r#"["\\Seen"]"#.into(),
+            modseq: None,
         })
         .unwrap();
 
@@ -2094,7 +2745,11 @@ async fn remove_label_expunges_only_the_label_copy_and_keeps_the_inbox_copy() {
         .expect("remove label");
 
     // The label copy is gone (server + local); the INBOX copy is untouched.
-    assert_eq!(uids_in(&server, "Labels/Clients").len(), 0, "label copy expunged");
+    assert_eq!(
+        uids_in(&server, "Labels/Clients").len(),
+        0,
+        "label copy expunged"
+    );
     assert_eq!(uids_in(&server, "INBOX"), vec![1], "INBOX copy kept");
     assert_eq!(local_mailboxes_of(&store, &id), vec!["INBOX".to_string()]);
     let g = server.lock().unwrap();
@@ -2106,10 +2761,23 @@ async fn remove_label_expunges_only_the_label_copy_and_keeps_the_inbox_copy() {
 #[tokio::test]
 async fn remove_label_that_is_the_last_copy_is_refused_with_zero_commands() {
     let server = server_with_label_folder();
-    server.lock().unwrap().folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("Labels/Clients", 600)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
     // The ONLY synced location is the label copy.
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Labels/Clients", 600, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "Labels/Clients",
+        600,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider
         .modify_messages(&[id], &[], &["lf:Clients".into()])
@@ -2134,14 +2802,28 @@ async fn remove_label_without_uidplus_is_refused_with_no_write() {
         let mut g = server.lock().unwrap();
         g.capabilities = vec!["IMAP4REV1".into(), "MOVE".into()]; // NO UIDPLUS
         g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
-        g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+        g.folder("Labels/Clients", 600)
+            .add(&["\\Seen"], &message("<m1@x>"));
     }
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
     store
         .upsert_location(&ImapLocation {
-            mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
-            message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            mailbox: "Labels/Clients".into(),
+            uidvalidity: 600,
+            uid: 1,
+            message_id: id.clone(),
+            flags_json: r#"["\\Seen"]"#.into(),
+            modseq: None,
         })
         .unwrap();
 
@@ -2154,8 +2836,16 @@ async fn remove_label_without_uidplus_is_refused_with_no_write() {
         other => panic!("expected permanent InvalidOperation, got {other:?}"),
     }
     let g = server.lock().unwrap();
-    assert_eq!(g.count_starting("UID STORE"), 0, "no \\Deleted store without UIDPLUS");
-    assert_eq!(g.count_starting("UID EXPUNGE"), 0, "and never a plain/UID EXPUNGE");
+    assert_eq!(
+        g.count_starting("UID STORE"),
+        0,
+        "no \\Deleted store without UIDPLUS"
+    );
+    assert_eq!(
+        g.count_starting("UID EXPUNGE"),
+        0,
+        "and never a plain/UID EXPUNGE"
+    );
 }
 
 // --- remove with no label copy is a satisfied no-op --------------------
@@ -2163,9 +2853,22 @@ async fn remove_label_without_uidplus_is_refused_with_no_write() {
 #[tokio::test]
 async fn remove_label_with_no_label_copy_sends_nothing() {
     let server = server_with_label_folder();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     provider
         .modify_messages(&[id], &[], &["lf:Clients".into()])
@@ -2189,14 +2892,28 @@ async fn remove_label_half_applied_expunge_failure_is_retryable_and_the_retry_fi
             let mut g = server.lock().unwrap();
             g.fail_expunge_once = Some(fail_text.into());
             g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
-            g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+            g.folder("Labels/Clients", 600)
+                .add(&["\\Seen"], &message("<m1@x>"));
         }
         let (provider, store) = provider_with(server.clone());
-        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+        let id = seed_loc(
+            &store,
+            &provider,
+            "m1",
+            "imap:t:m1",
+            "INBOX",
+            100,
+            1,
+            &["\\Seen"],
+        );
         store
             .upsert_location(&ImapLocation {
-                mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
-                message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+                mailbox: "Labels/Clients".into(),
+                uidvalidity: 600,
+                uid: 1,
+                message_id: id.clone(),
+                flags_json: r#"["\\Seen"]"#.into(),
+                modseq: None,
             })
             .unwrap();
 
@@ -2206,12 +2923,17 @@ async fn remove_label_half_applied_expunge_failure_is_retryable_and_the_retry_fi
             .await
             .unwrap_err();
         assert_eq!(
-            err.retry_mutation(), expect_transient,
+            err.retry_mutation(),
+            expect_transient,
             "retry class preserved for {fail_text}: {err:?}"
         );
         // The label copy is still present on the server (flagged \Deleted),
         // and still recorded locally — the half state the retry finishes.
-        assert_eq!(uids_in(&server, "Labels/Clients").len(), 1, "copy still present after the failed expunge");
+        assert_eq!(
+            uids_in(&server, "Labels/Clients").len(),
+            1,
+            "copy still present after the failed expunge"
+        );
         assert!(local_mailboxes_of(&store, &id).contains(&"Labels/Clients".to_string()));
 
         // Retry: the one-shot failure is cleared, the expunge completes,
@@ -2220,7 +2942,11 @@ async fn remove_label_half_applied_expunge_failure_is_retryable_and_the_retry_fi
             .modify_messages(std::slice::from_ref(&id), &[], &["lf:Clients".into()])
             .await
             .expect("retry finishes the remove");
-        assert_eq!(uids_in(&server, "Labels/Clients").len(), 0, "copy expunged on retry");
+        assert_eq!(
+            uids_in(&server, "Labels/Clients").len(),
+            0,
+            "copy expunged on retry"
+        );
         assert_eq!(local_mailboxes_of(&store, &id), vec!["INBOX".to_string()]);
     }
 }
@@ -2236,22 +2962,47 @@ async fn add_label_retry_after_a_recorded_copy_does_not_double_copy() {
     {
         let mut g = server.lock().unwrap();
         g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
-        g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>")); // the copy already landed
+        g.folder("Labels/Clients", 600)
+            .add(&["\\Seen"], &message("<m1@x>")); // the copy already landed
     }
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
     // Record the destination row as a prior partial success would.
     store
         .upsert_location(&ImapLocation {
-            mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
-            message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            mailbox: "Labels/Clients".into(),
+            uidvalidity: 600,
+            uid: 1,
+            message_id: id.clone(),
+            flags_json: r#"["\\Seen"]"#.into(),
+            modseq: None,
         })
         .unwrap();
 
-    provider.modify_messages(&[id], &["lf:Clients".into()], &[]).await.expect("retry add");
+    provider
+        .modify_messages(&[id], &["lf:Clients".into()], &[])
+        .await
+        .expect("retry add");
     // Still exactly one copy on the server (no second copy created).
-    assert_eq!(uids_in(&server, "Labels/Clients").len(), 1, "no duplicate copy");
-    assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0, "retry copies nothing");
+    assert_eq!(
+        uids_in(&server, "Labels/Clients").len(),
+        1,
+        "no duplicate copy"
+    );
+    assert_eq!(
+        server.lock().unwrap().count_starting("UID COPY"),
+        0,
+        "retry copies nothing"
+    );
 }
 
 // --- non-Folders storage mode rejects every lf: op with zero commands --
@@ -2260,26 +3011,48 @@ async fn add_label_retry_after_a_recorded_copy_does_not_double_copy() {
 async fn label_ops_in_non_folders_storage_mode_are_rejected_with_zero_commands() {
     use super::super::settings::LabelStorage;
     let server = server_with_label_folder();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (mut provider, store) = provider_with(server.clone());
     // Flip to keyword mode (no container in play).
     provider.settings.label_storage = LabelStorage::Keywords;
     provider.settings.label_container = None;
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     for (add, remove) in [
         (vec!["lf:Clients".to_string()], vec![]),
         (vec![], vec!["lf:Clients".to_string()]),
     ] {
-        let err = provider.modify_messages(std::slice::from_ref(&id), &add, &remove).await.unwrap_err();
+        let err = provider
+            .modify_messages(std::slice::from_ref(&id), &add, &remove)
+            .await
+            .unwrap_err();
         match err {
             ProviderError::InvalidOperation(m) => assert!(m.contains("keyword labels"), "{m}"),
             other => panic!("expected InvalidOperation naming the mode, got {other:?}"),
         }
     }
     // create / delete likewise refuse naming the mode.
-    assert!(matches!(provider.create_label("X").await.unwrap_err(), ProviderError::InvalidOperation(_)));
-    assert!(matches!(provider.delete_label("lf:Clients").await.unwrap_err(), ProviderError::InvalidOperation(_)));
+    assert!(matches!(
+        provider.create_label("X").await.unwrap_err(),
+        ProviderError::InvalidOperation(_)
+    ));
+    assert!(matches!(
+        provider.delete_label("lf:Clients").await.unwrap_err(),
+        ProviderError::InvalidOperation(_)
+    ));
     assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0);
     assert_eq!(server.lock().unwrap().count_starting("CREATE"), 0);
 }
@@ -2289,24 +3062,47 @@ async fn label_ops_in_non_folders_storage_mode_are_rejected_with_zero_commands()
 #[tokio::test]
 async fn a_mixed_or_multi_label_message_request_is_rejected_before_any_command() {
     let server = server_with_label_folder();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     let bad: Vec<(Vec<String>, Vec<String>)> = vec![
         (vec!["lf:Clients".into(), "STARRED".into()], vec![]), // label + flag
         (vec!["lf:A".into(), "lf:B".into()], vec![]),          // two labels
         (vec!["lf:Clients".into()], vec!["lf:Clients".into()]), // both lists
-        (vec!["folder:Projects".into()], vec![]),               // folder: not accepted
-        (vec!["lf:Clients".into(), "INBOX".into()], vec![]),    // label + system
+        (vec!["folder:Projects".into()], vec![]),              // folder: not accepted
+        (vec!["lf:Clients".into(), "INBOX".into()], vec![]),   // label + system
     ];
     for (add, remove) in bad {
-        let err = provider.modify_messages(std::slice::from_ref(&id), &add, &remove).await.unwrap_err();
-        assert!(matches!(err, ProviderError::InvalidOperation(_)), "add={add:?} remove={remove:?} -> {err:?}");
+        let err = provider
+            .modify_messages(std::slice::from_ref(&id), &add, &remove)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ProviderError::InvalidOperation(_)),
+            "add={add:?} remove={remove:?} -> {err:?}"
+        );
         assert!(!err.retry_mutation());
     }
     let g = server.lock().unwrap();
-    assert_eq!(g.count_starting("SELECT"), 0, "nothing selected for a rejected request");
+    assert_eq!(
+        g.count_starting("SELECT"),
+        0,
+        "nothing selected for a rejected request"
+    );
     assert_eq!(g.count_starting("UID COPY"), 0);
 }
 
@@ -2315,9 +3111,22 @@ async fn a_mixed_or_multi_label_message_request_is_rejected_before_any_command()
 #[tokio::test]
 async fn modify_thread_still_rejects_a_label_id_permanently() {
     let server = server_with_label_folder();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
-    let _id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let _id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider
         .modify_thread("imap:t:m1", &["lf:Clients".into()], &[])
@@ -2342,7 +3151,10 @@ async fn create_label_creates_the_mailbox_and_lists_it() {
     assert!(server.lock().unwrap().folders.contains_key("Labels/Acme"));
     // …and list_labels shows it immediately, with no sync.
     let listed = provider.list_labels().await.unwrap();
-    assert!(listed.iter().any(|l| l.id == "lf:Acme" && l.kind == "user"), "{listed:?}");
+    assert!(
+        listed.iter().any(|l| l.id == "lf:Acme" && l.kind == "user"),
+        "{listed:?}"
+    );
 }
 
 #[tokio::test]
@@ -2352,10 +3164,24 @@ async fn create_label_is_case_insensitively_idempotent() {
 
     // "clients" aliases the existing "Clients" case-insensitively: returns
     // the EXISTING label and creates no new mailbox.
-    let label = provider.create_label("clients").await.expect("idempotent create");
+    let label = provider
+        .create_label("clients")
+        .await
+        .expect("idempotent create");
     assert_eq!(label.id, "lf:Clients", "returns the existing label id");
-    assert!(!server.lock().unwrap().folders.contains_key("Labels/clients"), "no new mailbox");
-    assert_eq!(server.lock().unwrap().count_starting("CREATE"), 0, "no CREATE issued");
+    assert!(
+        !server
+            .lock()
+            .unwrap()
+            .folders
+            .contains_key("Labels/clients"),
+        "no new mailbox"
+    );
+    assert_eq!(
+        server.lock().unwrap().count_starting("CREATE"),
+        0,
+        "no CREATE issued"
+    );
 }
 
 #[tokio::test]
@@ -2364,28 +3190,44 @@ async fn create_label_rejects_hostile_names_delimiter_and_over_length() {
     let (provider, _store) = provider_with(server.clone());
 
     for bad in [
-        "",                 // empty
-        "   ",              // whitespace only
-        "a\rb",             // control (CR)
-        "a\nb",             // control (LF)
-        "Clients/Sub",      // contains the delimiter
-        "/leading",         // leading delimiter
-        "trailing/",        // trailing delimiter
+        "",            // empty
+        "   ",         // whitespace only
+        "a\rb",        // control (CR)
+        "a\nb",        // control (LF)
+        "Clients/Sub", // contains the delimiter
+        "/leading",    // leading delimiter
+        "trailing/",   // trailing delimiter
     ] {
         let err = provider.create_label(bad).await.unwrap_err();
-        assert!(matches!(err, ProviderError::InvalidOperation(_)), "{bad:?} -> {err:?}");
+        assert!(
+            matches!(err, ProviderError::InvalidOperation(_)),
+            "{bad:?} -> {err:?}"
+        );
     }
     // Length: below / exact / above MAX_LABEL_NAME_CHARS.
     let max = super::super::policy::MAX_LABEL_NAME_CHARS;
     let below = "x".repeat(max - 1);
     let exact = "x".repeat(max);
     let above = "x".repeat(max + 1);
-    assert!(provider.create_label(&below).await.is_ok(), "below the limit");
-    assert!(provider.create_label(&exact).await.is_ok(), "exactly at the limit");
+    assert!(
+        provider.create_label(&below).await.is_ok(),
+        "below the limit"
+    );
+    assert!(
+        provider.create_label(&exact).await.is_ok(),
+        "exactly at the limit"
+    );
     let err = provider.create_label(&above).await.unwrap_err();
-    assert!(matches!(err, ProviderError::InvalidOperation(_)), "above the limit must reject");
+    assert!(
+        matches!(err, ProviderError::InvalidOperation(_)),
+        "above the limit must reject"
+    );
     // No mailbox was created for the over-length name.
-    assert!(!server.lock().unwrap().folders.contains_key(&format!("Labels/{above}")));
+    assert!(!server
+        .lock()
+        .unwrap()
+        .folders
+        .contains_key(&format!("Labels/{above}")));
 }
 
 #[tokio::test]
@@ -2399,12 +3241,18 @@ async fn create_label_creates_a_missing_container_then_retries() {
     let server = Arc::new(Mutex::new(s));
     let (provider, _store) = provider_with(server.clone());
 
-    let label = provider.create_label("New").await.expect("create after container");
+    let label = provider
+        .create_label("New")
+        .await
+        .expect("create after container");
     assert_eq!(label.id, "lf:New");
     let g = server.lock().unwrap();
     // Both the container and the label mailbox exist now.
     assert!(g.folders.contains_key("Labels"), "container created");
-    assert!(g.folders.contains_key("Labels/New"), "label mailbox created on retry");
+    assert!(
+        g.folders.contains_key("Labels/New"),
+        "label mailbox created on retry"
+    );
     // Two CREATE lines reached the wire (the failed label, then container +
     // retried label) — at least the container + successful label.
     assert!(g.count_starting("CREATE") >= 2, "{:?}", g.wire());
@@ -2418,41 +3266,86 @@ async fn delete_label_allowed_when_every_message_has_another_copy() {
     {
         let mut g = server.lock().unwrap();
         g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
-        g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+        g.folder("Labels/Clients", 600)
+            .add(&["\\Seen"], &message("<m1@x>"));
     }
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
     store
         .upsert_location(&ImapLocation {
-            mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
-            message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            mailbox: "Labels/Clients".into(),
+            uidvalidity: 600,
+            uid: 1,
+            message_id: id.clone(),
+            flags_json: r#"["\\Seen"]"#.into(),
+            modseq: None,
         })
         .unwrap();
 
-    provider.delete_label("lf:Clients").await.expect("delete allowed");
+    provider
+        .delete_label("lf:Clients")
+        .await
+        .expect("delete allowed");
     // The mailbox is gone on the server, the catalog row retired, the
     // label copy's local location removed; INBOX untouched.
-    assert!(!server.lock().unwrap().folders.contains_key("Labels/Clients"));
-    assert!(!store.mailboxes().unwrap().iter().any(|m| m.name == "Labels/Clients"));
+    assert!(!server
+        .lock()
+        .unwrap()
+        .folders
+        .contains_key("Labels/Clients"));
+    assert!(!store
+        .mailboxes()
+        .unwrap()
+        .iter()
+        .any(|m| m.name == "Labels/Clients"));
     assert_eq!(local_mailboxes_of(&store, &id), vec!["INBOX".to_string()]);
     // DELETE was issued, and INBOX was selected first (never DELETE the
     // selected mailbox).
     let g = server.lock().unwrap();
     assert_eq!(g.count_starting("DELETE"), 1);
-    let delete_pos = g.wire().iter().position(|c| c.to_ascii_uppercase().starts_with("DELETE")).unwrap();
+    let delete_pos = g
+        .wire()
+        .iter()
+        .position(|c| c.to_ascii_uppercase().starts_with("DELETE"))
+        .unwrap();
     assert!(
-        g.wire()[..delete_pos].iter().any(|c| c.to_ascii_uppercase().starts_with("SELECT \"INBOX\"")),
-        "INBOX selected before DELETE: {:?}", g.wire()
+        g.wire()[..delete_pos]
+            .iter()
+            .any(|c| c.to_ascii_uppercase().starts_with("SELECT \"INBOX\"")),
+        "INBOX selected before DELETE: {:?}",
+        g.wire()
     );
 }
 
 #[tokio::test]
 async fn delete_label_refused_when_a_message_has_no_other_copy() {
     let server = server_with_label_folder();
-    server.lock().unwrap().folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("Labels/Clients", 600)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
     // The ONLY copy of m1 is in the label mailbox.
-    let _id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Labels/Clients", 600, 1, &["\\Seen"]);
+    let _id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "Labels/Clients",
+        600,
+        1,
+        &["\\Seen"],
+    );
 
     let err = provider.delete_label("lf:Clients").await.unwrap_err();
     match err {
@@ -2460,7 +3353,11 @@ async fn delete_label_refused_when_a_message_has_no_other_copy() {
         other => panic!("expected permanent InvalidOperation, got {other:?}"),
     }
     // Nothing deleted on the server.
-    assert!(server.lock().unwrap().folders.contains_key("Labels/Clients"));
+    assert!(server
+        .lock()
+        .unwrap()
+        .folders
+        .contains_key("Labels/Clients"));
     assert_eq!(server.lock().unwrap().count_starting("DELETE"), 0);
 }
 
@@ -2472,15 +3369,30 @@ async fn delete_label_refused_when_server_count_exceeds_local_count() {
     {
         let mut g = server.lock().unwrap();
         g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
-        g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>")); // uid 1 (known)
-        g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<unsynced@x>")); // uid 2 (unknown locally)
+        g.folder("Labels/Clients", 600)
+            .add(&["\\Seen"], &message("<m1@x>")); // uid 1 (known)
+        g.folder("Labels/Clients", 600)
+            .add(&["\\Seen"], &message("<unsynced@x>")); // uid 2 (unknown locally)
     }
     let (provider, store) = provider_with(server.clone());
-    let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+    let id = seed_loc(
+        &store,
+        &provider,
+        "m1",
+        "imap:t:m1",
+        "INBOX",
+        100,
+        1,
+        &["\\Seen"],
+    );
     store
         .upsert_location(&ImapLocation {
-            mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
-            message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            mailbox: "Labels/Clients".into(),
+            uidvalidity: 600,
+            uid: 1,
+            message_id: id.clone(),
+            flags_json: r#"["\\Seen"]"#.into(),
+            modseq: None,
         })
         .unwrap();
 
@@ -2489,7 +3401,14 @@ async fn delete_label_refused_when_server_count_exceeds_local_count() {
         ProviderError::InvalidOperation(m) => assert!(m.contains("unsynced"), "{m}"),
         other => panic!("expected permanent InvalidOperation, got {other:?}"),
     }
-    assert!(server.lock().unwrap().folders.contains_key("Labels/Clients"), "nothing deleted");
+    assert!(
+        server
+            .lock()
+            .unwrap()
+            .folders
+            .contains_key("Labels/Clients"),
+        "nothing deleted"
+    );
     assert_eq!(server.lock().unwrap().count_starting("DELETE"), 0);
 }
 
@@ -2498,7 +3417,10 @@ async fn delete_label_already_absent_is_idempotent_success() {
     let server = server_with_label_folder();
     let (provider, _store) = provider_with(server.clone());
     // A label with no catalog row: deleting it is success, no command.
-    provider.delete_label("lf:DoesNotExist").await.expect("idempotent absent delete");
+    provider
+        .delete_label("lf:DoesNotExist")
+        .await
+        .expect("idempotent absent delete");
     assert_eq!(server.lock().unwrap().count_starting("DELETE"), 0);
     assert_eq!(server.lock().unwrap().count_starting("EXAMINE"), 0);
 }
@@ -2510,7 +3432,10 @@ async fn update_label_rename_is_refused_permanently_with_a_reason() {
     let server = server_with_label_folder();
     let (provider, _store) = provider_with(server.clone());
 
-    let err = provider.update_label("lf:Clients", "Customers").await.unwrap_err();
+    let err = provider
+        .update_label("lf:Clients", "Customers")
+        .await
+        .unwrap_err();
     assert!(!err.retry_mutation(), "a rename refusal is permanent");
     match err {
         ProviderError::InvalidOperation(m) => {
@@ -2530,14 +3455,23 @@ async fn update_label_rename_is_refused_permanently_with_a_reason() {
 #[tokio::test]
 async fn after_add_label_a_following_sweep_sees_no_change_and_no_duplicate() {
     let server = server_with_label_folder();
-    server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&["\\Seen"], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
 
     // Baseline so INBOX's m1 is ingested with its id/thread.
     provider.baseline_cursor().await.unwrap();
-    let id = store.locations_in_mailbox("INBOX").unwrap()[0].message_id.clone();
+    let id = store.locations_in_mailbox("INBOX").unwrap()[0]
+        .message_id
+        .clone();
 
-    provider.modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[]).await.expect("add label");
+    provider
+        .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
+        .await
+        .expect("add label");
     let copies_before = store.locations_for_message(&id).unwrap().len();
     assert_eq!(copies_before, 2, "INBOX + Labels/Clients");
     let gen_after = store.generation().unwrap();
@@ -2658,7 +3592,11 @@ async fn encoded_labels_round_trip_creation_catalog_flags_removal_and_deletion()
             .iter()
             .any(|item| item.id == label.id && item.name == label.name));
         provider
-            .modify_messages(std::slice::from_ref(&id), std::slice::from_ref(&label.id), &[])
+            .modify_messages(
+                std::slice::from_ref(&id),
+                std::slice::from_ref(&label.id),
+                &[],
+            )
             .await
             .unwrap();
         provider
@@ -2708,7 +3646,11 @@ async fn existing_wire_label_ids_and_encoded_container_are_preserved() {
     assert_eq!(label.name, "Café");
     assert_eq!(server.lock().unwrap().count_starting("CREATE"), 0);
     provider
-        .modify_messages(std::slice::from_ref(&id), std::slice::from_ref(&label.id), &[])
+        .modify_messages(
+            std::slice::from_ref(&id),
+            std::slice::from_ref(&label.id),
+            &[],
+        )
         .await
         .unwrap();
     provider
@@ -2917,7 +3859,11 @@ async fn created_ampersand_label_must_be_removable() {
     );
     let label = provider.create_label("R&D").await.unwrap();
     provider
-        .modify_messages(std::slice::from_ref(&id), std::slice::from_ref(&label.id), &[])
+        .modify_messages(
+            std::slice::from_ref(&id),
+            std::slice::from_ref(&label.id),
+            &[],
+        )
         .await
         .unwrap();
     assert_eq!(uids_in(&server, "Labels/R&-D").len(), 1);

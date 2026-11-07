@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::crypto;
 use crate::error::EnvelopeError;
 use crate::ids::{DeviceId, Signature};
-use crate::{canonical_dag_cbor, decode_canonical_dag_cbor, validate_cid_reference, SigningKey, VerifyingKey};
+use crate::{
+    canonical_dag_cbor, decode_canonical_dag_cbor, validate_cid_reference, SigningKey, VerifyingKey,
+};
 
 const HEAD_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/device-head-signature/v3";
 
@@ -57,7 +59,11 @@ pub fn sign_device_head(
 ) -> Result<SignedDeviceHead, EnvelopeError> {
     validate_head(&head)?;
     let canonical = canonical_dag_cbor(&head)?;
-    let signature = Signature(crypto::sign_bytes(signing_key, HEAD_SIGNATURE_DOMAIN, &canonical));
+    let signature = Signature(crypto::sign_bytes(
+        signing_key,
+        HEAD_SIGNATURE_DOMAIN,
+        &canonical,
+    ));
     Ok(SignedDeviceHead { head, signature })
 }
 
@@ -106,7 +112,9 @@ mod tests {
             device_id: DeviceId::from_bytes([7u8; 16]),
             epoch: 2,
             state_sequence: 9,
-            state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
+            state_cid: Some(
+                "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string(),
+            ),
             published_at_ms: 1_700_000_000_000,
         }
     }
@@ -133,7 +141,10 @@ mod tests {
         let signing_key = SigningKey::generate(&mut os_rng());
         let mut signed = sign_device_head(&signing_key, sample_head()).unwrap();
         signed.head.state_sequence += 1;
-        assert_eq!(verify_device_head(&signing_key.verifying_key(), &signed), Err(EnvelopeError::SignatureInvalid));
+        assert_eq!(
+            verify_device_head(&signing_key.verifying_key(), &signed),
+            Err(EnvelopeError::SignatureInvalid)
+        );
     }
 
     #[test]
@@ -144,13 +155,23 @@ mod tests {
 
         let mut sequence = signed.clone();
         sequence.head.state_sequence += 1;
-        assert_eq!(verify_device_head(&verifying_key, &sequence), Err(EnvelopeError::SignatureInvalid));
+        assert_eq!(
+            verify_device_head(&verifying_key, &sequence),
+            Err(EnvelopeError::SignatureInvalid)
+        );
         let mut published = signed.clone();
         published.head.published_at_ms += 1;
-        assert_eq!(verify_device_head(&verifying_key, &published), Err(EnvelopeError::SignatureInvalid));
+        assert_eq!(
+            verify_device_head(&verifying_key, &published),
+            Err(EnvelopeError::SignatureInvalid)
+        );
         let mut snapshot = signed;
-        snapshot.head.state_cid = Some("bafkreihyp2mdkcvn2et4tbcjqsirtmpevqgemx5ab2ac5oioyzmfkwlhlu".to_string());
-        assert_eq!(verify_device_head(&verifying_key, &snapshot), Err(EnvelopeError::SignatureInvalid));
+        snapshot.head.state_cid =
+            Some("bafkreihyp2mdkcvn2et4tbcjqsirtmpevqgemx5ab2ac5oioyzmfkwlhlu".to_string());
+        assert_eq!(
+            verify_device_head(&verifying_key, &snapshot),
+            Err(EnvelopeError::SignatureInvalid)
+        );
     }
 
     #[test]
@@ -158,13 +179,22 @@ mod tests {
         let signing_key = SigningKey::generate(&mut os_rng());
         let mut bad_link = sample_head();
         bad_link.state_cid = Some("not-a-cid".to_string());
-        assert_eq!(sign_device_head(&signing_key, bad_link), Err(EnvelopeError::InvalidCidReference));
+        assert_eq!(
+            sign_device_head(&signing_key, bad_link),
+            Err(EnvelopeError::InvalidCidReference)
+        );
         let mut link_without_sequence = sample_head();
         link_without_sequence.state_sequence = 0;
-        assert_eq!(sign_device_head(&signing_key, link_without_sequence), Err(EnvelopeError::Malformed));
+        assert_eq!(
+            sign_device_head(&signing_key, link_without_sequence),
+            Err(EnvelopeError::Malformed)
+        );
         let mut sequence_without_link = sample_head();
         sequence_without_link.state_cid = None;
-        assert_eq!(sign_device_head(&signing_key, sequence_without_link), Err(EnvelopeError::Malformed));
+        assert_eq!(
+            sign_device_head(&signing_key, sequence_without_link),
+            Err(EnvelopeError::Malformed)
+        );
         let mut fresh = sample_head();
         fresh.state_sequence = 0;
         fresh.state_cid = None;
@@ -176,6 +206,9 @@ mod tests {
         let signing_key = SigningKey::generate(&mut os_rng());
         let other = SigningKey::generate(&mut os_rng());
         let signed = sign_device_head(&signing_key, sample_head()).unwrap();
-        assert_eq!(verify_device_head(&other.verifying_key(), &signed), Err(EnvelopeError::SignatureInvalid));
+        assert_eq!(
+            verify_device_head(&other.verifying_key(), &signed),
+            Err(EnvelopeError::SignatureInvalid)
+        );
     }
 }

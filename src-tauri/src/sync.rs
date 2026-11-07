@@ -203,7 +203,9 @@ impl SyncService {
     /// Window focus controls polling cadence for every connected account.
     pub fn set_foreground(&self, foreground: bool) {
         self.foreground.send_if_modified(|current| {
-            if *current == foreground { return false; }
+            if *current == foreground {
+                return false;
+            }
             *current = foreground;
             true
         });
@@ -444,7 +446,10 @@ impl SyncService {
     /// refresh this label's row in the local catalog cache (run 2b-1). A
     /// failure is logged and swallowed, never failing the user's action.
     fn cache_label_change(&self, label: &Label) {
-        if let Err(error) = self.database.upsert_account_label(&self.account_id(), label) {
+        if let Err(error) = self
+            .database
+            .upsert_account_label(&self.account_id(), label)
+        {
             log::warn!("label cache: could not cache label {}: {error}", label.id);
         }
     }
@@ -467,7 +472,9 @@ impl SyncService {
         loop {
             // Retirement cancels both connections. A failed removal/reconnect can
             // resume the same service, so keep its task alive until it is aborted.
-            if retired.wait_for(|retired| !*retired).await.is_err() { return; }
+            if retired.wait_for(|retired| !*retired).await.is_err() {
+                return;
+            }
             tokio::select! {
                 biased;
                 _ = retired.wait_for(|retired| *retired) => {},
@@ -483,22 +490,36 @@ impl SyncService {
             let signal = self.inbox_changed.clone();
             Arc::new(move || signal.notify_one())
         };
-        retry_mail_watch(|| async {
-            if !self.is_connected() { return Ok(()); }
-            match self.auth.provider(&self.database) {
-                Ok(provider) => provider.watch_inbox(changed.clone()).await,
-                Err(error) => Err(error),
-            }
-        }, |result| {
-            // IDLE only supplies hints; ordinary polling remains available.
-            if let Err(error) = pause_for_permanent_auth_failure(self.database.as_ref(), &self.account_id(), result) {
-                log::debug!("mail notification watch unavailable: {error}");
-            }
-        }).await;
+        retry_mail_watch(
+            || async {
+                if !self.is_connected() {
+                    return Ok(());
+                }
+                match self.auth.provider(&self.database) {
+                    Ok(provider) => provider.watch_inbox(changed.clone()).await,
+                    Err(error) => Err(error),
+                }
+            },
+            |result| {
+                // IDLE only supplies hints; ordinary polling remains available.
+                if let Err(error) = pause_for_permanent_auth_failure(
+                    self.database.as_ref(),
+                    &self.account_id(),
+                    result,
+                ) {
+                    log::debug!("mail notification watch unavailable: {error}");
+                }
+            },
+        )
+        .await;
     }
 
     async fn poll_loop(&self, sync_immediately: bool, on_synced: &(impl Fn(&str) + Send + Sync)) {
-        let mut delay = if *self.foreground.borrow() { ACTIVE_POLL_INTERVAL } else { MIN_POLL_INTERVAL };
+        let mut delay = if *self.foreground.borrow() {
+            ACTIVE_POLL_INTERVAL
+        } else {
+            MIN_POLL_INTERVAL
+        };
         let mut allow_notifications = true;
         if sync_immediately && self.is_connected() {
             (delay, allow_notifications) = self.poll_once(MIN_POLL_INTERVAL, on_synced).await;
@@ -508,7 +529,14 @@ impl SyncService {
             // same outage and retrying in lockstep; `next_poll_delay` itself
             // stays deterministic so its unit tests aren't flaky.
             let jitter = Duration::from_millis(rand::rng().random_range(0..250));
-            delay = wait_for_next_poll(&self.foreground, &self.inbox_changed, allow_notifications, delay, jitter).await;
+            delay = wait_for_next_poll(
+                &self.foreground,
+                &self.inbox_changed,
+                allow_notifications,
+                delay,
+                jitter,
+            )
+            .await;
             if !self.auth.available() {
                 delay = AUTH_UNAVAILABLE_RETRY_INTERVAL;
                 allow_notifications = false;
@@ -533,7 +561,15 @@ impl SyncService {
             on_synced(&self.account_id());
         }
         let allow_notifications = result.is_ok();
-        (next_poll_delay(delay, before, result.map(|(status, _)| status), *self.foreground.borrow()), allow_notifications)
+        (
+            next_poll_delay(
+                delay,
+                before,
+                result.map(|(status, _)| status),
+                *self.foreground.borrow(),
+            ),
+            allow_notifications,
+        )
     }
 
     /// Advances the one-time sent-mail backfill by a few bounded steps once
@@ -542,9 +578,17 @@ impl SyncService {
     async fn backfill_sent_if_pending(&self) {
         for _ in 0..SENT_BACKFILL_STEPS_PER_POLL {
             let account_id = self.account_id();
-            let ready = !self.database.account_needs_reauth(&account_id).unwrap_or(true)
+            let ready = !self
+                .database
+                .account_needs_reauth(&account_id)
+                .unwrap_or(true)
                 && self.database.cursor(&account_id).ok().flatten().is_some()
-                && self.database.recovery_cursor(&account_id).ok().flatten().is_none();
+                && self
+                    .database
+                    .recovery_cursor(&account_id)
+                    .ok()
+                    .flatten()
+                    .is_none();
             if !ready {
                 return;
             }
@@ -591,7 +635,8 @@ impl SyncService {
             let Ok(provider) = self.auth.provider(&self.database) else {
                 return;
             };
-            let _ = reconcile_and_mark(self.database.as_ref(), &account_id, provider.as_ref()).await;
+            let _ =
+                reconcile_and_mark(self.database.as_ref(), &account_id, provider.as_ref()).await;
         })
         .await;
     }
@@ -621,7 +666,9 @@ where
     loop {
         let started = tokio::time::Instant::now();
         finished(watch().await);
-        if started.elapsed() >= MAX_POLL_INTERVAL { retry = MIN_POLL_INTERVAL; }
+        if started.elapsed() >= MAX_POLL_INTERVAL {
+            retry = MIN_POLL_INTERVAL;
+        }
         tokio::time::sleep(retry).await;
         retry = (retry * 2).min(MAX_POLL_INTERVAL);
     }
@@ -716,19 +763,35 @@ pub async fn sync_with(
         return Ok(false);
     }
     let mut identities_changed = false;
-    if database.gmail_identities_refresh_due(account_id, crate::clock::unix_millis()).map_err(database_provider_error)? {
+    if database
+        .gmail_identities_refresh_due(account_id, crate::clock::unix_millis())
+        .map_err(database_provider_error)?
+    {
         match provider.refresh_sending_identities(account_id).await {
-            Ok(Some(identities)) => identities_changed = database.store_gmail_sending_identities(account_id, &identities, crate::clock::unix_millis()).map_err(database_provider_error)?,
-            Ok(None) => {},
+            Ok(Some(identities)) => {
+                identities_changed = database
+                    .store_gmail_sending_identities(
+                        account_id,
+                        &identities,
+                        crate::clock::unix_millis(),
+                    )
+                    .map_err(database_provider_error)?
+            }
+            Ok(None) => {}
             Err(error) => {
                 log::warn!("Sending address refresh for {account_id}: {error}");
                 database
-                    .record_gmail_identities_refresh_failure(account_id, crate::clock::unix_millis())
+                    .record_gmail_identities_refresh_failure(
+                        account_id,
+                        crate::clock::unix_millis(),
+                    )
                     .map_err(database_provider_error)?;
             }
         }
     }
-    let result = sync_active_with(database, account_id, provider).await.map(|changed| changed || identities_changed);
+    let result = sync_active_with(database, account_id, provider)
+        .await
+        .map(|changed| changed || identities_changed);
     pause_for_permanent_auth_failure(database, account_id, result)
 }
 
@@ -738,28 +801,46 @@ async fn sync_active_with(
     provider: &(impl MailSync + MailMutate + ?Sized),
 ) -> ProviderResult<bool> {
     deliver_mutations(database, account_id, provider).await?;
-    let changed = match database.cursor(account_id).map_err(database_provider_error)? {
-        Some(cursor) => match incremental_sync(database, account_id, provider, &SyncCursor::new(cursor))
-            .await
-        {
-            Err(ProviderError::InvalidCursor) => full_sync(database, account_id, provider).await,
-            result => result,
-        },
+    let changed = match database
+        .cursor(account_id)
+        .map_err(database_provider_error)?
+    {
+        Some(cursor) => {
+            match incremental_sync(database, account_id, provider, &SyncCursor::new(cursor)).await {
+                Err(ProviderError::InvalidCursor) => {
+                    full_sync(database, account_id, provider).await
+                }
+                result => result,
+            }
+        }
         None => full_sync(database, account_id, provider).await,
     }?;
-    let refresh = database.snooze_refresh_ids(account_id, chrono::Utc::now()).map_err(database_provider_error)?;
+    let refresh = database
+        .snooze_refresh_ids(account_id, chrono::Utc::now())
+        .map_err(database_provider_error)?;
     let refreshed = !refresh.is_empty();
     if refreshed {
-        let schedules = database.list_snooze_records(Some(account_id)).map_err(database_provider_error)?;
+        let schedules = database
+            .list_snooze_records(Some(account_id))
+            .map_err(database_provider_error)?;
         for id in &refresh {
-            if let Some(schedule) = schedules.iter().find(|schedule| &schedule.provider_thread_id == id) {
-                provider.prepare_snoozed_thread(id, &schedule.references).await?;
+            if let Some(schedule) = schedules
+                .iter()
+                .find(|schedule| &schedule.provider_thread_id == id)
+            {
+                provider
+                    .prepare_snoozed_thread(id, &schedule.references)
+                    .await?;
             }
         }
         ingest_snoozed_threads(database, account_id, provider, &refresh).await?;
     }
-    let woke = database.wake_verified_snoozes(account_id, chrono::Utc::now(), &refresh).map_err(database_provider_error)?;
-    if refreshed || woke { deliver_mutations(database, account_id, provider).await?; }
+    let woke = database
+        .wake_verified_snoozes(account_id, chrono::Utc::now(), &refresh)
+        .map_err(database_provider_error)?;
+    if refreshed || woke {
+        deliver_mutations(database, account_id, provider).await?;
+    }
     Ok(changed || refreshed || woke)
 }
 
@@ -1024,7 +1105,10 @@ async fn backfill_sent_step(
     else {
         return Ok(false);
     };
-    let result = match provider.search(SENT_BACKFILL_QUERY, progress.page.as_deref()).await {
+    let result = match provider
+        .search(SENT_BACKFILL_QUERY, progress.page.as_deref())
+        .await
+    {
         Ok(result) => result,
         // A page token the provider no longer honors. Starting over is cheap:
         // threads already cached are skipped without a fetch.
@@ -1100,18 +1184,29 @@ async fn ingest_snoozed_threads(
         let raw = match provider.fetch_thread(id).await {
             Ok(raw) => raw,
             Err(ProviderError::NotFound) => {
-                database.delete_thread(account_id, id).map_err(database_provider_error)?;
+                database
+                    .delete_thread(account_id, id)
+                    .map_err(database_provider_error)?;
                 continue;
             }
             Err(error) => return Err(error),
         };
-        let raw: Vec<_> = raw.into_iter().filter(|message| !is_draft_message(message)).collect();
+        let raw: Vec<_> = raw
+            .into_iter()
+            .filter(|message| !is_draft_message(message))
+            .collect();
         let (messages, quarantined) = normalize_thread(&raw);
         if messages.is_empty() || !quarantined.is_empty() {
-            return Err(ProviderError::TransientTransport("Snoozed mail could not be verified; its return remains pending".into()));
+            return Err(ProviderError::TransientTransport(
+                "Snoozed mail could not be verified; its return remains pending".into(),
+            ));
         }
-        database.apply_ingested_threads_with_aliases(account_id,
-            &[(id.clone(), messages, quarantined)], &provider.thread_aliases()?)
+        database
+            .apply_ingested_threads_with_aliases(
+                account_id,
+                &[(id.clone(), messages, quarantined)],
+                &provider.thread_aliases()?,
+            )
             .map_err(database_provider_error)?;
     }
     Ok(())
@@ -1153,7 +1248,10 @@ async fn ingest_threads(
         // them through the account's server drafts instead
         // (`docs/server-drafts-design.md`), and shows each as a draft.
         let had_messages = !messages.is_empty();
-        let messages: Vec<_> = messages.into_iter().filter(|message| !is_draft_message(message)).collect();
+        let messages: Vec<_> = messages
+            .into_iter()
+            .filter(|message| !is_draft_message(message))
+            .collect();
         if had_messages && messages.is_empty() {
             deleted.push(id);
             continue;
@@ -1164,7 +1262,11 @@ async fn ingest_threads(
             if aliases.is_empty() {
                 database.apply_ingested_threads(account_id, &ingested_threads)
             } else {
-                database.apply_ingested_threads_with_aliases(account_id, &ingested_threads, &aliases)
+                database.apply_ingested_threads_with_aliases(
+                    account_id,
+                    &ingested_threads,
+                    &aliases,
+                )
             }
             .map_err(database_provider_error)?;
             ingested_threads.clear();
@@ -1181,7 +1283,7 @@ async fn ingest_threads(
     for id in deleted {
         database
             .delete_thread(account_id, &id)
-                .map_err(database_provider_error)?;
+            .map_err(database_provider_error)?;
     }
     if let Some(error) = pending_error {
         return Err(error);
@@ -1256,7 +1358,10 @@ fn normalize_thread(
         }
     }
     kept.sort_by_key(|(index, _)| *index);
-    (kept.into_iter().map(|(_, message)| message).collect(), quarantined)
+    (
+        kept.into_iter().map(|(_, message)| message).collect(),
+        quarantined,
+    )
 }
 
 async fn deliver_mutations(
@@ -1267,7 +1372,7 @@ async fn deliver_mutations(
     loop {
         let mutations = database
             .claim_mutations(account_id, 50)
-                .map_err(database_provider_error)?;
+            .map_err(database_provider_error)?;
         if mutations.is_empty() {
             return Ok(());
         }
@@ -1416,9 +1521,16 @@ mod tests {
     fn offline_service() -> SyncService {
         let credential = crate::auth::OAuthCredential::in_memory_for_test(
             "http://127.0.0.1:9/token",
-            crate::auth::Tokens { access_token: "token".into(), refresh_token: Some("refresh".into()), expires_at: u64::MAX },
+            crate::auth::Tokens {
+                access_token: "token".into(),
+                refresh_token: Some("refresh".into()),
+                expires_at: u64::MAX,
+            },
         );
-        SyncService::new(Arc::new(Database::open_memory()), AccountAuth::Gmail(credential))
+        SyncService::new(
+            Arc::new(Database::open_memory()),
+            AccountAuth::Gmail(credential),
+        )
     }
 
     #[tokio::test]
@@ -1443,13 +1555,18 @@ mod tests {
         });
         entered_rx.await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), service.retire()).await.expect("retire waits only for the run to stop");
+        tokio::time::timeout(Duration::from_secs(5), service.retire())
+            .await
+            .expect("retire waits only for the run to stop");
         let _ = provider_tx.send(());
         assert_eq!(run.await.unwrap(), None);
         assert_eq!(writes.load(Ordering::SeqCst), 0);
 
         // Later runs on any clone don't start.
-        let later = service.clone().exclusive(async { writes.fetch_add(1, Ordering::SeqCst) }).await;
+        let later = service
+            .clone()
+            .exclusive(async { writes.fetch_add(1, Ordering::SeqCst) })
+            .await;
         assert_eq!(later, None);
         assert_eq!(writes.load(Ordering::SeqCst), 0);
         let error = service.sync().await.unwrap_err();
@@ -1579,7 +1696,6 @@ mod tests {
                 more: false,
             })
         }
-
     }
 
     #[async_trait]
@@ -1664,7 +1780,10 @@ mod tests {
         let events = Arc::new(StdMutex::new(Vec::new()));
         let recorded = Arc::clone(&events);
         let activity = SyncActivity::with_listener(move |account_id, active| {
-            recorded.lock().unwrap().push((account_id.to_string(), active));
+            recorded
+                .lock()
+                .unwrap()
+                .push((account_id.to_string(), active));
         });
         (activity, events)
     }
@@ -1676,10 +1795,16 @@ mod tests {
         let first = activity.begin("a@example.com");
         let overlapping = activity.begin("a@example.com");
         let other = activity.begin("b@example.com");
-        assert_eq!(activity.active_accounts(), ["a@example.com", "b@example.com"]);
+        assert_eq!(
+            activity.active_accounts(),
+            ["a@example.com", "b@example.com"]
+        );
 
         drop(first);
-        assert_eq!(activity.active_accounts(), ["a@example.com", "b@example.com"]);
+        assert_eq!(
+            activity.active_accounts(),
+            ["a@example.com", "b@example.com"]
+        );
         drop(other);
         drop(overlapping);
         assert!(activity.active_accounts().is_empty());
@@ -1701,29 +1826,56 @@ mod tests {
             let database = Database::open_memory();
             database.adopt_account("work@example.com").unwrap();
             let initial = ContractProvider::normal();
-            sync_with(&database, "work@example.com", &initial).await.unwrap();
+            sync_with(&database, "work@example.com", &initial)
+                .await
+                .unwrap();
             let id = "work@example.com:gmail-thread".to_string();
-            let mut record = database.snooze_threads(&[id.clone()], "2099-01-01T09:00:00Z").unwrap().remove(0);
+            let mut record = database
+                .snooze_threads(&[id.clone()], "2099-01-01T09:00:00Z")
+                .unwrap()
+                .remove(0);
             record.until = "2000-01-01T09:00:00Z".into();
             database.upsert_synced_snooze(&record).unwrap();
             let mut message = ContractProvider::message();
-            if evidence == "TRASH" { message.label_ids = vec!["TRASH".into()]; }
+            if evidence == "TRASH" {
+                message.label_ids = vec!["TRASH".into()];
+            }
             let provider = ContractProvider {
-                thread_messages: Some(if evidence == "empty" { vec![] } else { vec![message] }),
+                thread_messages: Some(if evidence == "empty" {
+                    vec![]
+                } else {
+                    vec![message]
+                }),
                 ..ContractProvider::normal()
             };
             let result = sync_with(&database, "work@example.com", &provider).await;
-            let saved = database.list_snooze_records(Some("work@example.com")).unwrap().remove(0);
+            let saved = database
+                .list_snooze_records(Some("work@example.com"))
+                .unwrap()
+                .remove(0);
             if evidence == "empty" {
                 assert!(result.is_err());
                 assert_eq!(saved.state, "active");
                 assert!(database.get_thread(&id).unwrap().thread.archived);
             } else {
                 result.unwrap();
-                assert_eq!(saved.state, if evidence == "TRASH" { "cancelled" } else { "returned" });
-                assert_eq!(database.get_thread(&id).unwrap().thread.archived, evidence == "TRASH");
+                assert_eq!(
+                    saved.state,
+                    if evidence == "TRASH" {
+                        "cancelled"
+                    } else {
+                        "returned"
+                    }
+                );
+                assert_eq!(
+                    database.get_thread(&id).unwrap().thread.archived,
+                    evidence == "TRASH"
+                );
             }
-            assert_eq!(provider.modifies.load(Ordering::SeqCst), if evidence == "safe" { 2 } else { 1 });
+            assert_eq!(
+                provider.modifies.load(Ordering::SeqCst),
+                if evidence == "safe" { 2 } else { 1 }
+            );
         }
     }
 
@@ -1731,7 +1883,11 @@ mod tests {
     async fn a_sync_reports_activity_while_it_runs_and_a_retired_account_reports_none() {
         let credential = crate::auth::OAuthCredential::in_memory_for_test(
             "http://127.0.0.1:9/token",
-            crate::auth::Tokens { access_token: "token".into(), refresh_token: Some("refresh".into()), expires_at: u64::MAX },
+            crate::auth::Tokens {
+                access_token: "token".into(),
+                refresh_token: Some("refresh".into()),
+                expires_at: u64::MAX,
+            },
         );
         let database = Arc::new(Database::open_memory());
         let (activity, events) = recording_activity();
@@ -1740,7 +1896,9 @@ mod tests {
         let account_id = service.account_id();
         // A paused account syncs without contacting the provider.
         database.adopt_account(&account_id).unwrap();
-        database.mark_account_needs_reauth(&account_id, "revoked").unwrap();
+        database
+            .mark_account_needs_reauth(&account_id, "revoked")
+            .unwrap();
 
         service.sync().await.unwrap();
         assert_eq!(
@@ -1759,7 +1917,14 @@ mod tests {
     async fn an_undisturbed_wait_sleeps_out_the_backed_off_delay() {
         let started = tokio::time::Instant::now();
 
-        let delay = wait_for_next_poll(&watch::Sender::new(false), &Notify::new(), true, MAX_POLL_INTERVAL, Duration::ZERO).await;
+        let delay = wait_for_next_poll(
+            &watch::Sender::new(false),
+            &Notify::new(),
+            true,
+            MAX_POLL_INTERVAL,
+            Duration::ZERO,
+        )
+        .await;
 
         assert_eq!(delay, MAX_POLL_INTERVAL);
         assert_eq!(started.elapsed(), MAX_POLL_INTERVAL);
@@ -1771,7 +1936,16 @@ mod tests {
         let started = tokio::time::Instant::now();
         let waiter = tokio::spawn({
             let foreground = foreground.clone();
-            async move { wait_for_next_poll(&foreground, &Notify::new(), false, MAX_POLL_INTERVAL, Duration::ZERO).await }
+            async move {
+                wait_for_next_poll(
+                    &foreground,
+                    &Notify::new(),
+                    false,
+                    MAX_POLL_INTERVAL,
+                    Duration::ZERO,
+                )
+                .await
+            }
         });
         tokio::time::sleep(Duration::from_secs(60)).await;
         foreground.send_replace(true);
@@ -1786,13 +1960,21 @@ mod tests {
         // A paused account syncs without contacting the provider, so an
         // attempt shows only as the recorded attempt time.
         service.database.adopt_account(&account).unwrap();
-        service.database.mark_account_needs_reauth(&account, "revoked").unwrap();
+        service
+            .database
+            .mark_account_needs_reauth(&account, "revoked")
+            .unwrap();
         let attempted = || service.last_attempt.lock().unwrap().is_some();
 
-        let refused: ProviderResult<()> = Err(ProviderError::RetryableServer("403 Forbidden: Quota exceeded".into()));
+        let refused: ProviderResult<()> = Err(ProviderError::RetryableServer(
+            "403 Forbidden: Quota exceeded".into(),
+        ));
         service.record_backoff(&refused, Instant::now());
         service.sync_if_stale().await.unwrap();
-        assert!(!attempted(), "returning to the window doesn't ask a rate-limited server again");
+        assert!(
+            !attempted(),
+            "returning to the window doesn't ask a rate-limited server again"
+        );
 
         // The backoff has run out.
         service.record_backoff(&refused, Instant::now() - MAX_POLL_INTERVAL);
@@ -1804,12 +1986,18 @@ mod tests {
     fn only_a_refused_sync_backs_off_catch_ups() {
         let service = offline_service();
         let now = Instant::now();
-        service.record_backoff(&ProviderResult::<()>::Err(ProviderError::RetryableServer("503".into())), now);
+        service.record_backoff(
+            &ProviderResult::<()>::Err(ProviderError::RetryableServer("503".into())),
+            now,
+        );
         assert!(service.backing_off(now + MAX_POLL_INTERVAL - Duration::from_secs(1)));
         assert!(!service.backing_off(now + MAX_POLL_INTERVAL));
         service.record_backoff(&ProviderResult::<()>::Ok(()), now);
         assert!(!service.backing_off(now));
-        service.record_backoff(&ProviderResult::<()>::Err(ProviderError::TransientTransport("offline".into())), now);
+        service.record_backoff(
+            &ProviderResult::<()>::Err(ProviderError::TransientTransport("offline".into())),
+            now,
+        );
         assert!(!service.backing_off(now));
     }
 
@@ -1839,9 +2027,21 @@ mod tests {
 
     #[test]
     fn active_mail_keeps_thirty_second_checks_and_background_mail_backs_off() {
-        let status = || SyncStatus { state: "idle", last_successful_sync: None, cursor: None, pending_mutations: 0, failed_mutations: vec![], quarantined_messages: vec![], error: None, fetch_errors: vec![] };
+        let status = || SyncStatus {
+            state: "idle",
+            last_successful_sync: None,
+            cursor: None,
+            pending_mutations: 0,
+            failed_mutations: vec![],
+            quarantined_messages: vec![],
+            error: None,
+            fetch_errors: vec![],
+        };
         for interval in [MIN_POLL_INTERVAL, ACTIVE_POLL_INTERVAL, MAX_POLL_INTERVAL] {
-            assert_eq!(next_poll_delay(interval, 0, Ok(status()), true), ACTIVE_POLL_INTERVAL);
+            assert_eq!(
+                next_poll_delay(interval, 0, Ok(status()), true),
+                ACTIVE_POLL_INTERVAL
+            );
         }
         let mut interval = ACTIVE_POLL_INTERVAL;
         for expected in [60, 120, 240, 300, 300] {
@@ -1849,9 +2049,28 @@ mod tests {
             assert_eq!(interval, Duration::from_secs(expected));
         }
         // Focus must not bypass failure backoff or delay queued outgoing changes.
-        assert_eq!(next_poll_delay(MIN_POLL_INTERVAL, 0, Err(ProviderError::RetryableServer("limited".into())), true), MAX_POLL_INTERVAL);
-        assert_eq!(next_poll_delay(MIN_POLL_INTERVAL, 0, Err(ProviderError::TransientTransport("offline".into())), true), POLL_FAILURE_RETRY_INTERVAL);
-        assert_eq!(next_poll_delay(MAX_POLL_INTERVAL, 1, Ok(status()), true), MIN_POLL_INTERVAL);
+        assert_eq!(
+            next_poll_delay(
+                MIN_POLL_INTERVAL,
+                0,
+                Err(ProviderError::RetryableServer("limited".into())),
+                true
+            ),
+            MAX_POLL_INTERVAL
+        );
+        assert_eq!(
+            next_poll_delay(
+                MIN_POLL_INTERVAL,
+                0,
+                Err(ProviderError::TransientTransport("offline".into())),
+                true
+            ),
+            POLL_FAILURE_RETRY_INTERVAL
+        );
+        assert_eq!(
+            next_poll_delay(MAX_POLL_INTERVAL, 1, Ok(status()), true),
+            MIN_POLL_INTERVAL
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1860,7 +2079,16 @@ mod tests {
         let started = tokio::time::Instant::now();
         let waiter = tokio::spawn({
             let foreground = foreground.clone();
-            async move { wait_for_next_poll(&foreground, &Notify::new(), true, MAX_POLL_INTERVAL, Duration::ZERO).await }
+            async move {
+                wait_for_next_poll(
+                    &foreground,
+                    &Notify::new(),
+                    true,
+                    MAX_POLL_INTERVAL,
+                    Duration::ZERO,
+                )
+                .await
+            }
         });
         tokio::time::sleep(Duration::from_secs(60)).await;
         foreground.send_replace(true);
@@ -1871,7 +2099,16 @@ mod tests {
         let started = tokio::time::Instant::now();
         let waiter = tokio::spawn({
             let foreground = foreground.clone();
-            async move { wait_for_next_poll(&foreground, &Notify::new(), true, ACTIVE_POLL_INTERVAL, Duration::ZERO).await }
+            async move {
+                wait_for_next_poll(
+                    &foreground,
+                    &Notify::new(),
+                    true,
+                    ACTIVE_POLL_INTERVAL,
+                    Duration::ZERO,
+                )
+                .await
+            }
         });
         tokio::time::sleep(Duration::from_secs(5)).await;
         foreground.send_replace(false);
@@ -1885,12 +2122,26 @@ mod tests {
         let started = tokio::time::Instant::now();
         let waiter = tokio::spawn({
             let changes = changes.clone();
-            async move { wait_for_next_poll(&watch::Sender::new(false), &changes, true, MAX_POLL_INTERVAL, Duration::ZERO).await }
+            async move {
+                wait_for_next_poll(
+                    &watch::Sender::new(false),
+                    &changes,
+                    true,
+                    MAX_POLL_INTERVAL,
+                    Duration::ZERO,
+                )
+                .await
+            }
         });
         tokio::time::sleep(Duration::from_secs(60)).await;
-        for _ in 0..20 { changes.notify_one(); }
+        for _ in 0..20 {
+            changes.notify_one();
+        }
         assert_eq!(waiter.await.unwrap(), MAX_POLL_INTERVAL);
-        assert_eq!(started.elapsed(), Duration::from_secs(60) + MAIL_CHANGE_DEBOUNCE);
+        assert_eq!(
+            started.elapsed(),
+            Duration::from_secs(60) + MAIL_CHANGE_DEBOUNCE
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1898,7 +2149,14 @@ mod tests {
         let changes = Notify::new();
         changes.notify_one();
         let started = tokio::time::Instant::now();
-        wait_for_next_poll(&watch::Sender::new(true), &changes, false, MAX_POLL_INTERVAL, Duration::ZERO).await;
+        wait_for_next_poll(
+            &watch::Sender::new(true),
+            &changes,
+            false,
+            MAX_POLL_INTERVAL,
+            Duration::ZERO,
+        )
+        .await;
         assert_eq!(started.elapsed(), MAX_POLL_INTERVAL);
     }
 
@@ -1908,10 +2166,17 @@ mod tests {
         let account = service.account_id();
         service.database.adopt_account(&account).unwrap();
         // A paused credential avoids network calls while exercising the real loops.
-        service.database.mark_account_needs_reauth(&account, "paused").unwrap();
+        service
+            .database
+            .mark_account_needs_reauth(&account, "paused")
+            .unwrap();
         let task = tokio::spawn(service.clone().polling_loop(true, |_| {}));
         tokio::time::sleep(Duration::from_secs(31)).await;
-        let before = service.last_attempt.lock().unwrap().expect("first check ran");
+        let before = service
+            .last_attempt
+            .lock()
+            .unwrap()
+            .expect("first check ran");
         service.retire().await;
         tokio::time::sleep(MAX_POLL_INTERVAL).await;
         assert_eq!(*service.last_attempt.lock().unwrap(), Some(before));
@@ -1944,10 +2209,14 @@ mod tests {
         let task = tokio::spawn({
             let attempts = attempts.clone();
             async move {
-                retry_mail_watch(|| {
-                    attempts.lock().unwrap().push(started.elapsed().as_secs());
-                    async { Err(ProviderError::TransientTransport("disconnected".into())) }
-                }, |_| {}).await;
+                retry_mail_watch(
+                    || {
+                        attempts.lock().unwrap().push(started.elapsed().as_secs());
+                        async { Err(ProviderError::TransientTransport("disconnected".into())) }
+                    },
+                    |_| {},
+                )
+                .await;
             }
         });
         tokio::time::sleep(Duration::from_secs(766)).await;
@@ -2318,20 +2587,39 @@ mod tests {
             thread_messages: Some(vec![sent.clone(), draft.clone()]),
             ..ContractProvider::normal()
         };
-        ingest_threads(&database, "default", &provider, vec![sent.thread_id.clone()])
-            .await
+        ingest_threads(
+            &database,
+            "default",
+            &provider,
+            vec![sent.thread_id.clone()],
+        )
+        .await
+        .unwrap();
+        let detail = database
+            .get_thread(&conversation(&database).unwrap().id)
             .unwrap();
-        let detail = database.get_thread(&conversation(&database).unwrap().id).unwrap();
-        assert_eq!(detail.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), [sent.id.as_str()]);
+        assert_eq!(
+            detail
+                .messages
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            [sent.id.as_str()]
+        );
 
         // A conversation holding only a draft is not a conversation.
         let draft_only = ContractProvider {
             thread_messages: Some(vec![draft]),
             ..ContractProvider::normal()
         };
-        ingest_threads(&database, "default", &draft_only, vec![sent.thread_id.clone()])
-            .await
-            .unwrap();
+        ingest_threads(
+            &database,
+            "default",
+            &draft_only,
+            vec![sent.thread_id.clone()],
+        )
+        .await
+        .unwrap();
         assert!(conversation(&database).is_none());
     }
 
@@ -2352,10 +2640,15 @@ mod tests {
 
         assert_eq!(normalized.len(), MAX_THREAD_MESSAGES);
         assert_eq!(normalized.first().unwrap().id, "message-1");
-        assert_eq!(normalized.last().unwrap().id, format!("message-{MAX_THREAD_MESSAGES}"));
+        assert_eq!(
+            normalized.last().unwrap().id,
+            format!("message-{MAX_THREAD_MESSAGES}")
+        );
         assert_eq!(quarantined.len(), 1);
         assert_eq!(quarantined[0].0, "message-0");
-        assert!(quarantined[0].1.contains(&format!("more than {MAX_THREAD_MESSAGES} messages")));
+        assert!(quarantined[0]
+            .1
+            .contains(&format!("more than {MAX_THREAD_MESSAGES} messages")));
     }
 
     #[test]
@@ -2366,14 +2659,23 @@ mod tests {
             message.snippet = "a".repeat(5 * 1024 * 1024);
             message
         };
-        let messages = [large("middle", 2_000), large("newest", 3_000), large("oldest", 1_000)];
+        let messages = [
+            large("middle", 2_000),
+            large("newest", 3_000),
+            large("oldest", 1_000),
+        ];
 
         let (normalized, quarantined) = normalize_thread(&messages);
 
-        assert_eq!(normalized.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["newest"]);
+        assert_eq!(
+            normalized.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["newest"]
+        );
         let set_aside: Vec<_> = quarantined.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(set_aside, ["middle", "oldest"]);
-        assert!(quarantined.iter().all(|(_, error)| error.contains("larger than 16 MB")));
+        assert!(quarantined
+            .iter()
+            .all(|(_, error)| error.contains("larger than 16 MB")));
     }
 
     #[test]
@@ -2390,8 +2692,17 @@ mod tests {
         let (normalized, quarantined) = normalize_thread(&[small, huge, newest]);
 
         // Kept messages stay in conversation order.
-        assert_eq!(normalized.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["small", "newest"]);
-        assert_eq!(quarantined.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["huge"]);
+        assert_eq!(
+            normalized.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["small", "newest"]
+        );
+        assert_eq!(
+            quarantined
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            ["huge"]
+        );
     }
 
     #[test]
@@ -2406,7 +2717,13 @@ mod tests {
 
         let (_, quarantined) = normalize_thread(&messages);
 
-        assert_eq!(quarantined.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["message-0"]);
+        assert_eq!(
+            quarantined
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            ["message-0"]
+        );
     }
 
     #[tokio::test]
@@ -2642,7 +2959,10 @@ mod tests {
         );
 
         let status = database.sync_status("default").unwrap();
-        assert_eq!(status.pending_mutations, 0, "nothing is left pending/running");
+        assert_eq!(
+            status.pending_mutations, 0,
+            "nothing is left pending/running"
+        );
         assert_eq!(status.failed_mutations.len(), 1, "it failed permanently");
         assert_eq!(status.failed_mutations[0].kind, "archive");
 
@@ -2657,7 +2977,11 @@ mod tests {
             "a failed InvalidOperation mutation is never retried"
         );
         assert_eq!(
-            database.sync_status("default").unwrap().failed_mutations.len(),
+            database
+                .sync_status("default")
+                .unwrap()
+                .failed_mutations
+                .len(),
             1
         );
     }
@@ -2665,14 +2989,20 @@ mod tests {
     #[test]
     fn reports_a_failed_check_for_new_mail_per_account_until_the_next_success() {
         let database = Database::open_memory();
-        database.fail_sync("default", "connection timed out").unwrap();
+        database
+            .fail_sync("default", "connection timed out")
+            .unwrap();
         let status = database.sync_status("default").unwrap();
         assert_eq!(status.fetch_errors.len(), 1);
         assert_eq!(status.fetch_errors[0].account_id, "default");
         assert_eq!(status.fetch_errors[0].error, "connection timed out");
 
         database.finish_sync("default", "1").unwrap();
-        assert!(database.sync_status("default").unwrap().fetch_errors.is_empty());
+        assert!(database
+            .sync_status("default")
+            .unwrap()
+            .fetch_errors
+            .is_empty());
     }
 
     #[tokio::test]
@@ -2689,7 +3019,14 @@ mod tests {
             ..ContractProvider::normal()
         };
         sync_with(&database, "default", &failing).await.unwrap();
-        assert_eq!(database.sync_status("default").unwrap().failed_mutations.len(), 1);
+        assert_eq!(
+            database
+                .sync_status("default")
+                .unwrap()
+                .failed_mutations
+                .len(),
+            1
+        );
 
         assert_eq!(database.retry_failed_mutations().unwrap(), 1);
         let status = database.sync_status("default").unwrap();
@@ -2702,7 +3039,10 @@ mod tests {
         assert_eq!(status.failed_mutations.len(), 1);
         assert_eq!(status.failed_mutations[0].attempts, 1);
         assert_eq!(status.state, "error");
-        assert!(status.fetch_errors.is_empty(), "a failed action is not a failed check for new mail");
+        assert!(
+            status.fetch_errors.is_empty(),
+            "a failed action is not a failed check for new mail"
+        );
 
         database.dismiss_sync_problems().unwrap();
         let status = database.sync_status("default").unwrap();
@@ -3050,7 +3390,6 @@ mod tests {
                 more: false,
             })
         }
-
     }
 
     #[async_trait]
@@ -3217,12 +3556,16 @@ mod tests {
         // Gmail still lists it in INBOX because the archive hasn't reached it.
         let provider = ReconcileProvider {
             inbox_ids: vec!["pending-thread".into()],
-            threads: [("pending-thread".to_string(), pending)].into_iter().collect(),
+            threads: [("pending-thread".to_string(), pending)]
+                .into_iter()
+                .collect(),
             list_calls: AtomicUsize::new(0),
             fail_thread_once: StdMutex::new(None),
             invalid_thread_ids: vec![],
         };
-        reconcile_inbox(&database, account, &provider).await.unwrap();
+        reconcile_inbox(&database, account, &provider)
+            .await
+            .unwrap();
 
         let thread = database
             .list_all_mail(Some(account))
@@ -3230,11 +3573,18 @@ mod tests {
             .into_iter()
             .find(|thread| thread.id == format!("{account}:pending-thread"))
             .unwrap();
-        assert!(thread.archived, "the user's pending archive must survive reconciliation");
+        assert!(
+            thread.archived,
+            "the user's pending archive must survive reconciliation"
+        );
         let pending: i64 = database
             .test_connection()
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM mutations WHERE state = 'pending'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM mutations WHERE state = 'pending'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(pending, 1);
     }
@@ -3470,9 +3820,7 @@ mod tests {
         real.thread_id = "real-thread".into();
         let provider = ReconcileProvider {
             inbox_ids: vec!["real-thread".into()],
-            threads: [("real-thread".to_string(), real)]
-                .into_iter()
-                .collect(),
+            threads: [("real-thread".to_string(), real)].into_iter().collect(),
             list_calls: AtomicUsize::new(0),
             fail_thread_once: StdMutex::new(None),
             invalid_thread_ids: vec!["demo-welcome".into()],
@@ -3546,7 +3894,10 @@ mod tests {
                     .map(|(token, ids, next)| {
                         (
                             token.to_string(),
-                            (ids.iter().map(|id| id.to_string()).collect(), next.map(str::to_string)),
+                            (
+                                ids.iter().map(|id| id.to_string()).collect(),
+                                next.map(str::to_string),
+                            ),
                         )
                     })
                     .collect(),
@@ -3568,9 +3919,18 @@ mod tests {
         message.thread_id = thread_id.into();
         message.label_ids = vec!["SENT".into()];
         message.payload.headers = vec![
-            MimeHeader { name: "Subject".into(), value: format!("About {thread_id}") },
-            MimeHeader { name: "From".into(), value: format!("Me <{BACKFILL_ACCOUNT}>") },
-            MimeHeader { name: "To".into(), value: format!("Person <{thread_id}@example.org>") },
+            MimeHeader {
+                name: "Subject".into(),
+                value: format!("About {thread_id}"),
+            },
+            MimeHeader {
+                name: "From".into(),
+                value: format!("Me <{BACKFILL_ACCOUNT}>"),
+            },
+            MimeHeader {
+                name: "To".into(),
+                value: format!("Person <{thread_id}@example.org>"),
+            },
         ];
         message
     }
@@ -3591,7 +3951,9 @@ mod tests {
             self.searches.fetch_add(1, Ordering::SeqCst);
             let token = page.unwrap_or_default();
             if self.expired_tokens.iter().any(|expired| expired == token) {
-                return Err(ProviderError::InvalidOperation("400 Invalid pageToken".into()));
+                return Err(ProviderError::InvalidOperation(
+                    "400 Invalid pageToken".into(),
+                ));
             }
             let (thread_ids, next) = self.pages.get(token).cloned().expect("known page token");
             Ok(ThreadPage { thread_ids, next })
@@ -3620,7 +3982,10 @@ mod tests {
 
     async fn run_sent_backfill(database: &Database, provider: &SentBackfillProvider) -> usize {
         let mut steps = 0;
-        while backfill_sent_step(database, BACKFILL_ACCOUNT, provider).await.unwrap() {
+        while backfill_sent_step(database, BACKFILL_ACCOUNT, provider)
+            .await
+            .unwrap()
+        {
             steps += 1;
             assert!(steps < 100, "backfill never finished");
         }
@@ -3634,19 +3999,31 @@ mod tests {
             ("", &["cached", "older"], Some("p2")),
             ("p2", &["oldest"], None),
         ]);
-        ingest_threads(&database, BACKFILL_ACCOUNT, &provider, vec!["cached".into()])
-            .await
-            .unwrap();
+        ingest_threads(
+            &database,
+            BACKFILL_ACCOUNT,
+            &provider,
+            vec!["cached".into()],
+        )
+        .await
+        .unwrap();
         provider.fetched.lock().unwrap().clear();
 
         run_sent_backfill(&database, &provider).await;
 
         assert_eq!(provider.fetched(), ["older", "oldest"]);
-        assert_eq!(database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(), None);
+        assert_eq!(
+            database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(),
+            None
+        );
         let contacts = database
             .list_contact_suggestions(BACKFILL_ACCOUNT, "", 50)
             .unwrap();
-        for email in ["cached@example.org", "older@example.org", "oldest@example.org"] {
+        for email in [
+            "cached@example.org",
+            "older@example.org",
+            "oldest@example.org",
+        ] {
             let contact = contacts
                 .iter()
                 .find(|contact| contact.email == email)
@@ -3656,7 +4033,9 @@ mod tests {
 
         // Finished for good: later polls don't search again.
         let searches = provider.searches.load(Ordering::SeqCst);
-        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider)
+            .await
+            .unwrap());
         assert_eq!(provider.searches.load(Ordering::SeqCst), searches);
     }
 
@@ -3669,14 +4048,22 @@ mod tests {
         let id_refs = ids.iter().map(String::as_str).collect::<Vec<_>>();
         let provider = SentBackfillProvider::new(&[("", &id_refs, None)]);
 
-        assert!(backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert!(backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider)
+            .await
+            .unwrap());
         assert_eq!(provider.fetched().len(), SENT_BACKFILL_FETCHES_PER_STEP);
         assert_eq!(
             database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(),
-            Some(SentBackfillProgress { page: None, offset: SENT_BACKFILL_FETCHES_PER_STEP, scanned: 0 })
+            Some(SentBackfillProgress {
+                page: None,
+                offset: SENT_BACKFILL_FETCHES_PER_STEP,
+                scanned: 0
+            })
         );
 
-        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider)
+            .await
+            .unwrap());
         assert_eq!(provider.fetched(), ids);
     }
 
@@ -3708,11 +4095,17 @@ mod tests {
         database
             .record_sent_backfill(
                 BACKFILL_ACCOUNT,
-                Some(&SentBackfillProgress { page: Some("stale".into()), offset: 3, scanned: 100 }),
+                Some(&SentBackfillProgress {
+                    page: Some("stale".into()),
+                    offset: 3,
+                    scanned: 100,
+                }),
             )
             .unwrap();
 
-        assert!(backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert!(backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider)
+            .await
+            .unwrap());
         assert_eq!(
             database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(),
             Some(SentBackfillProgress::default())
@@ -3736,9 +4129,14 @@ mod tests {
             )
             .unwrap();
 
-        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider)
+            .await
+            .unwrap());
         assert_eq!(provider.fetched(), ["last"]);
-        assert_eq!(database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(), None);
+        assert_eq!(
+            database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -3763,11 +4161,24 @@ mod tests {
             }
         }
         let database = backfill_database();
-        let saved = SentBackfillProgress { page: Some("p3".into()), offset: 7, scanned: 200 };
-        database.record_sent_backfill(BACKFILL_ACCOUNT, Some(&saved)).unwrap();
+        let saved = SentBackfillProgress {
+            page: Some("p3".into()),
+            offset: 7,
+            scanned: 200,
+        };
+        database
+            .record_sent_backfill(BACKFILL_ACCOUNT, Some(&saved))
+            .unwrap();
 
-        assert!(backfill_sent_step(&database, BACKFILL_ACCOUNT, &FlakySearch).await.is_err());
-        assert_eq!(database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(), Some(saved));
+        assert!(
+            backfill_sent_step(&database, BACKFILL_ACCOUNT, &FlakySearch)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(),
+            Some(saved)
+        );
     }
 
     // Phase 5 run 4: flipping `server_search` on for IMAP makes
@@ -3813,14 +4224,21 @@ mod tests {
         }
 
         let database = backfill_database();
-        let provider = ImapShapedSearch { searches: AtomicUsize::new(0) };
+        let provider = ImapShapedSearch {
+            searches: AtomicUsize::new(0),
+        };
         // Finishes at once: no more work, no error.
         assert!(
-            !backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap(),
+            !backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider)
+                .await
+                .unwrap(),
             "an empty search finishes the Sent backfill in one step"
         );
         // Progress cleared (nothing left to resume), so later polls don't loop.
-        assert_eq!(database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(), None);
+        assert_eq!(
+            database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(),
+            None
+        );
         assert_eq!(
             provider.searches.load(Ordering::SeqCst),
             1,
@@ -3828,7 +4246,13 @@ mod tests {
         );
         // A follow-up step does nothing (progress is cleared) and never searches
         // again.
-        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
-        assert_eq!(provider.searches.load(Ordering::SeqCst), 1, "no repeated work");
+        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider)
+            .await
+            .unwrap());
+        assert_eq!(
+            provider.searches.load(Ordering::SeqCst),
+            1,
+            "no repeated work"
+        );
     }
 }

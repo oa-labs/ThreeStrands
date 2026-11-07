@@ -148,9 +148,7 @@ async fn start(script: Script, implicit: bool) -> FakeSmtp {
             drop(reader);
             if script == Script::NoStartTls {
                 // Advertise AUTH but NOT STARTTLS; mail-send must refuse.
-                let _ = tcp
-                    .write_all(b"250-fake\r\n250 AUTH PLAIN LOGIN\r\n")
-                    .await;
+                let _ = tcp.write_all(b"250-fake\r\n250 AUTH PLAIN LOGIN\r\n").await;
                 // The client should give up here (MissingStartTls); drain.
                 let mut buf = [0u8; 64];
                 let _ = tcp.read(&mut buf).await;
@@ -172,7 +170,12 @@ async fn start(script: Script, implicit: bool) -> FakeSmtp {
             run_session(tls, script, log2, body2, false).await;
         }
     });
-    FakeSmtp { port, pin, log, body }
+    FakeSmtp {
+        port,
+        pin,
+        log,
+        body,
+    }
 }
 
 /// Drive the SMTP conversation over the (already TLS) stream per the script.
@@ -186,10 +189,9 @@ async fn run_session<S>(
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let mut s = BufReader::new(stream);
-    if greet
-        && s.write_all(b"220 fake ready\r\n").await.is_err() {
-            return;
-        }
+    if greet && s.write_all(b"220 fake ready\r\n").await.is_err() {
+        return;
+    }
     let mut rcpt_seen = 0usize;
     let mut line = String::new();
     loop {
@@ -345,7 +347,9 @@ async fn run_session<S>(
                     let _ = s.write_all(&long).await;
                 }
                 _ => {
-                    let _ = s.write_all(b"250 2.0.0 message accepted for delivery\r\n").await;
+                    let _ = s
+                        .write_all(b"250 2.0.0 message accepted for delivery\r\n")
+                        .await;
                 }
             }
         } else if up == "RSET" {
@@ -403,9 +407,15 @@ async fn connect(srv: &FakeSmtp, implicit: bool) -> Result<SmtpSession, SmtpFail
 #[tokio::test]
 async fn accepts_and_sends_the_exact_framed_bytes_in_both_tls_modes() {
     for implicit in [false, true] {
-        let script = if implicit { Script::AcceptImplicit } else { Script::Accept };
+        let script = if implicit {
+            Script::AcceptImplicit
+        } else {
+            Script::Accept
+        };
         let srv = start(script, implicit).await;
-        let session = connect(&srv, implicit).await.expect("prepare phase succeeds");
+        let session = connect(&srv, implicit)
+            .await
+            .expect("prepare phase succeeds");
         let out = session
             .send("a@b.example", &["c@d.example".to_string()], BODY)
             .await;
@@ -418,7 +428,10 @@ async fn accepts_and_sends_the_exact_framed_bytes_in_both_tls_modes() {
         assert!(srv.saw("RCPT TO:<c@d.example>"), "{implicit}");
         let body = srv.body_bytes();
         let expected = frame_message(BODY);
-        assert_eq!(body, expected, "{implicit} body bytes must match frame_message exactly");
+        assert_eq!(
+            body, expected,
+            "{implicit} body bytes must match frame_message exactly"
+        );
         assert!(body.ends_with(b"\r\n.\r\n"), "{implicit}");
     }
 }
@@ -430,7 +443,11 @@ async fn accepts_and_sends_the_exact_framed_bytes_in_both_tls_modes() {
 #[tokio::test]
 async fn a_wrong_pin_fails_before_auth_in_both_modes() {
     for implicit in [false, true] {
-        let script = if implicit { Script::AcceptImplicit } else { Script::Accept };
+        let script = if implicit {
+            Script::AcceptImplicit
+        } else {
+            Script::Accept
+        };
         let srv = start(script, implicit).await;
         let wrong = Sha256Fingerprint::from_bytes([0xEE; 32]);
         let res = SmtpSession::connect_with_timeouts(
@@ -449,7 +466,10 @@ async fn a_wrong_pin_fails_before_auth_in_both_modes() {
             fail.error
         );
         // No AUTH bytes ever reached the server.
-        assert!(!srv.saw_prefix("AUTH"), "{implicit} AUTH must not reach the wire on a wrong pin");
+        assert!(
+            !srv.saw_prefix("AUTH"),
+            "{implicit} AUTH must not reach the wire on a wrong pin"
+        );
     }
 }
 
@@ -484,7 +504,10 @@ async fn auth_535_maps_to_reauthentication_required() {
         "535 must map to the reauth class, got {:?}",
         fail.error
     );
-    assert!(!srv.saw_prefix("MAIL FROM"), "no envelope after an auth failure");
+    assert!(
+        !srv.saw_prefix("MAIL FROM"),
+        "no envelope after an auth failure"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -503,7 +526,10 @@ async fn mail_from_553_is_permanent_not_delivered() {
         SmtpOutcome::NotDelivered(f) => {
             assert_eq!(f.phase, Phase::MailFrom);
             assert_eq!(f.reply.as_ref().unwrap().code, 553);
-            assert!(matches!(f.error, ProviderError::PermanentClientRejection(_)));
+            assert!(matches!(
+                f.error,
+                ProviderError::PermanentClientRejection(_)
+            ));
         }
         other => panic!("expected NotDelivered, got {other:?}"),
     }
@@ -516,7 +542,10 @@ async fn mail_from_553_is_permanent_not_delivered() {
 #[tokio::test]
 async fn any_rejected_rcpt_aborts_the_whole_send_naming_the_address() {
     let srv = start(Script::Reject550SecondRcpt, false).await;
-    let rcpts = vec!["first@x.example".to_string(), "second@y.example".to_string()];
+    let rcpts = vec![
+        "first@x.example".to_string(),
+        "second@y.example".to_string(),
+    ];
     let out = connect(&srv, false)
         .await
         .unwrap()
@@ -528,7 +557,10 @@ async fn any_rejected_rcpt_aborts_the_whole_send_naming_the_address() {
             assert_eq!(f.reply.as_ref().unwrap().code, 550);
             match &f.error {
                 ProviderError::PermanentClientRejection(m) => {
-                    assert!(m.contains("second@y.example"), "must name the rejected address: {m}");
+                    assert!(
+                        m.contains("second@y.example"),
+                        "must name the rejected address: {m}"
+                    );
                 }
                 other => panic!("expected permanent, got {other:?}"),
             }
@@ -538,7 +570,10 @@ async fn any_rejected_rcpt_aborts_the_whole_send_naming_the_address() {
     // Both RCPTs were attempted, but NO body was sent (never a silent subset).
     assert!(srv.saw("RCPT TO:<first@x.example>"));
     assert!(srv.saw("RCPT TO:<second@y.example>"));
-    assert!(srv.body_bytes().is_empty(), "no DATA after a rejected recipient");
+    assert!(
+        srv.body_bytes().is_empty(),
+        "no DATA after a rejected recipient"
+    );
 }
 
 #[tokio::test]
@@ -581,7 +616,10 @@ async fn drop_before_354_is_definite_not_delivered() {
         other => panic!("expected NotDelivered, got {other:?}"),
     }
     assert!(srv.saw("DATA"));
-    assert!(srv.body_bytes().is_empty(), "no body bytes reached the server");
+    assert!(
+        srv.body_bytes().is_empty(),
+        "no body bytes reached the server"
+    );
 }
 
 #[tokio::test]
@@ -596,7 +634,10 @@ async fn data_554_before_body_is_permanent_not_delivered() {
         SmtpOutcome::NotDelivered(f) => {
             assert_eq!(f.phase, Phase::DataRequest);
             assert_eq!(f.reply.as_ref().unwrap().code, 554);
-            assert!(matches!(f.error, ProviderError::PermanentClientRejection(_)));
+            assert!(matches!(
+                f.error,
+                ProviderError::PermanentClientRejection(_)
+            ));
         }
         other => panic!("expected NotDelivered, got {other:?}"),
     }
@@ -663,7 +704,10 @@ async fn stall_waiting_for_final_reply_is_unknown_and_fast() {
     }
     // The final-reply timeout (400ms) fired; we did not wait anywhere near the
     // server's 3600s stall.
-    assert!(started.elapsed() < Duration::from_secs(10), "must give up on our own timeout");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "must give up on our own timeout"
+    );
 }
 
 /// Timeouts where CONNECT < COMMAND < FINAL-REPLY, all generous enough for a
@@ -725,7 +769,9 @@ async fn a_non_verdict_final_reply_is_unknown_not_definite() {
         .await;
     match out {
         SmtpOutcome::Unknown(u) => assert_eq!(u.phase, Phase::FinalReply),
-        other => panic!("a 1xx/3xx reply after the body is no verdict and must be Unknown, got {other:?}"),
+        other => panic!(
+            "a 1xx/3xx reply after the body is no verdict and must be Unknown, got {other:?}"
+        ),
     }
 }
 
@@ -765,7 +811,10 @@ async fn final_554_is_permanent_not_delivered() {
         SmtpOutcome::NotDelivered(f) => {
             assert_eq!(f.phase, Phase::FinalReply);
             assert_eq!(f.reply.as_ref().unwrap().code, 554);
-            assert!(matches!(f.error, ProviderError::PermanentClientRejection(_)));
+            assert!(matches!(
+                f.error,
+                ProviderError::PermanentClientRejection(_)
+            ));
         }
         other => panic!("expected NotDelivered, got {other:?}"),
     }
@@ -782,7 +831,11 @@ async fn multiline_final_reply_is_accepted() {
     match out {
         SmtpOutcome::Accepted { reply } => {
             assert_eq!(reply.code, 250);
-            assert!(reply.text.contains("accepted"), "last line's text is kept: {}", reply.text);
+            assert!(
+                reply.text.contains("accepted"),
+                "last line's text is kept: {}",
+                reply.text
+            );
         }
         other => panic!("a multi-line 250 must be Accepted, got {other:?}"),
     }
@@ -860,8 +913,7 @@ async fn connection_refused_is_definite_transient_transport() {
         security: SecurityMode::ImplicitTls,
         pinned: Some(Sha256Fingerprint::from_bytes([0x11; 32])),
     };
-    let res =
-        SmtpSession::connect_with_timeouts(&endpoint, &creds(), fast_timeouts()).await;
+    let res = SmtpSession::connect_with_timeouts(&endpoint, &creds(), fast_timeouts()).await;
     let fail = res.err().expect("a refused connection must fail");
     assert_eq!(fail.phase, Phase::Prepare);
     assert!(matches!(fail.error, ProviderError::TransientTransport(_)));
@@ -884,13 +936,19 @@ async fn a_crlf_injection_address_sends_zero_bytes() {
     match out {
         SmtpOutcome::NotDelivered(f) => {
             assert_eq!(f.phase, Phase::MailFrom);
-            assert!(matches!(f.error, ProviderError::PermanentClientRejection(_)));
+            assert!(matches!(
+                f.error,
+                ProviderError::PermanentClientRejection(_)
+            ));
         }
         other => panic!("an injection address must be NotDelivered, got {other:?}"),
     }
     // CRITICAL: nothing from the envelope ever reached the wire.
     assert!(!srv.saw_prefix("MAIL FROM"), "no MAIL FROM on the wire");
-    assert!(!srv.saw("attacker@evil.example"), "injected RCPT must never reach the server");
+    assert!(
+        !srv.saw("attacker@evil.example"),
+        "injected RCPT must never reach the server"
+    );
     assert!(srv.body_bytes().is_empty());
 }
 
@@ -904,7 +962,10 @@ async fn an_injection_in_a_recipient_sends_zero_envelope_bytes() {
         .send("a@b.example", &[evil_rcpt], BODY)
         .await;
     assert!(matches!(out, SmtpOutcome::NotDelivered(_)));
-    assert!(!srv.saw_prefix("MAIL FROM"), "validation runs before ANY command");
+    assert!(
+        !srv.saw_prefix("MAIL FROM"),
+        "validation runs before ANY command"
+    );
     assert!(!srv.saw_prefix("RCPT TO"));
     assert!(!srv.saw("Smuggled"));
 }
@@ -916,21 +977,24 @@ async fn an_injection_in_a_recipient_sends_zero_envelope_bytes() {
 #[test]
 fn address_validation_accepts_ordinary_and_rejects_the_dangerous_forms() {
     for ok in ["a@b.example", "first.last+tag@sub.domain.example", "x@y"] {
-        assert!(validate_envelope_address(ok).is_ok(), "{ok} should be valid");
+        assert!(
+            validate_envelope_address(ok).is_ok(),
+            "{ok} should be valid"
+        );
     }
     for bad in [
-        "",                                    // empty
-        "no-at-sign",                          // no @
-        "a@@b",                                // two @
-        "@domain.example",                     // empty local
-        "local@",                              // empty domain
-        "a@b.example>\r\nRCPT TO:<x@y",        // CRLF injection
-        "a@b\nexample",                        // lone LF
-        "a @b.example",                        // space
-        "a\t@b.example",                       // tab
-        "a<x>@b.example",                      // angle brackets
-        "a\0@b.example",                       // NUL
-        "üser@domain.example",                 // non-ASCII local (no SMTPUTF8)
+        "",                             // empty
+        "no-at-sign",                   // no @
+        "a@@b",                         // two @
+        "@domain.example",              // empty local
+        "local@",                       // empty domain
+        "a@b.example>\r\nRCPT TO:<x@y", // CRLF injection
+        "a@b\nexample",                 // lone LF
+        "a @b.example",                 // space
+        "a\t@b.example",                // tab
+        "a<x>@b.example",               // angle brackets
+        "a\0@b.example",                // NUL
+        "üser@domain.example",          // non-ASCII local (no SMTPUTF8)
     ] {
         let err = validate_envelope_address(bad).unwrap_err();
         assert!(
@@ -982,7 +1046,10 @@ fn phase_unknown_zone_is_exactly_body_and_final_reply() {
 
 #[test]
 fn classify_definite_table_maps_each_case_to_the_right_provider_error() {
-    let reply = |code| SmtpReply { code, text: "x".into() };
+    let reply = |code| SmtpReply {
+        code,
+        text: "x".into(),
+    };
     // 535 (and the 53x reauth band) during prepare => reauth class.
     for code in [530u16, 535, 538] {
         let e = classify_definite(Phase::Prepare, Some(&reply(code)));
@@ -1024,7 +1091,10 @@ fn credentials_debug_redacts_the_password() {
     };
     let shown = format!("{c:?}");
     assert!(shown.contains("user@example.com"));
-    assert!(!shown.contains("hunter2"), "password must never appear in Debug: {shown}");
+    assert!(
+        !shown.contains("hunter2"),
+        "password must never appear in Debug: {shown}"
+    );
     assert!(shown.contains("<redacted>"));
 }
 
@@ -1041,9 +1111,8 @@ fn reply_text_sanitiser_strips_controls_and_caps_length() {
 #[tokio::test]
 async fn smtp_reply_reader_handles_multiline_and_checks_the_final_code() {
     use std::io::Cursor;
-    let mut ok = Cursor::new(
-        b"250-mail.example.com\r\n250-SIZE 1024\r\n250 AUTH LOGIN\r\n".to_vec(),
-    );
+    let mut ok =
+        Cursor::new(b"250-mail.example.com\r\n250-SIZE 1024\r\n250 AUTH LOGIN\r\n".to_vec());
     assert!(read_smtp_reply(&mut ok, 250).await.is_ok());
     let mut rejected = Cursor::new(b"535 5.7.8 bad credentials\r\n".to_vec());
     assert!(read_smtp_reply(&mut rejected, 235).await.is_err());
@@ -1100,13 +1169,18 @@ mod dry_run {
                 return;
             };
             if mode == SecurityMode::ImplicitTls
-                && write_all_res(&mut tls, "220 submission ready\r\n").await.is_err()
+                && write_all_res(&mut tls, "220 submission ready\r\n")
+                    .await
+                    .is_err()
             {
                 return;
             }
             let first = read_command(&mut tls).await;
             if probe_only {
-                assert!(first.is_empty(), "a probe must not send credentials: {first}");
+                assert!(
+                    first.is_empty(),
+                    "a probe must not send credentials: {first}"
+                );
                 return;
             }
             assert_eq!(first, "EHLO threestrands.local\r\n");
@@ -1169,7 +1243,9 @@ mod dry_run {
     async fn smtp_probes_collect_certificates_without_authenticating() {
         for mode in [SecurityMode::ImplicitTls, SecurityMode::StartTls] {
             let (port, pin, server) = smtp_server(mode, false, true).await;
-            let probe = probe_smtp_certificate("127.0.0.1", port, mode).await.unwrap();
+            let probe = probe_smtp_certificate("127.0.0.1", port, mode)
+                .await
+                .unwrap();
             assert_eq!(probe.certificate.sha256_fingerprint, pin.to_hex());
             assert!(!probe.trusted_by_platform);
             finish(server).await;
@@ -1205,7 +1281,6 @@ mod dry_run {
         assert!(matches!(error, ProviderError::ReauthenticationRequired(_)));
         finish(server).await;
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1231,10 +1306,7 @@ mod live {
             SecurityMode::StartTls => "THREESTRANDS_SMTP_SINK_PORT",
             SecurityMode::ImplicitTls => "THREESTRANDS_SMTP_SINK_IMPLICIT_PORT",
         };
-        let port: u16 = std::env::var(var)
-            .ok()?
-            .parse()
-            .ok()?;
+        let port: u16 = std::env::var(var).ok()?.parse().ok()?;
         Some(SmtpEndpoint {
             host: "127.0.0.1".into(),
             port,

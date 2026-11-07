@@ -20,7 +20,10 @@ impl MailSend for ImapProvider {
         Ok(self.account_id.clone())
     }
 
-    async fn identities(&self, _account: &str) -> ProviderResult<Vec<crate::provider::imap::SendingIdentity>> {
+    async fn identities(
+        &self,
+        _account: &str,
+    ) -> ProviderResult<Vec<crate::provider::imap::SendingIdentity>> {
         // The one source of truth: the ACCOUNT address first and always, then
         // the stored list, normalized/validated. The first entry is the
         // account's own sending address (its key), not the login, for the same
@@ -47,7 +50,8 @@ impl MailSend for ImapProvider {
         // BEFORE any network. The password is never formatted — it goes only
         // into SmtpCredentials (which redacts Debug).
         let endpoint = crate::provider::imap::send::smtp_endpoint_from_settings(&self.settings)?;
-        let creds = crate::provider::imap::send::smtp_credentials(&self.settings, &self.smtp_password);
+        let creds =
+            crate::provider::imap::send::smtp_credentials(&self.settings, &self.smtp_password);
 
         // Connect + authenticate. Any failure here is a DEFINITE non-delivery
         // (nothing sent); map it to the existing ProviderError class the
@@ -60,7 +64,8 @@ impl MailSend for ImapProvider {
         // The permit owns the live session plus what send_once needs to derive
         // the envelope and the receipt: the account address (for the provider
         // id) and the identity list (to validate the From).
-        let identities = crate::provider::imap::account_identities(&self.account_id, &self.settings.identities);
+        let identities =
+            crate::provider::imap::account_identities(&self.account_id, &self.settings.identities);
         Ok(Box::new(crate::provider::imap::send::ImapDelivery::new(
             session,
             self.account_id.clone(),
@@ -104,13 +109,14 @@ impl MailSend for ImapProvider {
         }
         // The Message-ID is required to locate our copy; a message without one
         // can never be found again, so refuse PERMANENTLY (abandons the job).
-        let message_id = crate::provider::imap::send::raw_message_id(&request.raw).ok_or_else(|| {
-            ProviderError::InvalidOperation(
+        let message_id =
+            crate::provider::imap::send::raw_message_id(&request.raw).ok_or_else(|| {
+                ProviderError::InvalidOperation(
                 "cannot save the Sent copy: the message has no Message-ID header to locate it by; \
                  refusing permanently"
                     .into(),
             )
-        })?;
+            })?;
 
         // Resolve the Sent mailbox from the plan exactly as run 4a does (a WIRE
         // name; never re-encoded). A missing Sent mailbox is permanent.
@@ -140,7 +146,12 @@ impl MailSend for ImapProvider {
                 config: crate::provider::imap::write::SaveSentConfig::default(),
                 now: self.now,
             };
-            crate::provider::imap::write::decide_sent_copy(&mut io, request, crate::provider::imap::SENT_COPY_VERIFY_DELAY).await
+            crate::provider::imap::write::decide_sent_copy(
+                &mut io,
+                request,
+                crate::provider::imap::SENT_COPY_VERIFY_DELAY,
+            )
+            .await
         };
         let _ = session.logout().await;
         result
@@ -150,15 +161,27 @@ impl MailSend for ImapProvider {
         self.drafts_mailbox().is_some()
     }
 
-    async fn find_server_draft(&self, message_id: &str) -> ProviderResult<Option<crate::provider::ServerDraft>> {
+    async fn find_server_draft(
+        &self,
+        message_id: &str,
+    ) -> ProviderResult<Option<crate::provider::ServerDraft>> {
         self.find_draft_copy(message_id).await
     }
 
-    async fn create_server_draft(&self, raw: &[u8], _thread: Option<&str>) -> ProviderResult<crate::provider::ServerDraft> {
+    async fn create_server_draft(
+        &self,
+        raw: &[u8],
+        _thread: Option<&str>,
+    ) -> ProviderResult<crate::provider::ServerDraft> {
         self.write_draft_copy(raw, None).await
     }
 
-    async fn update_server_draft(&self, id: &str, raw: &[u8], _thread: Option<&str>) -> ProviderResult<crate::provider::ServerDraft> {
+    async fn update_server_draft(
+        &self,
+        id: &str,
+        raw: &[u8],
+        _thread: Option<&str>,
+    ) -> ProviderResult<crate::provider::ServerDraft> {
         self.write_draft_copy(raw, Some(id)).await
     }
 
@@ -170,7 +193,10 @@ impl MailSend for ImapProvider {
         self.list_draft_copies().await
     }
 
-    async fn fetch_server_draft(&self, id: &str) -> ProviderResult<crate::provider::FetchedServerDraft> {
+    async fn fetch_server_draft(
+        &self,
+        id: &str,
+    ) -> ProviderResult<crate::provider::FetchedServerDraft> {
         self.fetch_draft_copy(id).await
     }
 
