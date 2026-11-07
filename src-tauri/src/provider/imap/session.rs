@@ -321,12 +321,21 @@ where
                     NameAttribute::Junk => special_use = Some("\\Junk".to_string()),
                     NameAttribute::Sent => special_use = Some("\\Sent".to_string()),
                     NameAttribute::Trash => special_use = Some("\\Trash".to_string()),
+                    // The negotiated label extension also advertises this
+                    // system view. Never expose it as a creatable user label.
+                    NameAttribute::Extension(attribute) if attribute.eq_ignore_ascii_case("\\Important") => {
+                        special_use.get_or_insert_with(|| "\\Important".to_string());
+                    }
                     _ => {}
                 }
             }
             entries.push(MailboxEntry {
-                name: name.name().to_string(),
-                delimiter: name.delimiter().map(str::to_string),
+                name: if self.gmail_message_ids {
+                    native_list_string(name.name(), name.borrow_owner().borrow_owner())
+                } else { name.name().to_string() },
+                delimiter: name.delimiter().map(|delimiter| if self.gmail_message_ids {
+                    native_list_string(delimiter, name.borrow_owner().borrow_owner())
+                } else { delimiter.to_string() }),
                 no_select,
                 special_use,
             });
@@ -412,6 +421,25 @@ where
         // be re-borrowed as the write surface.
         Some(self)
     }
+}
+
+/// imap-proto borrows ASTRING contents without unescaping quoted strings.
+/// Use their position in the owned response to distinguish quotes from literal
+/// data: blindly unescaping a literal would address a different mailbox.
+fn native_list_string(value: &str, response: &[u8]) -> String {
+    let offset = (value.as_ptr() as usize).checked_sub(response.as_ptr() as usize);
+    let quoted = offset.is_some_and(|offset| offset > 0
+        && offset.checked_add(value.len()).is_some_and(|end| end <= response.len())
+        && response.get(offset - 1) == Some(&b'"'));
+    if !quoted { return value.to_string(); }
+    let mut chars = value.chars().peekable();
+    let mut out = String::new();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek().is_some_and(|next| matches!(next, '\\' | '"')) {
+            out.push(chars.next().expect("peeked escaped character"));
+        } else { out.push(ch); }
+    }
+    out
 }
 /// whether it completed OK, and the first typed `CopyUid` seen (from either an
 /// untagged `* OK [COPYUID ...]` — MOVE — or the tagged completion — COPY).

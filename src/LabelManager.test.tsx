@@ -87,17 +87,13 @@ describe("LabelManager picker", () => {
     return props;
   }
 
-  it("applies and removes existing native labels without offering catalog changes", () => {
-    const { onToggle, onCreate, onDelete, onRename } = renderPicker({
+  it("applies and removes existing native labels without offering rename or delete", () => {
+    const { onToggle, onDelete, onRename } = renderPicker({
       capabilities: labelCapabilities("imapNativeLabels"),
       checkedLabelIds: new Set([work.id]),
     });
-    const input = screen.getByRole("combobox", { name: "Find a Label" });
+    const input = screen.getByRole("combobox", { name: "Find or Create a Label" });
     expect(screen.queryByRole("button", { name: /rename|delete/i })).not.toBeInTheDocument();
-    fireEvent.change(input, { target: { value: "Missing" } });
-    expect(screen.queryByRole("option")).not.toBeInTheDocument();
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(onCreate).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: "Work" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onToggle).toHaveBeenCalledWith(work, false);
@@ -145,6 +141,23 @@ describe("LabelManager picker", () => {
     const created = { id: "new-Project X", name: "Project X", kind: "user" };
     expect(onToggle).toHaveBeenCalledWith(created, true);
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("creates and applies a native label while keeping rename and delete unavailable", async () => {
+    const { onCreate, onToggle, onDelete, onRename } = renderPicker({
+      capabilities: labelCapabilities("imapNativeLabels"),
+    });
+    const input = screen.getByRole("combobox", { name: "Find or Create a Label" });
+    fireEvent.change(input, { target: { value: "Projects/日本語" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+    expect(onCreate).toHaveBeenCalledWith("Projects/日本語");
+    expect(onToggle).toHaveBeenCalledWith({ id: "new-Projects/日本語", name: "Projects/日本語", kind: "user" }, true);
+    expect(screen.queryByRole("button", { name: /rename|delete/i })).not.toBeInTheDocument();
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(onRename).not.toHaveBeenCalled();
   });
 
   it("marks an applied label as added and removes it when picked again", () => {

@@ -520,7 +520,7 @@ impl MailMutate for ImapProvider {
 
     async fn create_label(&self, name: &str) -> ProviderResult<Label> {
         if self.store.uses_native_labels().map_err(db_err)? {
-            return Err(ProviderError::InvalidOperation("Create labels in another client; this account supports applying existing labels".into()));
+            return self.create_native_label(name).await;
         }
         self.create_label_folder(name).await
     }

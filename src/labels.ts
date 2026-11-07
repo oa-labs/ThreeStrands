@@ -127,7 +127,7 @@ export function labelCapabilities(labelModel: LabelModel | undefined): LabelCapa
       // the label-folder id is derived from the name and nothing migrates it.
       return { canManageLabels: true, canCreateLabels: true, canDeleteLabels: true, canRenameLabels: false, unavailableReason: null };
     case "imapNativeLabels":
-      return { canManageLabels: true, canCreateLabels: false, canDeleteLabels: false, canRenameLabels: false, unavailableReason: null };
+      return { canManageLabels: true, canCreateLabels: true, canDeleteLabels: false, canRenameLabels: false, unavailableReason: null };
     case "imapKeywords":
     case "imapNoUserLabels":
       // No writable user-label storage: every label action would be refused.

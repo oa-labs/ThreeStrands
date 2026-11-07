@@ -1,5 +1,6 @@
 use super::*;
 mod all_mail;
+mod native_creation;
 use async_trait::async_trait;
 
 use crate::provider::{
@@ -77,6 +78,12 @@ impl MutFolder {
 /// connection is visible to a later sweep.
 #[derive(Clone, Default)]
 struct MutServer {
+    create_outcome: Option<native_creation::CreateOutcome>,
+    list_fails: bool,
+    literal_list_names: bool,
+    list_attributes: BTreeMap<String, String>,
+    list_noselect: std::collections::BTreeSet<String>,
+    delimiter: String,
     drop_label_response_once: bool,
     reset_label_validity_once: bool,
     capabilities: Vec<String>,
@@ -110,6 +117,12 @@ struct MutServer {
 impl MutServer {
     fn new() -> Self {
         Self {
+            create_outcome: None,
+            list_fails: false,
+            literal_list_names: false,
+            list_attributes: Default::default(),
+            list_noselect: Default::default(),
+            delimiter: "/".into(),
             drop_label_response_once: false,
             reset_label_validity_once: false,
             capabilities: vec![
@@ -209,6 +222,8 @@ fn build_response(
     } else if upper.starts_with("CAPABILITY") {
         let caps = state.capabilities.join(" ");
         (format!("* CAPABILITY {caps}\r\n{tag} OK done\r\n"), false)
+    } else if upper.starts_with("LIST") && state.capabilities.iter().any(|cap| cap == "X-GM-EXT-1") {
+        native_creation::list_response(state, tag)
     } else if upper.starts_with("SELECT") || upper.starts_with("EXAMINE") {
         let is_select = upper.starts_with("SELECT");
         let name = select_name(rest, is_select);
@@ -311,6 +326,9 @@ fn build_response(
         out.push_str(&format!("{tag} OK done\r\n"));
         (out, false)
     } else if upper.starts_with("CREATE") {
+        if state.capabilities.iter().any(|cap| cap == "X-GM-EXT-1") {
+            return native_creation::create_response(state, tag, rest);
+        }
         // CREATE <mailbox>: create an empty folder (idempotent-ish — a
         // re-create of an existing one answers NO, which the caller never
         // triggers because create is reached only on TRYCREATE).

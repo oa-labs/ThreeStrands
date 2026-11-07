@@ -148,10 +148,10 @@ describe("conversationLabelGroups", () => {
 });
 
 describe("labelCapabilities", () => {
-  it("allows toggling existing native IMAP labels without catalog changes", () => {
+  it("allows creating and toggling native IMAP labels while keeping rename and delete unavailable", () => {
     expect(labelCapabilities("imapNativeLabels")).toEqual({
       canManageLabels: true,
-      canCreateLabels: false,
+      canCreateLabels: true,
       canDeleteLabels: false,
       canRenameLabels: false,
       unavailableReason: null,
