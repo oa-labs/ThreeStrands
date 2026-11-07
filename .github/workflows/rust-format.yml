@@ -1,0 +1,44 @@
+name: Rust format
+
+on:
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "**/rustfmt.toml"
+      - "**/.rustfmt.toml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust-format.yml"
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-format-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rustfmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # Same toolchain as rust-toolchain.toml, so CI and local formatting agree.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          components: rustfmt
+
+      - name: Check formatting (root workspace)
+        run: cargo fmt --all --check
+
+      # src-tauri is excluded from the root workspace and is checked on its own.
+      - name: Check formatting (src-tauri)
+        run: cargo fmt --all --check --manifest-path src-tauri/Cargo.toml

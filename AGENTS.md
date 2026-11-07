@@ -95,6 +95,10 @@ changes, and `cargo test --workspace` at the repository root when a change
 touches `crates/` (mail parsing lives in `crates/mail-mime`). Run `pnpm test:e2e` when the change touches compose, triage, or email
 rendering.
 
+Before committing Rust changes, run `cargo fmt --all` at the repository root
+and `cargo fmt --all --manifest-path src-tauri/Cargo.toml`; CI rejects
+unformatted code.
+
 Do not start the dev server, click through the UI, take screenshots, or use a
 browser to judge look and feel. Ship the change with automated coverage and
 leave hands-on UI verification to the developer.

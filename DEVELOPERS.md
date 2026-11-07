@@ -34,6 +34,14 @@ pnpm build
 pnpm tauri dev # native app with local SQLite
 ```
 
+Rust code is formatted with `rustfmt`, and CI rejects unformatted code. The
+root workspace excludes `src-tauri`, so format both:
+
+```sh
+cargo fmt --all
+cargo fmt --all --manifest-path src-tauri/Cargo.toml
+```
+
 Linux release packages are built in the repository's reproducible Ubuntu
 devcontainer. It produces x86-64 Debian, RPM, and AppImage artifacts whether
 the host is Linux or Apple Silicon. See the [Linux build guide](docs/linux-builds.md).
