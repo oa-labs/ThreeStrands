@@ -123,7 +123,7 @@ fn parse_usage(protocol: ApiProtocol, body: &str) -> (u64, u64, Option<f64>) {
 mod tests {
     use super::*;
     use crate::ai::brief::parse_action_proposals;
-    use crate::ai::provider::call_provider;
+    use crate::ai::provider::{call_provider, AiCall};
     use axum::{routing::post, Json, Router};
     use serde_json::json;
     use std::sync::{Arc, Mutex};
@@ -190,15 +190,17 @@ mod tests {
 
         let purpose = RequestPurpose::about("brief", "Lunch", Some(3));
         let content = with_purpose(purpose.clone(), call_provider(
-            AiProvider::Custom,
-            "usage-test-model",
-            Some(&endpoint),
-            "system",
-            "prompt",
-            100,
-            0.1,
-            None,
-            "key",
+            AiCall {
+                provider: AiProvider::Custom,
+                model: "usage-test-model",
+                endpoint: Some(&endpoint),
+                system_prompt: "system",
+                prompt: "prompt",
+                max_tokens: 100,
+                temperature: 0.1,
+                schema: None,
+                api_key: "key",
+            },
         ))
         .await
         .unwrap();

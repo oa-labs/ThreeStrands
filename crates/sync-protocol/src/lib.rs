@@ -732,7 +732,22 @@ mod tests {
         }
         // A build from before mute rules cannot decode the new type, so it
         // never merges a snapshot partially (see docs/cross-device-sync.md).
-        #[derive(Deserialize, Debug)] #[serde(rename_all="snake_case")] #[allow(dead_code)] enum PreviousType {Task,Snippet,SplitInbox,MailAccount,CalendarAccount,CalendarSelection,Preferences,Retention,Contact,Goal,ContactGroup,ScheduledSendSummary}
+        #[derive(Deserialize, Debug)]
+        #[serde(rename_all = "snake_case")]
+        enum PreviousType {
+            Task,
+            Snippet,
+            SplitInbox,
+            MailAccount,
+            CalendarAccount,
+            CalendarSelection,
+            Preferences,
+            Retention,
+            Contact,
+            Goal,
+            ContactGroup,
+            ScheduledSendSummary,
+        }
         assert!(serde_json::from_str::<PreviousType>("\"sender_rule\"").is_err());
         assert!(serde_json::from_str::<PreviousType>("\"scheduled_send_summary\"").is_ok());
     }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
 import { Check, Copy, Star, Users, X } from "lucide-react";
 import { matchingGroups, memberCountLabel } from "./contactGroups";
@@ -171,11 +171,11 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
   // Who joins the people already listed changes as they change; refresh
   // while the field is in use, as compose does.
   const valuesKey = values.join("\n").toLocaleLowerCase();
-  useEffect(() => {
+  // Reads the current draft and values; text edits have their own path.
+  const refreshLookUp = useEffectEvent(() => {
     if (suggestContacts && document.activeElement === inputRef.current) lookUp(draft);
-    // lookUp reads the current values; text edits have their own path.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [valuesKey, calendarAccount]);
+  });
+  useEffect(() => { refreshLookUp(); }, [valuesKey, calendarAccount]);
   const changeDraft = (text: string) => {
     setDraft(text);
     setRejected(false);

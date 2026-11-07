@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::context::{action_context, truncate_chars, ActionMessageInput};
 use super::output::{decode_json_output, OutputDecodeError};
-use super::provider::{call_provider, AiProvider, OutputSchema, STRUCTURED_OUTPUT_TOKENS};
+use super::provider::{call_provider, AiCall, AiProvider, OutputSchema, STRUCTURED_OUTPUT_TOKENS};
 use crate::error_text::display;
 
 /// Longest range a search may cover, matching the app's own scheduling cards.
@@ -153,15 +153,17 @@ pub async fn find_times(request: FindTimesRequest, api_key: &str) -> Result<Time
     let bounded = action_context(&request.messages, None);
     let prompt = build_find_times_prompt(&request, &bounded)?;
     let content = call_provider(
-        request.provider,
-        &request.model,
-        request.endpoint.as_deref(),
-        FIND_TIMES_SYSTEM_PROMPT,
-        &prompt,
-        STRUCTURED_OUTPUT_TOKENS,
-        0.2,
-        Some(&find_times_output_schema()),
-        api_key,
+        AiCall {
+            provider: request.provider,
+            model: &request.model,
+            endpoint: request.endpoint.as_deref(),
+            system_prompt: FIND_TIMES_SYSTEM_PROMPT,
+            prompt: &prompt,
+            max_tokens: STRUCTURED_OUTPUT_TOKENS,
+            temperature: 0.2,
+            schema: Some(&find_times_output_schema()),
+            api_key,
+        },
     )
     .await?;
     let mut search = parse_time_search(&content, &request.current_time)?;

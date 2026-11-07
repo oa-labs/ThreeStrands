@@ -492,6 +492,58 @@ describe("MeetingScheduler", () => {
       expect(screen.getByText("Already on your calendar")).toBeInTheDocument();
       expect(check).toHaveBeenCalledTimes(1);
     });
+
+    it("tells its caller about a match once, even when the caller passes a new callback", async () => {
+      conflicting();
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [added], errors: [] });
+      const handlers = { onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onOpenCalendarSettings: vi.fn() };
+      const first = vi.fn();
+      const { rerender } = render(<MeetingScheduler plan={announcedPlan} preferences={preferences} calendarConnected identity={identity} onMatchChange={first} {...handlers} />);
+      await waitFor(() => expect(first).toHaveBeenLastCalledWith(added));
+      const second = vi.fn();
+      rerender(<MeetingScheduler plan={announcedPlan} preferences={preferences} calendarConnected identity={{ ...identity }} onMatchChange={second} {...handlers} />);
+      expect(screen.getByText("Already on your calendar")).toBeInTheDocument();
+      expect(first.mock.calls.filter(([event]) => event !== null)).toHaveLength(1);
+      expect(second).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("re-rendered by its caller", () => {
+    const handlers = () => ({ onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onOpenCalendarSettings: vi.fn() });
+    const coworkers = { accountId: "me@example.com", emails: ["alex@example.com"] };
+
+    it("searches and reports a range once while the caller passes equal values and new callbacks", async () => {
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [candidate(50)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+      const first = vi.fn();
+      const { rerender } = render(<MeetingScheduler plan={range} preferences={preferences} calendarConnected coworkers={{ ...coworkers }} onSearchChange={first} {...handlers()} />);
+      expect(await screen.findByRole("group", { name: "Open times" })).toBeInTheDocument();
+      const second = vi.fn();
+      rerender(<MeetingScheduler plan={range} preferences={{ ...preferences }} calendarConnected coworkers={{ ...coworkers, emails: [...coworkers.emails] }} onSearchChange={second} {...handlers()} />);
+      expect(screen.getByRole("group", { name: "Open times" })).toBeInTheDocument();
+      expect(find).toHaveBeenCalledTimes(1);
+      expect(first).toHaveBeenCalledTimes(1);
+      expect(first).toHaveBeenCalledWith(expect.objectContaining({ query: range.query, durationMinutes: 45 }));
+      expect(second).not.toHaveBeenCalled();
+
+      // Moving to later days is a new search, reported to the latest callback.
+      fireEvent.click(screen.getByRole("button", { name: "Later" }));
+      await waitFor(() => expect(find).toHaveBeenCalledTimes(2));
+      expect(second).toHaveBeenCalledTimes(1);
+      expect(second.mock.calls[0][0].query.start).not.toBe(range.query!.start);
+      expect(first).toHaveBeenCalledTimes(1);
+    });
+
+    it("searches again when the coworkers' calendars really change", async () => {
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [candidate(50)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+      const callbacks = handlers();
+      const { rerender } = render(<MeetingScheduler plan={range} preferences={preferences} calendarConnected coworkers={coworkers} {...callbacks} />);
+      await waitFor(() => expect(find).toHaveBeenCalledTimes(1));
+      rerender(<MeetingScheduler plan={range} preferences={preferences} calendarConnected coworkers={{ ...coworkers, emails: ["sam@example.com"] }} {...callbacks} />);
+      await waitFor(() => expect(find).toHaveBeenCalledTimes(2));
+      expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ coworkers: { accountId: "me@example.com", emails: ["sam@example.com"] } }));
+    });
   });
 
   describe("adjusting a range search", () => {

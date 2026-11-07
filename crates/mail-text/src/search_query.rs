@@ -15,14 +15,6 @@
 //! The IMAP renderer and `has:attachment` local filtering are deliberately
 //! left out of this slice (`// IMAP:` seams below).
 
-// Seam module: the AST, parser and Gmail renderer are exercised by this
-// module's own tests and will be consumed by the live search path and the
-// IMAP renderer in later phases (see `docs/imap-design.md`, "Server search",
-// phases 1, 5). Until then the public items have no non-test caller, so a
-// normal build would flag them as dead code. The allow is scoped to this
-// module and removed once a caller is wired in.
-#![allow(dead_code)]
-
 use chrono::NaiveDate;
 
 /// The field a `before:`/`after:` date term constrains.

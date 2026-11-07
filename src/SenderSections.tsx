@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useId, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Eye, Globe, Link2, Mail, Paperclip, Reply, Shield, ShieldCheck, TriangleAlert, UserCheck, UserRound } from "lucide-react";
 import type { Message, MessageTrust, SenderFamiliarity, SenderHistory, SenderRule, SplitInbox } from "./domain";
 import { parseAddress } from "./emailAddress";
@@ -214,13 +214,13 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
     }
     return () => { active = false; stop?.(); window.removeEventListener(SENDER_FEEDBACK_CHANGED, refresh); };
   }, []);
+  // `key` covers the message fields the reads use, so the message itself is not a trigger.
+  const loadTrust = useEffectEvent(() => readTrust(message, key));
   useEffect(() => {
     if (!enabled) return;
     let active = true;
-    readTrust(message, key).then((loaded) => { if (active) setReads(loaded); });
+    loadTrust().then((loaded) => { if (active) setReads(loaded); });
     return () => { active = false; };
-    // `key` covers the message fields the reads use.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, key, revision]);
   const links = useMemo(() => enabled ? analyzeLinks(message.bodyHtml, prior) : null, [enabled, message.bodyHtml, prior]);
   return useMemo(() => {

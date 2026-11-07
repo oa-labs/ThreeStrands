@@ -134,16 +134,16 @@ impl Database {
             &operation_id,
             root,
         )?;
-        self.insert_scheduled_draft(
-            &draft,
+        self.insert_scheduled_draft(crate::db::ScheduledDraftRow {
+            draft: &draft,
             revision,
-            &operation_id,
-            &raw,
+            operation_id: &operation_id,
+            raw: &raw,
             owner,
             scheduled_at,
-            &selection.time_zone,
+            time_zone: &selection.time_zone,
             at,
-        )?;
+        })?;
         self.outbox()?
             .into_iter()
             .find(|o| o.id == operation_id)

@@ -9,7 +9,7 @@ use crate::models::{ReplyAssistContext, ReplyAssistMessage};
 use super::context::{bounded_bodies, MAX_BODY_CHARS, MAX_MESSAGES, ThreadMessageInput};
 use super::output::{contains_quoted_history, strip_markdown_fences, MAX_ACTION_OUTPUT_CHARS};
 use super::provider::{
-    call_provider, call_provider_reply, AiProvider, OutputSchema, Reasoning,
+    call_provider, call_provider_reply, AiCall, AiProvider, OutputSchema, Reasoning,
     STRUCTURED_OUTPUT_TOKENS, TEXT_OUTPUT_TOKENS,
 };
 
@@ -45,16 +45,18 @@ pub async fn generate_reply(
 ) -> Result<String, String> {
     let prompt = build_reply_prompt(context, instruction)?;
     let content = call_provider_reply(
-        provider,
-        model,
-        endpoint,
-        REPLY_SYSTEM_PROMPT,
-        &prompt,
-        TEXT_OUTPUT_TOKENS,
-        0.2,
-        None,
+        AiCall {
+            provider,
+            model,
+            endpoint,
+            system_prompt: REPLY_SYSTEM_PROMPT,
+            prompt: &prompt,
+            max_tokens: TEXT_OUTPUT_TOKENS,
+            temperature: 0.2,
+            schema: None,
+            api_key,
+        },
         reasoning,
-        api_key,
     )
     .await?
     .content;
@@ -218,15 +220,17 @@ pub async fn review_draft(
     validate_review_request(&request)?;
     let prompt = serde_json::to_string(&request).map_err(display)?;
     let content = call_provider(
-        provider,
-        model,
-        endpoint,
-        DRAFT_REVIEW_SYSTEM_PROMPT,
-        &prompt,
-        STRUCTURED_OUTPUT_TOKENS,
-        0.2,
-        Some(&draft_review_schema()),
-        api_key,
+        AiCall {
+            provider,
+            model,
+            endpoint,
+            system_prompt: DRAFT_REVIEW_SYSTEM_PROMPT,
+            prompt: &prompt,
+            max_tokens: STRUCTURED_OUTPUT_TOKENS,
+            temperature: 0.2,
+            schema: Some(&draft_review_schema()),
+            api_key,
+        },
     )
     .await?;
     parse_draft_review(&content, &request)

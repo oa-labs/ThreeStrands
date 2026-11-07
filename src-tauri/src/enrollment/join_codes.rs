@@ -640,18 +640,18 @@ pub(super) fn apply_incoming_redemption(
         return Ok(JoinObjectOutcome::Done);
     }
     let state = if direction == "outgoing" { "pending" } else { "observed" };
-    database.record_redemption(
-        cid,
-        &redemption.invitation_cid,
-        &inviter_device_id,
-        &encode_id(redemption.device_id.as_bytes()),
-        &redemption.ed25519_public,
-        &redemption.x25519_public,
-        &redemption.device_name,
-        redemption.created_at_ms,
+    database.record_redemption(crate::db::RedemptionRecord {
+        redemption_cid: cid,
+        invitation_cid: &redemption.invitation_cid,
+        inviter_device_id: &inviter_device_id,
+        device_id: &encode_id(redemption.device_id.as_bytes()),
+        ed25519_public: &redemption.ed25519_public,
+        x25519_public: &redemption.x25519_public,
+        device_name: &redemption.device_name,
+        created_at_ms: redemption.created_at_ms,
         state,
-        now_ms,
-    )?;
+        received_at_ms: now_ms,
+    })?;
     Ok(JoinObjectOutcome::Done)
 }
 

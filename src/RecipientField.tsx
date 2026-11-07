@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { Pin, PinOff, UserPlus, Users, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
@@ -104,13 +104,15 @@ export function RecipientField({ id, label, value, account, disabled, context, l
     onCommittedChange?.(id, chips.map((chip) => chip.email.toLowerCase()).filter(isEmailAddress));
   }, [id, chips, onCommittedChange]);
   // Context changes invalidate before the next debounce, even in sibling fields.
+  // query reads the current context and draft; text edits have their own immediate path.
+  const requery = useEffectEvent(() => {
+    if (document.activeElement === inputRef.current) query(draftText);
+  });
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current);
     ++requestId.current;
     setSuggestions([]);
-    if (document.activeElement === inputRef.current) query(draftText);
-    // query reads the current context; text edits have their own immediate path.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    requery();
   }, [account, contextKey]);
   const groupsLoaded = useRef(false);
   const groupsLoading = useRef(false);

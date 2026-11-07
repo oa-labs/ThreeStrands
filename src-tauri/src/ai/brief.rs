@@ -13,7 +13,7 @@ use super::context::{
 use super::output::{decode_json_output, OutputDecodeError};
 use super::proposals::{proposal_array_schema, proposal_evidence, resolve_evidence, validate_proposal_items};
 use super::provider::{
-    call_provider, call_provider_reply, AiProvider, OutputSchema, Reasoning,
+    call_provider, call_provider_reply, AiCall, AiProvider, OutputSchema, Reasoning,
     STRUCTURED_OUTPUT_TOKENS, TEXT_OUTPUT_TOKENS,
 };
 
@@ -206,15 +206,17 @@ pub async fn brief(request: AnalyzeRequest, api_key: &str) -> Result<ThreadBrief
         &request.goals,
     )?;
     let content = call_provider(
-        request.provider,
-        &request.model,
-        request.endpoint.as_deref(),
-        BRIEF_SYSTEM_PROMPT,
-        &prompt,
-        STRUCTURED_OUTPUT_TOKENS,
-        0.1,
-        Some(&brief_output_schema()),
-        api_key,
+        AiCall {
+            provider: request.provider,
+            model: &request.model,
+            endpoint: request.endpoint.as_deref(),
+            system_prompt: BRIEF_SYSTEM_PROMPT,
+            prompt: &prompt,
+            max_tokens: STRUCTURED_OUTPUT_TOKENS,
+            temperature: 0.1,
+            schema: Some(&brief_output_schema()),
+            api_key,
+        },
     )
     .await?;
     let mut brief = parse_thread_brief(&content, &bounded)?;
@@ -249,15 +251,17 @@ pub async fn analyze(request: AnalyzeRequest, api_key: &str) -> Result<ActionAna
         &request.goals,
     )?;
     let content = call_provider(
-        request.provider,
-        &request.model,
-        request.endpoint.as_deref(),
-        ACTION_SYSTEM_PROMPT,
-        &prompt,
-        STRUCTURED_OUTPUT_TOKENS,
-        0.1,
-        Some(&action_output_schema()),
-        api_key,
+        AiCall {
+            provider: request.provider,
+            model: &request.model,
+            endpoint: request.endpoint.as_deref(),
+            system_prompt: ACTION_SYSTEM_PROMPT,
+            prompt: &prompt,
+            max_tokens: STRUCTURED_OUTPUT_TOKENS,
+            temperature: 0.1,
+            schema: Some(&action_output_schema()),
+            api_key,
+        },
     )
     .await?;
     let mut analysis = parse_action_proposals(&content, &bounded)?;
@@ -632,16 +636,18 @@ fn strip_label<'a>(line: &'a str, label: &str) -> &'a str {
 pub async fn summarize(request: SummarizeRequest, api_key: &str) -> Result<String, String> {
     let prompt = build_summary_prompt(&request.subject, &request.messages, request.focus_from.as_deref());
     let content = call_provider_reply(
-        request.provider,
-        &request.model,
-        request.endpoint.as_deref(),
-        SYSTEM_PROMPT,
-        &prompt,
-        TEXT_OUTPUT_TOKENS,
-        0.2,
-        None,
+        AiCall {
+            provider: request.provider,
+            model: &request.model,
+            endpoint: request.endpoint.as_deref(),
+            system_prompt: SYSTEM_PROMPT,
+            prompt: &prompt,
+            max_tokens: TEXT_OUTPUT_TOKENS,
+            temperature: 0.2,
+            schema: None,
+            api_key,
+        },
         request.reasoning,
-        api_key,
     )
     .await?
     .content;

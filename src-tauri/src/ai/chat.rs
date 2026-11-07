@@ -15,7 +15,7 @@ use super::context::{
 use super::find_times;
 use super::output::{contains_quoted_history, decode_json_output, OutputDecodeError};
 use super::proposals::{proposal_array_schema, validate_proposal_items};
-use super::provider::{call_provider, AiProvider, OutputSchema, STRUCTURED_OUTPUT_TOKENS};
+use super::provider::{call_provider, AiCall, AiProvider, OutputSchema, STRUCTURED_OUTPUT_TOKENS};
 
 /// Most earlier chat turns sent back to the provider with a new question.
 pub(crate) const MAX_CHAT_HISTORY_TURNS: usize = 8;
@@ -210,15 +210,17 @@ pub async fn chat(request: ChatRequest, api_key: &str) -> Result<ChatAnswer, Str
     let bounded = action_context(&request.messages, None);
     let prompt = build_chat_prompt(&request, &bounded)?;
     let content = call_provider(
-        request.provider,
-        &request.model,
-        request.endpoint.as_deref(),
-        CHAT_SYSTEM_PROMPT,
-        &prompt,
-        STRUCTURED_OUTPUT_TOKENS,
-        0.2,
-        Some(&chat_output_schema()),
-        api_key,
+        AiCall {
+            provider: request.provider,
+            model: &request.model,
+            endpoint: request.endpoint.as_deref(),
+            system_prompt: CHAT_SYSTEM_PROMPT,
+            prompt: &prompt,
+            max_tokens: STRUCTURED_OUTPUT_TOKENS,
+            temperature: 0.2,
+            schema: Some(&chat_output_schema()),
+            api_key,
+        },
     )
     .await?;
     let allowed_sources: Vec<&str> = request

@@ -1735,20 +1735,12 @@ impl ImapCredential {
 
     /// Stores (or replaces) this account's password credential, encrypted at
     /// rest by the OS keychain exactly like an OAuth token.
-    ///
-    /// No caller in slice 2 — the IMAP "test and save" setup command that
-    /// writes a password (phase 2) is its first reader. The dead-code allow
-    /// is scoped to the two store/retrieval methods and removed with that
-    /// caller, the same way slice 1 scoped the unread `ProviderCapabilities`
-    /// flags.
-    #[allow(dead_code)]
     pub fn save(&self, password: &crate::credentials::ImapPassword) -> Result<(), String> {
         let value = StoredCredential::ImapPassword(password.clone()).encode()?;
         self.entry()?.set_password(&value).map_err(display)
     }
 
     /// Reads this account's stored password credential.
-    #[allow(dead_code)]
     pub fn load(&self) -> Result<crate::credentials::ImapPassword, String> {
         let value = self.entry()?.get_password().map_err(display)?;
         match StoredCredential::decode(&value)? {

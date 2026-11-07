@@ -146,7 +146,7 @@ impl Database {
     /// tested, standalone name->ids lookup for callers that need it outside a
     /// search query; until such a caller lands it is exercised only by this
     /// module's tests.
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code, reason = "a tested lookup kept for callers outside a search query"))]
     pub fn label_ids_named(&self, account_id: &str, name: &str) -> DbResult<Vec<String>> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(

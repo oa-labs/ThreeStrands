@@ -354,11 +354,11 @@ pub struct ProviderCapabilities {
     /// is computed locally from message references (`false`). Gmail returns
     /// conversation ids, so it is `true`; the IMAP provider sets it `false`
     /// when the server does not return `THREADID`.
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code, reason = "reported by each provider; no production reader yet"))]
     pub provided_threads: bool,
     /// How this provider models user-visible labels. Drives which label
     /// actions the frontend offers. See [`LabelModel`].
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code, reason = "reported by each provider; no production reader yet"))]
     pub label_model: LabelModel,
     /// Whether a message's delivery can be *verified* against a server-side
     /// sent copy. Gmail stores the sent message itself, so an uncertain send

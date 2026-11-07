@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { useStableValue } from "./useStableValue";
 import { Check, Mail, Plus, Trash, UserPlus, Users, X } from "lucide-react";
 import { Modal } from "./AppChrome";
 import type { ContactGroup, ContactProfile } from "./domain";
@@ -203,21 +204,21 @@ export function ContactMemberPicker({
   const [emails, setEmails] = useState<string[]>([]);
   const listId = useId();
   const [rankings, setRankings] = useState<import("./domain").ContactGroupSuggestion[]>([]);
-  const rankingKey = JSON.stringify([group.id, group.memberIds, contactIds, emails]);
+  // The group can arrive as a new but equal object; re-rank only when what is ranked changes.
+  const ranked = useStableValue({ groupId: group.id, memberIds: group.memberIds, contactIds, emails });
   useEffect(() => {
     let active = true;
     setRankings([]);
-    if (group.memberIds.length || contactIds.length || emails.length) {
+    if (ranked.memberIds.length || ranked.contactIds.length || ranked.emails.length) {
       const timer = setTimeout(() => {
-        void mailClient.rankContactGroupCandidates(group.id, contactIds, emails).then((items) => {
+        void mailClient.rankContactGroupCandidates(ranked.groupId, ranked.contactIds, ranked.emails).then((items) => {
           if (active) setRankings(items);
         }).catch(logBackgroundFailure("Group contact suggestions"));
       }, 150);
       return () => { active = false; clearTimeout(timer); };
     }
     // Profiles can refresh after a save, merge, or connected address-book update.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rankingKey, profiles]);
+  }, [ranked, profiles]);
   const rankById = new Map(rankings.map((item, index) => [item.id, index]));
   const reasonById = new Map(rankings.map((item) => [item.id, item.relatedTo]));
   const namesByEmail = new Map(profiles.flatMap((profile) => profile.addresses.map((email) =>

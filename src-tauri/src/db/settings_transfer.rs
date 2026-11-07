@@ -57,13 +57,15 @@ impl Database {
             for split in split_inboxes {
                 split_inboxes::insert_split_inbox_row(
                     transaction,
-                    &split.id,
-                    &split.name,
-                    &split.match_kind,
-                    &split.match_value,
-                    split.sort_order,
-                    &split.created_at,
-                    &split.account_id,
+                    split_inboxes::SplitInboxRow {
+                        id: &split.id,
+                        name: &split.name,
+                        match_kind: &split.match_kind,
+                        match_value: &split.match_value,
+                        sort_order: split.sort_order,
+                        created_at: &split.created_at,
+                        account_id: &split.account_id,
+                    },
                 )?;
             }
 

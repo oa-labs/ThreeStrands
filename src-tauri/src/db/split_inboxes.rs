@@ -55,7 +55,18 @@ impl Database {
                 )?;
             let id = Uuid::new_v4().to_string();
             let created_at = Utc::now().to_rfc3339();
-            insert_split_inbox_row(transaction, &id, name, match_kind, &match_value, sort_order, &created_at, account_id)?;
+            insert_split_inbox_row(
+                transaction,
+                SplitInboxRow {
+                    id: &id,
+                    name,
+                    match_kind,
+                    match_value: &match_value,
+                    sort_order,
+                    created_at: &created_at,
+                    account_id,
+                },
+            )?;
             Ok(SplitInbox {
                 id,
                 name: name.to_string(),
@@ -207,18 +218,32 @@ impl Database {
     }
 }
 
+/// A split inbox as stored. Named fields keep its six text columns from
+/// trading places unnoticed.
+pub(super) struct SplitInboxRow<'a> {
+    pub(super) id: &'a str,
+    pub(super) name: &'a str,
+    pub(super) match_kind: &'a str,
+    pub(super) match_value: &'a str,
+    pub(super) sort_order: i64,
+    pub(super) created_at: &'a str,
+    pub(super) account_id: &'a str,
+}
+
 /// Stores a new split inbox row. Used by local creation and settings import.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn insert_split_inbox_row(
     connection: &rusqlite::Connection,
-    id: &str,
-    name: &str,
-    match_kind: &str,
-    match_value: &str,
-    sort_order: i64,
-    created_at: &str,
-    account_id: &str,
+    row: SplitInboxRow<'_>,
 ) -> DbResult<()> {
+    let SplitInboxRow {
+        id,
+        name,
+        match_kind,
+        match_value,
+        sort_order,
+        created_at,
+        account_id,
+    } = row;
     connection.execute(
         "INSERT INTO split_inboxes(id, name, match_kind, match_value, sort_order, created_at, account_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",

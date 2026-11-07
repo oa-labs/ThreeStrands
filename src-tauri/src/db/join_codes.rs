@@ -18,6 +18,21 @@ pub(crate) fn rfc3339_from_ms(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms).map(|time| time.to_rfc3339()).unwrap_or_default()
 }
 
+/// One redemption of a join code, as stored. Named fields keep the IDs and
+/// the two public keys from trading places unnoticed.
+pub(crate) struct RedemptionRecord<'a> {
+    pub(crate) redemption_cid: &'a str,
+    pub(crate) invitation_cid: &'a str,
+    pub(crate) inviter_device_id: &'a str,
+    pub(crate) device_id: &'a str,
+    pub(crate) ed25519_public: &'a [u8],
+    pub(crate) x25519_public: &'a [u8],
+    pub(crate) device_name: &'a str,
+    pub(crate) created_at_ms: i64,
+    pub(crate) state: &'a str,
+    pub(crate) received_at_ms: i64,
+}
+
 impl Database {
     /// This device's shared name, for the code and the redemption.
     pub(crate) fn self_device_name(&self, identity: &DeviceIdentity) -> DbResult<String> {
@@ -269,20 +284,19 @@ impl Database {
 
     // ---- Redemptions ----
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn record_redemption(
-        &self,
-        redemption_cid: &str,
-        invitation_cid: &str,
-        inviter_device_id: &str,
-        device_id: &str,
-        ed25519_public: &[u8],
-        x25519_public: &[u8],
-        device_name: &str,
-        created_at_ms: i64,
-        state: &str,
-        received_at_ms: i64,
-    ) -> DbResult<()> {
+    pub(crate) fn record_redemption(&self, redemption: RedemptionRecord<'_>) -> DbResult<()> {
+        let RedemptionRecord {
+            redemption_cid,
+            invitation_cid,
+            inviter_device_id,
+            device_id,
+            ed25519_public,
+            x25519_public,
+            device_name,
+            created_at_ms,
+            state,
+            received_at_ms,
+        } = redemption;
         self.connection()?.execute(
             "INSERT OR IGNORE INTO replicated_sync_invitation_redemptions(redemption_cid, invitation_cid, inviter_device_id,
                  device_id, ed25519_public, x25519_public, device_name, created_at_ms, state, received_at)

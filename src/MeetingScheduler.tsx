@@ -1,6 +1,7 @@
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { CalendarCheck, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useStableValue } from "./useStableValue";
 import { availabilityKey, readAvailability, rememberAvailabilityView, sameAvailability, storeAvailability, type AvailabilityView } from "./availabilityCache";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, CoworkerCalendars, ProposedTimeCheck, ScheduleEvent } from "./domain";
 import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, type CalendarMatch, type EventIdentity } from "./eventMatching";
@@ -117,6 +118,20 @@ function matchedTime(event: ScheduleEvent, timeZone: string): string {
 /** Whether two schedule entries are the same event. */
 const sameEvent = (left: ScheduleEvent, right: ScheduleEvent) => left.accountId === right.accountId && left.id === right.id;
 
+/** Whether two searches cover the same times. */
+const sameQuery = (left: ScheduleQuery | null, right: ScheduleQuery | null) =>
+  left === right || (left !== null && right !== null && left.kind === right.kind && left.start === right.start && left.end === right.end);
+
+/** Whether two identities would recognize the same calendar event. */
+const sameIdentity = (left: EventIdentity | undefined, right: EventIdentity | undefined) =>
+  left === right || (left !== undefined && right !== undefined
+    && left.title === right.title && (left.location ?? "") === (right.location ?? "")
+    && (left.sourceMessageId ?? "") === (right.sourceMessageId ?? ""));
+
+/** Whether a caller told about one matched event needs telling about the other. */
+const sameMatchedEvent = (left: ScheduleEvent | null, right: ScheduleEvent | null) =>
+  left === right || (left !== null && right !== null && sameEvent(left, right) && (left.conferenceUrl ?? "") === (right.conferenceUrl ?? ""));
+
 /**
  * Checks a meeting against the user's calendar without involving AI: an
  * exact time is checked for conflicts, a range yields open slots spread
@@ -179,10 +194,7 @@ export function MeetingScheduler({
   const [plan] = useState(initialPlan);
   // Re-check only when preference values change, not when an equal object
   // arrives: replacing the result with "Checking…" reads as a flash.
-  const [preferences, setPreferences] = useState(latestPreferences);
-  if (preferences !== latestPreferences && JSON.stringify(preferences) !== JSON.stringify(latestPreferences)) {
-    setPreferences(latestPreferences);
-  }
+  const preferences = useStableValue(latestPreferences);
   // A length nothing stated follows the availability profile in use, until the user picks one.
   const [chosenLength, setChosenLength] = useState<number | null>(null);
   const durationMinutes = chosenLength ?? (plan.durationIsDefault ? preferences.defaultDurationMinutes : plan.durationMinutes);
@@ -192,7 +204,8 @@ export function MeetingScheduler({
   // Adjustments to a range search: part of the day, and ranges later or earlier.
   const [bounds, setBounds] = useState<DayBounds>(plan.bounds ?? ANY_TIME);
   const [shift, setShift] = useState(0);
-  const query = baseQuery?.kind === "range" && shift !== 0 ? shiftedRange(baseQuery, shift) : baseQuery;
+  // A shifted range is rebuilt on each render; effects follow the times it covers.
+  const query = useStableValue(baseQuery?.kind === "range" && shift !== 0 ? shiftedRange(baseQuery, shift) : baseQuery, sameQuery);
   const [visibleCount, setVisibleCount] = useState(SUGGESTED_SLOT_COUNT);
   const [state, setState] = useState<CheckState>({ phase: "idle" });
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
@@ -206,13 +219,9 @@ export function MeetingScheduler({
     return () => window.removeEventListener(CALENDAR_AVAILABILITY_CHANGED, refresh);
   }, []);
   // Callers build the identity on each render; re-check only when its values change.
-  const identityKey = latestIdentity ? `${latestIdentity.title}|${latestIdentity.location ?? ""}|${latestIdentity.sourceMessageId ?? ""}` : "";
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const identity = useMemo(() => latestIdentity, [identityKey]);
-  const coworkersKey = JSON.stringify(latestCoworkers);
+  const identity = useStableValue(latestIdentity, sameIdentity);
   // Stable across draft edits that do not change the selected calendars.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const coworkers = useMemo(() => latestCoworkers, [coworkersKey]);
+  const coworkers = useStableValue(latestCoworkers);
   const timeZone = preferences.timeZone;
   const announced = plan.announced === true;
 
@@ -307,16 +316,13 @@ export function MeetingScheduler({
     return () => { current = false; };
   }, [rangeStart, rangeEnd, attempt]);
 
-  const boundsKey = `${bounds.weekdays.join(",")}|${bounds.dayStart ?? ""}|${bounds.dayEnd ?? ""}`;
-  const queryKey = query ? `${query.kind}:${query.start}:${query.end}:${query.kind === "range" ? boundsKey : ""}` : "none";
   useEffect(() => {
     if (!calendarConnected || !query) return;
     let current = true;
     void run(query, () => current);
     return () => { current = false; };
-    // The query is identified by `queryKey`; `attempt` re-runs after a failure.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [calendarConnected, queryKey, attempt, run]);
+    // `attempt` re-runs after a failure or a calendar change.
+  }, [calendarConnected, query, attempt, run]);
   // A bare day is not checked for conflicts, only for the event already being on it.
   const [dayMatch, setDayMatch] = useState<CalendarMatch | null>(null);
   useEffect(() => {
@@ -329,24 +335,19 @@ export function MeetingScheduler({
       // Without the schedule the day still adds as usual.
       .catch(() => undefined);
     return () => { current = false; };
-    // A bare day has no query; `queryKey` stays "none" while it shows.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [calendarConnected, plan.day, queryKey, identity]);
-  const matchedEvent = query
+  }, [calendarConnected, plan.day, query, identity]);
+  const matchedEvent = useStableValue(query
     ? (state.phase === "specific" && state.match?.kind === "same" ? state.match.event : null)
-    : (plan.day ? dayMatch?.event ?? null : null);
+    : (plan.day ? dayMatch?.event ?? null : null), sameMatchedEvent);
   const matched = matchedEvent !== null;
-  const matchedKey = matchedEvent ? `${matchedEvent.accountId}|${matchedEvent.id}|${matchedEvent.conferenceUrl ?? ""}` : "";
+  // Reported when the matched event changes, not when the caller's callback does.
+  const reportMatch = useEffectEvent((event: ScheduleEvent | null) => onMatchChange?.(event));
+  useEffect(() => { reportMatch(matchedEvent); }, [matchedEvent]);
+  // Reported once per distinct search and length, not when the caller's callback changes.
+  const reportSearch = useEffectEvent((search: EffectiveSearch) => onSearchChange?.(search));
   useEffect(() => {
-    onMatchChange?.(matchedEvent);
-    // Reported when the matched event changes, not when the caller's callback does.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchedKey]);
-  useEffect(() => {
-    if (query?.kind === "range") onSearchChange?.({ query, durationMinutes, bounds });
-    // Reported once per distinct search, identified by `queryKey` and its length.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryKey, durationMinutes]);
+    if (query?.kind === "range") reportSearch({ query, durationMinutes, bounds });
+  }, [query, durationMinutes, bounds]);
 
   const findOtherTimes = (start: string) => {
     const day = new Date(start);

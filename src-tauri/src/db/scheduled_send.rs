@@ -98,21 +98,33 @@ pub(crate) fn record_schedule_report(tx: &Transaction, id: &str, owner: &str, at
     Ok(())
 }
 
+/// A draft queued to send later, as stored. Named fields keep the send time
+/// and the time it was scheduled from trading places unnoticed.
+pub(crate) struct ScheduledDraftRow<'a> {
+    pub(crate) draft: &'a Draft,
+    pub(crate) revision: i64,
+    pub(crate) operation_id: &'a str,
+    pub(crate) raw: &'a [u8],
+    pub(crate) owner: &'a str,
+    pub(crate) scheduled_at: i64,
+    pub(crate) time_zone: &'a str,
+    pub(crate) at: i64,
+}
+
 impl Database {
     /// Moves a draft at `revision` into the outbox as a scheduled message
     /// carrying its prepared MIME, and records its first report.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn insert_scheduled_draft(
-        &self,
-        draft: &Draft,
-        revision: i64,
-        operation_id: &str,
-        raw: &[u8],
-        owner: &str,
-        scheduled_at: i64,
-        time_zone: &str,
-        at: i64,
-    ) -> DbResult<()> {
+    pub(crate) fn insert_scheduled_draft(&self, row: ScheduledDraftRow<'_>) -> DbResult<()> {
+        let ScheduledDraftRow {
+            draft,
+            revision,
+            operation_id,
+            raw,
+            owner,
+            scheduled_at,
+            time_zone,
+            at,
+        } = row;
         self.with_transaction(|tx| {
             let visibility_group_id = group(tx)?;
             let owner_sync_device_id: Option<String> = tx

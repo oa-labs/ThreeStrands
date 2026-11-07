@@ -8,7 +8,7 @@ use crate::models::{ContactFieldSuggestion, ContactProfile};
 
 use super::output::strip_markdown_fences;
 use super::provider::{
-    call_provider_reply, describe_reply, reply_was_cut_off, AiProvider, CUT_OFF_REPLY_ERROR,
+    call_provider_reply, describe_reply, AiCall, reply_was_cut_off, AiProvider, CUT_OFF_REPLY_ERROR,
     OutputSchema, Reasoning, STRUCTURED_OUTPUT_TOKENS,
 };
 
@@ -158,16 +158,18 @@ async fn contact_suggestions_from_batch(
     }))
     .map_err(display)?;
     let reply = call_provider_reply(
-        request.provider,
-        &request.model,
-        request.endpoint.as_deref(),
-        &contact_system_prompt(allowed),
-        &prompt,
-        STRUCTURED_OUTPUT_TOKENS,
-        0.1,
-        Some(&contact_output_schema(allowed)),
+        AiCall {
+            provider: request.provider,
+            model: &request.model,
+            endpoint: request.endpoint.as_deref(),
+            system_prompt: &contact_system_prompt(allowed),
+            prompt: &prompt,
+            max_tokens: STRUCTURED_OUTPUT_TOKENS,
+            temperature: 0.1,
+            schema: Some(&contact_output_schema(allowed)),
+            api_key,
+        },
         request.reasoning,
-        api_key,
     )
     .await?;
     let mut tally = ContactSuggestionTally::default();

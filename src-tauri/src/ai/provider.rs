@@ -231,36 +231,28 @@ impl From<String> for ProviderError {
     }
 }
 
+/// One request to a model: where it goes and what it asks. Named fields keep
+/// the two prompts, and the endpoint and key, from trading places unnoticed.
+pub(super) struct AiCall<'a> {
+    pub(super) provider: AiProvider,
+    pub(super) model: &'a str,
+    pub(super) endpoint: Option<&'a str>,
+    pub(super) system_prompt: &'a str,
+    pub(super) prompt: &'a str,
+    pub(super) max_tokens: usize,
+    pub(super) temperature: f64,
+    pub(super) schema: Option<&'a OutputSchema>,
+    pub(super) api_key: &'a str,
+}
+
 /// Requests structured output when a schema is supplied. Support varies by
 /// provider, model, and (on OpenRouter) routed endpoint, so a request the
 /// provider rejects is retried once without the schema; callers parse either
 /// reply with the same tolerant, evidence-validating parser.
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn call_provider(
-    provider: AiProvider,
-    model: &str,
-    endpoint: Option<&str>,
-    system_prompt: &str,
-    prompt: &str,
-    max_tokens: usize,
-    temperature: f64,
-    schema: Option<&OutputSchema>,
-    api_key: &str,
-) -> Result<String, String> {
-    call_provider_reply(
-        provider,
-        model,
-        endpoint,
-        system_prompt,
-        prompt,
-        max_tokens,
-        temperature,
-        schema,
-        Reasoning::Default,
-        api_key,
-    )
-    .await
-    .map(|reply| reply.content)
+pub(super) async fn call_provider(call: AiCall<'_>) -> Result<String, String> {
+    call_provider_reply(call, Reasoning::Default)
+        .await
+        .map(|reply| reply.content)
 }
 
 /// A provider's reply text together with the reason it reported for stopping
@@ -273,30 +265,21 @@ pub(super) struct ProviderReply {
 
 /// Like `call_provider`, but keeps the reported stop reason for diagnostics
 /// and can ask the model to skip reasoning.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn call_provider_reply(
-    provider: AiProvider,
-    model: &str,
-    endpoint: Option<&str>,
-    system_prompt: &str,
-    prompt: &str,
-    max_tokens: usize,
-    temperature: f64,
-    schema: Option<&OutputSchema>,
+    call: AiCall<'_>,
     reasoning: Reasoning,
-    api_key: &str,
 ) -> Result<ProviderReply, String> {
     let request = ProviderRequest {
-        provider,
-        model,
-        system_prompt,
-        prompt,
-        max_tokens,
-        temperature,
+        provider: call.provider,
+        model: call.model,
+        system_prompt: call.system_prompt,
+        prompt: call.prompt,
+        max_tokens: call.max_tokens,
+        temperature: call.temperature,
         reasoning,
     };
-    let base_url = provider.base_url(endpoint)?;
-    send_with_fallbacks(&base_url, request, schema, api_key).await
+    let base_url = call.provider.base_url(call.endpoint)?;
+    send_with_fallbacks(&base_url, request, call.schema, call.api_key).await
 }
 
 /// Sends a request, dropping optional parameters when the provider rejects
@@ -521,15 +504,17 @@ pub async fn test_connection(
         return Err("Set a model name in AI settings".to_string());
     }
     call_provider(
-        provider,
-        model.trim(),
-        endpoint,
-        "You are a connection test. Reply with exactly OK.",
-        "Reply with exactly OK.",
-        1,
-        0.0,
-        None,
-        api_key,
+        AiCall {
+            provider,
+            model: model.trim(),
+            endpoint,
+            system_prompt: "You are a connection test. Reply with exactly OK.",
+            prompt: "Reply with exactly OK.",
+            max_tokens: 1,
+            temperature: 0.0,
+            schema: None,
+            api_key,
+        },
     )
     .await
     .map(|_| ())
@@ -1040,15 +1025,17 @@ mod tests {
                 axum::serve(listener, app).await.unwrap();
             });
             let result = call_provider(
-                AiProvider::Custom,
-                "model",
-                Some(&endpoint),
-                "system",
-                "prompt",
-                100,
-                0.1,
-                Some(&contact_output_schema(&CONTACT_FIELDS)),
-                "key",
+                AiCall {
+                    provider: AiProvider::Custom,
+                    model: "model",
+                    endpoint: Some(&endpoint),
+                    system_prompt: "system",
+                    prompt: "prompt",
+                    max_tokens: 100,
+                    temperature: 0.1,
+                    schema: Some(&contact_output_schema(&CONTACT_FIELDS)),
+                    api_key: "key",
+                },
             )
             .await;
             assert_eq!(result.is_ok(), succeeds, "{status}: {result:?}");

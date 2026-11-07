@@ -1,4 +1,4 @@
-import { type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { mailClient } from "./data/client";
 import type { Account, ImapConnectionSettings, ImapSecurityMode } from "./domain";
 import { useSettingsOperation } from "./settingsOperations";
@@ -185,30 +185,30 @@ function ServerEditor({
   // A pinned server that now presents a different certificate is shown for
   // review straight away, so the user trusts the change deliberately instead
   // of retyping a password that was never the problem.
+  // Reads the saved endpoints when the check answers; checked once per account.
+  const showChangedCertificates = useEffectEvent((changes: Awaited<ReturnType<typeof mailClient.checkImapCertificateChanges>>) => {
+    setChanged({ imap: changes.imap !== null, smtp: changes.smtp !== null });
+    setCertificates((current) => {
+      const next = { ...current };
+      for (const kind of ["imap", "smtp"] as const) {
+        const probe = changes[kind];
+        // Never replace a certificate the user is already reviewing.
+        if (probe && !current[kind]) {
+          const { host, port, security } = initial[kind];
+          next[kind] = { endpoint: endpointKey(host, port, security), probe, pin: null };
+        }
+      }
+      return next;
+    });
+  });
   useEffect(() => {
     let cancelled = false;
     mailClient.checkImapCertificateChanges(account).then((changes) => {
-      if (cancelled) return;
-      const found = { imap: changes.imap !== null, smtp: changes.smtp !== null };
-      setChanged(found);
-      setCertificates((current) => {
-        const next = { ...current };
-        for (const kind of ["imap", "smtp"] as const) {
-          const probe = changes[kind];
-          // Never replace a certificate the user is already reviewing.
-          if (probe && !current[kind]) {
-            const { host, port, security } = initial[kind];
-            next[kind] = { endpoint: endpointKey(host, port, security), probe, pin: null };
-          }
-        }
-        return next;
-      });
+      if (!cancelled) showChangedCertificates(changes);
     }).catch(() => {
       // An unreachable server is not evidence of a change; saving reports it.
     });
     return () => { cancelled = true; };
-    // `initial` is derived from `settings`, which is fixed while the editor is open.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
   const key = (kind: Kind) => endpointKey(values[kind].host, values[kind].port, values[kind].security);

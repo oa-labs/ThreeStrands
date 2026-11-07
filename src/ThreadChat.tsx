@@ -1,6 +1,6 @@
 import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { MessageSquareText, RotateCcw, Sparkles, X } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   MAX_CHAT_ATTACHMENTS,
   activeMention,
@@ -137,12 +137,12 @@ export function ThreadChat({
   // Only a request made while this conversation is shown activates the box;
   // one made for an earlier conversation must not reopen it on mount.
   const handledRequest = useRef(focusRequest);
+  // Only a new request should activate; availability changes should not.
+  const activateForRequest = useEffectEvent(activate);
   useEffect(() => {
     if (focusRequest === handledRequest.current) return;
     handledRequest.current = focusRequest;
-    activate();
-    // Only a new request should activate; availability changes should not.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    activateForRequest();
   }, [focusRequest]);
 
   useEffect(() => {
