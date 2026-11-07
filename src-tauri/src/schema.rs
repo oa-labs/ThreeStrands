@@ -12,9 +12,52 @@ use rusqlite::Connection;
 /// here and runs every migration above it.
 pub(crate) const BASELINE_VERSION: i64 = 74;
 
-/// The current schema version. A new schema change adds an
-/// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 99;
+/// A schema change above the baseline: the version it upgrades a database
+/// to, and the change, run inside [`migrate`]'s transaction.
+type Migration = (i64, fn(&rusqlite::Transaction) -> Result<(), String>);
+
+/// Every schema change above the baseline, in order. A new schema change adds
+/// a step here, numbered one above the last; [`LATEST_VERSION`] follows.
+const MIGRATIONS: &[Migration] = &[
+    (75, to_v75),
+    (76, to_v76),
+    (77, to_v77),
+    (78, to_v78),
+    (79, to_v79),
+    (80, to_v80),
+    (81, to_v81),
+    (82, to_v82),
+    (83, to_v83),
+    (84, to_v84),
+    (85, to_v85),
+    (86, to_v86),
+    (87, to_v87),
+    (88, to_v88),
+    (89, to_v89),
+    (90, to_v90),
+    (91, to_v91),
+    (92, to_v92),
+    (93, to_v93),
+    (94, to_v94),
+    (95, to_v95),
+    (96, to_v96),
+    (97, to_v97),
+    (98, to_v98),
+    (99, to_v99),
+];
+
+// Steps number consecutively from the baseline, so a gap or a repeat fails to
+// compile instead of skipping a change or stamping a version too early.
+const _: () = {
+    let mut index = 0;
+    while index < MIGRATIONS.len() {
+        assert!(MIGRATIONS[index].0 == BASELINE_VERSION + 1 + index as i64);
+        index += 1;
+    }
+};
+
+/// The current schema version: the last migration's.
+pub(crate) const LATEST_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -791,339 +834,10 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
              schema; update the application"
         ));
     }
-    if version < 75 {
-        // Muted senders: a per-account rule whose new mail sync marks read
-        // and archives, and a device-local log of the messages each rule has
-        // acted on, so a conversation the user moves back is left alone.
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS sender_rules (
-                 id TEXT PRIMARY KEY,
-                 account_id TEXT NOT NULL,
-                 match_kind TEXT NOT NULL CHECK(match_kind IN ('address', 'domain')),
-                 match_value TEXT NOT NULL,
-                 action TEXT NOT NULL CHECK(action IN ('mute')),
-                 created_at TEXT NOT NULL,
-                 updated_at TEXT
-             );
-             CREATE INDEX IF NOT EXISTS sender_rules_by_account ON sender_rules(account_id);
-             CREATE TABLE IF NOT EXISTS sender_rule_actions (
-                 account_id TEXT NOT NULL,
-                 message_id TEXT NOT NULL,
-                 rule_id TEXT NOT NULL REFERENCES sender_rules(id) ON DELETE CASCADE,
-                 acted_at TEXT NOT NULL,
-                 PRIMARY KEY(account_id, message_id)
-             );",
-        )
-        .map_err(error)?;
-    }
-    if version < 76 {
-        tx.execute_batch("CREATE TABLE signatures(id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE signature_defaults(id TEXT PRIMARY KEY, payload TEXT NOT NULL);").map_err(error)?;
-    }
-    if version < 77 {
-        // Cc and Bcc recipients, so search's `to:` matches them as Gmail's
-        // does. Existing mail is filled in from each message's stored payload
-        // by the bounded search-reindex queue (`reindex_next_search_batch`).
-        tx.execute_batch(
-            "ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';
-             INSERT OR IGNORE INTO pending_search_reindex(thread_id)
-                 SELECT DISTINCT thread_id FROM messages;",
-        )
-        .map_err(error)?;
-    }
-    if version < 78 {
-        // Inbox previews now decode entity references before collapsing and
-        // capping, so padding like `&zwnj;&nbsp;` disappears instead of
-        // leaving blank space and a cut-off reference. Queue every thread so
-        // the bounded search-reindex batch rebuilds its preview.
-        tx.execute_batch(
-            "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
-                 SELECT id FROM threads;",
-        )
-        .map_err(error)?;
-    }
-    if version < 79 {
-        // Server drafts: each local draft's link to its copy in the account's
-        // server drafts, and server copies waiting to be deleted after the
-        // draft was sent, discarded, or moved to another account. Device-local,
-        // never synced or exported. See docs/server-drafts-design.md.
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS draft_server_links (
-                 draft_id TEXT PRIMARY KEY,
-                 account TEXT NOT NULL,
-                 server_id TEXT,
-                 pushed_revision INTEGER NOT NULL DEFAULT 0,
-                 pending_since INTEGER,
-                 due_at INTEGER,
-                 state TEXT NOT NULL CHECK(state IN ('pending', 'retrying', 'failed', 'saved')),
-                 error TEXT,
-                 attempts INTEGER NOT NULL DEFAULT 0
-             );
-             CREATE TABLE IF NOT EXISTS draft_server_deletions (
-                 id INTEGER PRIMARY KEY,
-                 account TEXT NOT NULL,
-                 server_id TEXT,
-                 message_id TEXT NOT NULL,
-                 due_at INTEGER NOT NULL,
-                 attempts INTEGER NOT NULL DEFAULT 0
-             );",
-        )
-        .map_err(error)?;
-    }
-    if version < 80 {
-        // Server drafts, pull: the version of the server copy this device last
-        // wrote or read, to tell edits made elsewhere from its own, and the
-        // server's version held back when both sides changed the draft.
-        tx.execute_batch(
-            "ALTER TABLE draft_server_links ADD COLUMN server_version TEXT;
-             ALTER TABLE draft_server_links ADD COLUMN conflict TEXT;",
-        )
-        .map_err(error)?;
-    }
-    if version < 81 {
-        // A text/plain alternative missing most of what its HTML sibling says
-        // (a stub, an unfilled template, a stale copy) now takes its text from
-        // the HTML, and previews lead with the HTML's hidden preheader. Queue
-        // every thread so the bounded search-reindex batch re-normalizes its
-        // messages and rebuilds its preview.
-        tx.execute_batch(
-            "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
-                 SELECT id FROM threads;",
-        )
-        .map_err(error)?;
-    }
-    if version < 82 {
-        // Cc recipients on their own, so the reader can show who was copied.
-        // `cc_bcc_json` stays for search. Existing mail is filled in from each
-        // message's stored payload by the bounded search-reindex queue.
-        tx.execute_batch(
-            "ALTER TABLE messages ADD COLUMN cc_json TEXT NOT NULL DEFAULT '[]';
-             INSERT OR IGNORE INTO pending_search_reindex(thread_id)
-                 SELECT DISTINCT thread_id FROM messages;",
-        )
-        .map_err(error)?;
-    }
-    if version < 83 {
-        // Calendar accounts keep a chosen order, like mail accounts. Existing
-        // accounts keep the order they were listed in: oldest connection first.
-        tx.execute_batch(
-            "ALTER TABLE calendar_accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
-             UPDATE calendar_accounts SET sort_order = (
-                 SELECT count(*) FROM calendar_accounts AS earlier
-                 WHERE earlier.connected_at < calendar_accounts.connected_at
-                    OR (earlier.connected_at = calendar_accounts.connected_at AND earlier.email < calendar_accounts.email)
-             );",
-        )
-        .map_err(error)?;
-    }
-    if version < 84 {
-        // Discarded drafts, held for a while so Undo can bring them back with
-        // their attachment files. Device-local, never synced or exported.
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS discarded_drafts (
-                 id TEXT PRIMARY KEY,
-                 revision INTEGER NOT NULL,
-                 payload TEXT NOT NULL,
-                 discarded_at INTEGER NOT NULL
-             );",
-        )
-        .map_err(error)?;
-    }
-    if version < 85 {
-        // Briefs focus on messages the user hasn't been briefed on: where a
-        // saved summary's and saved suggestions' new messages started. And a
-        // device-local log of AI requests (metadata only, never email text)
-        // for Settings → AI.
-        tx.execute_batch(
-            "ALTER TABLE threads ADD COLUMN summary_focus_from TEXT;
-             ALTER TABLE ai_thread_analyses ADD COLUMN focus_from TEXT;
-             CREATE TABLE IF NOT EXISTS ai_activity (
-                 id INTEGER PRIMARY KEY,
-                 at TEXT NOT NULL,
-                 feature TEXT NOT NULL,
-                 provider TEXT NOT NULL,
-                 model TEXT NOT NULL,
-                 subject TEXT,
-                 message_count INTEGER,
-                 input_tokens INTEGER NOT NULL,
-                 output_tokens INTEGER NOT NULL
-             );",
-        )
-        .map_err(error)?;
-    }
-    if version < 86 {
-        // Explicit sender feedback is separate from contact aliases. Keep it
-        // after cached messages age out.
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS sender_delivery_patterns (
-                 id TEXT PRIMARY KEY,
-                 account_id TEXT NOT NULL,
-                 requester TEXT NOT NULL,
-                 sender_email TEXT NOT NULL,
-                 reply_to TEXT,
-                 link_origins TEXT NOT NULL,
-                 authenticated INTEGER NOT NULL,
-                 source_message_id TEXT NOT NULL,
-                 confirmed_at TEXT NOT NULL,
-                 UNIQUE(account_id, requester, sender_email, link_origins)
-             );
-             CREATE INDEX IF NOT EXISTS sender_delivery_requester ON sender_delivery_patterns(account_id, requester);",
-        ).map_err(error)?;
-    }
-    if version < 87 {
-        // Equivalent confirmations on different devices must share an identity
-        // so forgetting removes every copy. Preserve all original evidence.
-        let rows = {
-            let mut statement = tx.prepare("SELECT id, account_id, requester, sender_email, link_origins FROM sender_delivery_patterns").map_err(error)?;
-            let rows = statement
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                    ))
-                })
-                .map_err(error)?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
-        };
-        for (id, account, requester, sender, origins) in rows {
-            let stable = crate::db::sender_feedback::confirmation_id(
-                &account, &requester, &sender, &origins,
-            );
-            tx.execute(
-                "UPDATE sender_delivery_patterns SET id=?1 WHERE id=?2",
-                rusqlite::params![stable, id],
-            )
-            .map_err(error)?;
+    for &(target, step) in MIGRATIONS {
+        if version < target {
+            step(&tx)?;
         }
-    }
-    if version < 88 {
-        // NULL retains the primary-only default independently of visibility.
-        tx.execute_batch(
-            "ALTER TABLE calendar_accounts ADD COLUMN availability_calendar_ids TEXT;",
-        )
-        .map_err(error)?;
-    }
-    if version < 89 {
-        // Previews now end at the earliest quoted header block, skip link
-        // lead-ins, divider rules, spelled-out images, HTML comments, and an
-        // opening line that repeats the subject, and show the forwarded
-        // message under a signature-only forward. Queue every thread so the
-        // bounded search-reindex batch rebuilds its preview.
-        tx.execute_batch(
-            "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
-                 SELECT id FROM threads;",
-        )
-        .map_err(error)?;
-    }
-    if version < 90 {
-        // Plain-text parts carrying <br> tags now yield to the HTML part, or
-        // have the tags turned into line breaks. Queue every thread so the
-        // bounded search-reindex batch rebuilds its preview.
-        tx.execute_batch(
-            "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
-                 SELECT id FROM threads;",
-        )
-        .map_err(error)?;
-    }
-    if version < 91 {
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS conversation_snoozes (
-            id TEXT PRIMARY KEY, account_id TEXT NOT NULL, record_json TEXT NOT NULL, pending_apply INTEGER NOT NULL DEFAULT 0, replica_dirty INTEGER NOT NULL DEFAULT 0
-        ); CREATE INDEX IF NOT EXISTS conversation_snoozes_account ON conversation_snoozes(account_id);").map_err(error)?;
-    }
-    if version < 92 {
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS gmail_sending_identities (
-            account_id TEXT PRIMARY KEY REFERENCES accounts(email) ON DELETE CASCADE,
-            identities_json TEXT NOT NULL, refreshed_at INTEGER NOT NULL
-        );",
-        )
-        .map_err(error)?;
-    }
-    if version < 93 {
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS system_contact_connection(id INTEGER PRIMARY KEY CHECK(id=1), connection_json TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS system_contact_cache(id TEXT PRIMARY KEY, data_json TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS system_contact_addresses(contact_id TEXT NOT NULL REFERENCES system_contact_cache(id) ON DELETE CASCADE, email TEXT NOT NULL, display_name TEXT, PRIMARY KEY(contact_id,email));
-            CREATE INDEX IF NOT EXISTS system_contact_email ON system_contact_addresses(email);").map_err(error)?;
-    }
-    if version < 94 {
-        // Device-local, rebuildable header index. Never a replicated entity.
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS co_recipient_addresses (
-            message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-            account_id TEXT NOT NULL, email TEXT NOT NULL, display_name TEXT,
-            sender TEXT NOT NULL, sent_at TEXT NOT NULL,
-            PRIMARY KEY(message_id,email));
-            CREATE INDEX IF NOT EXISTS co_recipient_seed ON co_recipient_addresses(account_id,email,sent_at);
-            CREATE INDEX IF NOT EXISTS co_recipient_shared_seed ON co_recipient_addresses(email,sent_at);").map_err(error)?;
-    }
-    if version < 95 {
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS agent_tasks (
-            id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(email) ON DELETE CASCADE,
-            source_thread_id TEXT REFERENCES threads(id) ON DELETE SET NULL,
-            linked_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
-            record_json TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS agent_runs (
-                id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
-                state TEXT NOT NULL CHECK(state IN ('queued','running','waiting_for_input','paused','completed','failed','cancelled')),
-                generation INTEGER NOT NULL, lease_until INTEGER, not_before INTEGER NOT NULL,
-                record_json TEXT NOT NULL);
-            CREATE INDEX IF NOT EXISTS agent_runnable ON agent_runs(state,not_before,lease_until);
-            CREATE UNIQUE INDEX IF NOT EXISTS agent_one_active_run ON agent_runs(task_id)
-                WHERE state IN ('queued','running','waiting_for_input','paused');
-            CREATE TABLE IF NOT EXISTS agent_turns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
-                answer_to TEXT, record_json TEXT NOT NULL, UNIQUE(task_id,answer_to));
-            CREATE TABLE IF NOT EXISTS agent_steps (
-                id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
-                checkpoint INTEGER NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL,
-                result_json TEXT);
-            CREATE TABLE IF NOT EXISTS agent_artifacts (
-                id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
-                version INTEGER NOT NULL, record_json TEXT NOT NULL, UNIQUE(task_id,version));").map_err(error)?;
-    }
-    if version < 96 {
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS agent_research (
-            task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id) ON DELETE CASCADE,
-            expires_at INTEGER, record_json TEXT NOT NULL);
-            CREATE INDEX IF NOT EXISTS agent_evidence_expiry ON agent_research(expires_at);",
-        )
-        .map_err(error)?;
-    }
-    if version < 97 {
-        // Device-local identity reservations outlive locations and body eviction.
-        // Multiple candidates retain contradictory evidence instead of overwriting it.
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS imap_message_identities (
-            account_id TEXT NOT NULL,
-            namespace TEXT NOT NULL,
-            external_id TEXT NOT NULL,
-            message_id TEXT NOT NULL,
-            PRIMARY KEY(account_id, namespace, external_id, message_id)
-        ); CREATE INDEX IF NOT EXISTS imap_message_identities_message
-            ON imap_message_identities(account_id, message_id, namespace);",
-        )
-        .map_err(error)?;
-    }
-    if version < 98 {
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS imap_label_snapshots (
-            account_id TEXT NOT NULL, message_id TEXT NOT NULL, labels_json TEXT NOT NULL,
-            PRIMARY KEY(account_id,message_id)
-        );",
-        )
-        .map_err(error)?;
-    }
-    if version < 99 {
-        // Device-local, negotiated protocol support; never exported as settings.
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS imap_server_capabilities (
-            account_id TEXT PRIMARY KEY, native_labels INTEGER NOT NULL DEFAULT 0,
-            native_labels_seen INTEGER NOT NULL DEFAULT 0
-        );",
-        )
-        .map_err(error)?;
     }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
@@ -1142,6 +856,387 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
     tx.commit().map_err(error)?;
 
     post_open_outbox_fixups(connection)
+}
+
+fn to_v75(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Muted senders: a per-account rule whose new mail sync marks read
+    // and archives, and a device-local log of the messages each rule has
+    // acted on, so a conversation the user moves back is left alone.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sender_rules (
+             id TEXT PRIMARY KEY,
+             account_id TEXT NOT NULL,
+             match_kind TEXT NOT NULL CHECK(match_kind IN ('address', 'domain')),
+             match_value TEXT NOT NULL,
+             action TEXT NOT NULL CHECK(action IN ('mute')),
+             created_at TEXT NOT NULL,
+             updated_at TEXT
+         );
+         CREATE INDEX IF NOT EXISTS sender_rules_by_account ON sender_rules(account_id);
+         CREATE TABLE IF NOT EXISTS sender_rule_actions (
+             account_id TEXT NOT NULL,
+             message_id TEXT NOT NULL,
+             rule_id TEXT NOT NULL REFERENCES sender_rules(id) ON DELETE CASCADE,
+             acted_at TEXT NOT NULL,
+             PRIMARY KEY(account_id, message_id)
+         );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v76(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch("CREATE TABLE signatures(id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE signature_defaults(id TEXT PRIMARY KEY, payload TEXT NOT NULL);").map_err(error)?;
+    Ok(())
+}
+
+fn to_v77(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Cc and Bcc recipients, so search's `to:` matches them as Gmail's
+    // does. Existing mail is filled in from each message's stored payload
+    // by the bounded search-reindex queue (`reindex_next_search_batch`).
+    tx.execute_batch(
+        "ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';
+         INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+             SELECT DISTINCT thread_id FROM messages;",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v78(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Inbox previews now decode entity references before collapsing and
+    // capping, so padding like `&zwnj;&nbsp;` disappears instead of
+    // leaving blank space and a cut-off reference. Queue every thread so
+    // the bounded search-reindex batch rebuilds its preview.
+    tx.execute_batch(
+        "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+             SELECT id FROM threads;",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v79(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Server drafts: each local draft's link to its copy in the account's
+    // server drafts, and server copies waiting to be deleted after the
+    // draft was sent, discarded, or moved to another account. Device-local,
+    // never synced or exported. See docs/server-drafts-design.md.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS draft_server_links (
+             draft_id TEXT PRIMARY KEY,
+             account TEXT NOT NULL,
+             server_id TEXT,
+             pushed_revision INTEGER NOT NULL DEFAULT 0,
+             pending_since INTEGER,
+             due_at INTEGER,
+             state TEXT NOT NULL CHECK(state IN ('pending', 'retrying', 'failed', 'saved')),
+             error TEXT,
+             attempts INTEGER NOT NULL DEFAULT 0
+         );
+         CREATE TABLE IF NOT EXISTS draft_server_deletions (
+             id INTEGER PRIMARY KEY,
+             account TEXT NOT NULL,
+             server_id TEXT,
+             message_id TEXT NOT NULL,
+             due_at INTEGER NOT NULL,
+             attempts INTEGER NOT NULL DEFAULT 0
+         );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v80(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Server drafts, pull: the version of the server copy this device last
+    // wrote or read, to tell edits made elsewhere from its own, and the
+    // server's version held back when both sides changed the draft.
+    tx.execute_batch(
+        "ALTER TABLE draft_server_links ADD COLUMN server_version TEXT;
+         ALTER TABLE draft_server_links ADD COLUMN conflict TEXT;",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v81(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // A text/plain alternative missing most of what its HTML sibling says
+    // (a stub, an unfilled template, a stale copy) now takes its text from
+    // the HTML, and previews lead with the HTML's hidden preheader. Queue
+    // every thread so the bounded search-reindex batch re-normalizes its
+    // messages and rebuilds its preview.
+    tx.execute_batch(
+        "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+             SELECT id FROM threads;",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v82(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Cc recipients on their own, so the reader can show who was copied.
+    // `cc_bcc_json` stays for search. Existing mail is filled in from each
+    // message's stored payload by the bounded search-reindex queue.
+    tx.execute_batch(
+        "ALTER TABLE messages ADD COLUMN cc_json TEXT NOT NULL DEFAULT '[]';
+         INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+             SELECT DISTINCT thread_id FROM messages;",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v83(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Calendar accounts keep a chosen order, like mail accounts. Existing
+    // accounts keep the order they were listed in: oldest connection first.
+    tx.execute_batch(
+        "ALTER TABLE calendar_accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+         UPDATE calendar_accounts SET sort_order = (
+             SELECT count(*) FROM calendar_accounts AS earlier
+             WHERE earlier.connected_at < calendar_accounts.connected_at
+                OR (earlier.connected_at = calendar_accounts.connected_at AND earlier.email < calendar_accounts.email)
+         );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v84(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Discarded drafts, held for a while so Undo can bring them back with
+    // their attachment files. Device-local, never synced or exported.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS discarded_drafts (
+             id TEXT PRIMARY KEY,
+             revision INTEGER NOT NULL,
+             payload TEXT NOT NULL,
+             discarded_at INTEGER NOT NULL
+         );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v85(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Briefs focus on messages the user hasn't been briefed on: where a
+    // saved summary's and saved suggestions' new messages started. And a
+    // device-local log of AI requests (metadata only, never email text)
+    // for Settings → AI.
+    tx.execute_batch(
+        "ALTER TABLE threads ADD COLUMN summary_focus_from TEXT;
+         ALTER TABLE ai_thread_analyses ADD COLUMN focus_from TEXT;
+         CREATE TABLE IF NOT EXISTS ai_activity (
+             id INTEGER PRIMARY KEY,
+             at TEXT NOT NULL,
+             feature TEXT NOT NULL,
+             provider TEXT NOT NULL,
+             model TEXT NOT NULL,
+             subject TEXT,
+             message_count INTEGER,
+             input_tokens INTEGER NOT NULL,
+             output_tokens INTEGER NOT NULL
+         );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v86(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Explicit sender feedback is separate from contact aliases. Keep it
+    // after cached messages age out.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sender_delivery_patterns (
+             id TEXT PRIMARY KEY,
+             account_id TEXT NOT NULL,
+             requester TEXT NOT NULL,
+             sender_email TEXT NOT NULL,
+             reply_to TEXT,
+             link_origins TEXT NOT NULL,
+             authenticated INTEGER NOT NULL,
+             source_message_id TEXT NOT NULL,
+             confirmed_at TEXT NOT NULL,
+             UNIQUE(account_id, requester, sender_email, link_origins)
+         );
+         CREATE INDEX IF NOT EXISTS sender_delivery_requester ON sender_delivery_patterns(account_id, requester);",
+    ).map_err(error)?;
+    Ok(())
+}
+
+fn to_v87(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Equivalent confirmations on different devices must share an identity
+    // so forgetting removes every copy. Preserve all original evidence.
+    let rows = {
+        let mut statement = tx.prepare("SELECT id, account_id, requester, sender_email, link_origins FROM sender_delivery_patterns").map_err(error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(error)?
+    };
+    for (id, account, requester, sender, origins) in rows {
+        let stable =
+            crate::db::sender_feedback::confirmation_id(&account, &requester, &sender, &origins);
+        tx.execute(
+            "UPDATE sender_delivery_patterns SET id=?1 WHERE id=?2",
+            rusqlite::params![stable, id],
+        )
+        .map_err(error)?;
+    }
+    Ok(())
+}
+
+fn to_v88(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // NULL retains the primary-only default independently of visibility.
+    tx.execute_batch("ALTER TABLE calendar_accounts ADD COLUMN availability_calendar_ids TEXT;")
+        .map_err(error)?;
+    Ok(())
+}
+
+fn to_v89(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Previews now end at the earliest quoted header block, skip link
+    // lead-ins, divider rules, spelled-out images, HTML comments, and an
+    // opening line that repeats the subject, and show the forwarded
+    // message under a signature-only forward. Queue every thread so the
+    // bounded search-reindex batch rebuilds its preview.
+    tx.execute_batch(
+        "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+             SELECT id FROM threads;",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v90(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Plain-text parts carrying <br> tags now yield to the HTML part, or
+    // have the tags turned into line breaks. Queue every thread so the
+    // bounded search-reindex batch rebuilds its preview.
+    tx.execute_batch(
+        "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+             SELECT id FROM threads;",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v91(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS conversation_snoozes (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL, record_json TEXT NOT NULL, pending_apply INTEGER NOT NULL DEFAULT 0, replica_dirty INTEGER NOT NULL DEFAULT 0
+    ); CREATE INDEX IF NOT EXISTS conversation_snoozes_account ON conversation_snoozes(account_id);").map_err(error)?;
+    Ok(())
+}
+
+fn to_v92(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS gmail_sending_identities (
+        account_id TEXT PRIMARY KEY REFERENCES accounts(email) ON DELETE CASCADE,
+        identities_json TEXT NOT NULL, refreshed_at INTEGER NOT NULL
+    );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v93(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS system_contact_connection(id INTEGER PRIMARY KEY CHECK(id=1), connection_json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS system_contact_cache(id TEXT PRIMARY KEY, data_json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS system_contact_addresses(contact_id TEXT NOT NULL REFERENCES system_contact_cache(id) ON DELETE CASCADE, email TEXT NOT NULL, display_name TEXT, PRIMARY KEY(contact_id,email));
+        CREATE INDEX IF NOT EXISTS system_contact_email ON system_contact_addresses(email);").map_err(error)?;
+    Ok(())
+}
+
+fn to_v94(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Device-local, rebuildable header index. Never a replicated entity.
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS co_recipient_addresses (
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        account_id TEXT NOT NULL, email TEXT NOT NULL, display_name TEXT,
+        sender TEXT NOT NULL, sent_at TEXT NOT NULL,
+        PRIMARY KEY(message_id,email));
+        CREATE INDEX IF NOT EXISTS co_recipient_seed ON co_recipient_addresses(account_id,email,sent_at);
+        CREATE INDEX IF NOT EXISTS co_recipient_shared_seed ON co_recipient_addresses(email,sent_at);").map_err(error)?;
+    Ok(())
+}
+
+fn to_v95(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS agent_tasks (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(email) ON DELETE CASCADE,
+        source_thread_id TEXT REFERENCES threads(id) ON DELETE SET NULL,
+        linked_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+        record_json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+            state TEXT NOT NULL CHECK(state IN ('queued','running','waiting_for_input','paused','completed','failed','cancelled')),
+            generation INTEGER NOT NULL, lease_until INTEGER, not_before INTEGER NOT NULL,
+            record_json TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS agent_runnable ON agent_runs(state,not_before,lease_until);
+        CREATE UNIQUE INDEX IF NOT EXISTS agent_one_active_run ON agent_runs(task_id)
+            WHERE state IN ('queued','running','waiting_for_input','paused');
+        CREATE TABLE IF NOT EXISTS agent_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+            answer_to TEXT, record_json TEXT NOT NULL, UNIQUE(task_id,answer_to));
+        CREATE TABLE IF NOT EXISTS agent_steps (
+            id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+            checkpoint INTEGER NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL,
+            result_json TEXT);
+        CREATE TABLE IF NOT EXISTS agent_artifacts (
+            id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+            version INTEGER NOT NULL, record_json TEXT NOT NULL, UNIQUE(task_id,version));").map_err(error)?;
+    Ok(())
+}
+
+fn to_v96(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_research (
+        task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id) ON DELETE CASCADE,
+        expires_at INTEGER, record_json TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS agent_evidence_expiry ON agent_research(expires_at);",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v97(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Device-local identity reservations outlive locations and body eviction.
+    // Multiple candidates retain contradictory evidence instead of overwriting it.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS imap_message_identities (
+        account_id TEXT NOT NULL,
+        namespace TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        PRIMARY KEY(account_id, namespace, external_id, message_id)
+    ); CREATE INDEX IF NOT EXISTS imap_message_identities_message
+        ON imap_message_identities(account_id, message_id, namespace);",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v98(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS imap_label_snapshots (
+        account_id TEXT NOT NULL, message_id TEXT NOT NULL, labels_json TEXT NOT NULL,
+        PRIMARY KEY(account_id,message_id)
+    );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
+fn to_v99(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Device-local, negotiated protocol support; never exported as settings.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS imap_server_capabilities (
+        account_id TEXT PRIMARY KEY, native_labels INTEGER NOT NULL DEFAULT 0,
+        native_labels_seen INTEGER NOT NULL DEFAULT 0
+    );",
+    )
+    .map_err(error)?;
+    Ok(())
 }
 
 /// Outbox reconciliation that runs on every open, independent of schema
