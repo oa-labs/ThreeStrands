@@ -1003,6 +1003,16 @@ describe("SafeMessage", () => {
     expect(frame.srcdoc).not.toMatch(/<script|onclick/);
   });
 
+  it("gives sender HTML the mail-client default line height, which sender line heights override", () => {
+    render(<SafeMessage html={'<p class="MsoNormal" style="margin:0in">Default</p><p style="line-height:1.5">Set</p>'} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const document = new DOMParser().parseFromString(frame.srcdoc, "text/html");
+    const baseStyles = [...document.querySelectorAll("style")].map((style) => style.textContent ?? "").join("\n");
+
+    expect(baseStyles).toMatch(/body \{[^}]*line-height: normal;/);
+    expect(document.querySelector<HTMLParagraphElement>("p[style*='1.5']")!.style.lineHeight).toBe("1.5");
+  });
+
   it("safely embeds an installed font family name in the message document", () => {
     render(<SafeMessage html="<p>Hello</p>" fontFamily={'Font"; color: red; "'} />);
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;

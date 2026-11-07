@@ -553,7 +553,12 @@ test.describe("email rendering fixtures", () => {
         await expect(pre).toHaveCSS("white-space", "pre-wrap");
         const metrics = await pre.evaluate((element) => {
           const root = element.ownerDocument.documentElement;
-          const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
+          // Measure one rendered line: a computed line-height of `normal` is not a number.
+          const probe = element.cloneNode(false) as HTMLElement;
+          probe.textContent = "x";
+          element.after(probe);
+          const lineHeight = probe.getBoundingClientRect().height;
+          probe.remove();
           return {
             preOverflow: element.scrollWidth - element.clientWidth,
             rootOverflow: root.scrollWidth - root.clientWidth,
