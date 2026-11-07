@@ -189,6 +189,58 @@ describe("email rendering numeric policy", () => {
     expect(sanitizeCssDeclaration("line-height", String(EMAIL_CSS_LIMITS.maxLineHeightUnitless + 1))).toBeNull();
   });
 
+  it("bounds absolute units (pt, pc, in, cm, mm) by their px equivalent at the same limits as px", () => {
+    // 4096px = 3072pt = 256pc exactly, so the px limit has an exact boundary in these units.
+    const ptLimit = EMAIL_CSS_LIMITS.maxAbsolutePx * 3 / 4;
+    expect(sanitizeCssDeclaration("width", `${ptLimit - 1}pt`)).toBe(`${ptLimit - 1}pt`);
+    expect(sanitizeCssDeclaration("width", `${ptLimit}pt`)).toBe(`${ptLimit}pt`);
+    expect(sanitizeCssDeclaration("width", `${ptLimit + 1}pt`)).toBeNull();
+    const pcLimit = EMAIL_CSS_LIMITS.maxAbsolutePx / 16;
+    expect(sanitizeCssDeclaration("width", `${pcLimit}pc`)).toBe(`${pcLimit}pc`);
+    expect(sanitizeCssDeclaration("width", `${pcLimit + 1}pc`)).toBeNull();
+    // The limit is not a whole number of in/cm/mm; test the values either side of it.
+    const inLimit = EMAIL_CSS_LIMITS.maxAbsolutePx / 96;
+    expect(sanitizeCssDeclaration("width", `${Math.floor(inLimit)}in`)).toBe(`${Math.floor(inLimit)}in`);
+    expect(sanitizeCssDeclaration("width", `${Math.ceil(inLimit)}in`)).toBeNull();
+    const cmLimit = inLimit * 2.54;
+    expect(sanitizeCssDeclaration("width", `${Math.floor(cmLimit)}cm`)).toBe(`${Math.floor(cmLimit)}cm`);
+    expect(sanitizeCssDeclaration("width", `${Math.ceil(cmLimit)}cm`)).toBeNull();
+    const mmLimit = inLimit * 25.4;
+    expect(sanitizeCssDeclaration("width", `${Math.floor(mmLimit)}mm`)).toBe(`${Math.floor(mmLimit)}mm`);
+    expect(sanitizeCssDeclaration("width", `${Math.ceil(mmLimit)}mm`)).toBeNull();
+
+    // Font sizes use the font px limit: 256px = 192pt exactly.
+    const fontPtLimit = EMAIL_CSS_LIMITS.maxFontSizePx * 3 / 4;
+    expect(sanitizeCssDeclaration("font-size", "11pt")).toBe("11pt");
+    expect(sanitizeCssDeclaration("font-size", `${fontPtLimit}pt`)).toBe(`${fontPtLimit}pt`);
+    expect(sanitizeCssDeclaration("font-size", `${fontPtLimit + 1}pt`)).toBeNull();
+    expect(sanitizeCssDeclaration("font-size", "-1pt")).toBeNull();
+    expect(sanitizeCssDeclaration("font", "11pt/115% Calibri, sans-serif")).toBe("11pt/115% calibri, sans-serif");
+    expect(sanitizeCssDeclaration("font", `${fontPtLimit + 1}pt Calibri`)).toBeNull();
+
+    // The Word/Outlook paragraph reset and spacing forms.
+    expect(sanitizeCssDeclaration("margin", "0in")).toBe("0in");
+    expect(sanitizeCssDeclaration("margin", "0in 0in 8.0pt")).toBe("0in 0in 8.0pt");
+    expect(sanitizeCssDeclaration("margin-bottom", ".0001pt")).toBe(".0001pt");
+    expect(sanitizeCssDeclaration("margin", "0in 0in .0001pt")).toBe("0in 0in .0001pt");
+    expect(sanitizeCssDeclaration("font-size", ".5em")).toBe(".5em");
+    expect(sanitizeCssDeclaration("border", ".5pt solid #ccc")).toBe(".5pt solid #ccc");
+    expect(sanitizeCssDeclaration("margin-bottom", "0.0001pt")).toBe("0.0001pt");
+    expect(sanitizeCssDeclaration("margin-left", "-0.5in")).toBe("-0.5in");
+    expect(sanitizeCssDeclaration("padding-left", "-0.5in")).toBeNull();
+    expect(sanitizeCssDeclaration("padding", "0in 5.4pt 0in 5.4pt")).toBe("0in 5.4pt 0in 5.4pt");
+    expect(sanitizeCssDeclaration("border", "1pt solid windowtext")).toBe("1pt solid windowtext");
+    expect(sanitizeCssDeclaration("border-top", "solid #e1e1e1 1.0pt")).toBe("solid #e1e1e1 1.0pt");
+    expect(sanitizeCssDeclaration("line-height", "13.5pt")).toBe("13.5pt");
+    expect(sanitizeCssDeclaration("flex", "1 1 2in")).toBe("1 1 2in");
+
+    // Units outside the family stay rejected, and units never admit resources.
+    for (const value of ["10vw", "10vh", "10ex", "10ch", "10q", "10 pt", "pt", ".pt", "1.pt", "..5pt", "1e2pt", "calc(1in)"]) {
+      expect([value, sanitizeCssDeclaration("width", value)]).toEqual([value, null]);
+    }
+    expect(sanitizeCssDeclaration("margin", "0in url(https://tracker.example/x)")).toBeNull();
+  });
+
   it("bounds a percentage line-height by its own font-relative limit, not the layout percentage", () => {
     // A percentage line-height multiplies the font size, like a unitless one;
     // the 100% layout cap would reject ordinary spacing such as 150%.

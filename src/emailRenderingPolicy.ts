@@ -148,7 +148,31 @@ const colorValue ="(#[0-9a-f]{3,8}|rgba?\\([\\d.\\s,%]+\\)|hsla?\\([\\d.\\s,%]+\
 export const safeColor = new RegExp(`^${colorValue}$`, "i");
 
 const namedValue = (values: string[]) => new RegExp(`^(?:${values.join("|")})$`, "i");
-const cssLength = /^(-?)(\d+(?:\.\d+)?)(px|em|rem|%)$/i;
+/**
+ * CSS absolute length units as exact px ratios ([numerator, denominator]),
+ * from the CSS Values spec: 1in = 96px = 72pt = 6pc = 2.54cm = 25.4mm.
+ * Word and Outlook write paragraph spacing and type sizes in these units
+ * (`margin:0in`, `font-size:11pt`). Each is a fixed multiple of px, so it is
+ * checked against the same px limit and cannot reach anything px cannot.
+ */
+const ABSOLUTE_UNIT_PX: Record<string, readonly [number, number]> = {
+  px: [1, 1],
+  pt: [4, 3],
+  pc: [16, 1],
+  in: [96, 1],
+  cm: [9600, 254],
+  mm: [960, 254],
+};
+const lengthUnit = "px|pt|pc|in|cm|mm|em|rem";
+// CSS numbers may omit the leading zero; Word writes `margin:0in 0in .0001pt`.
+const cssNumber = "(?:\\d+(?:\\.\\d+)?|\\.\\d+)";
+const cssLength = new RegExp(`^(-?)(${cssNumber})(${lengthUnit}|%)$`, "i");
+
+/** Whether `amount` of an absolute `unit` stays within `pxLimit` CSS pixels. */
+function absoluteWithin(amount: number, unit: string, pxLimit: number): boolean {
+  const [numerator, denominator] = ABSOLUTE_UNIT_PX[unit];
+  return amount * numerator <= pxLimit * denominator;
+}
 
 function boundedLength(value: string, options: { allowNegative?: boolean; allowPercentage?: boolean } = {}): string | null {
   const trimmed = value.trim().toLowerCase();
@@ -161,8 +185,8 @@ function boundedLength(value: string, options: { allowNegative?: boolean; allowP
   if (unit === "%") {
     return options.allowPercentage && amount <= EMAIL_CSS_LIMITS.maxPercentage ? trimmed : null;
   }
-  const limit = unit === "px" ? EMAIL_CSS_LIMITS.maxAbsolutePx : EMAIL_CSS_LIMITS.maxRelativeLength;
-  return amount <= limit ? trimmed : null;
+  if (unit in ABSOLUTE_UNIT_PX) return absoluteWithin(amount, unit, EMAIL_CSS_LIMITS.maxAbsolutePx) ? trimmed : null;
+  return amount <= EMAIL_CSS_LIMITS.maxRelativeLength ? trimmed : null;
 }
 
 function fontSize(value: string): string | null {
@@ -174,11 +198,9 @@ function fontSize(value: string): string | null {
   if (!match || match[1] === "-") return null;
   const amount = Number(match[2]);
   if (!Number.isFinite(amount)) return null;
-  const limit = match[3] === "px"
-    ? EMAIL_CSS_LIMITS.maxFontSizePx
-    : match[3] === "%"
-      ? EMAIL_CSS_LIMITS.maxFontSizePercentage
-      : EMAIL_CSS_LIMITS.maxFontSizeRelative;
+  const unit = match[3];
+  if (unit in ABSOLUTE_UNIT_PX) return absoluteWithin(amount, unit, EMAIL_CSS_LIMITS.maxFontSizePx) ? trimmed : null;
+  const limit = unit === "%" ? EMAIL_CSS_LIMITS.maxFontSizePercentage : EMAIL_CSS_LIMITS.maxFontSizeRelative;
   return amount <= limit ? trimmed : null;
 }
 
@@ -207,10 +229,11 @@ function opacity(value: string): string | null {
 
 const safeFontFamily = /^(?=.{1,200}$)[a-z0-9 _,'"-]+$/i;
 const safeBorderWidthKeyword = /^(?:thin|medium|thick)$/;
+const orderedBorder = new RegExp(`^(${cssNumber}(?:${lengthUnit}))\\s+(none|solid|dashed|dotted|double|groove|ridge|inset|outset)(?:\\s+(.+))?$`);
 function border(value: string): string | null {
   const trimmed = value.trim().toLowerCase();
   if (/^(?:none|0|0px)$/.test(trimmed)) return trimmed;
-  const ordered = trimmed.match(/^(\d+(?:\.\d+)?(?:px|em|rem))\s+(none|solid|dashed|dotted|double|groove|ridge|inset|outset)(?:\s+(.+))?$/);
+  const ordered = trimmed.match(orderedBorder);
   // Width-style-color is how browsers serialize the shorthand (and how its
   // colors gain spaces, e.g. `rgb(1, 2, 3)`); its width obeys the same limit.
   if (ordered) return boundedLength(ordered[1]) !== null && (!ordered[3] || safeColor.test(ordered[3])) ? trimmed : null;
@@ -411,6 +434,9 @@ const autoOr = (validator: Validator): Validator => (value) => {
   return trimmed === "auto" ? trimmed : validator(value);
 };
 
+const flexBasisToken = new RegExp(`^(?:auto|content|0|${cssNumber}(?:${lengthUnit}|%))$`);
+const fontShorthand = new RegExp(`^(?:(?:normal|italic|oblique)\\s+)?(?:(?:normal|small-caps)\\s+)?(?:(?:normal|bold|[1-9]00)\\s+)?(0|${cssNumber}(?:${lengthUnit}|%))(?:\\/(normal|${cssNumber}(?:${lengthUnit}|%)))?\\s+(.+)$`, "i");
+
 const validators: Record<string, Validator> = {
   "text-align": keyword(["left", "right", "center", "justify", "start", "end"]),
   "font-weight": regex(/^(normal|bold|[1-9]00)$/),
@@ -489,7 +515,7 @@ const validators: Record<string, Validator> = {
     const parts = trimmed.split(/\s+/);
     if (parts.length < 1 || parts.length > 3 || unitlessFactor(parts[0]) === null) return null;
     if (parts[1] !== undefined && unitlessFactor(parts[1]) === null) return null;
-    if (parts[2] !== undefined && !/^(?:auto|content|0|\d+(?:\.\d+)?(?:px|em|rem|%))$/.test(parts[2])) return null;
+    if (parts[2] !== undefined && !flexBasisToken.test(parts[2])) return null;
     if (parts[2] !== undefined && !/^(?:auto|content|0)$/.test(parts[2]) && boundedLength(parts[2], { allowPercentage: true }) === null) return null;
     return trimmed;
   },
@@ -511,7 +537,7 @@ const validators: Record<string, Validator> = {
   bottom: layoutLength({ allowNegative: true, allowPercentage: true }),
   left: layoutLength({ allowNegative: true, allowPercentage: true }),
   font: (value) => {
-    const match = value.trim().toLowerCase().match(/^(?:(?:normal|italic|oblique)\s+)?(?:(?:normal|small-caps)\s+)?(?:(?:normal|bold|[1-9]00)\s+)?(0|\d+(?:\.\d+)?(?:px|em|rem|%))(?:\/(normal|\d+(?:\.\d+)?(?:px|em|rem|%)))?\s+(.+)$/i);
+    const match = value.trim().toLowerCase().match(fontShorthand);
     if (!match || fontSize(match[1]) === null || (match[2] && lineHeight(match[2]) === null) || !safeFontFamily.test(match[3])) return null;
     return value.trim().toLowerCase();
   },

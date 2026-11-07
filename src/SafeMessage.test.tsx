@@ -580,6 +580,54 @@ describe("SafeMessage", () => {
     expect(sanitized).not.toContain("padding-left");
   });
 
+  it("keeps Word-style paragraph resets and spacing given in in and pt", () => {
+    // Word and Outlook zero <p> margins in inches. Dropping "margin:0in" let the
+    // browser's 1em paragraph margin resurface between every line.
+    const sanitized = sanitizeMessageHtml(`
+      <div dir="ltr"><div style="color:rgb(0,0,0)">
+        <p class="MsoNormal" style="margin:0in 0in .0001pt"><font face="arial, sans-serif">Greetings,</font></p>
+        <p class="MsoNormal" style="margin:0in"><font face="arial, sans-serif">&nbsp;</font></p>
+        <p class="MsoNormal" style="margin:0in 0in 8.0pt;font-size:11pt;line-height:107%">Body</p>
+      </div></div>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const paragraphs = [...container.querySelectorAll("p")];
+    expect(paragraphs).toHaveLength(3);
+    expect(paragraphs[0].style.marginBottom).toBe("0.0001pt");
+    expect(paragraphs[1].style.margin).toBe("0in");
+    expect(paragraphs[2].style.marginBottom).toBe("8pt");
+    expect(paragraphs[2].style.fontSize).toBe("11pt");
+  });
+
+  it("keeps Outlook table cell padding, borders and stylesheet sizes in pt while dropping unsafe values", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <table class="MsoNormalTable" border="0" cellspacing="0" cellpadding="0" style="width:6.5in;border-collapse:collapse">
+        <tr><td style="padding:0in 5.4pt 0in 5.4pt;border:solid windowtext 1.0pt;width:${EMAIL_CSS_LIMITS.maxAbsolutePx}pt">
+          <p class="MsoNormal">Cell</p>
+        </td></tr>
+      </table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const cell = container.querySelector("td")!;
+    expect(container.querySelector("table")?.style.width).toBe("6.5in");
+    expect(cell.style.paddingLeft).toBe("5.4pt");
+    expect(cell.style.borderTopWidth).toBe("1pt");
+    // 4096pt is past the px limit, so the declaration is dropped, not clamped.
+    expect(cell.style.width).toBe("");
+
+    const styleSheet = extractSafeStyleSheet(`<style>
+      p.MsoNormal, li.MsoNormal { margin:0in; font-size:11.0pt; font-family:"Calibri",sans-serif; }
+      .WordSection1 { margin:1.0in 1.25in 1.0in 1.25in; }
+      .Bad { margin:0in; background:url(https://tracker.example/x.png); }
+    </style>`);
+    expect(styleSheet).toMatch(/margin:\s*0in/);
+    expect(styleSheet).toMatch(/font-size:\s*11(\.0)?pt/);
+    expect(styleSheet).toMatch(/margin:\s*1(\.0)?in 1\.25in 1(\.0)?in 1\.25in/);
+    expect(styleSheet).not.toContain("tracker.example");
+  });
+
   it("keeps newsletter preheaders hidden and preserves safe email dimensions", () => {
     const sanitized = sanitizeMessageHtml(`
       <div class="preview" style="display:none;font-size:1px;max-height:0;overflow:hidden">
