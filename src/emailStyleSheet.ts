@@ -51,6 +51,63 @@ function scopedSelectorList(selectorText: string): string | null {
 }
 
 /**
+ * Removes the CDO (`<!--`) and CDC (`-->`) tokens that sit between rules.
+ * CSS Syntax ignores them at a stylesheet's top level, so senders wrap
+ * `<style>` content in them to hide it from pre-CSS browsers; PostCSS
+ * instead rejects `-->` as an unknown word and the whole sheet would be
+ * lost. Markers inside strings, comments, or blocks are left alone, and
+ * each removed marker becomes a space so its neighbours cannot fuse into
+ * a new token.
+ */
+function stripTopLevelHtmlCommentMarkers(css: string): string {
+  let out = "";
+  let depth = 0;
+  let quote: string | null = null;
+  let i = 0;
+  while (i < css.length) {
+    const ch = css[i];
+    if (quote) {
+      if (ch === "\\") {
+        out += css.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      if (ch === quote || ch === "\n") quote = null;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === "/" && css[i + 1] === "*") {
+      const end = css.indexOf("*/", i + 2);
+      const stop = end === -1 ? css.length : end + 2;
+      out += css.slice(i, stop);
+      i = stop;
+      continue;
+    }
+    if (ch === "\\") {
+      out += css.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}" && depth > 0) depth -= 1;
+    else if (depth === 0 && css.startsWith("<!--", i)) {
+      out += " ";
+      i += 4;
+      continue;
+    } else if (depth === 0 && css.startsWith("-->", i)) {
+      out += " ";
+      i += 3;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+/**
  * Sanitizes sender CSS with the same typed declaration policy used for
  * inline styles. PostCSS owns stylesheet structure; selector-parser owns
  * selector-list parsing, root rewriting, and malformed-selector rejection.
@@ -60,7 +117,7 @@ function scopedSelectorList(selectorText: string): string | null {
 export function sanitizeStyleSheet(css: string, theme?: "light" | "dark"): string {
   let root;
   try {
-    root = postcss.parse(css);
+    root = postcss.parse(stripTopLevelHtmlCommentMarkers(css));
   } catch {
     return "";
   }

@@ -171,6 +171,57 @@ describe("sanitizeStyleSheet", () => {
     expect(css).not.toContain("background");
   });
 
+  describe("HTML comment markers (<!-- and -->) between rules", () => {
+    it("keeps a stylesheet wrapped in one comment pair spanning lines", () => {
+      const css = sanitizeStyleSheet([
+        "<!--",
+        "/* Style Definitions */",
+        "p.MsoNormal, div.MsoNormal",
+        "\t{margin:0in;",
+        "\tfont-size:12.0pt;}",
+        "@page WordSection1",
+        "\t{size:8.5in 11.0in;}",
+        "-->",
+      ].join("\n"));
+      expect(css).toContain("[data-email-root] p.MsoNormal, [data-email-root] div.MsoNormal");
+      expect(css).toMatch(/margin:\s*0in/);
+      expect(css).not.toContain("--");
+      expect(css).not.toContain("@page");
+    });
+
+    it("keeps rules between several markers sharing lines with them and a media query", () => {
+      const css = sanitizeStyleSheet(
+        "<!-- .lead { margin: 0; } --> <!-- @media (max-width: 600px) { .lead { margin: 0 0 8px; } } --><!--.foot{color:#333}-->",
+      );
+      expect(css).toContain("[data-email-root] .lead { margin: 0; }");
+      expect(css).toContain("@media (max-width: 600px)");
+      expect(css).toContain("[data-email-root] .foot{color:#333}");
+      expect(css).not.toContain("--");
+    });
+
+    it("leaves markers inside strings and comments as written", () => {
+      const css = sanitizeStyleSheet('<!-- /* --> */ [title="-->"] { color: red; } [title=\'<!--\'] { color: blue; } -->');
+      expect(css).toContain("/* --> */");
+      expect(css).toContain('[title="-->"] { color: red; }');
+      expect(css).toMatch(/\[title='[^']*!--'\] \{ color: blue; \}/);
+      expect(css).not.toContain("<");
+    });
+
+    it("still drops unsafe at-rules and declarations inside a wrapped stylesheet", () => {
+      const css = sanitizeStyleSheet(
+        '<!-- @import url("https://evil.example/x.css"); .a { color: red; background-image: url("https://evil.example/t.png"); } -->',
+      );
+      expect(css).toBe("[data-email-root] .a { color: red; }");
+    });
+
+    it("keeps a wrapped </style> breakout attempt escaped", () => {
+      const css = sanitizeStyleSheet('<!-- [title="--></style><script>alert(1)</script>"] { color: red; } -->');
+      expect(css).not.toContain("</style");
+      expect(css).not.toContain("<script");
+      expect(css).not.toContain("<");
+    });
+  });
+
   it("returns an empty string for unparseable CSS instead of throwing", () => {
     expect(sanitizeStyleSheet("{{{ not css at all ]]]")).toBe("");
   });
@@ -264,6 +315,33 @@ describe("extractSafeStyleSheet + sanitizeMessageHtml integration", () => {
     expect(body).toContain('class="light-row"');
     expect(body).toContain('class="dark-row"');
     expect(body).not.toContain("<style");
+  });
+
+  it("keeps the paragraph reset from a Word stylesheet wrapped in an HTML comment", () => {
+    const html = `<html><head>
+<meta name="Generator" content="Microsoft Word 15 (filtered medium)">
+<style><!--
+@font-face
+\t{font-family:Aptos;}
+p.MsoNormal, li.MsoNormal, div.MsoNormal
+\t{margin:0in;
+\tfont-size:12.0pt;
+\tfont-family:"Aptos",sans-serif;
+\tmso-ligatures:standardcontextual;}
+div.WordSection1
+\t{page:WordSection1;}
+--></style></head>
+<body><div class="WordSection1">
+<p class="MsoNormal"><span style="font-size:11.0pt">Hello,<o:p></o:p></span></p>
+<p class="MsoNormal"><span style="font-size:11.0pt"><o:p>&nbsp;</o:p></span></p>
+<p class="MsoNormal"><span style="font-size:11.0pt">Thanks.<o:p></o:p></span></p>
+</div></body></html>`;
+    const styleSheet = extractSafeStyleSheet(html);
+    expect(styleSheet).toContain("[data-email-root] p.MsoNormal");
+    expect(styleSheet).toMatch(/margin:\s*0in/);
+
+    const body = sanitizeMessageHtml(html);
+    expect(body.match(/<p class="MsoNormal">/g)).toHaveLength(3);
   });
 
   it("produces no stylesheet when the message has none", () => {
