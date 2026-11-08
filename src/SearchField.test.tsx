@@ -185,7 +185,7 @@ describe("SearchField suggestions", () => {
     expect(props.onEscape).toHaveBeenCalledTimes(1);
   });
 
-  it("remembers a search on Enter or blur and offers it in an empty box", () => {
+  it("remembers submitted searches and offers them in an empty box", () => {
     const { input, props } = renderField();
     type(input, "invoice");
     fireEvent.keyDown(input, { key: "Enter" });
@@ -203,7 +203,28 @@ describe("SearchField suggestions", () => {
     fireEvent.change(input, { target: { value: "from:bo" } });
     act(() => { vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS); });
     act(() => input.blur());
-    expect(JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY) ?? "[]")).toEqual(["from:bo", "invoice"]);
+    expect(JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY) ?? "[]")).toEqual(["invoice"]);
+  });
+
+  it("shows at most five existing recent searches under a heading without adding it to keyboard options", () => {
+    localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(["one", "two", "three", "four", "five", "six", "seven", "eight"]));
+    const { input } = renderField();
+    act(() => input.focus());
+    expect(screen.getByRole("heading", { name: "Recent searches" })).toBeInTheDocument();
+    expect(options()).toEqual(["one", "two", "three", "four", "five"]);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: "one" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(screen.getByRole("option", { name: "five" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("refreshes history recorded by opening results when the input regains focus", () => {
+    const { input } = renderField();
+    act(() => input.focus());
+    act(() => input.blur());
+    localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(["opened result"]));
+    act(() => input.focus());
+    expect(options()).toEqual(["opened result"]);
   });
 
   it("does not remember a draft that was never searched", () => {

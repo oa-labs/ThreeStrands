@@ -1,3 +1,4 @@
+import { MAX_RECENT_SEARCHES } from "./recentSearches";
 /**
  * Pure search-box autocomplete: finds the token under the caret, offers
  * operator names, operator values, and recent searches, and applies a chosen
@@ -165,7 +166,7 @@ export function contactQueryFor(token: SearchToken): string | null {
  */
 export function searchSuggestions(query: string, token: SearchToken, sources: SuggestionSources): SearchSuggestion[] {
   if (!query.trim()) {
-    return sources.recentSearches.slice(0, MAX_SEARCH_SUGGESTIONS).map((recent) => ({
+    return sources.recentSearches.slice(0, Math.min(MAX_RECENT_SEARCHES, MAX_SEARCH_SUGGESTIONS)).map((recent) => ({
       key: `recent:${recent}`,
       kind: "recent",
       label: recent,

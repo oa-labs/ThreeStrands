@@ -89,6 +89,7 @@ import { PanelResizeHandle, useInboxWidth } from "./PanelResizeHandle";
 import { messagesWithQueuedReplies, queuedMessage } from "./queuedReplies";
 import { AvailabilitySection } from "./RecipientSections";
 import { offersFindTimes, planChatAvailability, suggestedSearch } from "./scheduling";
+import { recordRecentSearch } from "./recentSearches";
 import { MailSearch } from "./MailSearch";
 import type { SavedSearch } from "./savedSearches";
 import { readSelectedAccountId, readSelectedMailboxForAccount } from "./settings";
@@ -551,17 +552,24 @@ export function App() {
   }, [correspondence, openTaskThread, setNotice]);
   // Clicking another conversation in the list does the same; a reply stays open over its own conversation.
   const selectThreadFromList = useCallback((threadId: string) => {
-    if (!correspondence.activeDraft || (!composingApart && threadId === selectedId)) {
+    // Record the executed query whose result the user deliberately opens,
+    // rather than intermediate typing or automatic first-result selection.
+    const searchedQuery = isTabbedMailbox ? queryRef.current : "";
+    const openResult = () => {
+      if (searchedQuery.trim()) recordRecentSearch(searchedQuery);
       selectThread(threadId);
+    };
+    if (!correspondence.activeDraft || (!composingApart && threadId === selectedId)) {
+      openResult();
       return;
     }
     void correspondence.flushDraft()
       .then(() => {
         correspondence.context.openInbox();
-        selectThread(threadId);
+        openResult();
       })
       .catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
-  }, [composingApart, correspondence, selectThread, selectedId, setNotice]);
+  }, [composingApart, correspondence, selectThread, selectedId, setNotice, isTabbedMailbox, queryRef]);
   const {
     selectAdjacentMessage, activateMessage, toggleMessage, showMessage, showMessageLink, linkReveal, registerMessageNode,
     respondToMessage,

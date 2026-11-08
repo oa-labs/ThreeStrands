@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { mailClient } from "./data/client";
 import type { SearchReport } from "./domain";
+import { RECENT_SEARCHES_KEY } from "./recentSearches";
 import { saveSearch, SAVED_SEARCHES_KEY } from "./savedSearches";
 import { REMOTE_SEARCH_DELAY_MS } from "./useMailboxThreads";
 
@@ -22,6 +23,7 @@ describe("split inbox search shortcuts", () => {
     localStorage.removeItem("threestrands.settings.selectedMailboxByAccount");
     localStorage.removeItem("threestrands.settings.selectedTabByAccount");
     localStorage.removeItem(SAVED_SEARCHES_KEY);
+    localStorage.removeItem(RECENT_SEARCHES_KEY);
     vi.restoreAllMocks();
   });
 
@@ -117,6 +119,23 @@ describe("split inbox search shortcuts", () => {
     expect(screen.getByRole("button", { name: "Filters, 1 active" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose folder, current folder Inbox" })).toBeInTheDocument();
     if (accountId) expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("records a search only when the user opens a result, not when it is automatically selected", async () => {
+    const results = await mailClient.listThreads();
+    vi.spyOn(mailClient, "searchThreads").mockResolvedValue(results);
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+    fireEvent.keyDown(window, { key: "/" });
+    const input = await screen.findByRole("textbox", { name: "Search Mail" });
+    fireEvent.change(input, { target: { value: "Welcome" } });
+    await waitFor(() => expect(mailClient.searchThreads).toHaveBeenCalledWith(expect.objectContaining({ query: "Welcome" }), undefined));
+    expect(localStorage.getItem(RECENT_SEARCHES_KEY)).toBeNull();
+    fireEvent.blur(input);
+    expect(localStorage.getItem(RECENT_SEARCHES_KEY)).toBeNull();
+    const list = screen.getByRole("listbox", { name: "Inbox" });
+    fireEvent.click(within(list).getAllByRole("option")[0]);
+    expect(JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY) ?? "[]")).toEqual(["Welcome"]);
   });
 
   it("shows Inbox as the folder and Main as the default tab, with a dismissible folder menu", async () => {

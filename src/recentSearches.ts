@@ -7,7 +7,7 @@
  */
 
 export const RECENT_SEARCHES_KEY = "threestrands.recentSearches";
-export const MAX_RECENT_SEARCHES = 8;
+export const MAX_RECENT_SEARCHES = 5;
 
 export function readRecentSearches(): string[] {
   try {

@@ -165,7 +165,10 @@ export function SearchField({
     const next = applySuggestion(draft, token, suggestion);
     pendingCaret.current = next.caret;
     updateDraft(next.query, next.caret);
-    if (suggestion.kind === "recent") commitNow(next.query);
+    if (suggestion.kind === "recent") {
+      commitNow(next.query);
+      setRecentSearches(recordRecentSearch(next.query));
+    }
   }
 
   const idle = !focused && !draft.trim();
@@ -180,12 +183,11 @@ export function SearchField({
           value={draft}
           onChange={(event) => updateDraft(event.target.value, event.target.selectionStart ?? event.target.value.length)}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
-          onFocus={() => setFocused(true)}
+          onFocus={() => { setFocused(true); setRecentSearches(readRecentSearches()); }}
           onBlur={() => {
             setFocused(false);
             setDismissed(false);
             setActiveIndex(null);
-            rememberSearch();
           }}
           placeholder="Search mail"
           aria-label="Search Mail"
@@ -239,6 +241,7 @@ export function SearchField({
         {onSaveSearch && draft.trim() ? <button type="button" className="btn-icon" aria-label="Save Search" title="Save Search" onClick={() => {
           commitNow(draft);
           setDismissed(true);
+          rememberSearch();
           onSaveSearch(draft);
         }}><BookmarkPlus size={ICON_SIZE.sm} /></button> : null}
         {/* One trailing slot: the / hint while idle (Close on hover), Close while searching. */}
@@ -256,27 +259,30 @@ export function SearchField({
         {idle ? <kbd>/</kbd> : null}
       </label>
       {visible ? (
-        <ul className="search-suggestions" role="listbox" id={listId} aria-label={draft.trim() ? "Search suggestions" : "Recent searches"}>
-          {suggestions.map((suggestion, index) => {
-            const Icon = SUGGESTION_ICONS[suggestion.kind];
-            return (
-              <li
-                key={suggestion.key}
-                id={`${listId}-${index}`}
-                role="option"
-                aria-selected={index === effectiveIndex}
-                className={index === effectiveIndex ? "active" : undefined}
-                // Keep focus in the input so choosing doesn't blur the search.
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => choose(suggestion)}
-              >
-                <Icon size={ICON_SIZE.sm} aria-hidden="true" />
-                <span className="search-suggestion-label">{suggestion.label}</span>
-                {suggestion.detail ? <small>{suggestion.detail}</small> : null}
-              </li>
-            );
-          })}
-        </ul>
+        <div className="search-suggestions">
+          {!draft.trim() ? <h3 className="search-suggestions-heading">Recent searches</h3> : null}
+          <ul className="search-suggestion-list" role="listbox" id={listId} aria-label={draft.trim() ? "Search suggestions" : "Recent searches"}>
+            {suggestions.map((suggestion, index) => {
+              const Icon = SUGGESTION_ICONS[suggestion.kind];
+              return (
+                <li
+                  key={suggestion.key}
+                  id={`${listId}-${index}`}
+                  role="option"
+                  aria-selected={index === effectiveIndex}
+                  className={index === effectiveIndex ? "active" : undefined}
+                  // Keep focus in the input so choosing doesn't blur the search.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => choose(suggestion)}
+                >
+                  <Icon size={ICON_SIZE.sm} aria-hidden="true" />
+                  <span className="search-suggestion-label">{suggestion.label}</span>
+                  {suggestion.detail ? <small>{suggestion.detail}</small> : null}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       ) : null}
     </div>
   );
