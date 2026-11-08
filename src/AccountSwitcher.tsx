@@ -11,8 +11,10 @@ export function AccountSwitcher({
   onSwitch,
   onShowAll,
   onReorder,
+  showAllAccounts = false,
 }: {
   accounts: Account[];
+  showAllAccounts?: boolean;
   unreadCounts: UnreadCounts;
   activeAccountId: string | null;
   onSwitch(email: string): void;
@@ -50,7 +52,7 @@ export function AccountSwitcher({
 
   return (
     <div className="account-rail" role="radiogroup" aria-label="Filter by account">
-      {accounts.length > 1 ? <HoverTooltip label="All accounts">
+      {accounts.length > 1 || showAllAccounts ? <HoverTooltip label="All accounts">
         <button
           type="button"
           role="radio"
@@ -68,7 +70,7 @@ export function AccountSwitcher({
         const identity = nickname ? `${nickname} (${account.email})` : account.email;
         const unreadCount = unreadCounts[account.email] ?? 0;
         const needsReconnect = account.status === "needs_reauth";
-        const selected = activeAccountId === account.email || (accounts.length === 1 && activeAccountId === null);
+        const selected = activeAccountId === account.email || (accounts.length === 1 && !showAllAccounts && activeAccountId === null);
         return (
           <HoverTooltip key={account.email} label={needsReconnect ? `${identity} · Needs reconnect in Mail Accounts` : identity}>
             <button

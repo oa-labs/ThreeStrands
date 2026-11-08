@@ -92,6 +92,7 @@ import { offersFindTimes, planChatAvailability, suggestedSearch } from "./schedu
 import { recordRecentSearch } from "./recentSearches";
 import { MailSearch } from "./MailSearch";
 import type { SavedSearch } from "./savedSearches";
+import { isSavedSearchView } from "./mailViews";
 import { readSelectedAccountId, readSelectedMailboxForAccount } from "./settings";
 import type { SettingsSection } from "./settingsPanelTypes";
 import { readSettingsSection, saveSettingsSection } from "./settingsNavigation";
@@ -217,7 +218,14 @@ export function App() {
   const { unreadCounts, checkingMail, refreshUnreadCounts } = useUnreadCounts(syncStatus, setSyncStatus);
   const [activeSplitInboxId, setActiveSplitInboxId] = useState<string | null>(null);
   const [mailbox, setMailbox] = useState<MailboxKind>(() => readSelectedMailboxForAccount(readSelectedAccountId()) ?? "inbox");
+  const splitInboxCatalog = useSplitInboxes();
+  const activeSavedSearch = useMemo(() => {
+    if (mailbox !== "split") return null;
+    const view = splitInboxCatalog.views.find((view) => view.id === activeSplitInboxId && view.accountId === activeAccountId);
+    return view && isSavedSearchView(view) ? view.savedSearch : null;
+  }, [mailbox, splitInboxCatalog.views, activeSplitInboxId, activeAccountId]);
   const mailboxThreads = useMailboxThreads({
+    savedSearch: activeSavedSearch,
     activeAccountId, mailbox, activeSplitInboxId, setSelectedId, refreshUnreadCounts,
     refreshMailboxUnreadCounts,
   });
@@ -328,7 +336,6 @@ export function App() {
     }).catch(reason => setNotice({ message: errorMessage(reason) }));
   };
   const { openTaskThreadIds, taskRevision, setTaskRevision, refreshTaskIndicators } = useTaskIndicators(activeAccountId);
-  const splitInboxCatalog = useSplitInboxes();
   const senderRuleCatalog = useSenderRules();
   const { refresh: refreshSplitInboxes } = splitInboxCatalog;
   const isThreadMailbox = mailbox === "snoozed" || mailbox === "inbox" || mailbox === "allMail" || mailbox === "sent" || mailbox === "trash" || mailbox === "split";
@@ -340,27 +347,27 @@ export function App() {
     selectedId, setSelectedId, selectedThreadRowRef, setNotice,
   });
   const { accountSplitInboxes, mailboxTitle, returnStep, openTaskThread, jumpToThread } = navigation;
-  const [pendingSavedSearch, setPendingSavedSearch] = useState<SavedSearch | null>(null);
-  const { goToInboxTab, switchAccount } = navigation;
-  const openSavedSearch = useCallback((search: SavedSearch) => {
-    if (search.accountId !== null && !accounts.some((account) => account.email === search.accountId)) {
-      setNotice({ message: "The saved search's account is no longer connected." });
-      return;
-    }
-    switchAccount(search.accountId);
-    setPendingSavedSearch(search);
-  }, [accounts, switchAccount, setNotice]);
-  // Account navigation restores its last tab and clears search first. Apply
-  // the saved query afterward, including when that tab catalog loads late.
-  useEffect(() => {
-    if (!pendingSavedSearch || !splitInboxCatalog.loaded || activeAccountId !== pendingSavedSearch.accountId) return;
-    goToInboxTab();
-    setActiveMessageFilters(new Set(pendingSavedSearch.messageFilters));
-    setInboxOnly(pendingSavedSearch.inboxOnly);
-    setQuery(pendingSavedSearch.query);
+  const { goToInboxTab } = navigation;
+  const restoreSavedSearch = useCallback((search: SavedSearch) => {
+    setQuery(search.query);
+    setInboxOnly(search.inboxOnly);
+    setActiveMessageFilters(new Set(search.messageFilters));
     setSearchOpen(true);
-    setPendingSavedSearch(null);
-  }, [pendingSavedSearch, splitInboxCatalog.loaded, activeAccountId, goToInboxTab, setActiveMessageFilters, setInboxOnly, setQuery, setSearchOpen]);
+  }, [setQuery, setInboxOnly, setActiveMessageFilters, setSearchOpen]);
+  const previousSavedView = useRef<string | null>(null);
+  useEffect(() => {
+    const definition = activeSavedSearch ? JSON.stringify([activeSavedSearch.id, activeSavedSearch.accountId, activeSavedSearch.query, activeSavedSearch.inboxOnly, activeSavedSearch.messageFilters]) : null;
+    if (definition === previousSavedView.current) return;
+    const previous = previousSavedView.current;
+    previousSavedView.current = definition;
+    if (activeSavedSearch) {
+      restoreSavedSearch(activeSavedSearch);
+    } else if (previous) {
+      setQuery("");
+      setInboxOnly(false);
+      setActiveMessageFilters(new Set());
+    }
+  }, [activeSavedSearch, restoreSavedSearch, setQuery, setInboxOnly, setActiveMessageFilters]);
   // Only a loaded, unfiltered, unsearched Main inbox with no threads is inbox zero;
   // a failed load or an empty split is not.
   const inboxZero = mailbox === "inbox" && !loading && !mailboxError && threads.length === 0 && !query.trim() && accounts.length > 0;
@@ -615,11 +622,16 @@ export function App() {
     if (event.key === "Escape" && event.defaultPrevented) setSideDrawerOpen(false);
   }, [activeDraft, focusDraftBody, setSideDrawerOpen]);
 
+  const commitMailSearch = useCallback((next: string) => {
+    if (activeSavedSearch && !next.trim()) goToInboxTab();
+    setQuery(next);
+  }, [activeSavedSearch, goToInboxTab, setQuery]);
   const closeSearch = useCallback(() => {
+    if (activeSavedSearch) goToInboxTab();
     setQuery("");
     setSearchOpen(false);
     selectedThreadRowRef.current?.focus();
-  }, [selectedThreadRowRef, setQuery, setSearchOpen]);
+  }, [selectedThreadRowRef, setQuery, setSearchOpen, activeSavedSearch, goToInboxTab]);
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
     delegateSelected,
@@ -785,6 +797,7 @@ export function App() {
     <main className={`app-shell${rightWorkspace === "agents" ? " agents-open" : rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
+          showAllAccounts={splitInboxCatalog.views.some(isSavedSearchView)}
           accounts={accounts}
           unreadCounts={unreadCounts}
           activeAccountId={activeAccountId}
@@ -1035,9 +1048,14 @@ export function App() {
                             key={splitInbox.id}
                             type="button"
                             role="tab"
+                            aria-label={"savedSearch" in splitInbox ? splitInbox.name : undefined}
+                            title={"savedSearch" in splitInbox ? "Saved Search — does not route mail out of Main" : undefined}
                             aria-selected={mailbox === "split" && activeSplitInboxId === splitInbox.id}
                             className={`mailbox-tab ${mailbox === "split" && activeSplitInboxId === splitInbox.id ? "active" : ""}`}
-                            onClick={() => context.openSplitInbox(splitInbox.id)}
+                            onClick={() => {
+                              if ("savedSearch" in splitInbox) restoreSavedSearch(splitInbox.savedSearch);
+                              context.openSplitInbox(splitInbox.id);
+                            }}
                           >
                             {splitInbox.id === STARRED_INBOX_ID ? `★ Starred · ${mailboxUnreadCounts.starred ?? 0}` : splitInbox.name}
                             {splitInbox.id !== STARRED_INBOX_ID && mailboxUnreadCounts.splits[splitInbox.id] ? ` ${mailboxUnreadCounts.splits[splitInbox.id]}` : ""}
@@ -1057,10 +1075,11 @@ export function App() {
               accounts={accounts}
               accountId={activeAccountId}
               activeFilters={activeMessageFilters}
-              onOpenSavedSearch={openSavedSearch}
+              onCreateSearch={splitInboxCatalog.createSearch}
+              onManageViews={() => openSettingsAt("splitInboxes")}
               inputRef={searchRef}
               query={query}
-              onCommit={setQuery}
+              onCommit={commitMailSearch}
               onInput={clearContextOpenedThread}
               onEscape={closeSearch}
               inboxOnly={inboxOnly}

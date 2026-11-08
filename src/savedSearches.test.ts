@@ -32,3 +32,25 @@ describe("saved searches", () => {
     expect(() => saveSearch({ ...search, ...invalid })).toThrow();
   });
 });
+
+describe("editing saved searches", () => {
+  it("preserves identity and other saved searches when editing conditions and scope", async () => {
+    const { updateSavedSearch } = await import("./savedSearches");
+    const [first] = saveSearch(search);
+    saveSearch({ ...search, name: "Other" });
+    const next = updateSavedSearch(first.id, { name: "All bills", query: "has:attachment", accountId: null, inboxOnly: false, messageFilters: ["starred"] });
+    expect(next[0]).toEqual({ id: first.id, name: "All bills", query: "has:attachment", accountId: null, inboxOnly: false, messageFilters: ["starred"] });
+    expect(next[1].name).toBe("Other");
+    expect(readSavedSearches()).toEqual(next);
+  });
+  it("retains the old definition on duplicate names or write failure", async () => {
+    const { updateSavedSearch } = await import("./savedSearches");
+    const [first] = saveSearch(search);
+    saveSearch({ ...search, name: "Other" });
+    const before = readSavedSearches();
+    expect(() => updateSavedSearch(first.id, { name: "other" })).toThrow(/already exists/);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage full"); });
+    expect(() => updateSavedSearch(first.id, { query: "new" })).toThrow("Storage full");
+    expect(readSavedSearches()).toEqual(before);
+  });
+});

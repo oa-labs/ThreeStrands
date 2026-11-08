@@ -18,9 +18,11 @@ Your active mail search stays in place when you visit Contacts or another view. 
 
 With a mail search entered, choose **Save Search** beside the search box. Give it a name and choose **All accounts** or one connected account. The saved search also remembers **Inbox Only** and your active quick filters (**Unread**, **Starred**, **Important**, and **No Reply**). Saving does not change your current search or move mail.
 
-Choose **Saved searches** beside the search box to reopen or delete a saved search. Reopening switches to its saved account scope and runs the search again using current mail. **All accounts** includes accounts you connect later. A search for a disconnected account stays listed but cannot be opened until that account is connected again.
+Saved searches appear automatically as tabs alongside your Split Inboxes. Select the saved account, or **All accounts** for a merged view, then choose its tab to run the search against current mail. Returning to **Main** clears the saved view’s search and quick filters. **All accounts** includes accounts you connect later. A search for a disconnected account stays listed in Settings; reconnect the account or edit the view’s scope to use it again.
 
-Saved searches stay on this computer; they are not included in settings exports or cross-device sync. Local results and server coverage follow the same rules as an ordinary search.
+Choose **Saved searches** beside the search box, or open **Settings → Split Inboxes**, to create, rename, edit, reorder, or delete saved-search views. Editing includes the query, account scope, Inbox Only, and quick filters. Typing in an open view changes the current search without rewriting its saved definition; select its tab again to restore the saved criteria. Existing saved searches appear in the shared tab catalog automatically.
+
+Saved searches show matching mail without routing it out of **Main**. Saved searches and their positions among routing splits stay on this computer; saved searches are not included in settings exports or cross-device sync. Local results and server coverage follow the same rules as an ordinary search.
 
 ## Search Examples {#search-examples}
 

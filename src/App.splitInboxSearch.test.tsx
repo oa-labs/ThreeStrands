@@ -108,9 +108,9 @@ describe("split inbox search shortcuts", () => {
     const searchThreads = vi.spyOn(mailClient, "searchThreads");
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
-    fireEvent.keyDown(window, { key: "/" });
-    fireEvent.click(await screen.findByRole("button", { name: "Saved searches" }));
-    fireEvent.click(screen.getByRole("button", { name: `Invoices · ${accountId ?? "All accounts"}${inboxOnly ? " · Inbox Only" : ""}` }));
+    if (accountId) fireEvent.click(await screen.findByRole("radio", { name: "Work" }));
+    else fireEvent.click(await screen.findByRole("radio", { name: /^All accounts/i }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Invoices" }));
     await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
       expect.objectContaining({ query: "subject:invoice", includeArchived: !inboxOnly }), accountId ?? undefined,
     ));
@@ -118,7 +118,11 @@ describe("split inbox search shortcuts", () => {
     expect(screen.getByRole("button", { name: "Search only the Inbox" })).toHaveAttribute("aria-pressed", String(inboxOnly));
     expect(screen.getByRole("button", { name: "Filters, 1 active" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose folder, current folder Inbox" })).toBeInTheDocument();
-    if (accountId) expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Invoices" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("listbox", { name: "Invoices" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^Main/ }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue(""));
+    expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
   });
 
   it("records a search only when the user opens a result, not when it is automatically selected", async () => {

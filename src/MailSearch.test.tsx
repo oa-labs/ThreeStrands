@@ -2,10 +2,10 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MailSearch } from "./MailSearch";
-import { readSavedSearches, saveSearch, SAVED_SEARCHES_KEY } from "./savedSearches";
+import { readSavedSearches, SAVED_SEARCHES_KEY } from "./savedSearches";
 
 function renderSearch(overrides: Partial<Parameters<typeof MailSearch>[0]> = {}) {
-  const props = { inputRef: createRef<HTMLInputElement>(), query: "invoice", onCommit: vi.fn(), onInput: vi.fn(), onEscape: vi.fn(), inboxOnly: true, onToggleInboxOnly: vi.fn(), accounts: [{ email: "work@example.com" }, { email: "personal@example.com" }], accountId: "work@example.com", onOpenSavedSearch: vi.fn(), ...overrides };
+  const props = { inputRef: createRef<HTMLInputElement>(), query: "invoice", onCommit: vi.fn(), onInput: vi.fn(), onEscape: vi.fn(), inboxOnly: true, onToggleInboxOnly: vi.fn(), accounts: [{ email: "work@example.com" }, { email: "personal@example.com" }], accountId: "work@example.com", onManageViews: vi.fn(), ...overrides };
   return { ...render(<MailSearch {...props} />), props };
 }
 afterEach(() => { cleanup(); localStorage.removeItem(SAVED_SEARCHES_KEY); vi.restoreAllMocks(); });
@@ -26,20 +26,11 @@ describe("named mail searches", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(readSavedSearches()).toEqual([expect.objectContaining({ name: "Files from Ana", query: "from:ana has:attachment", accountId: "personal@example.com", inboxOnly: true, messageFilters: ["starred"] })]);
   });
-  it("reopens a saved search after remount with all accounts and its filter intact", () => {
-    saveSearch({ name: "Invoices", query: "invoice", accountId: null, inboxOnly: false });
+  it("opens the shared Split Inboxes management rather than a separate catalog", () => {
     const { props } = renderSearch();
     fireEvent.click(screen.getByRole("button", { name: "Saved searches" }));
-    fireEvent.click(screen.getByRole("button", { name: "Invoices · All accounts" }));
-    expect(props.onOpenSavedSearch).toHaveBeenCalledWith(expect.objectContaining({ query: "invoice", accountId: null, inboxOnly: false }));
-  });
-  it("keeps disconnected accounts explicit and permits deleting their saved searches", () => {
-    saveSearch({ name: "Old work", query: "invoice", accountId: "old@example.com", inboxOnly: false });
-    renderSearch();
-    fireEvent.click(screen.getByRole("button", { name: "Saved searches" }));
-    expect(screen.getByRole("button", { name: "Old work · old@example.com" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Delete saved search Old work for old@example.com" }));
-    expect(readSavedSearches()).toEqual([]);
+    expect(props.onManageViews).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
   it("keeps the entered name on storage failure and allows retry", () => {
     renderSearch();

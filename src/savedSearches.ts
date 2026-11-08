@@ -59,3 +59,18 @@ export function deleteSavedSearch(id: string): SavedSearch[] {
   localStorage.setItem(SAVED_SEARCHES_KEY, JSON.stringify({ version: 1, searches: next }));
   return next;
 }
+
+export function updateSavedSearch(id: string, change: Partial<Omit<SavedSearch, "id">>): SavedSearch[] {
+  const current = readSavedSearches();
+  const existing = current.find((search) => search.id === id);
+  if (!existing) throw new Error("Saved search no longer exists.");
+  const updated = { ...existing, ...change, name: (change.name ?? existing.name).trim(), query: (change.query ?? existing.query).trim() };
+  if (!updated.name || !updated.query) throw new Error("Enter a name and a mail search.");
+  if (updated.accountId !== null && !updated.accountId.trim()) throw new Error("Choose an account scope.");
+  if (current.some((search) => search.id !== id && search.accountId === updated.accountId && search.name.toLocaleLowerCase() === updated.name.toLocaleLowerCase())) {
+    throw new Error("A saved search with this name already exists for this account scope.");
+  }
+  const next = current.map((search) => search.id === id ? updated : search);
+  localStorage.setItem(SAVED_SEARCHES_KEY, JSON.stringify({ version: 1, searches: next }));
+  return next;
+}

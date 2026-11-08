@@ -1,3 +1,5 @@
+import type { MailView } from "./mailViews";
+import type { SavedSearch } from "./savedSearches";
 import type { EmailTextColors } from "./emailRenderingPolicy";
 import type {
   Account,
@@ -101,6 +103,10 @@ export type CalendarAccountSettingsState = {
 };
 
 export type SplitInboxSettingsState = {
+  views?: MailView[];
+  error?: string | null;
+  createSearch?(search: Omit<SavedSearch, "id">): Promise<void>;
+  updateSearch?(id: string, search: Omit<SavedSearch, "id">): Promise<void>;
   splitInboxes: SplitInbox[];
   create(name: string, matchKind: SplitInboxMatchKind, matchValue: string, accountId: string): Promise<void>;
   rename(id: string, name: string): Promise<void>;

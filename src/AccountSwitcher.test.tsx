@@ -70,6 +70,20 @@ describe("AccountSwitcher", () => {
     expect(screen.queryByRole("radio", { name: /^All accounts/i })).not.toBeInTheDocument();
   });
 
+  it("keeps All accounts selectable for saved views with only one connected account", async () => {
+    const [account] = await mailClient.listAccounts();
+    const onShowAll = vi.fn();
+    const props = { accounts: [account!], unreadCounts: {}, onSwitch: vi.fn(), onShowAll, onReorder: vi.fn(), showAllAccounts: true };
+    const { rerender } = render(<AccountSwitcher {...props} activeAccountId={account!.email} />);
+    const all = screen.getByRole("radio", { name: /^All accounts/i });
+    expect(all).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(all);
+    expect(onShowAll).toHaveBeenCalledOnce();
+    rerender(<AccountSwitcher {...props} activeAccountId={null} />);
+    expect(all).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: account!.email })).toHaveAttribute("aria-checked", "false");
+  });
+
   it("uses nickname initials and email tooltips for accounts with the same sender name", async () => {
     const [account] = await mailClient.listAccounts();
     const onSwitch = vi.fn();

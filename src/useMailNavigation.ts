@@ -37,6 +37,7 @@ import type { useReaderState } from "./useReaderState";
 import type { useWorkspaces } from "./useWorkspaces";
 import type { useCorrespondence } from "./useCorrespondence";
 import type { useSplitInboxes } from "./useSplitInboxes";
+import type { MailView } from "./mailViews";
 import type { Notice } from "./useNotice";
 
 type Options = {
@@ -45,7 +46,7 @@ type Options = {
   reader: Pick<ReturnType<typeof useReaderState>, "messageExpansionOverrides" | "setMessageExpansionOverrides" | "messageStackRef" | "messageRefs">;
   workspaces: Pick<ReturnType<typeof useWorkspaces>, "rightWorkspace" | "setRightWorkspace">;
   correspondence: { context: Pick<ReturnType<typeof useCorrespondence>["context"], "openInbox" | "openDrafts" | "openOutbox"> };
-  splitInboxCatalog: Pick<ReturnType<typeof useSplitInboxes>, "splitInboxes" | "loaded">;
+  splitInboxCatalog: Pick<ReturnType<typeof useSplitInboxes>, "splitInboxes" | "loaded"> & { views?: MailView[] };
   starredCount?: number;
   showStarredInbox?: boolean;
   mailbox: MailboxKind;
@@ -71,16 +72,16 @@ export function useMailNavigation({
   const { visibleDetail, setDetail, setDetailLoading } = threadDetail;
   const { messageExpansionOverrides, setMessageExpansionOverrides, messageStackRef, messageRefs } = reader;
   const { rightWorkspace, setRightWorkspace } = workspaces;
-  const { splitInboxes, loaded: splitInboxesLoaded } = splitInboxCatalog;
+  const { splitInboxes, views, loaded: splitInboxesLoaded } = splitInboxCatalog;
   // Custom routing splits belong to one account. The built-in Starred view
   // follows the current scope, including the merged All accounts view.
   const accountSplitInboxes = useMemo(
     () => {
-      const custom = splitInboxes.filter((splitInbox) => splitInbox.accountId === activeAccountId);
+      const custom = (views ?? splitInboxes).filter((splitInbox) => splitInbox.accountId === activeAccountId);
       const showStarred = showStarredInbox && (starredCount > 0 || (mailbox === "split" && activeSplitInboxId === STARRED_INBOX_ID));
       return showStarred ? [{ id: STARRED_INBOX_ID, name: "Starred" }, ...custom] : custom;
     },
-    [splitInboxes, activeAccountId, starredCount, showStarredInbox, mailbox, activeSplitInboxId],
+    [splitInboxes, views, activeAccountId, starredCount, showStarredInbox, mailbox, activeSplitInboxId],
   );
   const activeSplitInbox = activeSplitInboxId
     ? accountSplitInboxes.find((candidate) => candidate.id === activeSplitInboxId) ?? null

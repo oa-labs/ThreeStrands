@@ -79,7 +79,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail imap smtp sender name color reconnect disconnect", icon: Mail },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
   { id: "reading", label: "Reading & Triage", group: "Workflow", description: "Choose when conversations are marked read and what opens next as you triage.", keywords: "mark read unread delay timer never manually archive archiving trash delete snooze return next older newer advance conversation", icon: Inbox, autosaves: true },
-  { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern", icon: Inbox },
+  { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern saved search views query", icon: Inbox },
   { id: "mutedSenders", label: "Muted Senders", group: "Workflow", description: "Review senders whose new mail skips the Inbox.", keywords: "mute muted sender newsletter archive automatically skip inbox unmute rule", icon: BellOff },
   { id: "signatures", label: "Signatures", group: "Workflow", description: "Create signatures and choose defaults for each sending address.", keywords: "signature sign-off logo alias footer compose", icon: Signature },
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
@@ -326,7 +326,10 @@ export function Settings({
           ) : null}
           {section === "splitInboxes" ? (
             <SplitInboxesSettings
-              splitInboxes={splitInboxes.splitInboxes}
+              splitInboxes={splitInboxes.views ?? splitInboxes.splitInboxes}
+              catalogError={splitInboxes.error}
+              onCreateSearch={splitInboxes.createSearch}
+              onUpdateSearch={splitInboxes.updateSearch}
               accounts={mailAccounts.accounts}
               activeAccountId={mailAccounts.activeAccountId}
               labelsByAccount={labelsByAccount}

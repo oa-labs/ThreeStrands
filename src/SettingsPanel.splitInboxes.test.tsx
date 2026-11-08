@@ -123,3 +123,50 @@ describe("split inbox settings cards", () => {
     expect(onDelete).toHaveBeenCalledExactlyOnceWith("upward");
   });
 });
+
+describe("saved searches in Split Inboxes", () => {
+  const saved = { id: "legacy", name: "Bills", query: "invoice", accountId: "old@example.com", inboxOnly: true, messageFilters: ["unread" as const] };
+  const view = { id: "saved-search:legacy", name: saved.name, accountId: saved.accountId, savedSearch: saved };
+  function renderView() {
+    const update = vi.fn().mockResolvedValue(undefined), remove = vi.fn().mockResolvedValue(undefined), create = vi.fn().mockResolvedValue(undefined);
+    render(<SplitInboxesSettings splitInboxes={[view]} showStarredInbox onShowStarredInboxChange={vi.fn()} accounts={[]} activeAccountId={null} labelsByAccount={{}}
+      onCreate={vi.fn()} onCreateSearch={create} onUpdateSearch={update} onRename={vi.fn()} onDelete={remove} onReorder={vi.fn()} />);
+    return { update, remove, create };
+  }
+  it("keeps disconnected scope explicit and edits all saved search conditions", async () => {
+    const { update } = renderView();
+    expect(screen.getByRole("listitem")).toHaveTextContent("Account disconnected");
+    fireEvent.click(screen.getByRole("button", { name: "Edit Bills" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit Saved Search" });
+    expect(within(dialog).getByRole("combobox", { name: "Account scope" })).toHaveValue("old@example.com");
+    expect(within(dialog).getByRole("button", { name: "Save Search" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: "All bills" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Search" }), { target: { value: "has:attachment" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Inbox Only" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Unread" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Starred" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Search" }));
+    expect(update).toHaveBeenCalledWith(view.id, { name: "All bills", query: "has:attachment", accountId: null, inboxOnly: false, messageFilters: ["starred"] });
+    await screen.findByRole("button", { name: "Edit Bills" });
+  });
+  it("deletes a saved view using the shared confirmation without touching mail", () => {
+    const { remove } = renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const confirmation = screen.getByRole("group", { name: "Delete Bills confirmation" });
+    expect(confirmation).toHaveTextContent("Your emails will not be deleted.");
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Delete Split Inbox" }));
+    expect(remove).toHaveBeenCalledWith(view.id);
+  });
+  it("creates a saved search from the same settings section with explicit All accounts scope", async () => {
+    const { create } = renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Add Saved Search" }));
+    const dialog = screen.getByRole("dialog", { name: "New Saved Search" });
+    expect(within(dialog).getByRole("combobox", { name: "Account scope" })).toHaveValue("");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: "Files" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Search" }), { target: { value: "has:attachment" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Search" }));
+    expect(create).toHaveBeenCalledWith({ name: "Files", query: "has:attachment", accountId: null, inboxOnly: false, messageFilters: [] });
+    await screen.findByRole("button", { name: "Add Saved Search" });
+  });
+});

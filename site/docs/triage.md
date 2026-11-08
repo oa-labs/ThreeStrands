@@ -68,7 +68,9 @@ Split Inboxes move high-volume mail into its own tab, so the main inbox stays fo
 2. Give it a name, choose the account, and pick **Match By**: **Sending Domain**, **Label**, or **Address Contains**.
 3. Click **Add Split Inbox**.
 
-Press <kbd>Tab</kbd> and <kbd>Shift + Tab</kbd> to move between tabs. Each split belongs to one account, so tabs appear when that account is in focus rather than in the combined view of all accounts. Deleting a split never deletes mail.
+Press <kbd>Tab</kbd> and <kbd>Shift + Tab</kbd> to move between tabs. Each routing split belongs to one account, so its tab appears when that account is in focus. Deleting a split never deletes mail.
+
+**Settings → Split Inboxes → Add Saved Search** adds a reusable search to the same tab bar. Saved searches can belong to one account or **All accounts**, and can include archived mail. They show matching mail without routing it out of Main. Use the same settings section to rename, edit, reorder, and delete saved views. Saved searches and their tab positions stay on this computer; existing routing splits retain their settings-transfer and sync behavior.
 
 ## Search {#search}
 

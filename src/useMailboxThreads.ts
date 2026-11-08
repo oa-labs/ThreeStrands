@@ -1,3 +1,5 @@
+import type { SavedSearch } from "./savedSearches";
+import { SAVED_VIEW_PREFIX } from "./mailViews";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { MailboxKind } from "./commands";
@@ -19,6 +21,7 @@ const REMOTE_SEARCH_POLL_MS = 1200;
 export const REMOTE_SEARCH_DELAY_MS = 600;
 
 type Options = {
+  savedSearch?: SavedSearch | null;
   activeAccountId: string | null;
   mailbox: MailboxKind;
   activeSplitInboxId: string | null;
@@ -30,8 +33,10 @@ type Options = {
 /** Owns mailbox pages and local/remote search, including stale-response guards. */
 export function useMailboxThreads({
   activeAccountId, mailbox, activeSplitInboxId, setSelectedId, refreshUnreadCounts,
-  refreshMailboxUnreadCounts,
+  refreshMailboxUnreadCounts, savedSearch,
 }: Options) {
+  const savedQuery = savedSearch?.query ?? "";
+  const savedInboxOnly = savedSearch?.inboxOnly ?? false;
   const [threads, setThreads] = useState<Thread[]>([]);
   const [query, setQuery] = useState("");
   const queryRef = useRef(query);
@@ -41,7 +46,7 @@ export function useMailboxThreads({
   // to the inbox. `includeArchived` is derived so an empty search box still
   // reads as the plain inbox to triage and mutation code.
   const [inboxOnly, setInboxOnly] = useState(false);
-  const includeArchived = Boolean(query.trim()) && !inboxOnly;
+  const includeArchived = Boolean(query.trim() || savedQuery) && !(query.trim() ? inboxOnly : savedInboxOnly);
   const [remoteSearchState, setRemoteSearchState] = useState<"idle" | "searching" | "error">("idle");
   // Phase 5 run 5: the ONE quiet status line for the current search (a partial,
   // skipped, or no-matches outcome worded in `searchStatusCopy`), or null when
@@ -76,6 +81,7 @@ export function useMailboxThreads({
     if (box === "sent") return mailClient.listSentPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "trash") return mailClient.listTrashPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "split" && activeSplitInboxId) {
+      if (activeSplitInboxId.startsWith(SAVED_VIEW_PREFIX)) return Promise.resolve({ threads: [], hasMore: false });
       if (activeSplitInboxId === STARRED_INBOX_ID) return mailClient.listStarredPage(accountId, offset, SEARCH_PAGE_SIZE);
       return mailClient.listSplitInboxPage(activeSplitInboxId, offset, SEARCH_PAGE_SIZE);
     }
@@ -93,10 +99,14 @@ export function useMailboxThreads({
       return;
     }
     setMailboxError("");
-    const trimmed = search.trim();
+    // A reload that explicitly leaves this tab/account must not carry its
+    // saved criteria into a broader scope (for example after account removal).
+    const withinSavedScope = box === "split" && (accountOverride === undefined || accountOverride === activeAccountId);
+    const effectiveSearch = savedQuery && !withinSavedScope ? "" : search;
+    const trimmed = (effectiveSearch || (withinSavedScope ? savedQuery : "")).trim();
     const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
     const searchableMailbox = box === "inbox" || box === "split";
-    const searchAllMail = !inboxOnly;
+    const searchAllMail = effectiveSearch.trim() ? !inboxOnly : !(withinSavedScope && savedInboxOnly);
     if (!searchableMailbox || !trimmed || !searchAllMail) cancelRemoteSearch();
     const commitPage = (page: { threads: Thread[]; hasMore: boolean }) => {
       if (requestId !== threadsRequest.current) return false;
@@ -202,7 +212,7 @@ export function useMailboxThreads({
       setMailboxError(errorMessage(error));
     }
   }, [
-    mailbox, activeSplitInboxId, activeAccountId, inboxOnly, setSelectedId,
+    mailbox, activeSplitInboxId, activeAccountId, inboxOnly, savedQuery, savedInboxOnly, setSelectedId,
     refreshUnreadCounts, refreshMailboxUnreadCounts, fetchMailboxPage, cancelRemoteSearch,
   ]);
 
@@ -238,7 +248,7 @@ export function useMailboxThreads({
   }, [refreshUnreadCounts, refreshMailboxUnreadCounts, activeAccountId]);
 
   const loadMoreResults = useCallback(async () => {
-    const trimmed = query.trim();
+    const trimmed = (query || savedQuery).trim();
     if ((mailbox === "drafts" || mailbox === "outbox") || loadingMore.current) return;
     if (mailbox === "split" && !activeSplitInboxId) return;
     loadingMore.current = true;
@@ -265,7 +275,7 @@ export function useMailboxThreads({
       loadingMore.current = false;
       setLoadingMoreState(false);
     }
-  }, [query, threads.length, includeArchived, activeAccountId, mailbox, activeSplitInboxId, fetchMailboxPage]);
+  }, [query, threads.length, includeArchived, activeAccountId, mailbox, activeSplitInboxId, savedQuery, fetchMailboxPage]);
 
   useEffect(() => {
     // Invalidate an in-flight request as soon as the view inputs change. The

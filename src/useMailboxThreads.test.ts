@@ -52,6 +52,33 @@ describe("useMailboxThreads", () => {
     return { ...hook, refreshUnreadCounts, refreshMailboxUnreadCounts };
   }
 
+  it("uses saved search criteria for cached pages and server backfill without querying a routing split", async () => {
+    const cached = vi.spyOn(mailClient, "searchThreads").mockResolvedValue(Array.from({ length: 50 }, (_, index) => ({ ...threads[0], id: `saved-${index}`, archived: true })));
+    const routed = vi.spyOn(mailClient, "listSplitInboxPage");
+    const backfill = vi.spyOn(mailClient, "backfillSearchThreads").mockResolvedValue(completeReport);
+    const noop = vi.fn();
+    const { result } = renderHook(() => useMailboxThreads({
+      activeAccountId: null, mailbox: "split", activeSplitInboxId: "saved-search:legacy",
+      savedSearch: { id: "legacy", name: "Files", query: "has:attachment", accountId: null, inboxOnly: false, messageFilters: [] },
+      setSelectedId: noop, refreshUnreadCounts: noop, refreshMailboxUnreadCounts: noop,
+    }));
+    await flushReload();
+    expect(cached).toHaveBeenCalledWith({ query: "has:attachment", limit: 50, includeArchived: true }, undefined);
+    expect(result.current.threads[0].archived).toBe(true);
+    await act(async () => { await result.current.loadMoreResults(); });
+    expect(cached).toHaveBeenCalledWith({ query: "has:attachment", limit: 50, offset: 50, includeArchived: true }, undefined);
+    await act(async () => { await vi.advanceTimersByTimeAsync(REMOTE_SEARCH_DELAY_MS); });
+    expect(backfill).toHaveBeenCalledWith("has:attachment", undefined);
+    expect(routed).not.toHaveBeenCalled();
+    cached.mockClear();
+    backfill.mockClear();
+    const inbox = vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
+    await act(async () => { await result.current.loadThreads("has:attachment", "other@example.com", "inbox"); });
+    expect(inbox).toHaveBeenCalledWith("other@example.com", 0, 50);
+    expect(cached).not.toHaveBeenCalled();
+    expect(backfill).not.toHaveBeenCalled();
+  });
+
   it("paginates Starred through its account-scoped source", async () => {
     const page = vi.spyOn(mailClient, "listStarredPage")
       .mockResolvedValueOnce({ threads: threads.slice(0, 1), hasMore: true })

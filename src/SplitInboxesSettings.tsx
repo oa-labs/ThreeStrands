@@ -1,3 +1,6 @@
+import { SaveSearchDialog } from "./MailSearch";
+import { isSavedSearchView, type MailView, type SavedSearchView } from "./mailViews";
+import type { SavedSearch } from "./savedSearches";
 import { ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { formatLabelName } from "./labels";
@@ -31,7 +34,7 @@ function SplitInboxNameInput({
   splitInbox,
   onCommit,
 }: {
-  splitInbox: SplitInbox;
+  splitInbox: Pick<MailView, "name">;
   onCommit(name: string): void;
 }) {
   const [value, setValue] = useState(splitInbox.name);
@@ -70,9 +73,12 @@ export function SplitInboxesSettings({
   onCreate,
   onRename,
   onDelete,
-  onReorder,
+  onReorder, onCreateSearch, onUpdateSearch, catalogError,
 }: {
-  splitInboxes: SplitInbox[];
+  splitInboxes: MailView[];
+  catalogError?: string | null;
+  onCreateSearch?(search: Omit<SavedSearch, "id">): Promise<void>;
+  onUpdateSearch?(id: string, search: Omit<SavedSearch, "id">): Promise<void>;
   showStarredInbox: boolean;
   onShowStarredInboxChange(value: boolean): void;
   accounts: Account[];
@@ -84,6 +90,7 @@ export function SplitInboxesSettings({
   onReorder(ids: string[]): Promise<void>;
 }) {
   const [name, setName] = useState("");
+  const [searchEditor, setSearchEditor] = useState<SavedSearchView | "new" | null>(null);
   const [matchKind, setMatchKind] = useState<SplitInboxMatchKind>("domain");
   const [matchValue, setMatchValue] = useState("");
   const [accountId, setAccountId] = useState(() => activeAccountId ?? accounts[0]?.email ?? "");
@@ -110,8 +117,8 @@ export function SplitInboxesSettings({
         <div>
           <h3>Split Inboxes</h3>
           <p>
-            Show a filtered slice of your inbox as its own view in the sidebar —
-            for example, every message from one client's sending domain.
+            Routing splits move matching inbox mail out of Main. Saved searches show matching mail without routing it out of Main.
+            Saved searches and their tab order stay on this computer.
           </p>
         </div>
       </div>
@@ -120,6 +127,11 @@ export function SplitInboxesSettings({
         Show Starred inbox automatically
       </label>
       <p id="starred-inbox-description">Appears when you have starred conversations, including archived mail. Unstar a conversation when you finish following up.</p>
+      {onCreateSearch ? <button type="button" className="btn" onClick={() => setSearchEditor("new")}>Add Saved Search</button> : null}
+      {searchEditor ? <SaveSearchDialog accounts={accounts} editable initialName={searchEditor === "new" ? "" : searchEditor.name}
+        search={searchEditor === "new" ? { query: "", accountId: activeAccountId, inboxOnly: false, messageFilters: [] } : searchEditor.savedSearch}
+        onClose={() => setSearchEditor(null)} onSaved={() => setSearchEditor(null)}
+        onSave={(value) => searchEditor === "new" ? onCreateSearch!(value) : onUpdateSearch!(searchEditor.id, value)} /> : null}
       <form
         className="split-inbox-add"
         onSubmit={(event) => {
@@ -191,7 +203,7 @@ export function SplitInboxesSettings({
       {splitInboxes.length === 0 ? (
         <div className="accounts-empty">
           <strong>No split inboxes yet</strong>
-          <p>Add one above to see a filtered slice of your inbox in the sidebar.</p>
+          <p>Add one above to see a filtered slice of your inbox as a tab.</p>
         </div>
       ) : (
         <ul className="accounts-list">
@@ -204,7 +216,9 @@ export function SplitInboxesSettings({
                     onCommit={(nextName) => runFor(splitInbox.id, () => onRename(splitInbox.id, nextName))}
                   />
                   <span className="account-card-email">
-                    {describeSplitInboxRule(splitInbox, labelsByAccount)} — {splitInbox.accountId}
+                    {isSavedSearchView(splitInbox) ? `Saved Search: ${splitInbox.savedSearch.query}` : describeSplitInboxRule(splitInbox, labelsByAccount)} — {splitInbox.accountId ?? "All accounts"}
+                    {isSavedSearchView(splitInbox) && splitInbox.savedSearch.inboxOnly ? " · Inbox Only" : ""}
+                    {splitInbox.accountId !== null && !accounts.some((account) => account.email === splitInbox.accountId) ? " · Account disconnected" : ""}
                   </span>
                 </div>
               </div>
@@ -228,6 +242,7 @@ export function SplitInboxesSettings({
                       <ChevronDown size={ICON_SIZE.sm} />
                     </button>
                   </span>
+                  {isSavedSearchView(splitInbox) && onUpdateSearch ? <button type="button" className="btn btn-sm" aria-label={`Edit ${splitInbox.name}`} onClick={() => setSearchEditor(splitInbox)}>Edit</button> : null}
                   <button
                     type="button"
                     className="btn btn-sm btn-danger"
@@ -261,6 +276,7 @@ export function SplitInboxesSettings({
           ))}
         </ul>
       )}
+      {catalogError ? <p role="alert" className="form-error">{catalogError}</p> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
   );
