@@ -88,7 +88,7 @@ fn payload_bytes(payload: &Value) -> DbResult<i64> {
 }
 
 /// Whether local changes are recorded for other devices now.
-fn sync_recording(tx: &Transaction<'_>) -> DbResult<bool> {
+pub(super) fn sync_recording(tx: &Transaction<'_>) -> DbResult<bool> {
     if crate::replicated_sync::enabled() {
         return Ok(true);
     }
@@ -572,7 +572,7 @@ impl Database {
         self.with_transaction(|tx| set_trashed(tx, id, false))
     }
 
-    /// Deletes a note from Trash on every device.
+    /// Deletes a note from Trash on every device, with its attachments.
     pub fn delete_note(&self, id: &str) -> DbResult<()> {
         self.with_transaction(|tx| {
             let note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
@@ -582,6 +582,7 @@ impl Database {
                 ));
             }
             remove(tx, id)?;
+            super::note_attachments::delete_note_attachments(tx, id)?;
             // Once the replica holds the note, its deletion is recorded even
             // while sync is off, so the note doesn't return when sync resumes.
             let in_replica: bool = tx.query_row(
@@ -775,9 +776,16 @@ impl Database {
                 [],
                 |row| row.get(0),
             )?;
+            let (attachment_count, attachment_bytes): (i64, i64) = connection.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM note_attachments",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
             Ok(NotesStorage {
                 used_bytes: used as u64,
                 limit_bytes: MAX_SYNCED_NOTES_TOTAL_BYTES as u64,
+                attachment_count: attachment_count as u64,
+                attachment_bytes: attachment_bytes as u64,
             })
         })
     }

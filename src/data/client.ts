@@ -61,6 +61,7 @@ import type {
   NoteSearchHit,
   NoteLinks,
   NoteTitle,
+  NoteAttachment,
   NotesExportFolder,
   NotesExportOutcome,
   NotesStorage,
@@ -430,6 +431,13 @@ export interface MailClient extends CorrespondenceClient {
   exportNotes(replace: boolean): Promise<NotesExportOutcome>;
   /** Notes in Trash, most recently trashed first. */
   listTrashedNotes(limit: number): Promise<NoteSummary[]>;
+  /** Stores a file pasted or dropped into the note `noteId`. */
+  addNoteAttachment(noteId: string, file: File): Promise<NoteAttachment>;
+  noteAttachment(id: string): Promise<NoteAttachment | null>;
+  /** An attached image as a `data:` URL; null for a file that isn't a picture this device has. */
+  noteAttachmentImage(id: string): Promise<string | null>;
+  /** Opens an attached file in its default app. */
+  openNoteAttachment(id: string): Promise<void>;
   /** Moves a note to Trash on every device. */
   trashNote(id: string): Promise<Note>;
   /** Takes a note out of Trash; refused while another note has its title. */
@@ -658,6 +666,13 @@ const tauriClient: MailClient = {
   notesStorage: () => read("notes_storage"),
   chooseNotesExportFolder: () => complete("notes_export_choose_folder"),
   exportNotes: (replace) => complete("notes_export_write", { replace }),
+  // The file travels as the request body; its name and type are percent-encoded so any script survives the header.
+  addNoteAttachment: async (noteId, file) => invokeWithPolicy("note_attachment_add", new Uint8Array(await file.arrayBuffer()), WAIT_FOR_NATIVE_COMPLETION, {
+    headers: { "x-note-id": encodeURIComponent(noteId), "x-file-name": encodeURIComponent(file.name), "x-file-type": encodeURIComponent(file.type) },
+  }),
+  noteAttachment: (id) => read("note_attachment", { id }),
+  noteAttachmentImage: (id) => read("note_attachment_image", { id }),
+  openNoteAttachment: (id) => complete("note_attachment_open", { id }),
   trashNote: (id) => complete("trash_note", { id }),
   restoreNote: (id) => complete("restore_note", { id }),
   deleteNote: (id) => complete("delete_note", { id }),

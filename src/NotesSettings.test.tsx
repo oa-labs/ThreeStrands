@@ -36,7 +36,7 @@ describe("Notes settings", () => {
 
     it("exports straight away to an empty folder and says where", async () => {
       vi.spyOn(mailClient, "chooseNotesExportFolder").mockResolvedValue({ path: "/Users/me/Notes", state: "empty" });
-      const exportNotes = vi.spyOn(mailClient, "exportNotes").mockResolvedValue({ path: "/Users/me/Notes", notes: 12 });
+      const exportNotes = vi.spyOn(mailClient, "exportNotes").mockResolvedValue({ path: "/Users/me/Notes", notes: 12, attachments: 0, missingAttachments: 0 });
       const section = await openNotes();
       const button = section.getByRole("button", { name: "Export to Markdown Folder…" });
       expect(button).toHaveAccessibleDescription();
@@ -47,7 +47,7 @@ describe("Notes settings", () => {
 
     it("asks before replacing an earlier export, starting on Cancel", async () => {
       vi.spyOn(mailClient, "chooseNotesExportFolder").mockResolvedValue({ path: "/Users/me/Notes", state: "earlierExport" });
-      const exportNotes = vi.spyOn(mailClient, "exportNotes").mockResolvedValue({ path: "/Users/me/Notes", notes: 1 });
+      const exportNotes = vi.spyOn(mailClient, "exportNotes").mockResolvedValue({ path: "/Users/me/Notes", notes: 1, attachments: 0, missingAttachments: 0 });
       const section = await openNotes();
       fireEvent.click(section.getByRole("button", { name: "Export to Markdown Folder…" }));
       const confirm = within(await section.findByRole("group", { name: "Replace earlier export" }));
@@ -74,6 +74,17 @@ describe("Notes settings", () => {
       expect(exportNotes).not.toHaveBeenCalled();
     });
 
+    it("counts the files it wrote and the ones this device doesn't have yet", async () => {
+      vi.spyOn(mailClient, "chooseNotesExportFolder").mockResolvedValue({ path: "/Users/me/Notes", state: "empty" });
+      const exportNotes = vi.spyOn(mailClient, "exportNotes").mockResolvedValue({ path: "/Users/me/Notes", notes: 3, attachments: 2, missingAttachments: 1 });
+      const section = await openNotes();
+      fireEvent.click(section.getByRole("button", { name: "Export to Markdown Folder…" }));
+      expect(await section.findByRole("status")).toHaveTextContent("Exported 3 notes and 2 files to /Users/me/Notes. 1 file hasn't reached this device yet, so it was left out.");
+      exportNotes.mockResolvedValue({ path: "/Users/me/Notes", notes: 1, attachments: 0, missingAttachments: 2 });
+      fireEvent.click(section.getByRole("button", { name: "Export to Markdown Folder…" }));
+      await waitFor(() => expect(section.getByRole("status")).toHaveTextContent("Exported 1 note to /Users/me/Notes. 2 files haven't reached this device yet, so they were left out."));
+    });
+
     it("shows a failed export's reason", async () => {
       vi.spyOn(mailClient, "chooseNotesExportFolder").mockResolvedValue({ path: "/x", state: "empty" });
       vi.spyOn(mailClient, "exportNotes").mockRejectedValue(new Error("The folder's “notes” is a link or a file, so the export won't write there."));
@@ -84,9 +95,18 @@ describe("Notes settings", () => {
   });
 
   it("shows how much of their sync space notes use", async () => {
-    vi.spyOn(mailClient, "notesStorage").mockResolvedValue({ usedBytes: 1536, limitBytes: 3 * 1024 * 1024 });
+    vi.spyOn(mailClient, "notesStorage").mockResolvedValue({ usedBytes: 1536, limitBytes: 3 * 1024 * 1024, attachmentCount: 0, attachmentBytes: 0 });
     render(<SettingsHarness initialSection="notes" />);
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
-    expect(await within(dialog).findByRole("region", { name: "Notes storage" })).toHaveTextContent("Notes use 2 KB of the 3.0 MB");
+    const region = await within(dialog).findByRole("region", { name: "Notes storage" });
+    expect(region).toHaveTextContent("Notes use 2 KB of the 3.0 MB");
+    expect(region).not.toHaveTextContent("files");
+  });
+
+  it("counts attached files apart from the notes' sync space", async () => {
+    vi.spyOn(mailClient, "notesStorage").mockResolvedValue({ usedBytes: 1536, limitBytes: 3 * 1024 * 1024, attachmentCount: 4, attachmentBytes: 5 * 1024 * 1024 });
+    render(<SettingsHarness initialSection="notes" />);
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(await within(dialog).findByRole("region", { name: "Notes storage" })).toHaveTextContent("Their 4 files take 5.0 MB more.");
   });
 });

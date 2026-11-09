@@ -1,7 +1,8 @@
 # Notes workspace design
 
-**Status:** v1 built: all five steps, with the meowdown editor. v2 items are
-under [Later](#later).
+**Status:** v1 built: all five steps, with the meowdown editor, plus
+[images and attachments](#images-and-attachments). v2 items are under
+[Later](#later).
 **Date:** 2026-11-09
 **Scope:** a Notes workspace for Markdown notes that travel through
 replicated sync
@@ -468,6 +469,82 @@ As built (`src-tauri/src/notes_export.rs`):
 
 **Settings → Notes** also shows how much of the notes' sync space they use.
 
+- Attachments go in `attachments/`, named by their file names with the same
+  rules and clash numbering, and are listed in the manifest like notes. A
+  note's `attachment:<id>` link destinations become
+  `../attachments/<percent-encoded name>`; only a whole destination right
+  after `](` changes. Files this device hasn't downloaded yet are left out,
+  keep their `attachment:` links, and are counted in the result.
+
+## Images and attachments
+
+Pasting or dropping a file into a note stores it and inserts
+`![](attachment:<id>)` for an image or `[name](attachment:<id>)` for any
+other file (meowdown's `onFilePaste` decides which). `<id>` is 32 hex
+digits. The note's text holds only that reference, so a file never counts
+toward the note's 64 KB or the notes' 3 MiB.
+
+**Files travel separately from snapshots.** The sync design's whole-state
+snapshots are resealed on every change, so carrying files in them would
+re-upload every file on every keystroke's save. Instead:
+
+- **The description is replicated.** `EntityType::NoteAttachment` holds
+  `id`, `noteId`, `name`, `mimeType`, `size`, `sha256`, `createdAt`,
+  `sealedBy` (the sealing device), and `index`, the CID of an object listing
+  the file's sealed parts. Each description takes about 400 bytes of the
+  snapshot, and notes hold at most `MAX_SYNCED_NOTE_ATTACHMENTS` (2,000)
+  files. Like every new entity type, a device on an earlier version can't
+  open a snapshot that holds one.
+- **The bytes are sealed objects of their own.** The file is split into
+  parts of at most `MAX_ATTACHMENT_PART_BYTES` (3 MiB, so a part that
+  doesn't compress still fits a message), and each part is sealed as
+  `ObjectKind::AttachmentPart`: chunked, padded, encrypted under the current
+  epoch key, and signed by the sealing device under its own signature
+  domain. Its message id is derived from the attachment id and part number,
+  and opening checks both. A file holds at most
+  `MAX_NOTE_ATTACHMENT_BYTES` (20 MiB).
+- **Sealing waits for sync.** A file is recorded in the replica only once it
+  is sealed, during the next push, so another device never learns of a file
+  it can't fetch. The chunks go through the same delivery queue as
+  snapshots, with `state_sequence` NULL, so they never hold up a head, and
+  the repair sweep copies them to a newly added connector.
+- **Downloading follows a pull.** A device fetches files it doesn't have,
+  up to 64 MiB per cycle. Every object is checked against its CID, each part
+  against its signer, attachment, and position, and the whole file against
+  `size` and `sha256` before it is stored. A failure is retried after a
+  minute, doubling to six hours. The sealing device's key is used whether
+  or not that device was since removed: the objects are pinned by a snapshot
+  an active device vouched for.
+- **Deletion follows the note.** Deleting a note from Trash deletes its
+  attachments on every device. Removing a reference from the text keeps the
+  file, so undo and older versions still show it. The sealing device
+  retires its objects through `sync_retired_objects`; they leave each
+  connector once a snapshot without the attachment is published there.
+- **Leaving a group** keeps the files this device has and seals them again
+  for the next group; descriptions of files it never downloaded go.
+
+**Showing files.** The editor's `resolveImageUrl` asks the native side for
+an attached image as a `data:` URL, which the CSP already allows. A file is
+an image only if its bytes are PNG, JPEG, GIF, WebP, or AVIF; the declared
+type is never trusted, and SVG is never shown. The bytes are checked again,
+with the mail image dimension limits, before each display. Remote image
+sources still resolve to nothing. An image another device added waits and
+appears once a sync brings it. Other files show as meowdown file pills with
+their size. Clicking a file or image opens it in its default app through
+the mail attachment path: the same warning for risky file types, a
+quarantined copy in the reader cache.
+
+**Settings → Notes** counts attached files and their size apart from the
+notes' sync space.
+
+Known gaps:
+
+- A file added to a note while another device permanently deletes that note
+  outlives it until the note's device deletes it; nothing sweeps orphans.
+- The sealing device keeps a sealed copy of each file (in `sync_objects`)
+  so a new connector can be filled, so files take about twice their size on
+  that device while sync is on.
+
 ## Security and privacy
 
 - Notes are encrypted in snapshots like every other synchronized type.
@@ -494,7 +571,14 @@ As built (`src-tauri/src/notes_export.rs`):
   the sidebar buttons "Contacts (4)", "Files (5)", and "Agents (6)", change
   with the new keys. That is a deliberate contract change.
 - **Security-negative:** raw HTML, `javascript:` links, and remote image
-  syntax in a note body never render live or fetch.
+  syntax in a note body never render live or fetch, even with attachments
+  on; a file claiming an image type without an image's bytes is stored as
+  `application/octet-stream` and never shown; a forged or corrupted part is
+  refused.
+- **Attachments:** a file of more than one part crosses the fake transport
+  and arrives byte for byte; the snapshot carries only the description;
+  deleting the note removes the objects from the connector; size and count
+  limits below, at, and above; export file names and rewritten links.
 
 ## Order of work
 
@@ -518,8 +602,6 @@ under `### New` or `### Improved` as they become visible.
   them.
 - **v2: Folder mirror.** Keep a chosen folder in step with notes in both
   directions, for users who edit in other tools.
-- Images and attachments, once snapshots are split by entity type or files
-  travel separately.
 - Tags beyond plain-text search.
 - "Add to Today's Note" from a mail conversation, and linking notes to
   conversations, tasks, and events.

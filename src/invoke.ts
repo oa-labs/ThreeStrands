@@ -1,4 +1,4 @@
-import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
+import { invoke, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
 
 const BOUNDED_READ_TIMEOUT_MS = 30_000;
 
@@ -39,9 +39,12 @@ export function invokeWithPolicy<T>(
   command: string,
   args: InvokeArgs | undefined,
   policy: InvokePolicy,
+  options?: InvokeOptions,
 ): Promise<T> {
+  // Options only when given, so a call reads the same as before they existed.
+  const call = () => options ? invoke<T>(command, args, options) : invoke<T>(command, args);
   if (policy.timeout === "none") {
-    return invoke<T>(command, args);
+    return call();
   }
 
   return new Promise<T>((resolve, reject) => {
@@ -49,7 +52,7 @@ export function invokeWithPolicy<T>(
       () => reject(new InvokeTimeoutError(command)),
       policy.timeoutMs,
     );
-    invoke<T>(command, args).then(
+    call().then(
       (value) => {
         clearTimeout(timer);
         resolve(value);

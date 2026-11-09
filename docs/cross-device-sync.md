@@ -210,7 +210,7 @@ IMAP Drafts mailbox), attachments included; see the
 [server drafts design](server-drafts-design.md). Draft records from 0.147.0
 and 0.148.0 snapshots are ignored.
 
-Cached mail and bodies, attachment files, queued mail payloads,
+Cached mail and bodies, mail attachment files, queued mail payloads,
 provider mutations, OAuth tokens, AI API keys, crash reports, telemetry
 consent, and device navigation state never leave the device. Storage
 providers see only ciphertext.
@@ -229,6 +229,13 @@ the size of one synchronized value (64 KB once encoded) and all notes
 together to 3 MiB. A device on a version without Notes can't open a snapshot
 that holds a note; it stops receiving changes until it is updated, and
 nothing is lost meanwhile. See the [Notes design](notes-design.md).
+
+Files attached to notes don't ride in the snapshot. Each is sealed once, as
+encrypted objects of its own on every connector, and the snapshot carries
+only its name, type, size, hash, and where its objects are. Other devices
+download it after they sync. A file holds at most 20 MiB, and notes at most
+2,000 files. Deleting a note from Trash deletes its files on every device and
+their objects from the connectors.
 
 ## Account removal
 

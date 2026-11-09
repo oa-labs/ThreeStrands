@@ -4,7 +4,11 @@
 //! ```text
 //! <folder>/daily/2026-11-09.md
 //! <folder>/notes/<title>.md
+//! <folder>/attachments/<file name>
 //! ```
+//!
+//! A note's `attachment:<id>` links become relative links to the exported
+//! files, so images and files still open from the Markdown.
 //!
 //! The export writes only inside the chosen folder. It never writes through
 //! a symbolic link, never replaces a file it didn't write, and only reuses a
@@ -20,7 +24,10 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::Note;
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+
+use crate::db::note_attachments::{attachment_id_of, ATTACHMENT_SCHEME};
+use crate::models::{Note, NoteAttachment};
 
 /// The file an export leaves in its folder, listing what it wrote, so the
 /// next export there can replace exactly those files.
@@ -28,6 +35,27 @@ pub(crate) const MANIFEST_NAME: &str = ".threestrands-notes-export.json";
 const MANIFEST_VERSION: u32 = 1;
 const DAILY_DIR: &str = "daily";
 const NOTES_DIR: &str = "notes";
+const ATTACHMENTS_DIR: &str = "attachments";
+/// Characters escaped in a link to an exported file, so any file name
+/// stays one Markdown link destination.
+const LINK_PATH: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'(')
+    .add(b')')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
 /// Most bytes of a title kept in its file name, leaving room for a clash
 /// suffix and `.md` under the 255-byte limit common to file systems.
 pub(crate) const MAX_FILE_STEM_BYTES: usize = 200;
@@ -64,6 +92,10 @@ pub struct ExportFolder {
 pub struct ExportOutcome {
     pub path: String,
     pub notes: usize,
+    pub attachments: usize,
+    /// Files this device hasn't downloaded yet, which the export leaves out;
+    /// their links stay as they are.
+    pub missing_attachments: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -175,6 +207,61 @@ pub(crate) fn file_text(note: &Note) -> String {
     )
 }
 
+/// `body` with each link destination `attachment:<id>` that `files` names
+/// replaced by that file's relative path, percent-encoded. Only a whole
+/// destination right after `](` changes; the same text elsewhere stays.
+pub(crate) fn link_exported_files(
+    body: &str,
+    files: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    let opener = format!("]({ATTACHMENT_SCHEME}");
+    while let Some(found) = rest.find(&opener) {
+        let start = found + 2;
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let end = after
+            .find(|c: char| c == ')' || c.is_whitespace())
+            .unwrap_or(after.len());
+        let destination = &after[..end];
+        match attachment_id_of(destination).and_then(|id| files.get(id)) {
+            Some(path) => out.push_str(&format!(
+                "../{ATTACHMENTS_DIR}/{}",
+                utf8_percent_encode(path, LINK_PATH)
+            )),
+            None => out.push_str(destination),
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A free name in `dir` for `name`, ignoring case: `name`, then
+/// `stem 2.ext`, `stem 3.ext`, and so on.
+fn free_name(dir: &Path, dir_name: &str, name: &str, taken: &mut HashSet<String>) -> String {
+    let (stem, extension) = match name.rfind('.') {
+        Some(dot) if dot > 0 => (&name[..dot], &name[dot..]),
+        _ => (name, ""),
+    };
+    let mut attempt = 1;
+    loop {
+        let candidate = if attempt == 1 {
+            format!("{stem}{extension}")
+        } else {
+            format!("{stem} {attempt}{extension}")
+        };
+        // Case is ignored, since macOS and Windows folders ignore it.
+        let key = format!("{dir_name}/{}", candidate.to_lowercase());
+        if !taken.contains(&key) && fs::symlink_metadata(dir.join(&candidate)).is_err() {
+            taken.insert(key);
+            return candidate;
+        }
+        attempt += 1;
+    }
+}
+
 /// A subfolder of the export, created if missing. One that is a symbolic
 /// link, or not a folder, is refused, so nothing is written outside.
 fn subfolder(folder: &Path, name: &str) -> Result<PathBuf, String> {
@@ -230,11 +317,15 @@ fn remove_earlier_export(folder: &Path) -> Result<(), String> {
         .map_err(|error| format!("Could not replace the earlier export: {error}"))
 }
 
-/// Writes `notes` to `folder`. An earlier export there is replaced only
-/// when `replace` is set; a folder holding anything else is refused.
+/// Writes `notes` and their `attachments` to `folder`, reading each file's
+/// bytes through `load` one at a time (`None` when this device doesn't
+/// have it). An earlier export there is replaced only when `replace` is
+/// set; a folder holding anything else is refused.
 pub(crate) fn export(
     folder: &Path,
     notes: &[Note],
+    attachments: &[NoteAttachment],
+    mut load: impl FnMut(&str) -> Result<Option<Vec<u8>>, String>,
     replace: bool,
 ) -> Result<ExportOutcome, String> {
     match folder_state(folder)? {
@@ -252,6 +343,12 @@ pub(crate) fn export(
     }
     let daily = subfolder(folder, DAILY_DIR)?;
     let regular = subfolder(folder, NOTES_DIR)?;
+    let present: Vec<&NoteAttachment> = attachments.iter().filter(|file| file.available).collect();
+    let files_dir = if present.is_empty() {
+        None
+    } else {
+        Some(subfolder(folder, ATTACHMENTS_DIR)?)
+    };
 
     // Names are chosen before anything is written, and the list of them is
     // written first, so an export that stops partway can still be replaced.
@@ -262,54 +359,76 @@ pub(crate) fn export(
             Some(date) => (&daily, DAILY_DIR, file_stem(date)),
             None => (&regular, NOTES_DIR, file_stem(&note.title)),
         };
-        let mut attempt = 1;
-        let name = loop {
-            let name = if attempt == 1 {
-                format!("{stem}.md")
-            } else {
-                format!("{stem} {attempt}.md")
-            };
-            // Case is ignored, since macOS and Windows folders ignore it.
-            let key = format!("{dir_name}/{}", name.to_lowercase());
-            if !taken.contains(&key) && fs::symlink_metadata(dir.join(&name)).is_err() {
-                taken.insert(key);
-                break name;
-            }
-            attempt += 1;
-        };
+        let name = free_name(dir, dir_name, &format!("{stem}.md"), &mut taken);
         planned.push((dir.join(&name), format!("{dir_name}/{name}"), note));
+    }
+    let mut file_names = std::collections::HashMap::new();
+    let mut planned_files: Vec<(PathBuf, String, &NoteAttachment)> = Vec::new();
+    if let Some(dir) = &files_dir {
+        for file in &present {
+            let name = free_name(dir, ATTACHMENTS_DIR, &file_stem(&file.name), &mut taken);
+            file_names.insert(file.id.clone(), name.clone());
+            planned_files.push((dir.join(&name), format!("{ATTACHMENTS_DIR}/{name}"), file));
+        }
     }
     let manifest = Manifest {
         version: MANIFEST_VERSION,
         files: planned
             .iter()
             .map(|(_, relative, _)| relative.clone())
+            .chain(
+                planned_files
+                    .iter()
+                    .map(|(_, relative, _)| relative.clone()),
+            )
             .collect(),
     };
     write_new(
         &folder.join(MANIFEST_NAME),
-        &serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?,
+        serde_json::to_string_pretty(&manifest)
+            .map_err(|error| error.to_string())?
+            .as_bytes(),
     )?;
+    let mut written_files = 0;
+    let mut missing = attachments.len() - present.len();
+    for (path, relative, file) in &planned_files {
+        match load(&file.id)? {
+            Some(bytes) => {
+                write_new(path, &bytes)
+                    .map_err(|error| format!("Could not write {relative}: {error}"))?;
+                written_files += 1;
+            }
+            None => {
+                file_names.remove(&file.id);
+                missing += 1;
+            }
+        }
+    }
     for (path, relative, note) in &planned {
-        write_new(path, &file_text(note))
+        let note = Note {
+            body: link_exported_files(&note.body, &file_names),
+            ..(*note).clone()
+        };
+        write_new(path, file_text(&note).as_bytes())
             .map_err(|error| format!("Could not write {relative}: {error}"))?;
     }
     Ok(ExportOutcome {
         path: folder.to_string_lossy().into_owned(),
         notes: planned.len(),
+        attachments: written_files,
+        missing_attachments: missing,
     })
 }
 
-/// Creates `path` and writes `text`, refusing a path that already exists,
+/// Creates `path` and writes `bytes`, refusing a path that already exists,
 /// including a symbolic link, so nothing is replaced or written through.
-fn write_new(path: &Path, text: &str) -> Result<(), String> {
+fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
         .map_err(|error| error.to_string())?;
-    file.write_all(text.as_bytes())
-        .map_err(|error| error.to_string())
+    file.write_all(bytes).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -329,6 +448,11 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// Exports notes with no attachments.
+    fn export_notes(folder: &Path, notes: &[Note], replace: bool) -> Result<ExportOutcome, String> {
+        export(folder, notes, &[], |_| Ok(None), replace)
     }
 
     fn tempdir() -> TestFolder {
@@ -415,7 +539,7 @@ mod tests {
             note("n3", "a:b", None, "second"),
             note("n4", "PLAN", None, "same name ignoring case"),
         ];
-        let outcome = export(folder.path(), &notes, false).unwrap();
+        let outcome = export_notes(folder.path(), &notes, false).unwrap();
         assert_eq!(outcome.notes, 5);
         assert_eq!(
             tree(folder.path()),
@@ -439,16 +563,17 @@ mod tests {
         let folder = tempdir();
         fs::write(folder.path().join(".DS_Store"), "").unwrap();
         assert_eq!(folder_state(folder.path()).unwrap(), FolderState::Empty);
-        export(folder.path(), &[note("n1", "Old", None, "old")], false).unwrap();
+        export_notes(folder.path(), &[note("n1", "Old", None, "old")], false).unwrap();
         assert_eq!(
             folder_state(folder.path()).unwrap(),
             FolderState::EarlierExport
         );
         fs::write(folder.path().join("notes/mine.md"), "kept").unwrap();
 
-        let error = export(folder.path(), &[note("n2", "New", None, "new")], false).unwrap_err();
+        let error =
+            export_notes(folder.path(), &[note("n2", "New", None, "new")], false).unwrap_err();
         assert!(error.contains("Confirm replacing"), "{error}");
-        export(
+        export_notes(
             folder.path(),
             &[note("n2", "New", None, "new"), note("n3", "mine", None, "")],
             true,
@@ -472,7 +597,7 @@ mod tests {
         let other = tempdir();
         fs::write(other.path().join("report.pdf"), "").unwrap();
         assert_eq!(folder_state(other.path()).unwrap(), FolderState::InUse);
-        assert!(export(other.path(), &[note("n1", "A", None, "")], true).is_err());
+        assert!(export_notes(other.path(), &[note("n1", "A", None, "")], true).is_err());
         assert_eq!(tree(other.path()), ["report.pdf"]);
     }
 
@@ -484,14 +609,14 @@ mod tests {
         let escape = outside.path().join("precious.md");
         let manifest = serde_json::json!({ "version": 1, "files": ["../precious.md", escape.to_string_lossy(), "notes/../../precious.md"] });
         fs::write(folder.path().join(MANIFEST_NAME), manifest.to_string()).unwrap();
-        export(folder.path(), &[note("n1", "A", None, "")], true).unwrap();
+        export_notes(folder.path(), &[note("n1", "A", None, "")], true).unwrap();
         assert_eq!(
             fs::read_to_string(outside.path().join("precious.md")).unwrap(),
             "keep"
         );
 
         fs::write(folder.path().join(MANIFEST_NAME), "not json").unwrap();
-        assert!(export(folder.path(), &[], true)
+        assert!(export_notes(folder.path(), &[], true)
             .unwrap_err()
             .contains("damaged"));
     }
@@ -507,7 +632,7 @@ mod tests {
             r#"{"version":1,"files":[]}"#,
         )
         .unwrap();
-        let error = export(folder.path(), &[note("n1", "A", None, "")], true).unwrap_err();
+        let error = export_notes(folder.path(), &[note("n1", "A", None, "")], true).unwrap_err();
         assert!(error.contains("is a link"), "{error}");
         assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
 
@@ -525,7 +650,7 @@ mod tests {
             r#"{"version":1,"files":["notes/A.md"]}"#,
         )
         .unwrap();
-        export(folder.path(), &[note("n1", "A", None, "mine")], true).unwrap();
+        export_notes(folder.path(), &[note("n1", "A", None, "mine")], true).unwrap();
         assert_eq!(
             fs::read_to_string(outside.path().join("target.md")).unwrap(),
             "outside"
@@ -535,6 +660,64 @@ mod tests {
                 .unwrap()
                 .ends_with("mine"),
             true
+        );
+    }
+
+    fn file(id: &str, name: &str, available: bool) -> NoteAttachment {
+        NoteAttachment {
+            id: id.to_string(),
+            note_id: "n1".to_string(),
+            name: name.to_string(),
+            mime_type: "image/png".to_string(),
+            size: 3,
+            image: true,
+            available,
+        }
+    }
+
+    #[test]
+    fn writes_attachments_beside_the_notes_and_links_them_relatively() {
+        let folder = tempdir();
+        let (a, b, c) = ("a".repeat(32), "b".repeat(32), "c".repeat(32));
+        let body = format!(
+            "![]({ATTACHMENT_SCHEME}{a})\n[Floor plan.pdf]({ATTACHMENT_SCHEME}{b} \"plan\")\n![]({ATTACHMENT_SCHEME}{c})\nNot a link: {ATTACHMENT_SCHEME}{a}"
+        );
+        let files = [
+            file(&a, "Photo (1).png", true),
+            file(&b, "photo (1).PNG", true),
+            file(&c, "later.png", false),
+        ];
+        let outcome = export(
+            folder.path(),
+            &[note("n1", "Plan", None, &body)],
+            &files,
+            |id| Ok(Some(id.as_bytes()[..3].to_vec())),
+            false,
+        )
+        .unwrap();
+        assert_eq!((outcome.attachments, outcome.missing_attachments), (2, 1));
+        let mut written: Vec<String> = fs::read_dir(folder.path().join(ATTACHMENTS_DIR))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        written.sort();
+        assert_eq!(written, ["Photo (1).png", "photo (1) 2.PNG"]);
+        assert_eq!(
+            fs::read(folder.path().join("attachments/Photo (1).png")).unwrap(),
+            b"aaa"
+        );
+        let text = fs::read_to_string(folder.path().join("notes/Plan.md")).unwrap();
+        assert!(text.ends_with(&format!(
+            "![](../attachments/Photo%20%281%29.png)\n[Floor plan.pdf](../attachments/photo%20%281%29%202.PNG \"plan\")\n![]({ATTACHMENT_SCHEME}{c})\nNot a link: {ATTACHMENT_SCHEME}{a}"
+        )), "{text}");
+
+        // Replacing the export removes the files it wrote, attachments too.
+        export_notes(folder.path(), &[], true).unwrap();
+        assert_eq!(
+            fs::read_dir(folder.path().join(ATTACHMENTS_DIR))
+                .unwrap()
+                .count(),
+            0
         );
     }
 }

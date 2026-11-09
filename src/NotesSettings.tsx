@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { NotesExportFolder, NotesStorage } from "./domain";
+import type { NotesExportFolder, NotesExportOutcome, NotesStorage } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { InlineConfirm } from "./InlineConfirm";
@@ -15,6 +15,16 @@ const HINTS: Record<NoteSyntaxMode, string> = {
 
 const IN_USE = "This folder already holds other files. Choose an empty folder, or one an earlier export of notes wrote.";
 
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+function exportedMessage(outcome: NotesExportOutcome): string {
+  const files = outcome.attachments ? ` and ${count(outcome.attachments, "file", "files")}` : "";
+  const missing = outcome.missingAttachments
+    ? ` ${count(outcome.missingAttachments, "file hasn't", "files haven't")} reached this device yet, so ${outcome.missingAttachments === 1 ? "it was" : "they were"} left out.`
+    : "";
+  return `Exported ${count(outcome.notes, "note", "notes")}${files} to ${outcome.path}.${missing}`;
+}
+
 /** Export to Markdown Folder: every note outside Trash as a Markdown file. */
 function NotesExport() {
   const [busy, setBusy] = useState(false);
@@ -25,7 +35,7 @@ function NotesExport() {
     setBusy(true);
     try {
       const outcome = await mailClient.exportNotes(replace);
-      setMessage(`Exported ${outcome.notes} ${outcome.notes === 1 ? "note" : "notes"} to ${outcome.path}.`);
+      setMessage(exportedMessage(outcome));
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -58,7 +68,7 @@ function NotesExport() {
       <div className="settings-row">
         <button type="button" className="btn" disabled={busy} aria-describedby="notes-export-hint" onClick={() => void choose()}>Export to Markdown Folder…</button>
       </div>
-      <p id="notes-export-hint" className="settings-hint">Writes each note outside Trash as a Markdown file you can open in other apps: daily notes in a “daily” folder, the rest in “notes”. Choose an empty folder, or one you exported to before.</p>
+      <p id="notes-export-hint" className="settings-hint">Writes each note outside Trash as a Markdown file you can open in other apps: daily notes in a “daily” folder, the rest in “notes”, and their files in “attachments”. Choose an empty folder, or one you exported to before.</p>
       {confirming ? <InlineConfirm ariaLabel="Replace earlier export" stacked focusCancel cancelLabel="Cancel" disabled={busy} onCancel={() => setConfirming(null)}
         title={`Replace the earlier export in ${confirming.path}?`}
         actions={[{ label: "Replace Export", onClick: () => void write(true) }]}>
@@ -81,6 +91,7 @@ function NotesStorageUsage() {
     <section className="settings-section" aria-label="Notes storage">
       <h3>Sync Space</h3>
       <p className="settings-hint">Notes use {formatAttachmentSize(storage.usedBytes)} of the {formatAttachmentSize(storage.limitBytes)} set aside for them in cross-device sync, Trash included.</p>
+      {storage.attachmentCount ? <p className="settings-hint">Their {count(storage.attachmentCount, "file takes", "files take")} {formatAttachmentSize(storage.attachmentBytes)} more. Files sync separately from note text, so they don’t count toward that space.</p> : null}
     </section>
   );
 }

@@ -1778,6 +1778,10 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::notes::notes_export_write,
         commands::notes::note_links,
         commands::notes::notes_storage,
+        commands::notes::note_attachment_add,
+        commands::notes::note_attachment,
+        commands::notes::note_attachment_image,
+        commands::notes::note_attachment_open,
         // System
         system_fonts::list_system_font_families,
         app_update::check_for_app_update,

@@ -3,6 +3,7 @@ import "@meowdown/react/style.css";
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { MarkdownEditor, useExtension, useKeymap, type EditorHandle, type WikilinkItem } from "@meowdown/react";
 import { Priority, defineViewAttributes } from "@meowdown/core";
+import { attachmentIdOf, type NoteFiles } from "./noteAttachments";
 import { openNoteLink } from "./noteLinks";
 import { splitWikiLink } from "./noteWikiLinks";
 import type { NoteSyntaxMode } from "./noteSyntaxMode";
@@ -17,11 +18,15 @@ export type NoteEditorHandle = {
 const MARK_MODE = { hide: "hide", hybrid: "focus", show: "show" } as const;
 
 /**
- * Remote content stays off: no image, X post, or YouTube card resolves, so
- * opening a note never reaches the network. The app's CSP blocks remote
- * images and connections as well.
+ * Remote content stays off: no remote image, X post, or YouTube card
+ * resolves, so opening a note never reaches the network. The app's CSP
+ * blocks remote images and connections as well. The only images shown are
+ * files attached to notes, which come from this device as `data:` URLs.
  */
 const noRemoteContent = () => undefined;
+
+/** `[name](attachment:<id>)` shows as a file pill rather than a link. */
+const claimAttachmentLink = ({ href }: { href: string }) => attachmentIdOf(href) !== null;
 
 /** Shows `[[Title|shown text]]` as its shown text, and follows it to Title. */
 const resolveWikilink = ({ target }: { target: string }) => {
@@ -79,7 +84,7 @@ function EscapeLeaves({ onLeave }: { onLeave(): void }) {
  * rewrites it. Escape hands focus back to the note list once the editor has
  * nothing of its own to close.
  */
-export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, onChange, onLeave, onSearchLinks, onOpenLink }: {
+export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, files, onChange, onLeave, onSearchLinks, onOpenLink }: {
   ref?: Ref<NoteEditorHandle>;
   /** Changes when another note opens, which starts a fresh editor. */
   noteKey: string;
@@ -88,6 +93,8 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   placeholder?: string;
   readOnly?: boolean;
   mode: NoteSyntaxMode;
+  /** Stores pasted and dropped files and shows attached ones. Without it, files can't be added. */
+  files?: NoteFiles;
   onChange(value: string): void;
   onLeave(): void;
   /** Notes the `[[` picker offers for what has been typed. */
@@ -106,7 +113,8 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   const refocus = useRef(false);
   const latestChange = useRef(onChange);
   const latestLinks = useRef({ onSearchLinks, onOpenLink });
-  useEffect(() => { latestChange.current = onChange; latestLinks.current = { onSearchLinks, onOpenLink }; });
+  const latestFiles = useRef(files);
+  useEffect(() => { latestChange.current = onChange; latestLinks.current = { onSearchLinks, onOpenLink }; latestFiles.current = files; });
 
   useImperativeHandle(ref, () => ({ focus: () => editor.current?.focus(), markdown: () => editor.current?.getMarkdown() ?? shown.current }), []);
 
@@ -131,6 +139,12 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   const handleLink = useCallback(({ href }: { href: string }) => openNoteLink(href), []);
   const handleWikilink = useCallback(({ target }: { target: string }) => latestLinks.current.onOpenLink?.(target), []);
   const searchLinks = useCallback(async (query: string) => linkMenuItems(query, await latestLinks.current.onSearchLinks?.(query) ?? []), []);
+  // The editor library wants each of these to stay the same function.
+  const saveFile = useCallback((file: File) => latestFiles.current?.save(file), []);
+  const resolveImage = useCallback((src: string) => latestFiles.current?.image(src), []);
+  const resolveFileInfo = useCallback((href: string) => latestFiles.current?.info(href), []);
+  const openFile = useCallback(({ href }: { href: string }) => latestFiles.current?.open(href), []);
+  const openImage = useCallback(({ src }: { src: string }) => { if (attachmentIdOf(src)) latestFiles.current?.open(src); }, []);
   const reducedMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   return <div ref={surface} className="note-editor-body" onClickCapture={(event) => {
@@ -151,7 +165,12 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
       readOnly={readOnly}
       placeholder={placeholder}
       spellCheck
-      resolveImageUrl={noRemoteContent}
+      resolveImageUrl={resolveImage}
+      resolveFileLink={claimAttachmentLink}
+      resolveFileInfo={resolveFileInfo}
+      onFileClick={openFile}
+      onImageClick={openImage}
+      onFilePaste={files && !readOnly ? saveFile : undefined}
       resolveXPost={noRemoteContent}
       resolveYouTubeVideo={noRemoteContent}
       embedPaste={false}

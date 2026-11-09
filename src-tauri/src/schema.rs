@@ -45,6 +45,7 @@ const MIGRATIONS: &[Migration] = &[
     (98, to_v98),
     (99, to_v99),
     (100, to_v100),
+    (101, to_v101),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1286,6 +1287,44 @@ fn to_v100(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v101(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Files attached to notes. A file's description is a replicated entity;
+    // its bytes stay here (`note_attachment_data`) and travel to other
+    // devices as sealed objects of their own. `sealed_by` and `index_cid`
+    // stay NULL until this device or another has sealed the bytes;
+    // `note_attachment_objects` lists the objects this device sealed, so it
+    // can remove them from its connectors once the attachment is deleted.
+    // The `fetch_*` columns pace downloading another device's file.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS note_attachments (
+            id TEXT PRIMARY KEY,
+            note_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            sha256 TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            sealed_by TEXT,
+            index_cid TEXT,
+            fetch_attempts INTEGER NOT NULL DEFAULT 0,
+            fetch_after TEXT,
+            fetch_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS note_attachments_by_note ON note_attachments(note_id);
+        CREATE TABLE IF NOT EXISTS note_attachment_data (
+            id TEXT PRIMARY KEY,
+            bytes BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS note_attachment_objects (
+            attachment_id TEXT NOT NULL,
+            cid TEXT NOT NULL,
+            PRIMARY KEY(attachment_id, cid)
+        );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
 /// Outbox reconciliation that runs on every open, independent of schema
 /// version: a send interrupted mid-flight is marked uncertain, an undo window
 /// is re-armed briefly, and an overdue scheduled send is surfaced.
@@ -1600,6 +1639,10 @@ mod tests {
         "table:note_search_docsize",
         "table:note_search_idx",
         "table:note_visits",
+        "table:note_attachments",
+        "index:note_attachments_by_note",
+        "table:note_attachment_data",
+        "table:note_attachment_objects",
     ];
 
     #[test]

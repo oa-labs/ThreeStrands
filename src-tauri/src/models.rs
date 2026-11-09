@@ -1416,6 +1416,26 @@ pub struct NoteLinks {
 pub struct NotesStorage {
     pub used_bytes: u64,
     pub limit_bytes: u64,
+    /// Files attached to notes. They sync apart from the snapshot, so they
+    /// don't count toward `limit_bytes`.
+    pub attachment_count: u64,
+    pub attachment_bytes: u64,
+}
+
+/// A file attached to a note.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteAttachment {
+    pub id: String,
+    pub note_id: String,
+    pub name: String,
+    pub mime_type: String,
+    pub size: u64,
+    /// Whether the file is a raster image a note shows in place.
+    pub image: bool,
+    /// Whether this device has the file. Another device's file is
+    /// unavailable until sync downloads it.
+    pub available: bool,
 }
 
 #[derive(Debug, Deserialize)]

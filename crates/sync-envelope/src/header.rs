@@ -24,6 +24,8 @@ pub enum ObjectKind {
     Snapshot = 2,
     Enrollment = 3,
     KeyRotation = 4,
+    /// One part of a note attachment's file. See `attachment`.
+    AttachmentPart = 5,
 }
 
 impl ObjectKind {
@@ -33,6 +35,7 @@ impl ObjectKind {
             2 => Some(Self::Snapshot),
             3 => Some(Self::Enrollment),
             4 => Some(Self::KeyRotation),
+            5 => Some(Self::AttachmentPart),
             _ => None,
         }
     }

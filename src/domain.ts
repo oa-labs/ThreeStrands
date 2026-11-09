@@ -1041,15 +1041,21 @@ export type NoteBacklink = { noteId: string; title: string; dailyDate: string | 
  * has yet, and every title it links to. */
 export type NoteLinks = { backlinks: NoteBacklink[]; unlinked: string[]; links: string[] };
 
-/** How much of the sync space set aside for notes they use. */
-export type NotesStorage = { usedBytes: number; limitBytes: number };
+/** How much of the sync space set aside for notes they use, and the files
+ * attached to them, which sync separately and don't count toward it. */
+export type NotesStorage = { usedBytes: number; limitBytes: number; attachmentCount: number; attachmentBytes: number };
+
+/** A file attached to a note. `available` is false until sync downloads
+ * another device's file; `image` marks a picture the note shows in place. */
+export type NoteAttachment = { id: string; noteId: string; name: string; mimeType: string; size: number; image: boolean; available: boolean };
 
 /** The folder chosen for Export to Markdown Folder: empty, holding an
  * earlier export (which exporting again replaces), or holding other files
  * (which the export refuses). */
 export type NotesExportFolder = { path: string; state: "empty" | "earlierExport" | "inUse" };
 
-export type NotesExportOutcome = { path: string; notes: number };
+/** What an export wrote. Files this device hasn't downloaded yet are left out. */
+export type NotesExportOutcome = { path: string; notes: number; attachments: number; missingAttachments: number };
 
 /** A note matching a search; U+0001 and U+0002 mark the matching text. */
 export type NoteSearchHit = { id: string; title: string; dailyDate: string | null; matchSnippet: string };

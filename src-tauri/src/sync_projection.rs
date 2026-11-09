@@ -90,6 +90,7 @@ impl Database {
                 EntityType::Draft => {}
                 EntityType::Snippet => self.delete_synced_snippet(entity_id)?,
                 EntityType::Note => self.delete_synced_note(entity_id)?,
+                EntityType::NoteAttachment => self.delete_synced_note_attachment(entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_split(entity_id)?,
                 EntityType::SenderConfirmation => self.forget_sender_delivery(entity_id)?,
                 EntityType::SenderRule => self.delete_synced_sender_rule(entity_id)?,
@@ -153,6 +154,9 @@ impl Database {
                     serde_json::from_value(payload.clone()).map_err(serialization_error)?,
                 )?,
                 EntityType::Note => self.upsert_synced_note(entity_id, payload)?,
+                EntityType::NoteAttachment => {
+                    self.upsert_synced_note_attachment(entity_id, payload)?
+                }
                 EntityType::SplitInbox => self.upsert_synced_split(
                     serde_json::from_value(payload.clone()).map_err(serialization_error)?,
                 )?,

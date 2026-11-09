@@ -3,7 +3,7 @@ import { extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLin
 import { notePreview } from "../notePreview";
 import type { MailClient } from "./client";
 
-type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes">;
+type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = (title: string) => title.split(/\s+/).filter(Boolean).join(" ");
@@ -110,7 +110,20 @@ export function createDemoNotes(): DemoNotes {
     },
     async notesStorage() {
       const usedBytes = [...notes.values()].reduce((total, note) => total + new TextEncoder().encode(JSON.stringify(note)).length, 0);
-      return { usedBytes, limitBytes: 3 * 1024 * 1024 };
+      return { usedBytes, limitBytes: 3 * 1024 * 1024, attachmentCount: 0, attachmentBytes: 0 };
+    },
+    // The browser demo keeps no files.
+    async addNoteAttachment() {
+      throw new Error("Adding files to notes needs the ThreeStrands app");
+    },
+    async noteAttachment() {
+      return null;
+    },
+    async noteAttachmentImage() {
+      return null;
+    },
+    async openNoteAttachment() {
+      throw new Error("Opening files needs the ThreeStrands app");
     },
     // The browser demo has no folders to write to.
     async chooseNotesExportFolder() {

@@ -35,6 +35,15 @@ pub const MAX_SYNCED_NOTES_TOTAL_BYTES: usize = 3 * 1024 * 1024;
 /// A daily note's entity id is this prefix and its `YYYY-MM-DD` date, so
 /// two devices that start the same day's note offline write one entity.
 pub const DAILY_NOTE_ID_PREFIX: &str = "daily:";
+/// Largest file one note attachment may hold. The file's bytes travel as
+/// their own sealed objects, never inside a snapshot; the snapshot carries
+/// only the attachment's description (`EntityType::NoteAttachment`).
+pub const MAX_NOTE_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
+/// Most attachments all notes together may hold. Each one's description
+/// takes about 400 bytes of the snapshot, so this bounds their share.
+pub const MAX_SYNCED_NOTE_ATTACHMENTS: usize = 2_000;
+/// Most characters in a note attachment's file name.
+pub const MAX_NOTE_ATTACHMENT_NAME_CHARS: usize = 255;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -67,6 +76,9 @@ pub enum EntityType {
     ConversationSnooze,
     /// A Markdown note. An earlier build cannot open a snapshot that holds one.
     Note,
+    /// A file attached to a note: its name, type, size, hash, and where its
+    /// sealed bytes are. An earlier build cannot open a snapshot that holds one.
+    NoteAttachment,
 }
 
 /// Most web origins one remembered delivery pattern may contain.
@@ -100,6 +112,7 @@ impl EntityType {
             Self::SenderConfirmation => "sender_confirmation",
             Self::ConversationSnooze => "conversation_snooze",
             Self::Note => "note",
+            Self::NoteAttachment => "note_attachment",
         }
     }
 
@@ -139,6 +152,7 @@ impl EntityType {
                 optional_string(object, "goalId", 128)?;
             }
             Self::Note => validate_note(object)?,
+            Self::NoteAttachment => validate_note_attachment(object)?,
             Self::Snippet => {
                 required_string(object, "name", 200)?;
                 required_string(object, "body", 32_000)?;
@@ -604,6 +618,7 @@ impl std::str::FromStr for EntityType {
             "signature_defaults" => Ok(Self::SignatureDefaults),
             "draft" => Ok(Self::Draft),
             "note" => Ok(Self::Note),
+            "note_attachment" => Ok(Self::NoteAttachment),
             _ => Err("Unknown synchronized entity type".to_string()),
         }
     }
@@ -720,6 +735,67 @@ fn validate_note(object: &Map<String, Value>) -> Result<(), String> {
         return Err("trashed is invalid".into());
     }
     Ok(())
+}
+
+fn is_lower_hex(value: &str, len: usize) -> bool {
+    value.len() == len
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// A note attachment: `id` (32 hex digits), `noteId`, `name`, `mimeType`,
+/// `size`, `sha256` of the file, `sealedBy` (the device that sealed its
+/// bytes, 32 hex digits), and `index`, the CID of the object listing its
+/// sealed parts. Optional `createdAt`. Unknown fields are allowed, as for
+/// notes.
+fn validate_note_attachment(object: &Map<String, Value>) -> Result<(), String> {
+    let text = |key: &str| object.get(key).and_then(Value::as_str).unwrap_or_default();
+    if !is_lower_hex(text("id"), 32) {
+        return Err("id is invalid".into());
+    }
+    required_string(object, "noteId", 128)?;
+    if text("noteId").chars().any(char::is_control) {
+        return Err("noteId is invalid".into());
+    }
+    required_string(object, "name", MAX_NOTE_ATTACHMENT_NAME_CHARS)?;
+    if text("name")
+        .chars()
+        .any(|c| c.is_control() || c == '/' || c == '\\')
+    {
+        return Err("name is invalid".into());
+    }
+    let mime = text("mimeType");
+    let mut halves = mime.splitn(2, '/');
+    let token = |part: Option<&str>| {
+        part.is_some_and(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"!#$&-^_.+".contains(&byte))
+        })
+    };
+    if mime.len() > 127 || !token(halves.next()) || !token(halves.next()) {
+        return Err("mimeType is invalid".into());
+    }
+    if object
+        .get("size")
+        .and_then(Value::as_u64)
+        .is_none_or(|size| size > MAX_NOTE_ATTACHMENT_BYTES)
+    {
+        return Err("size is invalid".into());
+    }
+    if !is_lower_hex(text("sha256"), 64) {
+        return Err("sha256 is invalid".into());
+    }
+    if !is_lower_hex(text("sealedBy"), 32) {
+        return Err("sealedBy is invalid".into());
+    }
+    let index = text("index");
+    if index.is_empty() || index.len() > 128 || !index.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Err("index is invalid".into());
+    }
+    optional_string(object, "createdAt", 64)
 }
 
 fn required_string(object: &Map<String, Value>, key: &str, max: usize) -> Result<(), String> {
@@ -895,7 +971,8 @@ mod tests {
             | EntityType::Draft
             | EntityType::SenderConfirmation
             | EntityType::ConversationSnooze
-            | EntityType::Note => entity_type,
+            | EntityType::Note
+            | EntityType::NoteAttachment => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -917,6 +994,7 @@ mod tests {
             EntityType::SenderConfirmation,
             EntityType::ConversationSnooze,
             EntityType::Note,
+            EntityType::NoteAttachment,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));
@@ -1374,6 +1452,73 @@ mod snooze_tests {
 mod note_tests {
     use super::*;
     use serde_json::json;
+
+    fn attachment() -> Value {
+        json!({
+            "id": "0123456789abcdef0123456789abcdef",
+            "noteId": "n-1",
+            "name": "Floor plan.png",
+            "mimeType": "image/png",
+            "size": 1024,
+            "sha256": "ab".repeat(32),
+            "sealedBy": "fedcba9876543210fedcba9876543210",
+            "index": "bafkreigh2akiscaildc",
+            "createdAt": "2026-11-09T09:00:00Z",
+        })
+    }
+
+    #[test]
+    fn note_attachment_size_is_bounded_below_at_and_above_the_limit() {
+        for (size, ok) in [
+            (MAX_NOTE_ATTACHMENT_BYTES - 1, true),
+            (MAX_NOTE_ATTACHMENT_BYTES, true),
+            (MAX_NOTE_ATTACHMENT_BYTES + 1, false),
+        ] {
+            let mut payload = attachment();
+            payload["size"] = json!(size);
+            assert_eq!(
+                EntityType::NoteAttachment
+                    .validate_payload(&payload)
+                    .is_ok(),
+                ok,
+                "{size}"
+            );
+        }
+    }
+
+    #[test]
+    fn note_attachment_refuses_paths_bad_hashes_and_unsealed_files() {
+        assert!(EntityType::NoteAttachment
+            .validate_payload(&attachment())
+            .is_ok());
+        let name_at_limit = "a".repeat(MAX_NOTE_ATTACHMENT_NAME_CHARS);
+        let name_over = "a".repeat(MAX_NOTE_ATTACHMENT_NAME_CHARS + 1);
+        for (field, value, ok) in [
+            ("name", json!(name_at_limit), true),
+            ("name", json!(name_over), false),
+            ("name", json!("../secrets.txt"), false),
+            ("name", json!("a\\b.txt"), false),
+            ("name", json!("line\nbreak.txt"), false),
+            ("id", json!("0123456789ABCDEF0123456789ABCDEF"), false),
+            ("sha256", json!("zz".repeat(32)), false),
+            ("mimeType", json!("text/html; charset=utf-8"), false),
+            ("mimeType", json!("image"), false),
+            ("index", json!(null), false),
+            ("index", json!("bafy/../x"), false),
+            ("sealedBy", json!("short"), false),
+            ("size", json!(-1), false),
+        ] {
+            let mut payload = attachment();
+            payload[field] = value.clone();
+            assert_eq!(
+                EntityType::NoteAttachment
+                    .validate_payload(&payload)
+                    .is_ok(),
+                ok,
+                "{field} = {value}"
+            );
+        }
+    }
 
     fn note(body: &str) -> Value {
         json!({"id": "n-1", "title": "Plans", "body": body, "createdAt": "2026-11-09T09:00:00Z", "trashed": false})

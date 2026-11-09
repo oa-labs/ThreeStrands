@@ -14,6 +14,7 @@
 //! See [`header`] for the header layout and associated data, and [`chunk`]
 //! for the compressed/padded/hashed plaintext layout inside the ciphertext.
 
+mod attachment;
 mod chunk;
 mod cid;
 mod crypto;
@@ -33,6 +34,9 @@ use std::collections::BTreeMap;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+pub use attachment::{
+    message_id_for_attachment_part, open_attachment_part, seal_attachment_part, AttachmentPart,
+};
 pub use cid::compute_cid;
 pub use crypto::{os_rng, seal_to_x25519, try_open_sealed_box};
 pub use device_head::{
@@ -106,6 +110,9 @@ fn object_signature_domain(kind: ObjectKind) -> &'static [u8] {
         ObjectKind::Snapshot => b"threestrands/sync-envelope/object-signature/v2/snapshot",
         ObjectKind::Enrollment => b"threestrands/sync-envelope/object-signature/v2/enrollment",
         ObjectKind::KeyRotation => b"threestrands/sync-envelope/object-signature/v2/key-rotation",
+        ObjectKind::AttachmentPart => {
+            b"threestrands/sync-envelope/object-signature/v2/attachment-part"
+        }
     }
 }
 

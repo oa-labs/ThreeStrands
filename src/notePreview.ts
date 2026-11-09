@@ -45,6 +45,13 @@ function inlinePlain(line: string): string {
       if (end >= 0) { out += inlinePlain(chars.slice(index + 1, close).join("")); index = end + 1; continue; }
       out += ch; index++; continue;
     }
+    if (ch === "<" && chars.slice(index, index + 4).join("") === "<!--") {
+      // An HTML comment, such as the size the editor keeps after a resized image, isn't text.
+      let close = index + 4;
+      while (close < chars.length && chars.slice(close, close + 3).join("") !== "-->") close++;
+      index = Math.min(close + 3, chars.length);
+      continue;
+    }
     if (ch === "<") {
       const end = chars.indexOf(">", index);
       const inside = chars.slice(index + 1, end < 0 ? chars.length : end).join("");

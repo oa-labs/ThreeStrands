@@ -8,6 +8,7 @@ describe("note previews", () => {
     expect(notePlainText(body)).toBe("The Basics Dates (LOCKED): Friday Lodging old new code see VRBO https://a.b quoted task Ada Plan photo let snake_case = 1; a b 1 2 *literal* 3 4");
     expect(notePlainText("#hashtag and # heading")).toBe("#hashtag and # heading");
     expect(notePlainText("")).toBe("");
+    expect(notePlainText("See ![](attachment:0123456789abcdef0123456789abcdef)<!-- {\"width\":320} --> and [Plan.pdf](attachment:0123456789abcdef0123456789abcdef) <!-- open")).toBe("See and Plan.pdf");
   });
 
   it("cut at the preview length", () => {

@@ -19,6 +19,15 @@ pub const MAX_DECOMPRESSED_BYTES: usize = 32 * 1024 * 1024;
 /// per-field limits but chunks itself into an unreasonable total.
 pub const MAX_REASSEMBLED_BYTES: usize = MAX_COMPRESSED_BYTES + 4_096;
 
+/// Most file bytes one sealed attachment part may carry. A file larger than
+/// this is split into several parts, each its own message. Files rarely
+/// compress (photos, PDFs), so a part must fit under
+/// [`MAX_COMPRESSED_BYTES`] uncompressed, with room for its framing.
+pub const MAX_ATTACHMENT_PART_BYTES: usize = 3 * 1024 * 1024;
+
+/// Most parts one attachment may be split into.
+pub const MAX_ATTACHMENT_PARTS: u32 = 64;
+
 /// Most fields one replica snapshot may hold. A snapshot is a device's
 /// whole synchronized state (tasks, snippets, preferences, and so on), so
 /// this bounds how large that state can grow; the message size limits

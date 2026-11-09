@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowLeft, FilePlus, GitCompareArrows, NotebookText, Plus, RotateCcw, Trash2, UserRound } from "lucide-react";
 import type { ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSummary } from "./domain";
@@ -13,6 +13,7 @@ import { WorkspaceContextRail } from "./WorkspaceContextRail";
 import { ContextRow, ContextSection, ContextSectionHeader } from "./ContextSections";
 import { InlineConfirm } from "./InlineConfirm";
 import { NoteEditor, type NoteEditorHandle, type NoteLinkSuggestion } from "./NoteEditor";
+import { noteFiles } from "./noteAttachments";
 import { noteTitleKey } from "./noteWikiLinks";
 import { notePreview } from "./notePreview";
 import { NewNoteDialog } from "./NewNoteDialog";
@@ -111,6 +112,10 @@ export function NotesWorkspace({ request = null, refreshKey = "", onOpenContact 
   const today = todayTarget();
   const todayKey = noteTargetKey(today);
   const selectedKey = noteTargetKey(target);
+  // Files go to the open note: its id, which for a day not yet written in is that day's note id.
+  const openKey = useRef(selectedKey);
+  useEffect(() => { openKey.current = selectedKey; });
+  const files = useMemo(() => noteFiles(() => openKey.current, setActionError), []);
 
   const loadRecent = useCallback(() => {
     void mailClient.listRecentNotes(RECENT_LIMIT).then((notes) => { setRecent(notes); setListError(null); }, (reason) => setListError(errorMessage(reason)));
@@ -158,8 +163,9 @@ export function NotesWorkspace({ request = null, refreshKey = "", onOpenContact 
     loadTrash();
     loadConflicts();
     loadLinks(openNoteId.current);
+    files.retry();
     void refresh().catch(logBackgroundFailure("Note refresh"));
-  }, [loadRecent, loadTrash, loadConflicts, loadLinks, refresh]);
+  }, [loadRecent, loadTrash, loadConflicts, loadLinks, refresh, files]);
   const noteId = editor.note?.id ?? null;
   useEffect(() => { loadLinks(noteId); }, [noteId, loadLinks]);
   // People: the note's links whose titles are saved contacts' names.
@@ -410,7 +416,7 @@ export function NotesWorkspace({ request = null, refreshKey = "", onOpenContact 
                   }} />}
               {editor.note && !inTrash ? <button type="button" className="btn btn-icon" title="Move to Trash (#)" aria-label="Move to Trash" aria-keyshortcuts="#" disabled={busy || Boolean(stale)} onClick={() => void moveToTrash()}><Trash2 size={ICON_SIZE.lg} aria-hidden="true" /></button> : null}
             </div>
-            <NoteEditor ref={body} noteKey={selectedKey} value={editor.text.body} label="Note text" readOnly={readOnly} mode={syntaxMode}
+            <NoteEditor ref={body} noteKey={selectedKey} value={editor.text.body} label="Note text" readOnly={readOnly} mode={syntaxMode} files={files}
               placeholder={daily ? "Write about the day" : "Write in Markdown"}
               onChange={(value) => editor.edit({ body: value })} onLeave={returnToList}
               onSearchLinks={searchLinks} onOpenLink={(title) => void openLink(title)} />

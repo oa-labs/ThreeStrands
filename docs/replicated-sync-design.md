@@ -217,9 +217,12 @@ A connector holds about one snapshot per device, plus control objects.
 - **Whole-state republishing:** every change reseals and re-uploads the whole
   snapshot. That is fine for kilobytes to a few megabytes, which is why
   compose drafts moved to the mail server in 0.149.0 instead of riding in
-  snapshots. A much larger
-  synchronized data set, such as attachment files, would need snapshots split
-  by entity type, or sent as deltas.
+  snapshots. Files attached to notes travel beside the snapshot instead: each
+  is sealed once as `ObjectKind::AttachmentPart` objects that the snapshot
+  names by CID, so they are uploaded once rather than with every change (see
+  [Images and attachments](notes-design.md#images-and-attachments)). Any
+  other large synchronized data set would need the same, snapshots split by
+  entity type, or deltas.
 - **Snapshot size:** one message holds at most 32 MB decompressed (4 MB
   compressed) and `MAX_SNAPSHOT_FIELDS` fields.
 - **Control objects accumulate:** enrollment requests, grants, rotations and

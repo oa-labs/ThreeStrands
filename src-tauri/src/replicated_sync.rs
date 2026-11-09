@@ -225,6 +225,11 @@ impl Database {
                 repaired += 1;
             }
         }
+        for (id, payload) in self.note_attachment_sync_payloads()? {
+            if self.reconcile_one_entity(EntityType::NoteAttachment, &id, payload)? {
+                repaired += 1;
+            }
+        }
         for contact in self.list_saved_contact_profiles()? {
             repaired += usize::from(
                 self.reconcile_one_entity(
@@ -785,6 +790,11 @@ pub async fn push_local_state(
         .iter()
         .map(|transport| transport.instance_id())
         .collect();
+    // A file that can't be sealed waits for the next cycle; it never holds
+    // up the rest of the replica.
+    if let Err(error) = seal_note_attachments(database, keys, &instance_ids) {
+        log::warn!(target: "replicated_sync", "sealing note attachments failed: {error}");
+    }
     let sealed_snapshot = database.seal_local_state(keys, &instance_ids)?;
 
     let mut delivered = 0usize;
@@ -1081,6 +1091,227 @@ async fn pull_device_state(
     let touched = database.merge_replica_state(&remote)?;
     database.record_merged_state(&author_hex, snapshot.state_sequence)?;
     database.materialize_touched_entities(&touched)
+}
+
+// ============================ Note attachments ==============================
+
+/// Lists one note attachment's sealed parts: each part's chunk CIDs, in
+/// order. Stored as a plain object like a snapshot's [`ChunkIndex`]; the
+/// attachment's replicated record names it by CID, and every chunk is
+/// authenticated on its own.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct AttachmentIndex {
+    pub(crate) parts: Vec<Vec<String>>,
+}
+
+/// Most chunks one sealed attachment part may list. A part holds at most
+/// `MAX_ATTACHMENT_PART_BYTES`, about 13 chunks.
+const MAX_CHUNKS_PER_ATTACHMENT_PART: usize = 64;
+
+/// Most bytes of other devices' files one sync cycle downloads; the rest
+/// wait for the next cycle. One file is always tried, whatever its size.
+const MAX_ATTACHMENT_FETCH_BYTES_PER_CYCLE: u64 = 64 * 1024 * 1024;
+
+/// Seals one file for the group: split into parts, each sealed and signed
+/// by this device, plus the index listing them.
+pub(crate) fn seal_note_attachment(
+    keys: &LocalKeys,
+    id: &str,
+    bytes: &[u8],
+) -> Result<crate::db::note_attachments::SealedAttachment, String> {
+    use threestrands_sync_envelope::limits::{MAX_ATTACHMENT_PARTS, MAX_ATTACHMENT_PART_BYTES};
+    let attachment_id = decode_id(id)?;
+    let slices: Vec<&[u8]> = if bytes.is_empty() {
+        vec![bytes]
+    } else {
+        bytes.chunks(MAX_ATTACHMENT_PART_BYTES).collect()
+    };
+    let parts = u32::try_from(slices.len())
+        .ok()
+        .filter(|parts| *parts <= MAX_ATTACHMENT_PARTS)
+        .ok_or("The file is too large to sync")?;
+    let mut objects = Vec::new();
+    let mut index = AttachmentIndex { parts: Vec::new() };
+    for (position, slice) in slices.into_iter().enumerate() {
+        let sealed = threestrands_sync_envelope::seal_attachment_part(
+            &threestrands_sync_envelope::AttachmentPart {
+                protocol_version: threestrands_sync_envelope::PROTOCOL_VERSION,
+                attachment_id: attachment_id.to_vec(),
+                part: position as u32,
+                parts,
+                bytes: slice.to_vec(),
+            },
+            &SealParams {
+                sync_space_id: &keys.sync_space_id,
+                k_epoch: &keys.k_epoch,
+                key_epoch: keys.key_epoch,
+                object_kind: ObjectKind::AttachmentPart,
+                signing_key: &keys.signing_key,
+            },
+        )
+        .map_err(display)?;
+        let mut cids = Vec::with_capacity(sealed.chunks.len());
+        for chunk in sealed.chunks {
+            let cid = compute_cid(&chunk);
+            cids.push(cid.clone());
+            objects.push((cid, "attachment_chunk", chunk));
+        }
+        index.parts.push(cids);
+    }
+    let index_bytes = serde_json::to_vec(&index).map_err(display)?;
+    let index_cid = compute_cid(&index_bytes);
+    objects.push((index_cid.clone(), "attachment_index", index_bytes));
+    Ok(crate::db::note_attachments::SealedAttachment {
+        sealed_by: encode_id(keys.device_id.as_bytes()),
+        index_cid,
+        objects,
+    })
+}
+
+/// Seals every file this device holds that the group doesn't have yet, and
+/// schedules it for delivery. Pure local work, like sealing a snapshot.
+pub(crate) fn seal_note_attachments(
+    database: &Database,
+    keys: &LocalKeys,
+    transports: &[TransportInstanceId],
+) -> Result<usize, String> {
+    let mut sealed = 0;
+    for id in database.note_attachments_to_seal()? {
+        let Some((_, bytes)) = database.note_attachment_bytes(&id)? else {
+            continue;
+        };
+        let objects = seal_note_attachment(keys, &id, &bytes)?;
+        database.store_sealed_note_attachment(&id, &objects, transports)?;
+        sealed += 1;
+    }
+    Ok(sealed)
+}
+
+/// Fetches `cid` from the first transport that has it, checking the bytes
+/// are the ones the CID names.
+async fn fetch_verified_object(
+    transports: &[Arc<dyn SyncTransport>],
+    cid: &str,
+) -> Result<Vec<u8>, String> {
+    let mut last_error = "No connector holds this file yet".to_string();
+    for transport in transports {
+        match transport.get_object(&TransportCid(cid.to_string())).await {
+            Ok(bytes) if compute_cid(&bytes) == cid => return Ok(bytes),
+            Ok(_) => last_error = "Fetched bytes do not match the requested CID".to_string(),
+            Err(error) => last_error = error.to_string(),
+        }
+    }
+    Err(last_error)
+}
+
+/// Downloads, opens, and reassembles one file another device sealed. Every
+/// object is checked against its CID, every part against its signer and
+/// position; the caller checks the result's size and hash against the
+/// record.
+async fn fetch_note_attachment(
+    database: &Database,
+    keys: &LocalKeys,
+    transports: &[Arc<dyn SyncTransport>],
+    fetch: &crate::db::note_attachments::AttachmentFetch,
+) -> Result<Vec<u8>, String> {
+    use threestrands_sync_envelope::limits::MAX_ATTACHMENT_PARTS;
+    let verifying_key = if fetch.sealed_by == encode_id(keys.device_id.as_bytes()) {
+        keys.signing_key.verifying_key()
+    } else {
+        database
+            .device_verifying_key(&fetch.sealed_by)?
+            .ok_or("The device that added this file isn't known here")?
+    };
+    let index: AttachmentIndex =
+        serde_json::from_slice(&fetch_verified_object(transports, &fetch.index_cid).await?)
+            .map_err(display)?;
+    let parts = index.parts.len();
+    if parts == 0
+        || parts > MAX_ATTACHMENT_PARTS as usize
+        || index
+            .parts
+            .iter()
+            .any(|cids| cids.is_empty() || cids.len() > MAX_CHUNKS_PER_ATTACHMENT_PART)
+    {
+        return Err("The file's index is malformed".to_string());
+    }
+    let attachment_id = decode_id(&fetch.id)?;
+    let mut bytes = Vec::with_capacity(fetch.size as usize);
+    for (position, cids) in index.parts.iter().enumerate() {
+        let mut chunks = Vec::with_capacity(cids.len());
+        for cid in cids {
+            chunks.push(fetch_verified_object(transports, cid).await?);
+        }
+        let key_epoch = message_key_epoch(&chunks[0]).map_err(display)?;
+        let k_epoch = keys.epoch_key(key_epoch).ok_or_else(|| {
+            format!("This device doesn't have the key for sync epoch {key_epoch}")
+        })?;
+        let part = threestrands_sync_envelope::open_attachment_part(
+            &chunks,
+            &OpenParams {
+                sync_space_id: &keys.sync_space_id,
+                k_epoch,
+                key_epoch,
+                verifying_key: &verifying_key,
+            },
+        )
+        .map_err(display)?;
+        if part.attachment_id != attachment_id
+            || part.part as usize != position
+            || part.parts as usize != parts
+        {
+            return Err("A part of the file belongs elsewhere".to_string());
+        }
+        bytes.extend_from_slice(&part.bytes);
+        if bytes.len() as u64 > fetch.size {
+            return Err("The file is larger than its description".to_string());
+        }
+    }
+    Ok(bytes)
+}
+
+/// Downloads other devices' files this device doesn't have, up to a byte
+/// budget per cycle. A failure is recorded and retried later with backoff;
+/// it never fails the sync cycle. Returns how many files were stored.
+pub(crate) async fn fetch_note_attachments(
+    database: &Database,
+    keys: &LocalKeys,
+    transports: &[Arc<dyn SyncTransport>],
+) -> usize {
+    let pending = match database.note_attachments_to_fetch() {
+        Ok(pending) => pending,
+        Err(error) => {
+            log::warn!(target: "replicated_sync", "listing note attachments to download failed: {error}");
+            return 0;
+        }
+    };
+    let mut fetched_bytes = 0u64;
+    let mut stored = 0;
+    for fetch in pending {
+        if fetched_bytes > 0 && fetched_bytes + fetch.size > MAX_ATTACHMENT_FETCH_BYTES_PER_CYCLE {
+            break;
+        }
+        let result = match fetch_note_attachment(database, keys, transports, &fetch).await {
+            Ok(bytes) => {
+                fetched_bytes += bytes.len() as u64;
+                database
+                    .store_fetched_note_attachment(&fetch, &bytes)
+                    .map_err(String::from)
+            }
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(()) => stored += 1,
+            Err(error) => {
+                log::debug!(target: "replicated_sync", "downloading note attachment {} failed: {error}", fetch.id);
+                if let Err(error) = database.record_note_attachment_fetch_failure(&fetch.id, &error)
+                {
+                    log::warn!(target: "replicated_sync", "recording a note attachment download failure failed: {error}");
+                }
+            }
+        }
+    }
+    stored
 }
 
 /// The result of one pull cycle.
@@ -1683,6 +1914,7 @@ impl ReplicatedSync {
 
         let push_result = push_local_state(&self.database, &keys, &transports).await;
         let pull_result = pull_from_transports(&self.database, &keys, &transports).await;
+        fetch_note_attachments(&self.database, &keys, &transports).await;
         if let Err(error) =
             crate::enrollment::share_keys_with_lagging_peers(&self.database, &keys, &transports)
                 .await
@@ -3044,6 +3276,148 @@ mod replicator_tests {
                 .unwrap()
                 .merged_states,
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn a_note_attachment_travels_in_its_own_objects_and_leaves_with_its_note() {
+        use threestrands_sync_envelope::limits::MAX_ATTACHMENT_PART_BYTES;
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        database_b.set_beta_features_enabled(true).unwrap();
+        let fake_transport = Arc::new(FakeTransport::new("shared"));
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![fake_transport.clone()];
+        let keys_b = test_keys(&database_b);
+        let note = database_b.create_note("Plan", "").unwrap();
+        // Larger than one part, so it travels as several.
+        let bytes: Vec<u8> = (0..MAX_ATTACHMENT_PART_BYTES + 10)
+            .map(|index| (index * 7 % 251) as u8)
+            .collect();
+        let file = database_b
+            .add_note_attachment(&note.id, "big.bin", "", &bytes)
+            .unwrap();
+        let objects_before = fake_transport.object_count();
+        push_local_state(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
+        let snapshot_bytes: i64 = database_b
+            .test_connection()
+            .unwrap()
+            .query_row(
+                "SELECT SUM(length(bytes)) FROM sync_objects WHERE state_sequence IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            snapshot_bytes < 64 * 1024,
+            "the snapshot carries the file's description, not its bytes"
+        );
+
+        let keys_a = test_keys(&database_a);
+        trust(&database_a, &keys_b);
+        pull_from_transports(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+        assert!(
+            !database_a
+                .note_attachment(&file.id)
+                .unwrap()
+                .unwrap()
+                .available
+        );
+        assert_eq!(
+            fetch_note_attachments(&database_a, &keys_a, &transports).await,
+            1
+        );
+        assert_eq!(
+            database_a
+                .note_attachment_bytes(&file.id)
+                .unwrap()
+                .unwrap()
+                .1,
+            bytes
+        );
+
+        // Deleting the note removes the file's objects from the connector
+        // once a snapshot without it is published.
+        let with_file = fake_transport.object_count();
+        database_b.trash_note(&note.id).unwrap();
+        database_b.delete_note(&note.id).unwrap();
+        push_local_state(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
+        assert!(
+            fake_transport.object_count() < with_file - 2,
+            "{} objects before the file, {with_file} with it, {} after",
+            objects_before,
+            fake_transport.object_count()
+        );
+        pull_from_transports(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+        assert!(database_a.note_attachment(&file.id).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_note_attachment_with_altered_or_forged_parts_is_refused() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        database_b.set_beta_features_enabled(true).unwrap();
+        let fake_transport = Arc::new(FakeTransport::new("shared"));
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![fake_transport.clone()];
+        let keys_b = test_keys(&database_b);
+        let note = database_b.create_note("Plan", "").unwrap();
+        let file = database_b
+            .add_note_attachment(&note.id, "a.txt", "text/plain", b"hello")
+            .unwrap();
+        push_local_state(&database_b, &keys_b, &transports)
+            .await
+            .unwrap();
+        let keys_a = test_keys(&database_a);
+        trust(&database_a, &keys_b);
+        pull_from_transports(&database_a, &keys_a, &transports)
+            .await
+            .unwrap();
+
+        // Every object read comes back corrupted: the CID check refuses it.
+        fake_transport.inject_corruption_on_get(100);
+        assert_eq!(
+            fetch_note_attachments(&database_a, &keys_a, &transports).await,
+            0
+        );
+        assert!(
+            !database_a
+                .note_attachment(&file.id)
+                .unwrap()
+                .unwrap()
+                .available
+        );
+
+        // A part signed by another key than the sealer's doesn't open.
+        let impostor = at_epoch(&keys_b, keys_b.key_epoch, keys_b.k_epoch, &[]);
+        let impostor = LocalKeys {
+            signing_key: SigningKey::generate(&mut os_rng()),
+            ..impostor
+        };
+        let forged = seal_note_attachment(&impostor, &file.id, b"hello").unwrap();
+        let fetch = crate::db::note_attachments::AttachmentFetch {
+            id: file.id.clone(),
+            sealed_by: encode_id(keys_b.device_id.as_bytes()),
+            index_cid: forged.index_cid.clone(),
+            size: 5,
+            sha256: String::new(),
+        };
+        let forged_transport = Arc::new(FakeTransport::new("forged"));
+        for (cid, _, bytes) in &forged.objects {
+            forged_transport
+                .put_object(&TransportCid(cid.clone()), bytes)
+                .await
+                .unwrap();
+        }
+        let forged_transports: Vec<Arc<dyn SyncTransport>> = vec![forged_transport];
+        assert!(
+            fetch_note_attachment(&database_a, &keys_a, &forged_transports, &fetch)
+                .await
+                .is_err()
         );
     }
 

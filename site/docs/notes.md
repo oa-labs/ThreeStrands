@@ -15,6 +15,8 @@ Select a note and press <kbd>Enter</kbd>, or click in it, to write. Press <kbd>E
 
 Notes are written in Markdown and formatted as you type: `**bold**` turns bold, `# ` starts a heading, and `- ` starts a list. Links open in your browser. Notes never load pictures or previews from the internet.
 
+Paste or drag a picture or file into a note to add it. Pictures show in the note, and other files show as a small label with their size; click either to open it in its usual app. A note can hold files up to 20 MB each. A file stays with its note until you delete the note from Trash, even if you remove it from the text.
+
 Today's note is created when you first write in it, so looking at a day leaves nothing behind. To make a note of your own, press <kbd>Shift</kbd>+<kbd>N</kbd> or click **New Note** and give it a title. Each title can be used once.
 
 ThreeStrands saves a note a moment after you stop typing, and again when you leave it or close the app. Text you haven't saved yet stays on this device, so it's still there if the app closes unexpectedly.
@@ -37,11 +39,11 @@ Press <kbd>#</kbd> in the list, or click the trash button beside the title, to m
 
 ## Export Your Notes {#export-your-notes}
 
-**Settings → Notes → Export to Markdown Folder** writes every note outside Trash to a folder you choose, as Markdown files that other apps such as Obsidian and Reflect can open. Daily notes go in a `daily` folder, named by date, and the rest in `notes`, named by title. Each file starts with a few lines naming the note, so a future version of ThreeStrands can match the files back to your notes.
+**Settings → Notes → Export to Markdown Folder** writes every note outside Trash to a folder you choose, as Markdown files that other apps such as Obsidian and Reflect can open. Daily notes go in a `daily` folder, named by date, the rest in `notes`, named by title, and their pictures and files in `attachments`, linked from the notes so they still open. Each file starts with a few lines naming the note, so a future version of ThreeStrands can match the files back to your notes.
 
 Choose an empty folder. To update an export, choose the same folder again: ThreeStrands asks first, then replaces the files the last export wrote and leaves anything else in the folder alone. A folder that holds other files is refused.
 
-Settings → Notes also shows how much of the space set aside for notes in cross-device sync they use.
+Settings → Notes also shows how much of the space set aside for notes in cross-device sync they use, and how much their files take.
 
 ## Find a Note {#find-a-note}
 
@@ -52,6 +54,8 @@ Press <kbd>/</kbd> and type to search titles and note text. Press <kbd>Esc</kbd>
 With [cross-device sync](sync.html) on, notes travel to your other devices, encrypted like the rest of your synced data. Update every device first: an earlier version stops receiving changes once you write a note.
 
 A note can hold about 64 KB of text, and all your notes together about 3 MB, so there's room for everything else that syncs. If a note is too long, ThreeStrands says so and keeps your text.
+
+Pictures and files travel separately, so they don't count toward that space; your notes can hold up to 2,000 of them. Another device downloads them after it syncs, and a picture appears in the note once it arrives. Files take space in your sync storage, such as your shared folder or bucket, and leave it when you delete their note from Trash.
 
 If a note changes on another device while you're typing, ThreeStrands stops saving and asks which version to keep: **Keep My Version** or **Use Other Version**. If the note was deleted there, you can keep your text as a new note.
 

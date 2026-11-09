@@ -363,6 +363,13 @@ fn inline_plain(line: &str) -> String {
                     index += 1;
                 }
             },
+            // An HTML comment, such as the size the editor keeps after a
+            // resized image, isn't text.
+            '<' if chars[index..].starts_with(&['<', '!', '-', '-']) => {
+                index = (index + 4..chars.len().saturating_sub(2))
+                    .find(|at| chars[*at..].starts_with(&['-', '-', '>']))
+                    .map_or(chars.len(), |at| at + 3);
+            }
             '<' if chars[index + 1..]
                 .iter()
                 .take_while(|c| **c != '>')
@@ -485,6 +492,10 @@ mod tests {
             "#hashtag and # heading"
         );
         assert_eq!(plain_text(""), "");
+        assert_eq!(
+            plain_text("See ![](attachment:0123456789abcdef0123456789abcdef)<!-- {\"width\":320} --> and [Plan.pdf](attachment:0123456789abcdef0123456789abcdef) <!-- open"),
+            "See and Plan.pdf"
+        );
     }
 
     #[test]

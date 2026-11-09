@@ -5,14 +5,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { NoteEditor, linkMenuItems, type NoteEditorHandle } from "./NoteEditor";
 import { noteLinkTarget, openNoteLink } from "./noteLinks";
 import type { NoteSyntaxMode } from "./noteSyntaxMode";
+import type { NoteFiles } from "./noteAttachments";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
-function renderEditor(value: string, { mode = "hide", readOnly = false }: { mode?: NoteSyntaxMode; readOnly?: boolean } = {}) {
+function renderEditor(value: string, { mode = "hide", readOnly = false, files }: { mode?: NoteSyntaxMode; readOnly?: boolean; files?: NoteFiles } = {}) {
   const onChange = vi.fn();
   const onLeave = vi.fn();
   const ref = createRef<NoteEditorHandle>();
-  const view = render(<NoteEditor ref={ref} noteKey="note-1" value={value} label="Note text" mode={mode} readOnly={readOnly} onChange={onChange} onLeave={onLeave} />);
+  const view = render(<NoteEditor ref={ref} noteKey="note-1" value={value} label="Note text" mode={mode} readOnly={readOnly} files={files} onChange={onChange} onLeave={onLeave} />);
   return { ...view, ref, onChange, onLeave };
 }
 
@@ -31,6 +32,18 @@ async function typeOver(box: HTMLElement, text: string) {
     node.data = text;
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
+}
+
+const ID = "0123456789abcdef0123456789abcdef";
+const PIXEL = "data:image/png;base64,iVBORw0KGgo=";
+
+function fakeFiles() {
+  return {
+    save: vi.fn(async () => `attachment:${ID}`),
+    image: vi.fn(async (src: string) => src === `attachment:${ID}` ? PIXEL : undefined),
+    info: vi.fn(async () => ({ size: 2048 })),
+    open: vi.fn(),
+  } satisfies NoteFiles;
 }
 
 /** Markdown that must come back unchanged after loading and saving. */
@@ -124,6 +137,26 @@ describe("NoteEditor", () => {
     expect(escape.defaultPrevented).toBe(true);
   });
 
+  describe("attached files", () => {
+    it("shows a file as a pill with its size and keeps its Markdown", async () => {
+      const files = fakeFiles();
+      const markdown = `See [Plan.pdf](attachment:${ID}) and [site](attachment:not-an-id).\n`;
+      const { ref, container, onChange } = await editorFor(markdown, { files });
+      const pill = await waitFor(() => {
+        const found = container.querySelector(".md-file-view");
+        expect(found).not.toBeNull();
+        return found!;
+      });
+      expect(pill).toHaveTextContent("Plan.pdf");
+      await waitFor(() => expect(pill).toHaveTextContent("2 KB"));
+      expect(files.info).toHaveBeenCalledWith(`attachment:${ID}`);
+      // Only a real attachment id is claimed as a file; the rest stays a link.
+      expect([...new Set([...container.querySelectorAll("a")].map((link) => link.getAttribute("href")))]).toEqual(["attachment:not-an-id"]);
+      expect(ref.current!.markdown()).toBe(markdown);
+      expect(onChange).not.toHaveBeenCalled();
+    });
+  });
+
   describe("untrusted note text", () => {
     it("shows raw HTML as text and never creates live elements", async () => {
       const { container, box } = await editorFor("<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>\n\n<iframe src=\"https://example.com\"></iframe>\n");
@@ -137,6 +170,17 @@ describe("NoteEditor", () => {
       const { container } = await editorFor("![photo](https://example.com/a.png)\n\n![](https://x.com/someone/status/123)\n\n![](https://www.youtube.com/watch?v=abc)\n");
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
       expect(container.querySelectorAll("img, iframe")).toHaveLength(0);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+
+    it("shows only attached images, never remote ones, even with files to show", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const files = fakeFiles();
+      const { container } = await editorFor(`![photo](https://example.com/a.png)\n\n![](attachment:${ID})\n`, { files });
+      await waitFor(() => expect(container.querySelectorAll("img")).toHaveLength(1));
+      expect(container.querySelector("img")!.getAttribute("src")).toBe(PIXEL);
+      expect(files.image).toHaveBeenCalledWith(`attachment:${ID}`);
       expect(fetchSpy).not.toHaveBeenCalled();
       fetchSpy.mockRestore();
     });

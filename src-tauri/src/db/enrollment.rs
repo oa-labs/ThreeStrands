@@ -343,7 +343,9 @@ impl Database {
     /// the replication log, roster, enrollment state, and labels go, while
     /// materialized data (tasks, snippets, accounts, preferences), the
     /// configured transports, and the beta toggle stay. The self row goes
-    /// too, so the next identity load provisions a fresh device id.
+    /// too, so the next identity load provisions a fresh device id. Note
+    /// attachments this device holds are kept and sealed again for the next
+    /// group; ones it never downloaded can't be read any more and go.
     ///
     /// Returns the highest epoch this device may hold a key for, so the
     /// caller can remove `0..=` that range from the keychain afterwards —
@@ -374,7 +376,11 @@ impl Database {
              DELETE FROM sync_remote_states;
              DELETE FROM sync_local_state;
              DELETE FROM sync_retired_objects;
-             DELETE FROM sync_head_publications;",
+             DELETE FROM sync_head_publications;
+             DELETE FROM note_attachment_objects;
+             DELETE FROM note_attachments WHERE id NOT IN (SELECT id FROM note_attachment_data);
+             UPDATE note_attachments SET sealed_by=NULL, index_cid=NULL,
+                 fetch_attempts=0, fetch_after=NULL, fetch_error=NULL;",
         )?;
         tx.execute(
             "UPDATE sync_spaces SET active_epoch=0, lamport=0, recovery_public_key=NULL, recovery_x25519_public=NULL, last_error=NULL WHERE id=?1",

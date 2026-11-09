@@ -152,6 +152,26 @@ describe("Notes workspace", () => {
     expect(screen.getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true");
   });
 
+  it("adds pasted files to the open note, today's included, and says why one couldn't be added", async () => {
+    const note = await mailClient.createNote(uniqueTitle("With files"), "");
+    const add = vi.spyOn(mailClient, "addNoteAttachment").mockResolvedValue({ id: "0123456789abcdef0123456789abcdef", noteId: note.id, name: "a.png", mimeType: "image/png", size: 3, image: true, available: true });
+    render(<NotesWorkspace />);
+    await screen.findByRole("textbox", { name: "Note text" });
+    const file = new File(["x"], "a.png", { type: "image/png" });
+    // Today's note takes a file before it is first saved.
+    expect(await lastEditorProps.current!.files!.save(file)).toBe("attachment:0123456789abcdef0123456789abcdef");
+    expect(add).toHaveBeenLastCalledWith(`daily:${todayTarget().date}`, file);
+
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(note.title) }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+    await lastEditorProps.current!.files!.save(file);
+    expect(add).toHaveBeenLastCalledWith(note.id, file);
+
+    add.mockRejectedValue(new Error("Adding files to notes needs the ThreeStrands app"));
+    expect(await lastEditorProps.current!.files!.save(file)).toBeUndefined();
+    expect(await screen.findByRole("alert")).toHaveTextContent("needs the ThreeStrands app");
+  });
+
   it("asks before replacing a version saved on another device", async () => {
     const note = await mailClient.createNote(uniqueTitle("Shared"), "v1");
     writeLastNoteTarget({ kind: "note", id: note.id });

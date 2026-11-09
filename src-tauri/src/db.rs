@@ -38,6 +38,7 @@ mod mail_sync;
 mod maintenance;
 mod messages;
 mod mutations;
+pub(crate) mod note_attachments;
 mod notes;
 mod outbox;
 mod recovery;

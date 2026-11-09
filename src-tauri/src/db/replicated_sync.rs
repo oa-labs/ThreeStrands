@@ -157,6 +157,34 @@ impl Database {
         })
     }
 
+    /// The public key this database holds for `device_id_hex`, revoked or
+    /// not. Note attachments use it: a file's objects are pinned by CID in a
+    /// snapshot an active device vouched for, so a file sealed before its
+    /// device was removed stays readable.
+    pub(crate) fn device_verifying_key(
+        &self,
+        device_id_hex: &str,
+    ) -> DbResult<Option<VerifyingKey>> {
+        let bytes: Option<Vec<u8>> = self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT public_key FROM sync_devices WHERE device_id=?1 AND public_key IS NOT NULL",
+                    params![device_id_hex],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })?;
+        bytes
+            .map(|bytes| {
+                let key: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| DatabaseError::corrupt("Stored device public key is invalid"))?;
+                VerifyingKey::from_bytes(&key)
+                    .map_err(|_| DatabaseError::corrupt("Stored device public key is invalid"))
+            })
+            .transpose()
+    }
+
     /// Every device this local database currently trusts a public key for
     /// and considers active (not revoked).
     pub(crate) fn known_device_roster(&self) -> DbResult<Vec<(EnvelopeDeviceId, VerifyingKey)>> {
