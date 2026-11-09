@@ -1,4 +1,5 @@
 import { nextUndoOrder } from "./undoOrder";
+import { runBeforeExitTasks } from "./beforeExit";
 import { type SignatureState } from "./signatures";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -181,7 +182,7 @@ export function useCorrespondence(
     const listener = listen("compose-before-exit", async () => {
       if (quitting.current) return;
       quitting.current = true; setClosing(true);
-      try { await editor.current?.prepareExit(); await invoke("finish_exit"); }
+      try { await editor.current?.prepareExit(); await runBeforeExitTasks(); await invoke("finish_exit"); }
       catch (e) { setError(`Could not close safely: ${String(e)}`); quitting.current = false; setClosing(false); }
     });
     return () => { void listener.then((unlisten) => unlisten()); };

@@ -11,7 +11,7 @@ test("delegates from mail, preserves a draft across views, answers, and revises 
   // On narrow windows the conversation has a tab; this run uses both layouts.
   await page.getByRole("textbox", { name: "Your answer" }).fill("Prioritize possible customers");
   await page.getByRole("button", { name: "Inbox (1)", exact: true }).click();
-  await page.getByRole("button", { name: "Agents (6)", exact: true }).click();
+  await page.getByRole("button", { name: "Agents (7)", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Your answer" })).toHaveValue("Prioritize possible customers");
   await page.getByRole("button", { name: "Answer question", exact: true }).click();
   await expect(page.getByText("Demonstration report · Not researched")).toBeVisible();

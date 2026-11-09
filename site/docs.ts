@@ -16,7 +16,7 @@ const docsRoot = path.join(siteRoot, "docs");
  */
 export const DOC_GROUPS = [
   { title: "Start", slugs: ["index", "getting-started", "first-steps"] },
-  { title: "Daily work", slugs: ["today", "triage", "compose", "search", "calendar", "tasks-and-goals", "contacts", "files"] },
+  { title: "Daily work", slugs: ["today", "triage", "compose", "search", "calendar", "tasks-and-goals", "notes", "contacts", "files"] },
   { title: "Setup and data", slugs: ["mail-accounts", "proton-bridge", "appearance", "privacy", "settings-and-sync", "sync", "ai"] },
   { title: "Help and reference", slugs: ["troubleshooting", "keyboard-shortcuts", "compatibility", "get-help"] },
 ] as const;
@@ -145,6 +145,7 @@ const RELATED: Partial<Record<DocSlug, DocSlug[]>> = {
   search: ["files", "privacy", "troubleshooting"],
   calendar: ["today", "tasks-and-goals", "troubleshooting"],
   "tasks-and-goals": ["calendar", "today", "sync"],
+  notes: ["today", "sync", "keyboard-shortcuts"],
   contacts: ["compose", "today", "settings-and-sync"],
   files: ["search", "privacy", "troubleshooting"],
   "mail-accounts": ["getting-started", "proton-bridge", "troubleshooting"],

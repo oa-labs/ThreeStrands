@@ -371,7 +371,7 @@ describe("split inbox search shortcuts", () => {
     fireEvent.click(splitTab);
     await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
 
-    for (const view of ["Calendar (2)", "Tasks (3)", "Contacts (4)"]) {
+    for (const view of ["Calendar (2)", "Tasks (3)", "Contacts (5)"]) {
       fireEvent.click(screen.getByRole("button", { name: view }));
       expect(screen.getByRole("button", { name: view })).toHaveClass("active");
       fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
@@ -391,7 +391,7 @@ describe("split inbox search shortcuts", () => {
       expect.objectContaining({ query: "Welcome" }), undefined,
     ));
 
-    fireEvent.click(screen.getByRole("button", { name: "Contacts (4)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Contacts (5)" }));
     expect(screen.queryByRole("textbox", { name: "Search Mail" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
     const restoredSearch = screen.getByRole("textbox", { name: "Search Mail" });

@@ -7,7 +7,7 @@ reviewed: 0.194.0
 
 ## The Address Book {#the-address-book}
 
-Press <kbd>4</kbd> for Contacts. ThreeStrands builds a record of who you correspond with from your mail. Save someone as a contact to add details, and press <kbd>Tab</kbd> to switch between **All Contacts**, **Keep in Touch**, and **Groups**.
+Press <kbd>5</kbd> for Contacts. ThreeStrands builds a record of who you correspond with from your mail. Save someone as a contact to add details, and press <kbd>Tab</kbd> to switch between **All Contacts**, **Keep in Touch**, and **Groups**.
 
 <ts-shot scene="contacts" alt="A contact profile with addresses, notes, correspondence history, and shared files."></ts-shot>
 

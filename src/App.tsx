@@ -20,6 +20,7 @@ import {
   MailCheck,
   MailOpen,
   Moon,
+  NotebookPen,
   PanelRightClose,
   PanelRightOpen,
   Pencil,
@@ -158,6 +159,7 @@ const CalendarWeekView = lazy(() => import("./CalendarWeekView").then((m) => ({ 
 const TodayWorkspace = lazy(() => import("./TodayWorkspace").then((m) => ({ default: m.TodayWorkspace })));
 const AgentsWorkspace = lazy(() => import("./AgentsWorkspace").then(m => ({ default: m.AgentsWorkspace })));
 const FilesWorkspace = lazy(() => import("./FilesWorkspace").then((m) => ({ default: m.FilesWorkspace })));
+const NotesWorkspace = lazy(() => import("./NotesWorkspace").then((m) => ({ default: m.NotesWorkspace })));
 const ContactsWorkspace = lazy(() => import("./ContactsWorkspace").then((m) => ({ default: m.ContactsWorkspace })));
 
 // An Outbox message is shown alone and expanded: it has no conversation to
@@ -320,7 +322,7 @@ export function App() {
     keepInTouchDueCount, refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openContactsView, contactCardActions,
     scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen,
-    contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView,
+    contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView, notesRequest,
   } = workspaces;
   const agents = useAgentTasks();
   const openAgent = (id: string) => { agents.select(id); setRightWorkspace("agents"); };
@@ -794,7 +796,7 @@ export function App() {
 
   return (
     <AvailabilityProfileChoiceContext.Provider value={profileChoice(threadProfileKey, "conversation", visibleDetail?.thread.accountId)}>
-    <main className={`app-shell${rightWorkspace === "agents" ? " agents-open" : rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "agents" ? " agents-open" : rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "notes" ? " notes-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           showAllAccounts={splitInboxCatalog.views.some(isSavedSearchView)}
@@ -836,18 +838,19 @@ export function App() {
               <SquareCheckBig size={ICON_SIZE.lg} />
             </button>
           </HoverTooltip>
-          <HoverTooltip label={keepInTouchDueCount ? `Contacts · ${keepInTouchDueCount} to reconnect with` : "Contacts"} shortcut="4">
+          <HoverTooltip label="Notes" shortcut="4"><button className={`nav-button ${rightWorkspace === "notes" ? "active" : ""}`} aria-label="Notes (4)" onClick={() => executeById("view.notes")}><NotebookPen size={ICON_SIZE.lg} /></button></HoverTooltip>
+          <HoverTooltip label={keepInTouchDueCount ? `Contacts · ${keepInTouchDueCount} to reconnect with` : "Contacts"} shortcut="5">
             <button
               className={`nav-button ${rightWorkspace === "contacts" ? "active" : ""}`}
-              aria-label={keepInTouchDueCount ? `Contacts (4), ${keepInTouchDueCount} due to reconnect` : "Contacts (4)"}
+              aria-label={keepInTouchDueCount ? `Contacts (5), ${keepInTouchDueCount} due to reconnect` : "Contacts (5)"}
               onClick={openContactsView}
             >
               <ContactRound size={ICON_SIZE.lg} />
               {keepInTouchDueCount ? <span className="nav-button-badge" aria-hidden="true">{keepInTouchDueCount > 99 ? "99+" : keepInTouchDueCount}</span> : null}
             </button>
           </HoverTooltip>
-          <HoverTooltip label="Files" shortcut="5"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (5)" onClick={() => executeById("view.files")}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
-          <HoverTooltip label="Agents" shortcut="6"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (6)" onClick={() => executeById("view.agents")}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
+          <HoverTooltip label="Files" shortcut="6"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (6)" onClick={() => executeById("view.files")}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
+          <HoverTooltip label="Agents" shortcut="7"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (7)" onClick={() => executeById("view.agents")}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
           <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail (⌘/Ctrl+R)"}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
@@ -1683,6 +1686,7 @@ export function App() {
       /></Suspense></ErrorBoundary> : null}
       {agents.activity ? <aside className="agent-activity" role="status"><button className="btn-link agent-activity-action" onClick={() => { const id = agents.activity!.id; agents.patchView(id, { version: null, tab: agents.activity!.label.startsWith("Answer needed") ? "conversation" : "result" }); openAgent(id); }}>{agents.activity.label}</button><button className="btn-icon" aria-label="Dismiss agent notification" onClick={agents.dismissActivity}><X size={ICON_SIZE.sm} /></button></aside> : null}
       {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Agents…</p>}><AgentsWorkspace controller={agents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAgentPersonalTask} onOpenResearchSettings={() => openSettingsAt("research")} settingsOpen={settingsOpen} /></Suspense></ErrorBoundary> : null}
+      {rightWorkspace === "notes" ? <ErrorBoundary area="Notes" variant="side"><Suspense fallback={null}><NotesWorkspace request={notesRequest} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "files" ? <ErrorBoundary area="Files" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "contacts" ? <ErrorBoundary area="Contacts" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} onOpenAiSettings={() => { setRightWorkspace(null); openSettingsAt("ai"); }} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "tasks" ? (

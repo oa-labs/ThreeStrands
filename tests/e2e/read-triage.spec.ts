@@ -1029,7 +1029,7 @@ test("calendar and contacts creation shortcuts stay in their current workspace",
   await expect(event).toBeVisible();
   await event.getByRole("textbox", { name: "Title" }).fill("Keyboard meeting");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Contacts (4)" }).click();
+  await page.getByRole("button", { name: "Contacts (5)" }).click();
   await expect(page.getByRole("button", { name: "New Contact", exact: true })).toBeVisible();
   await page.keyboard.press("Shift+n");
   const name = page.getByRole("textbox", { name: "Name", exact: true });
@@ -1159,4 +1159,14 @@ test("in a narrow window the context panel is a drawer over a full-width reader"
   await page.setViewportSize({ width: 1440, height: 800 });
   await expect(context).toBeVisible();
   await expect(show).toHaveCount(0);
+});
+
+test("the sidebar's views and actions fit a short window without lengthening the page", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 600 });
+  await page.goto("/");
+  const sidebar = page.getByRole("navigation", { name: "Mailboxes" });
+  await expect(sidebar.getByRole("button", { name: "Agents (7)" })).toBeInViewport();
+  const sizes = await sidebar.evaluate((element) => ({ rail: element.scrollHeight, page: document.documentElement.scrollHeight }));
+  expect(sizes.rail).toBeLessThanOrEqual(600);
+  expect(sizes.page).toBeLessThanOrEqual(600);
 });

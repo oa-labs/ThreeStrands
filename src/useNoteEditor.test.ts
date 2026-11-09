@@ -1,0 +1,185 @@
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mailClient } from "./data/client";
+import { readNoteDraft, writeNoteDraft, type NoteTarget } from "./noteDrafts";
+import { runBeforeExitTasks } from "./beforeExit";
+import { NOTE_SAVE_DELAY_MS, useNoteEditor } from "./useNoteEditor";
+
+let counter = 0;
+const uniqueTitle = (label: string) => `${label} ${++counter}`;
+const settle = () => act(async () => { await vi.advanceTimersByTimeAsync(0); });
+const wait = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+
+function open(target: NoteTarget | null, options?: Parameters<typeof useNoteEditor>[1]) {
+  return renderHook(({ current }) => useNoteEditor(current, options), { initialProps: { current: target } });
+}
+
+describe("useNoteEditor", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); localStorage.clear(); });
+
+  it("opens a note without writing anything", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Read only"), "Body");
+    const update = vi.spyOn(mailClient, "updateNote");
+    const daily = vi.spyOn(mailClient, "saveDailyNote");
+    const { result, unmount } = open({ kind: "note", id: note.id });
+    await settle();
+    expect(result.current.text).toEqual({ title: note.title, body: "Body" });
+    await wait(NOTE_SAVE_DELAY_MS * 3);
+    await act(async () => { await result.current.flush(); });
+    unmount();
+    await settle();
+    expect(update).not.toHaveBeenCalled();
+    expect(daily).not.toHaveBeenCalled();
+  });
+
+  it("saves once typing pauses, keeping a draft until the save lands", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Typing"), "");
+    const onSaved = vi.fn();
+    const update = vi.spyOn(mailClient, "updateNote");
+    const { result } = open({ kind: "note", id: note.id }, { onSaved });
+    await settle();
+    act(() => result.current.edit({ body: "a" }));
+    await wait(NOTE_SAVE_DELAY_MS - 1);
+    act(() => result.current.edit({ body: "ab" }));
+    await wait(NOTE_SAVE_DELAY_MS - 1);
+    expect(update).not.toHaveBeenCalled();
+    expect(result.current.dirty).toBe(true);
+    expect(readNoteDraft(note.id)).toEqual({ title: note.title, body: "ab", base: note.updatedAt });
+    await wait(1);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith(note.id, note.title, "ab", note.updatedAt);
+    expect(result.current.dirty).toBe(false);
+    expect(result.current.saveState).toEqual({ kind: "idle" });
+    expect(readNoteDraft(note.id)).toBeNull();
+    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ body: "ab" }));
+    expect((await mailClient.getNote(note.id))?.body).toBe("ab");
+  });
+
+  it("saves right away when another note opens, the window hides, the app quits, or the editor closes", async () => {
+    const first = await mailClient.createNote(uniqueTitle("First"), "");
+    const second = await mailClient.createNote(uniqueTitle("Second"), "");
+    const { result, rerender, unmount } = open({ kind: "note", id: first.id });
+    await settle();
+    act(() => result.current.edit({ body: "switching" }));
+    rerender({ current: { kind: "note", id: second.id } });
+    await settle();
+    expect((await mailClient.getNote(first.id))?.body).toBe("switching");
+    expect(result.current.text.body).toBe("");
+
+    act(() => result.current.edit({ body: "hidden" }));
+    act(() => { window.dispatchEvent(new Event("pagehide")); });
+    await settle();
+    expect((await mailClient.getNote(second.id))?.body).toBe("hidden");
+
+    act(() => result.current.edit({ body: "quitting" }));
+    await act(async () => { await runBeforeExitTasks(); });
+    expect((await mailClient.getNote(second.id))?.body).toBe("quitting");
+
+    act(() => result.current.edit({ body: "closing" }));
+    unmount();
+    await settle();
+    expect((await mailClient.getNote(second.id))?.body).toBe("closing");
+  });
+
+  it("doesn't create a day's note until something is typed", async () => {
+    const date = "2031-01-02";
+    const { result } = open({ kind: "daily", date });
+    await settle();
+    act(() => result.current.edit({ body: "x" }));
+    act(() => result.current.edit({ body: "" }));
+    await wait(NOTE_SAVE_DELAY_MS);
+    expect(await mailClient.getDailyNote(date)).toBeNull();
+    act(() => result.current.edit({ body: "Standup" }));
+    await wait(NOTE_SAVE_DELAY_MS);
+    expect(result.current.note).toMatchObject({ id: `daily:${date}`, body: "Standup" });
+    act(() => result.current.edit({ body: "Standup notes" }));
+    await wait(NOTE_SAVE_DELAY_MS);
+    expect((await mailClient.getDailyNote(date))?.body).toBe("Standup notes");
+  });
+
+  it("stops and asks when the note changed elsewhere, then keeps either version", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Shared"), "v1");
+    const { result } = open({ kind: "note", id: note.id });
+    await settle();
+    act(() => result.current.edit({ body: "mine" }));
+    const theirs = await mailClient.updateNote(note.id, note.title, "theirs", note.updatedAt);
+    await act(async () => { await result.current.flush(); });
+    expect(result.current.saveState).toEqual({ kind: "stale", current: theirs.note });
+    expect(result.current.text.body).toBe("mine");
+    expect((await mailClient.getNote(note.id))?.body).toBe("theirs");
+    // Saving waits for the choice, even after more typing.
+    act(() => result.current.edit({ body: "mine, more" }));
+    await wait(NOTE_SAVE_DELAY_MS * 2);
+    expect((await mailClient.getNote(note.id))?.body).toBe("theirs");
+
+    await act(async () => { await result.current.keepMine(); });
+    expect((await mailClient.getNote(note.id))?.body).toBe("mine, more");
+    expect(result.current.saveState).toEqual({ kind: "idle" });
+
+    act(() => result.current.edit({ body: "mine again" }));
+    const latest = (await mailClient.getNote(note.id))!;
+    await mailClient.updateNote(note.id, note.title, "theirs again", latest.updatedAt);
+    await act(async () => { await result.current.flush(); });
+    act(() => result.current.takeTheirs());
+    expect(result.current.text.body).toBe("theirs again");
+    expect(result.current.dirty).toBe(false);
+    expect(readNoteDraft(note.id)).toBeNull();
+  });
+
+  it("restores unsaved text after a restart, asking first if the note changed since", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Restart"), "saved");
+    writeNoteDraft(note.id, { title: note.title, body: "typed before quitting", base: note.updatedAt });
+    const restored = open({ kind: "note", id: note.id });
+    await settle();
+    expect(restored.result.current.text.body).toBe("typed before quitting");
+    expect(restored.result.current.dirty).toBe(true);
+    await wait(NOTE_SAVE_DELAY_MS);
+    expect((await mailClient.getNote(note.id))?.body).toBe("typed before quitting");
+    restored.unmount();
+
+    writeNoteDraft(note.id, { title: note.title, body: "from an old version", base: note.updatedAt });
+    const asked = open({ kind: "note", id: note.id });
+    await settle();
+    expect(asked.result.current.text.body).toBe("from an old version");
+    expect(asked.result.current.saveState).toMatchObject({ kind: "stale", current: { body: "typed before quitting" } });
+  });
+
+  it("keeps text typed into a note deleted elsewhere as a new note", async () => {
+    writeNoteDraft("gone", { title: uniqueTitle("Gone"), body: "rescued", base: "v1" });
+    vi.spyOn(mailClient, "getNote").mockResolvedValue(null);
+    const onReplaced = vi.fn();
+    const { result } = open({ kind: "note", id: "gone" }, { onReplaced });
+    await settle();
+    expect(result.current.saveState).toEqual({ kind: "stale", current: null });
+    await act(async () => { await result.current.keepMine(); });
+    expect(onReplaced).toHaveBeenCalledWith(expect.objectContaining({ body: "rescued" }));
+    expect(readNoteDraft("gone")).toBeNull();
+  });
+
+  it("shows a refused save and keeps the text", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Refused"), "");
+    vi.spyOn(mailClient, "updateNote").mockRejectedValueOnce("This note is too long to sync.");
+    const { result } = open({ kind: "note", id: note.id });
+    await settle();
+    act(() => result.current.edit({ body: "long" }));
+    await wait(NOTE_SAVE_DELAY_MS);
+    expect(result.current.saveState).toEqual({ kind: "error", message: "This note is too long to sync." });
+    expect(result.current.dirty).toBe(true);
+    expect(readNoteDraft(note.id)?.body).toBe("long");
+  });
+
+  it("picks up a synced change only while nothing is waiting to save", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Synced"), "v1");
+    const { result } = open({ kind: "note", id: note.id });
+    await settle();
+    await mailClient.updateNote(note.id, note.title, "v2", note.updatedAt);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.text.body).toBe("v2");
+    act(() => result.current.edit({ body: "typing" }));
+    const latest = (await mailClient.getNote(note.id))!;
+    await mailClient.updateNote(note.id, note.title, "v3", latest.updatedAt);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.text.body).toBe("typing");
+  });
+});

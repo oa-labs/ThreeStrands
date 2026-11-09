@@ -7,7 +7,7 @@ reviewed: 0.179.0
 
 ## Open Files {#open-files}
 
-Click **Files** in the sidebar or press <kbd>5</kbd>. Files lists attachments from mail on this device, including archived conversations. It is not a separate cloud drive or a complete index of every file on your mail server.
+Click **Files** in the sidebar or press <kbd>6</kbd>. Files lists attachments from mail on this device, including archived conversations. It is not a separate cloud drive or a complete index of every file on your mail server.
 
 <ts-shot scene="files" alt="Files lists attachments with filters, a preview, and a link to the source conversation."></ts-shot>
 

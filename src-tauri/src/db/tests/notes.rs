@@ -479,3 +479,82 @@ fn a_synced_note_must_match_its_entity_and_pass_validation() {
     // Projection writes nothing back to the replica.
     assert!(replica_fields(&db, "n-1").is_empty());
 }
+
+#[test]
+fn a_save_based_on_an_older_version_writes_nothing_and_returns_the_current_note() {
+    let (a, b) = (synced(), synced());
+    let note = a.create_note("Shared", "v1").unwrap();
+    sync_into(&b, &a);
+    let loaded = b.get_note(&note.id).unwrap().unwrap();
+
+    let saved = b
+        .save_note(&note.id, "Shared", "v2 from B", &loaded.updated_at)
+        .unwrap();
+    assert!(saved.saved);
+    let current = saved.note.unwrap();
+    assert_eq!(current.body, "v2 from B");
+
+    // A's edit, made after it saw B's, arrives while B keeps typing from the
+    // version it loaded.
+    sync_into(&a, &b);
+    a.update_note(&note.id, "Shared", "v3 from A").unwrap();
+    sync_into(&b, &a);
+    let stale = b
+        .save_note(&note.id, "Shared", "v4 from B", &current.updated_at)
+        .unwrap();
+    assert!(!stale.saved);
+    assert_eq!(stale.note.as_ref().unwrap().body, "v3 from A");
+    assert_eq!(b.get_note(&note.id).unwrap().unwrap().body, "v3 from A");
+
+    // Saving again from the version now shown is the user's choice to replace it.
+    let kept = b
+        .save_note(
+            &note.id,
+            "Shared",
+            "v4 from B",
+            &stale.note.unwrap().updated_at,
+        )
+        .unwrap();
+    assert!(kept.saved);
+
+    a.trash_note(&note.id).unwrap();
+    a.delete_note(&note.id).unwrap();
+    sync_into(&b, &a);
+    let deleted = b
+        .save_note(&note.id, "Shared", "v5", &kept.note.unwrap().updated_at)
+        .unwrap();
+    assert_eq!(
+        deleted,
+        NoteSave {
+            saved: false,
+            note: None
+        }
+    );
+}
+
+#[test]
+fn a_daily_save_checks_whether_the_day_gained_a_note_meanwhile() {
+    let (a, b) = (synced(), synced());
+    let empty = b.save_daily_note_edit(DAY, "", None).unwrap();
+    assert_eq!(
+        empty,
+        NoteSave {
+            saved: true,
+            note: None
+        }
+    );
+
+    a.save_daily_note_edit(DAY, "From A", None).unwrap();
+    sync_into(&b, &a);
+    let stale = b.save_daily_note_edit(DAY, "From B", None).unwrap();
+    assert!(!stale.saved);
+    let current = stale.note.unwrap();
+    assert_eq!(current.body, "From A");
+
+    let saved = b
+        .save_daily_note_edit(DAY, "From A, then B", Some(&current.updated_at))
+        .unwrap();
+    assert!(saved.saved);
+    assert_eq!(saved.note.unwrap().body, "From A, then B");
+    assert!(b.save_daily_note_edit("2026-02-30", "x", None).is_err());
+}

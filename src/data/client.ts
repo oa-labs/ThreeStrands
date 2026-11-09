@@ -56,6 +56,10 @@ import type {
   ScheduleResult,
   ScheduleEvent,
   Snippet,
+  Note,
+  NoteSave,
+  NoteSearchHit,
+  NoteSummary,
   SplitInbox,
   SplitInboxMatchKind,
   SummaryResult,
@@ -399,6 +403,16 @@ export interface MailClient extends CorrespondenceClient {
   deleteSignature(id: string): Promise<void>;
   saveSignatureDefaults(defaults: SignatureDefaults): Promise<void>;
   deleteSignatureDefaults(account: string, address: string): Promise<void>;
+  listRecentNotes(limit: number): Promise<NoteSummary[]>;
+  getNote(id: string): Promise<Note | null>;
+  getDailyNote(date: string): Promise<Note | null>;
+  createNote(title: string, body: string): Promise<Note>;
+  /** Saves only if the note is still at `expectedUpdatedAt`. */
+  updateNote(id: string, title: string, body: string, expectedUpdatedAt: string): Promise<NoteSave>;
+  /** Saves only if the day is still as the edit found it: its note's `updatedAt`, or null for no note. */
+  saveDailyNote(date: string, body: string, expectedUpdatedAt: string | null): Promise<NoteSave>;
+  recordNoteVisit(id: string): Promise<void>;
+  searchNotes(query: string, limit: number): Promise<NoteSearchHit[]>;
   listSnippets(): Promise<Snippet[]>;
   createSnippet(name: string, body: string): Promise<Snippet>;
   updateSnippet(id: string, name: string, body: string): Promise<Snippet>;
@@ -606,6 +620,14 @@ const tauriClient: MailClient = {
   deleteSignature: (id) => complete("delete_signature", { id }),
   saveSignatureDefaults: (defaults) => complete("save_signature_defaults", { defaults }),
   deleteSignatureDefaults: (account, address) => complete("delete_signature_defaults", { account, address }),
+  listRecentNotes: (limit) => read("list_recent_notes", { limit }),
+  getNote: (id) => read("get_note", { id }),
+  getDailyNote: (date) => read("get_daily_note", { date }),
+  createNote: (title, body) => complete("create_note", { request: { title, body } }),
+  updateNote: (id, title, body, expectedUpdatedAt) => complete("update_note", { request: { id, title, body, expectedUpdatedAt } }),
+  saveDailyNote: (date, body, expectedUpdatedAt) => complete("save_daily_note", { date, body, expectedUpdatedAt }),
+  recordNoteVisit: (id) => complete("record_note_visit", { id }),
+  searchNotes: (query, limit) => read("search_notes", { query, limit }),
   listSnippets: () => read("list_snippets"),
   createSnippet: (name, body) => complete("create_snippet", { request: { name, body } }),
   updateSnippet: (id, name, body) => complete("update_snippet", { request: { id, name, body } }),

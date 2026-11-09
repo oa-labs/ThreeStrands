@@ -4,7 +4,8 @@
 use tauri::State;
 
 use crate::models::{
-    CreateNoteRequest, Note, NoteLinks, NoteSearchHit, NoteSummary, NotesStorage, UpdateNoteRequest,
+    CreateNoteRequest, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NotesStorage,
+    UpdateNoteRequest,
 };
 use crate::{kick_replicated_sync, run_database_task, AppResult, AppState};
 
@@ -55,23 +56,34 @@ pub(crate) fn create_note(
 pub(crate) fn update_note(
     request: UpdateNoteRequest,
     state: State<'_, AppState>,
-) -> AppResult<Note> {
-    let note = state
-        .database
-        .update_note(&request.id, &request.title, &request.body)?;
-    kick_replicated_sync(&state);
-    Ok(note)
+) -> AppResult<NoteSave> {
+    let outcome = state.database.save_note(
+        &request.id,
+        &request.title,
+        &request.body,
+        &request.expected_updated_at,
+    )?;
+    if outcome.saved {
+        kick_replicated_sync(&state);
+    }
+    Ok(outcome)
 }
 
 #[tauri::command(async)]
 pub(crate) fn save_daily_note(
     date: String,
     body: String,
+    expected_updated_at: Option<String>,
     state: State<'_, AppState>,
-) -> AppResult<Option<Note>> {
-    let note = state.database.save_daily_note(&date, &body)?;
-    kick_replicated_sync(&state);
-    Ok(note)
+) -> AppResult<NoteSave> {
+    let outcome =
+        state
+            .database
+            .save_daily_note_edit(&date, &body, expected_updated_at.as_deref())?;
+    if outcome.saved {
+        kick_replicated_sync(&state);
+    }
+    Ok(outcome)
 }
 
 #[tauri::command(async)]

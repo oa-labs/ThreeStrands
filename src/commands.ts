@@ -6,7 +6,7 @@ import { adjacentTaskStatus, isActiveTaskStatus } from "./taskViews";
 
 export type MailboxKind = "inbox" | "allMail" | "sent" | "trash" | "drafts" | "outbox" | "split" | "snoozed";
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
-export type FocusedPane = "mail" | "tasks" | "contacts" | "files" | "calendar" | "today" | "agents";
+export type FocusedPane = "mail" | "tasks" | "notes" | "contacts" | "files" | "calendar" | "today" | "agents";
 
 export type CommandContext = {
   interactionScope: InteractionScope;
@@ -122,6 +122,9 @@ export type CommandContext = {
   openMailView(): void;
   openTasksView(): void;
   openFilesView?(): void;
+  openNotesView?(): void;
+  /** Opens Notes on today's daily note. */
+  openTodaysNote?(): void;
   openAgentsView?(): void;
   delegateSelected?(): void;
   openTodayView?(): void;
@@ -209,6 +212,7 @@ export const commands: Command[] = [
   workspaceCommand("contacts.newGroup", "New Contact Group", ["Shift+g"], "contacts"),
   workspaceCommand("contacts.save", "Save Contact", ["Mod+Enter"], "contacts", true),
   workspaceCommand("agents.new", "New Delegated Task", ["Shift+n"], "agents"),
+  workspaceCommand("notes.new", "New Note", ["Shift+n"], "notes"),
   workspaceCommand("files.open", "Open Selected File", ["o"], "files"),
   workspaceCommand("files.save", "Save Selected File As…", ["Mod+Shift+s"], "files"),
   workspaceCommand("files.star", "Toggle File Star", ["s"], "files"),
@@ -568,7 +572,7 @@ export const commands: Command[] = [
   },
   {
     id: "search.focus",
-    title: "Search Current View", keywords: ["mail", "contacts", "files"],
+    title: "Search Current View", keywords: ["mail", "notes", "contacts", "files"],
     keys: ["/"],
     group: "Application",
     enabled: () => true,
@@ -650,20 +654,28 @@ export const commands: Command[] = [
     run: (context) => complete(context.openTasksView),
   },
   {
+    id: "view.notes", title: "Go to Notes View", keys: ["4"], group: "Navigation",
+    enabled: (c) => !c.composerActive, run: (c) => complete(() => c.openNotesView?.()),
+  },
+  {
+    id: "notes.today", title: "Open Today's Note", keywords: ["daily", "journal", "notes"], keys: [], group: "Navigation",
+    enabled: (c) => !c.composerActive && Boolean(c.openTodaysNote), run: (c) => complete(() => c.openTodaysNote?.()),
+  },
+  {
     id: "view.contacts",
     title: "Go to Contacts Address Book",
-    keys: ["4"],
+    keys: ["5"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.openContactsView),
   },
   {
-    id: "view.files", title: "Go to Files View", keys: ["5"], group: "Navigation",
+    id: "view.files", title: "Go to Files View", keys: ["6"], group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(() => context.openFilesView?.()),
   },
   {
-    id: "view.agents", title: "Go to Agents View", keys: ["6"], group: "Navigation",
+    id: "view.agents", title: "Go to Agents View", keys: ["7"], group: "Navigation",
     enabled: (c) => !c.composerActive, run: (c) => complete(() => c.openAgentsView?.()),
   },
   {

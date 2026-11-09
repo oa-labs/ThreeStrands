@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-test("5 opens Files, stars an untouched attachment and returns from its source email", async ({ page }) => {
+test("6 opens Files, stars an untouched attachment and returns from its source email", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("region", { name: "Inbox" })).toBeVisible();
-  await page.keyboard.press("5");
+  await page.keyboard.press("6");
   const files = page.getByRole("region", { name: "Files", exact: true });
   await expect(files).toBeVisible();
   const attachments = files.getByRole("list", { name: "Mail attachments" });
@@ -29,7 +29,7 @@ test("5 opens Files, stars an untouched attachment and returns from its source e
 test("Files keeps secondary filters optional and shows explicit empty dates", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("region", { name: "Inbox" })).toBeVisible();
-  await page.keyboard.press("5");
+  await page.keyboard.press("6");
   const files=page.getByRole("region", { name: "Files", exact: true });
   await expect(files.getByRole("listitem").first()).toBeVisible();
   await expect(files.getByText("Download required", { exact: true })).toHaveCount(0);
@@ -99,7 +99,7 @@ test("reader attachment chips share a right edge per column and show each target
 
 test("Files searches locally, stars by keyboard, and saves the selected attachment", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Files (5)" }).click();
+  await page.getByRole("button", { name: "Files (6)" }).click();
   const files = page.getByRole("region", { name: "Files", exact: true });
   await expect(files.getByRole("listitem").first()).toBeVisible();
   await page.keyboard.press("/");

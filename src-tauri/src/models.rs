@@ -1330,6 +1330,17 @@ pub struct Note {
     pub trashed_at: Option<String>,
 }
 
+/// The outcome of saving an edit. `saved` is false when the note changed
+/// (or was deleted) after the edit started; `note` is then the note as it
+/// is now, and nothing was written. For a day without a note, saving an
+/// empty body saves nothing and `note` is `None`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteSave {
+    pub saved: bool,
+    pub note: Option<Note>,
+}
+
 /// A note as the note list shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1395,6 +1406,8 @@ pub struct UpdateNoteRequest {
     pub id: String,
     pub title: String,
     pub body: String,
+    /// The `updatedAt` of the version the edit started from.
+    pub expected_updated_at: String,
 }
 
 #[derive(Debug, Serialize)]

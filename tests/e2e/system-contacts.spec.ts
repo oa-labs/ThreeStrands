@@ -27,7 +27,7 @@ test("connects a selected Mac address book for browsing and recipient suggestion
       return selected.includes("icloud") && `${person.displayName} ${person.addresses}`.toLowerCase().includes(query.toLowerCase()) ? [...suggestions, { email: person.addresses[0], displayName: person.displayName, sentCount: 0, receivedCount: 0, lastInteractedAt: "", pinned: false }] : suggestions;
     };
   });
-  await page.getByRole("button", { name: "Contacts (4)" }).click();
+  await page.getByRole("button", { name: "Contacts (5)" }).click();
   const contacts = page.getByRole("region", { name: "Contacts", exact: true });
   await contacts.getByRole("button", { name: "Manage Contacts…" }).click();
   await page.getByRole("button", { name: "Mac Contacts…", exact: true }).click();

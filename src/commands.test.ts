@@ -225,7 +225,7 @@ describe("command registry", () => {
       "shift+e": ["tasks.reopenSelected", "thread.unarchive"],
       o: ["files.open", "tasks.openSelected", "thread.toggleOlderMessages"],
       s: ["files.star", "thread.star"],
-      "shift+n": ["calendar.new", "contacts.new", "agents.new"],
+      "shift+n": ["calendar.new", "contacts.new", "agents.new", "notes.new"],
       "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
       "mod+enter": ["contacts.save", "draft.send"],
       "#": ["draft.discard", "thread.trash"],
@@ -238,7 +238,7 @@ describe("command registry", () => {
       escape: ["navigation.back", "search.close"],
     });
 
-    for (const focusedPane of ["mail", "tasks", "contacts", "files", "calendar", "agents"] as const) {
+    for (const focusedPane of ["mail", "tasks", "notes", "contacts", "files", "calendar", "agents"] as const) {
       for (const selectedTaskStatus of ["open", "in_progress", "completed", "cancelled"] as const) {
         for (const [selectedArchived, taskBoardActive] of [[false, false], [true, false], [false, true], [true, true]] as const) {
           for (const mailbox of ["inbox", "drafts"] as const) {
@@ -331,13 +331,10 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "tasks.previous")?.enabled(contactsContext)).toBe(false);
   });
 
-  it("registers direct primary-view shortcuts, with 0 for Today", () => {
-    expect(commands.find((command) => command.id === "view.today")?.keys).toEqual(["0"]);
-    expect(commands.find((command) => command.id === "view.mail")?.keys).toEqual(["1"]);
-    expect(commands.find((command) => command.id === "view.calendar")?.keys).toEqual(["2"]);
-    expect(commands.find((command) => command.id === "view.tasks")?.keys).toEqual(["3"]);
-    expect(commands.find((command) => command.id === "view.contacts")?.keys).toEqual(["4"]);
-    expect(commands.find((command) => command.id === "view.files")?.keys).toEqual(["5"]);
+  it("registers direct primary-view shortcuts in sidebar order, with 0 for Today", () => {
+    const keys = ["view.today", "view.mail", "view.calendar", "view.tasks", "view.notes", "view.contacts", "view.files", "view.agents"]
+      .map((id) => commands.find((command) => command.id === id)?.keys);
+    expect(keys).toEqual([["0"], ["1"], ["2"], ["3"], ["4"], ["5"], ["6"], ["7"]]);
     expect(commands.filter((command) => command.keys.includes("0")).map((command) => command.id)).toEqual(["view.today"]);
   });
 
@@ -346,6 +343,29 @@ describe("command registry", () => {
     const command=commands.find((item)=>item.id==="view.files")!;
     await command.run(context); expect(context.openFilesView).toHaveBeenCalledOnce();
     expect(command.enabled({...context,composerActive:true})).toBe(false);
+  });
+
+  it("routes the Notes shortcut and Open Today's Note, and disables them during composition", async () => {
+    const openNotesView = vi.fn();
+    const openTodaysNote = vi.fn();
+    const context = { ...noopContext(), openNotesView, openTodaysNote };
+    const view = commands.find((item) => item.id === "view.notes")!;
+    const today = commands.find((item) => item.id === "notes.today")!;
+    await view.run(context);
+    await today.run(context);
+    expect(openNotesView).toHaveBeenCalledOnce();
+    expect(openTodaysNote).toHaveBeenCalledOnce();
+    expect(today.keys).toEqual([]);
+    expect(view.enabled({ ...context, composerActive: true })).toBe(false);
+    expect(today.enabled({ ...context, composerActive: true })).toBe(false);
+  });
+
+  it("offers New Note only in Notes", () => {
+    const command = commands.find((item) => item.id === "notes.new")!;
+    expect(command.keys).toEqual(["Shift+n"]);
+    expect(command.enabled({ ...noopContext(), focusedPane: "notes" })).toBe(true);
+    expect(command.enabled({ ...noopContext(), focusedPane: "mail" })).toBe(false);
+    expect(command.enabled({ ...noopContext(), focusedPane: "notes", composerActive: true })).toBe(false);
   });
 
   it("routes the Contacts shortcut to the address book outside the composer", async () => {

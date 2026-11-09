@@ -1,6 +1,7 @@
 # Notes workspace design
 
-**Status:** Proposed, not built
+**Status:** Steps 1 (sync and storage) and 2 (workspace shell) built; the
+rest proposed
 **Date:** 2026-11-09
 **Scope:** a Notes workspace for Markdown notes that travel through
 replicated sync
@@ -142,6 +143,20 @@ must not write one per keystroke.
 - Saving text identical to what is stored writes nothing, and saving an
   empty body for a day without a note doesn't create it. Opening or reading
   a note never writes. See the editor rules below.
+- Every save names the version it started from (the note's `updatedAt`, or
+  none for a day without a note). If the note changed or was deleted on
+  another device since, the save writes nothing and returns the note as it
+  is now (`NoteSave { saved: false }`). Without this, a save would replace
+  an edit that arrived while the user was typing, with no conflict to show
+  for it, because the replica had already seen that edit. The editor then
+  stops saving, keeps the user's text, turns read-only, and offers **Keep My
+  Version** (save over it) or **Use Other Version** (drop the typing). For a
+  deleted note the choices are **Keep as New Note** and **Discard My Text**.
+  A draft found on reopening that started from an older version gets the
+  same choice.
+- The app's exit waits for registered before-exit tasks (`beforeExit.ts`)
+  after the composer saves its draft, so the open note saves before the app
+  closes.
 
 ### Local tables
 
@@ -243,9 +258,9 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 - Register the keys and the palette commands below in `src/commands.ts`, the
   central command registry:
   - **Go to Notes View** (`4`)
-  - **Open Today's Note**
-  - **New Note**
-  - **Search Notes**
+  - **Open Today's Note**, from anywhere
+  - **New Note** (`Shift+N`), in Notes, like New Contact in Contacts
+  - **Search Current View** (`/`) focuses the note search in Notes
 - Opening the workspace doesn't steal focus or open a form. It selects the
   last open note on this device, or today's note.
 
@@ -254,8 +269,9 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 - **Today** is pinned at the top. Selecting it creates the daily note only
   once the user types, so browsing never writes an empty note.
 - **Recent** comes next: notes opened on this device, newest first.
-- A filter box searches titles as the user types. Searching inside bodies
-  goes through **Search Notes** and `⌘K`.
+- A search box above the list searches titles and note text as the user
+  types, through the local search index, and lists the matches in place of
+  the list. Escape clears it, then returns to the list.
 - `j`/`k` and Up/Down move through the list, and Enter puts focus in the
   editor, as in Mail.
 - **Trash** sits at the bottom. A trashed note opens read-only with
@@ -265,7 +281,9 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 
 - The title is the first line, edited in place. A daily note's title is its
   date, shown with the weekday, and it can't be renamed.
-- The body is the WYSIWYG Markdown editor described below.
+- The body is the editor described below. Until the WYSIWYG editor is
+  adopted, `NoteEditor` is a plain Markdown text area behind the same props,
+  so the swap touches one component.
 - A quiet status line shows "Saved" or "Too long to sync", plus the conflict
   banner when there is one.
 
@@ -273,7 +291,9 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 
 Use `WorkspaceContextRail`, with `ContextSection` and `ContextRow` for every
 list, under the panel rules in DESIGN.md: empty sections are left out, lists
-show three rows before **Show more**, and headings collapse.
+show three rows before **Show more**, and headings collapse. Step 2 shows
+**Note details** (when the note was created, and last changed on this
+device); the sections below arrive with links.
 
 - **Backlinks**: notes that link here, each with the line around the link as
   its detail.
@@ -296,8 +316,9 @@ show three rows before **Show more**, and headings collapse.
 
 ### Search
 
-Note search uses the local FTS5 index. `⌘K` lists matching notes beside its
-other results. **Search Current View** searches notes while Notes is open.
+Note search uses the local FTS5 index. **Search Current View** searches
+notes while Notes is open. Listing matching notes in `⌘K` beside its other
+results is not built yet.
 
 ## Editor
 
@@ -337,7 +358,8 @@ safety](../DEVELOPERS.md#dependency-safety) review, `cargo vet`, and
 
 If the review rejects meowdown, use ProseKit or Tiptap directly with a
 remark-based Markdown parser and serializer. The rules below apply to any
-choice.
+choice. The adoption is the developer's decision; until then the shell uses
+the plain text area.
 
 ### Rules for any editor
 
@@ -416,7 +438,8 @@ isn't in Trash to a folder the user picks:
 1. **Sync and storage.** The entity type, local tables, projection, search
    index, size limits, and daily-note ids, with the Rust tests above.
 2. **Workspace shell.** The workspace, list, editor, write cadence, today's
-   note, and the new view keys. Adopt the editor after its dependency review.
+   note, and the new view keys. Built with the plain text area; adopt the
+   WYSIWYG editor after its dependency review.
 3. **Links.** Wiki links, backlinks, unlinked links, people, and rename
    rewriting.
 4. **Safety.** The conflict banner and Trash.

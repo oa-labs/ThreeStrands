@@ -91,7 +91,7 @@ export function useAppCommandContext({
   const { messageStackRef, setMessageExpansionOverrides, activeMessageIdRef } = reader;
   const {
     rightWorkspace, setRightWorkspace, setContactsView, toggleSchedule, showMailContext, openTasks, openTasksView,
-    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openTodayView,
+    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openNotesView, openTodaysNote, openTodayView,
     canReturnFromCalendar, returnFromCalendar,
   } = workspaces;
   const {
@@ -117,7 +117,7 @@ export function useAppCommandContext({
     ...correspondence.context,
     toggleContextPanelFocus,
     interactionScope,
-    focusedPane: rightWorkspace === "agents" ? "agents" : rightWorkspace === "today" ? "today" : rightWorkspace === "files" ? "files" : rightWorkspace === "week" ? "calendar" : rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
+    focusedPane: rightWorkspace === "agents" ? "agents" : rightWorkspace === "today" ? "today" : rightWorkspace === "files" ? "files" : rightWorkspace === "notes" ? "notes" : rightWorkspace === "week" ? "calendar" : rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
     compose: () => {
       setRightWorkspace(null);
       correspondence.context.compose();
@@ -291,6 +291,7 @@ export function useAppCommandContext({
     focusSearch: () => {
       if (rightWorkspace === "agents") { runWorkspaceCommand("agents.search"); return; }
       if (rightWorkspace === "files") { runWorkspaceCommand("files.search"); return; }
+      if (rightWorkspace === "notes") { runWorkspaceCommand("notes.search"); return; }
       if (rightWorkspace === "contacts") { runWorkspaceCommand("contacts.search"); return; }
       setRightWorkspace(null);
       if (!isTabbedMailbox) {
@@ -312,6 +313,8 @@ export function useAppCommandContext({
     openMailView,
     openTasksView,
     openFilesView,
+    openNotesView,
+    openTodaysNote,
     openTodayView,
     openContactsView,
     openKeepInTouchView,
@@ -338,7 +341,7 @@ export function useAppCommandContext({
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
     aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, correspondence.activeDraft?.mode, refreshMail, toggleSchedule, showMailContext, openTasks, openMailView, openTasksView,
-    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openTodayView, getSuggestions,
+    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openNotesView, openTodaysNote, openTodayView, getSuggestions,
     openThreadChat, newTask, canUndoAction, canUndoArchive, switchAccount, toggleMessageFilter, setRightWorkspace,
     mutateIds, openFolder, selectedIndex, visibleThreads, setSelectedId, selectAdjacentMessage,
     taskWorkspaceRef, setContactsView, latestMessage, setUnsubscribeMessageId, labelTargetIds,

@@ -1,0 +1,94 @@
+import type { Note, NoteSave, NoteSearchHit, NoteSummary } from "../domain";
+import type { MailClient } from "./client";
+
+type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes">;
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const PREVIEW_CHARS = 140;
+const clean = (title: string) => title.split(/\s+/).filter(Boolean).join(" ");
+const key = (title: string) => clean(title).toLocaleLowerCase();
+
+/** A note's title, or why it can't be used, by the native rules (db/notes.rs). */
+function noteTitle(title: string): string {
+  const cleaned = clean(title);
+  if (!cleaned) throw new Error("A note needs a title");
+  if ([...cleaned].length > 200) throw new Error("A note title can be at most 200 characters");
+  if (/[[\]|]/.test(cleaned)) throw new Error("A note title can't contain [, ], or |");
+  if (DATE.test(cleaned)) throw new Error("A date names that day's daily note; choose another title");
+  return cleaned;
+}
+
+function preview(body: string) {
+  const text = body.split(/\s+/).filter(Boolean).join(" ");
+  return text.length <= PREVIEW_CHARS ? text : `${text.slice(0, PREVIEW_CHARS - 1)}…`;
+}
+
+/** In-memory notes for the browser demo and tests, following the native store's rules. */
+export function createDemoNotes(): DemoNotes {
+  const notes = new Map<string, Note>();
+  const visits = new Map<string, string>();
+  // Each change gets a distinct, increasing time, as the native store's versions do.
+  let clock = Date.now();
+  const now = () => new Date(++clock).toISOString();
+  const titleTaken = (title: string, id: string) => [...notes.values()].some((note) => note.id !== id && !note.trashed && key(note.title) === key(title));
+  const edit = (note: Note, title: string, body: string): Note => {
+    if (note.trashed) throw new Error("Restore this note to edit it");
+    if (note.title === title && note.body === body) return note;
+    if (note.title !== title && titleTaken(title, note.id)) throw new Error(`A note named “${title}” already exists`);
+    const next = { ...note, title, body, updatedAt: now() };
+    notes.set(next.id, next);
+    return next;
+  };
+  return {
+    async listRecentNotes(limit) {
+      const recent = (note: Note) => [visits.get(note.id) ?? "", note.updatedAt].sort().at(-1)!;
+      return [...notes.values()].filter((note) => !note.trashed)
+        .sort((a, b) => recent(b).localeCompare(recent(a)) || a.id.localeCompare(b.id))
+        .slice(0, limit)
+        .map((note): NoteSummary => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, preview: preview(note.body), updatedAt: note.updatedAt, visitedAt: visits.get(note.id) ?? null, trashedAt: note.trashedAt }));
+    },
+    async getNote(id) {
+      return structuredClone(notes.get(id) ?? null);
+    },
+    async getDailyNote(date) {
+      if (!DATE.test(date)) throw new Error("That isn't a valid date");
+      return structuredClone(notes.get(`daily:${date}`) ?? null);
+    },
+    async createNote(title, body) {
+      const cleaned = noteTitle(title);
+      if (titleTaken(cleaned, "")) throw new Error(`A note named “${cleaned}” already exists`);
+      const time = now();
+      const note: Note = { id: `demo-note-${crypto.randomUUID()}`, title: cleaned, body, dailyDate: null, createdAt: time, updatedAt: time, trashed: false, trashedAt: null };
+      notes.set(note.id, note);
+      return structuredClone(note);
+    },
+    async updateNote(id, title, body, expectedUpdatedAt): Promise<NoteSave> {
+      const current = notes.get(id) ?? null;
+      if (current?.updatedAt !== expectedUpdatedAt) return { saved: false, note: structuredClone(current) };
+      const next = edit(current, current.dailyDate ? current.title : noteTitle(title), body);
+      return { saved: true, note: structuredClone(next) };
+    },
+    async saveDailyNote(date, body, expectedUpdatedAt): Promise<NoteSave> {
+      if (!DATE.test(date)) throw new Error("That isn't a valid date");
+      const current = notes.get(`daily:${date}`) ?? null;
+      if ((current?.updatedAt ?? null) !== expectedUpdatedAt) return { saved: false, note: structuredClone(current) };
+      if (current) return { saved: true, note: structuredClone(edit(current, current.title, body)) };
+      if (!body) return { saved: true, note: null };
+      const time = now();
+      const note: Note = { id: `daily:${date}`, title: date, body, dailyDate: date, createdAt: time, updatedAt: time, trashed: false, trashedAt: null };
+      notes.set(note.id, note);
+      return { saved: true, note: structuredClone(note) };
+    },
+    async recordNoteVisit(id) {
+      if (notes.has(id)) visits.set(id, now());
+    },
+    async searchNotes(query, limit) {
+      const words = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+      if (!words.length) return [];
+      return [...notes.values()]
+        .filter((note) => !note.trashed && words.every((word) => `${note.title} ${note.body}`.toLocaleLowerCase().includes(word)))
+        .slice(0, limit)
+        .map((note): NoteSearchHit => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, matchSnippet: preview(note.body) }));
+    },
+  };
+}

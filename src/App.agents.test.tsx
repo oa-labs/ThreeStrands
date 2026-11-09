@@ -15,7 +15,7 @@ describe("Agents workspace wiring", () => {
     await screen.findByRole("form", { name: "New delegated task" });
     expect(screen.getByText("Linked to the selected conversation.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
-    fireEvent.keyDown(window, { key: "6" });
+    fireEvent.keyDown(window, { key: "7" });
     await screen.findByRole("region", { name: "Agents" });
     await waitFor(() => expect(createTask).not.toHaveBeenCalled());
   });

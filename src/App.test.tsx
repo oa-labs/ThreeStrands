@@ -747,7 +747,7 @@ describe("bulk sender decisions in the context panel", () => {
     const mutateThreads = vi.spyOn(mailClient, "mutateThreads").mockResolvedValue();
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
-    fireEvent.click(within(screen.getByRole("navigation", { name: "Mailboxes" })).getByRole("button", { name: "Files (5)" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Mailboxes" })).getByRole("button", { name: "Files (6)" }));
     const details = await screen.findByRole("complementary", { name: "File context" });
     const markSpam = await within(details).findByRole("button", { name: "Mark Spam" });
     const readsBefore = listFiles.mock.calls.length;
@@ -966,7 +966,7 @@ describe("keyboard-first task and action workspaces", () => {
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
 
-    fireEvent.keyDown(window, { key: "4" });
+    fireEvent.keyDown(window, { key: "5" });
 
     expect(await screen.findByRole("heading", { name: "Contacts" })).toBeInTheDocument();
     expect(screen.getByText("Address book")).toBeInTheDocument();
@@ -987,7 +987,7 @@ describe("keyboard-first task and action workspaces", () => {
       fireEvent.wheel(window);
       fireEvent.scroll(stack);
 
-      fireEvent.click(screen.getByRole("button", { name: "Contacts (4)" }));
+      fireEvent.click(screen.getByRole("button", { name: "Contacts (5)" }));
       await screen.findByRole("heading", { name: "Contacts" });
       expect(container.querySelector(".message-stack")).toBeNull();
       fireEvent.keyDown(window, { key: "1" });
@@ -1007,12 +1007,12 @@ describe("keyboard-first task and action workspaces", () => {
     try {
       render(<App/>);
       await screen.findByRole("region",{name:"Inbox"});
-      fireEvent.keyDown(window,{key:"4"});
+      fireEvent.keyDown(window,{key:"5"});
       fireEvent.click(await screen.findByRole("button",{name:/Z Remembered Contact/}));
       await screen.findByDisplayValue("Z Remembered Contact");
       fireEvent.keyDown(window,{key:"1"});
       await waitFor(()=>expect(screen.queryByRole("heading",{name:"Contacts"})).not.toBeInTheDocument());
-      fireEvent.keyDown(window,{key:"4"});
+      fireEvent.keyDown(window,{key:"5"});
       expect(await screen.findByDisplayValue("Z Remembered Contact")).toBeVisible();
       expect(await screen.findByRole("button",{name:/Z Remembered Contact/})).toHaveAttribute("aria-pressed","true");
     } finally {
@@ -1028,7 +1028,7 @@ describe("keyboard-first task and action workspaces", () => {
       render(<App />);
       await screen.findByRole("region", { name: "Inbox" });
 
-      fireEvent.keyDown(window, { key: "4" });
+      fireEvent.keyDown(window, { key: "5" });
       const allTab = await screen.findByRole("tab", { name: "All Contacts" });
       expect(allTab).toHaveAttribute("aria-selected", "true");
 
@@ -1042,26 +1042,30 @@ describe("keyboard-first task and action workspaces", () => {
       fireEvent.keyDown(document.body, { key: "Tab" });
       expect(await screen.findByRole("tab", { name: /Keep in Touch/ })).toHaveAttribute("aria-selected", "true");
 
-      fireEvent.keyDown(window, { key: "4" });
+      fireEvent.keyDown(window, { key: "5" });
       await waitFor(() => expect(screen.queryByRole("heading", { name: "Contacts" })).not.toBeInTheDocument());
-      fireEvent.keyDown(window, { key: "4" });
+      fireEvent.keyDown(window, { key: "5" });
       expect(await screen.findByRole("tab", { name: /Keep in Touch/ })).toHaveAttribute("aria-selected", "true");
     } finally {
       localStorage.removeItem("threestrands.contacts.view");
     }
   });
 
-  it("labels the navbar Contacts button with its 4 shortcut and separates it from utility actions", async () => {
+  it("orders the navbar views by their keys, with Notes on 4, and separates them from utility actions", async () => {
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
 
     const navbar = screen.getByRole("navigation", { name: "Mailboxes" });
-    const contactsButton = within(navbar).getByRole("button", { name: "Contacts (4)" });
-    expect(within(navbar).getByRole("tooltip", { name: /Contacts/ })).toHaveTextContent("Contacts4");
+    const tasksButton = within(navbar).getByRole("button", { name: "Tasks (3)" });
+    const notesButton = within(navbar).getByRole("button", { name: "Notes (4)" });
+    expect(tasksButton.parentElement?.nextElementSibling).toContainElement(notesButton);
+    const contactsButton = within(navbar).getByRole("button", { name: "Contacts (5)" });
+    expect(notesButton.parentElement?.nextElementSibling).toContainElement(contactsButton);
+    expect(within(navbar).getByRole("tooltip", { name: /Contacts/ })).toHaveTextContent("Contacts5");
 
-    const filesButton=within(navbar).getByRole("button", { name: "Files (5)" });
+    const filesButton=within(navbar).getByRole("button", { name: "Files (6)" });
     expect(contactsButton.parentElement?.nextElementSibling).toContainElement(filesButton);
-    const agentsButton=within(navbar).getByRole("button", { name: "Agents (6)" });
+    const agentsButton=within(navbar).getByRole("button", { name: "Agents (7)" });
     expect(filesButton.parentElement?.nextElementSibling).toContainElement(agentsButton);
     const separator = agentsButton.parentElement?.nextElementSibling;
     expect(separator).toHaveClass("sidebar-nav-separator");
@@ -1081,13 +1085,32 @@ describe("keyboard-first task and action workspaces", () => {
     await screen.findByRole("region", { name: "Inbox" });
 
     const navbar = screen.getByRole("navigation", { name: "Mailboxes" });
-    const contactsButton = await within(navbar).findByRole("button", { name: "Contacts (4), 2 due to reconnect" });
+    const contactsButton = await within(navbar).findByRole("button", { name: "Contacts (5), 2 due to reconnect" });
     expect(contactsButton.querySelector(".nav-button-badge")).toHaveTextContent("2");
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Keep in Touch" } });
     fireEvent.click(await screen.findByRole("button", { name: /Go to Keep in Touch/ }));
     expect(await screen.findByRole("tab", { name: /Keep in Touch/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("opens Notes with 4, and on today's note from the palette after another note was open", async () => {
+    const note = await mailClient.createNote("Wiring check", "Earlier text");
+    localStorage.setItem("threestrands.notes.last", note.id);
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+    fireEvent.keyDown(window, { key: "4" });
+    const notes = await screen.findByRole("region", { name: "Notes" });
+    expect(await within(notes).findByRole("textbox", { name: "Title" })).toHaveValue("Wiring check");
+    expect(within(screen.getByRole("navigation", { name: "Mailboxes" })).getByRole("button", { name: "Notes (4)" })).toHaveClass("active");
+
+    fireEvent.keyDown(window, { key: "1" });
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Notes" })).not.toBeInTheDocument());
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Today's Note" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Open Today's Note/ }));
+    const reopened = await screen.findByRole("region", { name: "Notes" });
+    await waitFor(() => expect(within(reopened).getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true"));
   });
 
   it("sends the navbar Calendar button to the week calendar view", async () => {
@@ -1757,7 +1780,7 @@ describe("account selection persistence", () => {
     expect(firstRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("work@example.com");
     fireEvent.click(screen.getByRole("button", { name: "Tasks (3)" }));
     expect(firstRun.container.querySelector(".tasks-sidebar-header")).toHaveTextContent("work@example.com");
-    fireEvent.click(screen.getByRole("button", { name: "Contacts (4)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Contacts (5)" }));
     expect(firstRun.container.querySelector(".contacts-header")).toHaveTextContent("work@example.com");
     firstRun.unmount();
 

@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("merges saved people and suppresses suggestions while allowing an explicit recipient", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Contacts (4)" }).click();
+  await page.getByRole("button", { name: "Contacts (5)" }).click();
   const contacts = page.getByRole("region", { name: "Contacts", exact: true });
   for (const [name, email] of [["Primary Person", "primary@example.com"], ["Other Person", "other@example.com"]]) {
     await contacts.getByRole("button", { name: "New Contact", exact: true }).click();
@@ -30,7 +30,7 @@ test("merges saved people and suppresses suggestions while allowing an explicit 
   await suggestions.getByRole("button", { name: "Never suggest other@example.com" }).click();
   await expect(suggestions.getByRole("button", { name: "Allow suggestions for other@example.com" })).toBeVisible();
   await suggestions.getByRole("button", { name: "Close", exact: true }).click();
-  await page.getByRole("button", { name: "Contacts (4)" }).click();
+  await page.getByRole("button", { name: "Contacts (5)" }).click();
   await page.getByRole("button", { name: "New Message (c)" }).click();
   const composer = page.getByRole("dialog", { name: "New Message" });
   const to = composer.getByRole("textbox", { name: "To", exact: true });

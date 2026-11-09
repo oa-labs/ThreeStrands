@@ -3,6 +3,7 @@ import { previewScheduleChoices } from "../scheduleTimes";
 import { isHolidayCalendar } from "../calendarAvailability";
 import type { FindAvailabilityRequest } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
+import { createDemoNotes } from "./demoNotes";
 import type { WorkspaceFile } from "../domain";
 import { attachmentKind } from "../attachmentKind";
 import { demoCorrespondence } from "./demoCorrespondence";
@@ -1953,6 +1954,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
     },
     ...demoSignatureClient,
+    ...createDemoNotes(),
     async listSnippets() {
       return structuredClone(snippets);
     },

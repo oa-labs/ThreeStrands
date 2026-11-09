@@ -176,8 +176,8 @@ plus the group's key changes and join records.
 Replicated entities are tasks (including the goal each one supports), goals,
 saved contacts, contact groups, snippets, signatures and their defaults,
 Split Inboxes, muted senders, mail-account display metadata, calendar-account
-metadata and selections, scheduled-send summaries, retention, and the portable
-preference allowlist.
+metadata and selections, scheduled-send summaries, retention, the portable
+preference allowlist, and notes.
 
 A device reads only the entity types its version knows. Goals arrived in
 0.62.0: a device on an earlier version can't open a snapshot that holds a goal,
@@ -217,6 +217,17 @@ providers see only ciphertext.
 Gmail and Calendar authorization remain separate per-device grants. Connector
 credentials travel only inside a join code the user creates and hands over
 themselves, never through replicated data.
+
+## Notes
+
+Notes travel as their title, Markdown text, Trash state, and either their
+creation time or, for a daily note, their date. When a device last opened a
+note, its link and search indexes, and unsaved typing stay on that device.
+Notes share the snapshot with everything else, so a note's text is limited to
+the size of one synchronized value (64 KB once encoded) and all notes
+together to 3 MiB. A device on a version without Notes can't open a snapshot
+that holds a note; it stops receiving changes until it is updated, and
+nothing is lost meanwhile. See the [Notes design](notes-design.md).
 
 ## Account removal
 

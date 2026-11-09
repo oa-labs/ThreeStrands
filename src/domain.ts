@@ -998,6 +998,37 @@ export type Snippet = {
   createdAt: string;
 };
 
+/** A Markdown note. A daily note's title is its date. `updatedAt` is when
+ * this device saw the latest change, and is the version a save checks. */
+export type Note = {
+  id: string;
+  title: string;
+  body: string;
+  dailyDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+  trashed: boolean;
+  trashedAt: string | null;
+};
+
+/** A note as the note list shows it. */
+export type NoteSummary = {
+  id: string;
+  title: string;
+  dailyDate: string | null;
+  preview: string;
+  updatedAt: string;
+  visitedAt: string | null;
+  trashedAt: string | null;
+};
+
+/** A save's outcome: `saved` is false when the note changed or was deleted
+ * after the edit began, and `note` is then the note as it is now. */
+export type NoteSave = { saved: boolean; note: Note | null };
+
+/** A note matching a search; U+0001 and U+0002 mark the matching text. */
+export type NoteSearchHit = { id: string; title: string; dailyDate: string | null; matchSnippet: string };
+
 export type SyncStatus = {
   state: "idle" | "syncing" | "offline" | "error";
   lastSuccessfulSync: string | null;

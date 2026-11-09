@@ -78,7 +78,7 @@ Press <kbd>/</kbd> in Mail to search local messages and, when online, older mail
 
 ## Moving Around {#moving-around}
 
-- <kbd>0</kbd> opens Today, and <kbd>1</kbd>–<kbd>5</kbd> switch between Mail, Calendar, Tasks, Contacts, and Files.
+- <kbd>0</kbd> opens Today, and <kbd>1</kbd>–<kbd>7</kbd> switch between Mail, Calendar, Tasks, Notes, Contacts, Files, and Agents.
 - <kbd>g</kbd> then <kbd>i</kbd>, <kbd>a</kbd>, <kbd>t</kbd>, <kbd>d</kbd>, <kbd>o</kbd>, or <kbd>s</kbd> goes to Inbox, All Mail, Trash, Drafts, Outbox, or Sent.
 - <kbd>Escape</kbd> goes back after you jump from one conversation to another, for example from a task or a contact, and returns to Today after you open an email or event from it.
 

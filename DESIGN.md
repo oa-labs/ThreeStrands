@@ -36,7 +36,11 @@ The deliberate exceptions are:
 
 - message composition, which is an explicit writing mode, including the
   optional goal field in the compose panel's Draft Review section;
-- mail search, entered explicitly with `/` and exited with Escape;
+- mail search, and the search boxes in Notes and Files, entered explicitly
+  with `/` and exited with Escape;
+- the open note in Notes, an explicit writing mode entered with Enter from
+  the note list or by clicking the note, and left with Escape, which returns
+  focus to the list. Its pane is a `compose` shortcut scope;
 - the command palette, entered explicitly with its shortcut; and
 - thread chat in the context panel, entered explicitly with `q` or `Mod+J`
   or by clicking its prompt, and exited with Escape.
@@ -201,11 +205,20 @@ window resizes.
 The Calendar sidebar may open beside it so meeting suggestions and candidate
 times stay visible together.
 
-Tasks, Week, and Contacts are primary navigation workspaces: they replace the
-mailbox, reader, and context panel while leaving the application sidebar
-available. Represent the active workspace with one state value (`null`,
-`calendar`, `contacts`, `tasks`, or `week`), not multiple booleans that must be
+Today, Calendar, Tasks, Notes, Contacts, Files, and Agents are primary
+navigation workspaces: they replace the mailbox, reader, and context panel
+while leaving the application sidebar available. Represent the active
+workspace with one state value (`null` for Mail, `today`, `week`, `tasks`,
+`notes`, `contacts`, `files`, or `agents`), not multiple booleans that must be
 synchronized manually.
+
+Notes follows Mail's layout: the note list, the open note, and a context
+rail. The list starts with Today's note, then notes recently opened or
+changed on this device. A note saves after typing pauses, when focus leaves
+it, when another note or view opens, and before the app exits; unsaved text
+is kept on the device until then. Opening or reading a note never saves. If
+the note changed on another device after typing began, saving stops and the
+note turns read-only until the user keeps one version.
 
 Opening a workspace must not steal focus or open a form. Workspace cards and
 candidate choices should use buttons and semantic disclosure elements. A plus,
@@ -214,9 +227,9 @@ read-only.
 
 Current primary commands are:
 
-- `0` through `6`: open Today, Mail, Calendar, Tasks, Contacts, Files, and
-  Agents, in sidebar order (the [Notes design](docs/notes-design.md#navigation)
-  moves Contacts, Files, and Agents up one key when Notes takes `4`);
+- `0` through `7`: open Today, Mail, Calendar, Tasks, Notes, Contacts, Files,
+  and Agents, in sidebar order;
+- `Shift+N` in Notes: name a new note in a dialog;
 - `d`: add a task linked to the selected conversation in Mail, or a blank,
   standalone task in the Tasks view;
 - `t`: toggle Calendar;
@@ -232,7 +245,8 @@ Current primary commands are:
   panel never closes the draft);
 - `Cmd/Ctrl+K`: open the command palette.
 
-The focused-pane model routes `j`/`k` and Up/Down to conversations or tasks.
+The focused-pane model routes `j`/`k` and Up/Down to conversations, tasks, or
+notes.
 Tasks use the same list-and-reader structure as mail: selection shows read-only
 details, Enter opens the edit modal, `e` completes, `Shift+e` reopens, and `o`
 opens the linked conversation when one exists. Keep these commands in the central command

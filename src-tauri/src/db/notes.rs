@@ -19,7 +19,9 @@ use super::sync_state::{
     record_replicated_deletion_in_transaction, record_replicated_write_in_transaction,
 };
 use super::{serialization_error, Database, DatabaseError, DbResult};
-use crate::models::{Note, NoteBacklink, NoteLinks, NoteSearchHit, NoteSummary, NotesStorage};
+use crate::models::{
+    Note, NoteBacklink, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NotesStorage,
+};
 use crate::notes::{clean_note_title, daily_note_id, extract_links, is_daily_date, title_key};
 
 const NOTE_COLUMNS: &str =
@@ -305,6 +307,44 @@ fn set_trashed(tx: &Transaction<'_>, id: &str, trashed: bool) -> DbResult<Note> 
     Ok(note)
 }
 
+fn update_in(tx: &Transaction<'_>, id: &str, title: &str, body: &str) -> DbResult<Note> {
+    let note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
+    let title = if note.daily_date.is_some() {
+        note.title.clone()
+    } else {
+        clean_note_title(title).map_err(DatabaseError::invalid)?
+    };
+    edit(tx, note, title, body)
+}
+
+fn save_daily_in(tx: &Transaction<'_>, date: &str, body: &str) -> DbResult<Option<Note>> {
+    let id = daily_note_id(date);
+    match get(tx, &id)? {
+        Some(note) => {
+            let title = note.title.clone();
+            edit(tx, note, title, body).map(Some)
+        }
+        None if body.is_empty() => Ok(None),
+        None => {
+            let now = Utc::now().to_rfc3339();
+            create(
+                tx,
+                Note {
+                    id,
+                    title: date.to_string(),
+                    body: body.to_string(),
+                    daily_date: Some(date.to_string()),
+                    created_at: now.clone(),
+                    updated_at: now,
+                    trashed: false,
+                    trashed_at: None,
+                },
+            )
+            .map(Some)
+        }
+    }
+}
+
 fn preview(body: &str) -> String {
     let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.chars().count() <= PREVIEW_CHARS {
@@ -363,52 +403,74 @@ impl Database {
         })
     }
 
-    /// Saves a regular note's title and body. Saving what is already stored
-    /// writes nothing, so opening and closing a note never syncs a change.
-    pub fn update_note(&self, id: &str, title: &str, body: &str) -> DbResult<Note> {
+    /// Saves a regular note's title and body, if the note is still the
+    /// version the edit started from (`expected_updated_at`). Otherwise
+    /// nothing is written, so an edit made elsewhere in the meantime isn't
+    /// silently replaced, and the current note comes back for the user to
+    /// choose. Saving what is already stored writes nothing, so opening and
+    /// closing a note never syncs a change.
+    pub fn save_note(
+        &self,
+        id: &str,
+        title: &str,
+        body: &str,
+        expected_updated_at: &str,
+    ) -> DbResult<NoteSave> {
         self.with_transaction(|tx| {
-            let note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
-            let title = if note.daily_date.is_some() {
-                note.title.clone()
-            } else {
-                clean_note_title(title).map_err(DatabaseError::invalid)?
-            };
-            edit(tx, note, title, body)
+            let current = get(tx, id)?;
+            if current.as_ref().map(|note| note.updated_at.as_str()) != Some(expected_updated_at) {
+                return Ok(NoteSave {
+                    saved: false,
+                    note: current,
+                });
+            }
+            let note = update_in(tx, id, title, body)?;
+            Ok(NoteSave {
+                saved: true,
+                note: Some(note),
+            })
         })
     }
 
-    /// Saves the body of the daily note for `date`. Saving an empty body
-    /// for a day without a note writes nothing and returns `None`, so
-    /// looking at a day never creates its note.
+    /// Saves the body of the daily note for `date`, if the day is still in
+    /// the state the edit started from: the note's `updatedAt`, or `None`
+    /// when the day had no note. Saving an empty body for a day without a
+    /// note writes nothing, so looking at a day never creates its note.
+    pub fn save_daily_note_edit(
+        &self,
+        date: &str,
+        body: &str,
+        expected_updated_at: Option<&str>,
+    ) -> DbResult<NoteSave> {
+        if !is_daily_date(date) {
+            return Err(DatabaseError::invalid("That isn't a valid date"));
+        }
+        self.with_transaction(|tx| {
+            let current = get(tx, &daily_note_id(date))?;
+            if current.as_ref().map(|note| note.updated_at.as_str()) != expected_updated_at {
+                return Ok(NoteSave {
+                    saved: false,
+                    note: current,
+                });
+            }
+            Ok(NoteSave {
+                saved: true,
+                note: save_daily_in(tx, date, body)?,
+            })
+        })
+    }
+
+    #[cfg(test)]
+    pub fn update_note(&self, id: &str, title: &str, body: &str) -> DbResult<Note> {
+        self.with_transaction(|tx| update_in(tx, id, title, body))
+    }
+
+    #[cfg(test)]
     pub fn save_daily_note(&self, date: &str, body: &str) -> DbResult<Option<Note>> {
         if !is_daily_date(date) {
             return Err(DatabaseError::invalid("That isn't a valid date"));
         }
-        let id = daily_note_id(date);
-        self.with_transaction(|tx| match get(tx, &id)? {
-            Some(note) => {
-                let title = note.title.clone();
-                edit(tx, note, title, body).map(Some)
-            }
-            None if body.is_empty() => Ok(None),
-            None => {
-                let now = Utc::now().to_rfc3339();
-                create(
-                    tx,
-                    Note {
-                        id: id.clone(),
-                        title: date.to_string(),
-                        body: body.to_string(),
-                        daily_date: Some(date.to_string()),
-                        created_at: now.clone(),
-                        updated_at: now,
-                        trashed: false,
-                        trashed_at: None,
-                    },
-                )
-                .map(Some)
-            }
-        })
+        self.with_transaction(|tx| save_daily_in(tx, date, body))
     }
 
     /// Moves a note to Trash. Other devices keep any edit made at the same
