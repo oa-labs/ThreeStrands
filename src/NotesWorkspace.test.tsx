@@ -1,3 +1,5 @@
+import { StrictMode } from "react";
+import { useWorkspaces } from "./useWorkspaces";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { installTestShortcuts } from "./test/commandContext";
@@ -140,6 +142,40 @@ describe("Notes workspace", () => {
     expect(search).toHaveValue("");
     fireEvent.keyDown(search, { key: "Escape" });
     expect(screen.getByRole("button", { name: /^Today/ })).toHaveFocus();
+  });
+
+  it.each(["today", "note"] as const)("restores the last selected note after consuming a %s request and remounting", async (kind) => {
+    const requested = await mailClient.createNote(uniqueTitle("Requested"), "requested body");
+    const last = await mailClient.createNote(uniqueTitle("Last selected"), "last body");
+    function Harness() {
+      const workspaces = useWorkspaces({ settingsOpen: false, settingsSection: "appearance", visibleDetail: null,
+        readingMessageId: null, readingMessageIdRef: { current: null }, openSettingsAt: vi.fn(), setNotice: vi.fn() });
+      return <>
+        <button onClick={() => kind === "today" ? workspaces.openTodaysNote() : workspaces.openNote(requested.id)}>Request note</button>
+        <button onClick={() => workspaces.setRightWorkspace(null)}>Leave Notes</button>
+        <button onClick={workspaces.openNotesView}>Return to Notes</button>
+        {workspaces.rightWorkspace === "notes" ? <NotesWorkspace request={workspaces.notesRequest} onRequestConsumed={workspaces.consumeNotesRequest} /> : null}
+      </>;
+    }
+    render(<StrictMode><Harness /></StrictMode>);
+    fireEvent.click(screen.getByRole("button", { name: "Request note" }));
+    if (kind === "today") {
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true"));
+    } else {
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(requested.title));
+    }
+    fireEvent.click(await noteList().findByRole("button", { name: new RegExp(last.title) }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(last.title));
+    fireEvent.click(screen.getByRole("button", { name: "Leave Notes" }));
+    expect(screen.queryByRole("textbox", { name: "Note text" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Return to Notes" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(last.title));
+    expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue("last body");
+    // A new explicit request still works while Notes is already mounted.
+    fireEvent.click(screen.getByRole("button", { name: "Request note" }));
+    await waitFor(() => kind === "today"
+      ? expect(screen.getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true")
+      : expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(requested.title));
   });
 
   it("goes to today's note when asked from elsewhere", async () => {

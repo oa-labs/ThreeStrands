@@ -81,8 +81,10 @@ type ListView = "notes" | "trash";
  * surface entered with Enter or a click and left with Escape. Trash sits at
  * the bottom of the list, and a trashed note opens read-only.
  */
-export function NotesWorkspace({ request = null, refreshKey = "", onOpenContact }: {
+export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact }: {
   request?: NotesRequest | null;
+  /** Acknowledge the request after selecting its target. */
+  onRequestConsumed?(id: number): void;
   refreshKey?: string;
   /** Opens a saved contact in Contacts, for the People section. */
   onOpenContact?(id: string): void;
@@ -201,7 +203,8 @@ export function NotesWorkspace({ request = null, refreshKey = "", onOpenContact 
     setQuery("");
     setListView("notes");
     select(request.kind === "today" ? todayTarget() : parseNoteTargetKey(request.noteId));
-  }, [request, select]);
+    onRequestConsumed?.(request.id);
+  }, [request, select, onRequestConsumed]);
 
   useEffect(() => {
     if (!query.trim()) { setHits(null); return; }
