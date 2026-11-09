@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
-import { errorMessage } from "./errors";
+import { errorMessage, logBackgroundFailure } from "./errors";
+import { mailClient } from "./data/client";
+import { formatNoteDate } from "./noteDates";
 import { FrontierConflictEditor } from "./FrontierConflictEditor";
 import { AddDevicePanel, JoinCodeNotices, JoinCodePanel, OutstandingJoinCodes } from "./JoinCodePanels";
 import { holdRecoveryPhrase } from "./RecoveryPhraseDialog";
@@ -125,7 +127,26 @@ export function recoveryPhraseFeedback(input: string, check: RecoveryPhraseCheck
   return { tone: "ok", text: `${check.wordCount} of ${RECOVERY_PHRASE_WORDS} words` };
 }
 
-export function ReplicatedSyncSettings() {
+/** A note's conflict, named by the note and settled in Notes, where both
+ * versions can be compared; a note body is too long to choose between here. */
+function NoteConflictRow({ noteId, onOpenNote }: { noteId: string; onOpenNote?(noteId: string): void }) {
+  const [title, setTitle] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    void mailClient.getNote(noteId).then((note) => {
+      if (active && note) setTitle(note.dailyDate ? formatNoteDate(note.dailyDate) : note.title);
+    }, logBackgroundFailure("Note conflict title"));
+    return () => { active = false; };
+  }, [noteId]);
+  return (
+    <div className="sync-note-conflict">
+      <p>The note <strong>{title ?? "Untitled"}</strong> was changed on two devices. Compare the versions and choose one in Notes.</p>
+      {onOpenNote ? <button type="button" className="btn btn-sm" onClick={() => onOpenNote(noteId)}>Open Note</button> : null}
+    </div>
+  );
+}
+
+export function ReplicatedSyncSettings({ onOpenNote }: { onOpenNote?(noteId: string): void } = {}) {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [betaEnabled, setBetaEnabledState] = useState(false);
   const [transports, setTransports] = useState<ReplicatedSyncTransportStatus[]>([]);
@@ -287,7 +308,10 @@ export function ReplicatedSyncSettings() {
       {conflicts.length > 0 ? (
         <div className="sync-conflicts">
           <h3>Resolve Conflicts</h3>
-          {conflicts.map((conflict) => {
+          {[...new Set(conflicts.filter((conflict) => conflict.entityType === "note").map((conflict) => conflict.entityId))].map((noteId) => (
+            <NoteConflictRow key={`note:${noteId}`} noteId={noteId} onOpenNote={onOpenNote} />
+          ))}
+          {conflicts.filter((conflict) => conflict.entityType !== "note").map((conflict) => {
             const key = `conflict:${conflict.entityType}-${conflict.entityId}-${conflict.field}`;
             return (
               <div key={key}>

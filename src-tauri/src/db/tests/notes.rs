@@ -108,6 +108,42 @@ fn titles_are_unique_among_notes_in_use_and_trashed_notes_cant_be_edited() {
 }
 
 #[test]
+fn restoring_a_note_whose_title_was_taken_meanwhile_is_refused() {
+    let db = database();
+    let first = db.create_note("Plan", "old").unwrap();
+    db.trash_note(&first.id).unwrap();
+    let replacement = db.create_note("plan", "new").unwrap();
+    let error = db.restore_note(&first.id).unwrap_err().to_string();
+    assert!(error.contains("Rename that note"), "{error}");
+    assert!(db.get_note(&first.id).unwrap().unwrap().trashed);
+
+    db.update_note(&replacement.id, "New plan", "new").unwrap();
+    assert!(!db.restore_note(&first.id).unwrap().trashed);
+}
+
+#[test]
+fn a_day_deleted_from_trash_can_be_written_again_on_every_device() {
+    let (a, b) = (synced(), synced());
+    a.save_daily_note(DAY, "first").unwrap();
+    let id = format!("daily:{DAY}");
+    a.trash_note(&id).unwrap();
+    a.delete_note(&id).unwrap();
+    sync_both(&a, &b);
+    assert!(b.get_daily_note(DAY).unwrap().is_none());
+
+    a.save_daily_note(DAY, "again").unwrap();
+    sync_both(&a, &b);
+    for db in [&a, &b] {
+        let note = db
+            .get_daily_note(DAY)
+            .unwrap()
+            .expect("the day's note is back");
+        assert_eq!(note.body, "again");
+        assert!(!note.trashed);
+    }
+}
+
+#[test]
 fn a_daily_note_exists_only_once_written_and_keeps_its_date_as_title() {
     let db = synced();
     assert!(db.save_daily_note(DAY, "").unwrap().is_none());

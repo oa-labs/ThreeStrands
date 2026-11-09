@@ -27,3 +27,16 @@ Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
   configurable: true,
   value: () => null,
 });
+
+// jsdom lacks two browser APIs the note editor's menus call unguarded:
+// running animations (none here) and media queries (none match).
+if (!("getAnimations" in Element.prototype)) {
+  Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, writable: true, value: () => [] });
+}
+if (typeof window.matchMedia !== "function") {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (media: string) => ({ matches: false, media, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false }),
+  });
+}

@@ -1,7 +1,8 @@
 # Notes workspace design
 
-**Status:** Steps 1 (sync and storage) and 2 (workspace shell) built; the
-rest proposed
+**Status:** Steps 1 (sync and storage), 2 (workspace shell), and 4 (safety:
+the conflict banner and Trash) built, with the meowdown editor; steps 3
+(links) and 5 (export) proposed
 **Date:** 2026-11-09
 **Scope:** a Notes workspace for Markdown notes that travel through
 replicated sync
@@ -215,6 +216,11 @@ too long to compare there. So v1 handles note conflicts in the note:
   "<title> (from <device>)", and keeps this one.
 - The note list marks conflicted notes, and the generic Settings list links
   a note conflict to the note rather than rendering its whole body.
+- With three or more devices in a conflict, the banner offers each other
+  device's version in turn. A version is that device's value for every
+  field in conflict and the shown value elsewhere.
+- **Compare** aligns lines up to `MAX_DIFF_CELLS` line pairs; past that it
+  marks everything between the shared start and end as changed.
 
 A local write replaces every value of the field it writes, so typing into a
 conflicted note would settle the conflict by discarding the other device's
@@ -275,15 +281,17 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 - `j`/`k` and Up/Down move through the list, and Enter puts focus in the
   editor, as in Mail.
 - **Trash** sits at the bottom. A trashed note opens read-only with
-  **Restore** and **Delete Permanently**.
+  **Restore** and **Delete Permanently**, which confirms first, with Cancel
+  focused. Restoring a note whose title another note took meanwhile is
+  refused until one is renamed. Today's note can go to Trash too; Today
+  stays selected and shows it read-only.
 
 ### Editor (center)
 
 - The title is the first line, edited in place. A daily note's title is its
   date, shown with the weekday, and it can't be renamed.
-- The body is the editor described below. Until the WYSIWYG editor is
-  adopted, `NoteEditor` is a plain Markdown text area behind the same props,
-  so the swap touches one component.
+- The body is the editor described below, in `NoteEditor`.
+- A button beside the title, and `#` in the list, move the note to Trash.
 - A quiet status line shows "Saved" or "Too long to sync", plus the conflict
   banner when there is one.
 
@@ -358,8 +366,17 @@ safety](../DEVELOPERS.md#dependency-safety) review, `cargo vet`, and
 
 If the review rejects meowdown, use ProseKit or Tiptap directly with a
 remark-based Markdown parser and serializer. The rules below apply to any
-choice. The adoption is the developer's decision; until then the shell uses
-the plain text area.
+choice.
+
+**Adopted:** `@meowdown/react` 0.81.2 and `@meowdown/core` 0.81.3, pinned
+exactly. Both, and `@meowdown/markdown` and `@meowdown/embed`, carry SLSA
+provenance. Everything they add loads with the Notes chunk or later:
+Notes itself is about 1 MB, Mermaid (1.5 MB) and KaTeX (256 KB) load only for
+a diagram or math, and each code-block language loads on first use. The
+startup bundle is unchanged. `NoteEditor` turns off every remote resolver
+(images, X posts, YouTube) and embed paste; the app's CSP blocks remote
+images and connections behind that. Upgrades follow the same rules: an exact
+version at least two weeks old.
 
 ### Rules for any editor
 
@@ -372,12 +389,14 @@ the plain text area.
 - **Round-trip tests.** Fixtures for headings, nested lists, task lists,
   tables, code blocks, links, wiki links, and front matter must survive load
   and save unchanged. Where normalization is unavoidable, the test states
-  the exact output.
+  the exact output. meowdown keeps all of them but tables, whose delimiter
+  row it writes as `| --- |`; that happens only when the user edits the note.
 - **No raw HTML.** Note text comes from other devices and from pastes, so it
   is untrusted. HTML in Markdown renders as text or is dropped, never as
   live markup.
 - **Links open outside the app** through the opener plugin, after the same
-  safety check mail links get.
+  safety check mail links get: only `http`, `https`, and `mailto` open, and a
+  click on a link never navigates the app's own window.
 - **No remote fetches.** Remote images stay blocked in v1 and never load
   directly. Images in v2 must go through the existing native proxy and
   blocked-source flow, as in mail.

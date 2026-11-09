@@ -218,7 +218,11 @@ changed on this device. A note saves after typing pauses, when focus leaves
 it, when another note or view opens, and before the app exits; unsaved text
 is kept on the device until then. Opening or reading a note never saves. If
 the note changed on another device after typing began, saving stops and the
-note turns read-only until the user keeps one version.
+note turns read-only until the user keeps one version. A note two devices
+changed before syncing is also read-only, under a banner that compares the
+versions, until the user chooses one. `#` moves the selected note to Trash,
+which sits at the bottom of the list; a trashed note is read-only, and
+**Delete Permanently** asks first.
 
 Opening a workspace must not steal focus or open a form. Workspace cards and
 candidate choices should use buttons and semantic disclosure elements. A plus,
@@ -230,6 +234,8 @@ Current primary commands are:
 - `0` through `7`: open Today, Mail, Calendar, Tasks, Notes, Contacts, Files,
   and Agents, in sidebar order;
 - `Shift+N` in Notes: name a new note in a dialog;
+- `#`: move the selected conversation to Trash in Mail, or the open note in
+  Notes;
 - `d`: add a task linked to the selected conversation in Mail, or a blank,
   standalone task in the Tasks view;
 - `t`: toggle Calendar;
