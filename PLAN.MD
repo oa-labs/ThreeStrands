@@ -192,9 +192,15 @@ direct Google Contacts integration remains deferred while existing scope
 approval is pending. CardDAV and Windows/Linux adapters are future extensions,
 not prerequisites for moving on.
 
-Next, scope general rules and richer saved views: agree on conditions and actions,
-preview behavior, account scope, saved searches, and where rules execute before
-implementation. Continue reliability and release checks alongside that work.
+Saved searches are implemented as reusable Split Inboxes tabs, with shared
+management and explicit account scope. This is a v1 stopping point for saved
+views; complete installed-build and live-account validation before broader release.
+Settings transfer, cross-device sync, and an explicit Update View action for
+temporary search edits remain later improvements.
+
+Next, scope richer rules separately: agree on conditions, actions, previews,
+account scope, execution timing, retries, and undo, including whether rules run
+locally or at the provider. Continue reliability and release checks alongside that work.
 This sequence is not a delivery-date commitment. If broader adoption becomes the
 immediate goal, revisit mobile continuity and Microsoft 365 as expansion priorities.
 
