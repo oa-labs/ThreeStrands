@@ -870,7 +870,11 @@ h1, h2, h3, h4 { font-weight: var(--weight-semibold); }
 }
 .list-toolbar .search-field { flex: 1; min-width: 0; }
 .list-toolbar .search-box { flex: 1; min-width: 0; margin: 0; }
-.search-field { position: relative; }
+.search-field { display: flex; align-items: center; gap: var(--space-1); }
+.search-input-area { position: relative; flex: 1; min-width: 0; }
+.search-input-actions, .search-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--space-0-5); }
+.search-box.idle .search-input-actions { width: var(--control-h-xs); justify-content: center; }
+.search-actions .btn-icon, .search-box > svg { flex-shrink: 0; }
 .search-suggestions { position: absolute; z-index: var(--z-local-popover); top: 100%; left: 0; right: 0; margin: var(--space-1) 0 0; padding: var(--space-1); list-style: none; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); box-shadow: var(--shadow-popover); max-height: 320px; overflow: auto; }
 .search-suggestion-list { list-style: none; margin: 0; padding: 0; }
 .search-suggestions-heading { margin: 0; padding: var(--space-2); color: var(--muted); font-size: var(--text-meta); }
@@ -885,7 +889,7 @@ h1, h2, h3, h4 { font-weight: var(--weight-semibold); }
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0 var(--space-1) 0 var(--space-3);
+  padding: 0 var(--space-1) 0 var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--hover);
@@ -904,27 +908,11 @@ h1, h2, h3, h4 { font-weight: var(--weight-semibold); }
   color: var(--text);
   background: transparent;
 }
-.search-toggle {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  padding: var(--space-1);
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  background: transparent;
-  cursor: pointer;
-}
 .search-toggle:hover { color: var(--text); background: var(--selected); }
 .search-toggle.active {
-  padding-inline: var(--space-2);
-  border: 1px solid var(--accent);
   color: var(--accent);
   background: var(--selected);
-  font-size: var(--text-meta);
-  font-weight: var(--weight-semibold);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .filters-anchor { position: relative; flex: 0 0 auto; }
 /* The tooltip would cover the menu it opens. */

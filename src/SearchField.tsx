@@ -1,5 +1,5 @@
 import { AtSign, BookmarkPlus, Calendar, Clock, Folder, Inbox, Search, SlidersHorizontal, Tag, User, X } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 import { readRecentSearches, recordRecentSearch } from "./recentSearches";
@@ -20,6 +20,8 @@ export const CONTACT_SUGGESTION_DEBOUNCE_MS = 120;
 
 type SearchFieldProps = {
   onSaveSearch?: (query: string) => void;
+  /** Related search actions displayed beside the input. */
+  actions?: ReactNode;
   inputRef: RefObject<HTMLInputElement | null>;
   /** The committed query that drives the thread list. */
   query: string;
@@ -70,6 +72,7 @@ export function SearchField({
   labels = NO_LABELS,
   loadContacts,
   onSaveSearch,
+  actions,
 }: SearchFieldProps) {
   const listId = useId();
   const [draft, setDraft] = useState(query);
@@ -175,115 +178,121 @@ export function SearchField({
 
   return (
     <div className="search-field">
-      <label className={`search-box ${idle ? "idle" : ""}`}>
-        <Search size={ICON_SIZE.md} />
-        <input
-          ref={inputRef}
-          {...SEARCH_INPUT_ATTRIBUTES}
-          value={draft}
-          onChange={(event) => updateDraft(event.target.value, event.target.selectionStart ?? event.target.value.length)}
-          onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
-          onFocus={() => { setFocused(true); setRecentSearches(readRecentSearches()); }}
-          onBlur={() => {
-            setFocused(false);
-            setDismissed(false);
-            setActiveIndex(null);
-          }}
-          placeholder="Search mail"
-          aria-label="Search Mail"
-          aria-autocomplete="list"
-          aria-controls={visible ? listId : undefined}
-          aria-activedescendant={effectiveIndex >= 0 ? `${listId}-${effectiveIndex}` : undefined}
-          data-mailbox-tab-shortcut
-          data-shortcut-scope="search"
-          onKeyDown={(event) => {
-            if (visible && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-              event.preventDefault();
-              const step = event.key === "ArrowDown" ? 1 : -1;
-              const from = effectiveIndex < 0 && step < 0 ? suggestions.length : effectiveIndex;
-              setActiveIndex((from + step + suggestions.length) % suggestions.length);
-              return;
-            }
-            if (event.key === "Enter") {
-              event.preventDefault();
-              if (effectiveIndex >= 0) {
-                choose(suggestions[effectiveIndex]);
+      <div className="search-input-area">
+        <label className={`search-box ${idle ? "idle" : ""}`}>
+          <Search size={ICON_SIZE.md} />
+          <input
+            ref={inputRef}
+            {...SEARCH_INPUT_ATTRIBUTES}
+            value={draft}
+            onChange={(event) => updateDraft(event.target.value, event.target.selectionStart ?? event.target.value.length)}
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
+            onFocus={() => { setFocused(true); setRecentSearches(readRecentSearches()); }}
+            onBlur={() => {
+              setFocused(false);
+              setDismissed(false);
+              setActiveIndex(null);
+            }}
+            placeholder="Search mail"
+            aria-label="Search Mail"
+            aria-autocomplete="list"
+            aria-controls={visible ? listId : undefined}
+            aria-activedescendant={effectiveIndex >= 0 ? `${listId}-${effectiveIndex}` : undefined}
+            data-mailbox-tab-shortcut
+            data-shortcut-scope="search"
+            onKeyDown={(event) => {
+              if (visible && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+                event.preventDefault();
+                const step = event.key === "ArrowDown" ? 1 : -1;
+                const from = effectiveIndex < 0 && step < 0 ? suggestions.length : effectiveIndex;
+                setActiveIndex((from + step + suggestions.length) % suggestions.length);
                 return;
               }
-              commitNow(draft);
-              rememberSearch();
-              setDismissed(true);
-              return;
-            }
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            event.stopPropagation();
-            if (visible && draft.trim()) {
-              setDismissed(true);
-              return;
-            }
-            closeSearch();
-          }}
-        />
-        {draft.trim() ? (
-          <button
-            type="button"
-            className={`search-toggle ${inboxOnly ? "active" : ""}`}
-            aria-pressed={inboxOnly}
-            aria-label="Search only the Inbox"
-            title={inboxOnly ? "Searching only the Inbox. Click to search all mail." : "Searching all mail. Click to search only the Inbox."}
-            onClick={onToggleInboxOnly}
-          >
-            <Inbox size={ICON_SIZE.sm} />
-            {inboxOnly ? <span>Inbox Only</span> : null}
-          </button>
+              if (event.key === "Enter") {
+                event.preventDefault();
+                if (effectiveIndex >= 0) {
+                  choose(suggestions[effectiveIndex]);
+                  return;
+                }
+                commitNow(draft);
+                rememberSearch();
+                setDismissed(true);
+                return;
+              }
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (visible && draft.trim()) {
+                setDismissed(true);
+                return;
+              }
+              closeSearch();
+            }}
+          />
+          <span className="search-input-actions">
+            {draft.trim() ? (
+              <button
+                type="button"
+                className={`btn-icon btn-icon-sm search-toggle ${inboxOnly ? "active" : ""}`}
+                aria-pressed={inboxOnly}
+                aria-label="Search only the Inbox"
+                title={inboxOnly ? "Searching only the Inbox. Click to search all mail." : "Searching all mail. Click to search only the Inbox."}
+                onClick={onToggleInboxOnly}
+              >
+                <Inbox size={ICON_SIZE.sm} />
+              </button>
+            ) : null}
+            {/* One trailing slot: the / hint while idle (Close on hover), Close while searching. */}
+            <button
+              type="button"
+              className="btn-icon btn-icon-sm search-close"
+              aria-label="Close Search"
+              title="Close Search (Esc)"
+              // Keep focus so the field doesn't flash idle (the / hint) before closing.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={closeSearch}
+            >
+              <X size={ICON_SIZE.sm} />
+            </button>
+            {idle ? <kbd>/</kbd> : null}
+          </span>
+        </label>
+        {visible ? (
+          <div className="search-suggestions">
+            {!draft.trim() ? <h3 className="search-suggestions-heading">Recent searches</h3> : null}
+            <ul className="search-suggestion-list" role="listbox" id={listId} aria-label={draft.trim() ? "Search suggestions" : "Recent searches"}>
+              {suggestions.map((suggestion, index) => {
+                const Icon = SUGGESTION_ICONS[suggestion.kind];
+                return (
+                  <li
+                    key={suggestion.key}
+                    id={`${listId}-${index}`}
+                    role="option"
+                    aria-selected={index === effectiveIndex}
+                    className={index === effectiveIndex ? "active" : undefined}
+                    // Keep focus in the input so choosing doesn't blur the search.
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => choose(suggestion)}
+                  >
+                    <Icon size={ICON_SIZE.sm} aria-hidden="true" />
+                    <span className="search-suggestion-label">{suggestion.label}</span>
+                    {suggestion.detail ? <small>{suggestion.detail}</small> : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         ) : null}
+      </div>
+      {onSaveSearch || actions ? <div className="search-actions">
         {onSaveSearch && draft.trim() ? <button type="button" className="btn-icon" aria-label="Save Search" title="Save Search" onClick={() => {
           commitNow(draft);
           setDismissed(true);
           rememberSearch();
           onSaveSearch(draft);
-        }}><BookmarkPlus size={ICON_SIZE.sm} /></button> : null}
-        {/* One trailing slot: the / hint while idle (Close on hover), Close while searching. */}
-        <button
-          type="button"
-          className="btn-icon search-close"
-          aria-label="Close Search"
-          title="Close Search (Esc)"
-          // Keep focus so the field doesn't flash idle (the / hint) before closing.
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={closeSearch}
-        >
-          <X size={ICON_SIZE.sm} />
-        </button>
-        {idle ? <kbd>/</kbd> : null}
-      </label>
-      {visible ? (
-        <div className="search-suggestions">
-          {!draft.trim() ? <h3 className="search-suggestions-heading">Recent searches</h3> : null}
-          <ul className="search-suggestion-list" role="listbox" id={listId} aria-label={draft.trim() ? "Search suggestions" : "Recent searches"}>
-            {suggestions.map((suggestion, index) => {
-              const Icon = SUGGESTION_ICONS[suggestion.kind];
-              return (
-                <li
-                  key={suggestion.key}
-                  id={`${listId}-${index}`}
-                  role="option"
-                  aria-selected={index === effectiveIndex}
-                  className={index === effectiveIndex ? "active" : undefined}
-                  // Keep focus in the input so choosing doesn't blur the search.
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => choose(suggestion)}
-                >
-                  <Icon size={ICON_SIZE.sm} aria-hidden="true" />
-                  <span className="search-suggestion-label">{suggestion.label}</span>
-                  {suggestion.detail ? <small>{suggestion.detail}</small> : null}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ) : null}
+        }}><BookmarkPlus size={ICON_SIZE.md} /></button> : null}
+        {actions}
+      </div> : null}
     </div>
   );
 }

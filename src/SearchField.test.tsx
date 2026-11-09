@@ -97,11 +97,11 @@ describe("SearchField", () => {
     expect(props.onToggleInboxOnly).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the Inbox Only filter as pressed while the search is narrowed", () => {
+  it("shows the compact Inbox Only filter as pressed while the search is narrowed", () => {
     renderField("roadmap", { inboxOnly: true });
     const toggle = screen.getByRole("button", { name: "Search only the Inbox" });
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(toggle).toHaveTextContent("Inbox Only");
+    expect(toggle).not.toHaveTextContent("Inbox Only");
   });
 
   it("shows the / hint only while the field is idle", () => {
