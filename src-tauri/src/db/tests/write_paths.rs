@@ -36,7 +36,6 @@ fn dump(db: &Database, tables: &[&str], start: &chrono::DateTime<chrono::FixedOf
             .unwrap();
         let columns: Vec<String> = statement
             .column_names()
-            .iter()
             .map(|name| name.to_string())
             .collect();
         let mut rows: Vec<String> = statement

@@ -526,26 +526,24 @@ fn token_seeding_work_does_not_grow_with_unrelated_messages_and_aliases() {
         let counter = operations.clone();
         store
             .database()
-            .with_connection(|c| {
-                c.progress_handler(
-                    1,
-                    Some(move || {
-                        counter.fetch_add(1, Ordering::Relaxed);
-                        false
-                    }),
-                )?;
-                Ok(())
-            })
+            .connection()
+            .unwrap()
+            .progress_handler(
+                1,
+                Some(move || {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    false
+                }),
+            )
             .unwrap();
         let seeded = store
             .seed_state_for_tokens(&["parent-token".into()])
             .unwrap();
         store
             .database()
-            .with_connection(|c| {
-                c.progress_handler(0, None::<fn() -> bool>)?;
-                Ok(())
-            })
+            .connection()
+            .unwrap()
+            .progress_handler(0, None::<fn() -> bool>)
             .unwrap();
         (seeded, operations.load(Ordering::Relaxed))
     };
