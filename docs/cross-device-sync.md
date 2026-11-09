@@ -225,8 +225,9 @@ Notes travel as their title, Markdown text, Trash state, and either their
 creation time or, for a daily note, their date. When a device last opened a
 note, its link and search indexes, and unsaved typing stay on that device.
 Notes share the snapshot with everything else, so a note's text is limited to
-the size of one synchronized value (64 KB once encoded) and all notes
-together to 3 MiB. A device on a version without Notes can't open a snapshot
+the size of one synchronized value (96 KB once encoded) and all notes
+together to 3.5 MiB. Edits to a note's text reach other devices with the
+next periodic sync, within about 30 seconds, rather than after every save. A device on a version without Notes can't open a snapshot
 that holds a note; it stops receiving changes until it is updated, and
 nothing is lost meanwhile. See the [Notes design](notes-design.md).
 

@@ -59,7 +59,7 @@ Press <kbd>/</kbd> and type to search titles and note text. Press <kbd>Esc</kbd>
 
 With [cross-device sync](sync.html) on, notes travel to your other devices, encrypted like the rest of your synced data. Update every device first: an earlier version stops receiving changes once you write a note.
 
-A note can hold about 64 KB of text, and all your notes together about 3 MB, so there's room for everything else that syncs. If a note is too long, ThreeStrands says so and keeps your text.
+A note can hold about 96 KB of text, and all your notes together about 3.5 MB, so there's room for everything else that syncs. If a note is too long, ThreeStrands says so and keeps your text.
 
 Pictures and files travel separately, so they don't count toward that space; your notes can hold up to 2,000 of them. Another device downloads them after it syncs, and a picture appears in the note once it arrives. Files take space in your sync storage, such as your shared folder or bucket, and leave it when you delete their note from Trash.
 

@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::test_support::database;
+use crate::models::Note;
 use threestrands_sync_transport::TransportInstanceId;
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\nrest-of-image";
@@ -27,9 +28,13 @@ fn count(db: &Database, sql: &str) -> i64 {
 /// Stands in for sealing: objects with made-up bytes, enough for the
 /// bookkeeping these tests check. `replicated_sync` tests the real thing.
 fn seal(db: &Database, id: &str) {
+    seal_by(db, id, &"ab".repeat(16));
+}
+
+fn seal_by(db: &Database, id: &str, device: &str) {
     let sealed = SealedAttachment {
-        sealed_by: "ab".repeat(16),
-        index_cid: format!("index{}", &id[..8]),
+        sealed_by: device.to_string(),
+        index_cid: format!("index{}{}", &id[..8], &device[..4]),
         objects: vec![
             (
                 format!("chunk{}", &id[..8]),
@@ -275,4 +280,53 @@ fn a_record_sealed_again_elsewhere_retires_this_devices_copy() {
 
     payload["id"] = Value::String("ef".repeat(16));
     assert!(a.upsert_synced_note_attachment(&file.id, &payload).is_err());
+}
+
+#[test]
+fn the_same_file_sealed_on_two_devices_settles_without_asking() {
+    let (a, b) = (synced(), synced());
+    let id = "0123456789abcdef0123456789abcdef";
+    for db in [&a, &b] {
+        let note = Note {
+            id: "import-ffffffffffffffffffffffffffffffff".into(),
+            title: "Plan".into(),
+            authored_title: None,
+            body: format!("![](attachment:{id})"),
+            daily_date: None,
+            created_at: "2026-09-01T10:00:00Z".into(),
+            updated_at: "2026-09-01T10:00:00Z".into(),
+            trashed: false,
+            trashed_at: None,
+        };
+        db.import_note(
+            note,
+            &[(id.into(), "a.png".into(), String::new(), PNG.to_vec())],
+        )
+        .unwrap();
+    }
+    seal_by(&a, id, &"aa".repeat(16));
+    seal_by(&b, id, &"bb".repeat(16));
+    sync_into(&b, &a);
+    sync_into(&a, &b);
+    sync_into(&b, &a);
+    for db in [&a, &b] {
+        let all = db.list_frontier_conflicts().unwrap();
+        assert!(all.is_empty(), "{all:?}");
+        assert!(db.note_attachment(id).unwrap().unwrap().available);
+    }
+    // Both settle on one sealed copy; the other device's own is retired.
+    let winner = |db: &Database| -> String {
+        db.test_connection()
+            .unwrap()
+            .query_row(
+                "SELECT sealed_by FROM note_attachments WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(winner(&a), winner(&b));
+    let kept = count(&a, "SELECT COUNT(*) FROM note_attachment_objects")
+        + count(&b, "SELECT COUNT(*) FROM note_attachment_objects");
+    assert_eq!(kept, 2, "only the winning device keeps its objects");
 }

@@ -66,9 +66,9 @@ pub(crate) fn update_note(
         &request.body,
         &request.expected_updated_at,
     )?;
-    if outcome.saved {
-        kick_replicated_sync(&state);
-    }
+    // Text saves while typing ride the next periodic sync (every 30
+    // seconds) instead of each re-uploading the snapshot; quitting syncs
+    // once more (`finish_exit`).
     Ok(outcome)
 }
 
@@ -83,9 +83,7 @@ pub(crate) fn save_daily_note(
         state
             .database
             .save_daily_note_edit(&date, &body, expected_updated_at.as_deref())?;
-    if outcome.saved {
-        kick_replicated_sync(&state);
-    }
+    // Like `update_note`, this waits for the next periodic sync.
     Ok(outcome)
 }
 
