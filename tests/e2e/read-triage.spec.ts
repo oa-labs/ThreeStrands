@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 
 const threadOptions = (page: import("@playwright/test").Page) => page.getByRole("listbox").getByRole("option");
 
-for (const count of [1, 3]) {
-  test(`aligns ${count === 1 ? "a brief paragraph" : `${count} brief bullets`}, wrapped text, and the section header with Find Times`, async ({ page }) => {
+for (const count of [0, 1, 3]) {
+  test(`aligns ${count === 0 ? "the Get Brief icon" : count === 1 ? "a brief paragraph" : `${count} brief bullets`}, wrapped text, and the section header with Find Times`, async ({ page }) => {
     await page.goto("/");
     await expect(page.locator(".context-panel")).toBeVisible();
     // Render the production components together, with a long brief that wraps
@@ -21,16 +21,17 @@ for (const count of [1, 3]) {
       const { createElement, Fragment } = React;
       const { createRoot } = ReactDOM;
       const detail = await mailClient.getThread("welcome");
-      detail.thread.summary = Array.from({ length: lineCount }, () => "Building Tours is on Tuesday, October 27, from 1–3pm Eastern, organized by Taylor Collins with you and Bethany Simon as guests.").join("\n");
+      detail.thread.summary = lineCount === 0 ? null : Array.from({ length: lineCount }, () => "Building Tours is on Tuesday, October 27, from 1–3pm Eastern, organized by Taylor Collins with you and Bethany Simon as guests.").join("\n");
       const preferences = { timeZone: "America/New_York", workingWindows: [], defaultDurationMinutes: 30, slotIncrementMinutes: 30, driveTimeBufferMinutes: 0 };
       const noop = () => {};
       const panel = document.createElement("aside");
       panel.id = "brief-layout-fixture";
       panel.className = "context-panel";
-      Object.assign(panel.style, { position: "fixed", top: "0", left: "0", bottom: "0", width: "360px" });
+      Object.assign(panel.style, { position: "fixed", top: "0", left: "0", bottom: "0", width: lineCount === 0 ? "260px" : "360px" });
       document.body.append(panel);
       createRoot(panel).render(createElement("div", { className: "context-ai-row" }, createElement(Fragment, null,
-        createElement(AvailabilitySection, { preferences, ai: false, compact: true, draft: { sourceId: null, subject: "Invitation", body: "" }, onInsertTimes: noop, onOpenCalendarSettings: noop }),
+        createElement(AvailabilitySection, { preferences, ai: lineCount === 0, compact: true, draft: { sourceId: null, subject: "Invitation", body: "" }, onInsertTimes: noop, onOpenCalendarSettings: noop }),
+        lineCount === 0 ? createElement("div", { className: "context-ai-launcher" }, createElement("button", { className: "btn btn-sm" }, "Delegate Work…")) : null,
         createElement(ThreadAssist, { detail, providerChosen: true,
           summary: { enabled: true, available: true, pending: false },
           suggestions: { enabled: false, available: false, requested: false, proposals: [], hiddenCount: 0, onDiscard: noop, onReview: noop },
@@ -39,10 +40,24 @@ for (const count of [1, 3]) {
       )));
     }, count);
     const fixture = page.locator("#brief-layout-fixture");
-    await expect(fixture.locator(".thread-assist-summary li")).toHaveCount(count === 1 ? 0 : count);
+    await expect(fixture.locator(".thread-assist-summary li")).toHaveCount(count <= 1 ? 0 : count);
     await expect(fixture.locator("p.thread-assist-summary")).toHaveCount(count === 1 ? 1 : 0);
     for (const scale of [1, 1.4]) {
       await page.evaluate((value) => document.documentElement.style.setProperty("--font-scale", String(value)), scale);
+      if (count === 0) {
+        const times = fixture.getByRole("button", { name: "Find Times", exact: true });
+        const brief = fixture.getByRole("button", { name: "Get Brief", exact: true });
+        const timesBox = (await times.boundingBox())!;
+        const briefBox = (await brief.boundingBox())!;
+        const timesIcon = (await times.locator("svg").boundingBox())!;
+        const briefIcon = (await brief.locator("svg").boundingBox())!;
+        expect(briefBox.y).toBeGreaterThan(timesBox.y);
+        expect(briefBox.x).toBeCloseTo(timesBox.x, 1);
+        expect(briefIcon.x).toBeCloseTo(timesIcon.x, 1);
+        expect(briefIcon.width).toBe(timesIcon.width);
+        expect(briefIcon.height).toBe(timesIcon.height);
+        continue;
+      }
       const layout = await fixture.evaluate((panel) => {
         const chevron = panel.querySelector(".context-section-toggle svg")!.getBoundingClientRect();
         const heading = panel.querySelector(".context-section-toggle > span:last-child")!.getBoundingClientRect();

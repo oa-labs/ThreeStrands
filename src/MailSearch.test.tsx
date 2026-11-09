@@ -26,6 +26,18 @@ describe("named mail searches", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(readSavedSearches()).toEqual([expect.objectContaining({ name: "Files from Ana", query: "from:ana has:attachment", accountId: "personal@example.com", inboxOnly: true, messageFilters: ["starred"] })]);
   });
+  it("groups save and management actions outside the search input", () => {
+    renderSearch();
+    const input = screen.getByRole("textbox", { name: "Search Mail" });
+    const box = input.closest(".search-box")!;
+    const save = screen.getByRole("button", { name: "Save Search" });
+    const manage = screen.getByRole("button", { name: "Saved searches" });
+    expect(box).not.toContainElement(save);
+    expect(box).not.toContainElement(manage);
+    expect(save.parentElement).toBe(manage.parentElement);
+    expect(within(box as HTMLElement).getByRole("button", { name: "Search only the Inbox" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(box as HTMLElement).getByRole("button", { name: "Close Search" })).toBeInTheDocument();
+  });
   it("opens the shared Split Inboxes management rather than a separate catalog", () => {
     const { props } = renderSearch();
     fireEvent.click(screen.getByRole("button", { name: "Saved searches" }));

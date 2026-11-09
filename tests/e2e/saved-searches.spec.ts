@@ -45,7 +45,10 @@ test("shows five deliberate recent searches and keeps Close near the input's rig
   }
   await input.fill("unfinished");
   await page.getByRole("button", { name: "Saved searches", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await expect(settings).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(settings).not.toBeVisible();
   await input.fill("");
   await expect(page.getByRole("heading", { name: "Recent searches" })).toBeVisible();
   const recent = page.getByRole("listbox", { name: "Recent searches" });
@@ -104,4 +107,31 @@ test("adopts an existing All accounts search as a tab and edits it in Split Inbo
   await page.reload();
   await expect(page.getByRole("tab", { name: "Local mail", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tab").filter({ hasText: /Copy view|Local mail/ })).toHaveText(["Copy view", "Local mail"]);
+});
+
+
+test("keeps search controls compact and saved-search actions outside the input", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("listbox", { name: "Inbox" })).toBeVisible();
+  await page.keyboard.press("/");
+  const input = page.getByRole("textbox", { name: "Search Mail" });
+  await input.fill("from:someone@example.com has:attachment quarterly report");
+  const inbox = page.getByRole("button", { name: "Search only the Inbox" });
+  const measure = async () => {
+    const box = (await page.locator(".search-box").boundingBox())!;
+    const text = (await input.boundingBox())!;
+    const toggle = (await inbox.boundingBox())!;
+    const close = (await page.getByRole("button", { name: "Close Search", exact: true }).boundingBox())!;
+    const save = (await page.getByRole("button", { name: "Save Search", exact: true }).boundingBox())!;
+    const manage = (await page.getByRole("button", { name: "Saved searches", exact: true }).boundingBox())!;
+    expect(box.width - text.width).toBeLessThanOrEqual(110);
+    expect(close.x - toggle.x - toggle.width).toBeLessThanOrEqual(2);
+    expect(save.x).toBeGreaterThan(box.x + box.width);
+    expect(manage.x - save.x - save.width).toBeLessThanOrEqual(2);
+    return text.width;
+  };
+  const width = await measure();
+  await inbox.click();
+  await expect(inbox).toHaveAttribute("aria-pressed", "true");
+  expect(await measure()).toBe(width);
 });
