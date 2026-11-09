@@ -343,4 +343,5 @@ flowchart LR
 - [Features and known limitations](docs/features.md) and [contact management](docs/address-book.md) — current capabilities, shortcuts, and outstanding live-account checks.
 - [IMAP/SMTP provider design](docs/imap-design.md) — provider design and phase progress.
 - [Today view design](docs/today-design.md) — what Today works out without AI, and the phase 2 AI layer (meaning sort, Top of mind strip).
+- [Notes workspace design](docs/notes-design.md) — proposed Markdown notes synchronized as replicated records, with wiki links, backlinks, a WYSIWYG editor, and Markdown folder export.
 - [Archived plans](docs/archive/) — completed plans (multi-account, database recovery, modularization, and layer boundary, Phase 2 compose, IMAP spike, Files workspace) kept for design history.
