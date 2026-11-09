@@ -169,6 +169,14 @@ finish stays recorded and goes on the next launch.
   stops saving, keeps the user's text, turns read-only, and offers **Keep My
   Version** (save over it) or **Use Other Version** (drop the typing). For a
   deleted note the choices are **Keep as New Note** and **Discard My Text**.
+- A note in Trash is never current, even though trashing changes no text
+  and so leaves `updatedAt` alone: a save over it returns the trashed note
+  instead of trying the edit. The editor then offers **Restore and Keep My
+  Text** (restore, then save the typing over the restored note) or
+  **Discard My Text** (show the note in Trash). If the restore is refused,
+  such as when another note took the title, the reason shows and both
+  choices stay. A draft left in a note that went to Trash while the app was
+  closed asks the same way instead of retrying the save.
   A draft found on reopening that started from an older version gets the
   same choice.
 - The app's exit waits for registered before-exit tasks (`beforeExit.ts`)

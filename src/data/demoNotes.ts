@@ -93,7 +93,8 @@ export function createDemoNotes(): DemoNotes {
     },
     async updateNote(id, title, body, expectedUpdatedAt): Promise<NoteSave> {
       const current = notes.get(id) ?? null;
-      if (current?.updatedAt !== expectedUpdatedAt) return { saved: false, note: structuredClone(current) };
+      // A note in Trash is never current, as natively.
+      if (current?.updatedAt !== expectedUpdatedAt || current.trashed) return { saved: false, note: structuredClone(current) };
       const oldKey = key(current.title);
       const next = edit(current, current.dailyDate ? current.title : noteTitle(title), body);
       if (key(next.title) === oldKey) return { saved: true, note: structuredClone(next) };
@@ -179,7 +180,7 @@ export function createDemoNotes(): DemoNotes {
     async saveDailyNote(date, body, expectedUpdatedAt): Promise<NoteSave> {
       if (!DATE.test(date)) throw new Error("That isn't a valid date");
       const current = notes.get(`daily:${date}`) ?? null;
-      if ((current?.updatedAt ?? null) !== expectedUpdatedAt) return { saved: false, note: structuredClone(current) };
+      if ((current?.updatedAt ?? null) !== expectedUpdatedAt || current?.trashed) return { saved: false, note: structuredClone(current) };
       if (current) return { saved: true, note: structuredClone(edit(current, current.title, body)) };
       if (!body) return { saved: true, note: null };
       const time = now();

@@ -15,14 +15,16 @@ export type NoteText = { title: string; body: string };
 
 /**
  * - `idle`: nothing waiting, or a save is scheduled.
- * - `stale`: the note changed (or was deleted, `current` null) on another
- *   device after this edit began. Saving waits for the user to choose.
+ * - `stale`: the note changed, went to Trash (`current.trashed`), or was
+ *   deleted (`current` null) on another device after this edit began.
+ *   Saving waits for the user to choose; `error` says why a choice failed,
+ *   with the choice still open.
  */
 export type NoteSaveState =
   | { kind: "idle" }
   | { kind: "saving" }
   | { kind: "error"; message: string }
-  | { kind: "stale"; current: Note | null };
+  | { kind: "stale"; current: Note | null; error?: string };
 
 const sameText = (a: NoteText, b: NoteText) => a.title === b.title && a.body === b.body;
 // A resolved conflict or a trip through Trash can change a note without a newer save time.
@@ -34,7 +36,7 @@ const sameNote = (a: Note | null, b: Note | null) => a === b || (a !== null && b
  * the editor goes away, and when the window closes. Unsaved text is kept as
  * a per-device draft until a save succeeds. Opening a note never writes.
  */
-export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }: { onSaved?(note: Note, relink?: NoteRelink): void; onReplaced?(note: Note): void } = {}) {
+export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, onRestored }: { onSaved?(note: Note, relink?: NoteRelink): void; onReplaced?(note: Note): void; /** A note restored from Trash to keep this device's typing. */ onRestored?(note: Note): void } = {}) {
   const targetKey = target ? noteTargetKey(target) : null;
   const [note, setNote] = useState<Note | null>(null);
   const [text, setText] = useState<NoteText>({ title: "", body: "" });
@@ -52,8 +54,8 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }
   const savingRef = useRef(false);
   const pausedRef = useRef(false);
   const timerRef = useRef<number | null>(null);
-  const callbacks = useRef({ onSaved, onReplaced });
-  callbacks.current = { onSaved, onReplaced };
+  const callbacks = useRef({ onSaved, onReplaced, onRestored });
+  callbacks.current = { onSaved, onReplaced, onRestored };
 
   const clearTimer = () => {
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
@@ -134,7 +136,8 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }
         // Unsaved typing from before a crash or a closed window.
         showText({ title: draft.title, body: draft.body });
         markDirty(true);
-        if (draft.base === (loaded?.updatedAt ?? null)) timerRef.current = window.setTimeout(() => void save(), NOTE_SAVE_DELAY_MS);
+        // A note in Trash can't take the typing until the user chooses, even when its text hasn't changed.
+        if (draft.base === (loaded?.updatedAt ?? null) && !loaded?.trashed) timerRef.current = window.setTimeout(() => void save(), NOTE_SAVE_DELAY_MS);
         else { pausedRef.current = true; setSaveState({ kind: "stale", current: loaded }); }
         return;
       }
@@ -190,10 +193,30 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }
     setMissing(current.kind === "note" && !loaded);
   }, []);
 
-  /** Replaces the other device's version with this one. */
+  /**
+   * Replaces the other device's version with this one. A note moved to
+   * Trash elsewhere is restored first, then saved with this text.
+   */
   const keepMine = useCallback(async () => {
     const current = targetRef.current;
     if (!current || saveState.kind !== "stale") return;
+    if (saveState.current?.trashed) {
+      const trashed = saveState.current;
+      try {
+        const restored = await mailClient.restoreNote(trashed.id);
+        if (keyRef.current !== noteTargetKey(current)) return;
+        callbacks.current.onRestored?.(restored);
+        pausedRef.current = false;
+        showNote(restored);
+        writeNoteDraft(noteTargetKey(current), { ...textRef.current, base: restored.updatedAt });
+        setSaveState({ kind: "idle" });
+        await save();
+      } catch (reason) {
+        // Restoring can fail (another note took the title); the choice stays open.
+        if (keyRef.current === noteTargetKey(current)) setSaveState({ kind: "stale", current: trashed, error: errorMessage(reason) });
+      }
+      return;
+    }
     pausedRef.current = false;
     if (current.kind === "note" && !saveState.current) {
       // Deleted elsewhere: keep the text as a new note with the same title.

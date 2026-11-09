@@ -127,6 +127,78 @@ describe("useNoteEditor", () => {
     expect(readNoteDraft(note.id)).toBeNull();
   });
 
+  it("asks when the note went to Trash elsewhere, then restores it to keep the typing or shows it in Trash", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Trashed elsewhere"), "v1");
+    const onRestored = vi.fn();
+    const { result } = open({ kind: "note", id: note.id }, { onRestored });
+    await settle();
+    act(() => result.current.edit({ body: "mine" }));
+    // Another device trashes it; trashing changes no text, so the save time stays.
+    const trashed = await mailClient.trashNote(note.id);
+    expect(trashed.updatedAt).toBe(note.updatedAt);
+    await act(async () => { await result.current.flush(); });
+    expect(result.current.saveState).toEqual({ kind: "stale", current: trashed });
+    expect(result.current.text.body).toBe("mine");
+
+    await act(async () => { await result.current.keepMine(); });
+    expect(onRestored).toHaveBeenCalledWith(expect.objectContaining({ id: note.id, trashed: false }));
+    expect(await mailClient.getNote(note.id)).toMatchObject({ trashed: false, body: "mine" });
+    expect(result.current.saveState).toEqual({ kind: "idle" });
+    expect(readNoteDraft(note.id)).toBeNull();
+
+    // Discarding instead shows the note as it is now, in Trash.
+    act(() => result.current.edit({ body: "mine again" }));
+    await mailClient.trashNote(note.id);
+    await act(async () => { await result.current.flush(); });
+    act(() => result.current.takeTheirs());
+    expect(result.current.note).toMatchObject({ trashed: true, body: "mine" });
+    expect(result.current.text.body).toBe("mine");
+    expect(result.current.dirty).toBe(false);
+  });
+
+  it("keeps the choice open when restoring from Trash fails", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Taken title"), "v1");
+    const { result } = open({ kind: "note", id: note.id });
+    await settle();
+    act(() => result.current.edit({ body: "mine" }));
+    const trashed = await mailClient.trashNote(note.id);
+    await act(async () => { await result.current.flush(); });
+    vi.spyOn(mailClient, "restoreNote").mockRejectedValue(new Error("A note named “Taken title” already exists."));
+    const update = vi.spyOn(mailClient, "updateNote");
+    await act(async () => { await result.current.keepMine(); });
+    expect(result.current.saveState).toEqual({ kind: "stale", current: trashed, error: "A note named “Taken title” already exists." });
+    expect(update).not.toHaveBeenCalled();
+    expect(result.current.text.body).toBe("mine");
+    await wait(NOTE_SAVE_DELAY_MS * 2);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("after a restart, asks about typing in a note that went to Trash instead of retrying the save", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Trashed while closed"), "saved");
+    writeNoteDraft(note.id, { title: note.title, body: "typed before quitting", base: note.updatedAt });
+    const trashed = await mailClient.trashNote(note.id);
+    const update = vi.spyOn(mailClient, "updateNote");
+    const { result } = open({ kind: "note", id: note.id });
+    await settle();
+    expect(result.current.text.body).toBe("typed before quitting");
+    expect(result.current.saveState).toEqual({ kind: "stale", current: trashed });
+    await wait(NOTE_SAVE_DELAY_MS * 2);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("asks when today's note went to Trash elsewhere", async () => {
+    const date = "2026-03-14";
+    const saved = (await mailClient.saveDailyNote(date, "morning", null)).note!;
+    const { result } = open({ kind: "daily", date });
+    await settle();
+    act(() => result.current.edit({ body: "morning, more" }));
+    const trashed = await mailClient.trashNote(saved.id);
+    await act(async () => { await result.current.flush(); });
+    expect(result.current.saveState).toEqual({ kind: "stale", current: trashed });
+    await act(async () => { await result.current.keepMine(); });
+    expect(await mailClient.getDailyNote(date)).toMatchObject({ trashed: false, body: "morning, more" });
+  });
+
   it("restores unsaved text after a restart, asking first if the note changed since", async () => {
     const note = await mailClient.createNote(uniqueTitle("Restart"), "saved");
     writeNoteDraft(note.id, { title: note.title, body: "typed before quitting", base: note.updatedAt });
