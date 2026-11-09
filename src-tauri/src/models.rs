@@ -1314,6 +1314,89 @@ pub struct UpdateSnippetRequest {
     pub body: String,
 }
 
+/// A Markdown note. Daily notes have a `daily_date`, which is also their
+/// title. `updated_at` and `trashed_at` are when this device saw the
+/// change; they aren't synchronized.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Note {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub daily_date: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub trashed: bool,
+    pub trashed_at: Option<String>,
+}
+
+/// A note as the note list shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteSummary {
+    pub id: String,
+    pub title: String,
+    pub daily_date: Option<String>,
+    pub preview: String,
+    pub updated_at: String,
+    /// When this device last opened the note.
+    pub visited_at: Option<String>,
+    pub trashed_at: Option<String>,
+}
+
+/// A note matching a search, with the matching text marked by U+0001 and
+/// U+0002 as in mail search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteSearchHit {
+    pub id: String,
+    pub title: String,
+    pub daily_date: Option<String>,
+    pub match_snippet: String,
+}
+
+/// Another note's link to this one, with the line it sits on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteBacklink {
+    pub note_id: String,
+    pub title: String,
+    pub daily_date: Option<String>,
+    pub context: String,
+}
+
+/// A note's links in both directions: notes that link here, and the titles
+/// this note links to that no note has yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteLinks {
+    pub backlinks: Vec<NoteBacklink>,
+    pub unlinked: Vec<String>,
+}
+
+/// How much of the space set aside for notes in a sync snapshot they use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotesStorage {
+    pub used_bytes: u64,
+    pub limit_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateNoteRequest {
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateNoteRequest {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatus {

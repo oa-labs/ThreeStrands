@@ -1325,6 +1325,28 @@ mod tests {
     }
 
     #[test]
+    fn settings_exports_exclude_notes() {
+        let database = Database::open_memory();
+        database
+            .create_note("Private plans", "secret-note-body [[Someone]]")
+            .unwrap();
+        database
+            .save_daily_note("2031-04-05", "secret-daily-body")
+            .unwrap();
+        let json =
+            serde_json::to_string(&build_export_payload(&database, payload().preferences).unwrap())
+                .unwrap();
+        for private in [
+            "Private plans",
+            "secret-note-body",
+            "secret-daily-body",
+            "2031-04-05",
+        ] {
+            assert!(!json.contains(private), "{private}");
+        }
+    }
+
+    #[test]
     fn settings_exports_exclude_system_contact_cache_and_connection_settings() {
         let database = Database::open_memory();
         let connection = crate::system_contacts::ContactConnection {

@@ -66,16 +66,26 @@ canonical field order, so a new variant must go last.
 | Field | Meaning |
 | --- | --- |
 | `_entity` | presence, as for every entity |
+| `id` | the entity id |
 | `title` | the note's title; for a daily note, its date |
 | `body` | the Markdown source, without front matter |
-| `daily_date` | `YYYY-MM-DD` for a daily note, absent otherwise |
-| `created_at` | when the note was created |
-| `updated_at` | when the body or title last changed |
-| `trashed_at` | when the note was moved to Trash, absent otherwise |
+| `dailyDate` | `YYYY-MM-DD` for a daily note, absent otherwise |
+| `createdAt` | when a regular note was created; absent for a daily note |
+| `trashed` | `true` while the note is in Trash |
+
+Fields a later version adds are accepted and ignored, so it can add one
+without older devices refusing its notes.
 
 - **One field per concern.** Title, body, and trash state are separate
   fields, so renaming on one device while editing on another doesn't
   conflict.
+- **No synchronized timestamps that change.** Two devices that touch the
+  same note would always write different times, and the field would show as
+  a conflict nobody cares about. So the time a note last changed, and when it
+  went to Trash, are kept by each device for itself. Trash is the boolean
+  `trashed`, so trashing on two devices at once agrees. A daily note has no
+  `createdAt`, because its date says when it began and two devices starting
+  the same day would otherwise disagree.
 - **The body is one field.** Don't split a long body across several fields.
   Each field merges separately, so concurrent edits could combine halves of
   two versions into a note neither device wrote.
@@ -86,23 +96,36 @@ canonical field order, so a new variant must go last.
 - **Trash is a field, not a deletion.** In this sync model a deletion beats
   a concurrent edit and keeps the entity deleted. If **Delete** removed the
   entity, an edit made on another device at the same time would be lost
-  silently. Setting `trashed_at` keeps that edit recoverable. A permanent
-  **Delete from Trash** is an ordinary replicated deletion.
+  silently. Setting `trashed` keeps that edit recoverable. A permanent
+  **Delete from Trash** is an ordinary replicated deletion. Deleting a note
+  the replica already holds is recorded even while sync is off, so the note
+  doesn't come back when sync resumes.
+- **Titles.** A regular note's title is unique among notes outside Trash
+  (ignoring case and repeated spaces), at most 200 characters, and can't
+  contain `[`, `]`, or `|`, which end or split a link. It can't be a date,
+  which names that day's daily note. A daily note's title is its date and
+  can't be changed.
 
 ### Size limits
 
-- **Per note.** The encoded `body` value must fit in `MAX_VALUE_BYTES`. JSON
-  escaping grows the text (newlines, quotes, and backslashes each take two
-  bytes), so measure the encoded value, not the Markdown length. Put the
-  note limit in one policy module with its own below-limit, exact-limit, and
-  above-limit tests. A save that would pass the limit is refused, and the
-  editor says the note is too long to sync and keeps the text locally. It
-  never truncates.
-- **All notes together.** Track notes' share of the snapshot. Warn as it
-  approaches a budget well under 4 MB compressed, and refuse new notes
-  before the snapshot as a whole would fail to seal. A failed seal would
-  stop every other synchronized type from syncing too. **Settings → Notes**
-  shows the usage.
+The limits live in `crates/sync-protocol` beside the other synchronized
+types' limits.
+
+- **Per note.** `MAX_NOTE_BODY_BYTES` is the envelope's `MAX_VALUE_BYTES`
+  (64 KB), measured on the body's JSON encoding (`note_body_bytes`), since
+  that is what the envelope measures. Escaping grows the text (newlines,
+  quotes, and backslashes each take two bytes), so a shorter body can be
+  over. A save past the limit is refused with "This note is too long to
+  sync"; the editor keeps the text and never truncates it.
+- **All notes together.** `MAX_SYNCED_NOTES_TOTAL_BYTES` is 3 MiB, counted
+  on the encoded fields of every note, Trash included. The snapshot holds at
+  most 4 MB after compression, shared with every other synchronized type.
+  Text that doesn't compress (a pasted key or encoded image) must still fit,
+  so the budget doesn't count on compression. A change that would grow notes
+  past it is refused; a change that doesn't grow its note always saves, so a
+  user over the budget because of notes from another device can still trim.
+  A failed seal would stop every other synchronized type from syncing too.
+  **Settings → Notes** shows the usage (`notes_storage`).
 - **The lasting fix** is splitting snapshots by entity type, already listed
   under the replicated sync design's known gaps. It is not part of v1.
 
@@ -111,12 +134,14 @@ canonical field order, so a new variant must go last.
 Every replicated write reseals and uploads the whole snapshot, so the editor
 must not write one per keystroke.
 
-- Save to the local `notes` table as the user types, so a crash loses
-  nothing.
-- Record the replicated write after about two seconds without typing, when
-  the editor loses focus, when the user opens another note or workspace, and
-  when the window closes.
-- Opening or reading a note never writes. See the editor rules below.
+- A save writes the `notes` row and the replica together, so the editor
+  saves after about two seconds without typing, when it loses focus, when
+  the user opens another note or workspace, and when the window closes.
+- Until then the editor keeps the unsaved text itself (a per-device draft),
+  so a crash loses at most what wasn't kept there.
+- Saving text identical to what is stored writes nothing, and saving an
+  empty body for a day without a note doesn't create it. Opening or reading
+  a note never writes. See the editor rules below.
 
 ### Local tables
 
@@ -124,10 +149,15 @@ All of these live on one device and are rebuilt from the replicated notes.
 None of them travel through sync or settings export.
 
 - `notes`: the materialized notes, written by the projection path like other
-  synchronized types.
-- `note_links`: one row per `[[link]]` per note, with the target title
-  normalized (case folded and whitespace collapsed) and the target id once
-  resolved.
+  synchronized types. A local change writes the row and records its changed
+  fields in the replica in one transaction. While sync is off, the changed
+  field names wait in `replica_dirty_fields`; sync records them before it
+  pulls, so they are concurrent with a peer's edits rather than replaced by
+  them.
+- `note_links`: one row per `[[link]]` per note (up to 500), with the target
+  title normalized (case folded and whitespace collapsed) and the line it
+  sits on. `[[Title|shown text]]` links to Title. Links inside fenced code
+  blocks or inline code, and escaped ones (`\[[`), don't count.
 - `note_search`: an FTS5 table over title and body, like `thread_search`.
 - `note_visits`: when this device last opened each note, for the
   **Recent** list.
@@ -171,8 +201,13 @@ too long to compare there. So v1 handles note conflicts in the note:
 - The note list marks conflicted notes, and the generic Settings list links
   a note conflict to the note rather than rendering its whole body.
 
-Typing in a conflicted note keeps the conflict, because the new edit replaces
-only this device's value. The banner stays until the user resolves it.
+A local write replaces every value of the field it writes, so typing into a
+conflicted note would settle the conflict by discarding the other device's
+version. The storage layer refuses an edit to a field in conflict ("This note
+was also changed on another device. Choose which version to keep before
+editing it."), so the editor stays read-only under the banner until the user
+chooses. Resolving applies the chosen value on this device at once, as a
+merge would.
 
 v1 doesn't merge concurrent text edits character by character. That would
 need a text CRDT inside the field, which the snapshot model and the 64 KB
@@ -359,7 +394,8 @@ isn't in Trash to a folder the user picks:
 
 ## Tests
 
-- **Rust:** two-device convergence for notes in `sync_sim`; daily notes
+- **Rust:** two-device convergence for notes (direct merges, plus one
+  push and pull through the fake transport with a body at the limit); daily notes
   created offline on two devices merge into one; edit racing Trash keeps the
   edit; edit racing permanent delete keeps the note deleted; conflict
   resolution through the shared command; encoded-size limit below, at, and

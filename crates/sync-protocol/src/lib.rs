@@ -19,6 +19,23 @@ pub const MAX_SYNCED_DRAFT_BYTES: usize = 512 * 1024;
 /// drafts leave room for everything else in one snapshot.
 pub const MAX_SYNCED_DRAFTS_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 
+/// Most bytes one note's body may take in a snapshot, measured as its JSON
+/// encoding (quotes and escapes included), which is how the envelope
+/// measures a field value. Equal to the envelope's `MAX_VALUE_BYTES`: the
+/// body is one field, so this is the most a snapshot can carry for it.
+pub const MAX_NOTE_BODY_BYTES: usize = 64 * 1024;
+/// Most characters in a note's title.
+pub const MAX_NOTE_TITLE_CHARS: usize = 200;
+/// Most bytes every note together may take in a snapshot, measured as the
+/// JSON encoding of each note's fields. A snapshot holds at most 4 MB after
+/// compression, shared with every other synchronized type. Text that
+/// doesn't compress (a pasted key or encoded image) must still fit, so the
+/// budget leaves room below that limit without counting on compression.
+pub const MAX_SYNCED_NOTES_TOTAL_BYTES: usize = 3 * 1024 * 1024;
+/// A daily note's entity id is this prefix and its `YYYY-MM-DD` date, so
+/// two devices that start the same day's note offline write one entity.
+pub const DAILY_NOTE_ID_PREFIX: &str = "daily:";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
@@ -48,6 +65,8 @@ pub enum EntityType {
     SenderConfirmation,
     /// Conversation return schedules; older apps must update before sharing these snapshots.
     ConversationSnooze,
+    /// A Markdown note. An earlier build cannot open a snapshot that holds one.
+    Note,
 }
 
 /// Most web origins one remembered delivery pattern may contain.
@@ -80,6 +99,7 @@ impl EntityType {
             Self::Draft => "draft",
             Self::SenderConfirmation => "sender_confirmation",
             Self::ConversationSnooze => "conversation_snooze",
+            Self::Note => "note",
         }
     }
 
@@ -118,6 +138,7 @@ impl EntityType {
                 optional_string(object, "evidenceText", 4_000)?;
                 optional_string(object, "goalId", 128)?;
             }
+            Self::Note => validate_note(object)?,
             Self::Snippet => {
                 required_string(object, "name", 200)?;
                 required_string(object, "body", 32_000)?;
@@ -582,6 +603,7 @@ impl std::str::FromStr for EntityType {
             "signature" => Ok(Self::Signature),
             "signature_defaults" => Ok(Self::SignatureDefaults),
             "draft" => Ok(Self::Draft),
+            "note" => Ok(Self::Note),
             _ => Err("Unknown synchronized entity type".to_string()),
         }
     }
@@ -633,6 +655,69 @@ fn validate_preferences(object: &Map<String, Value>) -> Result<(), String> {
         {
             return Err("A synchronized device name is invalid".to_string());
         }
+    }
+    Ok(())
+}
+
+/// The bytes a note body takes as a snapshot field value: its JSON encoding.
+pub fn note_body_bytes(body: &str) -> usize {
+    serde_json::to_vec(body).map_or(usize::MAX, |bytes| bytes.len())
+}
+
+/// Whether `value` has the `YYYY-MM-DD` shape of a daily note's date. The
+/// app checks that it is a real calendar date as well.
+pub fn is_daily_note_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit())
+}
+
+/// A note: `id`, `title`, and `body` always; `dailyDate` for a daily note,
+/// whose id and title follow from its date; `createdAt` for any other note;
+/// and `trashed`. Fields this version doesn't know are allowed, so a later
+/// version can add one without older devices refusing its notes.
+fn validate_note(object: &Map<String, Value>) -> Result<(), String> {
+    required_string(object, "id", 128)?;
+    required_string(object, "title", MAX_NOTE_TITLE_CHARS)?;
+    let id = object["id"].as_str().unwrap();
+    let title = object["title"].as_str().unwrap();
+    if title.chars().any(char::is_control) {
+        return Err("A note title cannot contain control characters".into());
+    }
+    let body = object
+        .get("body")
+        .and_then(Value::as_str)
+        .ok_or("A note body must be text")?;
+    if note_body_bytes(body) > MAX_NOTE_BODY_BYTES {
+        return Err("The note is too long to sync".into());
+    }
+    match object.get("dailyDate") {
+        None | Some(Value::Null) => {
+            if id.starts_with(DAILY_NOTE_ID_PREFIX) {
+                return Err("A daily note needs its date".into());
+            }
+        }
+        Some(Value::String(date)) => {
+            if !is_daily_note_date(date)
+                || id.strip_prefix(DAILY_NOTE_ID_PREFIX) != Some(date.as_str())
+                || title != date
+            {
+                return Err("A daily note's id, title, and date must agree".into());
+            }
+        }
+        Some(_) => return Err("dailyDate is invalid".into()),
+    }
+    optional_string(object, "createdAt", 64)?;
+    if !matches!(
+        object.get("trashed"),
+        None | Some(Value::Null) | Some(Value::Bool(_))
+    ) {
+        return Err("trashed is invalid".into());
     }
     Ok(())
 }
@@ -809,7 +894,8 @@ mod tests {
             | EntityType::SignatureDefaults
             | EntityType::Draft
             | EntityType::SenderConfirmation
-            | EntityType::ConversationSnooze => entity_type,
+            | EntityType::ConversationSnooze
+            | EntityType::Note => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -830,6 +916,7 @@ mod tests {
             EntityType::Draft,
             EntityType::SenderConfirmation,
             EntityType::ConversationSnooze,
+            EntityType::Note,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));
@@ -1280,5 +1367,79 @@ mod snooze_tests {
         assert!(EntityType::ConversationSnooze
             .validate_payload(&injected)
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod note_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn note(body: &str) -> Value {
+        json!({"id": "n-1", "title": "Plans", "body": body, "createdAt": "2026-11-09T09:00:00Z", "trashed": false})
+    }
+
+    fn daily(date: &str, id: &str, title: &str) -> Value {
+        json!({"id": id, "title": title, "body": "", "dailyDate": date})
+    }
+
+    #[test]
+    fn note_body_limit_counts_the_encoded_value_below_at_and_above_the_limit() {
+        // The encoding adds two quote bytes; a newline encodes as two bytes.
+        let at_limit = "a".repeat(MAX_NOTE_BODY_BYTES - 2);
+        assert_eq!(note_body_bytes(&at_limit), MAX_NOTE_BODY_BYTES);
+        assert!(EntityType::Note
+            .validate_payload(&note(&at_limit[1..]))
+            .is_ok());
+        assert!(EntityType::Note.validate_payload(&note(&at_limit)).is_ok());
+        let above = format!("{at_limit}a");
+        assert!(EntityType::Note.validate_payload(&note(&above)).is_err());
+        let escaped = "\n".repeat((MAX_NOTE_BODY_BYTES - 2) / 2 + 1);
+        assert!(escaped.len() < MAX_NOTE_BODY_BYTES);
+        assert!(EntityType::Note.validate_payload(&note(&escaped)).is_err());
+    }
+
+    #[test]
+    fn note_accepts_an_empty_body_and_later_fields_but_not_a_missing_body_or_bad_title() {
+        assert!(EntityType::Note.validate_payload(&note("")).is_ok());
+        let mut later = note("text");
+        later["tags"] = json!(["work"]);
+        assert!(EntityType::Note.validate_payload(&later).is_ok());
+        let mut missing = note("x");
+        missing.as_object_mut().unwrap().remove("body");
+        assert!(EntityType::Note.validate_payload(&missing).is_err());
+        for title in ["", "  ", "Line\nbreak"] {
+            let mut bad = note("x");
+            bad["title"] = json!(title);
+            assert!(
+                EntityType::Note.validate_payload(&bad).is_err(),
+                "{title:?}"
+            );
+        }
+        let mut long = note("x");
+        long["title"] = json!("t".repeat(MAX_NOTE_TITLE_CHARS + 1));
+        assert!(EntityType::Note.validate_payload(&long).is_err());
+        long["title"] = json!("t".repeat(MAX_NOTE_TITLE_CHARS));
+        assert!(EntityType::Note.validate_payload(&long).is_ok());
+        let mut trashed = note("x");
+        trashed["trashed"] = json!("yes");
+        assert!(EntityType::Note.validate_payload(&trashed).is_err());
+    }
+
+    #[test]
+    fn daily_note_id_title_and_date_must_agree() {
+        let ok = daily("2026-11-09", "daily:2026-11-09", "2026-11-09");
+        assert!(EntityType::Note.validate_payload(&ok).is_ok());
+        for bad in [
+            daily("2026-11-09", "daily:2026-11-10", "2026-11-09"),
+            daily("2026-11-09", "n-1", "2026-11-09"),
+            daily("2026-11-09", "daily:2026-11-09", "Monday"),
+            daily("2026/11/09", "daily:2026/11/09", "2026/11/09"),
+        ] {
+            assert!(EntityType::Note.validate_payload(&bad).is_err(), "{bad}");
+        }
+        let mut undated = note("x");
+        undated["id"] = json!("daily:2026-11-09");
+        assert!(EntityType::Note.validate_payload(&undated).is_err());
     }
 }

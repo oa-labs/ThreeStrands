@@ -1,0 +1,692 @@
+//! Note persistence and the indexes built from notes.
+//!
+//! A note is one replicated entity (`EntityType::Note`). A local change
+//! writes the `notes` row and records the changed fields in the replica in
+//! the same transaction. While sync is off, the changed field names wait in
+//! `replica_dirty_fields` and are recorded once it is on. The link index,
+//! search index, and visit times belong to this device and are rebuilt from
+//! the notes; none of them leaves it.
+
+use std::collections::BTreeSet;
+
+use chrono::Utc;
+use rusqlite::{params, OptionalExtension, Transaction};
+use serde_json::{json, Value};
+use threestrands_sync_protocol::{EntityType, MAX_SYNCED_NOTES_TOTAL_BYTES};
+
+use super::search::fts_query;
+use super::sync_state::{
+    record_replicated_deletion_in_transaction, record_replicated_write_in_transaction,
+};
+use super::{serialization_error, Database, DatabaseError, DbResult};
+use crate::models::{Note, NoteBacklink, NoteLinks, NoteSearchHit, NoteSummary, NotesStorage};
+use crate::notes::{clean_note_title, daily_note_id, extract_links, is_daily_date, title_key};
+
+const NOTE_COLUMNS: &str =
+    "id, title, body, daily_date, created_at, updated_at, trashed, trashed_at";
+/// Most characters of a note's body shown under its title in the list.
+const PREVIEW_CHARS: usize = 140;
+/// Most rows one list or search returns.
+const MAX_LIST_ROWS: usize = 500;
+
+const TOO_LONG: &str = "This note is too long to sync. Shorten it to save your changes.";
+const CONFLICTED: &str =
+    "This note was also changed on another device. Choose which version to keep before editing it.";
+const OUT_OF_SPACE: &str =
+    "Notes have used all of their sync space. Empty Trash or shorten other notes to save this one.";
+
+fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
+    Ok(Note {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        body: row.get(2)?,
+        daily_date: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+        trashed: row.get(6)?,
+        trashed_at: row.get(7)?,
+    })
+}
+
+fn get(tx: &Transaction<'_>, id: &str) -> DbResult<Option<Note>> {
+    Ok(tx
+        .query_row(
+            &format!("SELECT {NOTE_COLUMNS} FROM notes WHERE id=?1"),
+            [id],
+            note_from_row,
+        )
+        .optional()?)
+}
+
+/// The synchronized fields of a note. A daily note's date stands in for its
+/// creation time, so two devices that start the same day's note agree on
+/// every field but the body.
+fn sync_payload(note: &Note) -> Value {
+    let mut payload = json!({
+        "id": note.id,
+        "title": note.title,
+        "body": note.body,
+        "trashed": note.trashed,
+    });
+    match &note.daily_date {
+        Some(date) => payload["dailyDate"] = json!(date),
+        None => payload["createdAt"] = json!(note.created_at),
+    }
+    payload
+}
+
+fn payload_bytes(payload: &Value) -> DbResult<i64> {
+    Ok(serde_json::to_vec(payload)
+        .map_err(serialization_error)?
+        .len() as i64)
+}
+
+/// Whether local changes are recorded for other devices now.
+fn sync_recording(tx: &Transaction<'_>) -> DbResult<bool> {
+    if crate::replicated_sync::enabled() {
+        return Ok(true);
+    }
+    Ok(tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sync_spaces WHERE enabled=1)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+fn dirty_fields(tx: &Transaction<'_>, id: &str) -> DbResult<BTreeSet<String>> {
+    let json: Option<String> = tx
+        .query_row(
+            "SELECT replica_dirty_fields FROM notes WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    json.map(|json| serde_json::from_str(&json).map_err(serialization_error))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+/// Refuses a local change that the snapshot couldn't carry: a field over its
+/// limit, or a note that would take notes past their share of the
+/// snapshot. A change that doesn't grow the note is always allowed, so a
+/// user over the budget (from notes another device added) can still trim.
+fn check_sync_limits(tx: &Transaction<'_>, note: &Note, payload: &Value) -> DbResult<i64> {
+    EntityType::Note
+        .validate_payload(payload)
+        .map_err(|error| match error.as_str() {
+            "The note is too long to sync" => DatabaseError::invalid(TOO_LONG),
+            _ => DatabaseError::invalid(error),
+        })?;
+    let bytes = payload_bytes(payload)?;
+    let (others, current): (i64, Option<i64>) = tx.query_row(
+        "SELECT COALESCE(SUM(CASE WHEN id<>?1 THEN sync_bytes END), 0),
+                MAX(CASE WHEN id=?1 THEN sync_bytes END)
+         FROM notes",
+        [&note.id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let grows = current.is_none_or(|current| bytes > current);
+    if grows && others + bytes > MAX_SYNCED_NOTES_TOTAL_BYTES as i64 {
+        return Err(DatabaseError::invalid(OUT_OF_SPACE));
+    }
+    Ok(bytes)
+}
+
+/// Writes the note row and rebuilds its link and search entries. With
+/// `changed`, this is a local change: those fields are recorded in the
+/// replica now if sync is on, or remembered until it is.
+fn store(
+    tx: &Transaction<'_>,
+    note: &Note,
+    sync_bytes: i64,
+    changed: Option<&BTreeSet<String>>,
+) -> DbResult<()> {
+    let pending = match changed {
+        Some(changed) => {
+            let mut fields = dirty_fields(tx, &note.id)?;
+            fields.extend(changed.iter().cloned());
+            fields
+        }
+        None => dirty_fields(tx, &note.id)?,
+    };
+    let recording = changed.is_some() && sync_recording(tx)?;
+    let stored_pending = if recording || pending.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&pending).map_err(serialization_error)?)
+    };
+    tx.execute(
+        "INSERT INTO notes(id, title, title_key, body, daily_date, created_at, updated_at, trashed, trashed_at, sync_bytes, replica_dirty_fields)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+         ON CONFLICT(id) DO UPDATE SET title=excluded.title, title_key=excluded.title_key,
+            body=excluded.body, daily_date=excluded.daily_date, created_at=excluded.created_at,
+            updated_at=excluded.updated_at, trashed=excluded.trashed, trashed_at=excluded.trashed_at,
+            sync_bytes=excluded.sync_bytes, replica_dirty_fields=excluded.replica_dirty_fields",
+        params![
+            note.id,
+            note.title,
+            title_key(&note.title),
+            note.body,
+            note.daily_date,
+            note.created_at,
+            note.updated_at,
+            note.trashed,
+            note.trashed_at,
+            sync_bytes,
+            stored_pending,
+        ],
+    )?;
+    index(tx, note)?;
+    if recording {
+        record_replicated_write_in_transaction(
+            tx,
+            EntityType::Note,
+            &note.id,
+            &pending,
+            &sync_payload(note),
+        )?;
+    }
+    Ok(())
+}
+
+fn index(tx: &Transaction<'_>, note: &Note) -> DbResult<()> {
+    tx.execute("DELETE FROM note_links WHERE note_id=?1", [&note.id])?;
+    tx.execute("DELETE FROM note_search WHERE note_id=?1", [&note.id])?;
+    for (position, link) in extract_links(&note.body).iter().enumerate() {
+        tx.execute(
+            "INSERT INTO note_links(note_id, position, target_key, target_title, context) VALUES (?1,?2,?3,?4,?5)",
+            params![note.id, position as i64, link.key, link.title, link.context],
+        )?;
+    }
+    tx.execute(
+        "INSERT INTO note_search(note_id, title, body) VALUES (?1,?2,?3)",
+        params![note.id, note.title, note.body],
+    )?;
+    Ok(())
+}
+
+fn remove(tx: &Transaction<'_>, id: &str) -> DbResult<()> {
+    for statement in [
+        "DELETE FROM notes WHERE id=?1",
+        "DELETE FROM note_links WHERE note_id=?1",
+        "DELETE FROM note_search WHERE note_id=?1",
+        "DELETE FROM note_visits WHERE note_id=?1",
+    ] {
+        tx.execute(statement, [id])?;
+    }
+    Ok(())
+}
+
+/// Refuses a title another note in use already has, since a `[[link]]`
+/// names one note by its title.
+fn check_title_free(tx: &Transaction<'_>, id: &str, title: &str) -> DbResult<()> {
+    let taken: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM notes WHERE title_key=?1 AND id<>?2 AND trashed=0)",
+        params![title_key(title), id],
+        |row| row.get(0),
+    )?;
+    if taken {
+        return Err(DatabaseError::invalid(format!(
+            "A note named \u{201c}{title}\u{201d} already exists"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether the replica holds different values for one of a note's fields,
+/// written on different devices before either saw the other's. A local
+/// write replaces every value of a field, so editing it now would discard
+/// the other device's version without the user choosing.
+fn field_in_conflict(tx: &Transaction<'_>, id: &str, field: &str) -> DbResult<bool> {
+    let values: i64 = tx.query_row(
+        "SELECT COUNT(DISTINCT value) FROM sync_values WHERE entity_type=?1 AND entity_id=?2 AND field=?3",
+        params![EntityType::Note.as_str(), id, field],
+        |row| row.get(0),
+    )?;
+    Ok(values > 1)
+}
+
+/// Applies a local edit of title and body, writing only when one changed.
+/// A field in conflict can't be edited until the user picks a version.
+fn edit(tx: &Transaction<'_>, mut note: Note, title: String, body: &str) -> DbResult<Note> {
+    if note.trashed {
+        return Err(DatabaseError::invalid("Restore this note to edit it"));
+    }
+    let mut changed = BTreeSet::new();
+    if note.title != title {
+        check_title_free(tx, &note.id, &title)?;
+        note.title = title;
+        changed.insert("title".to_string());
+    }
+    if note.body != body {
+        note.body = body.to_string();
+        changed.insert("body".to_string());
+    }
+    if changed.is_empty() {
+        return Ok(note);
+    }
+    for field in &changed {
+        if field_in_conflict(tx, &note.id, field)? {
+            return Err(DatabaseError::invalid(CONFLICTED));
+        }
+    }
+    note.updated_at = Utc::now().to_rfc3339();
+    let bytes = check_sync_limits(tx, &note, &sync_payload(&note))?;
+    store(tx, &note, bytes, Some(&changed))?;
+    Ok(note)
+}
+
+fn create(tx: &Transaction<'_>, note: Note) -> DbResult<Note> {
+    let payload = sync_payload(&note);
+    let bytes = check_sync_limits(tx, &note, &payload)?;
+    let fields = payload
+        .as_object()
+        .map(|object| object.keys().cloned().collect())
+        .unwrap_or_default();
+    store(tx, &note, bytes, Some(&fields))?;
+    Ok(note)
+}
+
+fn set_trashed(tx: &Transaction<'_>, id: &str, trashed: bool) -> DbResult<Note> {
+    let mut note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
+    if note.trashed == trashed {
+        return Ok(note);
+    }
+    note.trashed = trashed;
+    note.trashed_at = trashed.then(|| Utc::now().to_rfc3339());
+    let bytes = payload_bytes(&sync_payload(&note))?;
+    store(
+        tx,
+        &note,
+        bytes,
+        Some(&BTreeSet::from(["trashed".to_string()])),
+    )?;
+    Ok(note)
+}
+
+fn preview(body: &str) -> String {
+    let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() <= PREVIEW_CHARS {
+        return text;
+    }
+    let mut preview: String = text.chars().take(PREVIEW_CHARS - 1).collect();
+    preview.push('…');
+    preview
+}
+
+fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteSummary> {
+    Ok(NoteSummary {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        daily_date: row.get(2)?,
+        preview: preview(&row.get::<_, String>(3)?),
+        updated_at: row.get(4)?,
+        visited_at: row.get(5)?,
+        trashed_at: row.get(6)?,
+    })
+}
+
+fn note_field<'a>(payload: &'a Value, field: &str) -> Option<&'a str> {
+    payload.get(field).and_then(Value::as_str)
+}
+
+impl Database {
+    pub fn get_note(&self, id: &str) -> DbResult<Option<Note>> {
+        self.with_transaction(|tx| get(tx, id))
+    }
+
+    /// The daily note for `date`, if one was written.
+    pub fn get_daily_note(&self, date: &str) -> DbResult<Option<Note>> {
+        if !is_daily_date(date) {
+            return Err(DatabaseError::invalid("That isn't a valid date"));
+        }
+        self.get_note(&daily_note_id(date))
+    }
+
+    pub fn create_note(&self, title: &str, body: &str) -> DbResult<Note> {
+        let title = clean_note_title(title).map_err(DatabaseError::invalid)?;
+        let now = Utc::now().to_rfc3339();
+        let note = Note {
+            id: uuid::Uuid::new_v4().to_string(),
+            title,
+            body: body.to_string(),
+            daily_date: None,
+            created_at: now.clone(),
+            updated_at: now,
+            trashed: false,
+            trashed_at: None,
+        };
+        self.with_transaction(|tx| {
+            check_title_free(tx, &note.id, &note.title)?;
+            create(tx, note)
+        })
+    }
+
+    /// Saves a regular note's title and body. Saving what is already stored
+    /// writes nothing, so opening and closing a note never syncs a change.
+    pub fn update_note(&self, id: &str, title: &str, body: &str) -> DbResult<Note> {
+        self.with_transaction(|tx| {
+            let note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
+            let title = if note.daily_date.is_some() {
+                note.title.clone()
+            } else {
+                clean_note_title(title).map_err(DatabaseError::invalid)?
+            };
+            edit(tx, note, title, body)
+        })
+    }
+
+    /// Saves the body of the daily note for `date`. Saving an empty body
+    /// for a day without a note writes nothing and returns `None`, so
+    /// looking at a day never creates its note.
+    pub fn save_daily_note(&self, date: &str, body: &str) -> DbResult<Option<Note>> {
+        if !is_daily_date(date) {
+            return Err(DatabaseError::invalid("That isn't a valid date"));
+        }
+        let id = daily_note_id(date);
+        self.with_transaction(|tx| match get(tx, &id)? {
+            Some(note) => {
+                let title = note.title.clone();
+                edit(tx, note, title, body).map(Some)
+            }
+            None if body.is_empty() => Ok(None),
+            None => {
+                let now = Utc::now().to_rfc3339();
+                create(
+                    tx,
+                    Note {
+                        id: id.clone(),
+                        title: date.to_string(),
+                        body: body.to_string(),
+                        daily_date: Some(date.to_string()),
+                        created_at: now.clone(),
+                        updated_at: now,
+                        trashed: false,
+                        trashed_at: None,
+                    },
+                )
+                .map(Some)
+            }
+        })
+    }
+
+    /// Moves a note to Trash. Other devices keep any edit made at the same
+    /// time, because trashing changes one field rather than deleting.
+    pub fn trash_note(&self, id: &str) -> DbResult<Note> {
+        self.with_transaction(|tx| set_trashed(tx, id, true))
+    }
+
+    pub fn restore_note(&self, id: &str) -> DbResult<Note> {
+        self.with_transaction(|tx| set_trashed(tx, id, false))
+    }
+
+    /// Deletes a note from Trash on every device.
+    pub fn delete_note(&self, id: &str) -> DbResult<()> {
+        self.with_transaction(|tx| {
+            let note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
+            if !note.trashed {
+                return Err(DatabaseError::invalid(
+                    "Move this note to Trash before deleting it",
+                ));
+            }
+            remove(tx, id)?;
+            // Once the replica holds the note, its deletion is recorded even
+            // while sync is off, so the note doesn't return when sync resumes.
+            let in_replica: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type=?1 AND entity_id=?2)",
+                params![EntityType::Note.as_str(), id],
+                |row| row.get(0),
+            )?;
+            if in_replica {
+                record_replicated_deletion_in_transaction(tx, EntityType::Note, id)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Notes not in Trash, most recently opened or changed on this device
+    /// first.
+    pub fn list_recent_notes(&self, limit: usize) -> DbResult<Vec<NoteSummary>> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT n.id, n.title, n.daily_date, substr(n.body, 1, 1000), n.updated_at, v.visited_at, n.trashed_at
+                 FROM notes n LEFT JOIN note_visits v ON v.note_id=n.id
+                 WHERE n.trashed=0
+                 ORDER BY max(COALESCE(v.visited_at, ''), n.updated_at) DESC, n.id
+                 LIMIT ?1",
+            )?;
+            let rows = statement.query_map([limit.min(MAX_LIST_ROWS) as i64], summary_from_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// Notes in Trash, most recently trashed first.
+    pub fn list_trashed_notes(&self, limit: usize) -> DbResult<Vec<NoteSummary>> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT n.id, n.title, n.daily_date, substr(n.body, 1, 1000), n.updated_at, v.visited_at, n.trashed_at
+                 FROM notes n LEFT JOIN note_visits v ON v.note_id=n.id
+                 WHERE n.trashed=1
+                 ORDER BY n.trashed_at DESC, n.id
+                 LIMIT ?1",
+            )?;
+            let rows = statement.query_map([limit.min(MAX_LIST_ROWS) as i64], summary_from_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// Remembers that the user opened a note on this device.
+    pub fn record_note_visit(&self, id: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO note_visits(note_id, visited_at)
+                 SELECT id, ?2 FROM notes WHERE id=?1
+                 ON CONFLICT(note_id) DO UPDATE SET visited_at=excluded.visited_at",
+                params![id, Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Notes not in Trash whose title or body matches every word of `query`.
+    pub fn search_notes(&self, query: &str, limit: usize) -> DbResult<Vec<NoteSearchHit>> {
+        let query = fts_query(query);
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT n.id, n.title, n.daily_date,
+                        snippet(note_search, -1, '\u{1}', '\u{2}', '…', 12)
+                 FROM note_search s JOIN notes n ON n.id=s.note_id
+                 WHERE note_search MATCH ?1 AND n.trashed=0
+                 ORDER BY rank
+                 LIMIT ?2",
+            )?;
+            let rows =
+                statement.query_map(params![query, limit.min(MAX_LIST_ROWS) as i64], |row| {
+                    Ok(NoteSearchHit {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        daily_date: row.get(2)?,
+                        match_snippet: row.get(3)?,
+                    })
+                })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// The notes that link to `id`, and the titles `id` links to that no
+    /// note outside Trash has.
+    pub fn note_links(&self, id: &str) -> DbResult<NoteLinks> {
+        self.with_transaction(|tx| {
+            let note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
+            let backlinks = {
+                let mut statement = tx.prepare(
+                    "SELECT n.id, n.title, n.daily_date, l.context
+                     FROM note_links l JOIN notes n ON n.id=l.note_id
+                     WHERE l.target_key=?1 AND n.id<>?2 AND n.trashed=0
+                     ORDER BY n.updated_at DESC, n.id, l.position
+                     LIMIT ?3",
+                )?;
+                let rows = statement.query_map(
+                    params![title_key(&note.title), id, MAX_LIST_ROWS as i64],
+                    |row| {
+                        Ok(NoteBacklink {
+                            note_id: row.get(0)?,
+                            title: row.get(1)?,
+                            daily_date: row.get(2)?,
+                            context: row.get(3)?,
+                        })
+                    },
+                )?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            let unlinked = {
+                let mut statement = tx.prepare(
+                    "SELECT target_title FROM note_links l
+                     WHERE l.note_id=?1 AND l.target_key<>?2
+                       AND NOT EXISTS(SELECT 1 FROM notes t WHERE t.title_key=l.target_key AND t.trashed=0)
+                     GROUP BY l.target_key
+                     ORDER BY min(l.position)",
+                )?;
+                let rows = statement
+                    .query_map(params![id, title_key(&note.title)], |row| row.get(0))?;
+                rows.collect::<Result<Vec<String>, _>>()?
+            };
+            Ok(NoteLinks {
+                backlinks,
+                unlinked,
+            })
+        })
+    }
+
+    /// How much of their snapshot budget notes use, Trash included.
+    pub fn notes_storage(&self) -> DbResult<NotesStorage> {
+        self.with_connection(|connection| {
+            let used: i64 = connection.query_row(
+                "SELECT COALESCE(SUM(sync_bytes), 0) FROM notes",
+                [],
+                |row| row.get(0),
+            )?;
+            Ok(NotesStorage {
+                used_bytes: used as u64,
+                limit_bytes: MAX_SYNCED_NOTES_TOTAL_BYTES as u64,
+            })
+        })
+    }
+}
+
+impl Database {
+    /// Stores a note another device wrote. A note with local changes that
+    /// haven't been recorded yet keeps them. Sync records those changes
+    /// before it pulls (see `ReplicatedSync::sync_once`), so this only
+    /// guards against a merge that reaches the note first.
+    pub(crate) fn upsert_synced_note(&self, id: &str, payload: &Value) -> DbResult<()> {
+        if note_field(payload, "id") != Some(id) {
+            return Err(DatabaseError::invalid("Note identity mismatch"));
+        }
+        let title = note_field(payload, "title").unwrap_or_default();
+        let body = note_field(payload, "body").unwrap_or_default();
+        let daily_date = note_field(payload, "dailyDate").map(str::to_string);
+        if daily_date
+            .as_deref()
+            .is_some_and(|date| !is_daily_date(date))
+        {
+            return Err(DatabaseError::invalid("Invalid daily note date"));
+        }
+        let trashed = payload
+            .get("trashed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        self.with_transaction(|tx| {
+            if !dirty_fields(tx, id)?.is_empty() {
+                return Ok(());
+            }
+            let now = Utc::now().to_rfc3339();
+            let existing = get(tx, id)?;
+            let created_at = note_field(payload, "createdAt")
+                .map(str::to_string)
+                .or_else(|| existing.as_ref().map(|note| note.created_at.clone()))
+                .unwrap_or_else(|| now.clone());
+            let note = Note {
+                id: id.to_string(),
+                title: title.to_string(),
+                body: body.to_string(),
+                updated_at: match &existing {
+                    Some(old) if old.title == title && old.body == body => old.updated_at.clone(),
+                    _ => now.clone(),
+                },
+                trashed_at: match &existing {
+                    _ if !trashed => None,
+                    Some(old) if old.trashed => old.trashed_at.clone(),
+                    _ => Some(now),
+                },
+                daily_date,
+                created_at,
+                trashed,
+            };
+            if existing.as_ref() == Some(&note) {
+                return Ok(());
+            }
+            let bytes = payload_bytes(&sync_payload(&note))?;
+            store(tx, &note, bytes, None)
+        })
+    }
+
+    /// Removes a note another device deleted.
+    pub(crate) fn delete_synced_note(&self, id: &str) -> DbResult<()> {
+        self.with_transaction(|tx| remove(tx, id))
+    }
+
+    /// Records the changes made to notes while sync was off.
+    pub(crate) fn publish_dirty_notes(&self) -> DbResult<()> {
+        self.with_transaction(|tx| {
+            if !sync_recording(tx)? {
+                return Ok(());
+            }
+            let ids = {
+                let mut statement =
+                    tx.prepare("SELECT id FROM notes WHERE replica_dirty_fields IS NOT NULL")?;
+                let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            for id in ids {
+                let Some(note) = get(tx, &id)? else { continue };
+                let fields = dirty_fields(tx, &id)?;
+                tx.execute(
+                    "UPDATE notes SET replica_dirty_fields=NULL WHERE id=?1",
+                    [&id],
+                )?;
+                record_replicated_write_in_transaction(
+                    tx,
+                    EntityType::Note,
+                    &id,
+                    &fields,
+                    &sync_payload(&note),
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Every note's synchronized fields, for the backlog sweep that records
+    /// any note the replica has never seen.
+    pub(crate) fn note_sync_payloads(&self) -> DbResult<Vec<(String, Value)>> {
+        self.with_connection(|connection| {
+            let mut statement =
+                connection.prepare(&format!("SELECT {NOTE_COLUMNS} FROM notes ORDER BY id"))?;
+            let rows = statement.query_map([], note_from_row)?;
+            let notes = rows.collect::<Result<Vec<_>, _>>()?;
+            Ok(notes
+                .into_iter()
+                .map(|note| (note.id.clone(), sync_payload(&note)))
+                .collect())
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/notes.rs"]
+mod tests;

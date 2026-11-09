@@ -219,6 +219,12 @@ impl Database {
                 repaired += 1;
             }
         }
+        self.publish_dirty_notes()?;
+        for (id, payload) in self.note_sync_payloads()? {
+            if self.reconcile_one_entity(EntityType::Note, &id, payload)? {
+                repaired += 1;
+            }
+        }
         for contact in self.list_saved_contact_profiles()? {
             repaired += usize::from(
                 self.reconcile_one_entity(
@@ -3250,6 +3256,43 @@ mod replicator_tests {
         pull_from_transports(&b, &kb, &transports).await.unwrap();
         assert!(b.signature_library().unwrap().signatures.is_empty());
         assert!(b.signature_library().unwrap().defaults.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_note_at_its_size_limit_seals_and_reaches_a_peer() {
+        let (a, b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let (ka, kb) = (test_keys(&a), test_keys(&b));
+        trust(&a, &kb);
+        trust(&b, &ka);
+        for database in [&a, &b] {
+            database.set_beta_features_enabled(true).unwrap();
+        }
+        // The largest body a note may save is exactly the largest value a
+        // snapshot accepts, so the limits can't drift apart.
+        assert_eq!(
+            threestrands_sync_protocol::MAX_NOTE_BODY_BYTES,
+            threestrands_sync_envelope::limits::MAX_VALUE_BYTES
+        );
+        // Newlines, quotes, and accents each take two bytes once encoded.
+        let limit = threestrands_sync_protocol::MAX_NOTE_BODY_BYTES;
+        let prefix = "See [[Plan]] ";
+        let repeats = (limit - 2 - prefix.len()) / 6;
+        let padding = limit - 2 - prefix.len() - repeats * 6;
+        let body = format!("{prefix}{}{}", "\n\"é".repeat(repeats), "a".repeat(padding));
+        assert_eq!(threestrands_sync_protocol::note_body_bytes(&body), limit);
+        let note = a.create_note("Big", &body).unwrap();
+        a.save_daily_note("2026-11-09", "About [[Big]]").unwrap();
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+        assert_eq!(b.get_note(&note.id).unwrap().unwrap().body, body);
+        assert_eq!(b.note_links(&note.id).unwrap().backlinks.len(), 1);
+
+        b.trash_note(&note.id).unwrap();
+        b.delete_note(&note.id).unwrap();
+        push_local_state(&b, &kb, &transports).await.unwrap();
+        pull_from_transports(&a, &ka, &transports).await.unwrap();
+        assert!(a.get_note(&note.id).unwrap().is_none());
     }
 
     #[tokio::test]

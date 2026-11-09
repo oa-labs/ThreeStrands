@@ -44,6 +44,7 @@ const MIGRATIONS: &[Migration] = &[
     (97, to_v97),
     (98, to_v98),
     (99, to_v99),
+    (100, to_v100),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1239,6 +1240,52 @@ fn to_v99(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v100(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Notes are synchronized through the replica. Everything else here is
+    // rebuilt from them on this device: the link and search indexes, and
+    // when this device last opened each note. `updated_at` and `trashed_at`
+    // record when this device saw the change. `sync_bytes` is the note's
+    // share of the snapshot; `replica_dirty_fields` lists fields edited while
+    // sync was off, which are recorded once it is on.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            title_key TEXT NOT NULL,
+            body TEXT NOT NULL,
+            daily_date TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            trashed INTEGER NOT NULL DEFAULT 0,
+            trashed_at TEXT,
+            sync_bytes INTEGER NOT NULL,
+            replica_dirty_fields TEXT
+        );
+        CREATE INDEX IF NOT EXISTS notes_by_title_key ON notes(title_key);
+        CREATE TABLE IF NOT EXISTS note_links (
+            note_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            target_key TEXT NOT NULL,
+            target_title TEXT NOT NULL,
+            context TEXT NOT NULL,
+            PRIMARY KEY(note_id, position)
+        );
+        CREATE INDEX IF NOT EXISTS note_links_by_target ON note_links(target_key);
+        CREATE VIRTUAL TABLE IF NOT EXISTS note_search USING fts5(
+            note_id UNINDEXED,
+            title,
+            body,
+            tokenize = 'unicode61 remove_diacritics 2'
+        );
+        CREATE TABLE IF NOT EXISTS note_visits (
+            note_id TEXT PRIMARY KEY,
+            visited_at TEXT NOT NULL
+        );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
 /// Outbox reconciliation that runs on every open, independent of schema
 /// version: a send interrupted mid-flight is marked uncertain, an undo window
 /// is re-armed briefly, and an overdue scheduled send is surfaced.
@@ -1542,6 +1589,17 @@ mod tests {
         "table:system_contact_addresses",
         "index:system_contact_email",
         "index:conversation_snoozes_account",
+        "table:notes",
+        "index:notes_by_title_key",
+        "table:note_links",
+        "index:note_links_by_target",
+        "table:note_search",
+        "table:note_search_config",
+        "table:note_search_content",
+        "table:note_search_data",
+        "table:note_search_docsize",
+        "table:note_search_idx",
+        "table:note_visits",
     ];
 
     #[test]
@@ -1712,6 +1770,36 @@ mod tests {
                 .unwrap(),
             "[\"Project\"]"
         );
+        super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v100_adds_empty_note_tables_and_keeps_earlier_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE notes; DROP TABLE note_links; DROP TABLE note_search;
+                 DROP TABLE note_visits; PRAGMA user_version=99;
+                 INSERT INTO snippets(id, name, body, created_at) VALUES('s','Hi','Hello','2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        for table in ["notes", "note_links", "note_search", "note_visits"] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
+        let snippet: String = connection
+            .query_row("SELECT body FROM snippets WHERE id='s'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(snippet, "Hello");
         super::migrate(&mut connection).unwrap();
     }
 

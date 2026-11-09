@@ -561,7 +561,11 @@ impl Database {
             entity_id,
             &BTreeSet::from([field.to_string()]),
             &Value::Object(payload),
-        )
+        )?;
+        // The chosen value may not be the one this device was showing, so
+        // apply the entity's settled values here too, as a merge would.
+        self.materialize_touched_entities(&[(entity_type, entity_id.to_string())])
+            .map_err(DatabaseError::Corrupt)
     }
 
     /// Whether the replica changed since the last sealed snapshot, that

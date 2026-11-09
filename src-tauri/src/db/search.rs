@@ -571,7 +571,7 @@ fn number_placeholders(sql: &str) -> String {
 /// every "quoted phrase" as a prefix match. `input.split('"')` alternates
 /// unquoted segments (even indices) with quoted ones (odd indices); an
 /// unterminated trailing quote is simply treated as still-quoted.
-fn fts_query(input: &str) -> String {
+pub(super) fn fts_query(input: &str) -> String {
     let mut terms: Vec<String> = Vec::new();
     for (index, segment) in input.split('"').enumerate() {
         if index % 2 == 0 {

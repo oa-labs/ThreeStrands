@@ -42,6 +42,7 @@ mod transport_validation;
 use threestrands_mail_mime::{html_plain_text, mime, sender_trust};
 use threestrands_mail_text::{quoted_history, search_query};
 mod net_safety;
+mod notes;
 mod provider;
 mod replicated_sync;
 mod s3_transport;
@@ -1754,6 +1755,21 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::tasks::set_task_status,
         commands::tasks::record_follow_up,
         commands::tasks::reconcile_tasks,
+        // Notes
+        commands::notes::list_recent_notes,
+        commands::notes::list_trashed_notes,
+        commands::notes::get_note,
+        commands::notes::get_daily_note,
+        commands::notes::create_note,
+        commands::notes::update_note,
+        commands::notes::save_daily_note,
+        commands::notes::trash_note,
+        commands::notes::restore_note,
+        commands::notes::delete_note,
+        commands::notes::record_note_visit,
+        commands::notes::search_notes,
+        commands::notes::note_links,
+        commands::notes::notes_storage,
         // System
         system_fonts::list_system_font_families,
         app_update::check_for_app_update,

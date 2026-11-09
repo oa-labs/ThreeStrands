@@ -8,6 +8,7 @@ pub(crate) mod attachments;
 pub(crate) mod calendar;
 pub(crate) mod contacts;
 pub(crate) mod mail;
+pub(crate) mod notes;
 pub(crate) mod replicated_sync;
 pub(crate) mod settings;
 pub(crate) mod sync;
