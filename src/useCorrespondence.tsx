@@ -483,6 +483,7 @@ export function useCorrespondence(
     activeDraft: active,
     liveDraft: active ? (liveDraft?.id === active.id ? liveDraft : active) : null,
     flushDraft,
+    closeDraft: closeComposer,
     insertIntoDraft,
     replaceDraftRecipient,
     switchDraftAccount,
