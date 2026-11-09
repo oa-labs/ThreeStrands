@@ -168,6 +168,7 @@ Mechanics:
 ## Not built
 
 - "From mail" event suggestions in Today.
-- A "Coming back" section, which needs mail snooze.
+- A "Coming back" section of snoozed mail; the mail snooze it needs shipped in
+  0.190.0, so this is no longer blocked.
 - Promise detection in languages other than English, and promises made in
   the Cc'd part of a reply-all (detection reads the To line only).

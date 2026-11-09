@@ -45,9 +45,13 @@ and re-add accounts to test the new path.
 - [x] Trace message/thread IDs through IMAP acquisition, deduplication, thread
   aliases, tasks, goals, snoozes, reader state, drafts, queued mutations/sends,
   and encrypted replication. Record each reference and its migration behavior.
-- [ ] Decide how advertised `X-GM-MSGID` and `X-GM-THRID` become external identity
-  mappings without invalidating existing header-derived IMAP IDs. Prefer stable
-  internal IDs with external mappings over changing primary keys on reconnect.
+- [x] Decide how advertised `X-GM-MSGID` becomes an external identity mapping
+  without invalidating existing header-derived IMAP IDs: prefer stable internal
+  IDs with external mappings over changing primary keys on reconnect.
+  Implemented in [identity mappings](imap-identity-mappings.md).
+- [ ] Decide how advertised `X-GM-THRID` conversation identities become external
+  mappings under the same rule; external conversation identities remain later
+  work.
 - [x] Define ambiguous identity handling: no subject-only matches and no silent
   reassociation when Message-ID headers are missing or duplicated. Preserve and
   expose unresolved references rather than deleting workflow data.

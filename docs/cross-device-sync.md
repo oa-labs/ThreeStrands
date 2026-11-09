@@ -176,8 +176,8 @@ plus the group's key changes and join records.
 Replicated entities are tasks (including the goal each one supports), goals,
 saved contacts, contact groups, snippets, signatures and their defaults,
 Split Inboxes, muted senders, mail-account display metadata, calendar-account
-metadata and selections, scheduled-send summaries, retention, the portable
-preference allowlist, and notes.
+metadata and selections, scheduled-send summaries, sender delivery-pattern
+confirmations, retention, the portable preference allowlist, and notes.
 
 A device reads only the entity types its version knows. Goals arrived in
 0.62.0: a device on an earlier version can't open a snapshot that holds a goal,
@@ -186,7 +186,8 @@ Contact groups arrived in 0.79.0 and behave the same way on earlier versions.
 Scheduled-send summaries arrived in 0.98.1; update every device to that version
 or later before sharing them. Muted senders arrived in 0.122.0 and behave the
 same way: an earlier device stops receiving changes once a muted sender is in a
-snapshot, until it is updated. Nothing is lost meanwhile, because a snapshot
+snapshot, until it is updated. Sender delivery-pattern confirmations arrived in
+0.173.0 and behave the same way. Nothing is lost meanwhile, because a snapshot
 it can't open is never merged.
 
 A mute is applied by whichever device syncs the mail first. It acts only on

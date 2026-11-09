@@ -1,6 +1,7 @@
 # Co-recipient contact suggestions
 
-**Status:** Implemented for 0.194.0; automated verification complete against master at 0.193.1.
+**Status:** archived. Implemented for 0.194.0; automated verification complete against master at 0.193.1.
+Kept for design history; the code is the current reference.
 **Planned:** 2026-11-01 against 0.192.2.
 
 **Sync decision:** Learned evidence, scores, and backfill progress remain local.

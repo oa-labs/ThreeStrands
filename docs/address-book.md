@@ -1,7 +1,7 @@
 # Contact management
 
 ThreeStrands keeps a local address book alongside correspondence history. Open
-**Contacts** from the sidebar (shortcut `4`). Profiles and groups are shared
+**Contacts** from the sidebar (shortcut `5`). Profiles and groups are shared
 across mail accounts; an account-scoped view shows people with correspondence
 in that account, plus saved profiles with no correspondence yet.
 
