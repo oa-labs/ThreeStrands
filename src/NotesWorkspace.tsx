@@ -155,7 +155,7 @@ export function NotesWorkspace({ request = null, refreshKey = "", onOpenContact 
     // Notes whose links followed the rename changed too.
     if (relink.updated) void mailClient.listRecentNotes(RECENT_LIMIT).then(setRecent, logBackgroundFailure("Recent notes"));
   }, [showSaved, loadLinks]);
-  const editor = useNoteEditor(target, { onSaved, onReplaced: (note) => select({ kind: "note", id: note.id }) });
+  const editor = useNoteEditor(target, { onSaved, onReplaced: (note) => select({ kind: "note", id: note.id }), onRestored: () => loadTrash() });
   useEffect(() => { openNoteId.current = editor.note?.id ?? null; });
   const { refresh } = editor;
   const reloadAll = useCallback(() => {
@@ -382,10 +382,13 @@ export function NotesWorkspace({ request = null, refreshKey = "", onOpenContact 
           : editor.missing ? <p className="context-status">This note was deleted.</p>
           : <>
             {stale ? <div className="notes-stale" role="alert">
-              <p>{stale.current ? "This note changed on another device after you started typing. Your text is kept here until you choose." : "This note was deleted on another device. Your text is kept here until you choose."}</p>
+              <p>{stale.current?.trashed ? "This note was moved to Trash on another device after you started typing. Your text is kept here until you choose."
+                : stale.current ? "This note changed on another device after you started typing. Your text is kept here until you choose."
+                : "This note was deleted on another device. Your text is kept here until you choose."}</p>
+              {stale.error ? <p className="form-error">{stale.error}</p> : null}
               <div className="notes-stale-actions">
-                <button type="button" className="btn btn-primary" onClick={() => void editor.keepMine()}>{stale.current ? "Keep My Version" : "Keep as New Note"}</button>
-                <button type="button" className="btn" onClick={editor.takeTheirs}>{stale.current ? "Use Other Version" : "Discard My Text"}</button>
+                <button type="button" className="btn btn-primary" onClick={() => void editor.keepMine()}>{stale.current?.trashed ? "Restore and Keep My Text" : stale.current ? "Keep My Version" : "Keep as New Note"}</button>
+                <button type="button" className="btn" onClick={editor.takeTheirs}>{stale.current && !stale.current.trashed ? "Use Other Version" : "Discard My Text"}</button>
               </div>
             </div> : null}
             {editor.note && !stale && noteConflicts.length ? <NoteConflictBanner key={editor.note.id} note={editor.note} title={editorTitle} conflicts={noteConflicts} roster={roster}

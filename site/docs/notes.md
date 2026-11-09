@@ -63,6 +63,6 @@ A note can hold about 96 KB of text, and all your notes together about 3.5 MB, s
 
 Pictures and files travel separately, so they don't count toward that space; your notes can hold up to 2,000 of them. Another device downloads them after it syncs, and a picture appears in the note once it arrives. Files take space in your sync storage, such as your shared folder or bucket, and leave it when you delete their note from Trash.
 
-If a note changes on another device while you're typing, ThreeStrands stops saving and asks which version to keep: **Keep My Version** or **Use Other Version**. If the note was deleted there, you can keep your text as a new note.
+If a note changes on another device while you're typing, ThreeStrands stops saving and asks which version to keep: **Keep My Version** or **Use Other Version**. If the note was moved to Trash there, **Restore and Keep My Text** brings it back with your text. If it was deleted there, you can keep your text as a new note.
 
 If two devices change the same note before they sync, the note says so, names the other device, and stays read-only until you choose. **Compare** shows the lines that differ. **Keep This Version** or **Use Other Version** settles it on every device, and **Keep Both** saves the other version as a new note. The note list marks notes waiting for a choice.

@@ -816,3 +816,41 @@ fn two_devices_importing_one_note_agree_except_on_text_that_differs() {
     let id = "import-0123456789abcdef0123456789abcdef".to_string();
     assert_eq!(note_conflicts(&c), [(id, "body".to_string())]);
 }
+
+#[test]
+fn a_note_trashed_on_another_device_while_typing_comes_back_stale_not_as_an_error() {
+    let (a, b) = (synced(), synced());
+    let note = a.create_note("Shared", "v1").unwrap();
+    a.save_daily_note(DAY, "today").unwrap();
+    sync_both(&a, &b);
+    let loaded = b.get_note(&note.id).unwrap().unwrap();
+    let day = b.get_daily_note(DAY).unwrap().unwrap();
+
+    // A trashes both while B is typing; trashing changes no text.
+    a.trash_note(&note.id).unwrap();
+    a.trash_note(&day.id).unwrap();
+    sync_both(&a, &b);
+    let trashed = b.get_note(&note.id).unwrap().unwrap();
+    assert!(trashed.trashed);
+    assert_eq!(trashed.updated_at, loaded.updated_at);
+
+    let save = b
+        .save_note(&note.id, "Shared", "typed on B", &loaded.updated_at)
+        .unwrap();
+    assert!(!save.saved);
+    assert!(save.note.unwrap().trashed);
+    let save = b
+        .save_daily_note_edit(DAY, "typed on B", Some(&day.updated_at))
+        .unwrap();
+    assert!(!save.saved);
+    assert!(save.note.unwrap().trashed);
+    assert_eq!(b.get_note(&note.id).unwrap().unwrap().body, "v1");
+
+    // Restoring it, then saving over the version it now is, keeps the typing.
+    let restored = b.restore_note(&note.id).unwrap();
+    let save = b
+        .save_note(&note.id, "Shared", "typed on B", &restored.updated_at)
+        .unwrap();
+    assert!(save.saved);
+    assert_eq!(save.note.unwrap().body, "typed on B");
+}

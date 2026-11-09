@@ -422,6 +422,15 @@ fn save_daily_in(tx: &Transaction<'_>, date: &str, body: &str) -> DbResult<Optio
     }
 }
 
+/// Whether an edit that began at `expected_updated_at` can still be saved
+/// over `current`. Trashing (here or on another device) changes no text, so
+/// it leaves `updated_at` alone; a note in Trash is never current, so the
+/// editor offers its choices instead of a save that would be refused.
+fn is_current(current: Option<&Note>, expected_updated_at: Option<&str>) -> bool {
+    current.map(|note| note.updated_at.as_str()) == expected_updated_at
+        && !current.is_some_and(|note| note.trashed)
+}
+
 fn note_title_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteTitle> {
     Ok(NoteTitle {
         id: row.get(0)?,
@@ -489,7 +498,8 @@ impl Database {
     }
 
     /// Saves a regular note's title and body, if the note is still the
-    /// version the edit started from (`expected_updated_at`). Otherwise
+    /// version the edit started from (`expected_updated_at`) and isn't in
+    /// Trash. Otherwise
     /// nothing is written, so an edit made elsewhere in the meantime isn't
     /// silently replaced, and the current note comes back for the user to
     /// choose. Saving what is already stored writes nothing, so opening and
@@ -503,7 +513,7 @@ impl Database {
     ) -> DbResult<NoteSave> {
         self.with_transaction(|tx| {
             let current = get(tx, id)?;
-            if current.as_ref().map(|note| note.updated_at.as_str()) != Some(expected_updated_at) {
+            if !is_current(current.as_ref(), Some(expected_updated_at)) {
                 return Ok(NoteSave {
                     saved: false,
                     note: current,
@@ -521,7 +531,7 @@ impl Database {
 
     /// Saves the body of the daily note for `date`, if the day is still in
     /// the state the edit started from: the note's `updatedAt`, or `None`
-    /// when the day had no note. Saving an empty body for a day without a
+    /// when the day had no note, and the note isn't in Trash. Saving an empty body for a day without a
     /// note writes nothing, so looking at a day never creates its note.
     pub fn save_daily_note_edit(
         &self,
@@ -534,7 +544,7 @@ impl Database {
         }
         self.with_transaction(|tx| {
             let current = get(tx, &daily_note_id(date))?;
-            if current.as_ref().map(|note| note.updated_at.as_str()) != expected_updated_at {
+            if !is_current(current.as_ref(), expected_updated_at) {
                 return Ok(NoteSave {
                     saved: false,
                     note: current,

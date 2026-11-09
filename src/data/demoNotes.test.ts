@@ -41,7 +41,9 @@ describe("demo notes", () => {
     await notes.trashNote(plan.id);
     expect((await notes.listRecentNotes(10)).map((note) => note.id)).not.toContain(plan.id);
     expect((await notes.listTrashedNotes(10)).map((note) => note.id)).toEqual([plan.id]);
-    await expect(notes.updateNote(plan.id, "Plan", "edit", (await notes.getNote(plan.id))!.updatedAt)).rejects.toThrow("Restore this note");
+    // A note in Trash is never current: the save comes back with it, for the editor to offer a restore.
+    const refused = await notes.updateNote(plan.id, "Plan", "edit", (await notes.getNote(plan.id))!.updatedAt);
+    expect(refused).toMatchObject({ saved: false, note: { id: plan.id, trashed: true, body: "old" } });
 
     const replacement = await notes.createNote("plan", "new");
     await expect(notes.restoreNote(plan.id)).rejects.toThrow("Rename that note");

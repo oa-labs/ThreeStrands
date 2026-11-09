@@ -190,6 +190,23 @@ describe("Notes workspace", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(body).not.toHaveAttribute("readonly");
   });
+  it("offers to restore a note moved to Trash on another device while typing", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Removed there"), "v1");
+    writeLastNoteTarget({ kind: "note", id: note.id });
+    render(<NotesWorkspace />);
+    const body = await screen.findByRole("textbox", { name: "Note text" });
+    await waitFor(() => expect(body).toHaveValue("v1"));
+    fireEvent.change(body, { target: { value: "mine" } });
+    await mailClient.trashNote(note.id);
+    act(() => { body.blur(); });
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("moved to Trash on another device");
+    expect(within(banner).getByRole("button", { name: "Discard My Text" })).toBeInTheDocument();
+    fireEvent.click(within(banner).getByRole("button", { name: "Restore and Keep My Text" }));
+    await waitFor(async () => expect(await mailClient.getNote(note.id)).toMatchObject({ trashed: false, body: "mine" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(body).not.toHaveAttribute("readonly");
+  });
   describe("Trash", () => {
     it("moves the open note to Trash with # and opens the next note", async () => {
       const kept = await mailClient.createNote(uniqueTitle("Kept"), "stays");
