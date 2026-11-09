@@ -199,8 +199,9 @@ pub(crate) fn file_stem(title: &str) -> String {
 pub(crate) fn file_text(note: &Note) -> String {
     let quote = |value: &str| serde_json::to_string(value).unwrap_or_default();
     format!(
-        "---\nid: {}\ncreated: {}\nupdated: {}\n---\n\n{}",
+        "---\nid: {}\ntitle: {}\ncreated: {}\nupdated: {}\n---\n\n{}",
         quote(&note.id),
+        quote(&note.title),
         quote(&note.created_at),
         quote(&note.updated_at),
         note.body
@@ -554,8 +555,76 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(folder.path().join("daily/2026-11-09.md")).unwrap(),
-            "---\nid: \"daily:2026-11-09\"\ncreated: \"2026-11-01T09:00:00Z\"\nupdated: \"2026-11-02T10:00:00Z\"\n---\n\nToday [[Plan]]"
+            "---\nid: \"daily:2026-11-09\"\ntitle: \"2026-11-09\"\ncreated: \"2026-11-01T09:00:00Z\"\nupdated: \"2026-11-02T10:00:00Z\"\n---\n\nToday [[Plan]]"
         );
+    }
+
+    #[test]
+    fn exported_titles_bodies_and_wiki_links_survive_import_with_safe_file_names() {
+        let folder = tempdir();
+        let titles = [
+            "a:b".to_string(),
+            "a/b".to_string(),
+            "a-b".to_string(),
+            r#"a\b*c?d"e<f>g"#.to_string(),
+            ".hidden".to_string(),
+            "ends with dot.".to_string(),
+            "CON".to_string(),
+            "界".repeat(200),
+        ];
+        let links = titles
+            .iter()
+            .map(|title| format!("[[{title}]]"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut notes: Vec<Note> = titles
+            .iter()
+            .enumerate()
+            .map(|(index, title)| {
+                note(
+                    &uuid::Uuid::new_v4().to_string(),
+                    title,
+                    None,
+                    if index % 2 == 0 {
+                        "# A body heading, not the title\n\nKeep this text.\n"
+                    } else {
+                        "Keep this text without a heading.\n"
+                    },
+                )
+            })
+            .collect();
+        notes.push(note(
+            &uuid::Uuid::new_v4().to_string(),
+            "Links",
+            None,
+            &links,
+        ));
+        export_notes(folder.path(), &notes, false).unwrap();
+        // These different titles really do collide as portable file names.
+        assert!(folder.path().join("notes/a-b.md").exists());
+        assert!(folder.path().join("notes/a-b 2.md").exists());
+        assert!(folder.path().join("notes/a-b 3.md").exists());
+        assert!(file_stem(&titles[7]).chars().count() < 200);
+
+        let imported = crate::notes_import::plan(
+            folder.path(),
+            &crate::notes_import::Existing {
+                ids: HashSet::new(),
+                titles: HashSet::new(),
+            },
+        )
+        .unwrap();
+        assert!(imported.problems.is_empty(), "{:?}", imported.problems);
+        assert_eq!(imported.notes.len(), notes.len());
+        for original in &notes {
+            let restored = &imported
+                .notes
+                .iter()
+                .find(|planned| planned.note.id == original.id)
+                .unwrap()
+                .note;
+            assert_eq!(restored, original);
+        }
     }
 
     #[test]
