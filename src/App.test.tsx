@@ -1056,6 +1056,10 @@ describe("keyboard-first task and action workspaces", () => {
     await screen.findByRole("region", { name: "Inbox" });
 
     const navbar = screen.getByRole("navigation", { name: "Mailboxes" });
+    const composeButton = within(navbar).getByRole("button", { name: "New message (c)" });
+    const composeGroup = composeButton.closest(".sidebar-compose");
+    expect(composeGroup).toContainElement(composeButton);
+    expect(composeGroup?.nextElementSibling).toContainElement(within(navbar).getByRole("button", { name: "Today (0)" }));
     const tasksButton = within(navbar).getByRole("button", { name: "Tasks (3)" });
     const notesButton = within(navbar).getByRole("button", { name: "Notes (4)" });
     expect(tasksButton.parentElement?.nextElementSibling).toContainElement(notesButton);
@@ -1067,7 +1071,9 @@ describe("keyboard-first task and action workspaces", () => {
     expect(contactsButton.parentElement?.nextElementSibling).toContainElement(filesButton);
     const agentsButton=within(navbar).getByRole("button", { name: "Agents (7)" });
     expect(filesButton.parentElement?.nextElementSibling).toContainElement(agentsButton);
-    const separator = agentsButton.parentElement?.nextElementSibling;
+    const secondaryGroup = filesButton.closest(".sidebar-secondary");
+    expect(secondaryGroup).toContainElement(agentsButton);
+    const separator = secondaryGroup?.nextElementSibling;
     expect(separator).toHaveClass("sidebar-nav-separator");
     expect(separator?.nextElementSibling).toContainElement(within(navbar).getByRole("button", { name: "Refresh mail" }));
   });

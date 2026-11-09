@@ -809,7 +809,9 @@ export function App() {
         />
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
-          <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={ICON_SIZE.lg} /></button></HoverTooltip>
+          <div className="sidebar-compose">
+            <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={ICON_SIZE.lg} /></button></HoverTooltip>
+          </div>
           <HoverTooltip label="Today" shortcut="0"><button className={`nav-button ${rightWorkspace === "today" ? "active" : ""}`} aria-label="Today (0)" onClick={() => executeById("view.today")}><LayoutDashboard size={ICON_SIZE.lg} /></button></HoverTooltip>
           <HoverTooltip label="Inbox" shortcut="1">
             <button
@@ -849,8 +851,10 @@ export function App() {
               {keepInTouchDueCount ? <span className="nav-button-badge" aria-hidden="true">{keepInTouchDueCount > 99 ? "99+" : keepInTouchDueCount}</span> : null}
             </button>
           </HoverTooltip>
-          <HoverTooltip label="Files" shortcut="6"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (6)" onClick={() => executeById("view.files")}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
-          <HoverTooltip label="Agents" shortcut="7"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (7)" onClick={() => executeById("view.agents")}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
+          <div className="sidebar-secondary">
+            <HoverTooltip label="Files" shortcut="6"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (6)" onClick={() => executeById("view.files")}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
+            <HoverTooltip label="Agents" shortcut="7"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (7)" onClick={() => executeById("view.agents")}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
+          </div>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
           <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail (⌘/Ctrl+R)"}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
