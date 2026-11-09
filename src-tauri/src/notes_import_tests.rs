@@ -367,3 +367,49 @@ fn a_file_that_became_a_link_after_reading_is_refused() {
     assert_eq!(outcome.notes, 0);
     assert_eq!(outcome.problems[0].file, "notes/b.md");
 }
+
+#[test]
+fn a_note_starting_with_a_horizontal_rule_keeps_all_its_text() {
+    let folder = TestFolder::new();
+    let rules = "---\nSome text\n---\nMore text\n";
+    folder.write("notes/rules.md", rules);
+    folder.write("notes/empty-block.md", "---\n---\nBetween rules\n");
+    folder.write(
+        "notes/prose-after-key.md",
+        "---\nsummary: x\nThis line is prose\n---\nBody\n",
+    );
+    folder.write("notes/unclosed.md", "---\nid: x\nno closing rule\n");
+    folder.write(
+        "notes/real.md",
+        "---\nid: real\naliases:\n  - Other name\n\n- Second\n---\n# Real\n\nBody\n",
+    );
+    let plan = plan(&folder.0, &nothing()).unwrap();
+    let body = |source: &str| {
+        plan.notes
+            .iter()
+            .find(|planned| planned.source == source)
+            .unwrap()
+            .note
+            .body
+            .clone()
+    };
+    assert_eq!(body("notes/rules.md"), rules);
+    assert_eq!(body("notes/empty-block.md"), "---\n---\nBetween rules\n");
+    assert_eq!(
+        body("notes/prose-after-key.md"),
+        "---\nsummary: x\nThis line is prose\n---\nBody\n"
+    );
+    assert_eq!(body("notes/unclosed.md"), "---\nid: x\nno closing rule\n");
+    // Real front matter still parses: its id is used and Reflect's keys go.
+    let real = plan
+        .notes
+        .iter()
+        .find(|planned| planned.source == "notes/real.md")
+        .unwrap();
+    assert_eq!(real.note.id, hashed_id("real"));
+    assert_eq!(real.note.title, "Real");
+    assert_eq!(
+        real.note.body,
+        "---\naliases:\n  - Other name\n\n- Second\n---\n\nBody\n"
+    );
+}

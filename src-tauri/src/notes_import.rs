@@ -230,7 +230,11 @@ fn modified(path: &Path) -> String {
 // ---- Front matter ----
 
 /// A note file split into its front matter, as `(key, value, lines)` in
-/// order, and the text after it.
+/// order, and the text after it. A leading `---` block counts as front
+/// matter only if every line in it is `key: value`, blank, or an indented
+/// or `- ` line continuing the key above; otherwise the `---` is a
+/// horizontal rule and the whole file is the note's text, so nothing is
+/// dropped.
 struct Parsed {
     keys: Vec<(String, Option<String>, Vec<String>)>,
     body: String,
@@ -283,20 +287,29 @@ fn parse(text: &str) -> Parsed {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
         });
-        match key_end {
-            Some(end) => keys.push((
+        let continues =
+            bare.trim().is_empty() || bare.starts_with([' ', '\t']) || bare.starts_with("- ");
+        match (key_end, keys.last_mut()) {
+            (Some(end), _) => keys.push((
                 bare[..end].to_string(),
                 scalar(&bare[end + 1..]),
                 vec![bare.to_string()],
             )),
-            None => {
-                if let Some(last) = keys.last_mut() {
-                    last.2.push(bare.to_string());
+            (None, Some(last)) if continues => last.2.push(bare.to_string()),
+            (None, None) if bare.trim().is_empty() => {}
+            // Text that isn't `key: value` or a key's continuation: the
+            // opening `---` was a horizontal rule, and every line is the
+            // note's own text.
+            _ => {
+                return Parsed {
+                    keys: Vec::new(),
+                    body: text.to_string(),
                 }
             }
         }
     }
-    if !closed {
+    // An empty block is two rules, not front matter.
+    if !closed || keys.is_empty() {
         return Parsed {
             keys: Vec::new(),
             body: text.to_string(),

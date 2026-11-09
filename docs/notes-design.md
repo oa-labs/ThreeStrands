@@ -542,9 +542,12 @@ user picks: a Reflect folder, or one Export to Markdown Folder wrote
   the folder, and nothing through a symbolic link, is read; each file is
   checked again when it is read for the import. A file over 20 MB keeps its
   link and is reported.
-- **Front matter.** `id`, `title`, `created`, `updated`, `summary`,
-  `snippet`, `summary_source_hash`, and `pinned` are dropped; anything else
-  (such as `aliases`) stays at the top of the note.
+- **Front matter.** A leading `---` block is front matter only when every
+  line in it is `key: value`, blank, or an indented or `- ` line continuing
+  a key; otherwise the `---` is a horizontal rule and the whole file is the
+  note's text, so nothing is dropped. `id`, `title`, `created`, `updated`,
+  `summary`, `snippet`, `summary_source_hash`, and `pinned` are dropped;
+  anything else (such as `aliases`) stays at the top of the note.
 - **Not imported**, with the reason shown: a note over 96 KB (never cut),
   a file that isn't UTF-8, Reflect's conflict copies (`name.md~other
   device`), and a matching second copy. A note that can't be saved during
