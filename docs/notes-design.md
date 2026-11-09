@@ -237,7 +237,11 @@ too long to compare there. So v1 handles note conflicts in the note:
 - **Keep This Version** and **Use Other Version** resolve the conflict with
   an ordinary write, through the same command Settings uses.
 - **Keep Both** writes the other version into a new note named
-  "<title> (from <device>)", and keeps this one.
+  "<title> (from <device>)", and keeps this one (`keptBothTitle`). The title
+  part is shortened so the name fits 200 characters, `[`, `]`, and `|`
+  become `-`, and a name already in use gets " 2", " 3", and so on. The
+  banner remembers the note it made, so trying again after the conflict
+  failed to resolve finishes the job rather than making another copy.
 - The note list marks conflicted notes, and the generic Settings list links
   a note conflict to the note rather than rendering its whole body.
 - With three or more devices in a conflict, the banner offers each other

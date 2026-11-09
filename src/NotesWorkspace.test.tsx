@@ -7,7 +7,7 @@ import { NotesWorkspace, relinkMessage } from "./NotesWorkspace";
 import { lastEditorProps } from "./test/NoteEditorStub";
 import { formatNoteDate } from "./noteDates";
 import { noteTitleKey as noteTitleKeyOf } from "./noteWikiLinks";
-import type { ContactProfile } from "./domain";
+import type { ContactProfile, Note } from "./domain";
 import { todayTarget, writeLastNoteTarget } from "./noteDrafts";
 import { replicatedSyncConflicts, replicatedSyncDeviceRoster, replicatedSyncResolveConflict, type FrontierConflict } from "./replicatedSync";
 
@@ -298,7 +298,10 @@ describe("Notes workspace", () => {
     const conflictOn = (id: string, field: string, values: [string, unknown][]): FrontierConflict => ({ entityType: "note", entityId: id, field, candidates: candidates(values) });
 
     async function conflictedNote() {
-      const note = await mailClient.createNote(uniqueTitle("Shared plan"), "line one\nmine");
+      return conflictedNoteFor(await mailClient.createNote(uniqueTitle("Shared plan"), "line one\nmine"));
+    }
+
+    async function conflictedNoteFor(note: Note) {
       await mailClient.recordNoteVisit(note.id);
       const conflicts = [conflictOn(note.id, "body", [["self", "line one\nmine"], ["laptop", "line one\ntheirs"]])];
       vi.mocked(replicatedSyncConflicts).mockResolvedValue(conflicts);
@@ -343,6 +346,35 @@ describe("Notes workspace", () => {
       await waitFor(() => expect(replicatedSyncResolveConflict).toHaveBeenCalledWith(conflicts[0], conflicts[0]!.candidates[0]));
       expect(create).toHaveBeenCalledWith(`${note.title} (from Work laptop)`, "line one\ntheirs");
       expect(create.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(replicatedSyncResolveConflict).mock.invocationCallOrder.at(-1)!);
+    });
+
+    it("keeps both with a long title shortened to fit, and a name in use numbered", async () => {
+      const long = "Quarterly planning ".repeat(11).trim().slice(0, 200);
+      const note = await mailClient.createNote(long, "line one\nmine");
+      const { conflicts } = await conflictedNoteFor(note);
+      await waitFor(() => expect(screen.getByRole("region", { name: "Note conflict" })).toHaveTextContent("Work laptop"));
+      const taken = await mailClient.createNote(`${long.slice(0, 200 - " (from Work laptop)".length).trimEnd()} (from Work laptop)`, "");
+      const create = vi.spyOn(mailClient, "createNote");
+      fireEvent.click(within(screen.getByRole("region", { name: "Note conflict" })).getByRole("button", { name: "Keep Both" }));
+      await waitFor(() => expect(replicatedSyncResolveConflict).toHaveBeenCalledWith(conflicts[0], conflicts[0]!.candidates[0]));
+      expect(create).toHaveBeenCalledTimes(1);
+      const [name] = create.mock.calls[0]!;
+      expect(name).not.toBe(taken.title);
+      expect([...name]).toHaveLength(200);
+      expect(name.endsWith(" (from Work laptop) 2")).toBe(true);
+    });
+
+    it("finishes Keep Both on a second try without making another copy", async () => {
+      const { conflicts, banner } = await conflictedNote();
+      await waitFor(() => expect(screen.getByRole("region", { name: "Note conflict" })).toHaveTextContent("Work laptop"));
+      const create = vi.spyOn(mailClient, "createNote");
+      vi.mocked(replicatedSyncResolveConflict).mockRejectedValueOnce(new Error("Sync is busy"));
+      fireEvent.click(banner.getByRole("button", { name: "Keep Both" }));
+      expect(await banner.findByRole("alert")).toHaveTextContent("Sync is busy");
+      fireEvent.click(banner.getByRole("button", { name: "Keep Both" }));
+      await waitFor(() => expect(vi.mocked(replicatedSyncResolveConflict).mock.calls.filter(([conflict]) => conflict === conflicts[0])).toHaveLength(2));
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(banner.queryByRole("alert")).not.toBeInTheDocument();
     });
   });
 
