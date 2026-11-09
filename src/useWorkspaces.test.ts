@@ -259,3 +259,47 @@ describe("Mail's right column in a narrow window", () => {
     expect(hook.result.current.sideDrawerOpen).toBe(false);
   });
 });
+
+describe("Notes requests", () => {
+  const setup = () => renderHook(() => useWorkspaces({
+    settingsOpen: false, settingsSection: "appearance", visibleDetail: null,
+    readingMessageId: null, readingMessageIdRef: { current: null },
+    openSettingsAt: vi.fn(), setNotice: vi.fn(),
+  }));
+
+  afterEach(() => localStorage.removeItem("threestrands.workspace.last"));
+
+  it("consumes each note jump and leaves sidebar navigation without a request", () => {
+    const { result } = setup();
+    act(() => result.current.openNote("from-files"));
+    const first = result.current.notesRequest!;
+    expect(first).toMatchObject({ kind: "note", noteId: "from-files" });
+    expect(result.current.rightWorkspace).toBe("notes");
+    act(() => result.current.consumeNotesRequest(first.id));
+    expect(result.current.notesRequest).toBeNull();
+    act(() => result.current.setRightWorkspace(null));
+    act(() => result.current.openNotesView());
+    expect(result.current.notesRequest).toBeNull();
+
+    act(() => result.current.openTodaysNote());
+    const today = result.current.notesRequest!;
+    expect(today.kind).toBe("today");
+    expect(today.id).toBeGreaterThan(first.id);
+    act(() => result.current.consumeNotesRequest(today.id));
+    expect(result.current.notesRequest).toBeNull();
+    act(() => result.current.openTodaysNote());
+    expect(result.current.notesRequest!.id).toBeGreaterThan(today.id);
+  });
+
+  it("keeps a newer request when an older request is acknowledged", () => {
+    const { result } = setup();
+    act(() => result.current.openNote("first"));
+    const first = result.current.notesRequest!;
+    act(() => result.current.openNote("second"));
+    const second = result.current.notesRequest;
+    act(() => result.current.consumeNotesRequest(first.id));
+    expect(result.current.notesRequest).toBe(second);
+    act(() => result.current.consumeNotesRequest(second!.id));
+    expect(result.current.notesRequest).toBeNull();
+  });
+});
