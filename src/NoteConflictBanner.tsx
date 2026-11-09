@@ -1,9 +1,9 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { Note } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
 import { replicatedSyncResolveConflict, type DeviceRosterEntry, type FrontierConflict } from "./replicatedSync";
-import { conflictChoices, deviceName, diffLines, noteConflictView, type NoteVersion } from "./noteConflicts";
+import { conflictChoices, deviceName, diffLines, keptBothTitle, noteConflictView, type NoteVersion } from "./noteConflicts";
 
 /**
  * Shown above a note that two devices changed before either saw the other's
@@ -27,6 +27,9 @@ export function NoteConflictBanner({ note, title, conflicts, roster, onResolved,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const compareId = useId();
+  // The note Keep Both made, so trying again after a failure resolves the
+  // conflict instead of making a second copy.
+  const kept = useRef<{ deviceId: string | null; note: Note } | null>(null);
   const other: NoteVersion | undefined = others[Math.min(pick, others.length - 1)];
   if (!other) return null;
   const otherName = deviceName(other.deviceId, roster);
@@ -51,8 +54,18 @@ export function NoteConflictBanner({ note, title, conflicts, roster, onResolved,
   });
   const keepBoth = () => run(async () => {
     // The other version becomes its own note first, so nothing is lost if keeping this one fails.
-    const created = await mailClient.createNote(`${other.title === note.title ? title : other.title} (from ${otherName})`, other.body);
-    onKeptBoth(created);
+    let created = kept.current?.deviceId === other.deviceId ? kept.current.note : null;
+    if (!created) {
+      const base = other.title === note.title ? title : other.title;
+      // A name already in use (an earlier Keep Both, say) moves on to " 2", " 3", ….
+      for (let attempt = 1; !created; attempt++) {
+        const name = keptBothTitle(base, otherName, attempt);
+        if (attempt < 100 && await mailClient.findNoteByTitle(name)) continue;
+        created = await mailClient.createNote(name, other.body);
+      }
+      kept.current = { deviceId: other.deviceId, note: created };
+      onKeptBoth(created);
+    }
     for (const { conflict, chosen } of conflictChoices(note, conflicts, null)) {
       await replicatedSyncResolveConflict(conflict, chosen);
     }

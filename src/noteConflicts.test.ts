@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Note } from "./domain";
 import type { FrontierConflict } from "./replicatedSync";
-import { MAX_DIFF_CELLS, conflictChoices, deviceName, diffLines, noteConflictView, noteConflictsById } from "./noteConflicts";
+import { MAX_DIFF_CELLS, conflictChoices, deviceName, diffLines, keptBothTitle, noteConflictView, noteConflictsById } from "./noteConflicts";
 
 const note: Note = { id: "n1", title: "Plan", body: "shown body", dailyDate: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-02T00:00:00Z", trashed: false, trashedAt: null };
 const conflict = (field: string, values: [string, unknown][], entityId = "n1", entityType = "note"): FrontierConflict => ({
@@ -99,5 +99,26 @@ describe("diffLines", () => {
     expect([count(above, "removed"), count(above, "added")]).toEqual([side + 1, side + 1]);
     expect(above[0]).toEqual({ kind: "same", text: "top" });
     expect(above.at(-1)).toEqual({ kind: "same", text: "end" });
+  });
+
+  it("names the kept other version within the title limit, below, at, and above it", () => {
+    expect(keptBothTitle("Plan", "Work laptop")).toBe("Plan (from Work laptop)");
+    expect(keptBothTitle("Plan", "Work laptop", 3)).toBe("Plan (from Work laptop) 3");
+    const suffix = " (from Work laptop)";
+    const fits = "a".repeat(200 - suffix.length);
+    expect(keptBothTitle(fits, "Work laptop")).toBe(`${fits}${suffix}`);
+    for (const length of [200 - suffix.length + 1, 199, 200]) {
+      const named = keptBothTitle("a".repeat(length), "Work laptop");
+      expect([...named]).toHaveLength(200);
+      expect(named.endsWith(suffix)).toBe(true);
+    }
+    // Counted in characters, not code units, as natively.
+    const emoji = keptBothTitle("🙂".repeat(200), "Work laptop", 12);
+    expect([...emoji]).toHaveLength(200);
+    expect(emoji.endsWith(" (from Work laptop) 12")).toBe(true);
+  });
+
+  it("keeps characters a title can't hold out of the kept version's name", () => {
+    expect(keptBothTitle("Plan", "Joel's [Mac] | home")).toBe("Plan (from Joel's -Mac- - home)");
   });
 });

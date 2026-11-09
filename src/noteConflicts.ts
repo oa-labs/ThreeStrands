@@ -1,3 +1,4 @@
+import { collapseWhitespace } from "./noteWikiLinks";
 import type { Note } from "./domain";
 import type { DeviceRosterEntry, FrontierCandidate, FrontierConflict } from "./replicatedSync";
 
@@ -133,4 +134,21 @@ export function diffLines(before: string, after: string): DiffLine[] {
   while (i < x.length) middle.push({ kind: "removed", text: x[i++]! });
   while (j < y.length) middle.push({ kind: "added", text: y[j++]! });
   return [...head, ...middle, ...tail];
+}
+
+/** The most characters a note title holds, as natively (`MAX_NOTE_TITLE_CHARS`). */
+const MAX_TITLE_CHARS = 200;
+
+/**
+ * The title for the other version when both are kept: "<title> (from
+ * <device>)", then " 2", " 3", … for later `attempt`s. The title part is
+ * shortened so the whole fits the title limit, and characters a title
+ * can't hold (`[`, `]`, `|`) become "-".
+ */
+export function keptBothTitle(title: string, device: string, attempt = 1): string {
+  const safe = (text: string) => collapseWhitespace(text.replace(/[[\]|]/g, "-"));
+  const suffix = ` (from ${safe(device)})${attempt > 1 ? ` ${attempt}` : ""}`;
+  const room = Math.max(1, MAX_TITLE_CHARS - [...suffix].length);
+  const base = [...safe(title)].slice(0, room).join("").trimEnd();
+  return [...`${base}${suffix}`].slice(0, MAX_TITLE_CHARS).join("");
 }
