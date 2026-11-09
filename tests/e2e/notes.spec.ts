@@ -79,3 +79,40 @@ test("# moves a note to Trash, and Trash restores it", async ({ page }) => {
   await notes.getByRole("button", { name: "Back to Notes" }).click();
   await expect(notes.getByRole("list", { name: "Notes" }).getByRole("button", { name: /Short lived/ })).toBeVisible();
 });
+
+test("a [[link]] picks a note, opens it, shows as a backlink, and follows a rename", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+  await page.keyboard.press("4");
+  const notes = page.getByRole("region", { name: "Notes" });
+  await expect(notes.getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true");
+  const create = async (title: string) => {
+    await page.keyboard.press("Shift+N");
+    await expect(page.getByRole("dialog", { name: "New Note" }).getByRole("textbox", { name: "Title" })).toBeFocused();
+    await page.keyboard.type(title);
+    await page.keyboard.press("Enter");
+    await expect(notes.getByRole("textbox", { name: "Note text" })).toBeFocused();
+  };
+  await create("Garden plan");
+  await page.keyboard.press("Escape");
+  await create("Weekend");
+  await page.keyboard.type("Work on [[Garden");
+  await page.getByRole("option", { name: /Garden plan/ }).click();
+  const body = notes.getByRole("textbox", { name: "Note text" });
+  const link = body.locator(".md-wikilink-view-preview", { hasText: "Garden plan" });
+  await expect(link).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(notes.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+
+  await link.click();
+  await expect(notes.getByRole("textbox", { name: "Title" })).toHaveValue("Garden plan");
+  const backlinks = page.getByRole("complementary", { name: "Note context" }).getByRole("region", { name: /Backlinks/ });
+  await expect(backlinks.getByRole("button", { name: /Weekend/ })).toContainText("Work on [[Garden plan]]");
+
+  const title = notes.getByRole("textbox", { name: "Title" });
+  await title.fill("Vegetable garden");
+  await title.press("Enter");
+  await expect(notes.getByRole("status")).toContainText("Updated links in 1 note.");
+  await backlinks.getByRole("button", { name: /Weekend/ }).click();
+  await expect(body.locator(".md-wikilink-view-preview", { hasText: "Vegetable garden" })).toBeVisible();
+});

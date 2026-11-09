@@ -19,6 +19,14 @@ Today's note is created when you first write in it, so looking at a day leaves n
 
 ThreeStrands saves a note a moment after you stop typing, and again when you leave it or close the app. Text you haven't saved yet stays on this device, so it's still there if the app closes unexpectedly.
 
+## Link Notes {#link-notes}
+
+Type `[[` to link to another note: pick one from the list, or keep typing a title that doesn't exist yet. Typing `@` at the start of a word does the same. `[[Title|other words]]` shows the other words but still links to Title, and `[[2026-11-09]]` links to that day's note. Click a link to open its note; a link to a note that doesn't exist yet creates it.
+
+The panel on the right lists the notes that link to this one under **Backlinks**, each with the line the link is on. **Unlinked** lists links in this note to notes that don't exist yet; choose one to create it. **People** lists links whose title is the name of a saved contact; choose one to open them in Contacts.
+
+When you rename a note, ThreeStrands changes the links to it in your other notes as soon as you leave the title. A note in Trash keeps its old links. So does a note that would become too long to sync, or one that was changed on two devices and is waiting for you to choose a version; ThreeStrands names those notes when it renames.
+
 ## Markdown Syntax {#markdown-syntax}
 
 **Settings → Notes → Markdown Syntax** chooses how much of the Markdown you see. **Hide** shows only the formatting. **Hybrid** shows the Markdown characters around the cursor while you write. **Show** keeps them visible all the time. The choice applies to this device.

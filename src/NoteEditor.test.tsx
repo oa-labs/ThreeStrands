@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
+import { NoteEditor, linkMenuItems, type NoteEditorHandle } from "./NoteEditor";
 import { noteLinkTarget, openNoteLink } from "./noteLinks";
 import type { NoteSyntaxMode } from "./noteSyntaxMode";
 
@@ -88,6 +88,24 @@ describe("NoteEditor", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(ref.current!.markdown()).toBe("second\n");
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("shows a link's shown text and keeps its Markdown", async () => {
+    const { box, ref } = await editorFor("Met [[Ada Lovelace|Ada]] and [[Charles Babbage]].\n");
+    const chips = [...box.querySelectorAll(".md-wikilink-view-preview")].map((chip) => chip.textContent);
+    expect(chips).toEqual(["Ada", "Charles Babbage"]);
+    expect(ref.current!.markdown()).toBe("Met [[Ada Lovelace|Ada]] and [[Charles Babbage]].\n");
+  });
+
+  it("offers matching notes in the link picker, then the typed title as a new note", () => {
+    expect(linkMenuItems("road  trip", [{ title: "Road trip planning" }])).toEqual([
+      { target: "Road trip planning", detail: undefined },
+      { target: "road trip", detail: "New note" },
+    ]);
+    expect(linkMenuItems("ROAD TRIP", [{ title: "Road trip" }])).toEqual([{ target: "Road trip", detail: undefined }]);
+    expect(linkMenuItems("", [{ title: "Recent" }])).toEqual([{ target: "Recent", detail: undefined }]);
+    // A title that can't be a note's isn't offered as one.
+    expect(linkMenuItems("a|b", [])).toEqual([]);
   });
 
   it("is read-only when asked and shows the chosen syntax mode", async () => {

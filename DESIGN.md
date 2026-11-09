@@ -222,7 +222,9 @@ note turns read-only until the user keeps one version. A note two devices
 changed before syncing is also read-only, under a banner that compares the
 versions, until the user chooses one. `#` moves the selected note to Trash,
 which sits at the bottom of the list; a trashed note is read-only, and
-**Delete Permanently** asks first.
+**Delete Permanently** asks first. A note's context rail lists Backlinks,
+Unlinked links, and linked People; a title saves when its field is left,
+because renaming rewrites links in other notes.
 
 Opening a workspace must not steal focus or open a form. Workspace cards and
 candidate choices should use buttons and semantic disclosure elements. A plus,

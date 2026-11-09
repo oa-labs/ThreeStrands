@@ -1,8 +1,7 @@
 # Notes workspace design
 
-**Status:** Steps 1 (sync and storage), 2 (workspace shell), and 4 (safety:
-the conflict banner and Trash) built, with the meowdown editor; steps 3
-(links) and 5 (export) proposed
+**Status:** Steps 1 through 4 (sync and storage, workspace shell, links, and
+safety) built, with the meowdown editor; step 5 (export) proposed
 **Date:** 2026-11-09
 **Scope:** a Notes workspace for Markdown notes that travel through
 replicated sync
@@ -301,26 +300,40 @@ Use `WorkspaceContextRail`, with `ContextSection` and `ContextRow` for every
 list, under the panel rules in DESIGN.md: empty sections are left out, lists
 show three rows before **Show more**, and headings collapse. Step 2 shows
 **Note details** (when the note was created, and last changed on this
-device); the sections below arrive with links.
+device), and the sections below follow it.
 
 - **Backlinks**: notes that link here, each with the line around the link as
   its detail.
 - **Unlinked**: `[[links]]` in this note whose target doesn't exist yet.
   Selecting one creates that note.
 - **People**: `[[Name]]` links whose title matches a saved contact's name.
-  Selecting one opens the contact in Contacts.
+  Selecting one opens the contact in Contacts. The first 30 distinct links
+  are looked up, each against the contact search, matched by normalized
+  name.
 
 ### Wiki links
 
-- Typing `[[` opens a title picker with existing notes. Typing a new title
-  and pressing Enter links to a note that doesn't exist yet.
+- Typing `[[` opens a title picker with existing notes
+  (`suggest_note_titles`: regular notes outside Trash whose title contains
+  the typed text, prefix matches first, then recent). Typing a new title
+  and pressing Enter links to a note that doesn't exist yet. meowdown also
+  opens the picker for `@` at the start of a word, and inserts the same
+  `[[Title]]` link.
+- `[[Title|shown text]]` shows the shown text and follows Title.
 - Links resolve by normalized title. Daily notes resolve by date
   (`[[2026-11-09]]`).
 - Selecting a link opens its note, or creates it if missing.
 - Renaming a note rewrites `[[Old Title]]` to `[[New Title]]` in every note
-  that links to it, as ordinary edits on the renaming device. Each rewritten
-  note counts toward the size limit, and one that would pass it keeps the old
-  link and is listed in the rename's notice.
+  that links to it, as ordinary edits on the renaming device, in the same
+  transaction as the rename. Each rewritten note counts toward the size
+  limit, and one that would pass it keeps the old link and is listed in the
+  rename's notice (`NoteSave.relink`). So is a note whose body is in
+  conflict: rewriting it would settle the conflict. Notes in Trash keep old
+  links. A change of case or spacing only rewrites nothing, since links
+  match by key.
+- A title saves when the title field is left, not after the typing pause,
+  so a rename rewrites links once rather than for every half-typed title.
+  The typed title is kept in the draft meanwhile.
 
 ### Search
 

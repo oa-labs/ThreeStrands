@@ -1339,6 +1339,29 @@ pub struct Note {
 pub struct NoteSave {
     pub saved: bool,
     pub note: Option<Note>,
+    /// After a rename, how links in other notes followed it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relink: Option<NoteRelink>,
+}
+
+/// What renaming a note did to links in other notes: how many notes now
+/// link to the new title, and the titles of notes that keep the old link
+/// because changing them would pass the sync size limit or settle a
+/// conflict nobody chose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteRelink {
+    pub updated: usize,
+    pub kept_old_link: Vec<String>,
+}
+
+/// A note named in a link or a title picker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteTitle {
+    pub id: String,
+    pub title: String,
+    pub daily_date: Option<String>,
 }
 
 /// A note as the note list shows it.
@@ -1376,13 +1399,15 @@ pub struct NoteBacklink {
     pub context: String,
 }
 
-/// A note's links in both directions: notes that link here, and the titles
-/// this note links to that no note has yet.
+/// A note's links in both directions: notes that link here, the titles
+/// this note links to that no note has yet, and all the titles it links to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteLinks {
     pub backlinks: Vec<NoteBacklink>,
     pub unlinked: Vec<String>,
+    /// Every title this note links to, once each, in order.
+    pub links: Vec<String>,
 }
 
 /// How much of the space set aside for notes in a sync snapshot they use.

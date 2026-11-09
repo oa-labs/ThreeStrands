@@ -1,7 +1,8 @@
-import type { Note, NoteSave, NoteSearchHit, NoteSummary } from "../domain";
+import type { Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
+import { extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
 import type { MailClient } from "./client";
 
-type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote">;
+type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const PREVIEW_CHARS = 140;
@@ -96,8 +97,48 @@ export function createDemoNotes(): DemoNotes {
     async updateNote(id, title, body, expectedUpdatedAt): Promise<NoteSave> {
       const current = notes.get(id) ?? null;
       if (current?.updatedAt !== expectedUpdatedAt) return { saved: false, note: structuredClone(current) };
+      const oldKey = key(current.title);
       const next = edit(current, current.dailyDate ? current.title : noteTitle(title), body);
-      return { saved: true, note: structuredClone(next) };
+      if (key(next.title) === oldKey) return { saved: true, note: structuredClone(next) };
+      // Links in other notes follow a rename, as natively.
+      let updated = 0;
+      for (const other of [...notes.values()]) {
+        if (other.id === id || other.trashed) continue;
+        const rewritten = rewriteWikiLinks(other.body, oldKey, next.title);
+        if (rewritten === null) continue;
+        notes.set(other.id, { ...other, body: rewritten, updatedAt: now() });
+        updated++;
+      }
+      return { saved: true, note: structuredClone(next), relink: { updated, keptOldLink: [] } };
+    },
+    async suggestNoteTitles(query, limit) {
+      const wanted = noteTitleKey(query);
+      const recent = (note: Note) => [visits.get(note.id) ?? "", note.updatedAt].sort().at(-1)!;
+      return [...notes.values()]
+        .filter((note) => !note.trashed && !note.dailyDate && key(note.title).includes(wanted))
+        .sort((a, b) => Number(!key(a.title).startsWith(wanted)) - Number(!key(b.title).startsWith(wanted)) || recent(b).localeCompare(recent(a)))
+        .slice(0, limit)
+        .map((note): NoteTitle => ({ id: note.id, title: note.title, dailyDate: note.dailyDate }));
+    },
+    async findNoteByTitle(title) {
+      const note = [...notes.values()].find((item) => !item.trashed && key(item.title) === noteTitleKey(title));
+      return note ? { id: note.id, title: note.title, dailyDate: note.dailyDate } : null;
+    },
+    async noteLinks(id): Promise<NoteLinks> {
+      const note = notes.get(id);
+      if (!note) throw new Error("Note not found");
+      const backlinks = [...notes.values()]
+        .filter((other) => other.id !== id && !other.trashed)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .flatMap((other) => extractWikiLinks(other.body)
+          .filter((link) => noteTitleKey(link.title) === key(note.title))
+          .map((link) => ({ noteId: other.id, title: other.title, dailyDate: other.dailyDate, context: link.context })));
+      const links: string[] = [];
+      for (const link of extractWikiLinks(note.body)) {
+        if (!links.some((title) => noteTitleKey(title) === noteTitleKey(link.title))) links.push(link.title);
+      }
+      const exists = (title: string) => [...notes.values()].some((other) => !other.trashed && key(other.title) === noteTitleKey(title));
+      return { backlinks, unlinked: links.filter((title) => noteTitleKey(title) !== key(note.title) && !exists(title)), links };
     },
     async saveDailyNote(date, body, expectedUpdatedAt): Promise<NoteSave> {
       if (!DATE.test(date)) throw new Error("That isn't a valid date");

@@ -59,6 +59,8 @@ import type {
   Note,
   NoteSave,
   NoteSearchHit,
+  NoteLinks,
+  NoteTitle,
   NoteSummary,
   SplitInbox,
   SplitInboxMatchKind,
@@ -413,6 +415,11 @@ export interface MailClient extends CorrespondenceClient {
   saveDailyNote(date: string, body: string, expectedUpdatedAt: string | null): Promise<NoteSave>;
   recordNoteVisit(id: string): Promise<void>;
   searchNotes(query: string, limit: number): Promise<NoteSearchHit[]>;
+  /** Regular notes whose titles contain `query`, for the `[[` picker. */
+  suggestNoteTitles(query: string, limit: number): Promise<NoteTitle[]>;
+  /** The note a `[[link]]` to `title` opens, matched ignoring case and spacing. */
+  findNoteByTitle(title: string): Promise<NoteTitle | null>;
+  noteLinks(id: string): Promise<NoteLinks>;
   /** Notes in Trash, most recently trashed first. */
   listTrashedNotes(limit: number): Promise<NoteSummary[]>;
   /** Moves a note to Trash on every device. */
@@ -636,6 +643,9 @@ const tauriClient: MailClient = {
   saveDailyNote: (date, body, expectedUpdatedAt) => complete("save_daily_note", { date, body, expectedUpdatedAt }),
   recordNoteVisit: (id) => complete("record_note_visit", { id }),
   searchNotes: (query, limit) => read("search_notes", { query, limit }),
+  suggestNoteTitles: (query, limit) => read("suggest_note_titles", { query, limit }),
+  findNoteByTitle: (title) => read("find_note_by_title", { title }),
+  noteLinks: (id) => read("note_links", { id }),
   listTrashedNotes: (limit) => read("list_trashed_notes", { limit }),
   trashNote: (id) => complete("trash_note", { id }),
   restoreNote: (id) => complete("restore_note", { id }),

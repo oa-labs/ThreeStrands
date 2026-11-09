@@ -201,4 +201,21 @@ describe("useNoteEditor", () => {
     await act(async () => { await result.current.flush(); });
     expect(result.current.unsaved()).toBe(false);
   });
+  it("saves a new title when asked to, not while it is typed, and reports what the rename did", async () => {
+    const target = await mailClient.createNote(uniqueTitle("Target"), "");
+    const linking = await mailClient.createNote(uniqueTitle("Linking"), `See [[${target.title}]]`);
+    const update = vi.spyOn(mailClient, "updateNote");
+    const onSaved = vi.fn();
+    const { result } = open({ kind: "note", id: target.id }, { onSaved });
+    await settle();
+    const renamed = uniqueTitle("Renamed");
+    act(() => result.current.edit({ title: renamed }));
+    await wait(NOTE_SAVE_DELAY_MS * 2);
+    expect(update).not.toHaveBeenCalled();
+    expect(readNoteDraft(target.id)?.title).toBe(renamed);
+    await act(async () => { await result.current.flush(); });
+    expect(update).toHaveBeenCalledWith(target.id, renamed, "", target.updatedAt);
+    expect(onSaved).toHaveBeenLastCalledWith(expect.objectContaining({ title: renamed }), { updated: 1, keptOldLink: [] });
+    expect((await mailClient.getNote(linking.id))?.body).toBe(`See [[${renamed}]]`);
+  });
 });

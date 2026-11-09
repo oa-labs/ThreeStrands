@@ -1,9 +1,10 @@
 import "@meowdown/core/style.css";
 import "@meowdown/react/style.css";
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
-import { MarkdownEditor, useExtension, useKeymap, type EditorHandle } from "@meowdown/react";
+import { MarkdownEditor, useExtension, useKeymap, type EditorHandle, type WikilinkItem } from "@meowdown/react";
 import { Priority, defineViewAttributes } from "@meowdown/core";
 import { openNoteLink } from "./noteLinks";
+import { splitWikiLink } from "./noteWikiLinks";
 import type { NoteSyntaxMode } from "./noteSyntaxMode";
 
 export type NoteEditorHandle = {
@@ -21,6 +22,29 @@ const MARK_MODE = { hide: "hide", hybrid: "focus", show: "show" } as const;
  * images and connections as well.
  */
 const noRemoteContent = () => undefined;
+
+/** Shows `[[Title|shown text]]` as its shown text, and follows it to Title. */
+const resolveWikilink = ({ target }: { target: string }) => {
+  const { target: title, label } = splitWikiLink(target);
+  return title ? { target: title, display: label } : undefined;
+};
+
+/** A note the `[[` picker offers. */
+export type NoteLinkSuggestion = { title: string; detail?: string };
+
+/**
+ * The `[[` picker's rows: the matching notes, then what was typed when no
+ * note has that title, which links to a note that doesn't exist yet;
+ * following that link creates it.
+ */
+export function linkMenuItems(query: string, found: NoteLinkSuggestion[]): WikilinkItem[] {
+  const typed = query.split(/\s+/).filter(Boolean).join(" ");
+  const exact = found.some((note) => note.title.toLocaleLowerCase() === typed.toLocaleLowerCase());
+  return [
+    ...found.map((note): WikilinkItem => ({ target: note.title, detail: note.detail })),
+    ...(typed && !exact && !/[[\]|]/.test(typed) ? [{ target: typed, detail: "New note" }] : []),
+  ];
+}
 
 /** Names the editable root, which the editor library creates itself. */
 function EditableName({ label }: { label: string }) {
@@ -55,7 +79,7 @@ function EscapeLeaves({ onLeave }: { onLeave(): void }) {
  * rewrites it. Escape hands focus back to the note list once the editor has
  * nothing of its own to close.
  */
-export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, onChange, onLeave }: {
+export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, onChange, onLeave, onSearchLinks, onOpenLink }: {
   ref?: Ref<NoteEditorHandle>;
   /** Changes when another note opens, which starts a fresh editor. */
   noteKey: string;
@@ -66,6 +90,10 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   mode: NoteSyntaxMode;
   onChange(value: string): void;
   onLeave(): void;
+  /** Notes the `[[` picker offers for what has been typed. */
+  onSearchLinks?(query: string): Promise<NoteLinkSuggestion[]>;
+  /** Opens the note a `[[link]]` names. */
+  onOpenLink?(title: string): void;
 }) {
   const editor = useRef<EditorHandle>(null);
   const surface = useRef<HTMLDivElement>(null);
@@ -77,7 +105,8 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   const [generation, setGeneration] = useState(0);
   const refocus = useRef(false);
   const latestChange = useRef(onChange);
-  useEffect(() => { latestChange.current = onChange; });
+  const latestLinks = useRef({ onSearchLinks, onOpenLink });
+  useEffect(() => { latestChange.current = onChange; latestLinks.current = { onSearchLinks, onOpenLink }; });
 
   useImperativeHandle(ref, () => ({ focus: () => editor.current?.focus(), markdown: () => editor.current?.getMarkdown() ?? shown.current }), []);
 
@@ -100,6 +129,8 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
     latestChange.current(markdown);
   }, []);
   const handleLink = useCallback(({ href }: { href: string }) => openNoteLink(href), []);
+  const handleWikilink = useCallback(({ target }: { target: string }) => latestLinks.current.onOpenLink?.(target), []);
+  const searchLinks = useCallback(async (query: string) => linkMenuItems(query, await latestLinks.current.onSearchLinks?.(query) ?? []), []);
   const reducedMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   return <div ref={surface} className="note-editor-body" onClickCapture={(event) => {
@@ -114,6 +145,9 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
       initialMarkdown={value}
       onDocChange={handleDocChange}
       onLinkClick={handleLink}
+      onWikilinkClick={handleWikilink}
+      onWikilinkSearch={onSearchLinks ? searchLinks : undefined}
+      resolveWikilink={resolveWikilink}
       readOnly={readOnly}
       placeholder={placeholder}
       spellCheck

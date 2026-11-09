@@ -563,7 +563,8 @@ fn a_save_based_on_an_older_version_writes_nothing_and_returns_the_current_note(
         deleted,
         NoteSave {
             saved: false,
-            note: None
+            note: None,
+            relink: None,
         }
     );
 }
@@ -576,7 +577,8 @@ fn a_daily_save_checks_whether_the_day_gained_a_note_meanwhile() {
         empty,
         NoteSave {
             saved: true,
-            note: None
+            note: None,
+            relink: None,
         }
     );
 
@@ -593,4 +595,163 @@ fn a_daily_save_checks_whether_the_day_gained_a_note_meanwhile() {
     assert!(saved.saved);
     assert_eq!(saved.note.unwrap().body, "From A, then B");
     assert!(b.save_daily_note_edit("2026-02-30", "x", None).is_err());
+}
+
+fn rename(db: &Database, id: &str, title: &str) -> NoteSave {
+    let note = db.get_note(id).unwrap().unwrap();
+    db.save_note(id, title, &note.body, &note.updated_at)
+        .unwrap()
+}
+
+#[test]
+fn renaming_a_note_points_links_in_other_notes_at_the_new_title() {
+    let db = synced();
+    let plan = db.create_note("Project Plan", "the plan").unwrap();
+    let meeting = db
+        .create_note(
+            "Meeting",
+            "See [[project plan]] and [[Project Plan|it]].\n`[[Project Plan]]`",
+        )
+        .unwrap();
+    db.save_daily_note(DAY, "Worked on [[Project  Plan]]")
+        .unwrap();
+    let trashed = db.create_note("Old", "Was [[Project Plan]]").unwrap();
+    db.trash_note(&trashed.id).unwrap();
+
+    let saved = rename(&db, &plan.id, "Roadmap");
+    assert_eq!(
+        saved.relink,
+        Some(NoteRelink {
+            updated: 2,
+            kept_old_link: vec![]
+        })
+    );
+    assert_eq!(
+        db.get_note(&meeting.id).unwrap().unwrap().body,
+        "See [[Roadmap]] and [[Roadmap|it]].\n`[[Project Plan]]`"
+    );
+    assert_eq!(
+        db.get_daily_note(DAY).unwrap().unwrap().body,
+        "Worked on [[Roadmap]]"
+    );
+    assert_eq!(
+        db.get_note(&trashed.id).unwrap().unwrap().body,
+        "Was [[Project Plan]]"
+    );
+    // Only the body changed in the linking notes, and the index follows.
+    assert_eq!(db.note_links(&plan.id).unwrap().backlinks.len(), 3);
+    assert!(replica_fields(&db, &meeting.id)
+        .iter()
+        .any(|(field, counter)| field == "body" && *counter > 1));
+
+    // Changing only case or spacing keeps links working without rewriting them.
+    assert_eq!(rename(&db, &plan.id, "roadmap").relink, None);
+    assert_eq!(
+        db.get_note(&meeting.id).unwrap().unwrap().body,
+        "See [[Roadmap]] and [[Roadmap|it]].\n`[[Project Plan]]`"
+    );
+}
+
+#[test]
+fn a_note_keeps_the_old_link_when_the_rename_would_pass_its_size_limit() {
+    let db = synced();
+    let plan = db.create_note("P", "").unwrap();
+    let link = "[[P]]";
+    let filler = "a".repeat(MAX_NOTE_BODY_BYTES - 2 - link.len());
+    let full = db.create_note("Full", &format!("{filler}{link}")).unwrap();
+    let below = db
+        .create_note("Below", &format!("{}{link}", &filler[1..]))
+        .unwrap();
+
+    let saved = rename(&db, &plan.id, "PQ");
+    assert_eq!(
+        saved.relink,
+        Some(NoteRelink {
+            updated: 1,
+            kept_old_link: vec!["Full".to_string()]
+        })
+    );
+    assert!(db
+        .get_note(&full.id)
+        .unwrap()
+        .unwrap()
+        .body
+        .ends_with("[[P]]"));
+    assert!(db
+        .get_note(&below.id)
+        .unwrap()
+        .unwrap()
+        .body
+        .ends_with("[[PQ]]"));
+    assert_eq!(db.get_note(&plan.id).unwrap().unwrap().title, "PQ");
+}
+
+#[test]
+fn a_note_in_conflict_keeps_the_old_link_instead_of_settling_the_conflict() {
+    let (a, b) = (synced(), synced());
+    let plan = a.create_note("Plan", "").unwrap();
+    let journal = a.create_note("Journal", "about [[Plan]]").unwrap();
+    sync_into(&b, &a);
+    a.update_note(&journal.id, "Journal", "A: about [[Plan]]")
+        .unwrap();
+    b.update_note(&journal.id, "Journal", "B: about [[Plan]]")
+        .unwrap();
+    sync_both(&a, &b);
+    assert!(note_conflicts(&a).contains(&(journal.id.clone(), "body".to_string())));
+
+    let saved = rename(&a, &plan.id, "Plan B");
+    assert_eq!(
+        saved.relink,
+        Some(NoteRelink {
+            updated: 0,
+            kept_old_link: vec!["Journal".to_string()]
+        })
+    );
+    assert!(note_conflicts(&a).contains(&(journal.id.clone(), "body".to_string())));
+}
+
+#[test]
+fn titles_are_suggested_by_contained_text_and_links_resolve_by_key() {
+    let db = database();
+    let roadmap = db.create_note("Product Roadmap", "").unwrap();
+    let road = db.create_note("Road trip", "").unwrap();
+    let gone = db.create_note("Roadkill", "").unwrap();
+    db.trash_note(&gone.id).unwrap();
+    db.save_daily_note(DAY, "road").unwrap();
+
+    let titles = |query: &str| -> Vec<String> {
+        db.suggest_note_titles(query, 10)
+            .unwrap()
+            .into_iter()
+            .map(|note| note.title)
+            .collect()
+    };
+    assert_eq!(titles("road"), ["Road trip", "Product Roadmap"]);
+    assert_eq!(titles("  ROAD   trip "), ["Road trip"]);
+    assert!(titles("").contains(&"Product Roadmap".to_string()));
+    assert_eq!(db.suggest_note_titles("", 1).unwrap().len(), 1);
+
+    assert_eq!(
+        db.find_note_by_title("product   ROADMAP")
+            .unwrap()
+            .map(|note| note.id),
+        Some(roadmap.id)
+    );
+    assert_eq!(
+        db.find_note_by_title("Road trip")
+            .unwrap()
+            .map(|note| note.id),
+        Some(road.id)
+    );
+    assert_eq!(db.find_note_by_title("Roadkill").unwrap(), None);
+
+    let links = db
+        .note_links(
+            &db.create_note("Hub", "[[Road trip]] [[road TRIP]] [[Nowhere]]")
+                .unwrap()
+                .id,
+        )
+        .unwrap();
+    assert_eq!(links.links, ["Road trip", "Nowhere"]);
+    assert_eq!(links.unlinked, ["Nowhere"]);
 }

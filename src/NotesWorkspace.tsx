@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowLeft, GitCompareArrows, Plus, RotateCcw, Trash2 } from "lucide-react";
-import type { Note, NoteSearchHit, NoteSummary } from "./domain";
+import { ArrowLeft, FilePlus, GitCompareArrows, NotebookText, Plus, RotateCcw, Trash2, UserRound } from "lucide-react";
+import type { ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSummary } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { formatHistoryDate } from "./contactContext";
@@ -10,9 +10,10 @@ import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
-import { ContextSectionHeader } from "./ContextSections";
+import { ContextRow, ContextSection, ContextSectionHeader } from "./ContextSections";
 import { InlineConfirm } from "./InlineConfirm";
-import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
+import { NoteEditor, type NoteEditorHandle, type NoteLinkSuggestion } from "./NoteEditor";
+import { noteTitleKey } from "./noteWikiLinks";
 import { NewNoteDialog } from "./NewNoteDialog";
 import { NoteConflictBanner } from "./NoteConflictBanner";
 import { noteConflictsById } from "./noteConflicts";
@@ -27,6 +28,10 @@ import type { NotesRequest } from "./useWorkspaces";
 const RECENT_LIMIT = 200;
 /** Most notes the Trash list shows. */
 const TRASH_LIMIT = 200;
+/** Most notes the `[[` picker offers. */
+const LINK_SUGGESTIONS = 8;
+/** Most of a note's links checked against saved contacts for People. */
+const PEOPLE_LOOKUPS = 30;
 /** Most notes a search lists. */
 const SEARCH_LIMIT = 50;
 const SEARCH_DELAY_MS = 150;
@@ -46,6 +51,26 @@ function MatchSnippet({ text }: { text: string }) {
 }
 
 type Row = { key: string; target: NoteTarget; title: string; detail: ReactNode; date?: string };
+
+/** A `[[link]]` that names a day opens that day's note. */
+const linkedDay = (title: string) => {
+  const date = title.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const [year, month, day] = date.split("-").map(Number);
+  const parsed = new Date(year!, month! - 1, day);
+  return parsed.getFullYear() === year && parsed.getMonth() === month! - 1 && parsed.getDate() === day ? date : null;
+};
+
+/** What a rename did to links elsewhere, in a sentence. */
+export function relinkMessage({ updated, keptOldLink }: NoteRelink): string | null {
+  const parts: string[] = [];
+  if (updated) parts.push(`Updated links in ${updated} ${updated === 1 ? "note" : "notes"}.`);
+  if (keptOldLink.length) {
+    const names = keptOldLink.map((title) => linkedDay(title) ? formatNoteDate(title) : `“${title}”`).join(", ");
+    parts.push(`${names} ${keptOldLink.length === 1 ? "keeps" : "keep"} the old link, because changing ${keptOldLink.length === 1 ? "it" : "them"} would make ${keptOldLink.length === 1 ? "it" : "them"} too long to sync or would settle a conflict.`);
+  }
+  return parts.length ? parts.join(" ") : null;
+}
 type ListView = "notes" | "trash";
 
 /**
@@ -54,7 +79,12 @@ type ListView = "notes" | "trash";
  * surface entered with Enter or a click and left with Escape. Trash sits at
  * the bottom of the list, and a trashed note opens read-only.
  */
-export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: NotesRequest | null; refreshKey?: string }) {
+export function NotesWorkspace({ request = null, refreshKey = "", onOpenContact }: {
+  request?: NotesRequest | null;
+  refreshKey?: string;
+  /** Opens a saved contact in Contacts, for the People section. */
+  onOpenContact?(id: string): void;
+}) {
   const [target, setTarget] = useState<NoteTarget>(() => readLastNoteTarget() ?? todayTarget());
   const [listView, setListView] = useState<ListView>("notes");
   const [recent, setRecent] = useState<NoteSummary[]>([]);
@@ -69,6 +99,9 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [links, setLinks] = useState<{ noteId: string; links: NoteLinks } | null>(null);
+  const [people, setPeople] = useState<ContactProfile[]>([]);
+  const [relinkNotice, setRelinkNotice] = useState<string | null>(null);
   const rows = useRef(new Map<string, HTMLButtonElement>());
   const search = useRef<HTMLInputElement>(null);
   const titleInput = useRef<HTMLInputElement>(null);
@@ -100,15 +133,48 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
       return summary ? current.map((item) => item.id === note.id ? updated : item) : [updated, ...current];
     });
   }, []);
-  const select = useCallback((next: NoteTarget) => { setTarget(next); setConfirmingDelete(false); setActionError(null); }, []);
-  const editor = useNoteEditor(target, { onSaved: showSaved, onReplaced: (note) => select({ kind: "note", id: note.id }) });
+  const select = useCallback((next: NoteTarget) => { setTarget(next); setConfirmingDelete(false); setActionError(null); setRelinkNotice(null); }, []);
+  const linksVersion = useRef(0);
+  const loadLinks = useCallback((noteId: string | null) => {
+    const version = ++linksVersion.current;
+    if (!noteId) { setLinks(null); return; }
+    void mailClient.noteLinks(noteId).then((found) => { if (version === linksVersion.current) setLinks({ noteId, links: found }); }, logBackgroundFailure("Note links"));
+  }, []);
+  const openNoteId = useRef<string | null>(null);
+  const onSaved = useCallback((note: Note, relink?: NoteRelink) => {
+    showSaved(note);
+    loadLinks(openNoteId.current);
+    if (!relink) return;
+    setRelinkNotice(relinkMessage(relink));
+    // Notes whose links followed the rename changed too.
+    if (relink.updated) void mailClient.listRecentNotes(RECENT_LIMIT).then(setRecent, logBackgroundFailure("Recent notes"));
+  }, [showSaved, loadLinks]);
+  const editor = useNoteEditor(target, { onSaved, onReplaced: (note) => select({ kind: "note", id: note.id }) });
+  useEffect(() => { openNoteId.current = editor.note?.id ?? null; });
   const { refresh } = editor;
   const reloadAll = useCallback(() => {
     loadRecent();
     loadTrash();
     loadConflicts();
+    loadLinks(openNoteId.current);
     void refresh().catch(logBackgroundFailure("Note refresh"));
-  }, [loadRecent, loadTrash, loadConflicts, refresh]);
+  }, [loadRecent, loadTrash, loadConflicts, loadLinks, refresh]);
+  const noteId = editor.note?.id ?? null;
+  useEffect(() => { loadLinks(noteId); }, [noteId, loadLinks]);
+  // People: the note's links whose titles are saved contacts' names.
+  const linkTitles = links?.noteId === noteId ? links.links.links : null;
+  useEffect(() => {
+    if (!linkTitles?.length) { setPeople([]); return; }
+    let active = true;
+    void Promise.all(linkTitles.slice(0, PEOPLE_LOOKUPS).map((title) => mailClient.listContactProfiles(title, 5).then((found) => found.find((contact) => contact.displayName && noteTitleKey(contact.displayName) === noteTitleKey(title)))))
+      .then((found) => {
+        if (!active) return;
+        const unique = new Map<string, ContactProfile>();
+        for (const contact of found) if (contact) unique.set(contact.id, contact);
+        setPeople([...unique.values()]);
+      }, logBackgroundFailure("Linked people"));
+    return () => { active = false; };
+  }, [linkTitles]);
 
   useEffect(() => { reloadAll(); }, [reloadAll, refreshKey]);
   // Another device's changes arrive with replicated sync.
@@ -180,6 +246,22 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
     setActionError(null);
     try { await action(); } catch (reason) { setActionError(errorMessage(reason)); } finally { setBusy(false); }
   };
+  /** Opens the note a `[[link]]` names: that day's note for a date, the note with the title, or a new note with it. */
+  const openLink = (title: string) => act(async () => {
+    await editor.flush();
+    const day = linkedDay(title);
+    if (day) { setListView("notes"); select({ kind: "daily", date: day }); return; }
+    const found = await mailClient.findNoteByTitle(title);
+    if (found) { select(summaryTarget(found)); return; }
+    const created = await mailClient.createNote(title, "");
+    setListView("notes");
+    showSaved(created);
+    select({ kind: "note", id: created.id });
+  });
+  const searchLinks = useCallback(async (query: string): Promise<NoteLinkSuggestion[]> => {
+    const found = await mailClient.suggestNoteTitles(query, LINK_SUGGESTIONS);
+    return found.filter((note) => note.id !== openNoteId.current).map((note) => ({ title: note.title }));
+  }, []);
   const moveToTrash = () => act(async () => {
     const note = editor.note;
     if (!note || note.trashed) return;
@@ -320,6 +402,7 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
                 : <input ref={titleInput} className="notes-editor-title" aria-label="Title" value={editor.text.title} readOnly={readOnly} maxLength={200}
                   {...SEARCH_INPUT_ATTRIBUTES}
                   onChange={(event) => editor.edit({ title: event.target.value })}
+                  onBlur={() => void editor.flush()}
                   onKeyDown={(event) => {
                     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); returnToList(); }
                     if (event.key === "Enter") { event.preventDefault(); body.current?.focus(); }
@@ -328,9 +411,10 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
             </div>
             <NoteEditor ref={body} noteKey={selectedKey} value={editor.text.body} label="Note text" readOnly={readOnly} mode={syntaxMode}
               placeholder={daily ? "Write about the day" : "Write in Markdown"}
-              onChange={(value) => editor.edit({ body: value })} onLeave={returnToList} />
+              onChange={(value) => editor.edit({ body: value })} onLeave={returnToList}
+              onSearchLinks={searchLinks} onOpenLink={(title) => void openLink(title)} />
             {editor.saveState.kind === "error" ? <p className="form-error" role="alert">{editor.saveState.message}</p>
-              : <p className="notes-save-status" role="status">{status}</p>}
+              : <p className="notes-save-status" role="status">{status}{relinkNotice ? ` ${relinkNotice}` : ""}</p>}
           </>}
       </div>
       <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow}>
@@ -340,6 +424,17 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
           <div><dt>Changed</dt><dd>{formatTime(editor.note.updatedAt)}</dd></div>
           {editor.note.trashedAt ? <div><dt>Trashed</dt><dd>{formatTime(editor.note.trashedAt)}</dd></div> : null}
         </dl> : <p className="context-status">{daily ? "This day's note starts when you write in it." : "Select a note to see its details."}</p>}
+        {editor.note && links?.noteId === editor.note.id ? <>
+          {links.links.backlinks.length ? <ContextSection id="notes-backlinks" title="Backlinks" count={links.links.backlinks.length}
+            rows={links.links.backlinks.map((link, index) => <ContextRow key={`${link.noteId}-${index}`} icon={<NotebookText size={ICON_SIZE.sm} />}
+              title={noteLabel(link)} detail={link.context} onActivate={() => select(summaryTarget({ id: link.noteId, dailyDate: link.dailyDate }))} />)} /> : null}
+          {links.links.unlinked.length && !inTrash ? <ContextSection id="notes-unlinked" title="Unlinked" count={links.links.unlinked.length}
+            rows={links.links.unlinked.map((title) => <ContextRow key={title} icon={<FilePlus size={ICON_SIZE.sm} />}
+              title={linkedDay(title) ? formatNoteDate(title) : title} detail={linkedDay(title) ? "No note for this day yet" : "Create this note"} disabled={busy} onActivate={() => void openLink(title)} />)} /> : null}
+          {people.length && onOpenContact ? <ContextSection id="notes-people" title="People" count={people.length}
+            rows={people.map((contact) => <ContextRow key={contact.id} icon={<UserRound size={ICON_SIZE.sm} />}
+              title={contact.displayName} detail={contact.company ?? contact.addresses[0]} onActivate={() => onOpenContact(contact.id)} />)} /> : null}
+        </> : null}
       </WorkspaceContextRail>
     </div>
     {creating ? <NewNoteDialog onClose={() => setCreating(false)} onCreated={(note) => {

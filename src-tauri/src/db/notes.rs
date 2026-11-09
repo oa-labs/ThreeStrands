@@ -20,9 +20,12 @@ use super::sync_state::{
 };
 use super::{serialization_error, Database, DatabaseError, DbResult};
 use crate::models::{
-    Note, NoteBacklink, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NotesStorage,
+    Note, NoteBacklink, NoteLinks, NoteRelink, NoteSave, NoteSearchHit, NoteSummary, NoteTitle,
+    NotesStorage,
 };
-use crate::notes::{clean_note_title, daily_note_id, extract_links, is_daily_date, title_key};
+use crate::notes::{
+    clean_note_title, daily_note_id, extract_links, is_daily_date, rewrite_links, title_key,
+};
 
 const NOTE_COLUMNS: &str =
     "id, title, body, daily_date, created_at, updated_at, trashed, trashed_at";
@@ -316,14 +319,78 @@ fn set_trashed(tx: &Transaction<'_>, id: &str, trashed: bool) -> DbResult<Note> 
     Ok(note)
 }
 
-fn update_in(tx: &Transaction<'_>, id: &str, title: &str, body: &str) -> DbResult<Note> {
+fn update_in(
+    tx: &Transaction<'_>,
+    id: &str,
+    title: &str,
+    body: &str,
+) -> DbResult<(Note, Option<NoteRelink>)> {
     let note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
+    let old_key = title_key(&note.title);
     let title = if note.daily_date.is_some() {
         note.title.clone()
     } else {
         clean_note_title(title).map_err(DatabaseError::invalid)?
     };
-    edit(tx, note, title, body)
+    let saved = edit(tx, note, title, body)?;
+    // Links match titles by key, so a change of case or spacing leaves
+    // them working and rewrites nothing.
+    let relink = if title_key(&saved.title) == old_key {
+        None
+    } else {
+        Some(relink(tx, &saved.id, &old_key, &saved.title)?)
+    };
+    Ok((saved, relink))
+}
+
+/// Points links to a renamed note at its new title, as ordinary edits of
+/// the notes outside Trash that hold them. A note whose body is in
+/// conflict, or that the change would push past a sync limit, keeps the
+/// old link and is named in the result.
+fn relink(tx: &Transaction<'_>, id: &str, old_key: &str, new_title: &str) -> DbResult<NoteRelink> {
+    let ids: Vec<String> = {
+        let mut statement = tx.prepare(
+            "SELECT DISTINCT n.id FROM note_links l JOIN notes n ON n.id=l.note_id
+             WHERE l.target_key=?1 AND n.id<>?2 AND n.trashed=0
+             ORDER BY n.id",
+        )?;
+        let rows = statement.query_map(params![old_key, id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    let mut result = NoteRelink {
+        updated: 0,
+        kept_old_link: Vec::new(),
+    };
+    for linking_id in ids {
+        let Some(mut note) = get(tx, &linking_id)? else {
+            continue;
+        };
+        let Some(body) = rewrite_links(&note.body, old_key, new_title) else {
+            continue;
+        };
+        if field_in_conflict(tx, &note.id, "body")? {
+            result.kept_old_link.push(note.title);
+            continue;
+        }
+        note.body = body;
+        note.updated_at = Utc::now().to_rfc3339();
+        let bytes = match check_sync_limits(tx, &note, &sync_payload(&note)) {
+            Ok(bytes) => bytes,
+            Err(DatabaseError::Validation(_)) => {
+                result.kept_old_link.push(note.title);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        store(
+            tx,
+            &note,
+            bytes,
+            Some(&BTreeSet::from(["body".to_string()])),
+        )?;
+        result.updated += 1;
+    }
+    Ok(result)
 }
 
 fn save_daily_in(tx: &Transaction<'_>, date: &str, body: &str) -> DbResult<Option<Note>> {
@@ -352,6 +419,14 @@ fn save_daily_in(tx: &Transaction<'_>, date: &str, body: &str) -> DbResult<Optio
             .map(Some)
         }
     }
+}
+
+fn note_title_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteTitle> {
+    Ok(NoteTitle {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        daily_date: row.get(2)?,
+    })
 }
 
 fn preview(body: &str) -> String {
@@ -431,12 +506,14 @@ impl Database {
                 return Ok(NoteSave {
                     saved: false,
                     note: current,
+                    relink: None,
                 });
             }
-            let note = update_in(tx, id, title, body)?;
+            let (note, relink) = update_in(tx, id, title, body)?;
             Ok(NoteSave {
                 saved: true,
                 note: Some(note),
+                relink,
             })
         })
     }
@@ -460,18 +537,20 @@ impl Database {
                 return Ok(NoteSave {
                     saved: false,
                     note: current,
+                    relink: None,
                 });
             }
             Ok(NoteSave {
                 saved: true,
                 note: save_daily_in(tx, date, body)?,
+                relink: None,
             })
         })
     }
 
     #[cfg(test)]
     pub fn update_note(&self, id: &str, title: &str, body: &str) -> DbResult<Note> {
-        self.with_transaction(|tx| update_in(tx, id, title, body))
+        self.with_transaction(|tx| update_in(tx, id, title, body).map(|(note, _)| note))
     }
 
     #[cfg(test)]
@@ -561,6 +640,38 @@ impl Database {
     }
 
     /// Notes not in Trash whose title or body matches every word of `query`.
+    /// Regular notes outside Trash whose titles contain `query`, ignoring
+    /// case and spacing: titles that start with it first, then the most
+    /// recently opened or changed. An empty query lists recent notes. For
+    /// the `[[` link picker.
+    pub fn suggest_note_titles(&self, query: &str, limit: usize) -> DbResult<Vec<NoteTitle>> {
+        let key = title_key(query);
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT n.id, n.title, n.daily_date
+                 FROM notes n LEFT JOIN note_visits v ON v.note_id=n.id
+                 WHERE n.trashed=0 AND n.daily_date IS NULL AND instr(n.title_key, ?1) > 0
+                 ORDER BY instr(n.title_key, ?1) <> 1, max(COALESCE(v.visited_at, ''), n.updated_at) DESC, n.id
+                 LIMIT ?2",
+            )?;
+            let rows = statement.query_map(params![key, limit.min(MAX_LIST_ROWS) as i64], note_title_from_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// The note outside Trash a `[[link]]` to `title` opens, matched by key.
+    pub fn find_note_by_title(&self, title: &str) -> DbResult<Option<NoteTitle>> {
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT id, title, daily_date FROM notes WHERE title_key=?1 AND trashed=0 ORDER BY id LIMIT 1",
+                    [title_key(title)],
+                    note_title_from_row,
+                )
+                .optional()?)
+        })
+    }
+
     pub fn search_notes(&self, query: &str, limit: usize) -> DbResult<Vec<NoteSearchHit>> {
         let query = fts_query(query);
         if query.trim().is_empty() {
@@ -626,9 +737,18 @@ impl Database {
                     .query_map(params![id, title_key(&note.title)], |row| row.get(0))?;
                 rows.collect::<Result<Vec<String>, _>>()?
             };
+            let links = {
+                let mut statement = tx.prepare(
+                    "SELECT target_title FROM note_links WHERE note_id=?1
+                     GROUP BY target_key ORDER BY min(position)",
+                )?;
+                let rows = statement.query_map([id], |row| row.get(0))?;
+                rows.collect::<Result<Vec<String>, _>>()?
+            };
             Ok(NoteLinks {
                 backlinks,
                 unlinked,
+                links,
             })
         })
     }

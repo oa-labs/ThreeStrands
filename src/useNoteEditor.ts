@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Note, NoteSave } from "./domain";
+import type { Note, NoteRelink, NoteSave } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
 import { onBeforeExit } from "./beforeExit";
@@ -34,7 +34,7 @@ const sameNote = (a: Note | null, b: Note | null) => a === b || (a !== null && b
  * the editor goes away, and when the window closes. Unsaved text is kept as
  * a per-device draft until a save succeeds. Opening a note never writes.
  */
-export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }: { onSaved?(note: Note): void; onReplaced?(note: Note): void } = {}) {
+export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }: { onSaved?(note: Note, relink?: NoteRelink): void; onReplaced?(note: Note): void } = {}) {
   const targetKey = target ? noteTargetKey(target) : null;
   const [note, setNote] = useState<Note | null>(null);
   const [text, setText] = useState<NoteText>({ title: "", body: "" });
@@ -83,7 +83,8 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }
         if (here()) { pausedRef.current = true; setSaveState({ kind: "stale", current: result.note }); }
         return;
       }
-      if (result.note) callbacks.current.onSaved?.(result.note);
+      if (result.note && result.relink) callbacks.current.onSaved?.(result.note, result.relink);
+      else if (result.note) callbacks.current.onSaved?.(result.note);
       if (!here()) {
         // Typing that arrived during the save stays as a draft on the saved
         // version, so reopening the note picks it up and saves it.
@@ -166,6 +167,10 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }
     markDirty(true);
     writeNoteDraft(noteTargetKey(current), { ...next, base: noteRef.current?.updatedAt ?? null });
     if (pausedRef.current) return;
+    // A new title saves when the title field is left (`flush`), not while it
+    // is typed: renaming rewrites links in other notes, which shouldn't
+    // follow every half-typed title.
+    if (patch.body === undefined) return;
     clearTimer();
     timerRef.current = window.setTimeout(() => void save(), NOTE_SAVE_DELAY_MS);
   }, [save]);

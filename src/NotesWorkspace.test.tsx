@@ -3,8 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { installTestShortcuts } from "./test/commandContext";
 import { runWorkspaceCommand } from "./workspaceCommands";
 import { mailClient } from "./data/client";
-import { NotesWorkspace } from "./NotesWorkspace";
+import { NotesWorkspace, relinkMessage } from "./NotesWorkspace";
+import { lastEditorProps } from "./test/NoteEditorStub";
 import { formatNoteDate } from "./noteDates";
+import { noteTitleKey as noteTitleKeyOf } from "./noteWikiLinks";
+import type { ContactProfile } from "./domain";
 import { todayTarget, writeLastNoteTarget } from "./noteDrafts";
 import { replicatedSyncConflicts, replicatedSyncDeviceRoster, replicatedSyncResolveConflict, type FrontierConflict } from "./replicatedSync";
 
@@ -313,5 +316,91 @@ describe("Notes workspace", () => {
     rerender(<NotesWorkspace request={{ kind: "note", noteId: note.id, id: 1 }} />);
     expect(await screen.findByRole("textbox", { name: "Title" })).toHaveValue(note.title);
     expect(screen.getByRole("list", { name: "Notes" })).toBeInTheDocument();
+  });
+  describe("links", () => {
+    const rail = () => within(screen.getByRole("complementary", { name: "Note context" }));
+    const openNote = async (id: string, props: Partial<Parameters<typeof NotesWorkspace>[0]> = {}) => {
+      writeLastNoteTarget({ kind: "note", id });
+      render(<NotesWorkspace {...props} />);
+      const note = await mailClient.getNote(id);
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note!.title));
+    };
+
+    it("lists backlinks with their line and opens the linking note", async () => {
+      const target = await mailClient.createNote(uniqueTitle("Hub"), "");
+      const linking = await mailClient.createNote(uniqueTitle("Spoke"), `Intro\nTalked about [[${target.title.toUpperCase()}]] today`);
+      await openNote(target.id);
+      const section = within(await rail().findByRole("region", { name: /Backlinks/ }));
+      const row = section.getByRole("button", { name: new RegExp(linking.title) });
+      expect(row).toHaveTextContent(`Talked about [[${target.title.toUpperCase()}]] today`);
+      fireEvent.click(row);
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(linking.title));
+    });
+
+    it("creates an unlinked note when chosen, and opens a day for a date link", async () => {
+      const missing = uniqueTitle("Someday");
+      const note = await mailClient.createNote(uniqueTitle("Ideas"), `Next: [[${missing}]] and [[2026-11-10]]`);
+      await openNote(note.id);
+      const section = within(await rail().findByRole("region", { name: /Unlinked/ }));
+      expect(section.getByRole("button", { name: new RegExp(formatNoteDate("2026-11-10")) })).toBeInTheDocument();
+      fireEvent.click(section.getByRole("button", { name: new RegExp(missing) }));
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(missing));
+      expect(await mailClient.findNoteByTitle(missing)).not.toBeNull();
+
+      act(() => lastEditorProps.current!.onOpenLink!("2026-11-10"));
+      await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: formatNoteDate("2026-11-10") })).toBeInTheDocument());
+      expect(await mailClient.getDailyNote("2026-11-10")).toBeNull();
+    });
+
+    it("follows a link to an existing note by title, ignoring case and spacing", async () => {
+      const target = await mailClient.createNote(uniqueTitle("Existing target"), "");
+      const note = await mailClient.createNote(uniqueTitle("Source"), "");
+      const create = vi.spyOn(mailClient, "createNote");
+      await openNote(note.id);
+      act(() => lastEditorProps.current!.onOpenLink!(`  ${target.title.toLowerCase().replace(" ", "   ")} `));
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(target.title));
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("offers other notes in the link picker", async () => {
+      const other = await mailClient.createNote(uniqueTitle("Pickable"), "");
+      const note = await mailClient.createNote(uniqueTitle("Pickable self"), "");
+      await openNote(note.id);
+      const found = await lastEditorProps.current!.onSearchLinks!("pickable");
+      expect(found.map((item) => item.title)).toContain(other.title);
+      expect(found.map((item) => item.title)).not.toContain(note.title);
+    });
+
+    it("lists linked people who are saved contacts and opens them in Contacts", async () => {
+      const note = await mailClient.createNote(uniqueTitle("Met"), "Lunch with [[Ada  Lovelace]] and [[Nobody Known]]");
+      vi.spyOn(mailClient, "listContactProfiles").mockImplementation(async (query) => noteTitleKeyOf(query ?? "") === "ada lovelace"
+        ? [{ id: "c-ada", displayName: "Ada Lovelace", company: "Analytical Engines", addresses: ["ada@example.com"] } as ContactProfile]
+        : [{ id: "c-near", displayName: "Nobody Else", company: null, addresses: [] } as unknown as ContactProfile]);
+      const onOpenContact = vi.fn();
+      await openNote(note.id, { onOpenContact });
+      const people = within(await rail().findByRole("region", { name: /People/ }));
+      expect(people.queryByRole("button", { name: /Nobody/ })).not.toBeInTheDocument();
+      fireEvent.click(people.getByRole("button", { name: /Ada Lovelace/ }));
+      expect(onOpenContact).toHaveBeenCalledWith("c-ada");
+    });
+
+    it("saves a renamed title when the field is left and says what happened to links", async () => {
+      const target = await mailClient.createNote(uniqueTitle("Before"), "");
+      const linking = await mailClient.createNote(uniqueTitle("Mentions"), `See [[${target.title}]]`);
+      await openNote(target.id);
+      const title = screen.getByRole("textbox", { name: "Title" });
+      const renamed = uniqueTitle("After");
+      fireEvent.change(title, { target: { value: renamed } });
+      fireEvent.blur(title);
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Updated links in 1 note."));
+      expect((await mailClient.getNote(linking.id))?.body).toBe(`See [[${renamed}]]`);
+    });
+
+    it("describes links a rename couldn't update", () => {
+      expect(relinkMessage({ updated: 0, keptOldLink: [] })).toBeNull();
+      expect(relinkMessage({ updated: 2, keptOldLink: ["Full", "2026-11-09"] })).toBe(
+        `Updated links in 2 notes. “Full”, ${formatNoteDate("2026-11-09")} keep the old link, because changing them would make them too long to sync or would settle a conflict.`,
+      );
+    });
   });
 });

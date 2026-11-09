@@ -4,8 +4,8 @@
 use tauri::State;
 
 use crate::models::{
-    CreateNoteRequest, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NotesStorage,
-    UpdateNoteRequest,
+    CreateNoteRequest, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle,
+    NotesStorage, UpdateNoteRequest,
 };
 use crate::{kick_replicated_sync, run_database_task, AppResult, AppState};
 
@@ -121,6 +121,25 @@ pub(crate) async fn search_notes(
 ) -> AppResult<Vec<NoteSearchHit>> {
     let database = state.database.clone();
     run_database_task(move || database.search_notes(&query, limit)).await
+}
+
+#[tauri::command]
+pub(crate) async fn suggest_note_titles(
+    query: String,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<NoteTitle>> {
+    let database = state.database.clone();
+    run_database_task(move || database.suggest_note_titles(&query, limit)).await
+}
+
+#[tauri::command]
+pub(crate) async fn find_note_by_title(
+    title: String,
+    state: State<'_, AppState>,
+) -> AppResult<Option<NoteTitle>> {
+    let database = state.database.clone();
+    run_database_task(move || database.find_note_by_title(&title)).await
 }
 
 #[tauri::command]

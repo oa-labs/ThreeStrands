@@ -1024,7 +1024,22 @@ export type NoteSummary = {
 
 /** A save's outcome: `saved` is false when the note changed or was deleted
  * after the edit began, and `note` is then the note as it is now. */
-export type NoteSave = { saved: boolean; note: Note | null };
+export type NoteSave = { saved: boolean; note: Note | null; relink?: NoteRelink };
+
+/** What renaming a note did to links in other notes: how many now use the
+ * new title, and which notes keep the old link (too long to sync, or in
+ * conflict). */
+export type NoteRelink = { updated: number; keptOldLink: string[] };
+
+/** A note named in a link or offered by the link picker. */
+export type NoteTitle = { id: string; title: string; dailyDate: string | null };
+
+/** Another note's link to this one, with the line it sits on. */
+export type NoteBacklink = { noteId: string; title: string; dailyDate: string | null; context: string };
+
+/** A note's links: notes that link here, titles it links to that no note
+ * has yet, and every title it links to. */
+export type NoteLinks = { backlinks: NoteBacklink[]; unlinked: string[]; links: string[] };
 
 /** A note matching a search; U+0001 and U+0002 mark the matching text. */
 export type NoteSearchHit = { id: string; title: string; dailyDate: string | null; matchSnippet: string };

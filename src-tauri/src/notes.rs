@@ -68,36 +68,75 @@ pub(crate) fn clean_note_title(title: &str) -> Result<String, &'static str> {
 /// and inline code spans) and escaped ones (`\[[`) are not links.
 pub(crate) fn extract_links(body: &str) -> Vec<NoteLink> {
     let mut links = Vec::new();
-    let mut fence: Option<(char, usize)> = None;
-    for line in body.lines() {
-        if let Some(marker) = fence_marker(line) {
-            match fence {
-                None => {
-                    fence = Some(marker);
-                    continue;
-                }
-                Some((ch, length)) if marker.0 == ch && marker.1 >= length => {
-                    fence = None;
-                    continue;
-                }
-                Some(_) => {}
-            }
-        }
-        if fence.is_some() {
-            continue;
-        }
-        for title in line_links(line) {
+    for line in prose_lines(body) {
+        for span in line_links(line) {
             if links.len() == MAX_LINKS_PER_NOTE {
                 return links;
             }
             links.push(NoteLink {
-                key: title_key(&title),
-                title,
+                key: title_key(&span.title),
+                title: span.title,
                 context: line_context(line),
             });
         }
     }
     links
+}
+
+/// `body` with every link to the note whose title key is `old_key` pointed
+/// at `new_title` instead, keeping any `|shown text`; `None` when no link
+/// changes. Code and escaped links stay as written, as in [`extract_links`].
+pub(crate) fn rewrite_links(body: &str, old_key: &str, new_title: &str) -> Option<String> {
+    let mut changed = false;
+    let mut fence: Option<(char, usize)> = None;
+    let mut out = String::with_capacity(body.len());
+    for piece in body.split_inclusive('\n') {
+        let line = piece.trim_end_matches('\n').trim_end_matches('\r');
+        let ending = &piece[line.len()..];
+        if !in_prose(line, &mut fence) {
+            out.push_str(piece);
+            continue;
+        }
+        let chars: Vec<char> = line.chars().collect();
+        let mut next = 0;
+        for span in line_links(line) {
+            if title_key(&span.title) != old_key {
+                continue;
+            }
+            out.extend(&chars[next..span.target_start]);
+            out.push_str(new_title);
+            next = span.target_end;
+            changed = true;
+        }
+        out.extend(&chars[next..]);
+        out.push_str(ending);
+    }
+    changed.then_some(out)
+}
+
+/// The lines of `body` outside fenced code blocks.
+fn prose_lines(body: &str) -> impl Iterator<Item = &str> {
+    let mut fence: Option<(char, usize)> = None;
+    body.lines().filter(move |line| in_prose(line, &mut fence))
+}
+
+/// Whether `line` is prose, tracking fenced code blocks through `fence`.
+/// Fence lines themselves aren't prose.
+fn in_prose(line: &str, fence: &mut Option<(char, usize)>) -> bool {
+    if let Some(marker) = fence_marker(line) {
+        match *fence {
+            None => {
+                *fence = Some(marker);
+                return false;
+            }
+            Some((ch, length)) if marker.0 == ch && marker.1 >= length => {
+                *fence = None;
+                return false;
+            }
+            Some(_) => {}
+        }
+    }
+    fence.is_none()
 }
 
 /// The fence character and length when `line` opens or closes a fenced code
@@ -113,9 +152,17 @@ fn fence_marker(line: &str) -> Option<(char, usize)> {
     (length >= 3).then_some((ch, length))
 }
 
-fn line_links(line: &str) -> Vec<String> {
+/// One link in a line: its title, and the character range of the target as
+/// written (between `[[` and `|` or `]]`).
+struct LinkSpan {
+    title: String,
+    target_start: usize,
+    target_end: usize,
+}
+
+fn line_links(line: &str) -> Vec<LinkSpan> {
     let chars: Vec<char> = line.chars().collect();
-    let mut titles = Vec::new();
+    let mut links = Vec::new();
     let mut index = 0;
     while index < chars.len() {
         if chars[index] == '`' {
@@ -128,15 +175,15 @@ fn line_links(line: &str) -> Vec<String> {
         }
         let escaped = index > 0 && chars[index - 1] == '\\';
         if !escaped && chars[index] == '[' && chars.get(index + 1) == Some(&'[') {
-            if let Some((title, end)) = link_at(&chars, index + 2) {
-                titles.push(title);
+            if let Some((link, end)) = link_at(&chars, index + 2) {
+                links.push(link);
                 index = end;
                 continue;
             }
         }
         index += 1;
     }
-    titles
+    links
 }
 
 /// The index just past the backtick run of exactly `run` that closes an
@@ -157,21 +204,29 @@ fn closing_backticks(chars: &[char], from: usize, run: usize) -> Option<usize> {
     None
 }
 
-/// The link title starting at `start` (just past `[[`), and the index just
-/// past its `]]`.
-fn link_at(chars: &[char], start: usize) -> Option<(String, usize)> {
+/// The link starting at `start` (just past `[[`), and the index just past
+/// its `]]`.
+fn link_at(chars: &[char], start: usize) -> Option<(LinkSpan, usize)> {
     let mut index = start;
     while index + 1 < chars.len() {
         match chars[index] {
             '[' => return None,
             ']' if chars[index + 1] == ']' => {
-                let inner: String = chars[start..index].iter().collect();
-                let target = inner.split('|').next().unwrap_or_default();
+                let target_end = chars[start..index]
+                    .iter()
+                    .position(|ch| *ch == '|')
+                    .map_or(index, |offset| start + offset);
+                let target: String = chars[start..target_end].iter().collect();
                 let title = target.split_whitespace().collect::<Vec<_>>().join(" ");
                 if title.is_empty() || title.chars().count() > MAX_NOTE_TITLE_CHARS {
                     return None;
                 }
-                return Some((title, index + 2));
+                let link = LinkSpan {
+                    title,
+                    target_start: start,
+                    target_end,
+                };
+                return Some((link, index + 2));
             }
             ']' => return None,
             _ => index += 1,
@@ -245,6 +300,20 @@ mod tests {
             std::slice::from_ref(&title)
         );
         assert!(titles(&format!("[[{title}t]]")).is_empty());
+    }
+
+    #[test]
+    fn rewriting_links_follows_a_rename_and_keeps_shown_text() {
+        let body = "See [[Project  plan]] and [[project plan|the plan]].\r\nNot [[Other]] or `[[Project plan]]`, nor \\[[Project plan]].\n```\n[[Project plan]]\n```\nLast [[PROJECT PLAN]]";
+        assert_eq!(
+            rewrite_links(body, &title_key("Project plan"), "Roadmap").as_deref(),
+            Some("See [[Roadmap]] and [[Roadmap|the plan]].\r\nNot [[Other]] or `[[Project plan]]`, nor \\[[Project plan]].\n```\n[[Project plan]]\n```\nLast [[Roadmap]]")
+        );
+        assert_eq!(rewrite_links(body, &title_key("Nothing"), "Roadmap"), None);
+        assert_eq!(
+            rewrite_links("Über [[Café]] ✓\n", &title_key("café"), "Bar").as_deref(),
+            Some("Über [[Bar]] ✓\n")
+        );
     }
 
     #[test]
