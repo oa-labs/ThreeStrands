@@ -3,7 +3,7 @@ import { extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLin
 import { notePreview } from "../notePreview";
 import type { MailClient } from "./client";
 
-type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
+type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = (title: string) => title.split(/\s+/).filter(Boolean).join(" ");
@@ -140,6 +140,12 @@ export function createDemoNotes(): DemoNotes {
     },
     async exportNotes() {
       throw new Error("Exporting notes needs the ThreeStrands app");
+    },
+    async chooseNotesImportFolder() {
+      return null;
+    },
+    async importNotes() {
+      throw new Error("Importing notes needs the ThreeStrands app");
     },
     async suggestNoteTitles(query, limit) {
       const wanted = noteTitleKey(query);

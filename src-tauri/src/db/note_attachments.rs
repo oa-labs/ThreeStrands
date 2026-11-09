@@ -221,6 +221,45 @@ pub(super) fn delete_note_attachments(tx: &Transaction<'_>, note_id: &str) -> Db
     Ok(())
 }
 
+/// Stores a file as attachment `id` of `note_id`, within the caller's
+/// transaction, after the size and count checks every new file gets.
+pub(super) fn insert_attachment(
+    tx: &Transaction<'_>,
+    id: &str,
+    note_id: &str,
+    name: &str,
+    declared_type: &str,
+    bytes: &[u8],
+) -> DbResult<()> {
+    if bytes.len() as u64 > MAX_NOTE_ATTACHMENT_BYTES {
+        return Err(DatabaseError::invalid(TOO_LARGE));
+    }
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM note_attachments", [], |row| {
+        row.get(0)
+    })?;
+    if count as usize >= MAX_SYNCED_NOTE_ATTACHMENTS {
+        return Err(DatabaseError::invalid(TOO_MANY));
+    }
+    tx.execute(
+        "INSERT INTO note_attachments(id, note_id, name, mime_type, size, sha256, created_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![
+            id,
+            note_id,
+            clean_name(name),
+            stored_mime_type(declared_type, bytes),
+            bytes.len() as i64,
+            sha256_hex(bytes),
+            Utc::now().to_rfc3339()
+        ],
+    )?;
+    tx.execute(
+        "INSERT INTO note_attachment_data(id, bytes) VALUES (?1, ?2)",
+        params![id, bytes],
+    )?;
+    Ok(())
+}
+
 /// A sealed attachment's objects, ready to store: each one's CID, kind
 /// (`attachment_chunk` or `attachment_index`), and bytes.
 pub(crate) struct SealedAttachment {
@@ -257,9 +296,6 @@ impl Database {
             .strip_prefix(threestrands_sync_protocol::DAILY_NOTE_ID_PREFIX)
             .is_some_and(crate::notes::is_daily_date);
         let id = encode_id(&random_id());
-        let name = clean_name(name);
-        let mime_type = stored_mime_type(declared_type, bytes);
-        let sha256 = sha256_hex(bytes);
         self.with_transaction(|tx| {
             let exists: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM notes WHERE id=?1)",
@@ -269,29 +305,7 @@ impl Database {
             if !exists && !daily {
                 return Err(DatabaseError::NotFound("Note"));
             }
-            let count: i64 =
-                tx.query_row("SELECT COUNT(*) FROM note_attachments", [], |row| row.get(0))?;
-            if count as usize >= MAX_SYNCED_NOTE_ATTACHMENTS {
-                return Err(DatabaseError::invalid(TOO_MANY));
-            }
-            tx.execute(
-                "INSERT INTO note_attachments(id, note_id, name, mime_type, size, sha256, created_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![
-                    id,
-                    note_id,
-                    name,
-                    mime_type,
-                    bytes.len() as i64,
-                    sha256,
-                    Utc::now().to_rfc3339()
-                ],
-            )?;
-            tx.execute(
-                "INSERT INTO note_attachment_data(id, bytes) VALUES (?1, ?2)",
-                params![id, bytes],
-            )?;
-            Ok(())
+            insert_attachment(tx, &id, note_id, name, declared_type, bytes)
         })?;
         self.note_attachment(&id)?
             .ok_or(DatabaseError::NotFound("Attachment"))

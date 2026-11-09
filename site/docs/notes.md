@@ -37,6 +37,12 @@ When you rename a note, ThreeStrands changes the links to it in your other notes
 
 Press <kbd>#</kbd> in the list, or click the trash button beside the title, to move a note to Trash. **Trash** at the bottom of the list shows notes you've moved there. A note in Trash can be read but not changed; **Restore** brings it back, and **Delete Permanently** removes it from every device after you confirm.
 
+## Import Your Notes {#import-your-notes}
+
+**Settings → Notes → Import Markdown Folder** adds the notes in a folder you choose, such as your Reflect folder or an earlier export from ThreeStrands. First ThreeStrands reads the folder and tells you how many notes, daily notes, and files it found, and lists anything it can't import and why. Nothing changes until you click **Import Notes**.
+
+Files named by date in a `daily` folder become daily notes, and every other Markdown file becomes a note, titled by its first heading. Links between your notes keep working, and pictures and files the notes link to come along. Notes you already have are skipped, so importing the same folder again adds nothing and never replaces your notes. A note too long to sync is listed rather than cut short.
+
 ## Export Your Notes {#export-your-notes}
 
 **Settings → Notes → Export to Markdown Folder** writes every note outside Trash to a folder you choose, as Markdown files that other apps such as Obsidian and Reflect can open. Daily notes go in a `daily` folder, named by date, the rest in `notes`, named by title, and their pictures and files in `attachments`, linked from the notes so they still open. Each file starts with a few lines naming the note, so a future version of ThreeStrands can match the files back to your notes.

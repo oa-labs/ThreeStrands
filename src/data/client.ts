@@ -64,6 +64,8 @@ import type {
   NoteAttachment,
   NotesExportFolder,
   NotesExportOutcome,
+  NotesImportOutcome,
+  NotesImportSummary,
   NotesStorage,
   NoteSummary,
   SplitInbox,
@@ -429,6 +431,10 @@ export interface MailClient extends CorrespondenceClient {
   chooseNotesExportFolder(): Promise<NotesExportFolder | null>;
   /** Writes every note outside Trash to the chosen folder; `replace` confirms replacing an earlier export. */
   exportNotes(replace: boolean): Promise<NotesExportOutcome>;
+  /** Asks for a folder of Markdown notes and reads it without writing; null when the user cancels. The folder stays native-side. */
+  chooseNotesImportFolder(): Promise<NotesImportSummary | null>;
+  /** Imports the folder last read by `chooseNotesImportFolder`. */
+  importNotes(): Promise<NotesImportOutcome>;
   /** Notes in Trash, most recently trashed first. */
   listTrashedNotes(limit: number): Promise<NoteSummary[]>;
   /** Stores a file pasted or dropped into the note `noteId`. */
@@ -672,6 +678,8 @@ const tauriClient: MailClient = {
   notesStorage: () => read("notes_storage"),
   chooseNotesExportFolder: () => complete("notes_export_choose_folder"),
   exportNotes: (replace) => complete("notes_export_write", { replace }),
+  chooseNotesImportFolder: () => complete("notes_import_choose_folder"),
+  importNotes: () => complete("notes_import_run"),
   // The file travels as the request body; its name and type are percent-encoded so any script survives the header.
   addNoteAttachment: async (noteId, file) => invokeWithPolicy("note_attachment_add", new Uint8Array(await file.arrayBuffer()), WAIT_FOR_NATIVE_COMPLETION, {
     headers: { "x-note-id": encodeURIComponent(noteId), "x-file-name": encodeURIComponent(file.name), "x-file-type": encodeURIComponent(file.type) },

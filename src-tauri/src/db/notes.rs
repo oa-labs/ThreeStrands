@@ -597,6 +597,83 @@ impl Database {
         })
     }
 
+    /// Every note's id, and the title keys of notes outside Trash, which an
+    /// import must not reuse.
+    pub fn note_identities(
+        &self,
+    ) -> DbResult<(
+        std::collections::HashSet<String>,
+        std::collections::HashSet<String>,
+    )> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare("SELECT id, title_key, trashed FROM notes")?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, bool>(2)?,
+                ))
+            })?;
+            let (mut ids, mut titles) = (
+                std::collections::HashSet::new(),
+                std::collections::HashSet::new(),
+            );
+            for row in rows {
+                let (id, key, trashed) = row?;
+                ids.insert(id);
+                if !trashed {
+                    titles.insert(key);
+                }
+            }
+            Ok((ids, titles))
+        })
+    }
+
+    /// Adds an imported note, with its dates, and its files (each `(id,
+    /// name, declared type, bytes)`), in one transaction. Returns false,
+    /// writing nothing, when a note with its id is already here. A title in
+    /// use, a note too long to sync, or notes out of sync space is refused
+    /// with its reason, as a new note would be.
+    pub fn import_note(
+        &self,
+        note: Note,
+        files: &[(String, String, String, Vec<u8>)],
+    ) -> DbResult<bool> {
+        let note = match &note.daily_date {
+            Some(date) => {
+                if !is_daily_date(date) || note.id != daily_note_id(date) || note.title != *date {
+                    return Err(DatabaseError::invalid("Invalid daily note"));
+                }
+                note
+            }
+            None => Note {
+                title: clean_note_title(&note.title).map_err(DatabaseError::invalid)?,
+                ..note
+            },
+        };
+        self.with_transaction(|tx| {
+            if get(tx, &note.id)?.is_some() {
+                return Ok(false);
+            }
+            if note.daily_date.is_none() {
+                check_title_free(tx, &note.id, &note.title)?;
+            }
+            let note_id = note.id.clone();
+            create(tx, note)?;
+            for (id, name, declared_type, bytes) in files {
+                super::note_attachments::insert_attachment(
+                    tx,
+                    id,
+                    &note_id,
+                    name,
+                    declared_type,
+                    bytes,
+                )?;
+            }
+            Ok(true)
+        })
+    }
+
     /// Notes not in Trash, most recently opened or changed on this device
     /// first.
     pub fn list_recent_notes(&self, limit: usize) -> DbResult<Vec<NoteSummary>> {

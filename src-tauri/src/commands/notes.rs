@@ -9,7 +9,7 @@ use crate::models::{
 };
 use crate::{
     attachment_security, file_preview, image_format, kick_replicated_sync, notes_export,
-    run_database_task, AppError, AppResult, AppState,
+    notes_import, run_database_task, AppError, AppResult, AppState,
 };
 
 #[tauri::command]
@@ -405,4 +405,59 @@ pub(crate) async fn set_note_attachment_star(
 ) -> AppResult<()> {
     let database = state.database.clone();
     run_database_task(move || database.set_note_attachment_star(&id, starred)).await
+}
+
+/// Asks for a folder of Markdown notes to import and reads it, without
+/// writing anything. The plan stays here for [`notes_import_run`]; the page
+/// sees only its summary.
+#[tauri::command]
+pub(crate) async fn notes_import_choose_folder(
+    state: State<'_, AppState>,
+) -> AppResult<Option<notes_import::ImportSummary>> {
+    state.notes_import.set(None);
+    let Some(folder) = rfd::AsyncFileDialog::new()
+        .set_title("Choose a folder of notes to import")
+        .pick_folder()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = folder.path().to_path_buf();
+    let database = state.database.clone();
+    let plan = tokio::task::spawn_blocking(move || {
+        let (ids, titles) = database
+            .note_identities()
+            .map_err(|error| error.to_string())?;
+        notes_import::plan(&path, &notes_import::Existing { ids, titles })
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    let summary = plan.summary();
+    state.notes_import.set(Some(plan));
+    Ok(Some(summary))
+}
+
+/// Imports the folder [`notes_import_choose_folder`] read, then syncs.
+#[tauri::command]
+pub(crate) async fn notes_import_run(
+    state: State<'_, AppState>,
+) -> AppResult<notes_import::ImportOutcome> {
+    let plan = state
+        .notes_import
+        .take()
+        .ok_or("Choose a folder of notes to import first")?;
+    let database = state.database.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        notes_import::run(plan, |note, files| {
+            database
+                .import_note(note, files)
+                .map_err(|error| error.to_string())
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    if outcome.notes > 0 {
+        kick_replicated_sync(&state);
+    }
+    Ok(outcome)
 }

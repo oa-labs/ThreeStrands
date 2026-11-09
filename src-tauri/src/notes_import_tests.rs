@@ -1,0 +1,342 @@
+use super::*;
+use crate::db::Database;
+
+fn database() -> Database {
+    Database::open_memory()
+}
+
+/// A folder for one test, removed when it ends.
+struct TestFolder(PathBuf);
+
+impl TestFolder {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!("notes-import-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&path).unwrap();
+        TestFolder(path)
+    }
+
+    fn write(&self, relative: &str, contents: impl AsRef<[u8]>) {
+        let path = self.0.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+}
+
+impl Drop for TestFolder {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\nrest-of-image";
+
+fn nothing() -> Existing {
+    Existing {
+        ids: HashSet::new(),
+        titles: HashSet::new(),
+    }
+}
+
+fn note<'a>(plan: &'a ImportPlan, title: &str) -> &'a PlannedNote {
+    plan.notes
+        .iter()
+        .find(|planned| planned.note.title == title)
+        .unwrap_or_else(|| panic!("no note titled {title}"))
+}
+
+/// A folder laid out as Reflect writes one.
+fn reflect_folder() -> TestFolder {
+    let folder = TestFolder::new();
+    folder.write(
+        "daily/2026-07-27.md",
+        "---\nid: daily/2026-07-27.md\nsnippet: \"x\"\n---\n- Created [[OLLI - University of Pitt Program]] and [[PittsburghLeadershipNetworks]]\n",
+    );
+    folder.write("daily/notes-about-days.md", "# Not a day\n");
+    folder.write(
+        "notes/OlliProgram.md",
+        "---\nid: Notes/OlliProgram\nsummary: \"OLLI\"\n---\n# OLLI - University of Pitt Program\n\nPhoto ID: ![](assets/pasted-1.png)\nPacket: [packet](../assets/packet.pdf \"Packet\") and again [same](assets/packet.pdf)\n",
+    );
+    folder.write(
+        "notes/PittsburghLeadershipNetworks.md",
+        "---\nid: 01kxp66n18p7vt6b5rsmd1taqy\naliases:\n  - Leadership customer network\nsummary: \"x\"\n---\n# Pittsburgh [Leadership] Networks\n\nSee [[leadership customer network]].\n",
+    );
+    folder.write(
+        "collection/Reading.md",
+        "---\nid: collections/Reading\n---\n# Reading\n\n- [The OLLI note](../notes/OlliProgram.md)\n- [OLLI - University of Pitt Program](../notes/OlliProgram.md)\n- [web](https://example.com/a.md)\n- [outside](../../secret.pdf)\n- [moved](../note/OlliProgram.md)\n\n```\n[[PittsburghLeadershipNetworks]] ![](assets/pasted-1.png)\n```\n",
+    );
+    folder.write(
+        "person/barry.md",
+        "---\nid: 01kxp66n18p7vt6b5rsmd1tbbb\n---\n# Personal\n",
+    );
+    folder.write("archive/old.md", "# Personal\n\nAn older one.\n");
+    folder.write("person/bethany.md~other device", "# Bethany\n");
+    folder.write("assets/pasted-1.png", PNG);
+    folder.write(
+        "assets/pasted-1.png.reflect.md",
+        "---\nreflectAsset: true\n---\nA picture of an ID card.\n",
+    );
+    folder.write("assets/packet.pdf", b"%PDF-1.4");
+    folder.write(".reflect/index.md", "# Hidden");
+    folder
+}
+
+#[test]
+fn a_reflect_folder_becomes_notes_with_titles_links_and_files() {
+    let folder = reflect_folder();
+    let plan = plan(&folder.0, &nothing()).unwrap();
+    let summary = plan.summary();
+    assert_eq!((summary.notes, summary.daily_notes), (6, 1));
+    assert_eq!(summary.files, 2);
+
+    let day = plan
+        .notes
+        .iter()
+        .find(|planned| planned.note.daily_date.is_some())
+        .unwrap();
+    assert_eq!(
+        (day.note.id.as_str(), day.note.title.as_str()),
+        ("daily:2026-07-27", "2026-07-27")
+    );
+    // A title link stays; a file-name link follows the note to its title.
+    assert_eq!(
+        day.note.body,
+        "- Created [[OLLI - University of Pitt Program]] and [[Pittsburgh -Leadership- Networks]]\n"
+    );
+
+    // The heading is the title and leaves the text; Reflect's keys go.
+    let olli = note(&plan, "OLLI - University of Pitt Program");
+    assert!(olli.note.id.starts_with("import-"));
+    let [picture, packet] = &olli.files[..] else {
+        panic!("{:?}", olli.files)
+    };
+    assert_eq!(
+        (picture.relative.as_str(), packet.relative.as_str()),
+        ("assets/pasted-1.png", "assets/packet.pdf")
+    );
+    assert_eq!(packet.declared_type, "application/pdf");
+    assert_eq!(
+        olli.note.body,
+        format!(
+            "Photo ID: ![](attachment:{})\nPacket: [packet](attachment:{} \"Packet\") and again [same](attachment:{})\n",
+            picture.id, packet.id, packet.id
+        )
+    );
+
+    // Characters a title can't hold are replaced; aliases stay as front matter.
+    let networks = note(&plan, "Pittsburgh -Leadership- Networks");
+    assert_eq!(
+        networks.note.body,
+        "---\naliases:\n  - Leadership customer network\n---\n\nSee [[Pittsburgh -Leadership- Networks|leadership customer network]].\n"
+    );
+
+    // Relative links to notes become wiki links; code, web, and outside paths stay.
+    let reading = note(&plan, "Reading");
+    assert_eq!(
+        reading.note.body,
+        "- [[OLLI - University of Pitt Program|The OLLI note]]\n- [[OLLI - University of Pitt Program]]\n- [web](https://example.com/a.md)\n- [outside](../../secret.pdf)\n- [[OLLI - University of Pitt Program|moved]]\n\n```\n[[PittsburghLeadershipNetworks]] ![](assets/pasted-1.png)\n```\n"
+    );
+    assert!(reading.files.is_empty());
+
+    // A clash gets a number; a file in `daily` that isn't a date is a regular note.
+    note(&plan, "Personal");
+    note(&plan, "Personal 2");
+    note(&plan, "Not a day");
+    assert_eq!(
+        plan.problems
+            .iter()
+            .map(|problem| problem.file.as_str())
+            .collect::<Vec<_>>(),
+        ["person/bethany.md~other device"]
+    );
+}
+
+#[test]
+fn a_second_copy_of_a_note_is_imported_once_unless_it_changed() {
+    let folder = TestFolder::new();
+    folder.write("notes/a.md", "---\nid: same\n---\n# Retreat\n\nPlans\n");
+    folder.write("notes/a 2.md", "---\nid: same\n---\n# Retreat\n\nPlans\n");
+    folder.write("notes/b.md", "---\nid: other\n---\n# Meeting\n\nFirst\n");
+    folder.write(
+        "notes/b 2.md",
+        "---\nid: other\n---\n# Meeting\n\nEdited since\n",
+    );
+    let plan = plan(&folder.0, &nothing()).unwrap();
+    let mut titles: Vec<&str> = plan
+        .notes
+        .iter()
+        .map(|planned| planned.note.title.as_str())
+        .collect();
+    titles.sort();
+    assert_eq!(titles, ["Meeting", "Meeting 2", "Retreat"]);
+    assert_eq!(plan.problems.len(), 1);
+    assert!(plan.problems[0].reason.contains("imported once"));
+    let ids: HashSet<&str> = plan
+        .notes
+        .iter()
+        .map(|planned| planned.note.id.as_str())
+        .collect();
+    assert_eq!(ids.len(), 3);
+}
+
+#[test]
+fn an_export_imports_back_with_its_ids_dates_and_files() {
+    let folder = TestFolder::new();
+    let id = "4f2a3c1e-8b7d-4e6f-9a0b-1c2d3e4f5a6b";
+    folder.write(
+        "notes/Floor plans.md",
+        format!("---\nid: \"{id}\"\ncreated: \"2026-11-01T09:00:00Z\"\nupdated: \"2026-11-02T10:00:00Z\"\n---\n\n![](../attachments/Kitchen%20%281%29.png)\n"),
+    );
+    folder.write("attachments/Kitchen (1).png", PNG);
+    let plan = plan(&folder.0, &nothing()).unwrap();
+    let planned = &plan.notes[0];
+    assert_eq!(planned.note.id, id);
+    assert_eq!(planned.note.title, "Floor plans");
+    assert_eq!(
+        (
+            planned.note.created_at.as_str(),
+            planned.note.updated_at.as_str()
+        ),
+        ("2026-11-01T09:00:00Z", "2026-11-02T10:00:00Z")
+    );
+    assert_eq!(planned.files[0].name, "Kitchen (1).png");
+    assert_eq!(
+        planned.note.body,
+        format!("![](attachment:{})\n", planned.files[0].id)
+    );
+}
+
+#[test]
+fn notes_and_titles_already_here_are_left_alone() {
+    let folder = reflect_folder();
+    let first = plan(&folder.0, &nothing()).unwrap();
+    let existing = Existing {
+        ids: first
+            .notes
+            .iter()
+            .map(|planned| planned.note.id.clone())
+            .collect(),
+        titles: HashSet::new(),
+    };
+    let again = plan(&folder.0, &existing).unwrap();
+    assert!(again.notes.is_empty());
+    assert_eq!(again.already_here, 7);
+
+    let taken = Existing {
+        ids: HashSet::new(),
+        titles: [title_key("Reading")].into_iter().collect(),
+    };
+    note(&plan(&folder.0, &taken).unwrap(), "Reading 2");
+}
+
+#[test]
+fn notes_over_the_size_limit_are_reported_not_cut() {
+    let folder = TestFolder::new();
+    let at_limit = "a".repeat(MAX_NOTE_BODY_BYTES - 2);
+    folder.write("notes/fits.md", &at_limit);
+    folder.write("notes/over.md", format!("{at_limit}a"));
+    folder.write(
+        "notes/huge.md",
+        "a".repeat(MAX_NOTE_FILE_BYTES as usize + 1),
+    );
+    folder.write("notes/binary.md", [0xff, 0xfe, 0x00]);
+    let plan = plan(&folder.0, &nothing()).unwrap();
+    assert_eq!(plan.notes.len(), 1);
+    assert_eq!(plan.notes[0].note.body, at_limit);
+    let mut problems: Vec<&str> = plan
+        .problems
+        .iter()
+        .map(|problem| problem.file.as_str())
+        .collect();
+    problems.sort();
+    assert_eq!(
+        problems,
+        ["notes/binary.md", "notes/huge.md", "notes/over.md"]
+    );
+}
+
+#[test]
+fn a_file_over_the_attachment_limit_keeps_its_link() {
+    let folder = TestFolder::new();
+    folder.write("notes/a.md", "# A\n\n[video](big.mov)\n");
+    let file = fs::File::create(folder.0.join("notes/big.mov")).unwrap();
+    file.set_len(MAX_NOTE_ATTACHMENT_BYTES + 1).unwrap();
+    let plan = plan(&folder.0, &nothing()).unwrap();
+    assert_eq!(plan.notes[0].note.body, "[video](big.mov)\n");
+    assert!(plan.notes[0].files.is_empty());
+    assert_eq!(plan.problems[0].file, "notes/big.mov");
+}
+
+#[cfg(unix)]
+#[test]
+fn nothing_outside_the_folder_is_read_through_a_link() {
+    let outside = TestFolder::new();
+    outside.write("secret.png", PNG);
+    outside.write("elsewhere/note.md", "# Elsewhere\n");
+    let folder = TestFolder::new();
+    folder.write(
+        "notes/a.md",
+        "# A\n\n![](linked/secret.png) ![](../secret.png)\n",
+    );
+    std::os::unix::fs::symlink(&outside.0, folder.0.join("linked")).unwrap();
+    std::os::unix::fs::symlink(
+        outside.0.join("elsewhere"),
+        folder.0.join("notes/elsewhere"),
+    )
+    .unwrap();
+    let plan = plan(&folder.0, &nothing()).unwrap();
+    assert_eq!(plan.notes.len(), 1, "a linked folder isn't read");
+    assert!(plan.notes[0].files.is_empty());
+    assert_eq!(
+        plan.notes[0].note.body,
+        "![](linked/secret.png) ![](../secret.png)\n"
+    );
+}
+
+#[test]
+fn importing_saves_notes_with_their_files_and_reports_what_it_couldnt() {
+    let folder = reflect_folder();
+    let db = database();
+    let (ids, titles) = db.note_identities().unwrap();
+    let plan = plan(&folder.0, &Existing { ids, titles }).unwrap();
+    let olli_id = note(&plan, "OLLI - University of Pitt Program")
+        .note
+        .id
+        .clone();
+    let outcome = run(plan, |note, files| {
+        db.import_note(note, files)
+            .map_err(|error| error.to_string())
+    });
+    assert_eq!((outcome.notes, outcome.files), (7, 2));
+    assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
+
+    let olli = db.get_note(&olli_id).unwrap().unwrap();
+    assert_eq!(olli.title, "OLLI - University of Pitt Program");
+    assert_eq!(db.notes_storage().unwrap().attachment_count, 2);
+    let links = db.note_links(&olli_id).unwrap();
+    // The daily note once, and Reading on three lines.
+    assert_eq!(links.backlinks.len(), 4);
+    assert!(db.get_daily_note("2026-07-27").unwrap().is_some());
+
+    // Reading the folder again finds everything here and imports nothing.
+    let (ids, titles) = db.note_identities().unwrap();
+    let again = super::plan(&folder.0, &Existing { ids, titles }).unwrap();
+    assert_eq!((again.notes.len(), again.already_here), (0, 7));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_became_a_link_after_reading_is_refused() {
+    let db = database();
+    let folder = TestFolder::new();
+    folder.write("notes/b.md", "# B\n\n![](b.png)\n");
+    folder.write("notes/b.png", PNG);
+    let plan = plan(&folder.0, &nothing()).unwrap();
+    fs::remove_file(folder.0.join("notes/b.png")).unwrap();
+    std::os::unix::fs::symlink("/etc/hosts", folder.0.join("notes/b.png")).unwrap();
+    let outcome = run(plan, |note, files| {
+        db.import_note(note, files)
+            .map_err(|error| error.to_string())
+    });
+    assert_eq!(outcome.notes, 0);
+    assert_eq!(outcome.problems[0].file, "notes/b.md");
+}

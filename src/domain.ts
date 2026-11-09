@@ -1065,6 +1065,15 @@ export type NoteAttachment = { id: string; noteId: string; name: string; mimeTyp
  * (which the export refuses). */
 export type NotesExportFolder = { path: string; state: "empty" | "earlierExport" | "inUse" };
 
+/** Something in a folder being imported that won't become a note, and why. */
+export type NotesImportProblem = { file: string; reason: string };
+
+/** What importing a folder would do, read before anything is written. */
+export type NotesImportSummary = { path: string; notes: number; dailyNotes: number; files: number; alreadyHere: number; problems: NotesImportProblem[] };
+
+/** What an import did; `problems` are notes that couldn't be saved after all. */
+export type NotesImportOutcome = { notes: number; files: number; problems: NotesImportProblem[] };
+
 /** What an export wrote. Files this device hasn't downloaded yet are left out. */
 export type NotesExportOutcome = { path: string; notes: number; attachments: number; missingAttachments: number };
 

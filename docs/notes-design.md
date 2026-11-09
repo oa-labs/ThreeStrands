@@ -476,6 +476,58 @@ As built (`src-tauri/src/notes_export.rs`):
   after `](` changes. Files this device hasn't downloaded yet are left out,
   keep their `attachment:` links, and are counted in the result.
 
+## Import Markdown Folder
+
+**Settings → Notes → Import Markdown Folder** adds the notes in a folder the
+user picks: a Reflect folder, or one Export to Markdown Folder wrote
+(`src-tauri/src/notes_import.rs`).
+
+- **Two steps.** Choosing the folder reads it and builds the whole plan
+  without writing; the page sees a summary (notes, daily notes, files,
+  notes already here, and what won't be imported, each with its reason) and
+  imports only on **Import Notes**. As with export, the folder stays
+  native-side.
+- **Layout.** A `YYYY-MM-DD.md` in a folder named `daily` is that day's
+  note; every other `.md` file, in any folder (Reflect's `notes`, `person`,
+  `meetings`, `collection`, `archive`), is a regular note. Hidden entries
+  (`.git`, `.reflect`) and symbolic links are skipped, and Reflect's
+  `*.reflect.md` picture descriptions aren't notes. At most 20,000 entries
+  and 5,000 notes are read.
+- **Titles.** A leading `# Heading` is the title and leaves the text; else
+  `title:`; else the file name. `[`, `]`, and `|` become `-`, a date gets
+  " (note)", and a title in use (here or earlier in the folder) gets " 2",
+  " 3", and so on.
+- **Ids and re-importing.** A daily note's id is its date. A front matter
+  `id` that is a ThreeStrands id (a UUID) is kept, so an export comes back
+  as the same notes; any other `id`, or the path when there is none, is
+  hashed into `import-<32 hex>`. A note whose id is already here is skipped
+  and counted, so importing the same folder again adds nothing, and nothing
+  is ever replaced. Two files with one `id` (iCloud's "name 2.md") are
+  imported once when their text matches, and both, under different ids,
+  when it doesn't.
+- **Dates** come from `created` and `updated` when they are RFC 3339 times
+  (an export's), else the file's modification time.
+- **Links.** `[[name]]` naming a note's file name becomes `[[Title]]`, and
+  one naming an alias becomes `[[Title|alias]]`. A relative link to a note
+  file (`[text](../notes/Plan.md)`) becomes `[[Title|text]]`; one whose path
+  went stale finds its note by file name when only one note has it. Fenced
+  code, inline code, and web links are left alone.
+- **Files.** A link or image whose destination is a file inside the folder,
+  relative to the note or to the folder's root (Reflect writes
+  `assets/…`), becomes an attachment, one per file per note. Nothing outside
+  the folder, and nothing through a symbolic link, is read; each file is
+  checked again when it is read for the import. A file over 20 MB keeps its
+  link and is reported.
+- **Front matter.** `id`, `title`, `created`, `updated`, `summary`,
+  `snippet`, `summary_source_hash`, and `pinned` are dropped; anything else
+  (such as `aliases`) stays at the top of the note.
+- **Not imported**, with the reason shown: a note over 64 KB (never cut),
+  a file that isn't UTF-8, Reflect's conflict copies (`name.md~other
+  device`), and a matching second copy. A note that can't be saved during
+  the import (notes out of sync space, a title taken meanwhile) is listed
+  afterwards. Each note and its files are saved in one transaction
+  (`import_note`), and recorded for sync like a new note.
+
 ## Images and attachments
 
 Pasting or dropping a file into a note stores it and inserts
@@ -611,9 +663,6 @@ under `### New` or `### Improved` as they become visible.
 
 ## Later
 
-- **v2: Import a Reflect folder.** Read `daily/` and `notes/`, match front
-  matter ids, and report notes over the size limit instead of truncating
-  them.
 - **v2: Folder mirror.** Keep a chosen folder in step with notes in both
   directions, for users who edit in other tools.
 - Tags beyond plain-text search.

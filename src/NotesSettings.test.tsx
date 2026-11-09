@@ -27,6 +27,65 @@ describe("Notes settings", () => {
     expect(result.current).toBe("show");
   });
 
+  describe("Import Markdown Folder", () => {
+    async function openImport() {
+      render(<SettingsHarness initialSection="notes" />);
+      const dialog = await screen.findByRole("dialog", { name: "Settings" });
+      return within(within(dialog).getByRole("region", { name: "Import notes" }));
+    }
+    const summary = { path: "/Users/me/Reflect", notes: 406, dailyNotes: 67, files: 44, alreadyHere: 2, problems: [{ file: "person/bethany.md~other device", reason: "A copy Reflect kept of conflicting edits." }] };
+
+    it("shows what a folder holds and imports only after confirming, starting on Cancel", async () => {
+      vi.spyOn(mailClient, "chooseNotesImportFolder").mockResolvedValue(summary);
+      const run = vi.spyOn(mailClient, "importNotes").mockResolvedValue({ notes: 473, files: 44, problems: [] });
+      const section = await openImport();
+      const button = section.getByRole("button", { name: "Import Markdown Folder…" });
+      expect(button).toHaveAccessibleDescription();
+      fireEvent.click(button);
+      const confirm = within(await section.findByRole("group", { name: "Import notes" }));
+      expect(confirm.getByText("Import 473 notes from /Users/me/Reflect?")).toBeInTheDocument();
+      expect(confirm.getByText(/406 notes, 67 daily notes, and 44 files\. 2 notes are already here/)).toBeInTheDocument();
+      expect(confirm.getByText("1 file won’t be imported")).toBeInTheDocument();
+      expect(confirm.getByText("person/bethany.md~other device")).toBeInTheDocument();
+      await waitFor(() => expect(confirm.getByRole("button", { name: "Cancel" })).toHaveFocus());
+      fireEvent.click(confirm.getByRole("button", { name: "Cancel" }));
+      expect(run).not.toHaveBeenCalled();
+
+      fireEvent.click(button);
+      fireEvent.click(within(await section.findByRole("group", { name: "Import notes" })).getByRole("button", { name: "Import Notes" }));
+      expect(await section.findByRole("status")).toHaveTextContent("Imported 473 notes and 44 files.");
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    it("says when a folder has nothing new, and lists notes that couldn't be saved", async () => {
+      const choose = vi.spyOn(mailClient, "chooseNotesImportFolder").mockResolvedValue({ ...summary, notes: 0, dailyNotes: 0, files: 0, alreadyHere: 473, problems: [] });
+      vi.spyOn(mailClient, "importNotes").mockResolvedValue({ notes: 1, files: 0, problems: [{ file: "notes/Big.md", reason: "Notes have used all of their sync space." }] });
+      const section = await openImport();
+      fireEvent.click(section.getByRole("button", { name: "Import Markdown Folder…" }));
+      expect(await section.findByRole("status")).toHaveTextContent("Every note in /Users/me/Reflect is already in Notes.");
+      expect(section.queryByRole("group", { name: "Import notes" })).not.toBeInTheDocument();
+
+      choose.mockResolvedValue({ ...summary, notes: 2, dailyNotes: 0, problems: [] });
+      fireEvent.click(section.getByRole("button", { name: "Import Markdown Folder…" }));
+      fireEvent.click(within(await section.findByRole("group", { name: "Import notes" })).getByRole("button", { name: "Import Notes" }));
+      await waitFor(() => expect(section.getByRole("status")).toHaveTextContent("Imported 1 note."));
+      expect(section.getByText("1 file wasn’t imported")).toBeInTheDocument();
+      expect(section.getByText("notes/Big.md")).toBeInTheDocument();
+    });
+
+    it("does nothing when the picker is cancelled, and shows why a folder couldn't be read", async () => {
+      const choose = vi.spyOn(mailClient, "chooseNotesImportFolder").mockResolvedValue(null);
+      const section = await openImport();
+      fireEvent.click(section.getByRole("button", { name: "Import Markdown Folder…" }));
+      await waitFor(() => expect(choose).toHaveBeenCalled());
+      expect(section.queryByRole("group")).not.toBeInTheDocument();
+      expect(section.queryByRole("status")).not.toBeInTheDocument();
+      choose.mockRejectedValue(new Error("This folder holds more than 20000 files. Choose the folder that holds your notes."));
+      fireEvent.click(section.getByRole("button", { name: "Import Markdown Folder…" }));
+      expect(await section.findByRole("alert")).toHaveTextContent("more than 20000 files");
+    });
+  });
+
   describe("Export to Markdown Folder", () => {
     async function openNotes() {
       render(<SettingsHarness initialSection="notes" />);
