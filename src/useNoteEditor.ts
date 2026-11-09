@@ -51,7 +51,7 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
   const noteRef = useRef<Note | null>(null);
   const textRef = useRef<NoteText>({ title: "", body: "" });
   const dirtyRef = useRef(false);
-  const savingRef = useRef(false);
+  const savingRef = useRef<Promise<void> | null>(null);
   const pausedRef = useRef(false);
   const timerRef = useRef<number | null>(null);
   const callbacks = useRef({ onSaved, onReplaced, onRestored });
@@ -65,15 +65,27 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
   const showNote = (value: Note | null) => { noteRef.current = value; setNote(value); };
   const showText = (value: NoteText) => { textRef.current = value; setText(value); };
 
-  const save = useCallback(async (): Promise<void> => {
+  const save = useCallback(async (autosave = false): Promise<void> => {
     clearTimer();
     const current = targetRef.current;
-    if (!current || !dirtyRef.current || savingRef.current || pausedRef.current) return;
+    if (!current || !dirtyRef.current || pausedRef.current) return;
     const key = noteTargetKey(current);
+    if (savingRef.current) {
+      // A blur/exit must still commit the finished title once the current
+      // body save lands. Timer saves can leave newer typing to the next save.
+      if (!autosave) {
+        await savingRef.current;
+        if (keyRef.current === key) await save();
+      }
+      return;
+    }
+    // Timers may save the body, but never commit an unconfirmed rename.
+    if (autosave && current.kind === "note" && textRef.current.title !== noteRef.current?.title) return;
     const sent = textRef.current;
     const expected = noteRef.current?.updatedAt ?? null;
     if (current.kind === "note" && expected === null) return;
-    savingRef.current = true;
+    let finishSave!: () => void;
+    savingRef.current = new Promise<void>((resolve) => { finishSave = resolve; });
     setSaveState({ kind: "saving" });
     const here = () => keyRef.current === key;
     try {
@@ -99,7 +111,9 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
       const typedSince = !sameText(textRef.current, sent);
       if (typedSince) {
         writeNoteDraft(key, { ...textRef.current, base: result.note?.updatedAt ?? null });
-        timerRef.current = window.setTimeout(() => void save(), NOTE_SAVE_DELAY_MS);
+        if (current.kind === "daily" || textRef.current.title === result.note?.title) {
+          timerRef.current = window.setTimeout(() => void save(true), NOTE_SAVE_DELAY_MS);
+        }
       } else {
         clearNoteDraft(key);
         markDirty(false);
@@ -108,7 +122,8 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
     } catch (reason) {
       if (here()) setSaveState({ kind: "error", message: errorMessage(reason) });
     } finally {
-      savingRef.current = false;
+      savingRef.current = null;
+      finishSave();
     }
   }, []);
 
@@ -169,13 +184,13 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
     showText(next);
     markDirty(true);
     writeNoteDraft(noteTargetKey(current), { ...next, base: noteRef.current?.updatedAt ?? null });
+    clearTimer();
     if (pausedRef.current) return;
     // A new title saves when the title field is left (`flush`), not while it
     // is typed: renaming rewrites links in other notes, which shouldn't
     // follow every half-typed title.
     if (patch.body === undefined) return;
-    clearTimer();
-    timerRef.current = window.setTimeout(() => void save(), NOTE_SAVE_DELAY_MS);
+    timerRef.current = window.setTimeout(() => void save(true), NOTE_SAVE_DELAY_MS);
   }, [save]);
 
   /** Whether typing is still waiting to be saved, as of now. */

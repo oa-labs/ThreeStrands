@@ -273,6 +273,71 @@ describe("useNoteEditor", () => {
     await act(async () => { await result.current.flush(); });
     expect(result.current.unsaved()).toBe(false);
   });
+  it("cancels a pending body save while a title is being typed, then renames and relinks on flush", async () => {
+    const target = await mailClient.createNote(uniqueTitle("Pending body"), "original body");
+    const linking = await mailClient.createNote(uniqueTitle("Backlink"), `See [[${target.title}]]`);
+    const update = vi.spyOn(mailClient, "updateNote");
+    const { result } = open({ kind: "note", id: target.id });
+    await settle();
+    act(() => result.current.edit({ body: "edited body" }));
+    await wait(NOTE_SAVE_DELAY_MS - 1);
+    act(() => result.current.edit({ title: "Half-typed" }));
+    await wait(NOTE_SAVE_DELAY_MS * 2);
+    expect(update).not.toHaveBeenCalled();
+    expect((await mailClient.getNote(target.id))?.title).toBe(target.title);
+    expect((await mailClient.getNote(linking.id))?.body).toBe(`See [[${target.title}]]`);
+    expect(readNoteDraft(target.id)).toMatchObject({ title: "Half-typed", body: "edited body" });
+    // Further body typing must not smuggle the pending title into a new timer.
+    act(() => result.current.edit({ body: "more body text" }));
+    await wait(NOTE_SAVE_DELAY_MS);
+    expect(update).not.toHaveBeenCalled();
+    expect(readNoteDraft(target.id)).toMatchObject({ title: "Half-typed", body: "more body text" });
+    const finished = uniqueTitle("Finished rename");
+    act(() => result.current.edit({ title: finished }));
+    await act(async () => { await result.current.flush(); });
+    expect(update).toHaveBeenCalledExactlyOnceWith(target.id, finished, "more body text", target.updatedAt);
+    expect((await mailClient.getNote(linking.id))?.body).toBe(`See [[${finished}]]`);
+    expect(result.current.dirty).toBe(false);
+  });
+
+  it.each([false, true])("keeps title edits out of in-flight body autosaves (flush while saving: %s)", async (flushWhileSaving) => {
+    const target = await mailClient.createNote(uniqueTitle("In flight"), "original body");
+    const linking = await mailClient.createNote(uniqueTitle("In flight backlink"), `See [[${target.title}]]`);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const realUpdate = mailClient.updateNote.bind(mailClient);
+    const update = vi.spyOn(mailClient, "updateNote").mockImplementationOnce(async (...args) => {
+      await gate;
+      return realUpdate(...args);
+    });
+    const { result } = open({ kind: "note", id: target.id });
+    await settle();
+    act(() => result.current.edit({ body: "edited body" }));
+    await wait(NOTE_SAVE_DELAY_MS);
+    expect(result.current.saveState.kind).toBe("saving");
+    const finished = uniqueTitle("Complete title");
+    act(() => result.current.edit({ title: finished }));
+    let flushed: Promise<void> | undefined;
+    if (flushWhileSaving) act(() => { flushed = result.current.flush(); });
+    await act(async () => { release(); await gate; });
+    await settle();
+    if (!flushWhileSaving) {
+      await wait(NOTE_SAVE_DELAY_MS * 2);
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(result.current.dirty).toBe(true);
+      expect((await mailClient.getNote(target.id))?.title).toBe(target.title);
+      expect((await mailClient.getNote(linking.id))?.body).toBe(`See [[${target.title}]]`);
+      await act(async () => { await result.current.flush(); });
+    } else {
+      await act(async () => { await flushed; });
+    }
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update.mock.calls[0]).toEqual([target.id, target.title, "edited body", target.updatedAt]);
+    expect(update.mock.calls[1]?.slice(0, 3)).toEqual([target.id, finished, "edited body"]);
+    expect((await mailClient.getNote(linking.id))?.body).toBe(`See [[${finished}]]`);
+    expect(result.current.dirty).toBe(false);
+  });
+
   it("saves a new title when asked to, not while it is typed, and reports what the rename did", async () => {
     const target = await mailClient.createNote(uniqueTitle("Target"), "");
     const linking = await mailClient.createNote(uniqueTitle("Linking"), `See [[${target.title}]]`);
