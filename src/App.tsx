@@ -761,6 +761,15 @@ export function App() {
 
   const showNoticeMessage = useCallback((message: string) => setNotice({ message }), [setNotice]);
 
+  // Sidebar clicks are explicit navigation even while typing a draft. Save
+  // before unmounting the editor; keyboard workspace shortcuts stay guarded.
+  const navigateFromSidebar = (open: (() => void) | undefined) => {
+    if (!open) return;
+    if (!correspondence.activeDraft) { open(); return; }
+    void correspondence.closeDraft().then(open)
+      .catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
+  };
+  const composeInView = rightWorkspace === null && Boolean(correspondence.activeDraft);
   const mailInView = rightWorkspace === null;
   const sideDrawerShown = mailInView && sideDrawerOpen;
   useEscapeDismiss(() => setSideDrawerOpen(false), sideDrawerShown);
@@ -810,14 +819,14 @@ export function App() {
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
           <div className="sidebar-compose">
-            <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={ICON_SIZE.lg} /></button></HoverTooltip>
+            <HoverTooltip title="New message (c)"><button className={`nav-button ${composeInView ? "active" : ""}`} aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={ICON_SIZE.lg} /></button></HoverTooltip>
           </div>
-          <HoverTooltip label="Today" shortcut="0"><button className={`nav-button ${rightWorkspace === "today" ? "active" : ""}`} aria-label="Today (0)" onClick={() => executeById("view.today")}><LayoutDashboard size={ICON_SIZE.lg} /></button></HoverTooltip>
+          <HoverTooltip label="Today" shortcut="0"><button className={`nav-button ${rightWorkspace === "today" ? "active" : ""}`} aria-label="Today (0)" onClick={() => navigateFromSidebar(context.openTodayView)}><LayoutDashboard size={ICON_SIZE.lg} /></button></HoverTooltip>
           <HoverTooltip label="Inbox" shortcut="1">
             <button
-              className={`nav-button ${mailInView ? "active" : ""}`}
+              className={`nav-button ${mailInView && !composeInView ? "active" : ""}`}
               aria-label="Inbox (1)"
-              onClick={() => executeById("view.mail")}
+              onClick={() => navigateFromSidebar(context.openMailView)}
             >
               <Inbox size={ICON_SIZE.lg} />
             </button>
@@ -826,7 +835,7 @@ export function App() {
             <button
               className={`nav-button ${rightWorkspace === "week" ? "active" : ""}`}
               aria-label="Calendar (2)"
-              onClick={() => executeById("view.calendar")}
+              onClick={() => navigateFromSidebar(context.openCalendarView)}
             >
               <CalendarDays size={ICON_SIZE.lg} />
             </button>
@@ -835,25 +844,25 @@ export function App() {
             <button
               className={`nav-button ${rightWorkspace === "tasks" ? "active" : ""}`}
               aria-label="Tasks (3)"
-              onClick={() => executeById("tasks.open")}
+              onClick={() => navigateFromSidebar(context.openTasksView)}
             >
               <SquareCheckBig size={ICON_SIZE.lg} />
             </button>
           </HoverTooltip>
-          <HoverTooltip label="Notes" shortcut="4"><button className={`nav-button ${rightWorkspace === "notes" ? "active" : ""}`} aria-label="Notes (4)" onClick={() => executeById("view.notes")}><NotebookPen size={ICON_SIZE.lg} /></button></HoverTooltip>
+          <HoverTooltip label="Notes" shortcut="4"><button className={`nav-button ${rightWorkspace === "notes" ? "active" : ""}`} aria-label="Notes (4)" onClick={() => navigateFromSidebar(context.openNotesView)}><NotebookPen size={ICON_SIZE.lg} /></button></HoverTooltip>
           <HoverTooltip label={keepInTouchDueCount ? `Contacts · ${keepInTouchDueCount} to reconnect with` : "Contacts"} shortcut="5">
             <button
               className={`nav-button ${rightWorkspace === "contacts" ? "active" : ""}`}
               aria-label={keepInTouchDueCount ? `Contacts (5), ${keepInTouchDueCount} due to reconnect` : "Contacts (5)"}
-              onClick={openContactsView}
+              onClick={() => navigateFromSidebar(openContactsView)}
             >
               <ContactRound size={ICON_SIZE.lg} />
               {keepInTouchDueCount ? <span className="nav-button-badge" aria-hidden="true">{keepInTouchDueCount > 99 ? "99+" : keepInTouchDueCount}</span> : null}
             </button>
           </HoverTooltip>
           <div className="sidebar-secondary">
-            <HoverTooltip label="Files" shortcut="6"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (6)" onClick={() => executeById("view.files")}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
-            <HoverTooltip label="Agents" shortcut="7"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (7)" onClick={() => executeById("view.agents")}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
+            <HoverTooltip label="Files" shortcut="6"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (6)" onClick={() => navigateFromSidebar(context.openFilesView)}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
+            <HoverTooltip label="Agents" shortcut="7"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (7)" onClick={() => navigateFromSidebar(context.openAgentsView)}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
           </div>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
           <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail (⌘/Ctrl+R)"}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>

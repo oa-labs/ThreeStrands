@@ -1485,6 +1485,52 @@ describe("Escape dismissal", () => {
 
   afterEach(cleanup);
 
+  it.each(["Inbox (1)", "Today (0)", "Calendar (2)", "Tasks (3)", "Notes (4)", "Contacts (5)", "Files (6)", "Agents (7)"])("saves a new message before sidebar navigation to %s", async (destination) => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const compose = screen.getByRole("button", { name: "New message (c)" });
+    const inbox = screen.getByRole("button", { name: "Inbox (1)" });
+    fireEvent.click(compose);
+    const subject = await screen.findByRole("textbox", { name: "Subject" });
+    expect(compose).toHaveClass("active");
+    expect(inbox).not.toHaveClass("active");
+    fireEvent.change(subject, { target: { value: "Keep this draft" } });
+
+    const target = screen.getByRole("button", { name: destination });
+    fireEvent.click(target);
+    await waitFor(() => expect(target).toHaveClass("active"));
+    expect(compose).not.toHaveClass("active");
+    expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument();
+    expect(await mailClient.listDrafts()).toEqual(expect.arrayContaining([expect.objectContaining({ subject: "Keep this draft" })]));
+
+    fireEvent.click(inbox);
+    await waitFor(() => expect(inbox).toHaveClass("active"));
+    fireEvent.click(screen.getByRole("button", { name: "Notes (4)" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Notes (4)" })).toHaveClass("active"));
+  });
+
+  it("keeps the draft open when saving before sidebar navigation fails", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+    const subject = await screen.findByRole("textbox", { name: "Subject" });
+    fireEvent.change(subject, { target: { value: "Unsaved draft" } });
+    const save = vi.spyOn(mailClient, "saveDraft").mockRejectedValue(new Error("Draft save unavailable"));
+    try {
+      const notes = screen.getByRole("button", { name: "Notes (4)" });
+      fireEvent.click(notes);
+      await screen.findAllByText(/Draft save unavailable/);
+      expect(notes).not.toHaveClass("active");
+      expect(screen.getByRole("button", { name: "New message (c)" })).toHaveClass("active");
+      expect(subject).toHaveValue("Unsaved draft");
+    } finally {
+      save.mockRestore();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Inbox (1)" })).toHaveClass("active"));
+    expect(await mailClient.listDrafts()).toEqual(expect.arrayContaining([expect.objectContaining({ subject: "Unsaved draft" })]));
+  });
+
   it("closes the composer when focus is in a field", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
