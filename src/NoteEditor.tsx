@@ -5,7 +5,7 @@ import { MarkdownEditor, useExtension, useKeymap, type EditorHandle, type Wikili
 import { Priority, defineViewAttributes } from "@meowdown/core";
 import { attachmentIdOf, type NoteFiles } from "./noteAttachments";
 import { openNoteLink } from "./noteLinks";
-import { splitWikiLink } from "./noteWikiLinks";
+import { collapseWhitespace, noteTitleKey, splitWikiLink } from "./noteWikiLinks";
 import type { NoteSyntaxMode } from "./noteSyntaxMode";
 
 export type NoteEditorHandle = {
@@ -43,8 +43,8 @@ export type NoteLinkSuggestion = { title: string; detail?: string };
  * following that link creates it.
  */
 export function linkMenuItems(query: string, found: NoteLinkSuggestion[]): WikilinkItem[] {
-  const typed = query.split(/\s+/).filter(Boolean).join(" ");
-  const exact = found.some((note) => note.title.toLocaleLowerCase() === typed.toLocaleLowerCase());
+  const typed = collapseWhitespace(query);
+  const exact = found.some((note) => noteTitleKey(note.title) === noteTitleKey(typed));
   return [
     ...found.map((note): WikilinkItem => ({ target: note.title, detail: note.detail })),
     ...(typed && !exact && !/[[\]|]/.test(typed) ? [{ target: typed, detail: "New note" }] : []),

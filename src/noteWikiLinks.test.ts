@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { extractWikiLinks, noteTitleKey, rewriteWikiLinks, splitWikiLink } from "./noteWikiLinks";
+import { describe, expect, it, vi } from "vitest";
+import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks, splitWikiLink } from "./noteWikiLinks";
 
 // The same cases as the native parser's tests in src-tauri/src/notes.rs.
 describe("wiki links", () => {
@@ -24,5 +24,22 @@ describe("wiki links", () => {
     expect(splitWikiLink("Ada  Lovelace")).toEqual({ target: "Ada Lovelace", label: "Ada Lovelace" });
     expect(splitWikiLink("Ada Lovelace|Ada")).toEqual({ target: "Ada Lovelace", label: "Ada" });
     expect(splitWikiLink("Ada|")).toEqual({ target: "Ada", label: "Ada" });
+  });
+
+  it("ends inline code only at a backtick run of the same length", () => {
+    // A longer run inside the code doesn't close it, nor does a shorter one.
+    const body = "x ```code ````` [[Inside]] `` [[Still]] ``` [[After]]\n`` a ` [[Also inside]] `` [[Out]]";
+    expect(extractWikiLinks(body).map((link) => link.title)).toEqual(["After", "Out"]);
+    expect(extractWikiLinks("`` never closed [[Seen]]").map((link) => link.title)).toEqual(["Seen"]);
+  });
+
+  it("matches titles by Unicode whitespace and case, whatever the system language", () => {
+    expect(noteTitleKey("  Café\u0085PLAN\u3000x ")).toBe("café plan x");
+    // U+FEFF isn't whitespace natively, so it stays part of the title.
+    expect(collapseWhitespace("a\ufeffb")).toBe("a\ufeffb");
+    // Under a Turkish locale, toLocaleLowerCase would fold I to ı.
+    const turkish = vi.spyOn(String.prototype, "toLocaleLowerCase").mockImplementation(function (this: string) { return this.replace(/I/g, "ı").toLowerCase(); });
+    expect(noteTitleKey("INBOX Ideas")).toBe("inbox ideas");
+    turkish.mockRestore();
   });
 });

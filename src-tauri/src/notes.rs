@@ -498,6 +498,21 @@ mod tests {
         );
     }
 
+    // The same cases as src/noteWikiLinks.test.ts, which the browser demo follows.
+    #[test]
+    fn inline_code_ends_only_at_a_backtick_run_of_the_same_length() {
+        let body = "x ```code ````` [[Inside]] `` [[Still]] ``` [[After]]\n`` a ` [[Also inside]] `` [[Out]]";
+        assert_eq!(titles(body), ["After", "Out"]);
+        assert_eq!(titles("`` never closed [[Seen]]"), ["Seen"]);
+    }
+
+    #[test]
+    fn title_keys_fold_unicode_whitespace_and_case() {
+        assert_eq!(title_key("  Café\u{85}PLAN\u{3000}x "), "café plan x");
+        assert_eq!(title_key("a\u{feff}b"), "a\u{feff}b");
+        assert_eq!(title_key("INBOX Ideas"), "inbox ideas");
+    }
+
     #[test]
     fn rewriting_links_follows_a_rename_and_keeps_shown_text() {
         let body = "See [[Project  plan]] and [[project plan|the plan]].\r\nNot [[Other]] or `[[Project plan]]`, nor \\[[Project plan]].\n```\n[[Project plan]]\n```\nLast [[PROJECT PLAN]]";

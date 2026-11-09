@@ -1,13 +1,13 @@
 import type { Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
-import { extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
+import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
 import { notePreview } from "../notePreview";
 import type { MailClient } from "./client";
 
 type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const clean = (title: string) => title.split(/\s+/).filter(Boolean).join(" ");
-const key = (title: string) => clean(title).toLocaleLowerCase();
+const clean = collapseWhitespace;
+const key = noteTitleKey;
 
 /** A note's title, or why it can't be used, by the native rules (db/notes.rs). */
 function noteTitle(title: string): string {
@@ -192,10 +192,10 @@ export function createDemoNotes(): DemoNotes {
       if (notes.has(id)) visits.set(id, now());
     },
     async searchNotes(query, limit) {
-      const words = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+      const words = collapseWhitespace(query.toLowerCase()).split(" ").filter(Boolean);
       if (!words.length) return [];
       return [...notes.values()]
-        .filter((note) => !note.trashed && words.every((word) => `${note.title} ${note.body}`.toLocaleLowerCase().includes(word)))
+        .filter((note) => !note.trashed && words.every((word) => `${note.title} ${note.body}`.toLowerCase().includes(word)))
         .slice(0, limit)
         .map((note): NoteSearchHit => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, matchSnippet: preview(note.body) }));
     },
