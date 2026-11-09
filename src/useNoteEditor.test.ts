@@ -82,6 +82,33 @@ describe("useNoteEditor", () => {
     expect((await mailClient.getNote(second.id))?.body).toBe("closing");
   });
 
+  it("waits for a save under way when quitting, then saves what was typed since", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Quitting"), "");
+    const real = mailClient.updateNote.bind(mailClient);
+    let release = () => {};
+    const update = vi.spyOn(mailClient, "updateNote").mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return real(...args);
+    });
+    const { result } = open({ kind: "note", id: note.id });
+    await settle();
+    act(() => result.current.edit({ body: "first" }));
+    await wait(NOTE_SAVE_DELAY_MS);
+    expect(update).toHaveBeenCalledTimes(1);
+    act(() => result.current.edit({ body: "first, then more" }));
+
+    let quit = false;
+    const quitting = runBeforeExitTasks().then(() => { quit = true; });
+    await settle();
+    expect(quit).toBe(false);
+    release();
+    await act(async () => { await quitting; });
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenLastCalledWith(note.id, note.title, "first, then more", expect.any(String));
+    expect((await mailClient.getNote(note.id))?.body).toBe("first, then more");
+    expect(result.current.dirty).toBe(false);
+  });
+
   it("doesn't create a day's note until something is typed", async () => {
     const date = "2031-01-02";
     const { result } = open({ kind: "daily", date });

@@ -243,6 +243,8 @@ pub(crate) async fn note_attachment_add(
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err(AppError::message("The file must be sent as bytes"));
     };
+    // Checked before the copy, so an oversized body is never duplicated.
+    crate::db::note_attachments::check_attachment_size(bytes.len())?;
     let bytes = bytes.clone();
     let note_id = header_text(&request, "x-note-id")?;
     let name = header_text(&request, "x-file-name")?;

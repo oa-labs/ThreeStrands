@@ -330,3 +330,68 @@ fn the_same_file_sealed_on_two_devices_settles_without_asking() {
         + count(&b, "SELECT COUNT(*) FROM note_attachment_objects");
     assert_eq!(kept, 2, "only the winning device keeps its objects");
 }
+
+#[test]
+fn a_file_added_while_its_note_was_deleted_elsewhere_goes_everywhere() {
+    let (a, b) = (synced(), synced());
+    let note = a.create_note("Plan", "").unwrap();
+    let kept = a.create_note("Kept", "").unwrap();
+    sync_into(&b, &a);
+    // A deletes the note from Trash while B adds a file to it.
+    a.trash_note(&note.id).unwrap();
+    a.delete_note(&note.id).unwrap();
+    let late = b
+        .add_note_attachment(&note.id, "late.png", "", PNG)
+        .unwrap();
+    seal(&b, &late.id);
+    let other = b
+        .add_note_attachment(&kept.id, "kept.png", "", PNG)
+        .unwrap();
+    seal(&b, &other.id);
+    let day = b
+        .add_note_attachment("daily:2026-11-09", "today.png", "", PNG)
+        .unwrap();
+    seal(&b, &day.id);
+    sync_into(&a, &b);
+    sync_into(&b, &a);
+
+    // Each device finds the file's note gone and removes it, for both.
+    assert_eq!(a.delete_orphaned_note_attachments().unwrap(), 1);
+    assert!(a.note_attachment(&late.id).unwrap().is_none());
+    sync_into(&b, &a);
+    assert!(b.note_attachment(&late.id).unwrap().is_none());
+    assert_eq!(b.delete_orphaned_note_attachments().unwrap(), 0);
+    // Files of notes that exist, and of a day not yet written, stay.
+    for db in [&a, &b] {
+        assert!(db.note_attachment(&other.id).unwrap().is_some());
+        assert!(db.note_attachment(&day.id).unwrap().is_some());
+    }
+}
+
+#[test]
+fn a_file_whose_note_is_still_arriving_is_kept() {
+    let db = synced();
+    let note = db.create_note("Arriving", "").unwrap();
+    let file = db.add_note_attachment(&note.id, "a.png", "", PNG).unwrap();
+    // The note's row is gone, but the replica still holds the note, as while
+    // its materialization waits to be retried.
+    db.test_connection()
+        .unwrap()
+        .execute("DELETE FROM notes WHERE id=?1", [&note.id])
+        .unwrap();
+    assert_eq!(db.delete_orphaned_note_attachments().unwrap(), 0);
+    assert!(db.note_attachment(&file.id).unwrap().is_some());
+    // Without sync, nothing is swept.
+    let local = database();
+    let note = local.create_note("Local", "").unwrap();
+    let file = local
+        .add_note_attachment(&note.id, "a.png", "", PNG)
+        .unwrap();
+    local
+        .test_connection()
+        .unwrap()
+        .execute("DELETE FROM notes WHERE id=?1", [&note.id])
+        .unwrap();
+    assert_eq!(local.delete_orphaned_note_attachments().unwrap(), 0);
+    assert!(local.note_attachment(&file.id).unwrap().is_some());
+}

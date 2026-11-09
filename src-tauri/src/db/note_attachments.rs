@@ -221,6 +221,14 @@ pub(super) fn delete_note_attachments(tx: &Transaction<'_>, note_id: &str) -> Db
     Ok(())
 }
 
+/// Refuses a file larger than a note can hold, before anything copies it.
+pub(crate) fn check_attachment_size(bytes: usize) -> DbResult<()> {
+    if bytes as u64 > MAX_NOTE_ATTACHMENT_BYTES {
+        return Err(DatabaseError::invalid(TOO_LARGE));
+    }
+    Ok(())
+}
+
 /// Stores a file as attachment `id` of `note_id`, within the caller's
 /// transaction, after the size and count checks every new file gets.
 pub(super) fn insert_attachment(
@@ -231,9 +239,7 @@ pub(super) fn insert_attachment(
     declared_type: &str,
     bytes: &[u8],
 ) -> DbResult<()> {
-    if bytes.len() as u64 > MAX_NOTE_ATTACHMENT_BYTES {
-        return Err(DatabaseError::invalid(TOO_LARGE));
-    }
+    check_attachment_size(bytes.len())?;
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM note_attachments", [], |row| {
         row.get(0)
     })?;
@@ -289,9 +295,7 @@ impl Database {
         declared_type: &str,
         bytes: &[u8],
     ) -> DbResult<NoteAttachment> {
-        if bytes.len() as u64 > MAX_NOTE_ATTACHMENT_BYTES {
-            return Err(DatabaseError::invalid(TOO_LARGE));
-        }
+        check_attachment_size(bytes.len())?;
         let daily = note_id
             .strip_prefix(threestrands_sync_protocol::DAILY_NOTE_ID_PREFIX)
             .is_some_and(crate::notes::is_daily_date);
@@ -427,6 +431,40 @@ impl Database {
                 &fields,
                 &payload,
             )
+        })
+    }
+
+    /// Deletes, on every device, the files of regular notes that no longer
+    /// exist: neither here nor in the replica. That happens when one device
+    /// adds a file to a note while another deletes the note from Trash; the
+    /// deletion covers only the files that device knew of. A daily note's
+    /// files stay, since today's note can hold a file before it is first
+    /// saved. Runs during sync, outside any remote projection, so the
+    /// deletions are recorded for other devices. Returns how many went.
+    pub(crate) fn delete_orphaned_note_attachments(&self) -> DbResult<usize> {
+        self.with_transaction(|tx| {
+            if !sync_recording(tx)? {
+                return Ok(0);
+            }
+            let orphans: Vec<String> = {
+                let mut statement = tx.prepare(&format!(
+                    "SELECT a.id FROM note_attachments a
+                     WHERE a.note_id NOT LIKE '{}%'
+                       AND NOT EXISTS(SELECT 1 FROM notes n WHERE n.id=a.note_id)
+                       AND NOT EXISTS(SELECT 1 FROM sync_values v WHERE v.entity_type=?1 AND v.entity_id=a.note_id)",
+                    threestrands_sync_protocol::DAILY_NOTE_ID_PREFIX
+                ))?;
+                let rows = statement.query_map([EntityType::Note.as_str()], |row| row.get(0))?;
+                rows.collect::<Result<_, _>>()?
+            };
+            for id in &orphans {
+                let recorded = in_replica(tx, id)?;
+                remove(tx, id)?;
+                if recorded {
+                    record_replicated_deletion_in_transaction(tx, EntityType::NoteAttachment, id)?;
+                }
+            }
+            Ok(orphans.len())
         })
     }
 

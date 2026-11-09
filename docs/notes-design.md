@@ -599,7 +599,12 @@ re-upload every file on every keystroke's save. Instead:
   or not that device was since removed: the objects are pinned by a snapshot
   an active device vouched for.
 - **Deletion follows the note.** Deleting a note from Trash deletes its
-  attachments on every device. Removing a reference from the text keeps the
+  attachments on every device. A file added on one device while another
+  deleted its note is swept up after the next pull
+  (`delete_orphaned_note_attachments`): a regular note's file whose note is
+  in neither the `notes` table nor the replica is deleted, and the deletion
+  is recorded for every device. A daily note's files stay, since today's
+  note can hold a file before it is first saved. Removing a reference from the text keeps the
   file, so undo and older versions still show it. The sealing device
   retires its objects through `sync_retired_objects`; they leave each
   connector once a snapshot without the attachment is published there.
@@ -636,8 +641,6 @@ mail attachments.
 
 Known gaps:
 
-- A file added to a note while another device permanently deletes that note
-  outlives it until the note's device deletes it; nothing sweeps orphans.
 - The sealing device keeps a sealed copy of each file (in `sync_objects`)
   so a new connector can be filled, so files take about twice their size on
   that device while sync is on.

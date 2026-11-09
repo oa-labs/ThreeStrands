@@ -1914,6 +1914,17 @@ impl ReplicatedSync {
 
         let push_result = push_local_state(&self.database, &keys, &transports).await;
         let pull_result = pull_from_transports(&self.database, &keys, &transports).await;
+        // Files whose note was deleted on another device while they were
+        // being added go before anything downloads them.
+        match self.database.delete_orphaned_note_attachments() {
+            Ok(0) => {}
+            Ok(removed) => {
+                log::info!(target: "replicated_sync", "removed {removed} note files whose note was deleted")
+            }
+            Err(error) => {
+                log::warn!(target: "replicated_sync", "removing orphaned note files failed: {error}")
+            }
+        }
         fetch_note_attachments(&self.database, &keys, &transports).await;
         if let Err(error) =
             crate::enrollment::share_keys_with_lagging_peers(&self.database, &keys, &transports)

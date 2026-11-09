@@ -52,6 +52,9 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
   const textRef = useRef<NoteText>({ title: "", body: "" });
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
+  // The save under way, so a save asked for meanwhile (quitting, say) can
+  // wait for it and then save what was typed since.
+  const inFlightRef = useRef<Promise<void> | null>(null);
   const pausedRef = useRef(false);
   const timerRef = useRef<number | null>(null);
   const callbacks = useRef({ onSaved, onReplaced, onRestored });
@@ -67,13 +70,20 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
 
   const save = useCallback(async (): Promise<void> => {
     clearTimer();
+    if (savingRef.current) {
+      await inFlightRef.current;
+      // Typing since that save began, if any, saves now.
+      return save();
+    }
     const current = targetRef.current;
-    if (!current || !dirtyRef.current || savingRef.current || pausedRef.current) return;
+    if (!current || !dirtyRef.current || pausedRef.current) return;
     const key = noteTargetKey(current);
     const sent = textRef.current;
     const expected = noteRef.current?.updatedAt ?? null;
     if (current.kind === "note" && expected === null) return;
     savingRef.current = true;
+    let finished = () => {};
+    inFlightRef.current = new Promise<void>((resolve) => { finished = resolve; });
     setSaveState({ kind: "saving" });
     const here = () => keyRef.current === key;
     try {
@@ -109,6 +119,7 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
       if (here()) setSaveState({ kind: "error", message: errorMessage(reason) });
     } finally {
       savingRef.current = false;
+      finished();
     }
   }, []);
 
