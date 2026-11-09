@@ -245,6 +245,177 @@ fn line_context(line: &str) -> String {
     context
 }
 
+/// A note's Markdown as the plain text a list shows under its title:
+/// front matter, fences, rules, and table dividers dropped; heading,
+/// quote, list, and task markers removed; links shown as their text; and
+/// emphasis, code, and escape characters removed. Lines are joined with
+/// single spaces.
+pub(crate) fn plain_text(body: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    let mut lines = body.lines().peekable();
+    if lines.peek().map(|line| line.trim_end()) == Some("---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if matches!(line.trim_end(), "---" | "...") {
+                break;
+            }
+        }
+    }
+    for line in lines {
+        let line = line.trim();
+        if fence_marker(line).is_some() || is_rule(line) || is_table_divider(line) {
+            continue;
+        }
+        let text = inline_plain(strip_block_markers(line));
+        words.extend(text.split_whitespace().map(str::to_string));
+    }
+    words.join(" ")
+}
+
+/// `---`, `***`, or `___` (three or more, spaces allowed): a horizontal rule.
+fn is_rule(line: &str) -> bool {
+    let marks: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+    marks.len() >= 3
+        && ["-", "*", "_"]
+            .iter()
+            .any(|mark| marks.chars().all(|ch| ch.to_string() == *mark))
+}
+
+/// A table's `| --- | :-: |` row.
+fn is_table_divider(line: &str) -> bool {
+    line.contains('-')
+        && line.contains('|')
+        && line.chars().all(|ch| matches!(ch, '|' | '-' | ':' | ' '))
+}
+
+/// The line without its quote, heading, list, and task markers.
+fn strip_block_markers(mut line: &str) -> &str {
+    loop {
+        let before = line;
+        line = line.trim_start();
+        if let Some(rest) = line.strip_prefix('>') {
+            line = rest;
+        }
+        let hashes = line.chars().take_while(|ch| *ch == '#').count();
+        if (1..=6).contains(&hashes) && line[hashes..].starts_with(' ') {
+            line = &line[hashes..];
+        }
+        for marker in ["- ", "* ", "+ "] {
+            if let Some(rest) = line.strip_prefix(marker) {
+                line = rest;
+            }
+        }
+        let digits = line.chars().take_while(char::is_ascii_digit).count();
+        if digits > 0 && (line[digits..].starts_with(". ") || line[digits..].starts_with(") ")) {
+            line = &line[digits + 2..];
+        }
+        for task in ["[ ] ", "[x] ", "[X] "] {
+            if let Some(rest) = line.strip_prefix(task) {
+                line = rest;
+            }
+        }
+        if line == before {
+            return line;
+        }
+    }
+}
+
+/// Inline Markdown as its visible text.
+fn inline_plain(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        match ch {
+            '\\' if chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_punctuation()) =>
+            {
+                out.push(chars[index + 1]);
+                index += 2;
+            }
+            '[' if chars.get(index + 1) == Some(&'[') => {
+                if let Some((span, end)) = link_at(&chars, index + 2) {
+                    let inner: String = chars[index + 2..end - 2].iter().collect();
+                    let shown = inner
+                        .split_once('|')
+                        .map_or(span.title.clone(), |(_, shown)| shown.trim().to_string());
+                    out.push_str(if shown.is_empty() {
+                        &span.title
+                    } else {
+                        &shown
+                    });
+                    index = end;
+                } else {
+                    out.push(ch);
+                    index += 1;
+                }
+            }
+            '!' if chars.get(index + 1) == Some(&'[') => index += 1,
+            '[' => match markdown_link(&chars, index) {
+                Some((text, end)) => {
+                    out.push_str(&inline_plain(&text));
+                    index = end;
+                }
+                None => {
+                    out.push(ch);
+                    index += 1;
+                }
+            },
+            '<' if chars[index + 1..]
+                .iter()
+                .take_while(|c| **c != '>')
+                .collect::<String>()
+                .contains("://") =>
+            {
+                let end = chars[index..]
+                    .iter()
+                    .position(|c| *c == '>')
+                    .map_or(chars.len(), |offset| index + offset);
+                out.extend(&chars[index + 1..end]);
+                index = (end + 1).min(chars.len());
+            }
+            '*' | '~' | '=' | '`'
+                if chars.get(index + 1) == Some(&ch) || matches!(ch, '*' | '`') =>
+            {
+                index += chars[index..].iter().take_while(|c| **c == ch).count();
+            }
+            '_' => {
+                // Underscores mark emphasis at word edges; inside a word (snake_case) they're text.
+                let run = chars[index..].iter().take_while(|c| **c == '_').count();
+                let before = index.checked_sub(1).map(|at| chars[at]);
+                let after = chars.get(index + run).copied();
+                let in_word = before.is_some_and(char::is_alphanumeric)
+                    && after.is_some_and(char::is_alphanumeric);
+                if in_word {
+                    out.extend(&chars[index..index + run]);
+                }
+                index += run;
+            }
+            '|' => {
+                out.push(' ');
+                index += 1;
+            }
+            _ => {
+                out.push(ch);
+                index += 1;
+            }
+        }
+    }
+    out
+}
+
+/// `[text](destination)` starting at `start`: the text, and the index past `)`.
+fn markdown_link(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let close = start + 1 + chars[start + 1..].iter().position(|c| *c == ']')?;
+    if chars.get(close + 1) != Some(&'(') {
+        return None;
+    }
+    let end = close + 2 + chars[close + 2..].iter().position(|c| *c == ')')?;
+    Some((chars[start + 1..close].iter().collect(), end + 1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +471,20 @@ mod tests {
             std::slice::from_ref(&title)
         );
         assert!(titles(&format!("[[{title}t]]")).is_empty());
+    }
+
+    #[test]
+    fn plain_text_drops_markdown_syntax() {
+        let body = "---\ntitle: x\n---\n## The Basics\n- **Dates (LOCKED):** Friday\n  * _Lodging_ ~~old~~ ==new== `code` see [VRBO](https://vrbo.com) <https://a.b>\n> quoted\n1. [ ] task [[Ada Lovelace|Ada]] [[Plan]] ![photo](x.png)\n---\n```js\nlet snake_case = 1;\n```\n| a | b |\n| --- | :-: |\n| 1 | 2 |\n\\*literal\\* 3 * 4";
+        assert_eq!(
+            plain_text(body),
+            "The Basics Dates (LOCKED): Friday Lodging old new code see VRBO https://a.b quoted task Ada Plan photo let snake_case = 1; a b 1 2 *literal* 3 4"
+        );
+        assert_eq!(
+            plain_text("#hashtag and # heading"),
+            "#hashtag and # heading"
+        );
+        assert_eq!(plain_text(""), "");
     }
 
     #[test]

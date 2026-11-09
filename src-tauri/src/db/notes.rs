@@ -24,7 +24,8 @@ use crate::models::{
     NotesStorage,
 };
 use crate::notes::{
-    clean_note_title, daily_note_id, extract_links, is_daily_date, rewrite_links, title_key,
+    clean_note_title, daily_note_id, extract_links, is_daily_date, plain_text, rewrite_links,
+    title_key,
 };
 
 const NOTE_COLUMNS: &str =
@@ -430,7 +431,7 @@ fn note_title_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteTitle> {
 }
 
 fn preview(body: &str) -> String {
-    let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = plain_text(body);
     if text.chars().count() <= PREVIEW_CHARS {
         return text;
     }
@@ -754,6 +755,19 @@ impl Database {
     }
 
     /// How much of their snapshot budget notes use, Trash included.
+    /// Every note outside Trash, daily notes by date then the rest by
+    /// title, for Export to Markdown Folder.
+    pub fn notes_for_export(&self) -> DbResult<Vec<Note>> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT {NOTE_COLUMNS} FROM notes WHERE trashed=0
+                 ORDER BY daily_date IS NULL, daily_date, title_key, id"
+            ))?;
+            let rows = statement.query_map([], note_from_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
     pub fn notes_storage(&self) -> DbResult<NotesStorage> {
         self.with_connection(|connection| {
             let used: i64 = connection.query_row(

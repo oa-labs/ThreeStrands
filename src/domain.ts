@@ -1041,6 +1041,16 @@ export type NoteBacklink = { noteId: string; title: string; dailyDate: string | 
  * has yet, and every title it links to. */
 export type NoteLinks = { backlinks: NoteBacklink[]; unlinked: string[]; links: string[] };
 
+/** How much of the sync space set aside for notes they use. */
+export type NotesStorage = { usedBytes: number; limitBytes: number };
+
+/** The folder chosen for Export to Markdown Folder: empty, holding an
+ * earlier export (which exporting again replaces), or holding other files
+ * (which the export refuses). */
+export type NotesExportFolder = { path: string; state: "empty" | "earlierExport" | "inUse" };
+
+export type NotesExportOutcome = { path: string; notes: number };
+
 /** A note matching a search; U+0001 and U+0002 mark the matching text. */
 export type NoteSearchHit = { id: string; title: string; dailyDate: string | null; matchSnippet: string };
 

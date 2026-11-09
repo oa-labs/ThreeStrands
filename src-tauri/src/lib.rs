@@ -43,6 +43,7 @@ use threestrands_mail_mime::{html_plain_text, mime, sender_trust};
 use threestrands_mail_text::{quoted_history, search_query};
 mod net_safety;
 mod notes;
+mod notes_export;
 mod provider;
 mod replicated_sync;
 mod s3_transport;
@@ -226,6 +227,8 @@ struct AppState {
     recovery: Option<db::RecoveryOutcome>,
     /// A decrypted settings import awaiting the user's account choices.
     staged_import: transfer::StagedImport,
+    /// The folder last chosen for Export to Markdown Folder.
+    notes_export_folder: notes_export::ChosenFolder,
 }
 
 /// SQLite and the mutex guarding its connection are synchronous. Run database
@@ -1218,6 +1221,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         attachment_text: attachment_text::ExtractCache::default(),
         recovery,
         staged_import: transfer::StagedImport::default(),
+        notes_export_folder: notes_export::ChosenFolder::default(),
     });
     Ok(())
 }
@@ -1770,6 +1774,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::notes::search_notes,
         commands::notes::suggest_note_titles,
         commands::notes::find_note_by_title,
+        commands::notes::notes_export_choose_folder,
+        commands::notes::notes_export_write,
         commands::notes::note_links,
         commands::notes::notes_storage,
         // System

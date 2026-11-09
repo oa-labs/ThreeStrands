@@ -755,3 +755,21 @@ fn titles_are_suggested_by_contained_text_and_links_resolve_by_key() {
     assert_eq!(links.links, ["Road trip", "Nowhere"]);
     assert_eq!(links.unlinked, ["Nowhere"]);
 }
+
+#[test]
+fn export_takes_every_note_outside_trash_days_first() {
+    let db = database();
+    db.create_note("beta", "").unwrap();
+    db.create_note("Alpha", "").unwrap();
+    let gone = db.create_note("Gone", "").unwrap();
+    db.trash_note(&gone.id).unwrap();
+    db.save_daily_note("2026-11-10", "later").unwrap();
+    db.save_daily_note(DAY, "earlier").unwrap();
+    let titles: Vec<String> = db
+        .notes_for_export()
+        .unwrap()
+        .into_iter()
+        .map(|note| note.title)
+        .collect();
+    assert_eq!(titles, [DAY, "2026-11-10", "Alpha", "beta"]);
+}

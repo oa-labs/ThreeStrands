@@ -1,7 +1,7 @@
 # Notes workspace design
 
-**Status:** Steps 1 through 4 (sync and storage, workspace shell, links, and
-safety) built, with the meowdown editor; step 5 (export) proposed
+**Status:** v1 built: all five steps, with the meowdown editor. v2 items are
+under [Later](#later).
 **Date:** 2026-11-09
 **Scope:** a Notes workspace for Markdown notes that travel through
 replicated sync
@@ -273,7 +273,9 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 
 - **Today** is pinned at the top. Selecting it creates the daily note only
   once the user types, so browsing never writes an empty note.
-- **Recent** comes next: notes opened on this device, newest first.
+- **Recent** comes next: notes opened on this device, newest first. Each
+  row's preview is the note's text without Markdown syntax (`plain_text`
+  natively, `notePlainText` in the page, kept to the same cases).
 - A search box above the list searches titles and note text as the user
   types, through the local search index, and lists the matches in place of
   the list. Escape clears it, then returns to the list.
@@ -289,7 +291,13 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 
 - The title is the first line, edited in place. A daily note's title is its
   date, shown with the weekday, and it can't be renamed.
-- The body is the editor described below, in `NoteEditor`.
+- The body is the editor described below, in `NoteEditor`, at the reading
+  type size. Blocks sit close together, as in Reflect: list items
+  `--space-1-5` apart, paragraphs `--space-2`, with more room above
+  headings; the app's stylesheet overrides meowdown's 0.85em block gap.
+- meowdown's menus are browser popovers that stay open while closed; the
+  stylesheet hides closed ones and clears the browser's popover border,
+  which otherwise shows as an empty box in the middle of the window.
 - A button beside the title, and `#` in the list, move the note to Trash.
 - A quiet status line shows "Saved" or "Too long to sync", plus the conflict
   banner when there is one.
@@ -436,6 +444,29 @@ isn't in Trash to a folder the user picks:
 - Export writes only inside the chosen folder, never follows symlinks out of
   it, and refuses a folder that isn't empty unless the user confirms
   replacing an earlier export there.
+
+As built (`src-tauri/src/notes_export.rs`):
+
+- The native folder picker's choice stays native-side; the page never sends
+  a path, so an export writes only where the user pointed the picker.
+- An export leaves `.threestrands-notes-export.json` listing the files it
+  wrote. A folder holding only that list's export (and `.DS_Store` or
+  `Thumbs.db`) can be replaced after confirming; replacing removes only the
+  listed files that are still ordinary files inside the folder, and keeps
+  anything else. A folder holding anything else is refused. The list is
+  written before the notes, so an export that stops partway can still be
+  replaced.
+- Every file is created new (`create_new`), so nothing existing is
+  overwritten or written through, including a symbolic link; a `daily` or
+  `notes` that is a link or a file is refused.
+- File names replace `/ \ : * ? " < > |` and control characters with `-`,
+  replace a leading dot and trailing dots or spaces, add `-` to Windows
+  device names, and are cut to 200 bytes (`MAX_FILE_STEM_BYTES`) at a
+  character boundary. Clashes, ignoring case, get " 2", " 3", and so on.
+- Front matter values are JSON-quoted strings: `id`, `created`, and
+  `updated` as this device has them.
+
+**Settings → Notes** also shows how much of the notes' sync space they use.
 
 ## Security and privacy
 

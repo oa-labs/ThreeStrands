@@ -35,6 +35,14 @@ When you rename a note, ThreeStrands changes the links to it in your other notes
 
 Press <kbd>#</kbd> in the list, or click the trash button beside the title, to move a note to Trash. **Trash** at the bottom of the list shows notes you've moved there. A note in Trash can be read but not changed; **Restore** brings it back, and **Delete Permanently** removes it from every device after you confirm.
 
+## Export Your Notes {#export-your-notes}
+
+**Settings → Notes → Export to Markdown Folder** writes every note outside Trash to a folder you choose, as Markdown files that other apps such as Obsidian and Reflect can open. Daily notes go in a `daily` folder, named by date, and the rest in `notes`, named by title. Each file starts with a few lines naming the note, so a future version of ThreeStrands can match the files back to your notes.
+
+Choose an empty folder. To update an export, choose the same folder again: ThreeStrands asks first, then replaces the files the last export wrote and leaves anything else in the folder alone. A folder that holds other files is refused.
+
+Settings → Notes also shows how much of the space set aside for notes in cross-device sync they use.
+
 ## Find a Note {#find-a-note}
 
 Press <kbd>/</kbd> and type to search titles and note text. Press <kbd>Esc</kbd> to clear the search, and again to go back to the list.

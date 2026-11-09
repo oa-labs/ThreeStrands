@@ -116,3 +116,52 @@ test("a [[link]] picks a note, opens it, shows as a backlink, and follows a rena
   await backlinks.getByRole("button", { name: /Weekend/ }).click();
   await expect(body.locator(".md-wikilink-view-preview", { hasText: "Vegetable garden" })).toBeVisible();
 });
+
+test("the editor's menus stay hidden until they open, then appear at the cursor", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+  await page.keyboard.press("4");
+  const notes = page.getByRole("region", { name: "Notes" });
+  const body = notes.getByRole("textbox", { name: "Note text" });
+  await expect(body).toBeVisible();
+  const visibleMenus = () => page.evaluate(() => [...document.querySelectorAll("[popover]")].filter((menu) => {
+    const box = menu.getBoundingClientRect();
+    return getComputedStyle(menu).display !== "none" && box.width > 0 && box.height > 0;
+  }).map((menu) => menu.tagName.toLowerCase()));
+  expect(await visibleMenus()).toEqual([]);
+
+  await body.click();
+  await page.keyboard.type("/");
+  const slash = page.getByTestId("slash-menu");
+  await expect(slash).toBeVisible();
+  const caret = await page.evaluate(() => window.getSelection()!.getRangeAt(0).getBoundingClientRect().bottom);
+  const menu = (await slash.boundingBox())!;
+  expect(menu.y).toBeGreaterThanOrEqual(caret - 1);
+  expect(menu.y - caret).toBeLessThan(80);
+  await page.keyboard.press("Escape");
+  await expect(slash).toBeHidden();
+});
+
+test("list items and paragraphs sit close together, at the reading size", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+  await page.keyboard.press("4");
+  const body = page.getByRole("region", { name: "Notes" }).getByRole("textbox", { name: "Note text" });
+  await body.click();
+  await page.keyboard.type("## The Basics\n- one\ntwo\nthree\n\nA paragraph\n\nAnother paragraph");
+  const layout = await body.evaluate((root) => {
+    const tops = (selector: string) => [...root.querySelectorAll(`:scope > ${selector}`)].map((block) => block.getBoundingClientRect().top);
+    const style = getComputedStyle(root);
+    return { items: tops(".prosemirror-flat-list"), paragraphs: tops("p"), lineHeight: parseFloat(style.lineHeight), fontSize: style.fontSize };
+  });
+  expect(layout.items).toHaveLength(3);
+  // Each line plus a small gap: no paragraph margins collapsing between items.
+  for (const tops of [layout.items, layout.paragraphs]) {
+    for (let index = 1; index < tops.length; index++) {
+      const pitch = tops[index]! - tops[index - 1]!;
+      expect(pitch).toBeGreaterThan(layout.lineHeight);
+      expect(pitch).toBeLessThanOrEqual(layout.lineHeight + 10);
+    }
+  }
+  expect(layout.fontSize).toBe("15px");
+});

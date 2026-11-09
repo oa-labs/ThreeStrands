@@ -7,7 +7,7 @@ use crate::models::{
     CreateNoteRequest, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle,
     NotesStorage, UpdateNoteRequest,
 };
-use crate::{kick_replicated_sync, run_database_task, AppResult, AppState};
+use crate::{kick_replicated_sync, notes_export, run_database_task, AppResult, AppState};
 
 #[tauri::command]
 pub(crate) async fn list_recent_notes(
@@ -146,6 +146,51 @@ pub(crate) async fn find_note_by_title(
 pub(crate) async fn note_links(id: String, state: State<'_, AppState>) -> AppResult<NoteLinks> {
     let database = state.database.clone();
     run_database_task(move || database.note_links(&id)).await
+}
+
+/// Asks for the folder to export notes to, and says what it holds. The
+/// folder stays here for [`notes_export_write`]; the page never names one.
+#[tauri::command]
+pub(crate) async fn notes_export_choose_folder(
+    state: State<'_, AppState>,
+) -> AppResult<Option<notes_export::ExportFolder>> {
+    let Some(folder) = rfd::AsyncFileDialog::new()
+        .set_title("Choose a folder to export notes to")
+        .pick_folder()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = folder.path().to_path_buf();
+    let chosen = path.clone();
+    let folder_state = tokio::task::spawn_blocking(move || notes_export::folder_state(&chosen))
+        .await
+        .map_err(|error| error.to_string())??;
+    state.notes_export_folder.set(Some(path.clone()));
+    Ok(Some(notes_export::ExportFolder {
+        path: path.to_string_lossy().into_owned(),
+        state: folder_state,
+    }))
+}
+
+/// Writes every note outside Trash to the chosen folder. `replace` confirms
+/// replacing an earlier export there.
+#[tauri::command]
+pub(crate) async fn notes_export_write(
+    replace: bool,
+    state: State<'_, AppState>,
+) -> AppResult<notes_export::ExportOutcome> {
+    let folder = state
+        .notes_export_folder
+        .get()
+        .ok_or("Choose a folder to export notes to first")?;
+    let database = state.database.clone();
+    let notes = run_database_task(move || database.notes_for_export()).await?;
+    let outcome =
+        tokio::task::spawn_blocking(move || notes_export::export(&folder, &notes, replace))
+            .await
+            .map_err(|error| error.to_string())??;
+    Ok(outcome)
 }
 
 #[tauri::command]

@@ -1,11 +1,11 @@
 import type { Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
 import { extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
+import { notePreview } from "../notePreview";
 import type { MailClient } from "./client";
 
-type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks">;
+type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const PREVIEW_CHARS = 140;
 const clean = (title: string) => title.split(/\s+/).filter(Boolean).join(" ");
 const key = (title: string) => clean(title).toLocaleLowerCase();
 
@@ -19,10 +19,7 @@ function noteTitle(title: string): string {
   return cleaned;
 }
 
-function preview(body: string) {
-  const text = body.split(/\s+/).filter(Boolean).join(" ");
-  return text.length <= PREVIEW_CHARS ? text : `${text.slice(0, PREVIEW_CHARS - 1)}…`;
-}
+const preview = notePreview;
 
 /** In-memory notes for the browser demo and tests, following the native store's rules. */
 export function createDemoNotes(): DemoNotes {
@@ -110,6 +107,17 @@ export function createDemoNotes(): DemoNotes {
         updated++;
       }
       return { saved: true, note: structuredClone(next), relink: { updated, keptOldLink: [] } };
+    },
+    async notesStorage() {
+      const usedBytes = [...notes.values()].reduce((total, note) => total + new TextEncoder().encode(JSON.stringify(note)).length, 0);
+      return { usedBytes, limitBytes: 3 * 1024 * 1024 };
+    },
+    // The browser demo has no folders to write to.
+    async chooseNotesExportFolder() {
+      return null;
+    },
+    async exportNotes() {
+      throw new Error("Exporting notes needs the ThreeStrands app");
     },
     async suggestNoteTitles(query, limit) {
       const wanted = noteTitleKey(query);

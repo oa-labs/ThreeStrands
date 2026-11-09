@@ -14,6 +14,7 @@ import { ContextRow, ContextSection, ContextSectionHeader } from "./ContextSecti
 import { InlineConfirm } from "./InlineConfirm";
 import { NoteEditor, type NoteEditorHandle, type NoteLinkSuggestion } from "./NoteEditor";
 import { noteTitleKey } from "./noteWikiLinks";
+import { notePreview } from "./notePreview";
 import { NewNoteDialog } from "./NewNoteDialog";
 import { NoteConflictBanner } from "./NoteConflictBanner";
 import { noteConflictsById } from "./noteConflicts";
@@ -128,7 +129,7 @@ export function NotesWorkspace({ request = null, refreshKey = "", onOpenContact 
   const showSaved = useCallback((note: Note) => {
     setRecent((current) => {
       const summary = current.find((item) => item.id === note.id);
-      const updated: NoteSummary = { id: note.id, title: note.title, dailyDate: note.dailyDate, preview: note.body.split(/\s+/).filter(Boolean).join(" ").slice(0, 140), updatedAt: note.updatedAt, visitedAt: summary?.visitedAt ?? null, trashedAt: note.trashedAt };
+      const updated: NoteSummary = { id: note.id, title: note.title, dailyDate: note.dailyDate, preview: notePreview(note.body), updatedAt: note.updatedAt, visitedAt: summary?.visitedAt ?? null, trashedAt: note.trashedAt };
       // A note keeps its place while it's being written in, so the list doesn't jump under the cursor.
       return summary ? current.map((item) => item.id === note.id ? updated : item) : [updated, ...current];
     });

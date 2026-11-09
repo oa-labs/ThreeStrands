@@ -61,6 +61,9 @@ import type {
   NoteSearchHit,
   NoteLinks,
   NoteTitle,
+  NotesExportFolder,
+  NotesExportOutcome,
+  NotesStorage,
   NoteSummary,
   SplitInbox,
   SplitInboxMatchKind,
@@ -420,6 +423,11 @@ export interface MailClient extends CorrespondenceClient {
   /** The note a `[[link]]` to `title` opens, matched ignoring case and spacing. */
   findNoteByTitle(title: string): Promise<NoteTitle | null>;
   noteLinks(id: string): Promise<NoteLinks>;
+  notesStorage(): Promise<NotesStorage>;
+  /** Asks for a folder to export notes to; null when the user cancels. The folder stays native-side. */
+  chooseNotesExportFolder(): Promise<NotesExportFolder | null>;
+  /** Writes every note outside Trash to the chosen folder; `replace` confirms replacing an earlier export. */
+  exportNotes(replace: boolean): Promise<NotesExportOutcome>;
   /** Notes in Trash, most recently trashed first. */
   listTrashedNotes(limit: number): Promise<NoteSummary[]>;
   /** Moves a note to Trash on every device. */
@@ -647,6 +655,9 @@ const tauriClient: MailClient = {
   findNoteByTitle: (title) => read("find_note_by_title", { title }),
   noteLinks: (id) => read("note_links", { id }),
   listTrashedNotes: (limit) => read("list_trashed_notes", { limit }),
+  notesStorage: () => read("notes_storage"),
+  chooseNotesExportFolder: () => complete("notes_export_choose_folder"),
+  exportNotes: (replace) => complete("notes_export_write", { replace }),
   trashNote: (id) => complete("trash_note", { id }),
   restoreNote: (id) => complete("restore_note", { id }),
   deleteNote: (id) => complete("delete_note", { id }),
