@@ -1590,8 +1590,21 @@ pub struct FileQuery {
     pub starred: Option<bool>,
     /// Leave calendar invitations out and report how many matched in `FilePage::hidden_calendar`.
     pub exclude_calendar: Option<bool>,
+    /// List files attached to notes beside mail attachments. They are left
+    /// out anyway when the query names a conversation, sender, direction,
+    /// or the calendar type, which only mail has.
+    pub include_notes: Option<bool>,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
+}
+
+/// The note a file in Files is attached to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteFileSource {
+    pub id: String,
+    pub title: String,
+    pub daily_date: Option<String>,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1605,7 +1618,14 @@ pub struct WorkspaceFile {
     pub direction: String,
     pub attachment: MessageAttachment,
     pub starred: bool,
+    /// `offline` or `download` for mail; `offline` or `syncing` (another
+    /// device's file not downloaded yet) for a note's file; else `unknown`.
     pub availability: String,
+    /// Set for a file attached to a note, whose `attachment.id` is the
+    /// attachment's id. The mail fields are then empty, and `sent_at` is
+    /// when the file was added.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<NoteFileSource>,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

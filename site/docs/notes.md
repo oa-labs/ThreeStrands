@@ -15,7 +15,7 @@ Select a note and press <kbd>Enter</kbd>, or click in it, to write. Press <kbd>E
 
 Notes are written in Markdown and formatted as you type: `**bold**` turns bold, `# ` starts a heading, and `- ` starts a list. Links open in your browser. Notes never load pictures or previews from the internet.
 
-Paste or drag a picture or file into a note to add it. Pictures show in the note, and other files show as a small label with their size; click either to open it in its usual app. A note can hold files up to 20 MB each. A file stays with its note until you delete the note from Trash, even if you remove it from the text.
+Paste or drag a picture or file into a note to add it. Pictures show in the note, and other files show as a small label with their size; click either to open it in its usual app. **Files** lists them too, beside your mail attachments. A note can hold files up to 20 MB each. A file stays with its note until you delete the note from Trash, even if you remove it from the text.
 
 Today's note is created when you first write in it, so looking at a day leaves nothing behind. To make a note of your own, press <kbd>Shift</kbd>+<kbd>N</kbd> or click **New Note** and give it a title. Each title can be used once.
 

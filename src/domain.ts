@@ -615,13 +615,22 @@ export type ContactFile = {
 
 export type ContactFiles = { files: ContactFile[]; total: number };
 
-/** One attachment occurrence, never identified by filename or size. */
+/** The note a file in Files is attached to. */
+export type NoteFileSource = { id: string; title: string; dailyDate: string | null };
+
+/**
+ * One attachment occurrence, never identified by filename or size. A file
+ * attached to a note has `note` set and empty mail fields; its `sentAt` is
+ * when it was added, and `syncing` means another device's file hasn't
+ * downloaded yet.
+ */
 export type WorkspaceFile = ContactFile & {
   accountId: string;
   sender: string;
   direction: "received" | "sent";
   starred: boolean;
-  availability: "offline" | "download" | "unknown";
+  availability: "offline" | "download" | "syncing" | "unknown";
+  note?: NoteFileSource;
   reason?: string;
 };
 export type FileQuery = {
@@ -639,6 +648,8 @@ export type FileQuery = {
   starred?: boolean;
   /** Leave calendar invitations out; the page reports how many in `hiddenCalendar`. */
   excludeCalendar?: boolean;
+  /** List notes' files too, unless a mail-only filter (conversation, sender, direction, calendar type) is set. */
+  includeNotes?: boolean;
   offset?: number;
   limit?: number;
 };

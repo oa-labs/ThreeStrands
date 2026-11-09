@@ -537,6 +537,20 @@ quarantined copy in the reader cache.
 **Settings → Notes** counts attached files and their size apart from the
 notes' sync space.
 
+**Files lists them too.** With `FileQuery::include_notes`, `list_files`
+merges notes' files (outside Trash, today's unsaved note included) with mail
+attachments, newest first by when each was sent or added: both lists are
+read to the end of the requested page and the merged window is returned.
+Files asks for them only while it covers every account, and the query
+leaves them out when it names a conversation, sender, direction, the
+calendar type, or a message to put first, since only mail has those. A
+note's file carries `note` (id, title, daily date) instead of the mail
+fields, and `availability` `syncing` until another device's file arrives.
+Search matches the note's title as it matches a mail sender. Stars live in
+`note_attachments.starred` (v102), on this device only. Previews, Open,
+and Save as… go through the same native preview and quarantine paths as
+mail attachments.
+
 Known gaps:
 
 - A file added to a note while another device permanently deletes that note

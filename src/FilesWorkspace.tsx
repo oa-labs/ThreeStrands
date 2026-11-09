@@ -1,7 +1,7 @@
 import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Download, ExternalLink, Info, MessageSquareText, ShieldAlert, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
+import { Download, ExternalLink, Info, MessageSquareText, NotebookText, ShieldAlert, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { WorkspaceFile } from "./domain";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
@@ -20,6 +20,7 @@ import { attachmentMeetingTitle } from "./invitationTitle";
 import { AddressWithCard } from "./AddressWithCard";
 import { attachmentRisk } from "./attachmentRisk";
 import { FilePreview } from "./FilePreview";
+import { formatNoteDate } from "./noteDates";
 
 /**
  * What Files remembers while another view is open: filters, selection,
@@ -29,8 +30,13 @@ import { FilePreview } from "./FilePreview";
  */
 export type FilesWorkspaceSnapshot = { loaded: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
 const PAGE_SIZE = 50;
-const keyFor = (file: WorkspaceFile) => JSON.stringify([file.accountId, file.messageId, file.attachment.id]);
+const keyFor = (file: WorkspaceFile) => JSON.stringify(file.note ? ["note", file.attachment.id] : [file.accountId, file.messageId, file.attachment.id]);
 const senderName = (file: WorkspaceFile) => formatDisplayName(parseAddress(file.sender).name);
+/** The note a note's file is in, as the note list names it. */
+const noteName = (file: WorkspaceFile) => file.note?.dailyDate ? formatNoteDate(file.note.dailyDate) : file.note?.title ?? "";
+/** Opens or saves a file, from mail or from a note. */
+const openFile = (file: WorkspaceFile) => file.note ? mailClient.openNoteAttachment(file.attachment.id) : mailClient.openAttachment(file.messageId, file.attachment.id);
+const saveFile = (file: WorkspaceFile) => file.note ? mailClient.saveNoteAttachment(file.attachment.id) : mailClient.saveAttachment(file.messageId, file.attachment.id);
 
 const SHOW_INVITATIONS_KEY = "threestrands.files.showInvitations";
 function readShowInvitations() {
@@ -64,7 +70,7 @@ function FileSender({ file, own, onOpenContact }: { file: WorkspaceFile; own: st
   return <AddressWithCard email={email} displayName={senderName(file)} hint="Opens in Contacts" onActivate={open} onOpenContact={onOpenContact} />;
 }
 
-export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenContact, onReportSpam, sessions, refreshKey = "" }: { refreshKey?: string; sessions?: RefObject<Map<string, FilesWorkspaceSnapshot>>; accountId: string | null; accountIds: string[]; onOpenThread(id: string): void; onOpenContact?(id: string): void; /** Marks the file's source conversation as spam, which removes its files from Files. */ onReportSpam?(threadId: string): void }) {
+export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenNote, onOpenContact, onReportSpam, sessions, refreshKey = "" }: { refreshKey?: string; sessions?: RefObject<Map<string, FilesWorkspaceSnapshot>>; accountId: string | null; accountIds: string[]; onOpenThread(id: string): void; /** Opens the note a note's file is attached to. */ onOpenNote?(id: string): void; onOpenContact?(id: string): void; /** Marks the file's source conversation as spam, which removes its files from Files. */ onReportSpam?(threadId: string): void }) {
   const sessionKey=accountId ?? "all";
   const restored=useRef(sessions?.current.get(sessionKey));
   const main=useRef<HTMLDivElement>(null);
@@ -103,7 +109,9 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
   // Date inputs name days in the user's time zone.
   // Invitations stay hidden unless asked for: by the toggle, the Calendar type, or a star.
   const excludeCalendar = !showInvitations && type !== "calendar" && !starred;
-  const queryKey = JSON.stringify({ accountIds: scoped, search, sender, type, direction: direction || undefined, starred, excludeCalendar: excludeCalendar || undefined, after: after ? localDayStart(after) : undefined, before: before ? localDayStart(before, 1) : undefined });
+  // Notes' files belong to no account, so they list only while Files covers every account.
+  const includeNotes = !accountId && !(scope && accountIds.includes(scope));
+  const queryKey = JSON.stringify({ accountIds: scoped, search, sender, type, direction: direction || undefined, starred, excludeCalendar: excludeCalendar || undefined, includeNotes: includeNotes || undefined, after: after ? localDayStart(after) : undefined, before: before ? localDayStart(before, 1) : undefined });
   const lastQuery = useRef(queryKey);
   if (lastQuery.current!==queryKey) { lastQuery.current=queryKey; setLoad((current) => ({ offset: 0, count: PAGE_SIZE, attempt: current.attempt+1 })); setFiles([]); setSelected(null); }
   const lastRefresh = useRef(refreshKey);
@@ -148,8 +156,8 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
   const action = (operation: Promise<void>) => { void operation.catch((reason) => setError(errorMessage(reason))); };
   useWorkspaceCommands({
     "files.search": () => requestAnimationFrame(() => searchInput.current?.focus()),
-    "files.open": () => { if (file) action(mailClient.openAttachment(file.messageId, file.attachment.id)); },
-    "files.save": () => { if (file) action(mailClient.saveAttachment(file.messageId, file.attachment.id)); },
+    "files.open": () => { if (file) action(openFile(file)); },
+    "files.save": () => { if (file) action(saveFile(file)); },
     // Reuse the button’s optimistic update, pending guard, and error recovery.
     "files.star": () => starButton.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.click(),
   });
@@ -168,13 +176,13 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
     <div className="files-workspace-body">
       <div ref={main} className="files-main">
         <div className="files-toolbar">
-          <label className="files-search"><span className="sr-only">Search Files</span><input ref={searchInput} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames and senders" /></label><kbd aria-hidden="true">/</kbd>
+          <label className="files-search"><span className="sr-only">Search Files</span><input ref={searchInput} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={includeNotes ? "Search filenames, senders, and notes" : "Search filenames and senders"} /></label><kbd aria-hidden="true">/</kbd>
           <button ref={filtersButton} type="button" className="btn" aria-expanded={filtersOpen} aria-controls="file-filter-controls" onClick={() => setFiltersOpen((value) => !value)}><SlidersHorizontal size={ICON_SIZE.sm} />Filters{filterChips.length ? <span className="context-count">{filterChips.length}</span> : null}</button>
           <details className="files-help" onKeyDown={(event) => {
             if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
           }}>
             <summary className="btn-icon" aria-label="About Files" title="About Files"><Info size={ICON_SIZE.sm} /></summary>
-            <div className="files-help-panel" role="note" aria-label="About Files"><p>Includes attachments from mail on this device, including archived conversations. Stars stay on this device. Starring a file does not keep an offline copy.</p></div>
+            <div className="files-help-panel" role="note" aria-label="About Files"><p>Includes attachments from mail on this device, including archived conversations, and files in your notes when Files shows all accounts. Sender and direction filters show mail only. Stars stay on this device. Starring a file does not keep an offline copy.</p></div>
           </details>
         </div>
         <div id="file-filter-controls" className="files-filters" role="group" aria-label="File filters" hidden={!filtersOpen} onKeyDown={(event) => {
@@ -194,7 +202,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
         </div> : null}
         {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn" onClick={() => setLoad((current) => ({ ...current, attempt: current.attempt+1 }))}>Retry</button></p> : null}
         <div className="file-list-heading" aria-hidden="true"><span className="file-list-heading-main"><span>Filename</span><span>Sender</span><span>Date</span><span>Size</span></span><span className="file-list-star-heading" /></div>
-        <div className="files-list" role="list" aria-label="Mail attachments">
+        <div className="files-list" role="list" aria-label="File list">
           {files.map((item) => <div key={keyFor(item)} role="listitem" className={`file-list-item${selected===keyFor(item) ? " selected" : ""}`}>
             <button type="button" className="file-list-select" aria-current={selected===keyFor(item) ? "true" : undefined}
               ref={(node) => { if (node) rows.current.set(keyFor(item),node); else rows.current.delete(keyFor(item)); }}
@@ -203,13 +211,14 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
                 // Enter on a file takes it to the context rail; other controls keep native Enter.
                 if (event.key!=="Enter" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
                 event.preventDefault(); setSelected(keyFor(item)); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "File context" }));
-              }} onDoubleClick={() => action(mailClient.openAttachment(item.messageId,item.attachment.id))}>
+              }} onDoubleClick={() => action(openFile(item))}>
               <span className="file-list-name"><AttachmentIcon filename={item.attachment.filename} mimeType={item.attachment.mimeType} size="sm" />{attachmentMeetingTitle(item) ? <><strong title={attachmentMeetingTitle(item)!}>{attachmentMeetingTitle(item)}</strong><span className="file-list-filename" title={item.attachment.filename}>({item.attachment.filename})</span></> : <strong title={item.attachment.filename}>{item.attachment.filename}</strong>}</span>
-              <span className="file-list-sender" title={item.sender}>{senderName(item)}{showAccount ? <small className="file-list-account">{item.accountId}</small> : null}</span>
+              {item.note ? <span className="file-list-sender file-list-note" title={`In note ${noteName(item)}`}><NotebookText size={ICON_SIZE.xs} aria-label="In note" />{noteName(item)}</span>
+                : <span className="file-list-sender" title={item.sender}>{senderName(item)}{showAccount ? <small className="file-list-account">{item.accountId}</small> : null}</span>}
               <time className="file-list-date" dateTime={item.sentAt}>{formatHistoryDate(item.sentAt)}</time>
               <span className="file-list-size">{formatAttachmentSize(item.attachment.size)}</span>
             </button>
-            <FileStarButton accountId={item.accountId} messageId={item.messageId} attachmentId={item.attachment.id} filename={item.attachment.filename} starred={item.starred} />
+            <FileStarButton accountId={item.accountId} messageId={item.messageId} attachmentId={item.attachment.id} filename={item.attachment.filename} starred={item.starred} note={Boolean(item.note)} />
           </div>)}
         </div>
         {loading ? <p className="context-status" role="status">Loading files…</p> : !files.length ? <p className="context-status">{starred ? "No starred files yet." : "No files match these filters."}</p> : null}
@@ -218,7 +227,20 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
       </div>
       <WorkspaceContextRail label="File context" onReturn={() => rows.current.get(selected ?? "")?.focus()}>
         <ContextSectionHeader title="File details" icon={<AttachmentIcon filename={file?.attachment.filename ?? ""} mimeType={file?.attachment.mimeType} size="xs" />} />
-        {file ? <>
+        {file?.note ? <>
+          <div className="file-detail">
+            <FilePreview file={file} online={online} onOpen={() => action(openFile(file))} />
+            <h2 className="file-detail-name">{file.attachment.filename}</h2>
+            <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)} · {formatAttachmentSize(file.attachment.size)}</p>
+            <dl className="file-detail-metadata">
+              <div><dt>Added</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
+            </dl>
+            {risk ? <p className="file-detail-risk" role="note"><TriangleAlert size={ICON_SIZE.sm} aria-hidden="true" />{risk.reason}</p> : null}
+            {file.availability === "syncing" ? <p className="file-detail-meta" role="status">This file is still on its way from another device. It arrives the next time notes sync.</p> : null}
+            <div className="file-detail-actions"><button type="button" className="btn btn-primary" title="Open (o)" aria-keyshortcuts="o" disabled={file.availability === "syncing"} onClick={() => action(openFile(file))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" title="Save as… (⌘/Ctrl+Shift+S)" aria-keyshortcuts="Meta+Shift+S Control+Shift+S" disabled={file.availability === "syncing"} onClick={() => action(saveFile(file))}><Download size={ICON_SIZE.sm} />Save as…</button><span ref={starButton} title="Star / unstar (s)"><FileStarButton messageId="" attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} note labeled /></span></div>
+          </div>
+          <ContextSection id="file-source" title="Source note" rows={[<ContextRow key="source" icon={<NotebookText size={ICON_SIZE.sm} />} title={noteName(file)} wrapTitle onActivate={onOpenNote ? () => onOpenNote(file.note!.id) : undefined} />]} />
+        </> : file ? <>
           <div className="file-detail">
             <FilePreview file={file} online={online} onOpen={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))} />
             <h2 className="file-detail-name">{attachmentMeetingTitle(file) ?? file.attachment.filename}</h2>

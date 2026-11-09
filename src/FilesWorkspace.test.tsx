@@ -6,10 +6,12 @@ import { FilesWorkspace, type FilesWorkspaceSnapshot } from "./FilesWorkspace";
 import { mailClient } from "./data/client";
 import { clearFilePreviewCache } from "./FilePreview";
 import type { WorkspaceFile } from "./domain";
+import { formatNoteDate } from "./noteDates";
 
 const report: WorkspaceFile = { accountId:"you@example.com", messageId:"files-report",threadId:"report-thread",subject:"Next quarter",sentAt:"2026-10-01T12:00:00Z",sender:"Alice <alice@example.com>",direction:"received",attachment:{id:"report",filename:"forecast.pdf",mimeType:"application/pdf",size:2048},starred:false,availability:"download" };
 const invite: WorkspaceFile = {...report,messageId:"files-invite",threadId:"invite-thread",subject:"Invitation: Weekly sync @ Tue Oct 14, 2026 10am - 11am (EDT)",attachment:{id:"invite",filename:"invite.ics",mimeType:"text/calendar",size:900}};
 const copy: WorkspaceFile = {...report,messageId:"files-copy",threadId:"copy-thread",attachment:{...report.attachment,id:"copy"}};
+const noteFile: WorkspaceFile = { accountId:"",messageId:"",threadId:"",subject:"Floor plans",sentAt:"2026-10-02T12:00:00Z",sender:"",direction:"received",attachment:{id:"0123456789abcdef0123456789abcdef",filename:"kitchen.png",mimeType:"image/png",size:4096},starred:false,availability:"offline",note:{id:"note-1",title:"Floor plans",dailyDate:null} };
 describe("Files workspace", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); clearFilePreviewCache(); });
   it("searches, opens, saves, and stars the keyboard-selected file without claiming editing or modal keys", async () => {
@@ -19,7 +21,7 @@ describe("Files workspace", () => {
     const star = vi.spyOn(mailClient, "setFileStar").mockResolvedValue();
     render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
     installTestShortcuts({ focusedPane: "files", focusSearch: () => runWorkspaceCommand("files.search") });
-    const rows = within(screen.getByRole("list", { name: "Mail attachments" }));
+    const rows = within(screen.getByRole("list", { name: "File list" }));
     await waitFor(() => expect(rows.getAllByRole("listitem")).toHaveLength(2));
     fireEvent.keyDown(document.body, { key: "/" });
     const search = screen.getByRole("searchbox", { name: "Search Files" });
@@ -43,13 +45,71 @@ describe("Files workspace", () => {
     expect(open).toHaveBeenCalledTimes(1);
     modal.remove();
   });
+  describe("files in notes", () => {
+    it("are asked for only while Files covers every account", async () => {
+      const list = vi.spyOn(mailClient, "listFiles").mockResolvedValue({ files: [], total: 0 });
+      render(<FilesWorkspace accountId={null} accountIds={[report.accountId, "other@example.com"]} onOpenThread={vi.fn()} />);
+      await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ includeNotes: true })));
+      fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+      fireEvent.change(screen.getByRole("combobox", { name: "Account" }), { target: { value: "other@example.com" } });
+      await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.not.objectContaining({ includeNotes: true })));
+      cleanup();
+      list.mockClear();
+      render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+      await waitFor(() => expect(list).toHaveBeenCalled());
+      expect(list).toHaveBeenLastCalledWith(expect.not.objectContaining({ includeNotes: true }));
+    });
+
+    it("name their note, open it, and open, save, and star the file", async () => {
+      vi.spyOn(mailClient, "listFiles").mockResolvedValue({ files: [noteFile, report], total: 2 });
+      const open = vi.spyOn(mailClient, "openNoteAttachment").mockResolvedValue();
+      const save = vi.spyOn(mailClient, "saveNoteAttachment").mockResolvedValue();
+      const star = vi.spyOn(mailClient, "setNoteAttachmentStar").mockResolvedValue();
+      const mailStar = vi.spyOn(mailClient, "setFileStar").mockResolvedValue();
+      const onOpenNote = vi.fn();
+      const onReportSpam = vi.fn();
+      render(<FilesWorkspace accountId={null} accountIds={[report.accountId]} onOpenThread={vi.fn()} onOpenNote={onOpenNote} onReportSpam={onReportSpam} />);
+      const rows = within(await screen.findByRole("list", { name: "File list" }));
+      const row = await rows.findByRole("button", { name: /^kitchen\.png/ });
+      expect(row).toHaveTextContent("Floor plans");
+      const rail = within(screen.getByRole("complementary", { name: "File context" }));
+      expect(rail.getByRole("heading", { name: "kitchen.png" })).toBeInTheDocument();
+      expect(rail.queryByText("From")).not.toBeInTheDocument();
+      expect(rail.queryByRole("button", { name: /Mark Spam/ })).not.toBeInTheDocument();
+      fireEvent.click(rail.getByRole("button", { name: "Floor plans" }));
+      expect(onOpenNote).toHaveBeenCalledWith("note-1");
+      fireEvent.click(rail.getByRole("button", { name: /^Open/ }));
+      fireEvent.click(rail.getByRole("button", { name: /Save as/ }));
+      fireEvent.click(rail.getByRole("button", { name: "Star kitchen.png" }));
+      await waitFor(() => expect(star).toHaveBeenCalledWith(noteFile.attachment.id, true));
+      expect(open).toHaveBeenCalledWith(noteFile.attachment.id);
+      expect(save).toHaveBeenCalledWith(noteFile.attachment.id);
+      expect(mailStar).not.toHaveBeenCalled();
+      fireEvent.doubleClick(row);
+      expect(open).toHaveBeenCalledTimes(2);
+    });
+
+    it("say when another device's file hasn't arrived, and name a day by its date", async () => {
+      const day: WorkspaceFile = { ...noteFile, availability: "syncing", note: { id: "daily:2026-10-02", title: "2026-10-02", dailyDate: "2026-10-02" } };
+      vi.spyOn(mailClient, "listFiles").mockResolvedValue({ files: [day], total: 1 });
+      const preview = vi.spyOn(mailClient, "noteAttachmentPreview");
+      render(<FilesWorkspace accountId={null} accountIds={[report.accountId]} onOpenThread={vi.fn()} onOpenNote={vi.fn()} />);
+      const rail = within(await screen.findByRole("complementary", { name: "File context" }));
+      expect(await rail.findByRole("status")).toHaveTextContent("still on its way from another device");
+      expect(rail.getByRole("button", { name: /^Open/ })).toBeDisabled();
+      expect(rail.getByRole("button", { name: /Save as/ })).toBeDisabled();
+      expect(rail.getByRole("button", { name: formatNoteDate("2026-10-02") })).toBeInTheDocument();
+      expect(preview).not.toHaveBeenCalled();
+    });
+  });
+
   it("automatically lists distinct attachment occurrences and routes open, download and source actions", async () => {
     vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report,copy],total:2});
     const open=vi.spyOn(mailClient,"openAttachment").mockResolvedValue();
     const download=vi.spyOn(mailClient,"saveAttachment").mockResolvedValue();
     const source=vi.fn();
     render(<FilesWorkspace accountId={null} accountIds={[report.accountId]} onOpenThread={source} />);
-    const list=await screen.findByRole("list",{name:"Mail attachments"});
+    const list=await screen.findByRole("list",{name:"File list"});
     await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
     const rail=within(screen.getByRole("complementary",{name:"File context"}));
     expect(screen.getByRole("complementary",{name:"File context"})).toHaveClass("context-panel");
@@ -117,7 +177,7 @@ describe("Files workspace", () => {
   it("names an invitation by its meeting and keeps the filename beside it", async () => {
     vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[invite,report],total:2});
     render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
-    const list=within(await screen.findByRole("list",{name:"Mail attachments"}));
+    const list=within(await screen.findByRole("list",{name:"File list"}));
     const row=await list.findByRole("button",{name:/^Weekly sync/});
     expect(row).toHaveTextContent("Weekly sync(invite.ics)");
     expect(row).not.toHaveTextContent("Invitation:");
@@ -134,7 +194,7 @@ describe("Files workspace", () => {
     const props={accountId:report.accountId,accountIds:[report.accountId],onOpenThread:vi.fn()};
     const view=render(<FilesWorkspace {...props} refreshKey="1" />);
     fireEvent.click(await screen.findByRole("button",{name:"Load more files"}));
-    const list=within(screen.getByRole("list",{name:"Mail attachments"}));
+    const list=within(screen.getByRole("list",{name:"File list"}));
     await waitFor(() => expect(list.getAllByRole("listitem")).toHaveLength(60));
     rows=[make(100),...rows.slice(1)];
     query.mockClear();
@@ -157,7 +217,7 @@ describe("Files workspace", () => {
     window.addEventListener("threestrands:focus-context",focus);
     try {
       render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
-      const list=within(await screen.findByRole("list",{name:"Mail attachments"}));
+      const list=within(await screen.findByRole("list",{name:"File list"}));
       await waitFor(() => expect(list.getAllByRole("listitem")).toHaveLength(2));
       for (const control of [list.getAllByRole("button",{name:"Star forecast.pdf"})[0],screen.getByRole("button",{name:"Starred"})]) {
         expect(fireEvent.keyDown(control,{key:"Enter"})).toBe(true);
@@ -174,7 +234,7 @@ describe("Files workspace", () => {
     const star=vi.spyOn(mailClient,"setFileStar").mockRejectedValueOnce(new Error("Disk full")).mockResolvedValue();
     vi.spyOn(mailClient,"fileStars").mockResolvedValue([[report.messageId,report.attachment.id]]);
     render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
-    const list=within(screen.getByRole("list",{name:"Mail attachments"}));
+    const list=within(screen.getByRole("list",{name:"File list"}));
     fireEvent.click(await list.findByRole("button",{name:"Star forecast.pdf"}));
     await screen.findByRole("alert");
     expect(list.getByRole("button",{name:"Star forecast.pdf"})).toHaveAttribute("aria-pressed","false");
