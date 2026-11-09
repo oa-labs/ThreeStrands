@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Plus } from "lucide-react";
+import { ArrowLeft, GitCompareArrows, Plus, RotateCcw, Trash2 } from "lucide-react";
 import type { Note, NoteSearchHit, NoteSummary } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -11,27 +11,31 @@ import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
 import { ContextSectionHeader } from "./ContextSections";
-import { NoteEditor } from "./NoteEditor";
+import { InlineConfirm } from "./InlineConfirm";
+import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
 import { NewNoteDialog } from "./NewNoteDialog";
-import { noteTargetKey, readLastNoteTarget, todayTarget, writeLastNoteTarget, type NoteTarget } from "./noteDrafts";
+import { NoteConflictBanner } from "./NoteConflictBanner";
+import { noteConflictsById } from "./noteConflicts";
+import { noteTargetKey, parseNoteTargetKey, readLastNoteTarget, todayTarget, writeLastNoteTarget, type NoteTarget } from "./noteDrafts";
+import { formatNoteDate } from "./noteDates";
+import { useNoteSyntaxMode } from "./noteSyntaxMode";
 import { useNoteEditor } from "./useNoteEditor";
+import { replicatedSyncConflicts, replicatedSyncDeviceRoster, type DeviceRosterEntry, type FrontierConflict } from "./replicatedSync";
 import type { NotesRequest } from "./useWorkspaces";
 
 /** Most notes the Recent list shows. */
 const RECENT_LIMIT = 200;
+/** Most notes the Trash list shows. */
+const TRASH_LIMIT = 200;
 /** Most notes a search lists. */
 const SEARCH_LIMIT = 50;
 const SEARCH_DELAY_MS = 150;
 const MATCH_START = "\u0001";
 const MATCH_END = "\u0002";
 
-/** A daily note's date as people read it: "Monday, November 9, 2026". */
-export function formatNoteDate(date: string): string {
-  const [year, month, day] = date.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-}
-
 const noteLabel = (note: { title: string; dailyDate: string | null }) => note.dailyDate ? formatNoteDate(note.dailyDate) : note.title;
+const summaryTarget = (note: { id: string; dailyDate: string | null }): NoteTarget => note.dailyDate ? { kind: "daily", date: note.dailyDate } : { kind: "note", id: note.id };
+const formatTime = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 function MatchSnippet({ text }: { text: string }) {
   const [before, ...matches] = text.split(MATCH_START);
@@ -42,30 +46,51 @@ function MatchSnippet({ text }: { text: string }) {
 }
 
 type Row = { key: string; target: NoteTarget; title: string; detail: ReactNode; date?: string };
+type ListView = "notes" | "trash";
 
 /**
  * Notes: the note list on the left, the open note in the middle, and its
  * context on the right. The list is read mode; the note is a writing
- * surface entered with Enter or a click and left with Escape.
+ * surface entered with Enter or a click and left with Escape. Trash sits at
+ * the bottom of the list, and a trashed note opens read-only.
  */
 export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: NotesRequest | null; refreshKey?: string }) {
   const [target, setTarget] = useState<NoteTarget>(() => readLastNoteTarget() ?? todayTarget());
+  const [listView, setListView] = useState<ListView>("notes");
   const [recent, setRecent] = useState<NoteSummary[]>([]);
+  const [trashed, setTrashed] = useState<NoteSummary[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<NoteSearchHit[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [focusEditor, setFocusEditor] = useState(false);
+  const [conflicts, setConflicts] = useState<Map<string, FrontierConflict[]>>(() => new Map());
+  const [roster, setRoster] = useState<DeviceRosterEntry[]>([]);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const rows = useRef(new Map<string, HTMLButtonElement>());
   const search = useRef<HTMLInputElement>(null);
   const titleInput = useRef<HTMLInputElement>(null);
-  const body = useRef<HTMLTextAreaElement>(null);
+  const body = useRef<NoteEditorHandle>(null);
+  const syntaxMode = useNoteSyntaxMode();
   const today = todayTarget();
   const todayKey = noteTargetKey(today);
   const selectedKey = noteTargetKey(target);
 
   const loadRecent = useCallback(() => {
     void mailClient.listRecentNotes(RECENT_LIMIT).then((notes) => { setRecent(notes); setListError(null); }, (reason) => setListError(errorMessage(reason)));
+  }, []);
+  const loadTrash = useCallback(() => {
+    void mailClient.listTrashedNotes(TRASH_LIMIT).then((notes) => { setTrashed(notes); setListError(null); }, (reason) => setListError(errorMessage(reason)));
+  }, []);
+  const loadConflicts = useCallback(() => {
+    void replicatedSyncConflicts().then((found) => {
+      const byNote = noteConflictsById(found);
+      setConflicts(byNote);
+      // Device names are only needed to describe a conflict.
+      if (byNote.size) void replicatedSyncDeviceRoster().then(setRoster, logBackgroundFailure("Sync device names"));
+    }, logBackgroundFailure("Note conflicts"));
   }, []);
   const showSaved = useCallback((note: Note) => {
     setRecent((current) => {
@@ -75,26 +100,35 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
       return summary ? current.map((item) => item.id === note.id ? updated : item) : [updated, ...current];
     });
   }, []);
-  const select = useCallback((next: NoteTarget) => setTarget(next), []);
+  const select = useCallback((next: NoteTarget) => { setTarget(next); setConfirmingDelete(false); setActionError(null); }, []);
   const editor = useNoteEditor(target, { onSaved: showSaved, onReplaced: (note) => select({ kind: "note", id: note.id }) });
   const { refresh } = editor;
+  const reloadAll = useCallback(() => {
+    loadRecent();
+    loadTrash();
+    loadConflicts();
+    void refresh().catch(logBackgroundFailure("Note refresh"));
+  }, [loadRecent, loadTrash, loadConflicts, refresh]);
 
-  useEffect(() => { loadRecent(); }, [loadRecent, refreshKey]);
-  useEffect(() => { void refresh().catch(logBackgroundFailure("Note refresh")); }, [refresh, refreshKey]);
+  useEffect(() => { reloadAll(); }, [reloadAll, refreshKey]);
   // Another device's changes arrive with replicated sync.
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let stop: (() => void) | undefined;
     let active = true;
-    const reload = () => { loadRecent(); void refresh().catch(logBackgroundFailure("Note refresh")); };
-    void listen("replicated-sync-status", reload).then((unlisten) => { if (active) stop = unlisten; else unlisten(); }).catch(logBackgroundFailure("Notes sync listener"));
+    void listen("replicated-sync-status", reloadAll).then((unlisten) => { if (active) stop = unlisten; else unlisten(); }).catch(logBackgroundFailure("Notes sync listener"));
     return () => { active = false; stop?.(); };
-  }, [loadRecent, refresh]);
+  }, [reloadAll]);
   useEffect(() => {
     writeLastNoteTarget(target);
     void mailClient.recordNoteVisit(noteTargetKey(target)).catch(logBackgroundFailure("Note visit"));
   }, [target]);
-  useEffect(() => { if (request?.kind === "today") select(todayTarget()); }, [request, select]);
+  useEffect(() => {
+    if (!request) return;
+    setQuery("");
+    setListView("notes");
+    select(request.kind === "today" ? todayTarget() : parseNoteTargetKey(request.noteId));
+  }, [request, select]);
 
   useEffect(() => {
     if (!query.trim()) { setHits(null); return; }
@@ -112,30 +146,83 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
     requestAnimationFrame(() => body.current?.focus());
   }, [focusEditor, editorReady]);
 
+  const inTrash = Boolean(editor.note?.trashed);
+  const noteConflicts = editor.note ? conflicts.get(editor.note.id) ?? [] : [];
+
+  const list: Row[] = hits
+    ? hits.map((hit) => ({ key: hit.id, target: summaryTarget(hit), title: noteLabel(hit), detail: <MatchSnippet text={hit.matchSnippet} /> }))
+    : listView === "trash"
+      ? trashed.map((note): Row => ({ key: note.id, target: summaryTarget(note), title: noteLabel(note), detail: note.preview || "No text", date: note.trashedAt ?? note.updatedAt }))
+      : [
+        { key: todayKey, target: today, title: "Today", detail: formatNoteDate(today.date) },
+        ...recent.filter((note) => note.id !== todayKey).map((note): Row => ({
+          key: note.id,
+          target: summaryTarget(note),
+          title: noteLabel(note),
+          detail: note.preview || "No text yet",
+          date: note.updatedAt,
+        })),
+      ];
+  const focusSelectedRow = () => (rows.current.get(selectedKey) ?? rows.current.values().next().value)?.focus();
+  const returnToList = () => {
+    void editor.flush();
+    focusSelectedRow();
+  };
+  /** Selects the row after `key` in the list, else the one before it, else Today. */
+  const selectNeighbor = (key: string) => {
+    const index = list.findIndex((row) => row.key === key);
+    const next = index < 0 ? undefined : list[index + 1] ?? list[index - 1];
+    select(next ? next.target : todayTarget());
+  };
+  const act = async (action: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    setActionError(null);
+    try { await action(); } catch (reason) { setActionError(errorMessage(reason)); } finally { setBusy(false); }
+  };
+  const moveToTrash = () => act(async () => {
+    const note = editor.note;
+    if (!note || note.trashed) return;
+    await editor.flush();
+    if (editor.unsaved()) throw new Error("This note has changes that weren't saved. Resolve them before moving it to Trash.");
+    await mailClient.trashNote(note.id);
+    setRecent((current) => current.filter((item) => item.id !== note.id));
+    loadTrash();
+    // Today stays at the top of the list, so its note stays open, now in Trash.
+    if (listView === "notes" && note.id !== todayKey) selectNeighbor(note.id);
+    else await refresh();
+  });
+  const restore = () => act(async () => {
+    const note = editor.note;
+    if (!note) return;
+    const restored = await mailClient.restoreNote(note.id);
+    setTrashed((current) => current.filter((item) => item.id !== note.id));
+    showSaved(restored);
+    await refresh();
+  });
+  const deletePermanently = () => act(async () => {
+    const note = editor.note;
+    if (!note) return;
+    await mailClient.deleteNote(note.id);
+    setConfirmingDelete(false);
+    setTrashed((current) => current.filter((item) => item.id !== note.id));
+    // Today stays at the top of the list, so its day stays open, now without a note.
+    if (note.id === todayKey) await refresh();
+    else if (listView === "trash") selectNeighbor(note.id);
+    else select(todayTarget());
+  });
+
   useWorkspaceCommands({
     "notes.new": () => setCreating(true),
     "notes.search": () => requestAnimationFrame(() => search.current?.focus()),
+    "notes.trash": () => void moveToTrash(),
   });
 
-  const list: Row[] = hits
-    ? hits.map((hit) => ({ key: hit.id, target: hit.dailyDate ? { kind: "daily", date: hit.dailyDate } : { kind: "note", id: hit.id }, title: noteLabel(hit), detail: <MatchSnippet text={hit.matchSnippet} /> }))
-    : [
-      { key: todayKey, target: today, title: "Today", detail: formatNoteDate(today.date) },
-      ...recent.filter((note) => note.id !== todayKey).map((note): Row => ({
-        key: note.id,
-        target: note.dailyDate ? { kind: "daily", date: note.dailyDate } : { kind: "note", id: note.id },
-        title: noteLabel(note),
-        detail: note.preview || "No text yet",
-        date: note.updatedAt,
-      })),
-    ];
-  const returnToList = () => {
-    void editor.flush();
-    (rows.current.get(selectedKey) ?? rows.current.values().next().value)?.focus();
-  };
   const stale = editor.saveState.kind === "stale" ? editor.saveState : null;
   const daily = target.kind === "daily";
+  const readOnly = Boolean(stale) || editor.loading || inTrash || noteConflicts.length > 0;
   const status = editor.loading ? "Loading note…" : editor.saveState.kind === "saving" ? "Saving…" : editor.dirty ? "Not saved yet" : editor.note ? "Saved" : "";
+  const editorTitle = daily ? formatNoteDate(target.date) : editor.text.title;
 
   return <section className="notes-workspace" aria-label="Notes" onKeyDown={(event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
@@ -149,7 +236,7 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
     <header className="notes-header">
       <h1>Notes</h1>
       <div className="notes-header-actions">
-        <button type="button" className="btn" title="New note (Shift+N)" aria-keyshortcuts="Shift+N" onClick={() => setCreating(true)}><Plus size={ICON_SIZE.sm} />New Note</button>
+        <button type="button" className="btn" title="New note (Shift+N)" aria-keyshortcuts="Shift+N" onClick={() => setCreating(true)}><Plus size={ICON_SIZE.md} aria-hidden="true" />New Note</button>
       </div>
     </header>
     <div className="notes-workspace-body">
@@ -165,7 +252,8 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
           <kbd aria-hidden="true">/</kbd>
         </div>
         {listError ? <p className="form-error" role="alert">{listError}</p> : null}
-        <div className="notes-list" role="list" aria-label={hits ? "Matching notes" : "Notes"}>
+        {listView === "trash" && !hits ? <h2 className="eyebrow notes-list-heading">Trash</h2> : null}
+        <div className="notes-list" role="list" aria-label={hits ? "Matching notes" : listView === "trash" ? "Trash" : "Notes"}>
           {list.map((row) => <div key={row.key} role="listitem" className={`notes-list-item${row.key === selectedKey ? " selected" : ""}`}>
             <button type="button" className="notes-list-select" aria-current={row.key === selectedKey ? "true" : undefined}
               ref={(node) => { if (node) rows.current.set(row.key, node); else rows.current.delete(row.key); }}
@@ -177,18 +265,32 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
                 select(row.target);
                 setFocusEditor(true);
               }}>
-              <span className="notes-list-title-line"><strong className="notes-list-title">{row.title}</strong>{row.date ? <time className="notes-list-date" dateTime={row.date}>{formatHistoryDate(row.date)}</time> : null}</span>
+              <span className="notes-list-title-line">
+                <strong className="notes-list-title">{row.title}</strong>
+                {conflicts.has(row.key) ? <span className="notes-list-conflict" title="Changed on two devices"><GitCompareArrows size={ICON_SIZE.sm} aria-hidden="true" /><span className="sr-only">Changed on two devices</span></span> : null}
+                {row.date ? <time className="notes-list-date" dateTime={row.date}>{formatHistoryDate(row.date)}</time> : null}
+              </span>
               <span className="notes-list-detail">{row.detail}</span>
             </button>
           </div>)}
         </div>
         {hits && !hits.length ? <p className="context-status">No notes match “{query.trim()}”.</p> : null}
+        {!hits && listView === "trash" && !trashed.length ? <p className="context-status">Trash is empty.</p> : null}
+        <div className="notes-list-footer">
+          {listView === "notes"
+            ? <button type="button" className="btn btn-sm" onClick={() => { setQuery(""); setListView("trash"); loadTrash(); }}>
+              <Trash2 size={ICON_SIZE.sm} aria-hidden="true" />Trash{trashed.length ? <span className="notes-trash-count">{trashed.length}</span> : null}
+            </button>
+            : <button type="button" className="btn btn-sm" onClick={() => { setQuery(""); setListView("notes"); }}>
+              <ArrowLeft size={ICON_SIZE.sm} aria-hidden="true" />Back to Notes
+            </button>}
+        </div>
       </div>
       <div className="notes-editor-pane" data-shortcut-scope="compose" onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void editor.flush();
       }}>
         {editor.loadError ? <p className="form-error" role="alert">{editor.loadError}</p>
-          : editor.missing ? <p className="context-status">This note was deleted on another device.</p>
+          : editor.missing ? <p className="context-status">This note was deleted.</p>
           : <>
             {stale ? <div className="notes-stale" role="alert">
               <p>{stale.current ? "This note changed on another device after you started typing. Your text is kept here until you choose." : "This note was deleted on another device. Your text is kept here until you choose."}</p>
@@ -197,31 +299,52 @@ export function NotesWorkspace({ request = null, refreshKey = "" }: { request?: 
                 <button type="button" className="btn" onClick={editor.takeTheirs}>{stale.current ? "Use Other Version" : "Discard My Text"}</button>
               </div>
             </div> : null}
-            {daily ? <h2 className="notes-editor-title">{formatNoteDate(target.date)}</h2>
-              : <input ref={titleInput} className="notes-editor-title" aria-label="Title" value={editor.text.title} readOnly={Boolean(stale) || editor.loading} maxLength={200}
-                {...SEARCH_INPUT_ATTRIBUTES}
-                onChange={(event) => editor.edit({ title: event.target.value })}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); returnToList(); }
-                  if (event.key === "Enter") { event.preventDefault(); body.current?.focus(); }
-                }} />}
-            <NoteEditor ref={body} value={editor.text.body} label="Note text" readOnly={Boolean(stale) || editor.loading}
+            {editor.note && !stale && noteConflicts.length ? <NoteConflictBanner key={editor.note.id} note={editor.note} title={editorTitle} conflicts={noteConflicts} roster={roster}
+              onResolved={reloadAll}
+              onKeptBoth={showSaved} /> : null}
+            {inTrash && !noteConflicts.length ? <div className="notes-trashed" role="region" aria-label="Note in Trash">
+              <p>This note is in Trash. Restore it to edit it.</p>
+              <div className="notes-stale-actions">
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void restore()}><RotateCcw size={ICON_SIZE.md} aria-hidden="true" />Restore</button>
+                <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setConfirmingDelete(true)}>Delete Permanently</button>
+              </div>
+              {confirmingDelete ? <InlineConfirm ariaLabel="Delete note permanently" stacked focusCancel cancelLabel="Cancel" onCancel={() => setConfirmingDelete(false)} disabled={busy}
+                title={`Delete “${editorTitle}” permanently?`}
+                actions={[{ label: "Delete Permanently", className: "btn-danger", onClick: () => void deletePermanently() }]}>
+                It is removed from every device that syncs with this one. This can't be undone.
+              </InlineConfirm> : null}
+            </div> : null}
+            {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
+            <div className="notes-editor-heading">
+              {daily ? <h2 className="notes-editor-title">{editorTitle}</h2>
+                : <input ref={titleInput} className="notes-editor-title" aria-label="Title" value={editor.text.title} readOnly={readOnly} maxLength={200}
+                  {...SEARCH_INPUT_ATTRIBUTES}
+                  onChange={(event) => editor.edit({ title: event.target.value })}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); returnToList(); }
+                    if (event.key === "Enter") { event.preventDefault(); body.current?.focus(); }
+                  }} />}
+              {editor.note && !inTrash ? <button type="button" className="btn btn-icon" title="Move to Trash (#)" aria-label="Move to Trash" aria-keyshortcuts="#" disabled={busy || Boolean(stale)} onClick={() => void moveToTrash()}><Trash2 size={ICON_SIZE.lg} aria-hidden="true" /></button> : null}
+            </div>
+            <NoteEditor ref={body} noteKey={selectedKey} value={editor.text.body} label="Note text" readOnly={readOnly} mode={syntaxMode}
               placeholder={daily ? "Write about the day" : "Write in Markdown"}
               onChange={(value) => editor.edit({ body: value })} onLeave={returnToList} />
             {editor.saveState.kind === "error" ? <p className="form-error" role="alert">{editor.saveState.message}</p>
               : <p className="notes-save-status" role="status">{status}</p>}
           </>}
       </div>
-      <WorkspaceContextRail label="Note context" onReturn={() => rows.current.get(selectedKey)?.focus()}>
+      <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow}>
         <ContextSectionHeader title="Note details" />
         {editor.note ? <dl className="notes-details">
-          <div><dt>Created</dt><dd>{new Date(editor.note.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
-          <div><dt>Changed</dt><dd>{new Date(editor.note.updatedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
+          <div><dt>Created</dt><dd>{formatTime(editor.note.createdAt)}</dd></div>
+          <div><dt>Changed</dt><dd>{formatTime(editor.note.updatedAt)}</dd></div>
+          {editor.note.trashedAt ? <div><dt>Trashed</dt><dd>{formatTime(editor.note.trashedAt)}</dd></div> : null}
         </dl> : <p className="context-status">{daily ? "This day's note starts when you write in it." : "Select a note to see its details."}</p>}
       </WorkspaceContextRail>
     </div>
     {creating ? <NewNoteDialog onClose={() => setCreating(false)} onCreated={(note) => {
       setCreating(false);
+      setListView("notes");
       showSaved(note);
       select({ kind: "note", id: note.id });
       setFocusEditor(true);

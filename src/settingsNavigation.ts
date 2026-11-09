@@ -13,6 +13,7 @@ const sections: Record<SettingsSection, true> = {
   snippets: true,
   signatures: true,
   writingProfile: true,
+  notes: true,
   ai: true,
   research: true,
   replicatedSync: true,

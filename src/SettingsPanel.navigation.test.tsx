@@ -105,7 +105,7 @@ describe("settings section navigation", () => {
     const dialog = await openSettings();
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
-    expect(sectionButtons).toHaveLength(17);
+    expect(sectionButtons).toHaveLength(18);
     for (const button of sectionButtons) {
       const icon = button.querySelector("svg");
       expect(icon).not.toBeNull();
@@ -168,7 +168,7 @@ describe("settings section navigation", () => {
     expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
       "Appearance", "Default Apps",
       "Mail Accounts", "Calendar Accounts",
-      "Reading & Triage", "Split Inboxes", "Muted Senders", "Signatures", "Snippets", "Writing Profile", "Availability",
+      "Reading & Triage", "Split Inboxes", "Muted Senders", "Signatures", "Snippets", "Writing Profile", "Notes", "Availability",
       "AI Provider", "Web Research", "Replicated Sync",
       "Privacy", "Diagnostics", "Data Transfer",
     ]);

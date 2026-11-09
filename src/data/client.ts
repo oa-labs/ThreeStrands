@@ -413,6 +413,14 @@ export interface MailClient extends CorrespondenceClient {
   saveDailyNote(date: string, body: string, expectedUpdatedAt: string | null): Promise<NoteSave>;
   recordNoteVisit(id: string): Promise<void>;
   searchNotes(query: string, limit: number): Promise<NoteSearchHit[]>;
+  /** Notes in Trash, most recently trashed first. */
+  listTrashedNotes(limit: number): Promise<NoteSummary[]>;
+  /** Moves a note to Trash on every device. */
+  trashNote(id: string): Promise<Note>;
+  /** Takes a note out of Trash; refused while another note has its title. */
+  restoreNote(id: string): Promise<Note>;
+  /** Deletes a note in Trash on every device. */
+  deleteNote(id: string): Promise<void>;
   listSnippets(): Promise<Snippet[]>;
   createSnippet(name: string, body: string): Promise<Snippet>;
   updateSnippet(id: string, name: string, body: string): Promise<Snippet>;
@@ -628,6 +636,10 @@ const tauriClient: MailClient = {
   saveDailyNote: (date, body, expectedUpdatedAt) => complete("save_daily_note", { date, body, expectedUpdatedAt }),
   recordNoteVisit: (id) => complete("record_note_visit", { id }),
   searchNotes: (query, limit) => read("search_notes", { query, limit }),
+  listTrashedNotes: (limit) => read("list_trashed_notes", { limit }),
+  trashNote: (id) => complete("trash_note", { id }),
+  restoreNote: (id) => complete("restore_note", { id }),
+  deleteNote: (id) => complete("delete_note", { id }),
   listSnippets: () => read("list_snippets"),
   createSnippet: (name, body) => complete("create_snippet", { request: { name, body } }),
   updateSnippet: (id, name, body) => complete("update_snippet", { request: { id, name, body } }),

@@ -228,7 +228,7 @@ describe("command registry", () => {
       "shift+n": ["calendar.new", "contacts.new", "agents.new", "notes.new"],
       "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
       "mod+enter": ["contacts.save", "draft.send"],
-      "#": ["draft.discard", "thread.trash"],
+      "#": ["notes.trash", "draft.discard", "thread.trash"],
       arrowright: ["tasks.nextColumn", "message.next"],
       arrowleft: ["tasks.previousColumn", "message.previous"],
       "mod+j": ["draft.replyAssist", "chat.open"],
@@ -360,9 +360,10 @@ describe("command registry", () => {
     expect(today.enabled({ ...context, composerActive: true })).toBe(false);
   });
 
-  it("offers New Note only in Notes", () => {
-    const command = commands.find((item) => item.id === "notes.new")!;
-    expect(command.keys).toEqual(["Shift+n"]);
+  it.each([["notes.new", ["Shift+n"]], ["notes.trash", ["#"]]])("offers %s only in Notes, outside text fields", (id, keys) => {
+    const command = commands.find((item) => item.id === id)!;
+    expect(command.keys).toEqual(keys);
+    expect(command.allowInEditable).toBe(false);
     expect(command.enabled({ ...noopContext(), focusedPane: "notes" })).toBe(true);
     expect(command.enabled({ ...noopContext(), focusedPane: "mail" })).toBe(false);
     expect(command.enabled({ ...noopContext(), focusedPane: "notes", composerActive: true })).toBe(false);

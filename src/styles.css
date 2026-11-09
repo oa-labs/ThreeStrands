@@ -3749,9 +3749,37 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .notes-editor-title { margin: 0; font-size: var(--text-pane-title); font-weight: var(--weight-semibold); line-height: var(--leading-tight); }
 input.notes-editor-title { box-sizing: border-box; width: 100%; height: auto; padding: 0; border: 0; background: transparent; color: var(--text); font-family: inherit; }
 input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-xs); }
-.note-editor-body { box-sizing: border-box; flex: 1; width: 100%; min-height: 240px; padding: 0; border: 0; resize: none; background: transparent; color: var(--text); font-family: inherit; font-size: var(--text-reading); line-height: var(--leading-relaxed); }
-.note-editor-body:focus-visible { outline: none; }
-.note-editor-body[readonly], input.notes-editor-title[readonly] { color: var(--muted); }
+.note-editor-body { box-sizing: border-box; flex: 1; display: flex; flex-direction: column; width: 100%; min-height: 240px; color: var(--text); font-family: inherit; font-size: var(--text-reading); line-height: var(--leading-relaxed); }
+/* The editor library reads its colors and fonts from these; its own sheet sits in a lower cascade layer. */
+.note-editor-surface {
+  --meowdown-text: var(--text); --meowdown-heading: var(--text); --meowdown-muted: var(--muted); --meowdown-placeholder: var(--muted);
+  --meowdown-accent: var(--accent); --meowdown-caret: var(--accent); --meowdown-border: var(--border); --meowdown-hr: var(--border);
+  --meowdown-code-bg: var(--code); --meowdown-font-mono: var(--font-mono); --meowdown-blockquote-border: var(--border-strong);
+  --meowdown-table-border: var(--border); --meowdown-table-header-bg: var(--surface); --meowdown-popover-bg: var(--surface); --meowdown-popover-hover-bg: var(--hover);
+  --meowdown-selection: color-mix(in srgb, var(--accent) 25%, transparent); --meowdown-danger: var(--error);
+  flex: 1; min-height: 0;
+}
+.note-editor-surface .ProseMirror { min-height: 100%; outline: none; }
+.note-editor-surface .ProseMirror[contenteditable="false"], input.notes-editor-title[readonly] { color: var(--muted); }
+.notes-editor-heading { display: flex; align-items: center; gap: var(--space-2); }
+.notes-editor-heading .notes-editor-title { flex: 1; min-width: 0; }
+.notes-list-heading { margin: 0 0 var(--space-2); padding-inline: var(--list-row-inset); }
+.notes-list-conflict { flex: none; display: inline-flex; color: var(--warning); }
+.notes-list-footer { margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--border); }
+.notes-trash-count { margin-left: var(--space-1); color: var(--muted); font-variant-numeric: tabular-nums; }
+.notes-trashed, .notes-conflict { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.notes-conflict { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
+.notes-trashed p, .notes-conflict p { margin: 0; font-size: var(--text-secondary); line-height: var(--leading-normal); }
+.notes-conflict-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.notes-conflict-pick { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-secondary); }
+.notes-conflict-compare { display: grid; gap: var(--space-2); }
+.notes-diff { max-height: 320px; margin: 0; padding: var(--space-2) 0; overflow: auto; list-style: none; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--background); font-family: var(--font-mono); font-size: var(--text-meta); line-height: var(--leading-normal); }
+.notes-diff li { padding-inline: var(--space-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.notes-diff-mark { display: inline-block; width: 2ch; color: var(--muted); }
+.notes-diff-removed { background: color-mix(in srgb, var(--error) 12%, transparent); }
+.notes-diff-added { background: color-mix(in srgb, var(--success) 12%, transparent); }
+.sync-note-conflict { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; }
+.sync-note-conflict p { margin: 0; }
 .notes-save-status { margin: 0; min-height: calc(var(--text-meta) * var(--leading-normal)); color: var(--muted); font-size: var(--text-meta); }
 .notes-stale { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--warning); border-radius: var(--radius-md); background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
 .notes-stale p { margin: 0; font-size: var(--text-secondary); line-height: var(--leading-normal); }

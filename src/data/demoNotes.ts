@@ -1,7 +1,7 @@
 import type { Note, NoteSave, NoteSearchHit, NoteSummary } from "../domain";
 import type { MailClient } from "./client";
 
-type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes">;
+type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const PREVIEW_CHARS = 140;
@@ -39,13 +39,44 @@ export function createDemoNotes(): DemoNotes {
     notes.set(next.id, next);
     return next;
   };
+  const summary = (note: Note): NoteSummary => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, preview: preview(note.body), updatedAt: note.updatedAt, visitedAt: visits.get(note.id) ?? null, trashedAt: note.trashedAt });
+  const existing = (id: string) => {
+    const note = notes.get(id);
+    if (!note) throw new Error("Note not found");
+    return note;
+  };
+  const setTrashed = (id: string, trashed: boolean): Note => {
+    const note = existing(id);
+    if (note.trashed === trashed) return structuredClone(note);
+    if (!trashed && !note.dailyDate && titleTaken(note.title, id)) throw new Error(`A note named “${note.title}” already exists. Rename that note, then restore this one.`);
+    const next = { ...note, trashed, trashedAt: trashed ? now() : null };
+    notes.set(id, next);
+    return structuredClone(next);
+  };
   return {
     async listRecentNotes(limit) {
       const recent = (note: Note) => [visits.get(note.id) ?? "", note.updatedAt].sort().at(-1)!;
       return [...notes.values()].filter((note) => !note.trashed)
         .sort((a, b) => recent(b).localeCompare(recent(a)) || a.id.localeCompare(b.id))
         .slice(0, limit)
-        .map((note): NoteSummary => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, preview: preview(note.body), updatedAt: note.updatedAt, visitedAt: visits.get(note.id) ?? null, trashedAt: note.trashedAt }));
+        .map(summary);
+    },
+    async listTrashedNotes(limit) {
+      return [...notes.values()].filter((note) => note.trashed)
+        .sort((a, b) => (b.trashedAt ?? "").localeCompare(a.trashedAt ?? "") || a.id.localeCompare(b.id))
+        .slice(0, limit)
+        .map(summary);
+    },
+    async trashNote(id) {
+      return setTrashed(id, true);
+    },
+    async restoreNote(id) {
+      return setTrashed(id, false);
+    },
+    async deleteNote(id) {
+      if (!existing(id).trashed) throw new Error("Move this note to Trash before deleting it");
+      notes.delete(id);
+      visits.delete(id);
     },
     async getNote(id) {
       return structuredClone(notes.get(id) ?? null);

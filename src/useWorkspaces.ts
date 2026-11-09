@@ -14,7 +14,8 @@ import { NARROW_LAYOUT_QUERY, useMediaQuery } from "./useMediaQuery";
 
 export type RightWorkspace = "contacts" | "tasks" | "notes" | "week" | "files" | "today" | "agents" | null;
 /** A request for the Notes workspace to carry out once it is open; `id` tells repeats apart. */
-export type NotesRequest = { kind: "today"; id: number };
+/** What the Notes view should open; `id` tells repeated requests apart. */
+export type NotesRequest = { kind: "today"; id: number } | { kind: "note"; noteId: string; id: number };
 // Keep-in-touch reminders fall due as time passes and as mail arrives,
 // without any local edit, so the Contacts badge is re-read on this cadence.
 const KEEP_IN_TOUCH_REFRESH_MS = 5 * 60_000;
@@ -142,6 +143,10 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     setNotesRequest((current) => ({ kind: "today", id: (current?.id ?? 0) + 1 }));
     setRightWorkspace("notes");
   }, []);
+  const openNote = useCallback((noteId: string) => {
+    setNotesRequest((current) => ({ kind: "note", noteId, id: (current?.id ?? 0) + 1 }));
+    setRightWorkspace("notes");
+  }, []);
   const openTodayView = useCallback(() => setRightWorkspace("today"), []);
 
   const openTasksView = useCallback(() => {
@@ -188,7 +193,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     calendarConnected, calendarSidebarStart, openCalendarAt, toggleSchedule, openTasks,
     sideColumn, setSideColumn, scheduleShown, showMailContext, openTasksView,
     narrowLayout, sideDrawerOpen, setSideDrawerOpen: setDrawerRequested,
-    openAgentsView, openFilesView, openNotesView, openTodaysNote, notesRequest, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
+    openAgentsView, openFilesView, openNotesView, openTodaysNote, openNote, notesRequest, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
     contextPersonEmail, openCalendarView, canReturnFromCalendar, returnFromCalendar,
   };
 }

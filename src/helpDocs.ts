@@ -16,6 +16,7 @@ export const SETTINGS_HELP: Record<SettingsSection, { slug: string; section?: st
   snippets: { slug: "compose", section: "snippets" },
   signatures: { slug: "compose", section: "signatures" },
   writingProfile: { slug: "ai", section: "features" },
+  notes: { slug: "notes", section: "markdown-syntax" },
   ai: { slug: "ai" },
   research: { slug: "ai", section: "web-research" },
   privacy: { slug: "privacy" },

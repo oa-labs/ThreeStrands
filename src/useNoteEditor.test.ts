@@ -182,4 +182,23 @@ describe("useNoteEditor", () => {
     await act(async () => { await result.current.refresh(); });
     expect(result.current.text.body).toBe("typing");
   });
+  it("picks up a change that keeps the save time, such as a trip to Trash", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Trashed"), "v1");
+    const { result } = open({ kind: "note", id: note.id });
+    await settle();
+    await mailClient.trashNote(note.id);
+    expect((await mailClient.getNote(note.id))?.updatedAt).toBe(note.updatedAt);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.note?.trashed).toBe(true);
+  });
+
+  it("says whether typing is still waiting after a save attempt", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Pending"), "v1");
+    const { result } = open({ kind: "note", id: note.id });
+    await settle();
+    act(() => result.current.edit({ body: "v2" }));
+    expect(result.current.unsaved()).toBe(true);
+    await act(async () => { await result.current.flush(); });
+    expect(result.current.unsaved()).toBe(false);
+  });
 });

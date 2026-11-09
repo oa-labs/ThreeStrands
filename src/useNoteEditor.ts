@@ -25,6 +25,8 @@ export type NoteSaveState =
   | { kind: "stale"; current: Note | null };
 
 const sameText = (a: NoteText, b: NoteText) => a.title === b.title && a.body === b.body;
+// A resolved conflict or a trip through Trash can change a note without a newer save time.
+const sameNote = (a: Note | null, b: Note | null) => a === b || (a !== null && b !== null && a.updatedAt === b.updatedAt && a.title === b.title && a.body === b.body && a.trashed === b.trashed);
 
 /**
  * Loads a note into the editor and saves edits: after typing pauses, on
@@ -168,13 +170,16 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }
     timerRef.current = window.setTimeout(() => void save(), NOTE_SAVE_DELAY_MS);
   }, [save]);
 
+  /** Whether typing is still waiting to be saved, as of now. */
+  const unsaved = useCallback(() => dirtyRef.current, []);
+
   /** Re-reads the note after a sync, unless this device has typing waiting. */
   const refresh = useCallback(async () => {
     const current = targetRef.current;
     if (!current || dirtyRef.current) return;
     const key = noteTargetKey(current);
     const loaded = current.kind === "daily" ? await mailClient.getDailyNote(current.date) : await mailClient.getNote(current.id);
-    if (keyRef.current !== key || dirtyRef.current || loaded?.updatedAt === noteRef.current?.updatedAt) return;
+    if (keyRef.current !== key || dirtyRef.current || sameNote(loaded, noteRef.current)) return;
     showNote(loaded);
     showText({ title: loaded?.title ?? "", body: loaded?.body ?? "" });
     setMissing(current.kind === "note" && !loaded);
@@ -219,5 +224,5 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced }
     setSaveState({ kind: "idle" });
   }, [saveState]);
 
-  return { note, text, dirty, loading, missing, loadError, saveState, edit, flush: save, refresh, keepMine, takeTheirs };
+  return { note, text, dirty, loading, missing, loadError, saveState, edit, flush: save, unsaved, refresh, keepMine, takeTheirs };
 }

@@ -34,4 +34,23 @@ describe("demo notes", () => {
     expect((await notes.searchNotes("beta", 10)).map((hit) => hit.title)).toEqual(["Second"]);
     expect(await notes.searchNotes("  ", 10)).toEqual([]);
   });
+  it("moves notes through Trash by the native rules", async () => {
+    const notes = createDemoNotes();
+    const plan = await notes.createNote("Plan", "old");
+    await expect(notes.deleteNote(plan.id)).rejects.toThrow("Move this note to Trash");
+    await notes.trashNote(plan.id);
+    expect((await notes.listRecentNotes(10)).map((note) => note.id)).not.toContain(plan.id);
+    expect((await notes.listTrashedNotes(10)).map((note) => note.id)).toEqual([plan.id]);
+    await expect(notes.updateNote(plan.id, "Plan", "edit", (await notes.getNote(plan.id))!.updatedAt)).rejects.toThrow("Restore this note");
+
+    const replacement = await notes.createNote("plan", "new");
+    await expect(notes.restoreNote(plan.id)).rejects.toThrow("Rename that note");
+    await notes.updateNote(replacement.id, "New plan", "new", replacement.updatedAt);
+    expect((await notes.restoreNote(plan.id)).trashed).toBe(false);
+
+    await notes.trashNote(plan.id);
+    await notes.deleteNote(plan.id);
+    expect(await notes.getNote(plan.id)).toBeNull();
+    expect(await notes.listTrashedNotes(10)).toEqual([]);
+  });
 });

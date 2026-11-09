@@ -295,6 +295,15 @@ fn set_trashed(tx: &Transaction<'_>, id: &str, trashed: bool) -> DbResult<Note> 
     if note.trashed == trashed {
         return Ok(note);
     }
+    if !trashed && note.daily_date.is_none() {
+        // Another note may have taken the title while this one was in Trash.
+        check_title_free(tx, id, &note.title).map_err(|_| {
+            DatabaseError::invalid(format!(
+                "A note named \u{201c}{}\u{201d} already exists. Rename that note, then restore this one.",
+                note.title
+            ))
+        })?;
+    }
     note.trashed = trashed;
     note.trashed_at = trashed.then(|| Utc::now().to_rfc3339());
     let bytes = payload_bytes(&sync_payload(&note))?;

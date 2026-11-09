@@ -13,6 +13,7 @@ import {
   Inbox,
   Mail,
   Network,
+  NotebookPen,
   Palette,
   Search,
   ShieldCheck,
@@ -34,6 +35,7 @@ import { ICON_SIZE } from "./iconSizes";
 import { DiagnosticsSettings } from "./DiagnosticsSettings";
 import { AppearanceSettings, StartupSettings } from "./AppearanceSettings";
 import { ReadingSettings } from "./ReadingSettings";
+import { NotesSettings } from "./NotesSettings";
 import { AccountsSettings } from "./AccountsSettings";
 import { AvailabilitySettings } from "./AvailabilitySettings";
 import { CalendarAccountsSettings } from "./CalendarAccountsSettings";
@@ -84,6 +86,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "signatures", label: "Signatures", group: "Workflow", description: "Create signatures and choose defaults for each sending address.", keywords: "signature sign-off logo alias footer compose", icon: Signature },
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
   { id: "writingProfile", label: "Writing Profile", group: "Workflow", description: "Tell Draft Review who you are and how to review your email, for each account.", keywords: "about you review instructions draft review feedback ai sales tone role company", icon: UserPen, autosaves: true },
+  { id: "notes", label: "Notes", group: "Workflow", description: "Choose how the note editor shows Markdown.", keywords: "notes markdown syntax editor formatting hide hybrid show wysiwyg", icon: NotebookPen, autosaves: true },
   { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock, autosaves: true },
   { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
   { id: "research", label: "Web Research", group: "Integrations", description: "Let delegated tasks in Agents research the web with Anthropic and Exa.", keywords: "agents delegated research anthropic claude exa search api key connections limits cost", icon: Globe },
@@ -110,6 +113,7 @@ export function Settings({
   syncDiagnostics,
   onAiConfigChange,
   onSettingsImported,
+  onOpenNote,
 }: {
   section: SettingsSection;
   onSectionChange(section: SettingsSection): void;
@@ -127,6 +131,8 @@ export function Settings({
   syncDiagnostics?: SyncDiagnosticsActions;
   onAiConfigChange(): void;
   onSettingsImported(result: SettingsImportResult): Promise<void>;
+  /** Closes Settings and opens a note in Notes. */
+  onOpenNote?(noteId: string): void;
 }) {
   const [signatureAccount, setSignatureAccount] = useState<string | undefined>(undefined);
   const [settingsQuery, setSettingsQuery] = useState("");
@@ -243,7 +249,7 @@ export function Settings({
             </div>
           ) : (
             <>
-          {section === "replicatedSync" ? <ReplicatedSyncSettings /> : null}
+          {section === "replicatedSync" ? <ReplicatedSyncSettings onOpenNote={onOpenNote} /> : null}
           {section === "appearance" ? (
             <AppearanceSettings
               theme={preferences.theme}
@@ -361,6 +367,7 @@ export function Settings({
               onDelete={snippets.remove}
             />
           ) : null}
+          {section === "notes" ? <NotesSettings /> : null}
           {section === "ai" ? <AiProviderSettings onChange={() => { onAiConfigChange(); queuePortablePreferences(); }} /> : null}
           {section === "research" ? <WebResearchSettings /> : null}
           {section === "privacy" ? (

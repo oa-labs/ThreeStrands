@@ -25,6 +25,8 @@
     "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {
+    "@meowdown/core": "0.81.3",
+    "@meowdown/react": "0.81.2",
     "@tauri-apps/api": "^2.12.1",
     "@tauri-apps/plugin-log": "2.10.0",
     "@tauri-apps/plugin-opener": "^2.7.0",

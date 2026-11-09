@@ -322,7 +322,7 @@ export function App() {
     keepInTouchDueCount, refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openContactsView, contactCardActions,
     scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen,
-    contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView, notesRequest,
+    contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView, notesRequest, openNote,
   } = workspaces;
   const agents = useAgentTasks();
   const openAgent = (id: string) => { agents.select(id); setRightWorkspace("agents"); };
@@ -1868,6 +1868,7 @@ export function App() {
             syncDiagnostics={syncDiagnostics}
             onAiConfigChange={refreshAiAvailability}
             onSettingsImported={async (result) => { await applyImportedSettings(result); await signatureLibrary.refresh(); }}
+            onOpenNote={(noteId) => { setSettingsOpen(false); openNote(noteId); }}
           />
         </Suspense>
         </ErrorBoundary>

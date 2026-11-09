@@ -5,6 +5,7 @@ vi.mock("./replicatedSync");
 
 import * as sync from "./replicatedSync";
 import { pendingRecoveryPhrase } from "./RecoveryPhraseDialog";
+import { mailClient } from "./data/client";
 import { currentSetupStep, describeTransportHealth, recoveryPhraseFeedback, ReplicatedSyncSettings, syncOverview } from "./ReplicatedSyncSettings";
 
 const folder: sync.ReplicatedSyncTransportStatus = {
@@ -58,6 +59,30 @@ describe("replicated sync conflicts", () => {
     const heading = await screen.findByRole("heading", { name: "Resolve Conflicts" });
     expect(heading.parentElement).toHaveClass("sync-conflicts");
     expect(within(heading.parentElement!).getAllByRole("radio")).toHaveLength(2);
+  });
+
+  it("sends a note's conflicts to the note instead of listing its text", async () => {
+    setUp({ status: { state: "enrolled", deviceCount: 2 } });
+    const note = await mailClient.createNote("Conflict sample", "long text");
+    const candidates = [
+      { operationId: "a:1", deviceId: "a", value: "long text" },
+      { operationId: "b:1", deviceId: "b", value: "other long text" },
+    ];
+    vi.mocked(sync.replicatedSyncConflicts).mockResolvedValue([
+      { entityType: "note", entityId: note.id, field: "body", candidates },
+      { entityType: "note", entityId: note.id, field: "title", candidates: [{ ...candidates[0]!, value: "Conflict sample" }, { ...candidates[1]!, value: "Renamed" }] },
+    ]);
+    const onOpenNote = vi.fn();
+    render(<ReplicatedSyncSettings onOpenNote={onOpenNote} />);
+
+    const section = (await screen.findByRole("heading", { name: "Resolve Conflicts" })).parentElement!;
+    expect(await within(section).findByText("Conflict sample")).toBeInTheDocument();
+    expect(within(section).queryByRole("radio")).not.toBeInTheDocument();
+    expect(within(section).queryByText(/other long text/)).not.toBeInTheDocument();
+    const open = within(section).getAllByRole("button", { name: "Open Note" });
+    expect(open).toHaveLength(1);
+    fireEvent.click(open[0]!);
+    expect(onOpenNote).toHaveBeenCalledWith(note.id);
   });
 });
 
