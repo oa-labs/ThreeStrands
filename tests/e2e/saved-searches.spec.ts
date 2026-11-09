@@ -45,7 +45,10 @@ test("shows five deliberate recent searches and keeps Close near the input's rig
   }
   await input.fill("unfinished");
   await page.getByRole("button", { name: "Saved searches", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await expect(settings).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(settings).not.toBeVisible();
   await input.fill("");
   await expect(page.getByRole("heading", { name: "Recent searches" })).toBeVisible();
   const recent = page.getByRole("listbox", { name: "Recent searches" });

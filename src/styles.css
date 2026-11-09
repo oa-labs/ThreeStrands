@@ -2502,10 +2502,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .draft-review-profile h4 { margin:0; }
 .draft-review-profile p { white-space:pre-wrap; }
 /* Find Times and Get Brief share one row as buttons; a section with something to show opens below them. */
-.context-ai-row { display:flex; flex-wrap:wrap; align-items:center; row-gap:var(--space-2); padding:var(--space-3) 0; border-bottom:1px solid var(--border); }
+.context-ai-row { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2) var(--space-1); padding:var(--space-3) 0; border-bottom:1px solid var(--border); }
 .context-ai-row:empty { display:none; }
 .context-ai-row > .context-ai-launcher { flex:0 0 auto; padding-left:var(--context-row-inset); }
-.context-ai-row > .context-ai-launcher + .context-ai-launcher { padding-left:var(--space-2); }
+.context-ai-launcher .btn > svg { flex-shrink:0; }
 .context-ai-row > .context-section { order:1; flex:1 1 100%; min-width:0; padding-block:0; border-bottom:0; }
 .context-ai-row > .context-section + .context-section { padding-top:var(--space-3); border-top:1px solid var(--border); }
 .compose-recipient-role { margin:0; color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); overflow-wrap:anywhere; }
