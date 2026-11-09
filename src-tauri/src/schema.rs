@@ -46,6 +46,7 @@ const MIGRATIONS: &[Migration] = &[
     (99, to_v99),
     (100, to_v100),
     (101, to_v101),
+    (102, to_v102),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1322,6 +1323,27 @@ fn to_v101(tx: &rusqlite::Transaction) -> Result<(), String> {
         );",
     )
     .map_err(error)?;
+    Ok(())
+}
+
+fn to_v102(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // A star on a note's file in Files. Device-local like mail file stars;
+    // a synced update of the attachment leaves it alone.
+    // Checked first: upgrade tests rerun the steps above an older stamped
+    // version on a database that already has every table.
+    let present: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('note_attachments') WHERE name='starred')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
+    if !present {
+        tx.execute_batch(
+            "ALTER TABLE note_attachments ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;",
+        )
+        .map_err(error)?;
+    }
     Ok(())
 }
 

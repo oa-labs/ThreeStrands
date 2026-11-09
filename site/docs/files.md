@@ -1,13 +1,13 @@
 ---
 title: Find an Attachment
 nav: Files
-summary: Browse attachments from synced mail, filter by source, and return to the original conversation.
+summary: Browse attachments from synced mail and files in your notes, filter by source, and return to the original conversation or note.
 reviewed: 0.179.0
 ---
 
 ## Open Files {#open-files}
 
-Click **Files** in the sidebar or press <kbd>6</kbd>. Files lists attachments from mail on this device, including archived conversations. It is not a separate cloud drive or a complete index of every file on your mail server.
+Click **Files** in the sidebar or press <kbd>6</kbd>. Files lists attachments from mail on this device, including archived conversations, and the pictures and files in your [notes](notes.html#write). It is not a separate cloud drive or a complete index of every file on your mail server.
 
 <ts-shot scene="files" alt="Files lists attachments with filters, a preview, and a link to the source conversation."></ts-shot>
 
@@ -17,6 +17,8 @@ Click **Files** in the sidebar or press <kbd>6</kbd>. Files lists attachments fr
 2. Narrow the list by sender, file type, direction, account, or date.
 3. Select a result to see its details and source conversation.
 4. Open or save the file, or follow the source conversation to read its context.
+
+A file from a note shows the note's name where a mail attachment shows its sender, and **Source note** opens the note. Notes' files appear while Files shows all accounts; choosing one account, a sender, a direction, or the Calendar type shows mail only. Search finds a note's files by the note's title too. A file another device added to a note shows that it's still on its way until sync brings it.
 
 If a file is missing, [search for the email](search.html) first. Older mail may need an online server search before its attachments appear locally. **Mark Spam** removes that email's files from Files, and **Undo** restores them.
 

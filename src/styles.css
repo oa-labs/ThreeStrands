@@ -3688,6 +3688,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .file-list-filename { flex-shrink: 1; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-meta); }
 .file-list-name strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-body); font-weight: var(--weight-medium); }
 .file-list-sender, .file-list-date, .file-list-size { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-meta); }
+.file-list-note { display: flex; align-items: center; gap: var(--space-1); }
+.file-list-note svg { flex: none; }
 .file-list-account { display: block; overflow: hidden; text-overflow: ellipsis; font-size: var(--text-meta); }
 .file-list-date, .file-list-size { text-align: right; font-variant-numeric: tabular-nums; }
 .files-workspace .workspace-context-rail { font-size: var(--text-body); line-height: var(--leading-normal); }

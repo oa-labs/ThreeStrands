@@ -305,7 +305,7 @@ const scenes: Scene[] = [
       await page.keyboard.press("5");
       const files = page.getByRole("region", { name: "Files", exact: true });
       await expect(files).toBeVisible();
-      const attachments = files.getByRole("list", { name: "Mail attachments" });
+      const attachments = files.getByRole("list", { name: "File list" });
       const plan = attachments.getByRole("listitem").filter({ hasText: "regional-rollout.png" });
       await expect(plan).toBeVisible();
       await expect(attachments.getByText("onboarding-v3-flows.png", { exact: true })).toBeVisible();

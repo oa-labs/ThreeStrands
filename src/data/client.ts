@@ -438,6 +438,12 @@ export interface MailClient extends CorrespondenceClient {
   noteAttachmentImage(id: string): Promise<string | null>;
   /** Opens an attached file in its default app. */
   openNoteAttachment(id: string): Promise<void>;
+  /** Saves a copy of an attached file where the user chooses. */
+  saveNoteAttachment(id: string): Promise<void>;
+  /** A picture of an attached file for Files, like `filePreview`. */
+  noteAttachmentPreview(id: string): Promise<string | null>;
+  /** Stars a note's file in Files, on this device. */
+  setNoteAttachmentStar(id: string, starred: boolean): Promise<void>;
   /** Moves a note to Trash on every device. */
   trashNote(id: string): Promise<Note>;
   /** Takes a note out of Trash; refused while another note has its title. */
@@ -673,6 +679,9 @@ const tauriClient: MailClient = {
   noteAttachment: (id) => read("note_attachment", { id }),
   noteAttachmentImage: (id) => read("note_attachment_image", { id }),
   openNoteAttachment: (id) => complete("note_attachment_open", { id }),
+  saveNoteAttachment: (id) => complete("note_attachment_save", { id }),
+  noteAttachmentPreview: (id) => complete("note_attachment_preview", { id }),
+  setNoteAttachmentStar: (id, starred) => complete("set_note_attachment_star", { id, starred }),
   trashNote: (id) => complete("trash_note", { id }),
   restoreNote: (id) => complete("restore_note", { id }),
   deleteNote: (id) => complete("delete_note", { id }),

@@ -22,6 +22,8 @@ function remember(key: string, preview: string | null) {
 export function wantsFilePreview(file: WorkspaceFile, online: boolean): boolean {
   if (attachmentRisk(file.attachment.filename, file.attachment.mimeType)) return false;
   if (!(file.attachment.size > 0) || file.attachment.size > FILE_PREVIEW_LIMITS.maxSourceBytes) return false;
+  // A note's file is on this device or not at all; being online doesn't fetch it.
+  if (file.note) return file.availability === "offline";
   return online || file.availability === "offline";
 }
 
@@ -33,20 +35,21 @@ export function wantsFilePreview(file: WorkspaceFile, online: boolean): boolean 
  * the file like the Open button, which stays the accessible way to do so.
  */
 export function FilePreview({ file, online, onOpen }: { file: WorkspaceFile; online: boolean; onOpen(): void }) {
-  const key = JSON.stringify([file.messageId, file.attachment.id]);
+  const key = JSON.stringify([file.note ? "note" : file.messageId, file.attachment.id]);
   const wanted = wantsFilePreview(file, online);
   const [preview, setPreview] = useState<{ key: string; src: string | null } | null>(null);
   useEffect(() => {
     if (!wanted) return;
     if (cache.has(key)) { setPreview({ key, src: cache.get(key) ?? null }); return; }
     let active = true;
-    void mailClient.filePreview(file.messageId, file.attachment.id).then((value) => {
+    const read = file.note ? mailClient.noteAttachmentPreview(file.attachment.id) : mailClient.filePreview(file.messageId, file.attachment.id);
+    void read.then((value) => {
       const src = typeof value === "string" && value.startsWith(PNG_DATA_URI) ? value : null;
       remember(key, src);
       if (active) setPreview({ key, src });
     }).catch(() => undefined);
     return () => { active = false; };
-  }, [file.attachment.id, file.messageId, key, wanted]);
+  }, [file.attachment.id, file.messageId, file.note, key, wanted]);
   const src = wanted && preview?.key === key ? preview.src : null;
   if (!src) return null;
   return <div className="file-detail-preview" aria-hidden="true" onClick={onOpen}>

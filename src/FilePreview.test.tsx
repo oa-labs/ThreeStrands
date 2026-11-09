@@ -41,6 +41,17 @@ describe("FilePreview", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("reads a note's file from this device only, keyed apart from mail", async () => {
+    const noted: WorkspaceFile = { ...slides, accountId: "", messageId: "", threadId: "", availability: "offline", note: { id: "n-1", title: "Plan", dailyDate: null } };
+    const mail = vi.spyOn(mailClient, "filePreview").mockResolvedValue(null);
+    const note = vi.spyOn(mailClient, "noteAttachmentPreview").mockResolvedValue(PNG);
+    const { container } = render(<FilePreview file={noted} online={false} onOpen={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector("img")).toHaveAttribute("src", PNG));
+    expect(note).toHaveBeenCalledWith("slides");
+    expect(mail).not.toHaveBeenCalled();
+    expect(wantsFilePreview({ ...noted, availability: "syncing" }, true)).toBe(false);
+  });
+
   it("never asks for a preview of a risky file", () => {
     const preview = vi.spyOn(mailClient, "filePreview").mockResolvedValue(PNG);
     for (const filename of ["invoice.pdf.exe", "Secure Message.html", "Budget.xlsm"]) {

@@ -3,11 +3,13 @@
 use super::{messages::resolve_body, Database, DatabaseError, DbResult};
 use crate::mime::RawMessage;
 use crate::models::{
-    ContextQuery, FilePage, FileQuery, MessageAttachment, WorkspaceConversation, WorkspaceFile,
+    ContextQuery, FilePage, FileQuery, MessageAttachment, NoteFileSource, WorkspaceConversation,
+    WorkspaceFile,
 };
 use crate::search_query::like_contains_pattern;
 use rusqlite::{functions::FunctionFlags, params, types::Value, Connection, OptionalExtension};
 use std::collections::{BTreeSet, HashMap};
+use threestrands_sync_protocol::DAILY_NOTE_ID_PREFIX;
 
 const MAX_FILE_PAGE: usize = 100;
 /// Calendar invitations, matched the same way as the Files "calendar" type.
@@ -33,12 +35,75 @@ fn folded_pattern(value: &str) -> String {
     like_contains_pattern(&value.to_lowercase())
 }
 
+/// A note's title as Files shows it; today's note before it is first saved
+/// has no row yet, and is named by its date.
+const NOTE_TITLE: &str = "COALESCE(n.title, substr(a.note_id, 7))";
+
+/// The SQL condition for a Files type, over `a.mime_type` and `a.filename`.
+fn type_condition(kind: &str) -> DbResult<&'static str> {
+    Ok(match kind {
+        "image" => "a.mime_type LIKE 'image/%'",
+        "audio" => "a.mime_type LIKE 'audio/%'",
+        "video" => "a.mime_type LIKE 'video/%'",
+        "calendar" => CALENDAR,
+        "spreadsheet" => "a.mime_type LIKE '%spreadsheet%' OR a.mime_type LIKE '%excel%' OR lower(a.filename) GLOB '*.xls*' OR lower(a.filename) LIKE '%.csv' OR lower(a.filename) LIKE '%.ods'",
+        "presentation" => "a.mime_type LIKE '%presentation%' OR a.mime_type LIKE '%powerpoint%' OR lower(a.filename) GLOB '*.ppt*' OR lower(a.filename) LIKE '%.odp'",
+        "document" => "a.mime_type='application/pdf' OR a.mime_type LIKE '%word%' OR a.mime_type='text/plain' OR lower(a.filename) LIKE '%.odt' OR lower(a.filename) LIKE '%.rtf'",
+        "archive" => "a.mime_type LIKE '%zip%' OR a.mime_type LIKE '%compressed%' OR lower(a.filename) LIKE '%.tar' OR lower(a.filename) LIKE '%.gz'",
+        _ => return Err(DatabaseError::invalid("Invalid file type")),
+    })
+}
+
+/// Whether a query lists notes' files: asked for, and not narrowed by
+/// anything only mail has (a conversation, sender, direction, the
+/// calendar type, or a message to put first).
+fn notes_included(query: &FileQuery) -> bool {
+    query.include_notes == Some(true)
+        && query.thread_id.is_none()
+        && query.thread_ids.is_none()
+        && query.priority_message_id.is_none()
+        && query.sender.as_deref().unwrap_or_default().is_empty()
+        && query.direction.is_none()
+        && query.r#type.as_deref() != Some("calendar")
+}
+
+/// When a file was sent or added, for ordering mail and note files
+/// together; unreadable times sort last.
+fn instant(value: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(value).map_or(i64::MIN, |time| time.timestamp_millis())
+}
+
 impl Database {
+    /// Files for Files and the context rail: mail attachments, and with
+    /// `include_notes` the files attached to notes outside Trash, newest
+    /// first together.
     pub fn list_files(&self, query: &FileQuery) -> DbResult<FilePage> {
         let limit = query.limit.unwrap_or(50);
         if limit == 0 || limit > MAX_FILE_PAGE || query.account_ids.len() > 100 {
             return Err(DatabaseError::invalid("Invalid file query limits"));
         }
+        let offset = query.offset.unwrap_or(0);
+        if !notes_included(query) {
+            let mut page = self.mail_files(query, offset, limit)?;
+            self.fill_mail_availability(&mut page.files)?;
+            return Ok(page);
+        }
+        // Both lists are read up to the end of this page and merged; the
+        // page is the window of the merged order.
+        let window = offset.saturating_add(limit);
+        let mut page = self.mail_files(query, 0, window)?;
+        let (note_total, notes) = self.note_files(query, window)?;
+        page.files.extend(notes);
+        // Stable, so files added at the same instant keep their own order.
+        page.files
+            .sort_by_key(|file| std::cmp::Reverse(instant(&file.sent_at)));
+        page.files = page.files.into_iter().skip(offset).take(limit).collect();
+        page.total += note_total;
+        self.fill_mail_availability(&mut page.files)?;
+        Ok(page)
+    }
+
+    fn mail_files(&self, query: &FileQuery, offset: usize, limit: usize) -> DbResult<FilePage> {
         if query.account_ids.is_empty() {
             return Ok(FilePage {
                 files: vec![],
@@ -112,18 +177,7 @@ impl Database {
             filters.push("s.message_id IS NOT NULL".into());
         }
         if let Some(kind) = query.r#type.as_ref().filter(|kind| !kind.is_empty()) {
-            let condition = match kind.as_str() {
-                "image" => "a.mime_type LIKE 'image/%'",
-                "audio" => "a.mime_type LIKE 'audio/%'",
-                "video" => "a.mime_type LIKE 'video/%'",
-                "calendar" => CALENDAR,
-                "spreadsheet" => "a.mime_type LIKE '%spreadsheet%' OR a.mime_type LIKE '%excel%' OR lower(a.filename) GLOB '*.xls*' OR lower(a.filename) LIKE '%.csv' OR lower(a.filename) LIKE '%.ods'",
-                "presentation" => "a.mime_type LIKE '%presentation%' OR a.mime_type LIKE '%powerpoint%' OR lower(a.filename) GLOB '*.ppt*' OR lower(a.filename) LIKE '%.odp'",
-                "document" => "a.mime_type='application/pdf' OR a.mime_type LIKE '%word%' OR a.mime_type='text/plain' OR lower(a.filename) LIKE '%.odt' OR lower(a.filename) LIKE '%.rtf'",
-                "archive" => "a.mime_type LIKE '%zip%' OR a.mime_type LIKE '%compressed%' OR lower(a.filename) LIKE '%.tar' OR lower(a.filename) LIKE '%.gz'",
-                _ => return Err(DatabaseError::invalid("Invalid file type")),
-            };
-            filters.push(format!("({condition})"));
+            filters.push(format!("({})", type_condition(kind)?));
         }
         let joins = "FROM file_attachments a JOIN messages m ON m.id=a.message_id JOIN threads t ON t.id=m.thread_id LEFT JOIN file_stars s ON s.message_id=a.message_id AND s.attachment_id=a.attachment_id";
         let matched = filters.join(" AND ");
@@ -133,31 +187,54 @@ impl Database {
         } else {
             format!("{joins} WHERE {matched}")
         };
-        let (mut page, payloads) = self.with_connection(|connection| {
+        self.with_connection(|connection| {
             let total = connection.query_row(&format!("SELECT COUNT(*) {from}"), rusqlite::params_from_iter(&values), |row| row.get::<_,i64>(0))? as usize;
             let hidden_calendar = if exclude_calendar { connection.query_row(&format!("SELECT COUNT(*) {joins} WHERE {matched} AND {CALENDAR}"), rusqlite::params_from_iter(&values), |row| row.get::<_,i64>(0))? as usize } else { 0 };
             let priority = if let Some(id)=&query.priority_message_id { values.push(Value::Text(id.clone())); "CASE WHEN m.id=? THEN 0 ELSE 1 END," } else { "" };
             let importance = if query.prioritize_starred==Some(true) { "s.message_id IS NULL," } else { "" };
             let sql = format!("SELECT t.account_id,m.id,t.id,t.subject,m.sent_at,m.sender,({DIRECTION}),a.attachment_id,a.filename,a.mime_type,a.size,s.message_id IS NOT NULL {from} ORDER BY {priority}{importance}m.sent_at DESC,m.id,a.attachment_id LIMIT ? OFFSET ?");
-            values.push(Value::Integer(limit as i64)); values.push(Value::Integer(query.offset.unwrap_or(0).min(i64::MAX as usize) as i64));
+            values.push(Value::Integer(limit.min(i64::MAX as usize) as i64)); values.push(Value::Integer(offset.min(i64::MAX as usize) as i64));
             let mut statement = connection.prepare(&sql)?;
             let files = statement.query_map(rusqlite::params_from_iter(&values), |row| Ok(WorkspaceFile {
                 account_id: row.get(0)?, message_id: row.get(1)?, thread_id: row.get(2)?, subject: row.get(3)?, sent_at: row.get(4)?, sender: row.get(5)?, direction: row.get(6)?,
                 attachment: MessageAttachment { id: row.get(7)?, filename: row.get(8)?, mime_type: row.get(9)?, size: row.get::<_, i64>(10)?.max(0) as u64, content_id: None, inline: false },
-                starred: row.get(11)?, availability: "unknown".into(),
+                starred: row.get(11)?, availability: "unknown".into(), note: None,
             }))?.collect::<Result<Vec<_>, _>>()?;
-            // One read per source message, however many of its files are listed.
-            let ids: BTreeSet<&str> = files.iter().map(|file| file.message_id.as_str()).collect();
+            Ok(FilePage { files, total, hidden_calendar })
+        })
+    }
+
+    /// Marks each listed mail file `offline` or `download`, from locally
+    /// cached MIME metadata only; bytes are never downloaded or decoded.
+    /// Missing metadata stays `unknown` rather than promising availability.
+    fn fill_mail_availability(&self, files: &mut [WorkspaceFile]) -> DbResult<()> {
+        // One read per source message, however many of its files are listed.
+        let ids: BTreeSet<String> = files
+            .iter()
+            .filter(|file| file.note.is_none())
+            .map(|file| file.message_id.clone())
+            .collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let payloads = self.with_connection(|connection| {
             let mut payloads = Vec::with_capacity(ids.len());
-            if !ids.is_empty() {
-                let mut statement = connection.prepare(&format!("SELECT id,payload,payload_z FROM message_metadata WHERE id IN ({})", vec!["?"; ids.len()].join(",")))?;
-                let rows = statement.query_map(rusqlite::params_from_iter(&ids), |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<Vec<u8>>>(2)?)))?;
-                for row in rows { payloads.push(row?); }
+            let mut statement = connection.prepare(&format!(
+                "SELECT id,payload,payload_z FROM message_metadata WHERE id IN ({})",
+                vec!["?"; ids.len()].join(",")
+            ))?;
+            let rows = statement.query_map(rusqlite::params_from_iter(&ids), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<Vec<u8>>>(2)?,
+                ))
+            })?;
+            for row in rows {
+                payloads.push(row?);
             }
-            Ok((FilePage { files, total, hidden_calendar }, payloads))
+            Ok(payloads)
         })?;
-        // Inspect locally cached MIME metadata only; never download/decode bytes.
-        // Missing metadata stays unknown rather than promising availability.
         // Payloads are decoded after the connection is released.
         let messages: HashMap<String, RawMessage> = payloads
             .into_iter()
@@ -166,7 +243,7 @@ impl Database {
                 Some((id, serde_json::from_str(&payload).ok()?))
             })
             .collect();
-        for file in &mut page.files {
+        for file in files.iter_mut().filter(|file| file.note.is_none()) {
             if let Some(message) = messages.get(&file.message_id) {
                 if let Ok(local) =
                     crate::mime::attachment_payload_available(message, &file.attachment.id)
@@ -175,7 +252,92 @@ impl Database {
                 }
             }
         }
-        Ok(page)
+        Ok(())
+    }
+
+    /// Files attached to notes outside Trash that match `query`, newest
+    /// first, up to `limit`, and how many match in all. A file in today's
+    /// note before the note is first saved is listed under the day's date.
+    fn note_files(&self, query: &FileQuery, limit: usize) -> DbResult<(usize, Vec<WorkspaceFile>)> {
+        let mut filters = vec![
+            "COALESCE(n.trashed, 0)=0".to_string(),
+            format!("(n.id IS NOT NULL OR a.note_id LIKE '{DAILY_NOTE_ID_PREFIX}%')"),
+        ];
+        let mut values: Vec<Value> = Vec::new();
+        if let Some(search) = query.search.as_ref().filter(|value| !value.is_empty()) {
+            filters.push(format!("(fold_case(a.filename) LIKE ? ESCAPE '\\' OR fold_case({NOTE_TITLE}) LIKE ? ESCAPE '\\')"));
+            values.extend(std::iter::repeat_n(Value::Text(folded_pattern(search)), 2));
+        }
+        for (operator, value) in [(">=", &query.after), ("<", &query.before)] {
+            if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
+                if chrono::DateTime::parse_from_rfc3339(value).is_err() {
+                    return Err(DatabaseError::invalid("Invalid file date"));
+                }
+                filters.push(format!("julianday(a.created_at){operator}julianday(?)"));
+                values.push(Value::Text(value.clone()));
+            }
+        }
+        if query.starred == Some(true) {
+            filters.push("a.starred=1".into());
+        }
+        if let Some(kind) = query.r#type.as_ref().filter(|kind| !kind.is_empty()) {
+            filters.push(format!("({})", type_condition(kind)?));
+        }
+        let from = format!(
+            "FROM (SELECT *, name AS filename FROM note_attachments) a LEFT JOIN notes n ON n.id=a.note_id WHERE {}",
+            filters.join(" AND ")
+        );
+        self.with_connection(|connection| {
+            let total = connection.query_row(&format!("SELECT COUNT(*) {from}"), rusqlite::params_from_iter(&values), |row| row.get::<_, i64>(0))? as usize;
+            values.push(Value::Integer(limit.min(i64::MAX as usize) as i64));
+            let mut statement = connection.prepare(&format!(
+                "SELECT a.id, a.filename, a.mime_type, a.size, a.created_at, a.starred, a.note_id, {NOTE_TITLE},
+                        CASE WHEN a.note_id LIKE '{DAILY_NOTE_ID_PREFIX}%' THEN substr(a.note_id, {}) END,
+                        EXISTS(SELECT 1 FROM note_attachment_data d WHERE d.id=a.id)
+                 {from} ORDER BY julianday(a.created_at) DESC, a.id LIMIT ?",
+                DAILY_NOTE_ID_PREFIX.len() + 1
+            ))?;
+            let files = statement
+                .query_map(rusqlite::params_from_iter(&values), |row| {
+                    let title: String = row.get(7)?;
+                    Ok(WorkspaceFile {
+                        account_id: String::new(),
+                        message_id: String::new(),
+                        thread_id: String::new(),
+                        subject: title.clone(),
+                        sent_at: row.get(4)?,
+                        sender: String::new(),
+                        direction: "received".into(),
+                        attachment: MessageAttachment {
+                            id: row.get(0)?,
+                            filename: row.get(1)?,
+                            mime_type: row.get(2)?,
+                            size: row.get::<_, i64>(3)?.max(0) as u64,
+                            content_id: None,
+                            inline: false,
+                        },
+                        starred: row.get(5)?,
+                        availability: if row.get::<_, bool>(9)? { "offline" } else { "syncing" }.into(),
+                        note: Some(NoteFileSource { id: row.get(6)?, title, daily_date: row.get(8)? }),
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((total, files))
+        })
+    }
+
+    /// Stars or unstars a note's file in Files, on this device.
+    pub fn set_note_attachment_star(&self, id: &str, starred: bool) -> DbResult<()> {
+        self.with_connection(|connection| {
+            let changed = connection.execute(
+                "UPDATE note_attachments SET starred=?2 WHERE id=?1",
+                params![id, starred],
+            )?;
+            if changed == 0 {
+                return Err(DatabaseError::NotFound("Attachment"));
+            }
+            Ok(())
+        })
     }
 
     pub fn context_candidates(&self, query: &ContextQuery) -> DbResult<Vec<WorkspaceConversation>> {
@@ -751,5 +913,172 @@ mod tests {
         assert!(db.upsert_thread("you@example.com", &[conflicting]).is_err());
         assert_eq!(db.list_files(&query("you@example.com")).unwrap().total, 1);
         assert_eq!(db.list_files(&query("other@example.com")).unwrap().total, 0);
+    }
+
+    /// A file attached to `note_id`, dated `added_at`.
+    fn note_file(db: &Database, note_id: &str, name: &str, bytes: &[u8], added_at: &str) -> String {
+        let file = db.add_note_attachment(note_id, name, "", bytes).unwrap();
+        db.with_connection(|c| {
+            c.execute(
+                "UPDATE note_attachments SET created_at=?2 WHERE id=?1",
+                params![file.id, added_at],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        file.id
+    }
+
+    fn names(page: &FilePage) -> Vec<String> {
+        page.files
+            .iter()
+            .map(|file| file.attachment.filename.clone())
+            .collect()
+    }
+
+    #[test]
+    fn files_list_note_files_with_mail_newest_first_and_page_across_both() {
+        let db = database();
+        seed(&db, "you@example.com", "mail"); // 2026-10-01T10:00:00Z
+        let plan = db.create_note("Floor plans", "").unwrap();
+        note_file(
+            &db,
+            &plan.id,
+            "newer.png",
+            b"\x89PNG\r\n\x1a\nx",
+            "2026-10-03T10:00:00Z",
+        );
+        note_file(&db, &plan.id, "older.txt", b"text", "2026-09-01T10:00:00Z");
+        let today = note_file(
+            &db,
+            "daily:2026-10-02",
+            "today.txt",
+            b"day",
+            "2026-10-02T10:00:00Z",
+        );
+
+        let mut q = query("you@example.com");
+        assert_eq!(db.list_files(&q).unwrap().total, 1, "only when asked for");
+        q.include_notes = Some(true);
+        let page = db.list_files(&q).unwrap();
+        assert_eq!(page.total, 4);
+        assert_eq!(
+            names(&page),
+            ["newer.png", "today.txt", "budget.pdf", "older.txt"]
+        );
+        let newer = &page.files[0];
+        let source = newer.note.as_ref().unwrap();
+        assert_eq!(
+            (source.id.as_str(), source.title.as_str()),
+            (plan.id.as_str(), "Floor plans")
+        );
+        assert_eq!(
+            (newer.availability.as_str(), newer.message_id.as_str()),
+            ("offline", "")
+        );
+        assert_eq!(
+            page.files[1].note.as_ref().unwrap().daily_date.as_deref(),
+            Some("2026-10-02")
+        );
+        assert_eq!(page.files[1].attachment.id, today);
+        assert!(page.files[2].note.is_none());
+
+        q.limit = Some(2);
+        q.offset = Some(1);
+        assert_eq!(
+            names(&db.list_files(&q).unwrap()),
+            ["today.txt", "budget.pdf"]
+        );
+        q.offset = Some(3);
+        assert_eq!(names(&db.list_files(&q).unwrap()), ["older.txt"]);
+    }
+
+    #[test]
+    fn files_filter_note_files_and_leave_them_out_of_mail_only_filters() {
+        let db = database();
+        seed(&db, "you@example.com", "mail");
+        let plan = db.create_note("Floor plans", "").unwrap();
+        let image = note_file(
+            &db,
+            &plan.id,
+            "kitchen.png",
+            b"\x89PNG\r\n\x1a\nx",
+            "2026-10-03T10:00:00Z",
+        );
+        note_file(&db, &plan.id, "notes.txt", b"text", "2026-10-04T10:00:00Z");
+        let trashed = db.create_note("Old", "").unwrap();
+        note_file(&db, &trashed.id, "gone.txt", b"x", "2026-10-05T10:00:00Z");
+        db.trash_note(&trashed.id).unwrap();
+        let mut q = query("you@example.com");
+        q.include_notes = Some(true);
+        assert_eq!(
+            db.list_files(&q).unwrap().total,
+            3,
+            "a note in Trash keeps its files out"
+        );
+
+        // The note's title finds its files, as a sender finds mail.
+        q.search = Some("FLOOR".into());
+        assert_eq!(
+            names(&db.list_files(&q).unwrap()),
+            ["notes.txt", "kitchen.png"]
+        );
+        q.search = None;
+        q.r#type = Some("image".into());
+        assert_eq!(names(&db.list_files(&q).unwrap()), ["kitchen.png"]);
+        q.r#type = None;
+        q.after = Some("2026-10-04T00:00:00Z".into());
+        assert_eq!(names(&db.list_files(&q).unwrap()), ["notes.txt"]);
+        q.after = None;
+        db.set_note_attachment_star(&image, true).unwrap();
+        assert!(db.set_note_attachment_star("missing", true).is_err());
+        q.starred = Some(true);
+        assert_eq!(names(&db.list_files(&q).unwrap()), ["kitchen.png"]);
+        q.starred = None;
+
+        for narrow in [
+            FileQuery {
+                sender: Some("sender".into()),
+                ..q.clone()
+            },
+            FileQuery {
+                direction: Some("received".into()),
+                ..q.clone()
+            },
+            FileQuery {
+                r#type: Some("calendar".into()),
+                ..q.clone()
+            },
+            FileQuery {
+                thread_ids: Some(vec!["t".into()]),
+                ..q.clone()
+            },
+        ] {
+            assert!(db
+                .list_files(&narrow)
+                .unwrap()
+                .files
+                .iter()
+                .all(|file| file.note.is_none()));
+        }
+        // With no mail account, notes' files still list.
+        let mut none = q.clone();
+        none.account_ids.clear();
+        assert_eq!(db.list_files(&none).unwrap().total, 2);
+    }
+
+    #[test]
+    fn a_file_another_device_added_lists_as_syncing_until_it_arrives() {
+        let db = database();
+        let plan = db.create_note("Plan", "").unwrap();
+        let id = note_file(&db, &plan.id, "a.txt", b"a", "2026-10-03T10:00:00Z");
+        db.with_connection(|c| {
+            c.execute("DELETE FROM note_attachment_data WHERE id=?1", [&id])?;
+            Ok(())
+        })
+        .unwrap();
+        let mut q = query("you@example.com");
+        q.include_notes = Some(true);
+        assert_eq!(db.list_files(&q).unwrap().files[0].availability, "syncing");
     }
 }

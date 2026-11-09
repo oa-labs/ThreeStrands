@@ -6,7 +6,7 @@ test("6 opens Files, stars an untouched attachment and returns from its source e
   await page.keyboard.press("6");
   const files = page.getByRole("region", { name: "Files", exact: true });
   await expect(files).toBeVisible();
-  const attachments = files.getByRole("list", { name: "Mail attachments" });
+  const attachments = files.getByRole("list", { name: "File list" });
   const row = attachments.getByRole("listitem").filter({ hasText: "threestrands-shortcuts.txt" });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Star threestrands-shortcuts.txt" }).click();

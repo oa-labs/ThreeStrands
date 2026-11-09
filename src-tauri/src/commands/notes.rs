@@ -8,8 +8,8 @@ use crate::models::{
     NoteTitle, NotesStorage, UpdateNoteRequest,
 };
 use crate::{
-    attachment_security, image_format, kick_replicated_sync, notes_export, run_database_task,
-    AppError, AppResult, AppState,
+    attachment_security, file_preview, image_format, kick_replicated_sync, notes_export,
+    run_database_task, AppError, AppResult, AppState,
 };
 
 #[tauri::command]
@@ -330,4 +330,79 @@ pub(crate) async fn note_attachment_open(
         .write(&filename, &bytes)
         .map_err(|error| format!("Unable to prepare the file: {error}"))?;
     open::that(path).map_err(|error| AppError::message(format!("Unable to open the file: {error}")))
+}
+
+/// An attached file and its bytes, or the reason it can't be read here.
+async fn attachment_with_bytes(
+    id: String,
+    state: &AppState,
+) -> AppResult<(NoteAttachment, Vec<u8>)> {
+    let database = state.database.clone();
+    Ok(
+        run_database_task(move || database.note_attachment_bytes(&id))
+            .await?
+            .ok_or(
+                "This file hasn't reached this device yet. It downloads the next time notes sync.",
+            )?,
+    )
+}
+
+/// Saves a copy of an attached file where the user chooses, quarantined
+/// like a saved mail attachment.
+#[tauri::command]
+pub(crate) async fn note_attachment_save(id: String, state: State<'_, AppState>) -> AppResult<()> {
+    let (attachment, bytes) = attachment_with_bytes(id, &state).await?;
+    let filename = attachment_security::normalize_filename(&attachment.name);
+    let Some(destination) = rfd::AsyncFileDialog::new()
+        .set_file_name(&filename)
+        .save_file()
+        .await
+    else {
+        return Ok(());
+    };
+    std::fs::write(destination.path(), bytes)
+        .map_err(|error| format!("Unable to save the file: {error}"))?;
+    if let Err(error) = attachment_security::quarantine(destination.path()) {
+        return match std::fs::remove_file(destination.path()) {
+            Ok(()) => Err(AppError::message(format!(
+                "Unable to save the file safely because quarantine metadata could not be applied: {error}"
+            ))),
+            Err(remove_error) => Err(AppError::message(format!(
+                "Quarantine metadata could not be applied to the saved file ({error}), and the unsafe copy could not be removed ({remove_error})"
+            ))),
+        };
+    }
+    Ok(())
+}
+
+/// A picture of an attached file for Files, drawn the way mail attachment
+/// previews are; `None` when it has none or isn't on this device yet.
+#[tauri::command]
+pub(crate) async fn note_attachment_preview(
+    id: String,
+    state: State<'_, AppState>,
+) -> AppResult<Option<String>> {
+    if !file_preview::HAS_BACKEND {
+        return Ok(None);
+    }
+    let database = state.database.clone();
+    let Some((attachment, bytes)) =
+        run_database_task(move || database.note_attachment_bytes(&id)).await?
+    else {
+        return Ok(None);
+    };
+    let filename = attachment_security::normalize_filename(&attachment.name);
+    file_preview::preview_data_uri(&state.file_previews, &filename, &bytes)
+        .await
+        .map_err(AppError::from)
+}
+
+#[tauri::command]
+pub(crate) async fn set_note_attachment_star(
+    id: String,
+    starred: bool,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let database = state.database.clone();
+    run_database_task(move || database.set_note_attachment_star(&id, starred)).await
 }

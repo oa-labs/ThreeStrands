@@ -18,8 +18,10 @@ function readStars(messageId: string) {
   return read;
 }
 
-export function FileStarButton({ messageId, attachmentId, filename, accountId, starred: initial, labeled = false }: {
+export function FileStarButton({ messageId, attachmentId, filename, accountId, starred: initial, labeled = false, note = false }: {
   messageId: string; attachmentId: string; filename: string; accountId?: string; starred?: boolean;
+  /** The file is attached to a note; `attachmentId` names it and `starred` must be given. */
+  note?: boolean;
   /** Shows the action as text beside the star, for a row of labeled buttons. */
   labeled?: boolean;
 }) {
@@ -41,7 +43,7 @@ export function FileStarButton({ messageId, attachmentId, filename, accountId, s
     const previous = starred;
     setPending(true); setError(null); setStarred(!previous);
     try {
-      await mailClient.setFileStar(accountId, messageId, attachmentId, !previous);
+      await (note ? mailClient.setNoteAttachmentStar(attachmentId, !previous) : mailClient.setFileStar(accountId, messageId, attachmentId, !previous));
       reads.delete(messageId);
       window.dispatchEvent(new Event(FILES_CHANGED));
     } catch (reason) { setStarred(previous); setError(errorMessage(reason)); }
