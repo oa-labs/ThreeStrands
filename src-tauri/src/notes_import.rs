@@ -21,7 +21,8 @@
 //! - **Links** to a note's file name, an alias, or a relative path to the
 //!   note's file (`[text](../notes/Plan.md)`) become `[[Title]]` links.
 //! - **Files**: a link or image whose destination is a file inside the
-//!   folder becomes an attachment of the note. Nothing outside the folder
+//!   folder becomes an attachment of the note, under an id derived from the
+//!   note and the file, so two devices importing one folder agree. Nothing outside the folder
 //!   is ever read, and symbolic links are never followed.
 //! - **Front matter** keys Reflect keeps for itself (`id`, `summary`, and
 //!   the like) are dropped; anything else stays at the top of the note.
@@ -593,6 +594,23 @@ fn declared_type(name: &str) -> &'static str {
     }
 }
 
+/// A file's attachment id, derived from its note, its path, and its size,
+/// so importing the same folder on two devices writes the same note text
+/// and the same attachments rather than two versions of each.
+fn file_id(note_id: &str, relative: &str, size: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"threestrands/notes-import/attachment-id/v1\0");
+    hasher.update(note_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(relative.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(size.to_be_bytes());
+    hasher.finalize()[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// The text of `[[title]]`, shown as `label` when that differs.
 fn wiki(title: &str, label: &str) -> String {
     let label = label.trim();
@@ -651,7 +669,7 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
         if fs::metadata(&path).is_ok_and(|metadata| metadata.len() > MAX_NOTE_FILE_BYTES) {
             problems.push(ImportProblem {
                 file: relative.clone(),
-                reason: "Too long to sync. A note can hold about 64 KB.".into(),
+                reason: "Too long to sync. A note can hold about 96 KB.".into(),
             });
             continue;
         }
@@ -868,8 +886,7 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
                     Some(file) => file.id.clone(),
                     None => {
                         let name = relative.rsplit('/').next().unwrap_or_default().to_string();
-                        let id =
-                            crate::replicated_sync::encode_id(&crate::replicated_sync::random_id());
+                        let id = file_id(&draft.note.id, &relative, size);
                         files.push(PlannedFile {
                             id: id.clone(),
                             declared_type: declared_type(&name).to_string(),
@@ -886,7 +903,7 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
         if note_body_bytes(&body) > MAX_NOTE_BODY_BYTES {
             problems.push(ImportProblem {
                 file: draft.source,
-                reason: "Too long to sync. A note can hold about 64 KB.".into(),
+                reason: "Too long to sync. A note can hold about 96 KB.".into(),
             });
             continue;
         }

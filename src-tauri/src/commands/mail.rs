@@ -36,6 +36,8 @@ pub(crate) async fn correspondence_request(
 
 /// How often quitting re-checks for undo windows that are still open.
 const EXIT_UNDO_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+/// The longest quitting waits for a last replicated sync.
+const EXIT_SYNC_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[tauri::command]
 pub(crate) async fn finish_exit(
@@ -48,6 +50,14 @@ pub(crate) async fn finish_exit(
     }
     // Give drafts a bounded chance to reach the server; they stay saved here.
     state.correspondence.push_drafts_before_exit().await;
+    // Note edits wait for the periodic sync, so give the last ones a bounded
+    // chance to leave too; they stay recorded here and go on the next launch.
+    if tokio::time::timeout(EXIT_SYNC_LIMIT, state.replicated_sync.sync_once())
+        .await
+        .is_err()
+    {
+        log::info!(target: "replicated_sync", "syncing before exit took too long; the rest goes on the next launch");
+    }
     crate::log_failure(
         "stopping delegated work before exit",
         state.agent_runner.shutdown().await,

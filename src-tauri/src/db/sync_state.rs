@@ -600,6 +600,15 @@ fn same_frontier_value(
     left: &Option<Value>,
     right: &Option<Value>,
 ) -> bool {
+    // Nothing a person would choose between: any device's sealed copy of a
+    // note's file is as good as another's, and a note's creation time
+    // differs only when two devices imported it from files with different
+    // modification times. The working value stands.
+    if entity_type == EntityType::NoteAttachment.as_str()
+        || (entity_type == EntityType::Note.as_str() && field == "createdAt")
+    {
+        return true;
+    }
     if (entity_type == EntityType::Task.as_str()
         && matches!(
             field,

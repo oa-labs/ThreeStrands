@@ -114,6 +114,12 @@ fn a_reflect_folder_becomes_notes_with_titles_links_and_files() {
         ("assets/pasted-1.png", "assets/packet.pdf")
     );
     assert_eq!(packet.declared_type, "application/pdf");
+    // A second reading names the same files the same way, as another device would.
+    let again = super::plan(&folder.0, &nothing()).unwrap();
+    assert_eq!(
+        note(&again, "OLLI - University of Pitt Program").note.body,
+        olli.note.body
+    );
     assert_eq!(
         olli.note.body,
         format!(

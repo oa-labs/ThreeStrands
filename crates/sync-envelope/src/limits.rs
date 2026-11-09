@@ -45,7 +45,7 @@ pub const MAX_ENTITY_ID_BYTES: usize = 320;
 pub const MAX_FIELD_NAME_BYTES: usize = 200;
 
 /// Maximum serialized byte length of a single field value.
-pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_VALUE_BYTES: usize = 96 * 1024;
 
 /// Maximum number of chunks a single logical message may be split into.
 pub const MAX_CHUNKS_PER_MESSAGE: usize = 4_096;

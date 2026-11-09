@@ -49,7 +49,7 @@ These limits shape most of the v1 design:
 
 | Limit | Value | Where |
 | --- | --- | --- |
-| One field value | 64 KB (`MAX_VALUE_BYTES`) | `crates/sync-envelope/src/limits.rs` |
+| One field value | 96 KB (`MAX_VALUE_BYTES`) | `crates/sync-envelope/src/limits.rs` |
 | One snapshot, compressed | 4 MB (`MAX_COMPRESSED_BYTES`) | same |
 | One snapshot, decompressed | 32 MB (`MAX_DECOMPRESSED_BYTES`) | same |
 | Republishing | every change reseals and uploads the whole snapshot | `replicated_sync.rs` |
@@ -114,16 +114,19 @@ The limits live in `crates/sync-protocol` beside the other synchronized
 types' limits.
 
 - **Per note.** `MAX_NOTE_BODY_BYTES` is the envelope's `MAX_VALUE_BYTES`
-  (64 KB), measured on the body's JSON encoding (`note_body_bytes`), since
+  (96 KB, raised from 64 KB before Notes first shipped), measured on the body's JSON encoding (`note_body_bytes`), since
   that is what the envelope measures. Escaping grows the text (newlines,
   quotes, and backslashes each take two bytes), so a shorter body can be
   over. A save past the limit is refused with "This note is too long to
   sync"; the editor keeps the text and never truncates it.
-- **All notes together.** `MAX_SYNCED_NOTES_TOTAL_BYTES` is 3 MiB, counted
-  on the encoded fields of every note, Trash included. The snapshot holds at
-  most 4 MB after compression, shared with every other synchronized type.
-  Text that doesn't compress (a pasted key or encoded image) must still fit,
-  so the budget doesn't count on compression. A change that would grow notes
+- **All notes together.** `MAX_SYNCED_NOTES_TOTAL_BYTES` is 3.5 MiB (raised
+  from 3 MiB before Notes first shipped), counted on the encoded fields of
+  every note, Trash included. The snapshot holds at most 4 MB after
+  compression, shared with every other synchronized type. Note text
+  compresses well (a real 1.1 MB set of notes came to about 400 KB), and even
+  base64 that encodes a pasted image or key compresses by about a quarter,
+  so 3.5 MiB of notes stays under 2.7 MB compressed and leaves room for
+  everything else. A change that would grow notes
   past it is refused; a change that doesn't grow its note always saves, so a
   user over the budget because of notes from another device can still trim.
   A failed seal would stop every other synchronized type from syncing too.
@@ -135,6 +138,13 @@ types' limits.
 
 Every replicated write reseals and uploads the whole snapshot, so the editor
 must not write one per keystroke.
+
+As built, a text save (`update_note`, `save_daily_note`) records the change
+in the replica but doesn't start a sync; the periodic sync (every 30
+seconds) carries a burst of edits in one upload. Creating, trashing,
+restoring, deleting, and importing notes still sync at once. Quitting runs
+one more sync, bounded to 5 seconds (`finish_exit`); anything it doesn't
+finish stays recorded and goes on the next launch.
 
 - A save writes the `notes` row and the replica together, so the editor
   saves after about two seconds without typing, when it loses focus, when
@@ -231,7 +241,7 @@ chooses. Resolving applies the chosen value on this device at once, as a
 merge would.
 
 v1 doesn't merge concurrent text edits character by character. That would
-need a text CRDT inside the field, which the snapshot model and the 64 KB
+need a text CRDT inside the field, which the snapshot model and the 96 KB
 field limit don't fit.
 
 ## Workspace UI
@@ -521,7 +531,7 @@ user picks: a Reflect folder, or one Export to Markdown Folder wrote
 - **Front matter.** `id`, `title`, `created`, `updated`, `summary`,
   `snippet`, `summary_source_hash`, and `pinned` are dropped; anything else
   (such as `aliases`) stays at the top of the note.
-- **Not imported**, with the reason shown: a note over 64 KB (never cut),
+- **Not imported**, with the reason shown: a note over 96 KB (never cut),
   a file that isn't UTF-8, Reflect's conflict copies (`name.md~other
   device`), and a matching second copy. A note that can't be saved during
   the import (notes out of sync space, a title taken meanwhile) is listed
@@ -534,7 +544,7 @@ Pasting or dropping a file into a note stores it and inserts
 `![](attachment:<id>)` for an image or `[name](attachment:<id>)` for any
 other file (meowdown's `onFilePaste` decides which). `<id>` is 32 hex
 digits. The note's text holds only that reference, so a file never counts
-toward the note's 64 KB or the notes' 3 MiB.
+toward the note's 96 KB or the notes' 3.5 MiB.
 
 **Files travel separately from snapshots.** The sync design's whole-state
 snapshots are resealed on every change, so carrying files in them would

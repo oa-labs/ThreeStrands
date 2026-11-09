@@ -773,3 +773,46 @@ fn export_takes_every_note_outside_trash_days_first() {
         .collect();
     assert_eq!(titles, [DAY, "2026-11-10", "Alpha", "beta"]);
 }
+
+#[test]
+fn two_devices_importing_one_note_agree_except_on_text_that_differs() {
+    let (a, b) = (synced(), synced());
+    let imported = |created_at: &str, body: &str| Note {
+        id: "import-0123456789abcdef0123456789abcdef".into(),
+        title: "Retreat".into(),
+        body: body.into(),
+        daily_date: None,
+        created_at: created_at.into(),
+        updated_at: created_at.into(),
+        trashed: false,
+        trashed_at: None,
+    };
+    // Each device read the file with its own modification time.
+    assert!(a
+        .import_note(imported("2026-09-01T10:00:00Z", "Plans"), &[])
+        .unwrap());
+    assert!(b
+        .import_note(imported("2026-09-03T08:00:00Z", "Plans"), &[])
+        .unwrap());
+    sync_both(&a, &b);
+    for db in [&a, &b] {
+        let all = db.list_frontier_conflicts().unwrap();
+        assert!(
+            all.iter().all(|conflict| conflict.entity_type != "note"),
+            "{all:?}"
+        );
+        assert!(!db
+            .import_note(imported("2026-09-01T10:00:00Z", "Plans"), &[])
+            .unwrap());
+    }
+
+    // Text that really differs is still a conflict to resolve.
+    let (c, d) = (synced(), synced());
+    c.import_note(imported("2026-09-01T10:00:00Z", "Plans"), &[])
+        .unwrap();
+    d.import_note(imported("2026-09-01T10:00:00Z", "Other plans"), &[])
+        .unwrap();
+    sync_both(&c, &d);
+    let id = "import-0123456789abcdef0123456789abcdef".to_string();
+    assert_eq!(note_conflicts(&c), [(id, "body".to_string())]);
+}

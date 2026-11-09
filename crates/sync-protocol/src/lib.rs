@@ -23,7 +23,7 @@ pub const MAX_SYNCED_DRAFTS_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 /// encoding (quotes and escapes included), which is how the envelope
 /// measures a field value. Equal to the envelope's `MAX_VALUE_BYTES`: the
 /// body is one field, so this is the most a snapshot can carry for it.
-pub const MAX_NOTE_BODY_BYTES: usize = 64 * 1024;
+pub const MAX_NOTE_BODY_BYTES: usize = 96 * 1024;
 /// Most characters in a note's title.
 pub const MAX_NOTE_TITLE_CHARS: usize = 200;
 /// Most bytes every note together may take in a snapshot, measured as the
@@ -31,7 +31,7 @@ pub const MAX_NOTE_TITLE_CHARS: usize = 200;
 /// compression, shared with every other synchronized type. Text that
 /// doesn't compress (a pasted key or encoded image) must still fit, so the
 /// budget leaves room below that limit without counting on compression.
-pub const MAX_SYNCED_NOTES_TOTAL_BYTES: usize = 3 * 1024 * 1024;
+pub const MAX_SYNCED_NOTES_TOTAL_BYTES: usize = 3_584 * 1024;
 /// A daily note's entity id is this prefix and its `YYYY-MM-DD` date, so
 /// two devices that start the same day's note offline write one entity.
 pub const DAILY_NOTE_ID_PREFIX: &str = "daily:";
