@@ -303,7 +303,7 @@ Labels are worked out from where a message is stored and its flags:
 | Message is in the `\Trash` mailbox | `TRASH` |
 | No `\Seen` flag | `UNREAD` |
 | `\Flagged` | `STARRED` |
-| Keyword `foo` (keyword mode) | `kw:foo`, a user label |
+| Keyword `foo` (keyword mode) | `kw:foo`, a user label. Designed, not implemented yet: the app refuses `kw:` IDs and label folders are the only label store (see [the parity plan](imap-parity-plan.md)). |
 | Copy in `<container>/foo` (label-folder mode) | `lf:foo`, a user label |
 | Message is in user folder `Clients/Acme` | `folder:Clients/Acme`, a new `kind: "folder"` label |
 
@@ -506,7 +506,7 @@ current locations:
 | Spam / not spam | Move to `\Junk` and set `$Junk`, clearing `$NotJunk`. The reverse moves to INBOX and sets `$NotJunk`. The keywords help server-side spam filters learn. They're set only when `PERMANENTFLAGS` allows them; otherwise the move alone counts. |
 | Read / unread | `UID STORE ±FLAGS.SILENT (\Seen)` |
 | Star | `±FLAGS.SILENT (\Flagged)` |
-| Add or remove a user label | Keyword mode: `±FLAGS.SILENT (keyword)`. Label-folder mode: copy into, or expunge from, `<container>/<label>` (see [User labels](#user-labels)). With neither mode available, fail with `InvalidOperation` and a clear message. |
+| Add or remove a user label | Label-folder mode: copy into, or expunge from, `<container>/<label>` (see [User labels](#user-labels)). Keyword mode (`±FLAGS.SILENT (keyword)`) is designed but not implemented yet. With no usable mode, fail with `InvalidOperation` and a clear message. |
 | Move to folder (new action) | Move to the chosen mailbox. |
 
 - **Only permanent flags:** a `STORE` is limited to flags the mailbox's
@@ -723,8 +723,9 @@ keep working.
   non-secret server settings. Passwords are never exported. Importing an IMAP
   account on another device marks it `needs_reauth` until the password is
   entered.
-- **Format version:** older builds reject `provider: "imap"`, so this bumps
-  `transfer.rs` `VERSION` to 4. Versions 1–3 must still import, with
+- **Format version:** older builds reject `provider: "imap"`, so IMAP support
+  bumped `transfer.rs` `VERSION` to 4 (the format version has since moved on;
+  it is 5 today). Versions 1–3 must still import, with
   regression tests for exports produced by version 3, as `AGENTS.md`
   requires.
 - **Replicated sync:** the mail-account entity carries the same non-secret
@@ -739,20 +740,21 @@ keep working.
   and unticked ones import as "available". Import never disconnects an account
   that is already set up.
 
-## Gmail assumptions to remove first
+## Gmail assumptions removed
 
-These were found during the step-1 survey and have to become provider-neutral
-or capability-driven:
+These were found during the step-1 survey and have become provider-neutral or
+capability-driven:
 
-- **Interface text:** "Add a Gmail account", "Searching Gmail…", "Gmail search
-  unavailable", "couldn't be applied in Gmail" (`SettingsPanel.tsx`,
-  `App.tsx`).
-- **`labels.ts`:** hides `Label_NN` IDs and assumes the `CATEGORY_*` labels
-  exist. It needs a `folder` label kind and must respect each account's label
-  model.
-- **The split-inbox "label" rule** (`SettingsPanel.tsx`, `db.rs:2682`): it
-  should offer keywords and folders for IMAP accounts.
-- **The `connect_google` first-run path:** onboarding needs a provider choice.
+- **Interface text:** setup offers "a Gmail account or any IMAP mail server"
+  and the Gmail-only search and apply-failure strings are gone
+  (`App.tsx`, `SettingsPanel.tsx`).
+- **`labels.ts`:** hides `Label_NN` IDs, no longer assumes the `CATEGORY_*`
+  labels exist, and implements the `folder` label kind for each account's
+  label model.
+- **The split-inbox "label" rule** (`SettingsPanel.tsx`,
+  `db/split_inboxes.rs`): split inbox rules match IMAP label folders.
+- **The `connect_google` first-run path:** onboarding offers a provider
+  choice.
 
 ## Testing
 
