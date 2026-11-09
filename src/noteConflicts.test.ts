@@ -49,6 +49,15 @@ describe("note conflicts", () => {
     expect(conflictChoices(note, conflicts, null).map(({ chosen }) => chosen.operationId)).toEqual(["a:1", "a:1"]);
   });
 
+  it("keeps the authored title candidate when the display title is disambiguated", () => {
+    const projected = { ...note, title: "Plan 2", authoredTitle: "Plan" };
+    // The losing candidate deliberately matches the generated display name.
+    const conflicts = [conflict("title", [["a", "Plan 2"], ["b", "Plan"]])];
+    expect(noteConflictView(projected, conflicts).shownDeviceId).toBe("b");
+    expect(conflictChoices(projected, conflicts, null)[0]!.chosen.value).toBe("Plan");
+    expect(conflictChoices(projected, conflicts, "a")[0]!.chosen.value).toBe("Plan 2");
+  });
+
   it("names devices as Settings does", () => {
     const roster = [
       { deviceId: "a", status: "active", isSelf: true, label: null },

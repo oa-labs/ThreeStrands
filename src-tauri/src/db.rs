@@ -66,6 +66,7 @@ pub(crate) use join_codes::{rfc3339_from_ms, RedemptionRecord};
 pub(crate) use labels::cache_label_listing;
 pub use mail_sync::SentBackfillProgress;
 pub use mutations::PendingMutation;
+pub(crate) use notes::reconcile_titles;
 pub use recovery::{open_with_recovery, OpenError, RecoveryOutcome};
 pub(crate) use scheduled_send::{record_schedule_report, ScheduledDraftRow};
 pub(crate) use sender::MAX_SENDER_THREADS;

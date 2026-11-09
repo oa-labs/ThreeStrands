@@ -47,6 +47,7 @@ const MIGRATIONS: &[Migration] = &[
     (100, to_v100),
     (101, to_v101),
     (102, to_v102),
+    (103, to_v103),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1286,6 +1287,24 @@ fn to_v100(tx: &rusqlite::Transaction) -> Result<(), String> {
     )
     .map_err(error)?;
     Ok(())
+}
+
+fn to_v103(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let has_authored: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('notes') WHERE name='authored_title')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
+    if !has_authored {
+        tx.execute_batch(
+            "ALTER TABLE notes ADD COLUMN authored_title TEXT NOT NULL DEFAULT '';
+             UPDATE notes SET authored_title=title;",
+        )
+        .map_err(error)?;
+    }
+    crate::db::reconcile_titles(tx).map_err(error)
 }
 
 fn to_v101(tx: &rusqlite::Transaction) -> Result<(), String> {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::test_support::database;
+use std::collections::HashSet;
 use threestrands_sync_protocol::{note_body_bytes, MAX_NOTE_BODY_BYTES};
 
 const DAY: &str = "2026-11-09";
@@ -772,4 +773,227 @@ fn export_takes_every_note_outside_trash_days_first() {
         .map(|note| note.title)
         .collect();
     assert_eq!(titles, [DAY, "2026-11-10", "Alpha", "beta"]);
+}
+
+#[test]
+fn independently_created_titles_converge_without_publishing_projection_names() {
+    let (a, b, c) = (synced(), synced(), synced());
+    let first = a.create_note("Project plan", "first").unwrap();
+    let second = b.create_note("PROJECT PLAN", "second").unwrap();
+    let natural = c.create_note("Project plan 2", "natural suffix").unwrap();
+    let links = c.create_note("Links", "[[project plan]]").unwrap();
+    // Start with opposite local incumbents and bring a natural suffix in later.
+    sync_both(&a, &b);
+    sync_both(&c, &b);
+    sync_both(&a, &c);
+    sync_both(&a, &b);
+    let (winner, loser) = if first.id < second.id {
+        (&first, &second)
+    } else {
+        (&second, &first)
+    };
+    for db in [&a, &b, &c] {
+        assert_eq!(
+            db.get_note(&winner.id).unwrap().unwrap().title,
+            winner.title
+        );
+        assert_eq!(
+            db.get_note(&loser.id).unwrap().unwrap().title,
+            format!("{} 3", loser.title)
+        );
+        assert_eq!(
+            db.get_note(&natural.id).unwrap().unwrap().title,
+            natural.title
+        );
+        assert_eq!(
+            db.find_note_by_title("project   PLAN").unwrap().unwrap().id,
+            winner.id
+        );
+        assert_eq!(
+            db.note_links(&winner.id).unwrap().backlinks[0].note_id,
+            links.id
+        );
+        assert!(db.note_links(&loser.id).unwrap().backlinks.is_empty());
+        let titles = db.suggest_note_titles("project", 10).unwrap();
+        assert_eq!(titles.len(), 3);
+        assert_eq!(
+            titles
+                .iter()
+                .map(|n| title_key(&n.title))
+                .collect::<HashSet<_>>()
+                .len(),
+            3
+        );
+        assert!(note_conflicts(db).is_empty());
+    }
+    let before = replica_fields(&a, &loser.id);
+    let projected = a.get_note(&loser.id).unwrap().unwrap();
+    a.update_note(&loser.id, &projected.title, "edited body")
+        .unwrap();
+    let after = replica_fields(&a, &loser.id);
+    assert_eq!(
+        before.iter().find(|(f, _)| f == "title"),
+        after.iter().find(|(f, _)| f == "title")
+    );
+    assert_eq!(
+        a.note_sync_payloads()
+            .unwrap()
+            .into_iter()
+            .find(|(id, _)| id == &loser.id)
+            .unwrap()
+            .1["title"],
+        loser.title
+    );
+    sync_both(&a, &b);
+    assert_eq!(b.get_note(&loser.id).unwrap().unwrap().body, "edited body");
+    assert_eq!(
+        b.get_note(&loser.id).unwrap().unwrap().title,
+        projected.title
+    );
+    let stable = b.get_note(&loser.id).unwrap().unwrap();
+    sync_into(&b, &a);
+    assert_eq!(b.get_note(&loser.id).unwrap().unwrap(), stable);
+    a.update_note(&loser.id, "Distinct title", "edited body")
+        .unwrap();
+    sync_both(&a, &b);
+    assert_eq!(
+        b.get_note(&loser.id).unwrap().unwrap().title,
+        "Distinct title"
+    );
+}
+
+#[test]
+fn synced_restore_collisions_and_long_unicode_titles_stay_unique() {
+    let (a, b) = (synced(), synced());
+    let title = "界".repeat(MAX_NOTE_TITLE_CHARS);
+    let old = a.create_note(&title, "old").unwrap();
+    a.trash_note(&old.id).unwrap();
+    sync_both(&a, &b);
+    let replacement = b.create_note(&title, "new").unwrap();
+    a.restore_note(&old.id).unwrap();
+    sync_both(&a, &b);
+    let (winner, loser) = if old.id < replacement.id {
+        (&old, &replacement)
+    } else {
+        (&replacement, &old)
+    };
+    for db in [&a, &b] {
+        let restored = db.get_note(&loser.id).unwrap().unwrap();
+        assert_eq!(restored.title.chars().count(), MAX_NOTE_TITLE_CHARS);
+        assert_eq!(
+            restored.title,
+            format!("{} 2", "界".repeat(MAX_NOTE_TITLE_CHARS - 2))
+        );
+        assert!(clean_note_title(&restored.title).is_ok());
+        assert_eq!(
+            db.find_note_by_title(&title).unwrap().unwrap().id,
+            winner.id
+        );
+    }
+    // Removing the winner frees the authored title on both peers.
+    a.trash_note(&winner.id).unwrap();
+    sync_both(&a, &b);
+    assert_eq!(a.get_note(&loser.id).unwrap().unwrap().title, title);
+    assert_eq!(b.get_note(&loser.id).unwrap().unwrap().title, title);
+}
+
+#[test]
+fn offline_body_edits_of_disambiguated_notes_keep_the_authored_title() {
+    let (a, b) = (synced(), synced());
+    let first = a.create_note("Plan", "first").unwrap();
+    let second = b.create_note("Plan", "second").unwrap();
+    sync_both(&a, &b);
+    let loser = if first.id > second.id {
+        &first
+    } else {
+        &second
+    };
+    let projected = a.get_note(&loser.id).unwrap().unwrap();
+    assert_eq!(projected.title, "Plan 2");
+    a.set_beta_features_enabled(false).unwrap();
+    a.update_note(&loser.id, &projected.title, "offline body")
+        .unwrap();
+    a.set_beta_features_enabled(true).unwrap();
+    a.reconcile_replicated_sync_backlog().unwrap();
+    sync_both(&a, &b);
+    assert_eq!(b.get_note(&loser.id).unwrap().unwrap().title, "Plan 2");
+    assert_eq!(b.get_note(&loser.id).unwrap().unwrap().body, "offline body");
+    assert_eq!(
+        a.note_sync_payloads()
+            .unwrap()
+            .into_iter()
+            .find(|(id, _)| id == &loser.id)
+            .unwrap()
+            .1["title"],
+        "Plan"
+    );
+}
+
+#[test]
+fn synced_titles_are_independent_of_arrival_order_and_replays() {
+    let (a, b) = (synced(), synced());
+    let payloads = [
+        serde_json::json!({"id":"n-a", "title":"Plan", "body":"one"}),
+        serde_json::json!({"id":"n-b", "title":"plan", "body":"two"}),
+        serde_json::json!({"id":"n-c", "title":"Plan 2", "body":"three"}),
+    ];
+    for payload in &payloads {
+        a.upsert_synced_note(payload["id"].as_str().unwrap(), payload)
+            .unwrap();
+    }
+    for payload in payloads.iter().rev() {
+        b.upsert_synced_note(payload["id"].as_str().unwrap(), payload)
+            .unwrap();
+    }
+    for db in [&a, &b] {
+        assert_eq!(db.get_note("n-a").unwrap().unwrap().title, "Plan");
+        assert_eq!(db.get_note("n-b").unwrap().unwrap().title, "plan 3");
+        assert_eq!(db.get_note("n-c").unwrap().unwrap().title, "Plan 2");
+        let stable = db.get_note("n-b").unwrap().unwrap();
+        db.upsert_synced_note("n-b", &payloads[1]).unwrap();
+        assert_eq!(db.get_note("n-b").unwrap().unwrap(), stable);
+        assert!(replica_fields(db, "n-b").is_empty());
+        assert_eq!(db.search_notes("plan", 10).unwrap().len(), 3);
+    }
+}
+
+#[test]
+fn upgrading_existing_duplicate_titles_repairs_names_and_search_without_sync_writes() {
+    let db = synced();
+    let first = db.create_note("Plan", "first body").unwrap();
+    let second = db.create_note("Different", "second body").unwrap();
+    let before = replica_fields(&db, &second.id);
+    {
+        let mut connection = db.test_connection().unwrap();
+        connection
+            .execute(
+                "UPDATE notes SET title='Plan', title_key='plan' WHERE id=?1",
+                [&second.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE note_search SET title='Plan' WHERE note_id=?1",
+                [&second.id],
+            )
+            .unwrap();
+        connection
+            .execute_batch("ALTER TABLE notes DROP COLUMN authored_title; PRAGMA user_version=102;")
+            .unwrap();
+        crate::schema::migrate(&mut connection).unwrap();
+    }
+    let (winner, loser) = if first.id < second.id {
+        (&first, &second)
+    } else {
+        (&second, &first)
+    };
+    assert_eq!(db.get_note(&winner.id).unwrap().unwrap().title, "Plan");
+    assert_eq!(db.get_note(&loser.id).unwrap().unwrap().title, "Plan 2");
+    assert_eq!(db.get_note(&first.id).unwrap().unwrap().body, "first body");
+    assert_eq!(
+        db.get_note(&second.id).unwrap().unwrap().body,
+        "second body"
+    );
+    assert_eq!(db.search_notes("plan", 10).unwrap().len(), 2);
+    assert_eq!(replica_fields(&db, &second.id), before);
 }

@@ -1014,6 +1014,8 @@ export type Snippet = {
 export type Note = {
   id: string;
   title: string;
+  /** Authored title when the displayed name has a sync collision suffix. */
+  authoredTitle?: string;
   body: string;
   dailyDate: string | null;
   createdAt: string;

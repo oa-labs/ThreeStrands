@@ -7,12 +7,12 @@
 //! search index, and visit times belong to this device and are rebuilt from
 //! the notes; none of them leaves it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde_json::{json, Value};
-use threestrands_sync_protocol::{EntityType, MAX_SYNCED_NOTES_TOTAL_BYTES};
+use threestrands_sync_protocol::{EntityType, MAX_NOTE_TITLE_CHARS, MAX_SYNCED_NOTES_TOTAL_BYTES};
 
 use super::search::fts_query;
 use super::sync_state::{
@@ -29,7 +29,7 @@ use crate::notes::{
 };
 
 const NOTE_COLUMNS: &str =
-    "id, title, body, daily_date, created_at, updated_at, trashed, trashed_at";
+    "id, title, body, daily_date, created_at, updated_at, trashed, trashed_at, authored_title";
 /// Most characters of a note's body shown under its title in the list.
 const PREVIEW_CHARS: usize = 140;
 /// Most rows one list or search returns.
@@ -42,9 +42,12 @@ const OUT_OF_SPACE: &str =
     "Notes have used all of their sync space. Empty Trash or shorten other notes to save this one.";
 
 fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
+    let title: String = row.get(1)?;
+    let authored: String = row.get(8)?;
     Ok(Note {
         id: row.get(0)?,
-        title: row.get(1)?,
+        authored_title: (authored != title).then_some(authored),
+        title,
         body: row.get(2)?,
         daily_date: row.get(3)?,
         created_at: row.get(4)?,
@@ -79,6 +82,80 @@ fn sync_payload(note: &Note) -> Value {
         None => payload["createdAt"] = json!(note.created_at),
     }
     payload
+}
+
+/// The replica keeps the authored title, even when this device displays a
+/// disambiguated title. Body edits and Trash changes must not publish that
+/// derived name as an unintended title edit.
+fn write_payload(tx: &Transaction<'_>, note: &Note, changed: &BTreeSet<String>) -> DbResult<Value> {
+    let mut payload = sync_payload(note);
+    if !changed.contains("title") {
+        let authored: Option<String> = tx
+            .query_row(
+                "SELECT authored_title FROM notes WHERE id=?1",
+                [&note.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(title) = authored {
+            payload["title"] = json!(title);
+        }
+    }
+    Ok(payload)
+}
+
+/// A deterministic projection of authored titles: the lowest note id keeps
+/// each title; the others get numbered names. Reserve all authored names
+/// before generating suffixes, so an actual "Plan 2" is never displaced.
+/// This changes neither the replica nor bodies: title-only links cannot
+/// identify which independently-created note their author meant.
+pub(crate) fn reconcile_titles(tx: &Transaction<'_>) -> DbResult<()> {
+    let notes = {
+        let mut query =
+            tx.prepare("SELECT id, title, authored_title FROM notes WHERE trashed=0 ORDER BY id")?;
+        let rows = query
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    let mut reserved: HashSet<String> =
+        notes.iter().map(|(_, _, title)| title_key(title)).collect();
+    let mut claimed = HashSet::new();
+    for (id, displayed, authored) in notes {
+        let mut title = authored.clone();
+        if !claimed.insert(title_key(&authored)) {
+            let mut number = 2;
+            loop {
+                let suffix = format!(" {number}");
+                let base: String = authored
+                    .chars()
+                    .take(MAX_NOTE_TITLE_CHARS - suffix.len())
+                    .collect();
+                title = format!("{}{suffix}", base.trim_end());
+                if reserved.insert(title_key(&title)) {
+                    break;
+                }
+                number += 1;
+            }
+        }
+        if displayed != title {
+            let mut note = get(tx, &id)?.ok_or(DatabaseError::NotFound("Note"))?;
+            note.title = title;
+            note.updated_at = Utc::now().to_rfc3339();
+            tx.execute(
+                "UPDATE notes SET title=?2, title_key=?3, updated_at=?4 WHERE id=?1",
+                params![note.id, note.title, title_key(&note.title), note.updated_at],
+            )?;
+            index(tx, &note)?;
+        }
+    }
+    Ok(())
 }
 
 fn payload_bytes(payload: &Value) -> DbResult<i64> {
@@ -162,13 +239,39 @@ fn store(
     } else {
         Some(serde_json::to_string(&pending).map_err(serialization_error)?)
     };
+    let authored_payload = match changed {
+        Some(fields) => write_payload(tx, note, fields)?,
+        None => sync_payload(note),
+    };
+    let previous: Option<(String, String, bool, Option<String>)> = tx
+        .query_row(
+            "SELECT title, authored_title, trashed, daily_date FROM notes WHERE id=?1",
+            [&note.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let titles_changed = previous
+        .as_ref()
+        .is_none_or(|(_, authored, trashed, daily)| {
+            authored_payload["title"].as_str() != Some(authored.as_str())
+                || *trashed != note.trashed
+                || daily != &note.daily_date
+        });
+    let mut projected = note.clone();
+    if !titles_changed {
+        // A remote body edit carries the authored title. Keep its existing
+        // display name without reassigning every other note's name.
+        projected.title = previous.as_ref().unwrap().0.clone();
+    }
+    let note = &projected;
     tx.execute(
-        "INSERT INTO notes(id, title, title_key, body, daily_date, created_at, updated_at, trashed, trashed_at, sync_bytes, replica_dirty_fields)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+        "INSERT INTO notes(id, title, title_key, body, daily_date, created_at, updated_at, trashed, trashed_at, sync_bytes, replica_dirty_fields, authored_title)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
          ON CONFLICT(id) DO UPDATE SET title=excluded.title, title_key=excluded.title_key,
             body=excluded.body, daily_date=excluded.daily_date, created_at=excluded.created_at,
             updated_at=excluded.updated_at, trashed=excluded.trashed, trashed_at=excluded.trashed_at,
-            sync_bytes=excluded.sync_bytes, replica_dirty_fields=excluded.replica_dirty_fields",
+            sync_bytes=excluded.sync_bytes, replica_dirty_fields=excluded.replica_dirty_fields,
+            authored_title=excluded.authored_title",
         params![
             note.id,
             note.title,
@@ -181,6 +284,7 @@ fn store(
             note.trashed_at,
             sync_bytes,
             stored_pending,
+            authored_payload["title"].as_str().unwrap_or_default(),
         ],
     )?;
     index(tx, note)?;
@@ -190,8 +294,11 @@ fn store(
             EntityType::Note,
             &note.id,
             &pending,
-            &sync_payload(note),
+            &authored_payload,
         )?;
+    }
+    if titles_changed {
+        reconcile_titles(tx)?;
     }
     Ok(())
 }
@@ -278,9 +385,9 @@ fn edit(tx: &Transaction<'_>, mut note: Note, title: String, body: &str) -> DbRe
         }
     }
     note.updated_at = Utc::now().to_rfc3339();
-    let bytes = check_sync_limits(tx, &note, &sync_payload(&note))?;
+    let bytes = check_sync_limits(tx, &note, &write_payload(tx, &note, &changed)?)?;
     store(tx, &note, bytes, Some(&changed))?;
-    Ok(note)
+    get(tx, &note.id)?.ok_or(DatabaseError::NotFound("Note"))
 }
 
 fn create(tx: &Transaction<'_>, note: Note) -> DbResult<Note> {
@@ -291,7 +398,7 @@ fn create(tx: &Transaction<'_>, note: Note) -> DbResult<Note> {
         .map(|object| object.keys().cloned().collect())
         .unwrap_or_default();
     store(tx, &note, bytes, Some(&fields))?;
-    Ok(note)
+    get(tx, &note.id)?.ok_or(DatabaseError::NotFound("Note"))
 }
 
 fn set_trashed(tx: &Transaction<'_>, id: &str, trashed: bool) -> DbResult<Note> {
@@ -310,14 +417,10 @@ fn set_trashed(tx: &Transaction<'_>, id: &str, trashed: bool) -> DbResult<Note> 
     }
     note.trashed = trashed;
     note.trashed_at = trashed.then(|| Utc::now().to_rfc3339());
-    let bytes = payload_bytes(&sync_payload(&note))?;
-    store(
-        tx,
-        &note,
-        bytes,
-        Some(&BTreeSet::from(["trashed".to_string()])),
-    )?;
-    Ok(note)
+    let changed = BTreeSet::from(["trashed".to_string()]);
+    let bytes = payload_bytes(&write_payload(tx, &note, &changed)?)?;
+    store(tx, &note, bytes, Some(&changed))?;
+    get(tx, &note.id)?.ok_or(DatabaseError::NotFound("Note"))
 }
 
 fn update_in(
@@ -375,7 +478,8 @@ fn relink(tx: &Transaction<'_>, id: &str, old_key: &str, new_title: &str) -> DbR
         }
         note.body = body;
         note.updated_at = Utc::now().to_rfc3339();
-        let bytes = match check_sync_limits(tx, &note, &sync_payload(&note)) {
+        let changed = BTreeSet::from(["body".to_string()]);
+        let bytes = match check_sync_limits(tx, &note, &write_payload(tx, &note, &changed)?) {
             Ok(bytes) => bytes,
             Err(DatabaseError::Validation(_)) => {
                 result.kept_old_link.push(note.title);
@@ -415,6 +519,7 @@ fn save_daily_in(tx: &Transaction<'_>, date: &str, body: &str) -> DbResult<Optio
                     updated_at: now,
                     trashed: false,
                     trashed_at: None,
+                    authored_title: None,
                 },
             )
             .map(Some)
@@ -481,6 +586,7 @@ impl Database {
             updated_at: now,
             trashed: false,
             trashed_at: None,
+            authored_title: None,
         };
         self.with_transaction(|tx| {
             check_title_free(tx, &note.id, &note.title)?;
@@ -582,6 +688,7 @@ impl Database {
                 ));
             }
             remove(tx, id)?;
+            reconcile_titles(tx)?;
             super::note_attachments::delete_note_attachments(tx, id)?;
             // Once the replica holds the note, its deletion is recorded even
             // while sync is off, so the note doesn't return when sync resumes.
@@ -896,6 +1003,15 @@ impl Database {
             }
             let now = Utc::now().to_rfc3339();
             let existing = get(tx, id)?;
+            let mut authored_existing = existing.clone();
+            if let Some(note) = &mut authored_existing {
+                note.authored_title = None;
+                note.title = tx.query_row(
+                    "SELECT authored_title FROM notes WHERE id=?1",
+                    [id],
+                    |row| row.get(0),
+                )?;
+            }
             let created_at = note_field(payload, "createdAt")
                 .map(str::to_string)
                 .or_else(|| existing.as_ref().map(|note| note.created_at.clone()))
@@ -904,7 +1020,8 @@ impl Database {
                 id: id.to_string(),
                 title: title.to_string(),
                 body: body.to_string(),
-                updated_at: match &existing {
+                authored_title: None,
+                updated_at: match &authored_existing {
                     Some(old) if old.title == title && old.body == body => old.updated_at.clone(),
                     _ => now.clone(),
                 },
@@ -917,7 +1034,7 @@ impl Database {
                 created_at,
                 trashed,
             };
-            if existing.as_ref() == Some(&note) {
+            if authored_existing.as_ref() == Some(&note) {
                 return Ok(());
             }
             let bytes = payload_bytes(&sync_payload(&note))?;
@@ -927,7 +1044,10 @@ impl Database {
 
     /// Removes a note another device deleted.
     pub(crate) fn delete_synced_note(&self, id: &str) -> DbResult<()> {
-        self.with_transaction(|tx| remove(tx, id))
+        self.with_transaction(|tx| {
+            remove(tx, id)?;
+            reconcile_titles(tx)
+        })
     }
 
     /// Records the changes made to notes while sync was off.
@@ -954,7 +1074,7 @@ impl Database {
                     EntityType::Note,
                     &id,
                     &fields,
-                    &sync_payload(&note),
+                    &write_payload(tx, &note, &BTreeSet::new())?,
                 )?;
             }
             Ok(())
@@ -967,7 +1087,12 @@ impl Database {
         self.with_connection(|connection| {
             let mut statement =
                 connection.prepare(&format!("SELECT {NOTE_COLUMNS} FROM notes ORDER BY id"))?;
-            let rows = statement.query_map([], note_from_row)?;
+            let rows = statement.query_map([], |row| {
+                let mut note = note_from_row(row)?;
+                note.title = row.get(8)?;
+                note.authored_title = None;
+                Ok(note)
+            })?;
             let notes = rows.collect::<Result<Vec<_>, _>>()?;
             Ok(notes
                 .into_iter()

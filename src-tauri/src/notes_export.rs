@@ -471,6 +471,7 @@ mod tests {
             updated_at: "2026-11-02T10:00:00Z".to_string(),
             trashed: false,
             trashed_at: None,
+            authored_title: None,
         }
     }
 

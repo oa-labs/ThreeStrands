@@ -38,7 +38,7 @@ export function noteConflictsById(conflicts: FrontierConflict[]): Map<string, Fr
 
 const sameValue = (field: NoteField, candidate: FrontierCandidate, note: Note) => {
   const value = candidate.value ?? (field === "trashed" ? false : "");
-  return value === note[field];
+  return value === (field === "title" ? note.authoredTitle ?? note.title : note[field]);
 };
 
 /** The candidate holding the value the note shows now, which every device

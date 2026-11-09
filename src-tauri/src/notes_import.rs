@@ -764,6 +764,7 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
                 updated_at: updated,
                 trashed: false,
                 trashed_at: None,
+                authored_title: None,
             },
         });
     }

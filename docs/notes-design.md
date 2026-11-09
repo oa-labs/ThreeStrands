@@ -106,7 +106,13 @@ without older devices refusing its notes.
   (ignoring case and repeated spaces), at most 200 characters, and can't
   contain `[`, `]`, or `|`, which end or split a link. It can't be a date,
   which names that day's daily note. A daily note's title is its date and
-  can't be changed.
+  can't be changed. If devices independently use the same title, the note
+  with the lowest id keeps it and the others receive numbered titles, within
+  the same 200-character limit. All authored titles are reserved before
+  assigning numbers. This is a deterministic local projection, not a new
+  replicated title edit: body edits never publish the generated name. Existing
+  title-only links keep their text and resolve to the note keeping the original
+  title; their intended target cannot be inferred across offline creations.
 
 ### Size limits
 

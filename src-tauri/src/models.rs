@@ -1322,6 +1322,9 @@ pub struct UpdateSnippetRequest {
 pub struct Note {
     pub id: String,
     pub title: String,
+    /// Authored title when the displayed name is disambiguated locally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authored_title: Option<String>,
     pub body: String,
     pub daily_date: Option<String>,
     pub created_at: String,
