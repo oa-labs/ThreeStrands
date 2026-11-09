@@ -212,6 +212,27 @@ fn an_export_imports_back_with_its_ids_dates_and_files() {
 }
 
 #[test]
+fn explicit_titles_preserve_body_headings_and_untitled_files_still_use_headings() {
+    let folder = TestFolder::new();
+    folder.write(
+        "notes/file.md",
+        "---\ntitle: \"Explicit: title\"\n---\n\n# Body heading\n\nText\n",
+    );
+    folder.write("notes/legacy.md", "# Heading title\n\nText\n");
+    folder.write(
+        "notes/fallback.md",
+        "---\ntitle: \"\"\n---\n# Fallback title\n\nText\n",
+    );
+    let plan = plan(&folder.0, &nothing()).unwrap();
+    assert_eq!(
+        note(&plan, "Explicit: title").note.body,
+        "# Body heading\n\nText\n"
+    );
+    assert_eq!(note(&plan, "Heading title").note.body, "Text\n");
+    assert_eq!(note(&plan, "Fallback title").note.body, "Text\n");
+}
+
+#[test]
 fn notes_and_titles_already_here_are_left_alone() {
     let folder = reflect_folder();
     let first = plan(&folder.0, &nothing()).unwrap();

@@ -9,8 +9,8 @@
 //!
 //! - **Daily notes** are `YYYY-MM-DD.md` files in a folder named `daily`.
 //!   Every other `.md` file is a regular note, whatever folder it is in.
-//! - **Titles** come from a leading `# Heading`, which is then removed from
-//!   the text, else a `title:` in the front matter, else the file name.
+//! - **Titles** come from `title:` in the front matter, else a leading
+//!   `# Heading`, which is then removed from the text, else the file name.
 //!   Characters a title can't hold are replaced, and a title already in use
 //!   gets " 2", " 3", and so on.
 //! - **Ids**: a daily note's id is its date. A front matter `id` that is a
@@ -688,9 +688,14 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
             (parent.eq_ignore_ascii_case("daily") && is_daily_date(stem)).then(|| stem.to_string());
 
         let mut body = parsed.body.clone();
-        let title = match &daily {
-            Some(date) => date.clone(),
-            None => {
+        let explicit_title = value(&parsed, "title").filter(|title| !title.trim().is_empty());
+        let title = match (&daily, explicit_title) {
+            (Some(date), _) => date.clone(),
+            (None, Some(title)) => {
+                // An explicit title keeps a leading body heading as content.
+                usable_title(title)
+            }
+            (None, None) => {
                 let heading = body
                     .lines()
                     .next()
@@ -705,11 +710,7 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
                         .trim_start_matches(['\r', '\n'])
                         .to_string();
                 }
-                usable_title(
-                    &heading
-                        .or_else(|| value(&parsed, "title").map(str::to_string))
-                        .unwrap_or_else(|| stem.to_string()),
-                )
+                usable_title(&heading.unwrap_or_else(|| stem.to_string()))
             }
         };
         let kept: Vec<&String> = parsed
