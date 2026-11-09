@@ -214,9 +214,9 @@ read-only.
 
 Current primary commands are:
 
-- `1`: open the Inbox/mail view;
-- `3`: open the Tasks view;
-- `0`: cycle between the Inbox/mail and Tasks views;
+- `0` through `6`: open Today, Mail, Calendar, Tasks, Contacts, Files, and
+  Agents, in sidebar order (the [Notes design](docs/notes-design.md#navigation)
+  moves Contacts, Files, and Agents up one key when Notes takes `4`);
 - `d`: add a task linked to the selected conversation in Mail, or a blank,
   standalone task in the Tasks view;
 - `t`: toggle Calendar;

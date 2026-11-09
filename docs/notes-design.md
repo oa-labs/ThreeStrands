@@ -186,9 +186,28 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 
 - Add `"notes"` to `RightWorkspace` in `src/useWorkspaces.ts`, so the active
   workspace stays one state value.
-- `7` opens Notes (keys `1` through `6` are taken). Register it and the
-  palette commands below in `src/commands.ts`, the central command registry:
-  - **Go to Notes View** (`7`)
+- `4` opens Notes. Mail, Calendar, Tasks, and Notes are the core views, so
+  they take `1` through `4`. Contacts, Files, and Agents are used less, and
+  each moves up one key. The sidebar lists the views in key order:
+
+  | Key | Before Notes | With Notes |
+  | --- | --- | --- |
+  | `0` | Today | Today |
+  | `1` | Mail | Mail |
+  | `2` | Calendar | Calendar |
+  | `3` | Tasks | Tasks |
+  | `4` | Contacts | **Notes** |
+  | `5` | Files | **Contacts** |
+  | `6` | Agents | **Files** |
+  | `7` | — | **Agents** |
+
+  The new keys ship in the same release as the Notes workspace, so `4` never
+  opens an empty view and users relearn the keys only once. That release's
+  changelog says the Contacts, Files, and Agents keys moved, and DESIGN.md's
+  list of primary commands gets the new keys.
+- Register the keys and the palette commands below in `src/commands.ts`, the
+  central command registry:
+  - **Go to Notes View** (`4`)
   - **Open Today's Note**
   - **New Note**
   - **Search Notes**
@@ -349,8 +368,10 @@ isn't in Trash to a folder the user picks:
 - **Frontend:** the editor's round-trip fixtures; loading a note doesn't
   write; the write cadence; the conflict banner and its actions; rename
   rewriting links; the backlinks and unlinked sections. Test hooks and
-  components directly, and keep one slim `<App />` test for the `7` shortcut
-  and palette wiring.
+  components directly, and keep one slim `<App />` test for the `4` shortcut
+  and palette wiring. Existing App tests that press `4`, `5`, or `6`, or find
+  the sidebar buttons "Contacts (4)", "Files (5)", and "Agents (6)", change
+  with the new keys. That is a deliberate contract change.
 - **Security-negative:** raw HTML, `javascript:` links, and remote image
   syntax in a note body never render live or fetch.
 
@@ -358,8 +379,8 @@ isn't in Trash to a folder the user picks:
 
 1. **Sync and storage.** The entity type, local tables, projection, search
    index, size limits, and daily-note ids, with the Rust tests above.
-2. **Workspace shell.** The workspace, list, editor, write cadence, and
-   today's note. Adopt the editor after its dependency review.
+2. **Workspace shell.** The workspace, list, editor, write cadence, today's
+   note, and the new view keys. Adopt the editor after its dependency review.
 3. **Links.** Wiki links, backlinks, unlinked links, people, and rename
    rewriting.
 4. **Safety.** The conflict banner and Trash.
