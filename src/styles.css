@@ -411,6 +411,9 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 .account-rail, .sidebar-nav { display: flex; flex-direction: column; align-items: center; gap: var(--sidebar-item-gap); }
 .account-rail { gap: var(--space-4); }
+/* Compose stands apart from navigation; Files and Agents form a quieter pair. */
+.sidebar-compose { display: flex; margin-block-end: var(--space-3); }
+.sidebar-secondary { display: flex; flex-direction: column; align-items: center; gap: var(--sidebar-item-gap); margin-block-start: var(--space-2); }
 .sidebar-nav-separator { width: 20px; height: 0; margin: var(--space-0-5) 0; border: 0; border-top: 1px solid var(--border); }
 .account-icon {
   position: relative;
@@ -3253,6 +3256,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 @media (max-height: 720px) {
   :root { --sidebar-item-size: var(--space-8); --sidebar-item-gap: var(--space-1); }
   .sidebar { padding-block: var(--space-2); }
+  .sidebar-compose { margin-block-end: var(--space-2); }
+  .sidebar-secondary { margin-block-start: var(--space-1); }
 }
 
 @media (max-height: 700px) {
