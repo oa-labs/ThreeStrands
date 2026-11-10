@@ -134,6 +134,29 @@ describe("Notes workspace", () => {
     }
   });
 
+  it("pages the open note with Space and starts writing with Enter, as reading a message does", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Long read"), "many lines");
+    const { container } = render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    const row = await noteList().findByRole("button", { name: new RegExp(note.title) });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+    const pane = container.querySelector<HTMLElement>(".notes-editor-pane")!;
+    Object.defineProperty(pane, "clientHeight", { value: 500 });
+    const scrollBy = vi.fn();
+    pane.scrollBy = scrollBy as typeof pane.scrollBy;
+
+    row.focus();
+    fireEvent.keyDown(row, { key: " ", code: "Space" });
+    expect(scrollBy).toHaveBeenLastCalledWith(expect.objectContaining({ top: 450 }));
+    fireEvent.keyDown(row, { key: " ", code: "Space", shiftKey: true });
+    expect(scrollBy).toHaveBeenLastCalledWith(expect.objectContaining({ top: -450 }));
+    expect(row).toHaveFocus();
+    // With nothing focused, the app's shortcuts run the same commands.
+    act(() => runWorkspaceCommand("notes.pageDown"));
+    expect(scrollBy).toHaveBeenLastCalledWith(expect.objectContaining({ top: 450 }));
+    act(() => runWorkspaceCommand("notes.write"));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveFocus());
+  });
+
   it("creates a note from the New Note dialog and opens it for writing", async () => {
     const taken = await mailClient.createNote(uniqueTitle("Taken"), "");
     shortcuts();
@@ -336,6 +359,9 @@ describe("Notes workspace", () => {
       expect(screen.getByRole("textbox", { name: "Title" })).toHaveAttribute("readonly");
       expect(screen.queryByRole("button", { name: "Move to Trash" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Link to…" })).not.toBeInTheDocument();
+      act(() => runWorkspaceCommand("notes.write"));
+      await act(() => new Promise(requestAnimationFrame));
+      expect(screen.getByRole("textbox", { name: "Note text" })).not.toHaveFocus();
 
       fireEvent.click(within(banner).getByRole("button", { name: "Restore" }));
       await waitFor(() => expect(screen.queryByRole("region", { name: "Note in Trash" })).not.toBeInTheDocument());

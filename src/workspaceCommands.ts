@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 
-export type WorkspaceCommandId = "agents.new" | "agents.search" | "calendar.new" | "calendar.goToday" | "contacts.search" | "contacts.new" | "contacts.newGroup" | "contacts.save" | "files.search" | "files.open" | "files.save" | "files.star" | "notes.new" | "notes.search" | "notes.trash" | "notes.link";
+export type WorkspaceCommandId = "agents.new" | "agents.search" | "calendar.new" | "calendar.goToday" | "contacts.search" | "contacts.new" | "contacts.newGroup" | "contacts.save" | "files.search" | "files.open" | "files.save" | "files.star" | "notes.new" | "notes.search" | "notes.trash" | "notes.link" | "notes.pageDown" | "notes.pageUp" | "notes.write";
 const WORKSPACE_COMMAND = "threestrands:workspace-command";
 
 /** The command registry owns bindings; the mounted workspace owns its actions. */

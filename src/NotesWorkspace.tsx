@@ -30,6 +30,7 @@ import { useNoteEditor } from "./useNoteEditor";
 import { replicatedSyncConflicts, replicatedSyncDeviceRoster, type DeviceRosterEntry, type FrontierConflict } from "./replicatedSync";
 import type { NotesRequest } from "./useWorkspaces";
 import { formatShortcut } from "./shortcutLabels";
+import { scrollBehavior } from "./useReaderActions";
 
 /** Most notes the Recent list shows. */
 const RECENT_LIMIT = 200;
@@ -87,8 +88,9 @@ type ListView = "notes" | "trash";
 
 /**
  * Notes: the note list on the left, the open note in the middle, and its
- * context on the right. The list is read mode; the note is a writing
- * surface entered with Enter or a click and left with Escape. Trash sits at
+ * context on the right. The list is read mode, where Space and Shift+Space
+ * page the open note; the note is a writing surface entered with Enter or a
+ * click and left with Escape. Trash sits at
  * the bottom of the list, and a trashed note opens read-only.
  */
 export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact, onOpenEntity, onReturn }: {
@@ -129,6 +131,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     return () => window.clearTimeout(timer);
   }, [lastSave]);
   const rows = useRef(new Map<string, HTMLButtonElement>());
+  const editorPane = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const titleInput = useRef<HTMLInputElement>(null);
   const body = useRef<NoteEditorHandle>(null);
@@ -281,6 +284,11 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
           date: note.updatedAt,
         })),
       ];
+  /** Pages the open note by most of a screen, as Space pages a message. */
+  const pageNote = (direction: 1 | -1) => {
+    const pane = editorPane.current;
+    if (pane) pane.scrollBy({ top: direction * pane.clientHeight * 0.9, behavior: scrollBehavior() });
+  };
   const focusSelectedRow = () => (rows.current.get(selectedKey) ?? rows.current.values().next().value)?.focus();
   const returnToList = () => {
     void editor.flush();
@@ -354,6 +362,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     "notes.search": () => requestAnimationFrame(() => search.current?.focus()),
     "notes.trash": () => void moveToTrash(),
     "notes.link": () => { if (!readOnly) setLinkPicker(true); },
+    "notes.pageDown": () => pageNote(1),
+    "notes.pageUp": () => pageNote(-1),
+    "notes.write": () => { if (!readOnly) setFocusEditor(true); },
   });
 
   const entityItemsCurrent = entityDocument?.noteId === noteId && entityDocument?.version === editor.note?.updatedAt;
@@ -365,8 +376,10 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   return <section className="notes-workspace" aria-label="Notes" onKeyDown={(event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
     if (event.key === "Escape" && onReturn) { event.preventDefault(); onReturn(); return; }
-    if (!["j", "k", "ArrowDown", "ArrowUp"].includes(event.key)) return;
     if (!(event.target instanceof HTMLElement) || !event.target.closest(".notes-list")) return;
+    // Space pages the open note from the list, rather than choosing the row again.
+    if (event.code === "Space") { event.preventDefault(); event.stopPropagation(); pageNote(event.shiftKey ? -1 : 1); return; }
+    if (!["j", "k", "ArrowDown", "ArrowUp"].includes(event.key)) return;
     event.preventDefault(); event.stopPropagation();
     const index = list.findIndex((row) => row.key === selectedKey);
     const next = list[Math.max(0, Math.min(list.length - 1, index + (["j", "ArrowDown"].includes(event.key) ? 1 : -1)))];
@@ -426,7 +439,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             </button>}
         </div>
       </div>
-      <div className="notes-editor-pane" data-shortcut-scope="compose" onBlur={(event) => {
+      <div ref={editorPane} className="notes-editor-pane" data-shortcut-scope="compose" onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void editor.flush();
       }}>
         {editor.loadError ? <p className="form-error" role="alert">{editor.loadError}</p>

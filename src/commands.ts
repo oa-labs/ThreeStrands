@@ -218,6 +218,10 @@ export const commands: Command[] = [
   workspaceCommand("notes.new", "New Note", ["Shift+n"], "notes"),
   workspaceCommand("notes.trash", "Move Note to Trash", ["#"], "notes"),
   workspaceCommand("notes.link", "Link to Conversation, Task, or Event…", [], "notes"),
+  // Reading a note works as reading a message: Space pages it, and Enter starts writing in it.
+  { ...workspaceCommand("notes.pageDown", "Scroll Note Down", ["Space"], "notes"), group: "Navigation", repeatable: true },
+  { ...workspaceCommand("notes.pageUp", "Scroll Note Up", ["Shift+Space"], "notes"), group: "Navigation", repeatable: true },
+  { ...workspaceCommand("notes.write", "Edit Note", ["Enter"], "notes"), group: "Navigation" },
   workspaceCommand("files.open", "Open Selected File", ["o"], "files"),
   workspaceCommand("files.save", "Save Selected File As…", ["Mod+Shift+s"], "files"),
   workspaceCommand("files.star", "Toggle File Star", ["s"], "files"),

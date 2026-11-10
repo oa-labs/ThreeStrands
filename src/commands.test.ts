@@ -249,6 +249,9 @@ describe("command registry", () => {
       "shift+n": ["calendar.new", "contacts.new", "agents.new", "notes.new"],
       "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
       "mod+enter": ["contacts.save", "draft.send"],
+      enter: ["notes.write", "tasks.openDetails"],
+      space: ["notes.pageDown", "thread.pageDown"],
+      "shift+space": ["notes.pageUp", "thread.pageUp"],
       "#": ["notes.trash", "draft.discard", "thread.trash"],
       arrowright: ["tasks.nextColumn", "message.next"],
       arrowleft: ["tasks.previousColumn", "message.previous"],
@@ -381,7 +384,7 @@ describe("command registry", () => {
     expect(today.enabled({ ...context, composerActive: true })).toBe(false);
   });
 
-  it.each([["notes.new", ["Shift+n"]], ["notes.trash", ["#"]], ["notes.link", []]])("offers %s only in Notes, outside text fields", (id, keys) => {
+  it.each([["notes.new", ["Shift+n"]], ["notes.trash", ["#"]], ["notes.link", []], ["notes.pageDown", ["Space"]], ["notes.pageUp", ["Shift+Space"]], ["notes.write", ["Enter"]]])("offers %s only in Notes, outside text fields", (id, keys) => {
     const command = commands.find((item) => item.id === id)!;
     expect(command.keys).toEqual(keys);
     expect(command.allowInEditable).toBe(false);
