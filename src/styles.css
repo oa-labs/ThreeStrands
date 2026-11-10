@@ -3763,6 +3763,16 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
   flex: 1; min-height: 0;
 }
 .note-editor-surface .ProseMirror { min-height: 100%; outline: none; font-size: var(--text-reading); line-height: var(--leading-relaxed); }
+.note-autocomplete-positioner { z-index: var(--z-local-popover); max-width: min(440px, calc(100vw - var(--space-6))); }
+.note-autocomplete-popup { max-height: 320px; overflow: auto; padding: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius-md); color: var(--text); background: var(--raised); box-shadow: var(--shadow-popover); }
+.note-autocomplete-heading { margin: 0; padding: var(--space-2); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-semibold); }
+.note-autocomplete-item { display: flex; align-items: start; gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-sm); cursor: pointer; }
+.note-autocomplete-item[data-highlighted], .note-autocomplete-item:hover { background: var(--selected); }
+.note-autocomplete-icon { display: flex; align-items: center; flex: none; height: calc(var(--text-body) * var(--leading-normal)); color: var(--muted); }
+.note-autocomplete-text { display: grid; gap: var(--space-0-5); min-width: 0; font-size: var(--text-body); line-height: var(--leading-normal); }
+.note-autocomplete-text > span { overflow-wrap: anywhere; }
+.note-autocomplete-text > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-meta); }
+.note-autocomplete-status { padding: var(--space-2); color: var(--muted); font-size: var(--text-secondary); }
 /* Block spacing close to Reflect's: list items sit just apart, paragraphs a
    little more, and a heading gets room above and stays near what follows.
    The editor library spaces every block, list items included, 0.85em apart. */

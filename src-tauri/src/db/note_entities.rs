@@ -467,6 +467,8 @@ impl Database {
 pub struct NoteLinkChoice {
     pub label: String,
     pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sent_at: Option<String>,
     pub reference: NoteReference,
 }
 impl Database {
@@ -509,24 +511,70 @@ impl Database {
         })
     }
     pub fn note_link_choices(&self, kind: &str, query: &str) -> DbResult<Vec<NoteLinkChoice>> {
+        // Reuse Contacts' saved and mail-derived profiles outside the connection lock.
+        if kind == "contact" {
+            return Ok(self
+                .list_contact_profiles(query, 50)?
+                .into_iter()
+                .filter_map(|profile| {
+                    let address = profile
+                        .addresses
+                        .iter()
+                        .map(|address| note_entities::normalize_contact_address(address))
+                        .find(|address| {
+                            let reference = NoteReference {
+                                version: 1,
+                                kind: "contact".into(),
+                                id: address.clone(),
+                                account: None,
+                                calendar: None,
+                                note: None,
+                                contact: None,
+                                series: None,
+                            };
+                            reference.validate()
+                        })?;
+                    let reference = NoteReference {
+                        version: 1,
+                        kind: "contact".into(),
+                        id: address.clone(),
+                        account: None,
+                        calendar: None,
+                        note: None,
+                        contact: (!profile.id.starts_with("derived:")).then_some(profile.id),
+                        series: None,
+                    };
+                    Some(NoteLinkChoice {
+                        label: profile
+                            .display_name
+                            .filter(|name| !name.trim().is_empty())
+                            .unwrap_or_else(|| address.clone()),
+                        detail: profile.addresses.join(" · "),
+                        sent_at: None,
+                        reference,
+                    })
+                })
+                .collect());
+        }
         self.with_connection(|c| {
             let mut choices=Vec::new();
             match kind {
                 "conversation" => {
-                    let mut q=c.prepare("SELECT subject,account_id,provider_thread_id FROM threads WHERE instr(lower(subject),lower(?1))>0 ORDER BY last_message_at DESC LIMIT 50")?;
-                    for r in q.query_map([query],|r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))? {
-                        let (label,account,id)=r?;
-                        choices.push(NoteLinkChoice{label:if label.is_empty(){"(No subject)".into()}else{label},detail:account.clone(),reference:NoteReference{version:1,kind:kind.into(),id,account:Some(account),calendar:None,note:None,contact:None,series:None}});
+                    let mut q=c.prepare("SELECT t.subject,t.account_id,t.provider_thread_id,(SELECT json_group_array(person) FROM (SELECT value AS person FROM json_each(t.participants_json) UNION SELECT CASE WHEN coalesce(display_name,'')='' THEN email ELSE display_name || ' <' || email || '>' END AS person FROM contact_interactions WHERE thread_id=t.id)),t.last_message_at FROM threads t WHERE instr(lower(t.subject || ' ' || t.participants_json),lower(?1))>0 OR EXISTS(SELECT 1 FROM contact_interactions ci WHERE ci.thread_id=t.id AND instr(lower(ci.email || ' ' || coalesce(ci.display_name,'')),lower(?1))>0) ORDER BY t.last_message_at DESC,t.id LIMIT 50")?;
+                    for r in q.query_map([query],|r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?)))? {
+                        let (label,account,id,participants,sent_at)=r?;
+                        let participants: Vec<String> = serde_json::from_str(&participants).map_err(super::serialization_error)?;
+                        choices.push(NoteLinkChoice{label:if label.is_empty(){"(No subject)".into()}else{label},detail:format!("{} · {}",participants.join(", "),account),sent_at:Some(sent_at),reference:NoteReference{version:1,kind:kind.into(),id,account:Some(account),calendar:None,note:None,contact:None,series:None}});
                     }
                 }
                 "task" => {
                     let mut q=c.prepare("SELECT title,account_id,id FROM tasks WHERE instr(lower(title),lower(?1))>0 ORDER BY updated_at DESC LIMIT 50")?;
                     for r in q.query_map([query],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))? {
-                        let (label,detail,id)=r?; choices.push(NoteLinkChoice{label,detail,reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:None,contact:None,series:None}});
+                        let (label,detail,id)=r?; choices.push(NoteLinkChoice{label,detail,sent_at:None,reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:None,contact:None,series:None}});
                     }
                     let mut q=c.prepare("SELECT t.title,n.title,t.marker_id,n.id FROM note_tasks t JOIN notes n ON n.id=t.note_id WHERE n.trashed=0 AND instr(lower(t.title),lower(?1))>0 LIMIT 50")?;
                     for r in q.query_map([query],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))? {
-                        let (label,detail,id,note)=r?; choices.push(NoteLinkChoice{label,detail:format!("Note · {detail}"),reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:Some(note),contact:None,series:None}});
+                        let (label,detail,id,note)=r?; choices.push(NoteLinkChoice{label,detail:format!("Note · {detail}"),sent_at:None,reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:Some(note),contact:None,series:None}});
                     }
                 }
                 "event" => {
@@ -536,8 +584,8 @@ impl Database {
                         if !event.title.to_lowercase().contains(&query.to_lowercase()){continue;}
                         let reference=NoteReference{version:1,kind:kind.into(),id:event.id.clone(),account:Some(event.account_id.clone()),calendar:Some(event.calendar_id.clone()),note:None,contact:None,series:event.series_id.clone().filter(|series|*series!=event.id)};
                         let detail=format!("{} · {} · {}",event.account_id,event.calendar_id,event.start);
-                        choices.push(NoteLinkChoice{label:event.title.clone(),detail:format!("{detail}{}",if event.series_id.is_some(){" · This occurrence"}else{""}),reference:reference.clone()});
-                        if let Some(series)=event.series_id { if !choices.iter().any(|c|c.reference.id==series && c.reference.account==reference.account && c.reference.calendar==reference.calendar) {choices.push(NoteLinkChoice{label:event.title,detail:format!("{detail} · Entire series"),reference:NoteReference{id:series,series:None,..reference}});} }
+                        choices.push(NoteLinkChoice{label:event.title.clone(),detail:format!("{detail}{}",if event.series_id.is_some(){" · This occurrence"}else{""}),sent_at:None,reference:reference.clone()});
+                        if let Some(series)=event.series_id { if !choices.iter().any(|c|c.reference.id==series && c.reference.account==reference.account && c.reference.calendar==reference.calendar) {choices.push(NoteLinkChoice{label:event.title,detail:format!("{detail} · Entire series"),sent_at:None,reference:NoteReference{id:series,series:None,..reference}});} }
                     }
                 }
                 _ => return Err(DatabaseError::invalid("Unknown note link kind")),

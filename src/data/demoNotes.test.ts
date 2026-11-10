@@ -1,8 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { createDemoNotes } from "./demoNotes";
 import { noteReferenceHref } from "../noteEntities";
+import type { ContactProfile, Thread } from "../domain";
 
 describe("demo notes", () => {
+  it("offers contacts by name or address and conversations by participant with stable references", async () => {
+    const contacts = [
+      { id: "c-ada", displayName: "Ada", addresses: ["ada@example.com", "ada@work.example"] },
+      { id: "c-other", displayName: "Ada", addresses: ["other@example.com"] },
+    ] as ContactProfile[];
+    const threads = [
+      { id: "local-personal", providerThreadId: "same-provider", accountId: "personal@example.com", subject: "Review", participants: ["Ada <ada@example.com>"], lastMessageAt: "2026-11-10T15:00:00Z" },
+      { id: "local-work", providerThreadId: "same-provider", accountId: "work@example.com", subject: "Review", participants: ["Ada <ada@example.com>"], lastMessageAt: "2026-11-09T15:00:00Z" },
+    ] as Thread[];
+    const notes = createDemoNotes({ contacts: () => contacts, threads: () => threads, tasks: () => [], events: () => [] });
+    expect(await notes.noteLinkChoices("contact", "Ada")).toHaveLength(2);
+    const found = await notes.noteLinkChoices("contact", "ada@work.example");
+    expect(found).toHaveLength(1);
+    expect(found[0].reference).toEqual({ version: 1, kind: "contact", id: "ada@example.com", contact: "c-ada" });
+    expect(await notes.resolveNoteContact(found[0].reference)).toBe("c-ada");
+    const mail = await notes.noteLinkChoices("conversation", "ada@example.com");
+    expect(mail.map((choice) => choice.sentAt)).toEqual(threads.map((thread) => thread.lastMessageAt));
+    expect(await notes.resolveNoteConversation(mail[0].reference)).toBe("local-personal");
+    expect(await notes.resolveNoteConversation(mail[1].reference)).toBe("local-work");
+  });
   it("follows the native title rules", async () => {
     const notes = createDemoNotes();
     expect((await notes.createNote("  Project   plan ", "")).title).toBe("Project plan");

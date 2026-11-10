@@ -1452,6 +1452,101 @@ fn saved_contact(db: &Database, name: &str, addresses: &[&str]) -> crate::models
     .unwrap()
 }
 
+#[test]
+fn note_contact_choices_search_names_and_addresses_without_confusing_identical_names() {
+    let db = database();
+    let ada = saved_contact(&db, "Ada", &["ada@example.com", "ada@work.example"]);
+    let other = saved_contact(&db, "Ada", &["other@example.com"]);
+    let choices = db.note_link_choices("contact", "Ada").unwrap();
+    assert_eq!(choices.len(), 2);
+    let targets: HashSet<_> = choices
+        .iter()
+        .map(|choice| choice.reference.contact.clone().unwrap())
+        .collect();
+    assert_eq!(targets, HashSet::from([ada.id.clone(), other.id]));
+    let choices = db.note_link_choices("contact", "ada@work.example").unwrap();
+    assert_eq!(choices.len(), 1);
+    assert_eq!(choices[0].label, "Ada");
+    assert!(choices[0].detail.contains("ada@work.example"));
+    assert!(choices[0].reference.validate());
+    assert_eq!(
+        db.resolve_note_contact(&choices[0].reference).unwrap(),
+        Some(ada.id)
+    );
+    assert!(db
+        .note_link_choices("contact", "Nobody here")
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn note_conversation_choices_search_participants_and_keep_account_scoped_provider_ids() {
+    let db = database();
+    for account in ["personal@example.com", "work@example.com"] {
+        db.adopt_account(account).unwrap();
+        let mut message = crate::db::test_support::message(
+            &format!("message-{account}"),
+            "same-provider-thread",
+            "2026-11-10T12:00:00Z",
+            "review",
+        );
+        message.subject = "Project review".into();
+        message.from = account.into();
+        message.to = vec!["Jane <jane@example.com>".into()];
+        db.upsert_thread(account, &[message]).unwrap();
+    }
+    let choices = db.note_link_choices("conversation", "Jane").unwrap();
+    assert_eq!(choices.len(), 2);
+    for choice in &choices {
+        assert_eq!(choice.label, "Project review");
+        assert_eq!(choice.reference.id, "same-provider-thread");
+        assert_eq!(choice.sent_at.as_deref(), Some("2026-11-10T12:00:00Z"));
+        assert!(choice.detail.contains("jane@example.com"));
+        assert!(choice.reference.validate());
+    }
+    let first = db
+        .resolve_note_conversation(&choices[0].reference)
+        .unwrap()
+        .unwrap();
+    let second = db
+        .resolve_note_conversation(&choices[1].reference)
+        .unwrap()
+        .unwrap();
+    assert_ne!(first, second);
+    let contacts = db.note_link_choices("contact", "jane@example.com").unwrap();
+    assert_eq!(contacts.len(), 1);
+    assert!(contacts[0].reference.contact.is_none());
+    assert!(db
+        .resolve_note_contact(&contacts[0].reference)
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn note_contact_choices_rank_recent_correspondence_before_alphabetical_names() {
+    let db = database();
+    db.adopt_account("you@example.com").unwrap();
+    saved_contact(&db, "Mention Z recent", &["recent@example.com"]);
+    saved_contact(&db, "Mention A older", &["older@example.com"]);
+    for (id, address, date) in [
+        ("recent", "recent@example.com", "2026-11-10T12:00:00Z"),
+        ("older", "older@example.com", "2026-11-01T12:00:00Z"),
+    ] {
+        let mut message = crate::db::test_support::message(id, id, date, "hello");
+        message.from = "you@example.com".into();
+        message.to = vec![address.into()];
+        db.upsert_thread("you@example.com", &[message]).unwrap();
+    }
+    let choices = db.note_link_choices("contact", "Mention").unwrap();
+    assert_eq!(
+        choices
+            .iter()
+            .map(|choice| choice.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Mention Z recent", "Mention A older"]
+    );
+}
+
 fn contact_reference(address: &str, contact: Option<&str>) -> crate::note_entities::NoteReference {
     crate::note_entities::NoteReference {
         version: 1,

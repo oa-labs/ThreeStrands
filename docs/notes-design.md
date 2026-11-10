@@ -1232,9 +1232,22 @@ A fourth kind of note reference, beside `conversation`, `task`, and
   never creates a contact, sends mail, or fetches anything.
 - **Labels** are the name written at insertion and don't change when the
   contact is renamed, like other references.
-- **Link to…** doesn't offer contacts in this release; only **Add Note**
-  writes them. The editor renders and preserves them as it does other
-  application links.
+- **Inserting links.** In the Markdown editor, a standalone `@` opens
+  autocomplete for **Contacts** and **Mail**. Search contacts by name or
+  address and conversations by subject or participant. Results are grouped
+  by type, with contact addresses and conversation participants, account,
+  and date to distinguish similar matches. Contacts share the Contacts view's
+  ordering: favorites first, then most recent correspondence across accounts.
+  Conversations are newest first. Choosing one inserts the person's
+  name or conversation subject as a standard Markdown application link.
+  **Link to…** also offers **Contact** alongside its existing choices, and
+  **Add Note** continues to write attendee references.
+- **Separate note links.** `[[` autocomplete searches notes and can name a
+  new note. `@` does not offer notes, tasks, or events. An `@` inside an
+  ordinary email address, or inside code, stays literal. Autocomplete uses
+  local data, supports keyboard selection and Escape, and ignores stale
+  search results when the query or open note changes. No new reference
+  format or sync entity is introduced.
 
 **Backlinks.** The entity-link index keys a contact reference by its address,
 so references written before and after a merge, or with and without a

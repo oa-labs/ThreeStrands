@@ -172,6 +172,9 @@ importers:
       '@meowdown/react':
         specifier: 0.81.2
         version: 0.81.2(@lezer/common@1.5.5)(@lezer/highlight@1.2.5)(@shikijs/types@4.6.0)(@types/hast@3.0.5)(@types/react@19.3.0)(@typescript/typescript6@6.0.2)(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)(prosemirror-transform@1.12.4)(prosemirror-view@1.42.9)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@prosekit/react':
+        specifier: 0.8.4
+        version: 0.8.4(@lezer/common@1.5.5)(@lezer/highlight@1.2.5)(@shikijs/types@4.6.0)(@types/hast@3.0.5)(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)(prosemirror-transform@1.12.4)(prosemirror-view@1.42.9)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@tauri-apps/api':
         specifier: ^2.12.1
         version: 2.12.1

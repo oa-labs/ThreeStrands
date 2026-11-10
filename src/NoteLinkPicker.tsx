@@ -3,7 +3,8 @@ import { Modal } from "./AppChrome";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
 import type { NoteReference } from "./noteEntities";
-export type NoteLinkChoice = { label: string; detail: string; reference: NoteReference };
+import { noteLinkDetail, type NoteLinkChoice } from "./noteLinkChoices";
+export type { NoteLinkChoice } from "./noteLinkChoices";
 
 export function NoteLinkPicker({ onClose, onSelect }: { onClose(): void; onSelect(choice: NoteLinkChoice): Promise<void> }) {
   const [kind, setKind] = useState<NoteReference["kind"]>("conversation");
@@ -19,11 +20,11 @@ export function NoteLinkPicker({ onClose, onSelect }: { onClose(): void; onSelec
   }, [kind, query]);
   return <Modal title="Link to…" onClose={onClose} dismissible={!busy}>
     <div className="modal-form">
-      <label>Kind<select value={kind} onChange={(e) => setKind(e.target.value as NoteReference["kind"])}><option value="conversation">Conversation</option><option value="task">Task</option><option value="event">Event</option></select></label>
+      <label>Kind<select value={kind} onChange={(e) => setKind(e.target.value as NoteReference["kind"])}><option value="contact">Contact</option><option value="conversation">Conversation</option><option value="task">Task</option><option value="event">Event</option></select></label>
       <label>Search<input type="search" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
       {kind === "event" ? <p className="context-status">Searches events already loaded on this device. Open Calendar to load other dates.</p> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
-      <ul>{rows.map((row, index) => <li key={index}><button type="button" className="btn-link" disabled={busy} onClick={() => { setBusy(true); void onSelect(row).catch((e) => { setError(errorMessage(e)); }).finally(() => setBusy(false)); }}>{row.label}<small> · {row.detail}</small></button></li>)}</ul>
+      <ul>{rows.map((row, index) => <li key={index}><button type="button" className="btn-link" disabled={busy} onClick={() => { setBusy(true); void onSelect(row).catch((e) => { setError(errorMessage(e)); }).finally(() => setBusy(false)); }}>{row.label}<small> · {noteLinkDetail(row)}</small></button></li>)}</ul>
       {!rows.length ? <p role="status">No matching items on this device.</p> : null}
     </div>
   </Modal>;

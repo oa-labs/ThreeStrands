@@ -27,6 +27,7 @@
   "dependencies": {
     "@meowdown/core": "0.81.3",
     "@meowdown/react": "0.81.2",
+    "@prosekit/react": "0.8.4",
     "@tauri-apps/api": "^2.12.1",
     "@tauri-apps/plugin-log": "2.10.0",
     "@tauri-apps/plugin-opener": "^2.7.0",

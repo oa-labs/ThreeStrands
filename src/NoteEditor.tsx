@@ -9,6 +9,8 @@ import { attachmentIdOf, type NoteFiles } from "./noteAttachments";
 import { openNoteLink } from "./noteLinks";
 import { collapseWhitespace, noteTitleKey, splitWikiLink } from "./noteWikiLinks";
 import type { NoteSyntaxMode } from "./noteSyntaxMode";
+import { NoteLinkAutocomplete } from "./NoteLinkAutocomplete";
+import type { NoteLinkChoice } from "./noteLinkChoices";
 
 export type NoteEditorHandle = {
   focus(): void;
@@ -89,7 +91,7 @@ function EscapeLeaves({ onLeave }: { onLeave(): void }) {
  * rewrites it. Escape hands focus back to the note list once the editor has
  * nothing of its own to close.
  */
-export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, files, onChange, onLeave, onSearchLinks, onOpenLink, onOpenEntity }: {
+export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, files, onChange, onLeave, onSearchLinks, onSearchEntities, onOpenLink, onOpenEntity }: {
   ref?: Ref<NoteEditorHandle>;
   /** Changes when another note opens, which starts a fresh editor. */
   noteKey: string;
@@ -104,6 +106,8 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   onLeave(): void;
   /** Notes the `[[` picker offers for what has been typed. */
   onSearchLinks?(query: string): Promise<NoteLinkSuggestion[]>;
+  /** Contacts and conversations the @ picker offers. */
+  onSearchEntities?(query: string): Promise<NoteLinkChoice[]>;
   /** Opens the note a `[[link]]` names. */
   onOpenLink?(title: string): void;
   onOpenEntity?(href: string): void;
@@ -118,9 +122,9 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   const [generation, setGeneration] = useState(0);
   const refocus = useRef(false);
   const latestChange = useRef(onChange);
-  const latestLinks = useRef({ onSearchLinks, onOpenLink, onOpenEntity });
+  const latestLinks = useRef({ onSearchLinks, onSearchEntities, onOpenLink, onOpenEntity });
   const latestFiles = useRef(files);
-  useEffect(() => { latestChange.current = onChange; latestLinks.current = { onSearchLinks, onOpenLink, onOpenEntity }; latestFiles.current = files; });
+  useEffect(() => { latestChange.current = onChange; latestLinks.current = { onSearchLinks, onSearchEntities, onOpenLink, onOpenEntity }; latestFiles.current = files; });
 
   useImperativeHandle(ref, () => ({ focus: () => editor.current?.focus(), markdown: () => fromEditorMarkdown(editor.current?.getMarkdown() ?? toEditorMarkdown(shown.current), shown.current), insert: (markdown) => editor.current?.insertMarkdown(toEditorMarkdown(markdown)), revealTask: (id) => {
     const e = editor.current?.getEditor();
@@ -197,6 +201,7 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   }, []);
   const handleWikilink = useCallback(({ target }: { target: string }) => latestLinks.current.onOpenLink?.(target), []);
   const searchLinks = useCallback(async (query: string) => linkMenuItems(query, await latestLinks.current.onSearchLinks?.(query) ?? []), []);
+  const searchEntities = useCallback(async (query: string) => await latestLinks.current.onSearchEntities?.(query) ?? [], []);
   // The editor library wants each of these to stay the same function.
   const saveFile = useCallback((file: File) => latestFiles.current?.save(file), []);
   const resolveImage = useCallback((src: string) => latestFiles.current?.image(src), []);
@@ -228,7 +233,6 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
       ].filter((item) => item.label.toLowerCase().includes(query))}
       onLinkClick={handleLink}
       onWikilinkClick={handleWikilink}
-      onWikilinkSearch={onSearchLinks ? searchLinks : undefined}
       resolveWikilink={resolveWikilink}
       readOnly={readOnly}
       placeholder={placeholder}
@@ -247,6 +251,7 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
       wrapperClassName="note-editor-surface"
     >
       <EditableName label={label} />
+      {!readOnly && (onSearchLinks || onSearchEntities) ? <NoteLinkAutocomplete onSearchNotes={onSearchLinks ? searchLinks : undefined} onSearchEntities={onSearchEntities ? searchEntities : undefined} /> : null}
       <EscapeLeaves onLeave={onLeave} />
     </MarkdownEditor>
   </div>;

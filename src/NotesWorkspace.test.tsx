@@ -86,7 +86,7 @@ describe("Notes workspace", () => {
     expect(rail.getByRole("heading", { name: "Note details" }).querySelector('[aria-hidden="true"] svg')).not.toBeNull();
     const links = within(rail.getByRole("region", { name: "Links" }));
     expect(links.queryByRole("heading")).not.toBeInTheDocument();
-    fireEvent.click(links.getByRole("button", { name: "Link conversation, task, or event" }));
+    fireEvent.click(links.getByRole("button", { name: "Link contact or conversation" }));
     expect(await screen.findByRole("dialog", { name: "Link to…" })).toBeInTheDocument();
   });
 
@@ -586,6 +586,38 @@ describe("Notes workspace", () => {
       });
     });
 
+    it("searches only contacts and conversations for @, with a bounded preview for each", async () => {
+      const note = await mailClient.createNote(uniqueTitle("Mention search"), "");
+      const choices = vi.spyOn(mailClient, "noteLinkChoices").mockImplementation(async (kind) => Array.from({ length: 12 }, (_, index) => ({
+        label: `${kind} ${index}`, detail: "me@example.com", reference: kind === "contact"
+          ? { version: 1, kind, id: `person${index}@example.com` }
+          : { version: 1, kind, id: `thread-${index}`, account: "me@example.com" },
+      })));
+      await openNote(note.id);
+      const found = await lastEditorProps.current!.onSearchEntities!("Ada");
+      expect(choices.mock.calls).toEqual([["contact", "Ada"], ["conversation", "Ada"]]);
+      expect(found.filter((item) => item.reference.kind === "contact")).toHaveLength(8);
+      expect(found.filter((item) => item.reference.kind === "conversation")).toHaveLength(8);
+    });
+
+    it("inserts a contact from Link to… as a Markdown reference and lists it under People", async () => {
+      const note = await mailClient.createNote(uniqueTitle("Mention picker"), "Lunch with ");
+      const reference = { version: 1 as const, kind: "contact" as const, id: "ada.picker@example.com", contact: "ada-picker" };
+      vi.spyOn(mailClient, "noteLinkChoices").mockImplementation(async (kind) => kind === "contact" ? [{ label: "Ada Picker", detail: reference.id, reference }] : []);
+      vi.spyOn(mailClient, "resolveNoteContact").mockResolvedValue("ada-picker");
+      vi.spyOn(mailClient, "getContactProfile").mockResolvedValue({ id: "ada-picker", displayName: "Ada Picker", addresses: [reference.id] } as ContactProfile);
+      await openNote(note.id, { onOpenContact: vi.fn() });
+      fireEvent.click(rail().getByRole("button", { name: "Link contact or conversation" }));
+      const picker = within(await screen.findByRole("dialog", { name: "Link to…" }));
+      fireEvent.change(picker.getByRole("combobox", { name: "Kind" }), { target: { value: "contact" } });
+      fireEvent.click(await picker.findByRole("button", { name: /Ada Picker/ }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Link to…" })).not.toBeInTheDocument());
+      expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(`Lunch with ${markdownEntityLink("Ada Picker", reference)}`);
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Note text" }), { key: "Escape" });
+      await waitFor(async () => expect((await mailClient.getNote(note.id))?.body).toContain(markdownEntityLink("Ada Picker", reference)));
+      expect(await rail().findByRole("region", { name: "People" })).toBeInTheDocument();
+    });
+
     it("lists linked people who are saved contacts and opens them in Contacts", async () => {
       const note = await mailClient.createNote(uniqueTitle("Met"), "Lunch with [[Ada  Lovelace]] and [[Nobody Known]]");
       vi.spyOn(mailClient, "listContactProfiles").mockImplementation(async (query) => noteTitleKeyOf(query ?? "") === "ada lovelace"
@@ -624,8 +656,10 @@ describe("Notes workspace", () => {
       const href = markdownEntityLink("Quarterly plan", { version: 1, kind: "conversation", id: "thread-q", account: "acct-1" });
       const note = await mailClient.createNote(uniqueTitle("Linked"), `See ${href}`);
       await openNote(note.id);
-      const links = within(await rail().findByRole("region", { name: /Links/ }));
-      expect(await links.findByRole("button", { name: /Quarterly plan/ })).toBeInTheDocument();
+      // Wait for the saved links before capturing the section: loading replaces
+      // the compact empty-state action with the populated Links section.
+      expect(await rail().findByRole("button", { name: /Quarterly plan/ })).toBeInTheDocument();
+      const links = within(rail().getByRole("region", { name: "Links" }));
       fireEvent.click(links.getByRole("button", { name: "Link to…" }));
       const picker = await screen.findByRole("dialog", { name: "Link to…" });
       fireEvent.keyDown(picker, { key: "Escape" });

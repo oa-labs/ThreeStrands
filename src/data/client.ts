@@ -413,7 +413,7 @@ export interface MailClient extends CorrespondenceClient {
   deleteSignature(id: string): Promise<void>;
   saveSignatureDefaults(defaults: SignatureDefaults): Promise<void>;
   deleteSignatureDefaults(account: string, address: string): Promise<void>;
-  noteLinkChoices(kind: NoteReference["kind"], query: string): Promise<import("../NoteLinkPicker").NoteLinkChoice[]>;
+  noteLinkChoices(kind: NoteReference["kind"], query: string): Promise<import("../noteLinkChoices").NoteLinkChoice[]>;
   resolveNoteEvent(reference: NoteReference): Promise<ScheduleEvent | null>;
   noteDocument(id: string): Promise<NoteDocument>;
   noteTaskWarnings(): Promise<[string, string, string][]>;

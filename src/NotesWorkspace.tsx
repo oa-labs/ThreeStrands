@@ -320,6 +320,10 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     const found = await mailClient.suggestNoteTitles(query, LINK_SUGGESTIONS);
     return found.filter((note) => note.id !== openNoteId.current).map((note) => ({ title: note.title }));
   }, []);
+  const searchEntities = useCallback(async (query: string) => {
+    const [contacts, conversations] = await Promise.all([mailClient.noteLinkChoices("contact", query), mailClient.noteLinkChoices("conversation", query)]);
+    return [...contacts.slice(0, LINK_SUGGESTIONS), ...conversations.slice(0, LINK_SUGGESTIONS)];
+  }, []);
   const moveToTrash = () => act(async () => {
     const note = editor.note;
     if (!note || note.trashed) return;
@@ -488,7 +492,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
               placeholder={daily ? "Write about the day" : "Write in Markdown"}
               onChange={(value) => editor.edit({ body: value })} onLeave={returnToList}
               onOpenEntity={(href) => void act(async () => { if (!parseNoteReference(href)) throw new Error("Invalid note reference"); await editor.flush(); if (editor.unsaved()) throw new Error("Save or resolve this note before opening its link."); await onOpenEntity?.(href); })}
-              onSearchLinks={searchLinks} onOpenLink={(title) => void openLink(title)} />
+              onSearchLinks={searchLinks} onSearchEntities={searchEntities} onOpenLink={(title) => void openLink(title)} />
             {editor.saveState.kind === "error" ? <p className="form-error" role="alert">{editor.saveState.message}</p> : null}
           </>}
       </div>
@@ -496,10 +500,10 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
         <ContextSectionHeader title="Note details" icon={<NotebookText size={ICON_SIZE.xs} />} />
         {entityDocument?.warning ? <p role="alert" className="form-error">{entityDocument.warning}</p> : null}
         {!entityLinks.length && !readOnly ? <section className="note-links-empty" aria-label="Links">
-          <button type="button" className="btn-link" onClick={() => setLinkPicker(true)}><span className="context-row-glyph" aria-hidden="true"><Plus size={ICON_SIZE.sm} /></span>Link conversation, task, or event</button>
+          <button type="button" className="btn-link" onClick={() => setLinkPicker(true)}><span className="context-row-glyph" aria-hidden="true"><Plus size={ICON_SIZE.sm} /></span>Link contact or conversation</button>
         </section> : null}
         {entityLinks.length ? <ContextSection id="note-links" title="Links" count={entityLinks.length}
-          actions={!readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
+          actions={!readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a contact, conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
           rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind as keyof typeof LINK_ICON]} title={link.label} detail={link.reference.account}
             onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null}
         {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <NoteChecklistSection key={noteId} items={entityDocument.items}

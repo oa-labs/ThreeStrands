@@ -1,4 +1,4 @@
-import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKey, noteReferenceSeriesKey, markdownEntityLink, type NoteDocument } from "../noteEntities";
+import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKey, noteReferenceSeriesKey, contactNoteReferences, markdownEntityLink, type NoteDocument } from "../noteEntities";
 import type { ContactProfile, Thread, ThreadTask, ScheduleEvent, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
 import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
 import { notePreview, noteInlineText } from "../notePreview";
@@ -24,7 +24,7 @@ function noteTitle(title: string): string {
 const preview = notePreview;
 
 /** In-memory notes for the browser demo and tests, following the native store's rules. */
-export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadTask[]; events(): ScheduleEvent[]; contacts?(): ContactProfile[] } = { threads: () => [], tasks: () => [], events: () => [] }): DemoNotes {
+export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadTask[]; events(): ScheduleEvent[]; contacts?(): ContactProfile[] | Promise<ContactProfile[]> } = { threads: () => [], tasks: () => [], events: () => [] }): DemoNotes {
   const notes = new Map<string, Note>();
   const provisional = new Map<string, string>();
   const itemId = (noteId: string, body: string, item: ReturnType<typeof noteItemRanges>[number], occurrence: number) => {
@@ -79,14 +79,18 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
   };
   return {
     async noteLinkChoices(kind, query) {
-      const conversation = sources.threads().map((thread) => ({ label: thread.subject || "(No subject)", detail: thread.accountId, reference: { version: 1 as const, kind: "conversation" as const, id: thread.providerThreadId, account: thread.accountId } }));
+      const conversation = sources.threads().slice().sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)).map((thread) => ({ label: thread.subject || "(No subject)", detail: `${thread.participants.join(", ")} · ${thread.accountId}`, sentAt: thread.lastMessageAt, reference: { version: 1 as const, kind: "conversation" as const, id: thread.providerThreadId, account: thread.accountId } }));
+      if (kind === "contact") return ((await sources.contacts?.()) ?? []).flatMap((contact) => {
+        const reference = contactNoteReferences(contact.addresses)[0];
+        return reference ? [{ label: contact.displayName?.trim() || reference.id, detail: contact.addresses.join(" · "), reference: { ...reference, ...(!contact.id.startsWith("derived:") ? { contact: contact.id } : {}) } }] : [];
+      }).filter((choice) => `${choice.label} ${choice.detail}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 50);
       const ordinaryTasks = sources.tasks().map((task) => ({ label: task.title, detail: task.accountId, reference: { version: 1 as const, kind: "task" as const, id: task.id } }));
       const noteTasks = [...notes.values()].filter((note) => !note.trashed).flatMap((note) => document(note).items.filter((item) => item.task).map((item) => ({ label: item.title, detail: `Note · ${note.title}`, reference: { version: 1 as const, kind: "task" as const, id: item.id, note: note.id } })));
       const events = sources.events().flatMap((event) => {
         const reference = { version: 1 as const, kind: "event" as const, id: event.id, account: event.accountId, calendar: event.calendarId };
         return [{ label: event.title, detail: `${event.accountId} · ${event.calendarId} · ${event.start}${event.seriesId ? " · This occurrence" : ""}`, reference }, ...(event.seriesId ? [{ label: event.title, detail: `${event.accountId} · Entire series`, reference: { ...reference, id: event.seriesId } }] : [])];
       });
-      return (kind === "conversation" ? conversation : kind === "task" ? [...ordinaryTasks, ...noteTasks] : events).filter((choice) => choice.label.toLowerCase().includes(query.toLowerCase())).slice(0, 50);
+      return (kind === "conversation" ? conversation : kind === "task" ? [...ordinaryTasks, ...noteTasks] : events).filter((choice) => `${choice.label}${kind === "conversation" ? ` ${choice.detail}` : ""}`.toLowerCase().includes(query.toLowerCase())).slice(0, 50);
     },
     async resolveNoteEvent(reference) { return structuredClone(sources.events().find((event) => event.accountId === reference.account && event.calendarId === reference.calendar && (event.id === reference.id || event.seriesId === reference.id)) ?? null); },
     async noteDocument(id) { return document(existing(id)); },
@@ -108,7 +112,7 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
       return [...notes.values()].filter((note) => !note.trashed).flatMap((note) => { const link = document(note).links.find((link) => noteReferenceKey(link.reference) === key || noteReferenceSeriesKey(link.reference) === key); return link ? [{ noteId: note.id, title: note.title, dailyDate: note.dailyDate, context: link.context, reference: link.reference }] : []; });
     },
     async resolveNoteContact(reference) {
-      const contacts = sources.contacts?.() ?? [];
+      const contacts = await sources.contacts?.() ?? [];
       return (contacts.find((contact) => contact.id === reference.contact) ?? contacts.find((contact) => contact.addresses.includes(reference.id)))?.id ?? null;
     },
     async resolveNoteConversation(reference) { return sources.threads().find((thread) => thread.accountId === reference.account && thread.providerThreadId === reference.id)?.id ?? null; },
