@@ -1,3 +1,4 @@
+import { formatCompactDate } from "./dateFormatting";
 import type { ContactProfile } from "./domain";
 
 /** Mirrors `MAX_KEEP_IN_TOUCH_DAYS` in `src-tauri/src/db/contacts.rs`. */
@@ -66,7 +67,7 @@ export function isKeepInTouchDue(profile: Pick<ContactProfile, "keepInTouchDueAt
 const monthDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 const fullDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
 /** "Oct 1", with the year only outside the current year. */
-const shortDate = (date: Date, now: Date) => (date.getFullYear() === now.getFullYear() ? monthDay : fullDate).format(date);
+const shortDate = (date: Date, now: Date) => formatCompactDate(date, now);
 
 /** "Overdue since Oct 1", "Due today", or "Due Oct 12". */
 export function describeDue(dueAt: string, now = new Date()): string {

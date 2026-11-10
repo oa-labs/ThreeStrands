@@ -1,3 +1,4 @@
+import { formatCompactDate } from "./dateFormatting";
 import type { ScheduleEvent } from "./domain";
 
 /** Pixel height of one hour row in every time-grid calendar surface. */
@@ -161,9 +162,7 @@ export function formatUpcomingDate(event: ScheduleEvent, now = new Date()): stri
   if (days <= 0) return "Today";
   if (days === 1) return "Tomorrow";
   if (days < 7) return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date);
-  return new Intl.DateTimeFormat(undefined, date.getFullYear() === now.getFullYear()
-    ? { month: "short", day: "numeric" }
-    : { month: "short", day: "numeric", year: "numeric" }).format(date);
+  return formatCompactDate(date, now);
 }
 
 export function safeWebUrl(value: string | null | undefined): string | null {

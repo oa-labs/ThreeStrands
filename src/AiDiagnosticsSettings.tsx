@@ -1,3 +1,4 @@
+import { formatDiagnosticDateTime } from "./dateFormatting";
 import { Fragment, useEffect, useId, useState } from "react";
 import { mailClient } from "./data/client";
 import type { AiDiagnosticSnapshot } from "./domain";
@@ -61,7 +62,7 @@ export function AiDiagnosticsSettings() {
     {snapshot && snapshot.entries.length > 0 ? <ul className="ai-activity-list">
       {snapshot.entries.map((entry, index) => <li key={`${entry.requestId}:${index}`}>
         <strong>{entry.reason}</strong>
-        <small>{new Date(entry.at).toLocaleString()} · {aiActivityFeatureLabel(entry.feature)} · {AI_PROVIDERS.find((provider) => provider.id === entry.provider)?.label ?? entry.provider} · {entry.model}</small>
+        <small>{formatDiagnosticDateTime(new Date(entry.at))} · {aiActivityFeatureLabel(entry.feature)} · {AI_PROVIDERS.find((provider) => provider.id === entry.provider)?.label ?? entry.provider} · {entry.model}</small>
         <details>
           <summary>Request details</summary>
           <p>Request reference: <code>{entry.requestId}</code></p>

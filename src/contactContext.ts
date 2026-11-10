@@ -1,3 +1,4 @@
+import { formatCompactDate, formatFullDate, formatMonthYear } from "./dateFormatting";
 import type { ContactActivity } from "./domain";
 
 /** Rows a context panel section shows before "Show more". */
@@ -70,14 +71,9 @@ export function estimateCadence(receivedAt: string[], now = new Date()): Cadence
   return { label: cadence.label, monthPart };
 }
 
-const monthYear = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
-const monthDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
-const fullDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
-
-/** "Mar 4" within the current year, otherwise "Mar 2025". */
+/** Exact history date, including the year when it differs from the current year. */
 export function formatHistoryDate(iso: string, now = new Date()): string {
-  const date = new Date(iso);
-  return date.getFullYear() === now.getFullYear() ? monthDay.format(date) : monthYear.format(date);
+  return formatCompactDate(new Date(iso), now);
 }
 
 /**
@@ -89,8 +85,8 @@ export function describeActivity(activity: ContactActivity, now = new Date()): s
   const total = activity.sentCount + activity.receivedCount;
   if (total === 0 || !activity.firstAt) return [];
   const facts = [total === 1
-    ? `1 email · ${fullDate.format(new Date(activity.firstAt))}`
-    : `${total} emails since ${monthYear.format(new Date(activity.firstAt))}`];
+    ? `1 email · ${formatFullDate(new Date(activity.firstAt))}`
+    : `${total} emails since ${formatMonthYear(new Date(activity.firstAt))}`];
   const cadence = estimateCadence(activity.recentReceivedAt, now);
   if (cadence) {
     const label = cadence.label[0].toLocaleUpperCase() + cadence.label.slice(1);

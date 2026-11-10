@@ -1,3 +1,4 @@
+import { formatCompactDate } from "./dateFormatting";
 import type { TaskStatus, ThreadTask } from "./domain";
 
 export const TASK_VIEWS = ["All", "Overdue", "Today", "Upcoming", "Anytime", "Waiting", "Completed"] as const;
@@ -116,8 +117,7 @@ export function formatRelativeDate(date: Date, now: Date = new Date()): string {
   if (diffDays === 0) return "Today";
   if (diffDays === 1) return "Tomorrow";
   if (diffDays === -1) return "Yesterday";
-  const includeYear = date.getFullYear() !== now.getFullYear();
-  return date.toLocaleDateString(undefined, includeYear ? { year: "numeric", month: "short", day: "numeric" } : { month: "short", day: "numeric" });
+  return formatCompactDate(date, now);
 }
 
 export function formatDue(task: ThreadTask): string | null {

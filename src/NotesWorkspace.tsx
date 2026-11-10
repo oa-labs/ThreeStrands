@@ -1,3 +1,4 @@
+import { formatDateTime } from "./dateFormatting";
 import { NoteLinkPicker } from "./NoteLinkPicker";
 import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./noteEntities";
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
@@ -46,7 +47,7 @@ const MATCH_END = "\u0002";
 
 const noteLabel = (note: { title: string; dailyDate: string | null }) => note.dailyDate ? formatNoteDate(note.dailyDate) : note.title;
 const summaryTarget = (note: { id: string; dailyDate: string | null }): NoteTarget => note.dailyDate ? { kind: "daily", date: note.dailyDate } : { kind: "note", id: note.id };
-const formatTime = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+const formatTime = (value: string) => formatDateTime(new Date(value));
 
 function MatchSnippet({ text }: { text: string }) {
   const [before, ...matches] = text.split(MATCH_START);

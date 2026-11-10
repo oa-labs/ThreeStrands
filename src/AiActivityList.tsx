@@ -1,3 +1,4 @@
+import { formatDateTime } from "./dateFormatting";
 import { useEffect, useState } from "react";
 import type { AiActivity } from "./domain";
 import { mailClient } from "./data/client";
@@ -57,7 +58,7 @@ export function AiActivityList() {
     {entries && entries.length === 0 ? <p className="settings-hint">Nothing has been sent yet.</p> : null}
     {shown.length > 0 ? <ul className="ai-activity-list">
       {shown.map((entry, index) => {
-        const when = new Date(entry.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        const when = formatDateTime(new Date(entry.at));
         const details = [
           when,
           `${providerLabel(entry.provider)} ${entry.model}`,

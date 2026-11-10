@@ -1,3 +1,4 @@
+import { formatDateTime } from "./dateFormatting";
 import { useEffect, useState } from "react";
 import { mailClient } from "./data/client";
 import type { SystemContactsStatus } from "./domain";
@@ -46,7 +47,7 @@ export function MacContactsSettings({ onChanged }: { onChanged(): void }) {
       <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => mailClient.refreshSystemContacts(selected))}>Use selected address books</button>
     </> : null}
     {status?.connection.selectedSources.length ? <>
-      <p role="status">{status.contactCount} {status.contactCount === 1 ? "contact" : "contacts"} with email addresses connected.{status.connection.refreshedAt ? ` Last refreshed ${new Date(status.connection.refreshedAt).toLocaleString()}.` : ""} Refreshes automatically while ThreeStrands is running.</p>
+      <p role="status">{status.contactCount} {status.contactCount === 1 ? "contact" : "contacts"} with email addresses connected.{status.connection.refreshedAt ? ` Last refreshed ${formatDateTime(new Date(status.connection.refreshedAt))}.` : ""} Refreshes automatically while ThreeStrands is running.</p>
       <button type="button" className="btn" disabled={busy || !permitted} onClick={() => void run(() => mailClient.refreshSystemContacts())}>Refresh now</button>
       <button type="button" className="btn" disabled={busy} onClick={() => void run(() => mailClient.refreshSystemContacts([]))}>Disconnect Mac Contacts</button>
       <p>Disconnecting removes downloaded contacts. Profiles you saved in ThreeStrands remain.</p>

@@ -1,13 +1,9 @@
+import { formatCompactDate } from "./dateFormatting";
 import type { Thread } from "./domain";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
-});
-
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "2-digit",
 });
 
 export function formatMailTimestamp(iso: string, now = new Date()): string {
@@ -16,7 +12,7 @@ export function formatMailTimestamp(iso: string, now = new Date()): string {
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
-  return isToday ? timeFormatter.format(date) : dateFormatter.format(date);
+  return isToday ? timeFormatter.format(date) : formatCompactDate(date, now);
 }
 
 export function formatTimeOnly(iso: string): string {

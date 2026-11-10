@@ -1,3 +1,4 @@
+import { formatDiagnosticDateTime } from "./dateFormatting";
 import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { mailClient } from "./data/client";
@@ -102,7 +103,7 @@ export function syncOverview(transports: readonly ReplicatedSyncTransportStatus[
     .at(-1);
   return {
     tone: "ok",
-    text: `Syncing · ${devices} · ${lastSuccess ? `last synced ${new Date(lastSuccess).toLocaleString()}` : "not synced yet"}`,
+    text: `Syncing · ${devices} · ${lastSuccess ? `last synced ${formatDiagnosticDateTime(new Date(lastSuccess))}` : "not synced yet"}`,
   };
 }
 
@@ -728,7 +729,7 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
       <div className="account-card-row">
         <div className="account-card-identity">
           <strong>New device asking to join</strong>
-          <span className="account-card-email">Requested {new Date(request.createdAt).toLocaleString()}</span>
+          <span className="account-card-email">Requested {formatDiagnosticDateTime(new Date(request.createdAt))}</span>
         </div>
         {reviewing ? null : (
           <button type="button" className="btn btn-primary" disabled={busy} aria-expanded={false} onClick={() => setReviewing(true)}>
@@ -782,7 +783,7 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
     device.isSelf ? "This device" : null,
     device.status === "revoked" ? "Revoked" : "Active",
     device.joinedWithJoinCode ? "Joined with a join code" : null,
-    device.lastChangeAt ? `Last change ${new Date(device.lastChangeAt).toLocaleString()}` : "No changes yet",
+    device.lastChangeAt ? `Last change ${formatDiagnosticDateTime(new Date(device.lastChangeAt))}` : "No changes yet",
   ].filter(Boolean).join(" · ");
 
   return (

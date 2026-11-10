@@ -1,3 +1,4 @@
+import { formatCompactDate } from "./dateFormatting";
 import { ContactRound, ListPlus, Mail, Send, Video, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -329,7 +330,7 @@ function formatArrival(iso: string, now: Date): string {
   const date = new Date(iso);
   return startOfLocalDay(date).getTime() === startOfLocalDay(now).getTime()
     ? formatClockTime(date)
-    : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    : formatCompactDate(date, now);
 }
 
 /** "No meetings", "1 meeting", "3 meetings". */

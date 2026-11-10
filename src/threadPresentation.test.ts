@@ -58,10 +58,20 @@ describe("thread presentation helpers", () => {
       hour: "numeric",
       minute: "2-digit",
     }).format(new Date("2026-09-18T08:05:00")));
-    expect(formatMailTimestamp("2026-09-17T08:05:00", now)).toBe(new Intl.DateTimeFormat(undefined, {
+    expect(formatMailTimestamp("2026-09-05T08:05:00", now)).toBe(new Intl.DateTimeFormat(undefined, {
       month: "short",
-      day: "2-digit",
-    }).format(new Date("2026-09-17T08:05:00")));
+      day: "numeric",
+    }).format(new Date("2026-09-05T08:05:00")));
+  });
+
+  it("keeps the exact date and year for mail outside the current year", () => {
+    const now = new Date(2026, 8, 18);
+    for (const year of [2025, 2027]) {
+      const date = new Date(year, 8, 5, 8, 5);
+      expect(formatMailTimestamp(date.toISOString(), now)).toBe(new Intl.DateTimeFormat(undefined, {
+        month: "short", day: "numeric", year: "numeric",
+      }).format(date));
+    }
   });
 
   it("sorts without mutating the source array", () => {

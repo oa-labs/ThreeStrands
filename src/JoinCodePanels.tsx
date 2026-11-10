@@ -1,3 +1,4 @@
+import { formatDateTime } from "./dateFormatting";
 import { useEffect, useState } from "react";
 import { errorMessage } from "./errors";
 import {
@@ -310,7 +311,7 @@ function OutstandingJoinCodeRow({ code, operation }: { code: OutstandingJoinCode
       <div className="account-card-row">
         <div className="account-card-identity">
           <strong>{describeJoinCode(code)}</strong>
-          <span className="account-card-email">Created {new Date(code.createdAt).toLocaleString()}</span>
+          <span className="account-card-email">Created {formatDateTime(new Date(code.createdAt))}</span>
           {code.rejectedAttempts > 0 ? (
             <span className="account-card-email sync-attention-text">Refused {plural(code.rejectedAttempts, "later attempt")} to use this code</span>
           ) : null}

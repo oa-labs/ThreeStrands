@@ -1,3 +1,4 @@
+import { formatCompactDate } from "./dateFormatting";
 import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { useId, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -387,7 +388,7 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
     const message = detail.messages.find((candidate) => candidate.id === messageId);
     if (!message) return null;
     const sender = parseAddress(message.sender);
-    return `${sender.name || sender.email} · ${new Date(message.sentAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+    return `${sender.name || sender.email} · ${formatCompactDate(new Date(message.sentAt))}`;
   };
   const copyBrief = async () => {
     if (!summaryText) return;
