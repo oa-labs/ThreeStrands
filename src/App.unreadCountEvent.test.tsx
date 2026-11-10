@@ -97,7 +97,7 @@ describe("background unread count updates", () => {
     const syncStatus = vi.spyOn(mailClient, "syncStatus");
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const refresh = screen.getByRole("button", { name: "Refresh mail" });
+    const refresh = screen.getByRole("button", { name: "Refresh Mail" });
     expect(refresh).toHaveAttribute("aria-busy", "false");
 
     await bridge.fire("mail-sync-activity", { accountId: DEMO_ACCOUNT_ID, active: true });

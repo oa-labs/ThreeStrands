@@ -45,7 +45,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(updated);
     fireEvent(window, new Event("threestrands:system-contacts-changed"));
     expect(await screen.findByDisplayValue("Updated on Mac")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Delete contact" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Contact" })).not.toBeInTheDocument();
   });
 
   it("preserves unsaved contact edits during a background Mac refresh", async () => {
@@ -394,8 +394,8 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.saveContactProfile).mockImplementation(async request=>({...jane,favorite:request.favorite}));
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:"Favorite contact"}));
-    await waitFor(()=>expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","true"));
+    fireEvent.click(screen.getByRole("button",{name:"Favorite Contact"}));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Favorite Contact"})).toHaveAttribute("aria-pressed","true"));
     expect(screen.queryByRole("region",{name:"Save changes"})).not.toBeInTheDocument();
   });
 
@@ -560,16 +560,16 @@ describe("ContactsWorkspace",()=>{
     await screen.findByDisplayValue("Jane Doe");
     fireEvent.change(field("Company"),{target:{value:"Unsaved Company"}});
 
-    fireEvent.click(screen.getByRole("button",{name:"Favorite contact"}));
+    fireEvent.click(screen.getByRole("button",{name:"Favorite Contact"}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:jane.id,favorite:true,company:null})));
-    await waitFor(()=>expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","true"));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Favorite Contact"})).toHaveAttribute("aria-pressed","true"));
     expect(field("Company")).toHaveValue("Unsaved Company");
     expect(within(screen.getByRole("region",{name:"Favorites"})).getByRole("button",{name:/Jane Doe/})).toBeInTheDocument();
     expect(onSaved).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button",{name:"Favorite contact"}));
+    fireEvent.click(screen.getByRole("button",{name:"Favorite Contact"}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenLastCalledWith(expect.objectContaining({id:jane.id,favorite:false,company:null})));
-    await waitFor(()=>expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","false"));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Favorite Contact"})).toHaveAttribute("aria-pressed","false"));
     expect(field("Company")).toHaveValue("Unsaved Company");
   });
 
@@ -586,21 +586,21 @@ describe("ContactsWorkspace",()=>{
     await screen.findByDisplayValue("Jane Doe");
     fireEvent.change(field("Company"),{target:{value:"Unsaved Company"}});
 
-    fireEvent.click(screen.getByRole("button",{name:"Favorite contact"}));
+    fireEvent.click(screen.getByRole("button",{name:"Favorite Contact"}));
 
     await waitFor(()=>expect(mailClient.getContactProfile).toHaveBeenCalledWith("contact:saved-jane"));
     expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:derived.id,favorite:true,company:null}));
     expect(field("Company")).toHaveValue("Unsaved Company");
-    expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","true");
+    expect(screen.getByRole("button",{name:"Favorite Contact"})).toHaveAttribute("aria-pressed","true");
   });
 
   it("leaves the favorite unchanged when its immediate save fails",async()=>{
     vi.mocked(mailClient.saveContactProfile).mockRejectedValueOnce(new Error("Could not save favorite"));
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:"Favorite contact"}));
+    fireEvent.click(screen.getByRole("button",{name:"Favorite Contact"}));
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save favorite");
-    expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","false");
+    expect(screen.getByRole("button",{name:"Favorite Contact"})).toHaveAttribute("aria-pressed","false");
   });
 
   it("restores independent tab selections after leaving Contacts",async()=>{
@@ -872,7 +872,7 @@ describe("ContactsWorkspace",()=>{
   it("confirms deletion of a saved profile",async()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:"Delete contact"}));
+    fireEvent.click(screen.getByRole("button",{name:"Delete Contact"}));
     fireEvent.click(screen.getByRole("button",{name:"Confirm"}));
     await waitFor(()=>expect(mailClient.deleteContactProfile).toHaveBeenCalledWith(jane.id));
   });
@@ -1367,13 +1367,13 @@ describe("ContactsWorkspace",()=>{
       vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
       vi.mocked(mailClient.deleteContactGroup).mockResolvedValue(undefined);
       groupsView();
-      fireEvent.click(await screen.findByRole("button",{name:"Delete group"}));
+      fireEvent.click(await screen.findByRole("button",{name:"Delete Group"}));
       const confirm=screen.getByRole("group",{name:"Delete group"});
       expect(confirm).toHaveTextContent("Its contacts stay in your address book.");
       fireEvent.click(within(confirm).getByRole("button",{name:"Cancel"}));
       expect(mailClient.deleteContactGroup).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button",{name:"Delete group"}));
       fireEvent.click(screen.getByRole("button",{name:"Delete Group"}));
+      fireEvent.click(within(screen.getByRole("group",{name:"Delete group"})).getByRole("button",{name:"Delete Group"}));
       await waitFor(()=>expect(mailClient.deleteContactGroup).toHaveBeenCalledWith(board.id));
       expect(await screen.findByText("Create a group to email several people at once")).toBeInTheDocument();
       expect(mailClient.deleteContactProfile).not.toHaveBeenCalled();
@@ -1473,7 +1473,7 @@ describe("ContactsWorkspace",()=>{
       render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
       await screen.findByDisplayValue("Jane Doe");
       expect(mailClient.listContactGroups).toHaveBeenCalledTimes(1);
-      fireEvent.click(screen.getByRole("button",{name:"Delete contact"}));
+      fireEvent.click(screen.getByRole("button",{name:"Delete Contact"}));
       fireEvent.click(screen.getByRole("button",{name:"Confirm"}));
       await waitFor(()=>expect(mailClient.listContactGroups).toHaveBeenCalledTimes(2));
     });

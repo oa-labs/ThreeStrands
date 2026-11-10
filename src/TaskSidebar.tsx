@@ -604,7 +604,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       {noteWarnings.map(([id, title, warning]) => <p key={id} className="form-error" role="alert">{title}: {warning}. Tasks from this note are unavailable. <button className="btn-link" onClick={() => onOpenNote?.(id)}>Open Note</button></p>)}
       {error ? <p className="form-error tasks-error" role="alert">
         <span>{error}</span>
-        <button type="button" className="btn-icon btn-icon-sm" aria-label="Dismiss error" onClick={() => setError(null)}><X size={ICON_SIZE.sm} /></button>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Dismiss Error" onClick={() => setError(null)}><X size={ICON_SIZE.sm} /></button>
       </p> : null}
       <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
       {completionToast ? (

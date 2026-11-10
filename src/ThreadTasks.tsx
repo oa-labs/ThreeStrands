@@ -73,7 +73,7 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
       label={thread ? "Conversation tasks" : "Tasks with this person"}
       count={tasks.filter((task) => isActiveTaskStatus(task.status)).length}
       actions={onAddTask ? <HoverTooltip title="Add task" shortcut="d" placement="bottom">
-        <button type="button" className="btn-icon btn-icon-sm" aria-label="Add task" onClick={onAddTask}><Plus size={ICON_SIZE.sm} /></button>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Add Task" onClick={onAddTask}><Plus size={ICON_SIZE.sm} /></button>
       </HoverTooltip> : undefined}
       rows={tasks.map((task) => {
         const due = formatDue(task);

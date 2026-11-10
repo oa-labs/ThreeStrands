@@ -467,10 +467,10 @@ test("reply send options support keyboard navigation and send-and-archive withou
   const reply = page.getByRole("dialog", { name: "Reply Message" });
   const body = reply.getByRole("textbox", { name: "Message Body" });
   await body.fill("Thanks for the introduction.");
-  const trigger = reply.getByRole("button", { name: "Send options" });
+  const trigger = reply.getByRole("button", { name: "Send Options" });
   await trigger.focus();
   await trigger.press("ArrowDown");
-  const menu = reply.getByRole("menu", { name: "Send options" });
+  const menu = reply.getByRole("menu", { name: "Send Options" });
   const later = menu.getByRole("menuitem", { name: "Send Later…" });
   const archive = menu.getByRole("menuitem", { name: "Send & Archive" });
   await expect(later).toBeFocused();
@@ -752,7 +752,7 @@ test("scheduled send survives reload, reschedules, and requires confirmation aft
   await composer.getByRole("textbox", { name: "To", exact: true }).fill("test@example.com");
   await composer.getByRole("textbox", { name: "Subject" }).fill("A scheduled email");
   await composer.getByRole("textbox", { name: "Message Body" }).fill("Preserved scheduled content");
-  await composer.getByRole("button", { name: "Send options" }).click();
+  await composer.getByRole("button", { name: "Send Options" }).click();
   await expect(composer.getByRole("menuitem")).toHaveCount(1);
   await expect(composer.getByRole("menuitem", { name: "Send Later…", exact: true })).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+L Control+Shift+L");
   await composer.getByRole("menuitem", { name: "Send Later…" }).click();

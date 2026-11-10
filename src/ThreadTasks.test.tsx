@@ -37,14 +37,14 @@ describe("ThreadTasks", () => {
     const { rerender, onAddTask, onEditTask, onDraftFollowUp, onTasksChanged } = renderTasks();
     await waitFor(() => expect(listTasks).toHaveBeenCalled());
     expect(screen.queryByRole("region", { name: "Conversation tasks" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Task" })).not.toBeInTheDocument();
 
     listTasks.mockResolvedValue([task("added")]);
     rerender(<ThreadTasks thread={thread} refreshKey={1} onAddTask={onAddTask} onEditTask={onEditTask} onDraftFollowUp={onDraftFollowUp} onTasksChanged={onTasksChanged} />);
     const section = await screen.findByRole("region", { name: "Conversation tasks" });
     expectContextRows(section);
     expect(section.querySelector(".context-section-header-actions .context-count")).toHaveTextContent("1");
-    expect(screen.getByRole("button", { name: "Add task" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Task" })).toBeInTheDocument();
   });
 
   it("lists open tasks linked to this conversation and those marked done today", async () => {
@@ -125,7 +125,7 @@ describe("ThreadTasks", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Task mine" }));
     expect(onEditTask).toHaveBeenCalledWith(expect.objectContaining({ id: "mine" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
     expect(onAddTask).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -171,6 +171,6 @@ describe("ThreadTasks", () => {
     vi.spyOn(mailClient, "listTasks").mockRejectedValue(new Error("Database is locked"));
     renderTasks();
     expect(await screen.findByRole("alert")).toHaveTextContent("Database is locked");
-    expect(screen.getByRole("button", { name: "Add task" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Task" })).toBeInTheDocument();
   });
 });

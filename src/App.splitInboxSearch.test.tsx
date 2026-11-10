@@ -115,7 +115,7 @@ describe("split inbox search shortcuts", () => {
       expect.objectContaining({ query: "subject:invoice", includeArchived: !inboxOnly }), accountId ?? undefined,
     ));
     expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("subject:invoice");
-    expect(screen.getByRole("button", { name: "Search only the Inbox" })).toHaveAttribute("aria-pressed", String(inboxOnly));
+    expect(screen.getByRole("button", { name: "Search Only the Inbox" })).toHaveAttribute("aria-pressed", String(inboxOnly));
     expect(screen.getByRole("button", { name: "Filters, 1 active" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose folder, current folder Inbox" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Invoices" })).toHaveAttribute("aria-selected", "true");
@@ -153,7 +153,7 @@ describe("split inbox search shortcuts", () => {
     const trigger = screen.getByRole("button", { name: "Choose folder, current folder Inbox" });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByRole("navigation", { name: "Mailboxes" }).querySelectorAll(".sidebar-nav")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "New message (c)" }).closest(".sidebar-nav")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New Message (c)" }).closest(".sidebar-nav")).toBeInTheDocument();
 
     fireEvent.click(trigger);
     const folders = screen.getByRole("group", { name: "Folders" });

@@ -87,11 +87,11 @@ export function ContactCard({ email, fallbackName, profile, loaded = true, facts
               ? <button type="button" className="context-contact-name" aria-describedby={openHintId} onClick={() => onOpenContact(profile.id)}>{displayName}</button>
               : displayName}</Title>
             {!loaded ? null : profile ? (
-              <button type="button" className="btn-icon btn-icon-sm context-contact-favorite" aria-label={profile.favorite ? "Remove favorite" : "Add favorite"} aria-pressed={profile.favorite} title={profile.favorite ? "Remove favorite" : "Add favorite"} onClick={() => void toggleFavorite()}>
+              <button type="button" className="btn-icon btn-icon-sm context-contact-favorite" aria-label={profile.favorite ? "Remove Favorite" : "Add Favorite"} aria-pressed={profile.favorite} title={profile.favorite ? "Remove favorite" : "Add favorite"} onClick={() => void toggleFavorite()}>
                 <Heart size={ICON_SIZE.sm} fill={profile.favorite ? "currentColor" : "none"} />
               </button>
             ) : (
-              <button type="button" className="btn-icon btn-icon-sm" aria-label="Save to contacts" title="Save to contacts" onClick={() => void save()}>
+              <button type="button" className="btn-icon btn-icon-sm" aria-label="Save to Contacts" title="Save to contacts" onClick={() => void save()}>
                 <UserPlus size={ICON_SIZE.sm} />
               </button>
             )}

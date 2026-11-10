@@ -60,7 +60,7 @@ describe("contact management", () => {
     expect(within(dialog).getByText(/Jane — jane@example.com/)).toBeInTheDocument();
     expect(mailClient.importContacts).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Import contacts" }));
-    await screen.findByText("Imported 0 contacts. Skipped 3.");
+    await screen.findByText("Imported 0 contacts, skipped 3");
     expect(mailClient.importContacts).toHaveBeenCalledExactlyOnceWith([request]);
     expect(changed).toHaveBeenCalledOnce();
   });
@@ -73,7 +73,7 @@ describe("contact management", () => {
     const dialog = await screen.findByRole("dialog", { name: "Review contact import" });
     expect(within(dialog).getByText(/^1 contact ready to import\./)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Import contacts" }));
-    await screen.findByText("Imported 1 contact. Skipped 0.");
+    await screen.findByText("Imported 1 contact");
   });
 
   it("leaves cancellation harmless and keeps a failed import review available for retry", async () => {
@@ -101,7 +101,7 @@ describe("contact management", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Export contacts" })).toBeEnabled());
     expect(mailClient.exportContacts).toHaveBeenCalledWith("vcard");
     fireEvent.click(screen.getByRole("button", { name: "Export contacts" }));
-    await screen.findByText("Saved contacts exported."); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await screen.findByText("Saved contacts exported"); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("hides saved and arbitrary addresses and allows suggestions again", async () => {

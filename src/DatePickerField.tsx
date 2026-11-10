@@ -100,9 +100,9 @@ function CalendarDatePicker({ id, label, value, onSelect, onClose }: {
   };
   return <div id={id} className="date-picker-panel" role="dialog" aria-label={`Choose ${label.toLowerCase()}`}>
     <div className="date-picker-heading">
-      <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous month" onClick={() => setCursor(shiftMonth(cursor, -1))}><ChevronLeft size={ICON_SIZE.sm} /></button>
+      <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Month" onClick={() => setCursor(shiftMonth(cursor, -1))}><ChevronLeft size={ICON_SIZE.sm} /></button>
       <span id={`${id}-month`} aria-live="polite">{title}</span>
-      <button type="button" className="btn-icon btn-icon-sm" aria-label="Next month" onClick={() => setCursor(shiftMonth(cursor, 1))}><ChevronRight size={ICON_SIZE.sm} /></button>
+      <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Month" onClick={() => setCursor(shiftMonth(cursor, 1))}><ChevronRight size={ICON_SIZE.sm} /></button>
     </div>
     <table role="grid" aria-labelledby={`${id}-month`} onKeyDown={keyDown}>
       <thead><tr>{Array.from({ length: 7 }, (_, day) => <th key={day} scope="col" abbr={new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(addDays(gridStart, day))}>

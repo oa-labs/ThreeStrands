@@ -1973,7 +1973,7 @@ describe("Composer recipient autocomplete", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(cc).toHaveFocus();
-    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Options" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Send Later…" }));
     expect(screen.queryByRole("dialog", { name: "Send Later" })).not.toBeInTheDocument();
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -1981,7 +1981,7 @@ describe("Composer recipient autocomplete", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Remove bob" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Options" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Send Later…" }));
     expect(screen.getByRole("dialog", { name: "Send Later" })).toBeInTheDocument();
   });
@@ -2173,7 +2173,7 @@ describe("Composer send options", () => {
     const onClose = vi.fn();
     const onSendAndArchive = vi.fn();
     render(<Composer draft={{ ...draft, mode: "reply" }} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={vi.fn()} onSendAndArchive={onSendAndArchive} />);
-    const trigger = screen.getByRole("button", { name: "Send options" });
+    const trigger = screen.getByRole("button", { name: "Send Options" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send Later" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send" })).toHaveTextContent("Send Ctrl+Enter");
@@ -2202,7 +2202,7 @@ describe("Composer send options", () => {
 
   it("offers only scheduling when archive is unavailable and dismisses on outside clicks or focus leaving", () => {
     render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
-    const trigger = screen.getByRole("button", { name: "Send options" });
+    const trigger = screen.getByRole("button", { name: "Send Options" });
     fireEvent.click(trigger);
     expect(screen.getAllByRole("menuitem")).toHaveLength(1);
     fireEvent.pointerDown(screen.getByRole("textbox", { name: "Subject" }));
@@ -2220,7 +2220,7 @@ describe("Composer send options", () => {
     const archive = vi.fn();
     const schedule = vi.spyOn(mailClient, "schedulingInfo");
     render(<Composer draft={{ ...draft, mode: "reply" }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} onSendAndArchive={archive} />);
-    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Options" }));
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Send Later…" }), { key: "Enter", metaKey, ctrlKey: !metaKey, shiftKey: true });
     expect(archive).toHaveBeenCalledOnce();
     expect(schedule).not.toHaveBeenCalled();
@@ -2230,7 +2230,7 @@ describe("Composer send options", () => {
   it("sends normally from a focused menu item without opening scheduling", async () => {
     const queue = vi.spyOn(mailClient, "queueDraft").mockResolvedValue({ id: "queued", draft, state: "undo_pending", deadline: 10000, error: null });
     render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Options" }));
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Send Later…" }), { key: "Enter", ctrlKey: true });
     await waitFor(() => expect(queue).toHaveBeenCalledWith("draft-1", 0));
     expect(screen.queryByRole("dialog", { name: "Send Later" })).not.toBeInTheDocument();
@@ -2244,7 +2244,7 @@ describe("Composer send options", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Sending" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Send options" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send Options" })).toBeDisabled();
     await act(async () => { pending.resolve({ ...draft, subject: "Sending", revision: 1 }); });
   });
 
@@ -2257,7 +2257,7 @@ describe("Composer send options", () => {
     const immediate=vi.spyOn(mailClient,"queueDraft");const onQueued=vi.fn(),onClose=vi.fn();
     render(<Composer draft={{...draft,to:"client@example.com"}} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={onQueued}/>);
     fireEvent.change(screen.getByRole("textbox",{name:"Subject"}),{target:{value:"Saved before scheduling"}});
-    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Options" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Send Later…" }));
     const dialog=screen.getByRole("dialog",{name:"Send Later"});
     await waitFor(() => expect(within(dialog).getByRole("button",{name:"Send Later"})).toBeEnabled());
@@ -2270,7 +2270,7 @@ describe("Composer send options", () => {
     vi.spyOn(mailClient,"schedulingInfo").mockResolvedValue({deviceName:"Desktop",sharing:false});
     vi.spyOn(mailClient,"scheduleChoices").mockResolvedValue([{scheduledAt:Date.now()+3600000,offsetSeconds:-14400},{scheduledAt:Date.now()+7200000,offsetSeconds:-18000}]);
     const close=vi.fn();render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={close} onQueued={vi.fn()}/>);
-    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Options" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Send Later…" }));
     await waitFor(() => expect(screen.getByRole("combobox",{name:"UTC Offset"})).toBeInTheDocument());
     expect(screen.getByRole("button",{name:"Send Later"})).toBeDisabled();

@@ -335,7 +335,7 @@ describe("calendar sidebar", () => {
     render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} embedded={embedded} />);
     await screen.findByText("No events scheduled.");
 
-    for (const name of ["Previous day (-)", "Next day (=)"]) {
+    for (const name of ["Previous Day (-)", "Next Day (=)"]) {
       const button = screen.getByRole("button", { name });
       expect(button.closest(".tooltip-anchor")).toHaveClass("tooltip-bottom");
       expect(within(button.closest(".tooltip-anchor") as HTMLElement).getByRole("tooltip")).toBeInTheDocument();

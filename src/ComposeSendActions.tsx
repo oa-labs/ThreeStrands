@@ -41,7 +41,7 @@ export function ComposeSendActions({ busy, onSend, onSchedule, onSendAndArchive 
     <button type="button" className="btn btn-primary send-button" aria-label="Send" aria-keyshortcuts="Meta+Enter Control+Enter" title={`Send (${formatShortcut("Mod+Enter")})`} onClick={onSend} disabled={busy}>
       <Send size={ICON_SIZE.md} /> Send <kbd aria-hidden="true">{formatShortcut("Mod+Enter")}</kbd>
     </button>
-    <button ref={trigger} type="button" className="btn btn-primary compose-send-options" aria-label="Send options" aria-haspopup="menu" aria-expanded={open && !busy} aria-controls={open && !busy ? menuId : undefined} title="Send options" disabled={busy} onClick={() => setOpen((value) => !value)} onKeyDown={(event) => {
+    <button ref={trigger} type="button" className="btn btn-primary compose-send-options" aria-label="Send Options" aria-haspopup="menu" aria-expanded={open && !busy} aria-controls={open && !busy ? menuId : undefined} title="Send options" disabled={busy} onClick={() => setOpen((value) => !value)} onKeyDown={(event) => {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         setOpen(true);
@@ -60,7 +60,7 @@ function SendOptionsMenu({ id, onClose, onSchedule, onSendAndArchive }: {
   const menu = useRef<HTMLDivElement>(null);
   useEffect(() => { menu.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus(); }, []);
   useEscapeDismiss(onClose);
-  return <div ref={menu} id={id} className="compose-send-menu" role="menu" aria-label="Send options" onKeyDown={(event) => {
+  return <div ref={menu} id={id} className="compose-send-menu" role="menu" aria-label="Send Options" onKeyDown={(event) => {
     if (event.key === "Tab") { onClose(); return; }
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     event.preventDefault();

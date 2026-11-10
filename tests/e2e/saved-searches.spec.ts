@@ -6,7 +6,7 @@ test("saves the current search and restores its scope and Inbox Only after resta
   await page.keyboard.press("/");
   const input = page.getByRole("textbox", { name: "Search Mail" });
   await input.fill("Welcome");
-  await page.getByRole("button", { name: "Search only the Inbox" }).click();
+  await page.getByRole("button", { name: "Search Only the Inbox" }).click();
   await page.getByRole("button", { name: "Save Search", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Save Search", exact: true });
   await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("Welcome mail");
@@ -20,10 +20,10 @@ test("saves the current search and restores its scope and Inbox Only after resta
   await page.reload();
   await expect(page.getByRole("listbox", { name: "Welcome mail" })).toBeVisible();
   await expect(input).toHaveValue("Welcome");
-  await expect(page.getByRole("button", { name: "Search only the Inbox" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Search Only the Inbox" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("listbox", { name: "Welcome mail" }).getByRole("option")).toHaveCount(1);
   await expect(page.getByRole("listbox", { name: "Welcome mail" }).getByRole("option")).toContainText("Welcome to ThreeStrands");
-  await page.getByRole("button", { name: "Saved searches", exact: true }).click();
+  await page.getByRole("button", { name: "Saved Searches", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   const card = settings.getByRole("listitem").filter({ has: page.getByRole("textbox", { name: "Name for Welcome mail" }) });
   await card.getByRole("button", { name: "Delete", exact: true }).click();
@@ -44,7 +44,7 @@ test("shows five deliberate recent searches and keeps Close near the input's rig
     await input.press("Enter");
   }
   await input.fill("unfinished");
-  await page.getByRole("button", { name: "Saved searches", exact: true }).click();
+  await page.getByRole("button", { name: "Saved Searches", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await expect(settings).toBeVisible();
   await page.keyboard.press("Escape");
@@ -70,7 +70,7 @@ test("adopts an existing All accounts search as a tab and edits it in Split Inbo
   const tab = page.getByRole("tab", { name: "Old view", exact: true });
   await tab.click();
   await expect(page.getByRole("listbox", { name: "Old view" }).getByRole("option")).toHaveCount(1);
-  await page.getByRole("button", { name: "Saved searches", exact: true }).click();
+  await page.getByRole("button", { name: "Saved Searches", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Edit Old view", exact: true }).click();
   const edit = page.getByRole("dialog", { name: "Edit Saved Search" });
@@ -89,7 +89,7 @@ test("adopts an existing All accounts search as a tab and edits it in Split Inbo
   await copy.getByRole("button", { name: "Save Search", exact: true }).click();
   await expect(copy).not.toBeVisible();
   await expect(page.getByRole("textbox", { name: "Search Mail" })).toHaveValue("Welcome");
-  await page.getByRole("button", { name: "Saved searches", exact: true }).click();
+  await page.getByRole("button", { name: "Saved Searches", exact: true }).click();
   await settings.getByRole("button", { name: "Move Copy view up", exact: true }).click();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("tab").filter({ hasText: /Copy view|Local mail/ })).toHaveText(["Copy view", "Local mail"]);
@@ -116,14 +116,14 @@ test("keeps search controls compact and saved-search actions outside the input",
   await page.keyboard.press("/");
   const input = page.getByRole("textbox", { name: "Search Mail" });
   await input.fill("from:someone@example.com has:attachment quarterly report");
-  const inbox = page.getByRole("button", { name: "Search only the Inbox" });
+  const inbox = page.getByRole("button", { name: "Search Only the Inbox" });
   const measure = async () => {
     const box = (await page.locator(".search-box").boundingBox())!;
     const text = (await input.boundingBox())!;
     const toggle = (await inbox.boundingBox())!;
     const close = (await page.getByRole("button", { name: "Close Search", exact: true }).boundingBox())!;
     const save = (await page.getByRole("button", { name: "Save Search", exact: true }).boundingBox())!;
-    const manage = (await page.getByRole("button", { name: "Saved searches", exact: true }).boundingBox())!;
+    const manage = (await page.getByRole("button", { name: "Saved Searches", exact: true }).boundingBox())!;
     expect(box.width - text.width).toBeLessThanOrEqual(110);
     expect(close.x - toggle.x - toggle.width).toBeLessThanOrEqual(2);
     expect(save.x).toBeGreaterThan(box.x + box.width);

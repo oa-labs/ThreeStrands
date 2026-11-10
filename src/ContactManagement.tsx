@@ -29,7 +29,8 @@ export function ContactManagement({ addresses, onChanged, hasUnsavedChanges = fa
   const importContacts = () => run(async () => {
     if (!preview) return;
     const result = await mailClient.importContacts(preview.contacts);
-    setNotice(`Imported ${plural(result.imported, "contact")}. Skipped ${result.skipped + preview.skipped}.`);
+    const skipped = result.skipped + preview.skipped;
+    setNotice(`Imported ${plural(result.imported, "contact")}${skipped ? `, skipped ${skipped}` : ""}`);
     setPreview(null); setMode(null); onChanged();
   });
   const suggestions = () => run(async () => { setSuppressed(await mailClient.listContactSuppressions()); setMode("suggestions"); });
@@ -62,7 +63,7 @@ export function ContactManagement({ addresses, onChanged, hasUnsavedChanges = fa
           <p>Export all saved contacts across accounts. Mail-derived suggestions, photos, groups, and keep-in-touch settings are excluded. Use encrypted settings export to transfer those saved details.</p>
           <p>Contact files are unencrypted. CSV exports make formula-looking values safe for spreadsheets by prefixing an apostrophe.</p>
           <label>File Format<select value={format} disabled={busy} onChange={event => setFormat(event.target.value as ContactFormat)}><option value="csv">CSV</option><option value="vcard">vCard (.vcf)</option></select></label>
-          <div className="modal-actions"><button type="button" className="btn" disabled={busy} onClick={() => setMode(null)}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(async () => { if (await mailClient.exportContacts(format)) { setNotice("Saved contacts exported."); setMode(null); } })}>Export contacts</button></div>
+          <div className="modal-actions"><button type="button" className="btn" disabled={busy} onClick={() => setMode(null)}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(async () => { if (await mailClient.exportContacts(format)) { setNotice("Saved contacts exported"); setMode(null); } })}>Export contacts</button></div>
         </> : null}
         {mode === "suggestions" ? <>
           <p>Hide an address from automatic recipient suggestions on this device, across all accounts. You can still type it or deliberately choose a group containing it. This preference survives deleting a contact and stays on this device.</p>

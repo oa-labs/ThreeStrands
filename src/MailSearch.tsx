@@ -19,7 +19,7 @@ type Props = ComponentProps<typeof SearchField> & {
 export function MailSearch({ accounts, accountId, onManageViews, onCreateSearch, activeFilters, ...field }: Props) {
   const [saving, setSaving] = useState<{ query: string; inboxOnly: boolean; accountId: string | null; messageFilters: MessageFilterKind[] } | null>(null);
   return <>
-    <SearchField {...field} onSaveSearch={(query) => setSaving({ query, inboxOnly: field.inboxOnly, accountId, messageFilters: [...(activeFilters ?? [])] })} actions={<button type="button" className="btn-icon" aria-label="Saved searches" title="Manage saved searches in Split Inboxes" onClick={onManageViews}><Bookmark size={ICON_SIZE.md} /></button>} />
+    <SearchField {...field} onSaveSearch={(query) => setSaving({ query, inboxOnly: field.inboxOnly, accountId, messageFilters: [...(activeFilters ?? [])] })} actions={<button type="button" className="btn-icon" aria-label="Saved Searches" title="Manage saved searches in Split Inboxes" onClick={onManageViews}><Bookmark size={ICON_SIZE.md} /></button>} />
     {saving ? <SaveSearchDialog accounts={accounts} search={saving} onSave={onCreateSearch} onClose={() => setSaving(null)} onSaved={() => setSaving(null)} /> : null}
   </>;
 }

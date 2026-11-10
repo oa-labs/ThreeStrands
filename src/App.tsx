@@ -339,7 +339,7 @@ export function App() {
   const openAgentPersonalTask = (id: string) => {
     void mailClient.listTasks().then(list => {
       const task = list.find(t => t.id === id);
-      if (!task) { setNotice({ message: "The personal task is no longer available." }); return; }
+      if (!task) { setNotice({ message: "The personal task is no longer available" }); return; }
       setRightWorkspace("tasks"); setTaskEditor({ kind: "edit", task });
     }).catch(reason => setNotice({ message: errorMessage(reason) }));
   };
@@ -877,7 +877,7 @@ export function App() {
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
           <div className="sidebar-compose">
-            <HoverTooltip title="New message (c)"><button className={`nav-button ${composeInView ? "active" : ""}`} aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={ICON_SIZE.lg} /></button></HoverTooltip>
+            <HoverTooltip title="New message (c)"><button className={`nav-button ${composeInView ? "active" : ""}`} aria-label="New Message (c)" onClick={() => executeById("draft.new")}><Pencil size={ICON_SIZE.lg} /></button></HoverTooltip>
           </div>
           <HoverTooltip label="Today" shortcut="0"><button className={`nav-button ${rightWorkspace === "today" ? "active" : ""}`} aria-label="Today (0)" onClick={() => navigateFromSidebar(context.openTodayView)}><LayoutDashboard size={ICON_SIZE.lg} /></button></HoverTooltip>
           <HoverTooltip label="Inbox" shortcut="1">
@@ -911,7 +911,7 @@ export function App() {
           <HoverTooltip label={keepInTouchDueCount ? `Contacts · ${keepInTouchDueCount} to reconnect with` : "Contacts"} shortcut="5">
             <button
               className={`nav-button ${rightWorkspace === "contacts" ? "active" : ""}`}
-              aria-label={keepInTouchDueCount ? `Contacts (5), ${keepInTouchDueCount} due to reconnect` : "Contacts (5)"}
+              aria-label={keepInTouchDueCount ? `Contacts (5), ${keepInTouchDueCount} Due to Reconnect` : "Contacts (5)"}
               onClick={() => navigateFromSidebar(openContactsView)}
             >
               <ContactRound size={ICON_SIZE.lg} />
@@ -923,11 +923,11 @@ export function App() {
             <HoverTooltip label="Agents" shortcut="7"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (7)" onClick={() => navigateFromSidebar(context.openAgentsView)}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
           </div>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
-          <HoverTooltip title={checkingMail ? "Checking for mail…" : `Refresh mail (${formatShortcut("Mod+r")})`}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
+          <HoverTooltip title={checkingMail ? "Checking for mail…" : `Refresh mail (${formatShortcut("Mod+r")})`}><button className="nav-button" aria-label="Refresh Mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
           </button></HoverTooltip>
           <HoverTooltip label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} shortcut="Mod+d">
-            <button className="nav-button" aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} aria-keyshortcuts="Meta+D Control+D" onClick={() => executeById("theme.toggle")}>
+            <button className="nav-button" aria-label={`Switch to ${effectiveThemeValue === "dark" ? "Light" : "Dark"} Mode`} aria-keyshortcuts="Meta+D Control+D" onClick={() => executeById("theme.toggle")}>
               {effectiveThemeValue === "dark" ? <Sun size={ICON_SIZE.lg} /> : <Moon size={ICON_SIZE.lg} />}
             </button>
           </HoverTooltip>
@@ -942,7 +942,7 @@ export function App() {
           </HoverTooltip>
           {gettingStarted.visible ? (
             <HoverTooltip title={`Getting started · ${gettingStarted.remaining} left`}>
-              <button className="nav-button" aria-label={`Getting Started, ${gettingStarted.remaining} steps left`} onClick={() => setGettingStartedOpen(true)}>
+              <button className="nav-button" aria-label={`Getting Started, ${gettingStarted.remaining} Steps Left`} onClick={() => setGettingStartedOpen(true)}>
                 <ListChecks size={ICON_SIZE.lg} />
                 <span className="nav-button-badge" aria-hidden="true">{gettingStarted.remaining}</span>
               </button>
@@ -1022,9 +1022,9 @@ export function App() {
                     <RotateCcw size={ICON_SIZE.md} />
                   </ActionButton>
                 </HoverTooltip>
-                <HoverTooltip label={discardableSends.length ? `Discard ${discardableSends.length} failed` : "Only failed messages can be discarded"} placement="bottom">
+                <HoverTooltip label={discardableSends.length ? `Discard ${discardableSends.length} failed messages` : "Only failed messages can be discarded"} placement="bottom">
                   <ActionButton
-                    label={`Discard ${discardableSends.length} Failed`}
+                    label={`Discard ${discardableSends.length} Failed Messages`}
                     disabled={discardableSends.length === 0}
                     onClick={() => {
                       const ids = discardableSends;
@@ -1758,7 +1758,7 @@ export function App() {
         onOpenContact={contactCardActions.onOpenContact}
         onOpenKeepInTouch={openKeepInTouchView}
       /></Suspense></ErrorBoundary> : null}
-      {agents.activity ? <aside className="agent-activity" role="status"><button className="btn-link agent-activity-action" onClick={() => { const id = agents.activity!.id; agents.patchView(id, { version: null, tab: agents.activity!.label.startsWith("Answer needed") ? "conversation" : "result" }); openAgent(id); }}>{agents.activity.label}</button><button className="btn-icon" aria-label="Dismiss agent notification" onClick={agents.dismissActivity}><X size={ICON_SIZE.sm} /></button></aside> : null}
+      {agents.activity ? <aside className="agent-activity" role="status"><button className="btn-link agent-activity-action" onClick={() => { const id = agents.activity!.id; agents.patchView(id, { version: null, tab: agents.activity!.label.startsWith("Answer needed") ? "conversation" : "result" }); openAgent(id); }}>{agents.activity.label}</button><button className="btn-icon" aria-label="Dismiss Agent Notification" onClick={agents.dismissActivity}><X size={ICON_SIZE.sm} /></button></aside> : null}
       {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Agents…</p>}><AgentsWorkspace controller={agents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAgentPersonalTask} onOpenResearchSettings={() => openSettingsAt("research")} settingsOpen={settingsOpen} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "notes" ? <ErrorBoundary area="Notes" variant="side"><Suspense fallback={null}><NotesWorkspace request={notesRequest} onRequestConsumed={consumeNotesRequest} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} onOpenContact={contactCardActions.onOpenContact} onOpenEntity={openEntityReference} onReturn={notesReturnMail ? () => { setRightWorkspace(null); setNotesReturnMail(false); } : undefined} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "files" ? <ErrorBoundary area="Files" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenNote={openNote} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense></ErrorBoundary> : null}

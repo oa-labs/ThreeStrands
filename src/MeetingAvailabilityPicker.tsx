@@ -69,9 +69,9 @@ export function MeetingAvailabilityPicker({ eventId, accountId, calendarId, atte
   const ticks = Array.from({ length: Math.ceil(dayLength / (SCHEDULING_STEP_MINUTES * 60_000)) }, (_, index) => dayStart + index * SCHEDULING_STEP_MINUTES * 60_000);
   return <section className="meeting-availability" aria-label="Find a time" aria-busy={validDuration && !result && !error}>
     <div className="meeting-availability-toolbar">
-      <button type="button" className="btn-icon" aria-label="Previous week" disabled={disabled} onClick={() => setDay(shiftSchedulingDay(day, -7))}><ChevronLeft size={ICON_SIZE.sm} /></button>
+      <button type="button" className="btn-icon" aria-label="Previous Week" disabled={disabled} onClick={() => setDay(shiftSchedulingDay(day, -7))}><ChevronLeft size={ICON_SIZE.sm} /></button>
       <strong>{date(schedulingDayStart(week, timeZone))} – {date(schedulingDayStart(shiftSchedulingDay(week, 6), timeZone))}</strong>
-      <button type="button" className="btn-icon" aria-label="Next week" disabled={disabled} onClick={() => setDay(shiftSchedulingDay(day, 7))}><ChevronRight size={ICON_SIZE.sm} /></button>
+      <button type="button" className="btn-icon" aria-label="Next Week" disabled={disabled} onClick={() => setDay(shiftSchedulingDay(day, 7))}><ChevronRight size={ICON_SIZE.sm} /></button>
       <span>{duration} minutes · {timeZone}</span>
       <button type="button" className="btn btn-sm" disabled={disabled} onClick={() => setAttempt((value) => value + 1)}><RefreshCw size={ICON_SIZE.sm} /> Refresh</button>
     </div>
