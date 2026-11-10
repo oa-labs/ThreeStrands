@@ -184,6 +184,24 @@ describe("ThreadAssist", () => {
     expect(screen.getByText("The client needs the website.")).toBeVisible();
   });
 
+  it("folds only the brief from its heading, leaving Suggested to its own toggle", () => {
+    render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal] } })} />);
+    fireEvent.click(within(screen.getByRole("heading", { name: "Brief" })).getByRole("button", { name: "Brief" }));
+    expect(screen.getByText("The client needs the website.")).not.toBeVisible();
+    const suggested = within(screen.getByRole("heading", { name: "Suggested" })).getByRole("button", { name: "Suggested" });
+    expect(suggested).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Set up the website")).toBeVisible();
+    fireEvent.click(suggested);
+    expect(screen.getByText("Set up the website")).not.toBeVisible();
+  });
+
+  it("folds the cards from the heading when there is no brief, only suggestions", () => {
+    render(<ThreadAssist {...props({ summary: { available: false }, suggestions: { requested: true, proposals: [taskProposal] } })} />);
+    expect(screen.queryByRole("heading", { name: "Suggested" })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("heading", { name: "Suggestions" })).getByRole("button", { name: "Suggestions" }));
+    expect(screen.getByText("Set up the website")).not.toBeVisible();
+  });
+
   it("adds no note of what was shared, since the user chose the provider and pressed an AI action", () => {
     render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true } })} />);
     expect(screen.getByText("The client needs the website.")).toBeInTheDocument();

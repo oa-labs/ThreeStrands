@@ -480,8 +480,54 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
     </>
   );
 
+  const actionsPart = <>
+    {failure ? <div className="action-analysis-error" role="alert">
+      <p>{failure.summary}</p>
+      <div className="action-analysis-error-actions">
+        {failure.retryable ? <button type="button" className="btn btn-sm" onClick={() => onRun(false)}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button> : null}
+        {failure.retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{error}</p></details> : null}
+      </div>
+    </div> : null}
+    {showSuggestions ? <div className="thread-assist-suggestions">
+      {offerSuggestions && visibleProposals.length === 0 ? <div className="thread-assist-suggestions-run">{suggestionsButton}</div> : <>
+        {/* Collapses on its own, so the brief can stay open while the cards are put away. */}
+        {summary.available ? <div className="thread-assist-suggestions-header">
+          <h4>
+            <button type="button" className="context-section-toggle" aria-expanded={!suggestionsCollapsed} aria-controls={suggestionsId} onClick={toggleSuggestionsCollapsed}>
+              <span className="context-row-glyph" aria-hidden="true">{suggestionsCollapsed ? <ChevronRight size={ICON_SIZE.xs} /> : <ChevronDown size={ICON_SIZE.xs} />}</span>
+              <span>Suggested</span>
+            </button>
+          </h4>
+          {visibleProposals.length > 0 ? <span className="context-count">{visibleProposals.length}</span> : null}
+        </div> : null}
+        <div id={suggestionsId} className="thread-assist-suggestions-body" hidden={summary.available && suggestionsCollapsed}>
+          {lookingForSuggestions ? <p className="context-status" role="status">Looking for suggestions…</p> : null}
+          {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
+          {!busy && suggestions.hiddenCount > 0 ? <HiddenSuggestionsNotice count={suggestions.hiddenCount} /> : null}
+          {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
+          {visibleProposals.length > 0 ? <div className="action-proposals">
+            {visibleProposals.map((proposal) => <ProposalCard
+              key={proposalKey(proposal)}
+              proposal={proposal}
+              index={suggestions.proposals.indexOf(proposal)}
+              source={messageSource(proposal.evidence.sourceMessageId)}
+              suggestions={suggestions}
+              scheduling={scheduling}
+              ownEmails={ownEmails}
+              ownNames={ownNames}
+              people={people}
+            />)}
+          </div> : null}
+          {offerSuggestions ? suggestionsButton : null}
+        </div>
+      </>}
+    </div> : null}
+  </>;
+
   return <section id={THREAD_ASSIST_ID} className="context-section context-collapsible thread-assist" aria-labelledby="thread-assist-heading">
     <ContextSectionHeader title={title} titleId="thread-assist-heading" actions={headerActions} toggle={{ collapsed, controls: bodyId, onToggle: toggleCollapsed }} />
+    {/* The Brief heading folds the brief itself; Suggested has its own toggle, so its cards stay until
+        it is used. Without a brief the heading is Suggestions, and folds the cards. */}
     <div id={bodyId} hidden={collapsed}>
       {copyFailed ? <p className="context-status" role="status">Could not copy brief</p> : null}
       {orderedLines.length === 1 ? <p className="thread-assist-summary thread-assist-summary-paragraph">{orderedLines[0]}</p> : summaryText ? <ul className="thread-assist-summary" role="list">
@@ -496,47 +542,9 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
       {stale ? <p className="context-status">New messages since this brief.</p> : null}
       {/* Which messages the brief covers, when not the whole conversation. */}
       {scopeNote ? <p className="thread-assist-shared">{scopeNote}</p> : null}
-      {failure ? <div className="action-analysis-error" role="alert">
-        <p>{failure.summary}</p>
-        <div className="action-analysis-error-actions">
-          {failure.retryable ? <button type="button" className="btn btn-sm" onClick={() => onRun(false)}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button> : null}
-          {failure.retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{error}</p></details> : null}
-        </div>
-      </div> : null}
-      {showSuggestions ? <div className="thread-assist-suggestions">
-        {offerSuggestions && visibleProposals.length === 0 ? <div className="thread-assist-suggestions-run">{suggestionsButton}</div> : <>
-          {/* Collapses on its own, so the brief can stay open while the cards are put away. */}
-          {summary.available ? <div className="thread-assist-suggestions-header">
-            <h4>
-              <button type="button" className="context-section-toggle" aria-expanded={!suggestionsCollapsed} aria-controls={suggestionsId} onClick={toggleSuggestionsCollapsed}>
-                <span className="context-row-glyph" aria-hidden="true">{suggestionsCollapsed ? <ChevronRight size={ICON_SIZE.xs} /> : <ChevronDown size={ICON_SIZE.xs} />}</span>
-                <span>Suggested</span>
-              </button>
-            </h4>
-            {visibleProposals.length > 0 ? <span className="context-count">{visibleProposals.length}</span> : null}
-          </div> : null}
-          <div id={suggestionsId} className="thread-assist-suggestions-body" hidden={summary.available && suggestionsCollapsed}>
-            {lookingForSuggestions ? <p className="context-status" role="status">Looking for suggestions…</p> : null}
-            {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
-            {!busy && suggestions.hiddenCount > 0 ? <HiddenSuggestionsNotice count={suggestions.hiddenCount} /> : null}
-            {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
-            {visibleProposals.length > 0 ? <div className="action-proposals">
-              {visibleProposals.map((proposal) => <ProposalCard
-                key={proposalKey(proposal)}
-                proposal={proposal}
-                index={suggestions.proposals.indexOf(proposal)}
-                source={messageSource(proposal.evidence.sourceMessageId)}
-                suggestions={suggestions}
-                scheduling={scheduling}
-                ownEmails={ownEmails}
-                ownNames={ownNames}
-                people={people}
-              />)}
-            </div> : null}
-            {offerSuggestions ? suggestionsButton : null}
-          </div>
-        </>}
-      </div> : null}
+      {summary.available ? null : actionsPart}
     </div>
+    {summary.available ? actionsPart : null}
   </section>;
 }
+
