@@ -4,7 +4,7 @@ import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./not
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowLeft, CalendarDays, Circle, CircleCheck, FilePlus, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Square, Trash2, UserRound } from "lucide-react";
+import { ArrowLeft, CalendarDays, CircleCheck, FilePlus, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Trash2, UserRound } from "lucide-react";
 import type { ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSummary } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -15,6 +15,7 @@ import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
 import { ContextRow, ContextSection, ContextSectionHeader } from "./ContextSections";
+import { NoteChecklistSection } from "./NoteChecklistSection";
 import { InlineConfirm } from "./InlineConfirm";
 import { NoteEditor, type NoteEditorHandle, type NoteLinkSuggestion } from "./NoteEditor";
 import { noteFiles } from "./noteAttachments";
@@ -492,19 +493,17 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
           </>}
       </div>
       <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow}>
-        <ContextSectionHeader title="Note details" />
+        <ContextSectionHeader title="Note details" icon={<NotebookText size={ICON_SIZE.xs} />} />
         {entityDocument?.warning ? <p role="alert" className="form-error">{entityDocument.warning}</p> : null}
-        {entityLinks.length || !readOnly ? <ContextSection id="note-links" title="Links" count={entityLinks.length}
+        {!entityLinks.length && !readOnly ? <section className="note-links-empty" aria-label="Links">
+          <button type="button" className="btn-link" onClick={() => setLinkPicker(true)}><span className="context-row-glyph" aria-hidden="true"><Plus size={ICON_SIZE.sm} /></span>Link conversation, task, or event</button>
+        </section> : null}
+        {entityLinks.length ? <ContextSection id="note-links" title="Links" count={entityLinks.length}
           actions={!readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
-          note={entityLinks.length ? null : "Link a conversation, task, or event."}
           rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind as keyof typeof LINK_ICON]} title={link.label} detail={link.reference.account}
             onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null}
-        {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <ContextSection id="note-checklist-tasks" title="Checklists and tasks" count={entityDocument.items.length} rows={entityDocument.items.map((item) => <ContextRow key={item.id} title={item.title} control={<input type="checkbox" className={item.task ? "note-round-checkbox" : undefined} checked={item.checked} disabled={readOnly || busy || !entityItemsCurrent} aria-label={`${item.task ? "Task" : "Checklist"}: ${item.title}`} onChange={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { checked: !item.checked }); })} />} trailing={<button type="button" className="btn-icon btn-icon-sm" aria-label={`Convert to ${item.task ? "Checklist" : "Task"}`} title={`Convert to ${item.task ? "Checklist" : "Task"}`} disabled={readOnly || busy || !entityItemsCurrent} onClick={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { task: !item.task }); })}>{item.task ? <Square size={ICON_SIZE.sm} aria-hidden="true" /> : <Circle size={ICON_SIZE.sm} aria-hidden="true" />}</button>} />)} /> : null}
-        {editor.note ? <dl className="notes-details">
-          <div><dt>Created</dt><dd>{formatTime(editor.note.createdAt)}</dd></div>
-          <div><dt>Changed</dt><dd>{formatTime(editor.note.updatedAt)}</dd></div>
-          {editor.note.trashedAt ? <div><dt>Trashed</dt><dd>{formatTime(editor.note.trashedAt)}</dd></div> : null}
-        </dl> : <p className="context-status">{daily ? "This day's note starts when you write in it." : "Select a note to see its details."}</p>}
+        {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <NoteChecklistSection key={noteId} items={entityDocument.items}
+          disabled={readOnly || busy || !entityItemsCurrent} onChange={(item, patch) => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, patch); })} /> : null}
         {editor.note && links?.noteId === editor.note.id ? <>
           {links.links.backlinks.length ? <ContextSection id="notes-backlinks" title="Backlinks" count={links.links.backlinks.length}
             rows={links.links.backlinks.map((link, index) => <ContextRow key={`${link.noteId}-${index}`} icon={<NotebookText size={ICON_SIZE.sm} />}
@@ -516,6 +515,11 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             rows={people.map((contact) => <ContextRow key={contact.id} icon={<UserRound size={ICON_SIZE.sm} />}
               title={contact.displayName ?? contact.addresses[0]} detail={contact.company ?? contact.addresses[0]} onActivate={() => onOpenContact(contact.id)} />)} /> : null}
         </> : null}
+        {editor.note ? <dl className="notes-details">
+          <div><dt>Created</dt><dd><time dateTime={editor.note.createdAt}>{formatTime(editor.note.createdAt)}</time></dd></div>
+          {Date.parse(editor.note.updatedAt) !== Date.parse(editor.note.createdAt) ? <div><dt>Updated</dt><dd><time dateTime={editor.note.updatedAt}>{formatTime(editor.note.updatedAt)}</time></dd></div> : null}
+          {editor.note.trashedAt ? <div><dt>Trashed</dt><dd><time dateTime={editor.note.trashedAt}>{formatTime(editor.note.trashedAt)}</time></dd></div> : null}
+        </dl> : <p className="context-status">{daily ? "This day's note starts when you write in it." : "Select a note to see its details."}</p>}
       </WorkspaceContextRail>
     </div>
     {linkPicker ? <NoteLinkPicker onClose={() => setLinkPicker(false)} onSelect={async (choice) => {

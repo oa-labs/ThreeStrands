@@ -41,21 +41,25 @@ describe("Notes workspace", () => {
     render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
     await screen.findByRole("region", { name: "Checklists and tasks" });
     const context = () => within(screen.getByRole("region", { name: "Checklists and tasks" }));
+    const convert = async (label: string) => {
+      await waitFor(() => expect(context().getByRole("checkbox", { name: /: Local only$/ })).toBeEnabled());
+      fireEvent.click(context().getByRole("button", { name: "Actions for Local only" }));
+      const action = screen.getByRole("menuitem", { name: label });
+      expect(action).toBeEnabled();
+      fireEvent.click(action);
+    };
     fireEvent.click(context().getByRole("checkbox", { name: "Checklist: Local only" }));
     await waitFor(async () => expect((await mailClient.getNote(note.id))?.body).toContain("- [x] Local only"));
     expect((await mailClient.listNoteTasks()).filter((task) => task.noteId === note.id)).toHaveLength(1);
-    await waitFor(() => expect(context().getByRole("button", { name: "Convert to Task" })).toBeEnabled());
-    fireEvent.click(context().getByRole("button", { name: "Convert to Task" }));
+    fireEvent.click(await context().findByRole("button", { name: "Completed · 2" }));
+    await convert("Convert to Task");
     await waitFor(async () => expect((await mailClient.listNoteTasks()).filter((task) => task.noteId === note.id)).toHaveLength(2));
     const promoted = (await mailClient.listNoteTasks()).find((task) => task.noteId === note.id && task.title === "Local only")!;
     expect(promoted.checked).toBe(true);
-    await waitFor(() => expect(context().getAllByRole("button", { name: "Convert to Checklist" })[0]).toBeEnabled());
-    fireEvent.click(context().getAllByRole("button", { name: "Convert to Checklist" })[0]);
+    await convert("Convert to Checklist");
     await waitFor(async () => expect((await mailClient.listNoteTasks()).filter((task) => task.noteId === note.id)).toHaveLength(1));
     expect((await mailClient.listNoteTasks()).find((task) => task.noteId === note.id)?.markerId).toBe(original.markerId);
-    await waitFor(() => expect(context().getByRole("button", { name: "Convert to Task" })).toBeEnabled());
-    await waitFor(() => expect(context().getByRole("button", { name: "Convert to Task" })).toBeEnabled());
-    fireEvent.click(context().getByRole("button", { name: "Convert to Task" }));
+    await convert("Convert to Task");
     await waitFor(async () => expect((await mailClient.listNoteTasks()).find((task) => task.noteId === note.id && task.title === "Local only")?.markerId).toBe(promoted.markerId));
   });
 
@@ -73,6 +77,32 @@ describe("Notes workspace", () => {
     expect(update).not.toHaveBeenCalled();
     expect(daily).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("uses an icon in Note Details and a single action to link an empty note", async () => {
+    render(<NotesWorkspace />);
+    await screen.findByRole("button", { name: /^Today/ });
+    const rail = within(screen.getByRole("complementary", { name: "Note context" }));
+    expect(rail.getByRole("heading", { name: "Note details" }).querySelector('[aria-hidden="true"] svg')).not.toBeNull();
+    const links = within(rail.getByRole("region", { name: "Links" }));
+    expect(links.queryByRole("heading")).not.toBeInTheDocument();
+    fireEvent.click(links.getByRole("button", { name: "Link conversation, task, or event" }));
+    expect(await screen.findByRole("dialog", { name: "Link to…" })).toBeInTheDocument();
+  });
+
+  it.each([false, true])("keeps timestamps in the footer and shows Updated only for a changed note (%s)", async (changed) => {
+    const note = await mailClient.createNote(uniqueTitle("Metadata"), "Some text");
+    const createdAt = "2026-11-01T20:33:00Z";
+    const updatedAt = changed ? "2026-11-02T21:34:00Z" : createdAt;
+    vi.spyOn(mailClient, "getNote").mockResolvedValue({ ...note, createdAt, updatedAt });
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+    const rail = screen.getByRole("complementary", { name: "Note context" });
+    const footer = rail.querySelector(".notes-details")!;
+    expect(rail.lastElementChild).toBe(footer);
+    expect(footer.querySelector("time")).toHaveAttribute("datetime", createdAt);
+    expect(within(footer as HTMLElement).queryByText("Updated") !== null).toBe(changed);
+    if (changed) expect(footer.querySelectorAll("time")[1]).toHaveAttribute("datetime", updatedAt);
   });
 
   it("moves through the list with j and k, writes after Enter, and returns with Escape", async () => {

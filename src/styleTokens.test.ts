@@ -151,6 +151,21 @@ describe("form controls", () => {
     expect(button.get("font-size")).toBe("var(--text-control)");
   });
 
+  it("gives note previews two lines, lets full text expand, and keeps metadata visually secondary", () => {
+    const value = (selector: string, prop: string) => {
+      let result: string | undefined;
+      css.walkRules(selector, (r) => r.walkDecls(prop, (d) => { result = d.value; }));
+      return result;
+    };
+    expect(value(".context-row-wrap .context-row-title", "overflow-wrap")).toBe("anywhere");
+    expect(value(".note-item .context-row-title", "-webkit-line-clamp")).toBe("2");
+    expect(value(".note-item-expanded .context-row-title", "-webkit-line-clamp")).toBe("unset");
+    expect(value(".notes-details", "font-size")).toBe("var(--text-meta)");
+    expect(value(".notes-details", "color")).toBe("var(--muted)");
+    expect(value(".notes-workspace .workspace-context-rail > .context-section-header:first-child", "margin-bottom")).toBe("var(--space-1)");
+    expect(value(".note-item .context-row-main", "padding-block")).toBe("var(--space-2)");
+  });
+
   it("sizes text inputs, selects, and search fields from the shared control heights", () => {
     const raw: string[] = [];
     css.walkDecls(/^(height|min-height)$/, (declaration) => {

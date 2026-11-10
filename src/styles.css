@@ -3809,9 +3809,19 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .notes-stale-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .notes-editor-pane > .context-status, .notes-editor-pane > .form-error { margin: 0; }
 .notes-workspace .workspace-context-rail { font-size: var(--text-body); line-height: var(--leading-normal); }
-.notes-details { display: grid; gap: var(--space-2); margin: 0; padding: var(--space-3) 0 var(--space-3) calc(var(--context-row-inset) + var(--context-glyph-column)); border-bottom: 1px solid var(--border); font-size: var(--text-secondary); }
-.workspace-context-rail > .context-section-header + .notes-details { padding-top: 0; }
-.workspace-context-rail > .notes-details:last-child { border-bottom: 0; }
+.notes-workspace .workspace-context-rail > .context-section-header:first-child { margin-bottom: var(--space-1); }
+.notes-workspace .workspace-context-rail > .context-section { padding-block: var(--space-2); border-bottom: 0; }
+.note-links-empty { padding: var(--space-2) var(--context-row-inset); }
+.note-links-empty > .btn-link { display: flex; align-items: baseline; text-align: left; font-size: var(--text-secondary); }
+.note-links-empty .context-row-glyph { align-self: center; }
+.note-item .context-row-main { padding-block: var(--space-2); }
+.note-item .context-row-control { margin-top: var(--space-2); }
+.note-item .context-row-trailing { align-self: start; padding-top: var(--space-1); }
+.note-item .context-row-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.note-item-expanded .context-row-title { -webkit-line-clamp: unset; }
+.note-completed { margin-top: var(--space-2); }
+.note-completed-toggle { display: flex; align-items: center; padding-inline: var(--context-row-inset); color: var(--muted); font-size: var(--text-meta); }
+.notes-details { display: grid; gap: var(--space-1); margin: var(--space-3) 0 0; padding: var(--space-2) 0 0 calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); }
 .notes-details > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); align-items: baseline; gap: var(--space-2); }
 .notes-details dt { color: var(--muted); font-size: var(--text-meta); }
 .notes-details dd { min-width: 0; margin: 0; }
