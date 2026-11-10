@@ -3824,6 +3824,8 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .note-item-expanded .context-row-title { -webkit-line-clamp: unset; }
 .note-completed { margin-top: var(--space-2); }
 .note-completed-toggle { display: flex; align-items: center; padding-inline: var(--context-row-inset); color: var(--muted); font-size: var(--text-meta); }
+/* The glyph column already includes the icon-to-text spacing used by checklist rows. */
+.note-links-empty > .btn-link, .note-completed-toggle { gap: 0; }
 .notes-details { display: grid; gap: var(--space-1); margin: var(--space-3) 0 0; padding: var(--space-2) 0 0 calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); }
 .notes-details > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); align-items: baseline; gap: var(--space-2); }
 .notes-details dt { color: var(--muted); font-size: var(--text-meta); }

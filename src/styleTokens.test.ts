@@ -165,10 +165,10 @@ describe("form controls", () => {
     expect(button.get("font-size")).toBe("var(--text-control)");
   });
 
-  it("gives note previews two lines, lets full text expand, and keeps metadata visually secondary", () => {
+  it("keeps note details aligned and readable with secondary metadata", () => {
     const value = (selector: string, prop: string) => {
       let result: string | undefined;
-      css.walkRules(selector, (r) => r.walkDecls(prop, (d) => { result = d.value; }));
+      css.walkRules((r) => { if (r.selectors.includes(selector)) r.walkDecls(prop, (d) => { result = d.value; }); });
       return result;
     };
     expect(value(".context-row-wrap .context-row-title", "overflow-wrap")).toBe("anywhere");
@@ -178,6 +178,12 @@ describe("form controls", () => {
     expect(value(".notes-details", "color")).toBe("var(--muted)");
     expect(value(".notes-workspace .workspace-context-rail > .context-section-header:first-child", "margin-bottom")).toBe("var(--space-1)");
     expect(value(".note-item .context-row-main", "padding-block")).toBe("var(--space-2)");
+    expect(value(".note-item .context-row-control", "margin-top")).toBe(value(".note-item .context-row-main", "padding-block"));
+    // Action text shares the checklist title edge: the glyph column already includes its gap.
+    expect(value(".context-row-glyph", "width")).toBe("var(--context-glyph-column)");
+    expect(value(".note-links-empty > .btn-link", "gap")).toBe("0");
+    expect(value(".note-completed-toggle", "gap")).toBe("0");
+    expect(value(".context-collapsible > div > .context-link-button", "margin-left")).toBe("calc(var(--context-row-inset) + var(--context-glyph-column))");
   });
 
   it("lets the shared search wrapper draw corners instead of the native search input", () => {
