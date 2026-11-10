@@ -41,7 +41,7 @@ mod mutations;
 pub(crate) mod note_attachments;
 pub(crate) mod note_entities;
 pub(crate) mod notes;
-pub(crate) use note_entities::{NoteCapture, NoteDocument, NoteTask};
+pub(crate) use note_entities::{MeetingCapture, NoteCapture, NoteDocument, NoteTask};
 mod outbox;
 mod recovery;
 pub(crate) mod replicated_sync;

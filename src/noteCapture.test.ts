@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureConversation } from "./noteCapture";
+import { addMeetingToDailyNote, captureConversation } from "./noteCapture";
 import { mailClient } from "./data/client";
 import { registerNoteOwner } from "./noteMutations";
 import { writeNoteDraft } from "./noteDrafts";
@@ -28,6 +28,54 @@ describe("conversation capture", () => {
     const stop = registerNoteOwner(note.id, { flush, unsaved: () => true, refresh: vi.fn(async () => undefined) });
     try { await expect(captureConversation("conversation", new Date(2026, 10, 10))).rejects.toThrow("unsaved changes"); expect(flush).toHaveBeenCalledOnce(); }
     finally { stop(); }
+  });
+});
+
+describe("adding a meeting to its day's note", () => {
+  const entry = { event: { version: 1 as const, kind: "event" as const, id: "evt", account: "you@example.com", calendar: "work" }, time: "9:30am", attendees: [], name: "Sync", linkNote: true };
+  const day: Note = { ...note, id: "daily:2026-11-12", title: "2026-11-12", dailyDate: "2026-11-12", updatedAt: "added" };
+  const meetingNote: Note = { ...note, id: "meeting", title: "Sync", dailyDate: null, body: "", updatedAt: "created" };
+  const added = { note: day, added: true, previousBody: "Before\n", meetingNote, createdMeetingNote: true };
+
+  it("writes to the event's own day and Undo removes the line and the untouched note it created", async () => {
+    vi.spyOn(mailClient, "getDailyNote").mockResolvedValue({ ...day, updatedAt: "before" });
+    const add = vi.spyOn(mailClient, "addMeetingToDailyNote").mockResolvedValue(added);
+    const save = vi.spyOn(mailClient, "saveDailyNote").mockResolvedValue({ saved: true, note: day });
+    vi.spyOn(mailClient, "getNote").mockResolvedValue(meetingNote);
+    const trash = vi.spyOn(mailClient, "trashNote").mockResolvedValue({ ...meetingNote, trashed: true });
+    const result = await addMeetingToDailyNote("2026-11-12", entry);
+    expect(add).toHaveBeenCalledExactlyOnceWith("2026-11-12", "before", entry);
+    await result.undo();
+    expect(save).toHaveBeenCalledExactlyOnceWith("2026-11-12", "Before\n", "added");
+    expect(trash).toHaveBeenCalledExactlyOnceWith("meeting");
+  });
+
+  it("Undo keeps a meeting note someone wrote in, and keeps everything when the day changed", async () => {
+    vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null);
+    vi.spyOn(mailClient, "addMeetingToDailyNote").mockResolvedValue(added);
+    const save = vi.spyOn(mailClient, "saveDailyNote").mockResolvedValueOnce({ saved: true, note: day }).mockResolvedValueOnce({ saved: false, note: { ...day, updatedAt: "newer" } });
+    vi.spyOn(mailClient, "getNote").mockResolvedValue({ ...meetingNote, body: "Agenda", updatedAt: "edited" });
+    const trash = vi.spyOn(mailClient, "trashNote");
+    await (await addMeetingToDailyNote("2026-11-12", entry)).undo();
+    expect(trash).not.toHaveBeenCalled();
+    await expect((await addMeetingToDailyNote("2026-11-12", entry)).undo()).rejects.toThrow("changed after the meeting was added");
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(trash).not.toHaveBeenCalled();
+  });
+
+  it("does nothing to undo when the occurrence was already in the note", async () => {
+    vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(day);
+    vi.spyOn(mailClient, "addMeetingToDailyNote").mockResolvedValue({ ...added, added: false, meetingNote: null, createdMeetingNote: false });
+    const save = vi.spyOn(mailClient, "saveDailyNote");
+    await (await addMeetingToDailyNote("2026-11-12", entry)).undo();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("refuses to add behind a closed draft of that day", async () => {
+    writeNoteDraft("daily:2026-11-12", { title: "2026-11-12", body: "draft", base: null });
+    const add = vi.spyOn(mailClient, "addMeetingToDailyNote");
+    await expect(addMeetingToDailyNote("2026-11-12", entry)).rejects.toThrow("saved draft");
+    expect(add).not.toHaveBeenCalled();
   });
 });
 

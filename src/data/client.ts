@@ -1,4 +1,5 @@
 import type { NoteDocument, NoteTaskRecord, NoteReference, NoteCapture, NoteBacklink } from "../noteEntities";
+import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
 import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
@@ -423,6 +424,8 @@ export interface MailClient extends CorrespondenceClient {
   /** The contact a contact reference opens, or null when this device has none. */
   resolveNoteContact(reference: NoteReference): Promise<string | null>;
   captureNoteConversation(date: string, thread: string, expected: string | null): Promise<NoteCapture>;
+  /** Writes a meeting's line into `date`'s daily note, if that note is still at `expected`. */
+  addMeetingToDailyNote(date: string, expected: string | null, entry: MeetingEntry): Promise<MeetingCapture>;
   listRecentNotes(limit: number): Promise<NoteSummary[]>;
   getNote(id: string): Promise<Note | null>;
   getDailyNote(date: string): Promise<Note | null>;
@@ -685,6 +688,7 @@ const tauriClient: MailClient = {
   resolveNoteConversation: (reference) => read("resolve_note_conversation", { reference }),
   resolveNoteContact: (reference) => read("resolve_note_contact", { reference }),
   captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),
+  addMeetingToDailyNote: (date, expected, entry) => complete("add_meeting_to_daily_note", { date, expected, entry }),
   listRecentNotes: (limit) => read("list_recent_notes", { limit }),
   getNote: (id) => read("get_note", { id }),
   getDailyNote: (date) => read("get_daily_note", { date }),

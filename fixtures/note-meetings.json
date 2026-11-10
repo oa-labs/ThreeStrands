@@ -1,0 +1,342 @@
+{
+  "insert": [
+    {
+      "name": "empty note",
+      "body": "",
+      "expected": "## Meetings\n\n- NEW\n"
+    },
+    {
+      "name": "text without a final newline",
+      "body": "Hello",
+      "expected": "Hello\n\n## Meetings\n\n- NEW\n"
+    },
+    {
+      "name": "text with a final newline",
+      "body": "Hello\n",
+      "expected": "Hello\n\n## Meetings\n\n- NEW\n"
+    },
+    {
+      "name": "text ending in a blank line",
+      "body": "Hello\n\n",
+      "expected": "Hello\n\n## Meetings\n\n- NEW\n"
+    },
+    {
+      "name": "section in the middle",
+      "body": "# Day\n\n## Meetings\n\n- 9am A\n\n## Tasks\n\n- ( ) x\n",
+      "expected": "# Day\n\n## Meetings\n\n- 9am A\n- NEW\n\n## Tasks\n\n- ( ) x\n"
+    },
+    {
+      "name": "section at the end without a final newline",
+      "body": "## Meetings\n- A",
+      "expected": "## Meetings\n- A\n- NEW\n"
+    },
+    {
+      "name": "empty section",
+      "body": "## Meetings\n\n## Tasks\n",
+      "expected": "## Meetings\n\n- NEW\n\n## Tasks\n"
+    },
+    {
+      "name": "heading matched by normalized text with a closing run",
+      "body": "##   meetings  ##\n- A\n",
+      "expected": "##   meetings  ##\n- A\n- NEW\n"
+    },
+    {
+      "name": "a deeper heading stays in the section",
+      "body": "## Meetings\n- A\n### Notes\nText\n## Next\n",
+      "expected": "## Meetings\n- A\n### Notes\nText\n- NEW\n## Next\n"
+    },
+    {
+      "name": "a heading inside code is not the section",
+      "body": "```\n## Meetings\n```\n",
+      "expected": "```\n## Meetings\n```\n\n## Meetings\n\n- NEW\n"
+    },
+    {
+      "name": "closed code inside the section",
+      "body": "## Meetings\n```\n## not a heading\n```\n\nAfter\n",
+      "expected": "## Meetings\n```\n## not a heading\n```\n\nAfter\n- NEW\n"
+    },
+    {
+      "name": "first of two sections",
+      "body": "## Meetings\n- A\n## Meetings\n- B\n",
+      "expected": "## Meetings\n- A\n- NEW\n## Meetings\n- B\n"
+    },
+    {
+      "name": "trailing blank lines stay after the line",
+      "body": "## Meetings\n- A\n\n\n",
+      "expected": "## Meetings\n- A\n- NEW\n\n\n"
+    },
+    {
+      "name": "a level-1 heading is not the section",
+      "body": "# Meetings\n- A\n",
+      "expected": "# Meetings\n- A\n\n## Meetings\n\n- NEW\n"
+    },
+    {
+      "name": "other heading text is not the section",
+      "body": "## Meetings later\n",
+      "expected": "## Meetings later\n\n## Meetings\n\n- NEW\n"
+    },
+    {
+      "name": "no space after the hashes is not a heading",
+      "body": "##Meetings\n",
+      "expected": "##Meetings\n\n## Meetings\n\n- NEW\n"
+    },
+    {
+      "name": "an indented heading is code",
+      "body": "    ## Meetings\n",
+      "expected": "    ## Meetings\n\n## Meetings\n\n- NEW\n"
+    },
+    {
+      "name": "unclosed code at the end",
+      "body": "Text\n```\ncode\n",
+      "expected": null
+    },
+    {
+      "name": "unclosed code in the section",
+      "body": "## Meetings\n- A\n~~~\ncode\n",
+      "expected": null
+    },
+    {
+      "name": "a shorter run doesn't close code",
+      "body": "## Meetings\n````\n```\n",
+      "expected": null
+    }
+  ],
+  "titles": [
+    [
+      "CS Leadership Meeting (and Sales Mtg)",
+      "CS Leadership Meeting (and Sales Mtg)"
+    ],
+    [
+      "Plan [Q3] | review",
+      "Plan -Q3- - review"
+    ],
+    [
+      "  Standup\n weekly\t ",
+      "Standup weekly"
+    ],
+    [
+      "",
+      "Meeting"
+    ],
+    [
+      "   ",
+      "Meeting"
+    ],
+    [
+      "2026-11-10",
+      "2026-11-10 (meeting)"
+    ],
+    [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    [
+      "Café ☕ sync",
+      "Café ☕ sync"
+    ]
+  ],
+  "lines": [
+    {
+      "name": "attendees and a plain name",
+      "entry": {
+        "event": {
+          "version": 1,
+          "kind": "event",
+          "id": "evt-1/2026-11-10",
+          "account": "you@example.com",
+          "calendar": "work"
+        },
+        "time": "9:30am",
+        "attendees": [
+          {
+            "label": "Pete B",
+            "reference": {
+              "version": 1,
+              "kind": "contact",
+              "id": "pete@example.com",
+              "contact": "c1"
+            }
+          },
+          {
+            "label": "Mike Carpenter",
+            "reference": {
+              "version": 1,
+              "kind": "contact",
+              "id": "mike@example.com"
+            }
+          }
+        ],
+        "name": "CS Leadership Meeting (and Sales Mtg)",
+        "linkNote": false
+      },
+      "title": null,
+      "expected": "- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22evt%2D1%2F2026%2D11%2D10%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%7D) met with [Pete B](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22pete%40example%2Ecom%22%2C%22contact%22%3A%22c1%22%7D), [Mike Carpenter](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22mike%40example%2Ecom%22%7D) for CS Leadership Meeting \\(and Sales Mtg\\)"
+    },
+    {
+      "name": "a linked meeting note",
+      "entry": {
+        "event": {
+          "version": 1,
+          "kind": "event",
+          "id": "evt-1/2026-11-10",
+          "account": "you@example.com",
+          "calendar": "work"
+        },
+        "time": "9:30am",
+        "attendees": [
+          {
+            "label": "Pete B",
+            "reference": {
+              "version": 1,
+              "kind": "contact",
+              "id": "pete@example.com",
+              "contact": "c1"
+            }
+          }
+        ],
+        "name": "CS Leadership Meeting (and Sales Mtg)",
+        "linkNote": true
+      },
+      "title": "CS Leadership Meeting (and Sales Mtg)",
+      "expected": "- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22evt%2D1%2F2026%2D11%2D10%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%7D) met with [Pete B](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22pete%40example%2Ecom%22%2C%22contact%22%3A%22c1%22%7D) for [[CS Leadership Meeting (and Sales Mtg)]]"
+    },
+    {
+      "name": "no attendees, all day",
+      "entry": {
+        "event": {
+          "version": 1,
+          "kind": "event",
+          "id": "evt-1/2026-11-10",
+          "account": "you@example.com",
+          "calendar": "work"
+        },
+        "time": "All day",
+        "attendees": [],
+        "name": "Offsite",
+        "linkNote": false
+      },
+      "title": null,
+      "expected": "- [All day](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22evt%2D1%2F2026%2D11%2D10%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%7D) for Offsite"
+    },
+    {
+      "name": "labels escaped, collapsed, or replaced by the address",
+      "entry": {
+        "event": {
+          "version": 1,
+          "kind": "event",
+          "id": "evt-1/2026-11-10",
+          "account": "you@example.com",
+          "calendar": "work"
+        },
+        "time": "9:30am",
+        "attendees": [
+          {
+            "label": "Ann [ops]\nLee",
+            "reference": {
+              "version": 1,
+              "kind": "contact",
+              "id": "ann@example.com"
+            }
+          },
+          {
+            "label": "  ",
+            "reference": {
+              "version": 1,
+              "kind": "contact",
+              "id": "mike@example.com"
+            }
+          }
+        ],
+        "name": " Q3\n*plan* ",
+        "linkNote": false
+      },
+      "title": null,
+      "expected": "- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22evt%2D1%2F2026%2D11%2D10%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%7D) met with [Ann \\[ops\\] Lee](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22ann%40example%2Ecom%22%7D), [mike@example\\.com](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22mike%40example%2Ecom%22%7D) for Q3 \\*plan\\*"
+    },
+    {
+      "name": "an empty name",
+      "entry": {
+        "event": {
+          "version": 1,
+          "kind": "event",
+          "id": "evt-1/2026-11-10",
+          "account": "you@example.com",
+          "calendar": "work"
+        },
+        "time": "9:30am",
+        "attendees": [],
+        "name": "  ",
+        "linkNote": false
+      },
+      "title": null,
+      "expected": "- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22evt%2D1%2F2026%2D11%2D10%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%7D) for Meeting"
+    },
+    {
+      "name": "not an event",
+      "entry": {
+        "event": {
+          "version": 1,
+          "kind": "task",
+          "id": "t"
+        },
+        "time": "9:30am",
+        "attendees": [],
+        "name": "Sync",
+        "linkNote": false
+      },
+      "title": null,
+      "expected": null
+    },
+    {
+      "name": "an attendee that isn't a contact",
+      "entry": {
+        "event": {
+          "version": 1,
+          "kind": "event",
+          "id": "evt-1/2026-11-10",
+          "account": "you@example.com",
+          "calendar": "work"
+        },
+        "time": "9:30am",
+        "attendees": [
+          {
+            "label": "X",
+            "reference": {
+              "version": 1,
+              "kind": "event",
+              "id": "evt-1/2026-11-10",
+              "account": "you@example.com",
+              "calendar": "work"
+            }
+          }
+        ],
+        "name": "Sync",
+        "linkNote": false
+      },
+      "title": null,
+      "expected": null
+    },
+    {
+      "name": "no time",
+      "entry": {
+        "event": {
+          "version": 1,
+          "kind": "event",
+          "id": "evt-1/2026-11-10",
+          "account": "you@example.com",
+          "calendar": "work"
+        },
+        "time": " ",
+        "attendees": [],
+        "name": "Sync",
+        "linkNote": false
+      },
+      "title": null,
+      "expected": null
+    }
+  ]
+}

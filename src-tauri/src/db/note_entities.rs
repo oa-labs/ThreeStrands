@@ -4,6 +4,7 @@ use super::{Database, DatabaseError, DbResult};
 use crate::{
     models::{Note, NoteBacklink},
     note_entities::{self, EntityLink, NoteItem, NoteReference},
+    note_meetings::{self, MeetingEntry},
 };
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::Serialize;
@@ -34,6 +35,62 @@ pub struct NoteCapture {
     pub note: Note,
     pub added: bool,
     pub previous_body: String,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingCapture {
+    pub note: Note,
+    pub added: bool,
+    pub previous_body: String,
+    /// The note the meeting's name links, when it links one.
+    pub meeting_note: Option<Note>,
+    /// Whether this action created `meeting_note`, so Undo may remove it.
+    pub created_meeting_note: bool,
+}
+
+/// What a refused insert into a daily note says, naming that note.
+struct DailyInsertMessages {
+    changed: &'static str,
+    conflict: &'static str,
+    fence: &'static str,
+}
+
+/// A daily note checked for adding to: still the version the action began
+/// from, not in Trash, and without a body conflict.
+struct DailyInsertStart {
+    note: Option<Note>,
+    previous_body: String,
+    parsed: note_entities::ParsedNote,
+}
+
+fn begin_daily_insert(
+    tx: &Transaction<'_>,
+    date: &str,
+    expected: Option<&str>,
+    messages: &DailyInsertMessages,
+) -> DbResult<DailyInsertStart> {
+    if !crate::notes::is_daily_date(date) {
+        return Err(DatabaseError::invalid("Invalid date"));
+    }
+    let id = crate::notes::daily_note_id(date);
+    let note = super::notes::get(tx, &id)?;
+    if !super::notes::is_current(note.as_ref(), expected) {
+        return Err(DatabaseError::invalid(messages.changed));
+    }
+    let conflicted: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='note' AND entity_id=?1 GROUP BY field HAVING count(DISTINCT value)>1)",
+        [&id], |r| r.get(0),
+    )?;
+    if conflicted {
+        return Err(DatabaseError::invalid(messages.conflict));
+    }
+    let previous_body = note.as_ref().map(|n| n.body.clone()).unwrap_or_default();
+    let parsed = note_entities::parse(&id, &previous_body).map_err(DatabaseError::invalid)?;
+    Ok(DailyInsertStart {
+        note,
+        previous_body,
+        parsed,
+    })
 }
 
 pub(crate) fn index(tx: &Transaction<'_>, note: &Note) -> DbResult<()> {
@@ -239,52 +296,139 @@ impl Database {
         thread: &str,
         expected: Option<&str>,
     ) -> DbResult<NoteCapture> {
-        if !crate::notes::is_daily_date(date) {
-            return Err(DatabaseError::invalid("Invalid date"));
-        }
+        const MESSAGES: DailyInsertMessages = DailyInsertMessages {
+            changed: "Today's note changed. Open it before adding this conversation.",
+            conflict: "Resolve today's note conflict before adding this conversation.",
+            fence:
+                "Today's note ends inside a code block. Open it before adding this conversation.",
+        };
         self.with_transaction(|tx| {
             let (account, provider, title): (String, String, String) = tx.query_row(
                 "SELECT account_id,provider_thread_id,subject FROM threads WHERE id=?1",
-                [thread], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                [thread],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )?;
             let reference = NoteReference {
-                version: 1, kind: "conversation".into(), id: provider,
-                account: Some(account), calendar: None, note: None, contact: None,
+                version: 1,
+                kind: "conversation".into(),
+                id: provider,
+                account: Some(account),
+                calendar: None,
+                note: None,
+                contact: None,
             };
             let href = reference.href().map_err(DatabaseError::invalid)?;
-            let id = crate::notes::daily_note_id(date);
-            let note = super::notes::get(tx, &id)?;
-            if !super::notes::is_current(note.as_ref(), expected) {
-                return Err(DatabaseError::invalid("Today's note changed. Open it before adding this conversation."));
-            }
-            let conflicted: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='note' AND entity_id=?1 GROUP BY field HAVING count(DISTINCT value)>1)",
-                [&id], |r| r.get(0),
-            )?;
-            if conflicted { return Err(DatabaseError::invalid("Resolve today's note conflict before adding this conversation.")); }
-            let previous_body = note.as_ref().map(|n| n.body.clone()).unwrap_or_default();
-            let parsed = note_entities::parse(&id, &previous_body).map_err(DatabaseError::invalid)?;
-            for link in &parsed.links {
+            let start = begin_daily_insert(tx, date, expected, &MESSAGES)?;
+            for link in &start.parsed.links {
                 let same_conversation = link.reference.kind == "conversation"
                     && link.reference.account == reference.account
-                    && conversation_id(tx, reference.account.as_deref().unwrap(), &link.reference.id)?.as_ref() == Some(&reference.id);
+                    && conversation_id(
+                        tx,
+                        reference.account.as_deref().unwrap(),
+                        &link.reference.id,
+                    )?
+                    .as_ref()
+                        == Some(&reference.id);
                 if link.reference == reference || same_conversation {
-                    return Ok(NoteCapture { note: note.unwrap(), added: false, previous_body });
+                    return Ok(NoteCapture {
+                        note: start.note.unwrap(),
+                        added: false,
+                        previous_body: start.previous_body,
+                    });
                 }
             }
-            if parsed.unclosed_fence {
-                return Err(DatabaseError::invalid("Today's note ends inside a code block. Open it before adding this conversation."));
+            if start.parsed.unclosed_fence {
+                return Err(DatabaseError::invalid(MESSAGES.fence));
             }
-            let title = if title.trim().is_empty() { "(No subject)" } else { title.trim() };
+            let title = if title.trim().is_empty() {
+                "(No subject)"
+            } else {
+                title.trim()
+            };
             let mut label = String::new();
             for ch in title.chars() {
-                if ch.is_ascii_punctuation() { label.push('\\'); }
+                if ch.is_ascii_punctuation() {
+                    label.push('\\');
+                }
                 label.push(if ch == '\n' || ch == '\r' { ' ' } else { ch });
             }
-            let separator = if previous_body.is_empty() || previous_body.ends_with('\n') { "" } else { "\n" };
+            let previous_body = start.previous_body;
+            let separator = if previous_body.is_empty() || previous_body.ends_with('\n') {
+                ""
+            } else {
+                "\n"
+            };
             let body = format!("{previous_body}{separator}- [{label}]({href})\n");
+            let saved = super::notes::save_daily_in(tx, date, &body)?
+                .ok_or(DatabaseError::NotFound("Note"))?;
+            Ok(NoteCapture {
+                note: saved,
+                added: true,
+                previous_body,
+            })
+        })
+    }
+
+    /// Writes the meeting's line into the `## Meetings` section of `date`'s
+    /// daily note and, when the name links a note, creates that note if no
+    /// note outside Trash has its title. Adds nothing when the note already
+    /// links this event occurrence. All in one transaction: a refusal writes
+    /// neither note.
+    pub fn add_meeting_to_daily_note(
+        &self,
+        date: &str,
+        expected: Option<&str>,
+        entry: &MeetingEntry,
+    ) -> DbResult<MeetingCapture> {
+        const MESSAGES: DailyInsertMessages = DailyInsertMessages {
+            changed: "That day's note changed. Open it before adding this meeting.",
+            conflict: "Resolve that day's note conflict before adding this meeting.",
+            fence: "That day's note has a code block that never closes where the meeting would go. Open it before adding this meeting.",
+        };
+        let title = entry
+            .link_note
+            .then(|| note_meetings::meeting_note_title(&entry.name));
+        let line =
+            note_meetings::meeting_line(entry, title.as_deref()).map_err(DatabaseError::invalid)?;
+        let event = entry.event.target().map_err(DatabaseError::invalid)?;
+        self.with_transaction(|tx| {
+            let start = begin_daily_insert(tx, date, expected, &MESSAGES)?;
+            let linked = start.parsed.links.iter().any(|link| link.reference.kind == "event" && link.reference.target().ok().as_ref() == Some(&event));
+            if linked {
+                return Ok(MeetingCapture { note: start.note.unwrap(), added: false, previous_body: start.previous_body, meeting_note: None, created_meeting_note: false });
+            }
+            let body = note_meetings::insert_meeting_line(&start.previous_body, &line)
+                .map_err(|_| DatabaseError::invalid(MESSAGES.fence))?;
+            let (meeting_note, created_meeting_note) = match &title {
+                None => (None, false),
+                Some(title) => {
+                    let existing: Option<String> = tx.query_row(
+                        "SELECT id FROM notes WHERE title_key=?1 AND trashed=0 AND daily_date IS NULL ORDER BY id LIMIT 1",
+                        [crate::notes::title_key(title)], |r| r.get(0),
+                    ).optional()?;
+                    match existing {
+                        Some(id) => (super::notes::get(tx, &id)?, false),
+                        None => {
+                            let now = chrono::Utc::now().to_rfc3339();
+                            let note = Note {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                title: crate::notes::clean_note_title(title).map_err(DatabaseError::invalid)?,
+                                body: String::new(),
+                                daily_date: None,
+                                created_at: now.clone(),
+                                updated_at: now,
+                                trashed: false,
+                                trashed_at: None,
+                                authored_title: None,
+                            };
+                            super::notes::check_title_free(tx, &note.id, &note.title)?;
+                            (Some(super::notes::create(tx, note)?), true)
+                        }
+                    }
+                }
+            };
             let saved = super::notes::save_daily_in(tx, date, &body)?.ok_or(DatabaseError::NotFound("Note"))?;
-            Ok(NoteCapture { note: saved, added: true, previous_body })
+            Ok(MeetingCapture { note: saved, added: true, previous_body: start.previous_body, meeting_note, created_meeting_note })
         })
     }
 }

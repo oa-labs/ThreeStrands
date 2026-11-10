@@ -514,6 +514,17 @@ pub(crate) async fn resolve_note_contact(
     run_database_task(move || db.resolve_note_contact(&reference)).await
 }
 #[tauri::command]
+pub(crate) async fn add_meeting_to_daily_note(
+    date: String,
+    expected: Option<String>,
+    entry: crate::note_meetings::MeetingEntry,
+    state: State<'_, AppState>,
+) -> AppResult<crate::db::MeetingCapture> {
+    let db = state.database.clone();
+    run_database_task(move || db.add_meeting_to_daily_note(&date, expected.as_deref(), &entry))
+        .await
+}
+#[tauri::command]
 pub(crate) async fn capture_note_conversation(
     date: String,
     thread: String,

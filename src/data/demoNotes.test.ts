@@ -55,4 +55,17 @@ describe("demo notes", () => {
     expect(await notes.getNote(plan.id)).toBeNull();
     expect(await notes.listTrashedNotes(10)).toEqual([]);
   });
+  it("adds a meeting once per occurrence and links one shared meeting note, as native does", async () => {
+    const notes = createDemoNotes();
+    const event = (id: string) => ({ version: 1 as const, kind: "event" as const, id, account: "you@example.com", calendar: "work" });
+    const entry = (id: string) => ({ event: event(id), time: "9:30am", attendees: [], name: "Weekly [sync]", linkNote: true });
+    const first = await notes.addMeetingToDailyNote("2026-11-12", null, entry("a"));
+    expect(first.note.body).toMatch(/^## Meetings\n\n- \[9:30am\]\(threestrands:event\/.+\) for \[\[Weekly -sync-\]\]\n$/);
+    expect(first.createdMeetingNote).toBe(true);
+    expect((await notes.addMeetingToDailyNote("2026-11-12", first.note.updatedAt, entry("a"))).added).toBe(false);
+    const next = await notes.addMeetingToDailyNote("2026-11-19", null, entry("b"));
+    expect(next.createdMeetingNote).toBe(false);
+    expect(next.meetingNote?.id).toBe(first.meetingNote?.id);
+    await expect(notes.addMeetingToDailyNote("2026-11-12", null, entry("c"))).rejects.toThrow("changed");
+  });
 });

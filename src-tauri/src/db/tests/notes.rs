@@ -1619,3 +1619,195 @@ fn a_contact_reference_to_someone_only_mailed_opens_their_derived_contact() {
     let jane = saved_contact(&db, "Jane", &["jane@example.com"]);
     assert_eq!(db.resolve_note_contact(&reference).unwrap(), Some(jane.id));
 }
+
+fn meeting(event: &str, link_note: bool) -> crate::note_meetings::MeetingEntry {
+    crate::note_meetings::MeetingEntry {
+        event: crate::note_entities::NoteReference {
+            version: 1,
+            kind: "event".into(),
+            id: event.into(),
+            account: Some("you@example.com".into()),
+            calendar: Some("work".into()),
+            note: None,
+            contact: None,
+        },
+        time: "9:30am".into(),
+        attendees: vec![crate::note_meetings::MeetingAttendee {
+            label: "Pete B".into(),
+            reference: contact_reference("pete@example.com", None),
+        }],
+        name: "CS Leadership [Sync]".into(),
+        link_note,
+    }
+}
+
+fn notes_titled(db: &Database, title: &str) -> Vec<Note> {
+    db.list_recent_notes(500)
+        .unwrap()
+        .into_iter()
+        .chain(db.list_trashed_notes(500).unwrap())
+        .filter(|note| note.title == title)
+        .map(|note| db.get_note(&note.id).unwrap().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_meeting_line_goes_into_its_days_meetings_section_once_per_occurrence() {
+    let db = database();
+    let first = db
+        .add_meeting_to_daily_note(DAY, None, &meeting("evt-1", false))
+        .unwrap();
+    assert!(first.added);
+    assert_eq!(first.previous_body, "");
+    assert!(first.meeting_note.is_none());
+    assert!(first
+        .note
+        .body
+        .starts_with("## Meetings\n\n- [9:30am](threestrands:event/"));
+    assert!(first.note.body.ends_with(" for CS Leadership \\[Sync\\]\n"));
+    let event = meeting("evt-1", false).event;
+    assert_eq!(db.note_backlinks(&event).unwrap()[0].note_id, first.note.id);
+    assert_eq!(
+        db.note_backlinks(&contact_reference("pete@example.com", None))
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // The same occurrence again adds nothing, even after the user typed
+    // around it; another occurrence lands under the same heading.
+    let edited = db
+        .save_daily_note_edit(
+            DAY,
+            &format!("Morning\n\n{}\n## Later\n", first.note.body),
+            Some(&first.note.updated_at),
+        )
+        .unwrap()
+        .note
+        .unwrap();
+    let again = db
+        .add_meeting_to_daily_note(DAY, Some(&edited.updated_at), &meeting("evt-1", true))
+        .unwrap();
+    assert!(!again.added);
+    assert_eq!(again.note.updated_at, edited.updated_at);
+    assert!(notes_titled(&db, "CS Leadership -Sync-").is_empty());
+    let second = db
+        .add_meeting_to_daily_note(DAY, Some(&edited.updated_at), &meeting("evt-2", false))
+        .unwrap();
+    let lines: Vec<&str> = second.note.body.lines().collect();
+    assert_eq!(lines[0], "Morning");
+    assert_eq!(lines[2], "## Meetings");
+    assert!(lines[4].contains("evt%2D1"));
+    assert!(lines[5].contains("evt%2D2"));
+    assert_eq!(&lines[6..], ["", "## Later"]);
+    assert_eq!(second.previous_body, edited.body);
+
+    // A link the user wrote to an occurrence counts as already there.
+    let typed = format!(
+        "{}\nSee [standup]({})\n",
+        second.note.body,
+        meeting("evt-3", false).event.href().unwrap()
+    );
+    let typed = db
+        .save_daily_note_edit(DAY, &typed, Some(&second.note.updated_at))
+        .unwrap()
+        .note
+        .unwrap();
+    assert!(
+        !db.add_meeting_to_daily_note(DAY, Some(&typed.updated_at), &meeting("evt-3", false))
+            .unwrap()
+            .added
+    );
+}
+
+#[test]
+fn a_linked_meeting_note_is_created_once_and_shared_by_later_occurrences() {
+    let db = database();
+    let first = db
+        .add_meeting_to_daily_note(DAY, None, &meeting("evt-1", true))
+        .unwrap();
+    assert!(first.created_meeting_note);
+    let created = first.meeting_note.unwrap();
+    assert_eq!(created.title, "CS Leadership -Sync-");
+    assert_eq!(created.body, "");
+    assert!(first.note.body.contains(" for [[CS Leadership -Sync-]]\n"));
+    assert_eq!(db.note_links(&created.id).unwrap().backlinks.len(), 1);
+
+    let next_day = db
+        .add_meeting_to_daily_note("2026-11-16", None, &meeting("evt-1b", true))
+        .unwrap();
+    assert!(!next_day.created_meeting_note);
+    assert_eq!(next_day.meeting_note.unwrap().id, created.id);
+    assert_eq!(notes_titled(&db, "CS Leadership -Sync-").len(), 1);
+    assert_eq!(db.note_links(&created.id).unwrap().backlinks.len(), 2);
+
+    // A same-titled note in Trash doesn't hold the title.
+    db.trash_note(&created.id).unwrap();
+    let after_trash = db
+        .add_meeting_to_daily_note("2026-11-23", None, &meeting("evt-1c", true))
+        .unwrap();
+    assert!(after_trash.created_meeting_note);
+    assert_ne!(after_trash.meeting_note.unwrap().id, created.id);
+}
+
+#[test]
+fn a_refused_meeting_writes_neither_note() {
+    let db = database();
+    let note = db
+        .save_daily_note_edit(DAY, "Notes\n```\ncode\n", None)
+        .unwrap()
+        .note
+        .unwrap();
+    // A stale version, an unclosed code block, Trash, and the size limit.
+    assert!(db
+        .add_meeting_to_daily_note(DAY, None, &meeting("evt-1", true))
+        .is_err());
+    let fence = db
+        .add_meeting_to_daily_note(DAY, Some(&note.updated_at), &meeting("evt-1", true))
+        .unwrap_err()
+        .to_string();
+    assert!(fence.contains("code block"), "{fence}");
+    let long = format!("{}\n", "x".repeat(MAX_NOTE_BODY_BYTES - 200));
+    let near = db
+        .save_daily_note_edit(DAY, &long, Some(&note.updated_at))
+        .unwrap()
+        .note
+        .unwrap();
+    let mut wide = meeting("evt-1", true);
+    wide.attendees = (0..40)
+        .map(|i| crate::note_meetings::MeetingAttendee {
+            label: format!("Person {i}"),
+            reference: contact_reference(&format!("p{i}@example.com"), None),
+        })
+        .collect();
+    assert!(db
+        .add_meeting_to_daily_note(DAY, Some(&near.updated_at), &wide)
+        .is_err());
+    db.trash_note(&near.id).unwrap();
+    assert!(db
+        .add_meeting_to_daily_note(DAY, Some(&near.updated_at), &meeting("evt-1", true))
+        .is_err());
+    assert!(notes_titled(&db, "CS Leadership -Sync-").is_empty());
+    assert_eq!(db.get_note(&near.id).unwrap().unwrap().body, near.body);
+    assert!(db
+        .note_backlinks(&meeting("evt-1", false).event)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn a_meeting_is_refused_while_its_days_note_is_in_conflict() {
+    let a = synced();
+    let b = synced();
+    a.save_daily_note(DAY, "From A").unwrap();
+    b.save_daily_note(DAY, "From B").unwrap();
+    sync_both(&a, &b);
+    let current = a.get_daily_note(DAY).unwrap().unwrap();
+    let error = a
+        .add_meeting_to_daily_note(DAY, Some(&current.updated_at), &meeting("evt-1", true))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("conflict"), "{error}");
+    assert_eq!(a.get_daily_note(DAY).unwrap().unwrap().body, current.body);
+    assert!(notes_titled(&a, "CS Leadership -Sync-").is_empty());
+}

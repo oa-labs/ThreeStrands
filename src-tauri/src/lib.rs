@@ -43,6 +43,7 @@ use threestrands_mail_mime::{html_plain_text, mime, sender_trust};
 use threestrands_mail_text::{quoted_history, search_query};
 mod net_safety;
 mod note_entities;
+mod note_meetings;
 mod notes;
 mod notes_export;
 mod notes_import;
@@ -1789,6 +1790,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::notes::note_backlinks,
         commands::notes::resolve_note_conversation,
         commands::notes::resolve_note_contact,
+        commands::notes::add_meeting_to_daily_note,
         commands::notes::capture_note_conversation,
         commands::notes::note_links,
         commands::notes::notes_storage,

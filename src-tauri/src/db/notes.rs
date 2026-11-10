@@ -337,7 +337,7 @@ fn remove(tx: &Transaction<'_>, id: &str) -> DbResult<()> {
 
 /// Refuses a title another note in use already has, since a `[[link]]`
 /// names one note by its title.
-fn check_title_free(tx: &Transaction<'_>, id: &str, title: &str) -> DbResult<()> {
+pub(super) fn check_title_free(tx: &Transaction<'_>, id: &str, title: &str) -> DbResult<()> {
     let taken: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM notes WHERE title_key=?1 AND id<>?2 AND trashed=0)",
         params![title_key(title), id],
@@ -400,7 +400,7 @@ pub(super) fn edit(
     get(tx, &note.id)?.ok_or(DatabaseError::NotFound("Note"))
 }
 
-fn create(tx: &Transaction<'_>, mut note: Note) -> DbResult<Note> {
+pub(super) fn create(tx: &Transaction<'_>, mut note: Note) -> DbResult<Note> {
     note.body =
         crate::note_entities::normalize(&note.id, &note.body).map_err(DatabaseError::invalid)?;
     let payload = sync_payload(&note);

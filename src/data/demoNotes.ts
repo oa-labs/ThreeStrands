@@ -2,9 +2,10 @@ import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKe
 import type { ContactProfile, Thread, ThreadTask, ScheduleEvent, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
 import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
 import { notePreview, noteInlineText } from "../notePreview";
+import { insertMeetingLine, meetingLine, meetingNoteTitle } from "../noteMeetings";
 import type { MailClient } from "./client";
 
-type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
+type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = collapseWhitespace;
@@ -119,6 +120,27 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
       const body = added ? `${previousBody}${previousBody && !previousBody.endsWith("\n") ? "\n" : ""}- ${markdownEntityLink(source.subject || "(No subject)", reference)}\n` : previousBody;
       const next = note ? edit(note, note.title, body) : { id, title: date, body: normalize(id, body), dailyDate: date, createdAt: now(), updatedAt: now(), trashed: false, trashedAt: null };
       notes.set(id, next); return { note: structuredClone(next), added, previousBody };
+    },
+    async addMeetingToDailyNote(date, expected, entry) {
+      const id = `daily:${date}`, note = notes.get(id);
+      if ((note?.updatedAt ?? null) !== expected || note?.trashed) throw new Error("That day's note changed. Open it before adding this meeting.");
+      const title = entry.linkNote ? meetingNoteTitle(entry.name) : null;
+      const line = meetingLine(entry, title), previousBody = note?.body ?? "";
+      if (document(note ?? { body: "" } as Note).links.some((link) => noteReferenceKey(link.reference) === noteReferenceKey(entry.event))) return { note: structuredClone(note!), added: false, previousBody, meetingNote: null, createdMeetingNote: false };
+      const body = insertMeetingLine(previousBody, line);
+      if (body === null) throw new Error("That day's note has a code block that never closes where the meeting would go. Open it before adding this meeting.");
+      let meetingNote: Note | null = null, createdMeetingNote = false;
+      if (title !== null) {
+        meetingNote = [...notes.values()].find((other) => !other.trashed && !other.dailyDate && key(other.title) === key(title)) ?? null;
+        if (!meetingNote) {
+          const time = now();
+          meetingNote = { id: `demo-note-${crypto.randomUUID()}`, title: noteTitle(title), body: "", dailyDate: null, createdAt: time, updatedAt: time, trashed: false, trashedAt: null };
+          notes.set(meetingNote.id, meetingNote); createdMeetingNote = true;
+        }
+      }
+      const next = note ? edit(note, note.title, body) : { id, title: date, body: normalize(id, body), dailyDate: date, createdAt: now(), updatedAt: now(), trashed: false, trashedAt: null };
+      notes.set(id, next);
+      return { note: structuredClone(next), added: true, previousBody, meetingNote: meetingNote && structuredClone(meetingNote), createdMeetingNote };
     },
     async listRecentNotes(limit) {
       const recent = (note: Note) => [visits.get(note.id) ?? "", note.updatedAt].sort().at(-1)!;

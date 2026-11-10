@@ -1076,7 +1076,8 @@ behavior, and keep the user-facing changelog entry current.
 
 ## Meeting notes proposal
 
-**Status: step 1 (contact references) built; steps 2 and 3 proposed.**
+**Status: steps 1 (contact references) and 2 (section insert) built; step 3
+(the Add Note dialog) proposed.**
 Notes for a calendar event are among the
 most common notes people write. Today a user can link a note to an event
 (**Link to… → Event**), and the event's **Meeting context** lists the notes
@@ -1320,6 +1321,29 @@ Step 1, as built:
   links together, contact references first.
 - Nothing writes contact references yet, so users see no change until step
   3; the changelog entry comes with it.
+
+Step 2, as built:
+
+- `note_meetings.rs` writes the line, finds the section, and makes the
+  meeting note's title, as pure functions over the stored text;
+  `src/noteMeetings.ts` mirrors them for the demo client.
+  `fixtures/note-meetings.json` holds both to the same placement, titles,
+  and lines.
+- `add_meeting_to_daily_note` and **Add to Today's Note** share one start
+  (`begin_daily_insert`: date, version, Trash, and conflict checks, then the
+  parse). Add to Today's Note's text, messages, and repeat rule are
+  unchanged. A meeting's messages say "that day's note", since the event's
+  day may not be today.
+- Link labels and a plain meeting name escape the same characters as
+  `markdownEntityLink`, so `(and Sales Mtg)` is stored as
+  `\(and Sales Mtg\)`; it reads the same once rendered. A line names at
+  most 50 attendees (`MAX_MEETING_ATTENDEES`), and the time label is at most
+  32 characters.
+- **Undo** (`addMeetingToDailyNote` in `noteCapture.ts`) restores that day's
+  note to its text before the action, under the same version check as Add to
+  Today's Note's Undo, which removes exactly the line and any heading it
+  added. It then moves a meeting note the action created to Trash only if it
+  is still empty and at its created version.
 
 ### Open questions
 
