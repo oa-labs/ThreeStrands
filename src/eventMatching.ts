@@ -1,7 +1,9 @@
 // Recognizes when a suggested event is already on the user's calendar. An
 // event ThreeStrands added from the same email carries that email's id and is
-// recognized first; otherwise the event's own title, time, and place decide.
-// Matching is conservative: a title and time that agree are the same event; a
+// recognized first; otherwise the event's own title, time, people, and place
+// decide. Matching is conservative: a title and time that agree are the same
+// event, and so are a time and a person from the conversation on the event,
+// since an invitation is often titled differently from the email about it; a
 // shared place at the same time is only a possibility; anything less stays an
 // ordinary conflict.
 
@@ -18,11 +20,15 @@ export const LOCATION_MIN_SHARED_WORDS = 3;
 /** The share of each location's words the other must contain, so a shared city and state are not enough. */
 export const LOCATION_COVERAGE = 0.6;
 
-/** What a suggestion is called, where it is, and the email it was read from, compared with the calendar. */
-export type EventIdentity = { title: string; location?: string | null; sourceMessageId?: string | null };
+/**
+ * What a suggestion is called, where it is, the email it was read from, and
+ * the conversation's other people (lowercased addresses, never the user's
+ * own), compared with the calendar.
+ */
+export type EventIdentity = { title: string; location?: string | null; sourceMessageId?: string | null; people?: readonly string[] };
 
 export type CalendarMatch = {
-  /** `same` when title and time agree; `maybe` when only the place and time do. */
+  /** `same` when title or people and time agree; `maybe` when only the place and time do. */
   kind: "same" | "maybe";
   event: ScheduleEvent;
 };
@@ -93,11 +99,19 @@ export function locationsMatch(left: string | null | undefined, right: string | 
     && overlap / a.size >= LOCATION_COVERAGE && overlap / b.size >= LOCATION_COVERAGE;
 }
 
+/** Whether someone on a calendar event is one of the conversation's people. */
+function sharesPerson(identity: EventIdentity, event: ScheduleEvent): boolean {
+  if (!identity.people?.length || !event.attendees?.length) return false;
+  const people = new Set(identity.people.map((address) => address.trim().toLowerCase()));
+  return event.attendees.some((address) => people.has(address.trim().toLowerCase()));
+}
+
 /**
  * The calendar event a timed suggestion already appears as, if any. An event
  * added from the same email counts at any time the events include; otherwise
- * only timed events starting within the tolerance are considered, a title
- * match outranks a place match, and a closer start breaks ties.
+ * only timed events starting within the tolerance are considered. A title
+ * match outranks a person from the conversation on the event, which outranks a
+ * place match, and a closer start breaks ties.
  */
 export function findCalendarMatch(
   identity: EventIdentity,
@@ -109,15 +123,16 @@ export function findCalendarMatch(
   const distance = (event: ScheduleEvent) => event.allDay ? Infinity : Math.abs(Date.parse(event.start) - start);
   const tagged = findTaggedMatch(identity, events, (event) => distance(event) <= tolerance, distance);
   if (tagged) return tagged;
-  let best: (CalendarMatch & { distance: number }) | null = null;
+  let best: (CalendarMatch & { rank: number; distance: number }) | null = null;
   for (const event of events) {
     const gap = distance(event);
     if (!(gap <= tolerance)) continue;
-    const kind = titlesMatch(identity.title, event.title) ? "same"
-      : locationsMatch(identity.location, event.location) ? "maybe" : null;
-    if (!kind) continue;
-    const better = !best || (kind === "same" && best.kind === "maybe") || (kind === best.kind && gap < best.distance);
-    if (better) best = { kind, event, distance: gap };
+    const rank = titlesMatch(identity.title, event.title) ? 3
+      : sharesPerson(identity, event) ? 2
+        : locationsMatch(identity.location, event.location) ? 1 : 0;
+    if (!rank) continue;
+    const better = !best || rank > best.rank || (rank === best.rank && gap < best.distance);
+    if (better) best = { kind: rank > 1 ? "same" : "maybe", event, rank, distance: gap };
   }
   return best ? { kind: best.kind, event: best.event } : null;
 }

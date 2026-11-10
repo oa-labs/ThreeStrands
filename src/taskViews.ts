@@ -120,7 +120,7 @@ export function formatRelativeDate(date: Date, now: Date = new Date()): string {
   return formatCompactDate(date, now);
 }
 
-export function formatDue(task: ThreadTask): string | null {
+export function formatDue(task: Pick<ThreadTask, "dueKind" | "dueValue">): string | null {
   if (!task.dueValue) return null;
   const value = task.dueKind === "date" ? new Date(`${task.dueValue}T12:00:00`) : new Date(task.dueValue);
   return formatRelativeDate(value);

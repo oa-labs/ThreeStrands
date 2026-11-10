@@ -126,7 +126,8 @@ const sameQuery = (left: ScheduleQuery | null, right: ScheduleQuery | null) =>
 const sameIdentity = (left: EventIdentity | undefined, right: EventIdentity | undefined) =>
   left === right || (left !== undefined && right !== undefined
     && left.title === right.title && (left.location ?? "") === (right.location ?? "")
-    && (left.sourceMessageId ?? "") === (right.sourceMessageId ?? ""));
+    && (left.sourceMessageId ?? "") === (right.sourceMessageId ?? "")
+    && (left.people ?? []).join(",") === (right.people ?? []).join(","));
 
 /** Whether a caller told about one matched event needs telling about the other. */
 const sameMatchedEvent = (left: ScheduleEvent | null, right: ScheduleEvent | null) =>
