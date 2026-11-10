@@ -44,7 +44,7 @@ export function DatePickerField({ label, value, onChange }: {
         if (event.key === "ArrowDown") { event.preventDefault(); setOpen(true); }
       }}
     /></label>
-    <button type="button" className="btn-icon date-picker-trigger" aria-label={`Choose ${label.toLowerCase()}`}
+    <button type="button" className="btn-icon btn-icon-sm date-picker-trigger" aria-label={`Choose ${label.toLowerCase()}`}
       aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? popupId : undefined}
       onClick={() => setOpen(!open)}><CalendarDays size={ICON_SIZE.sm} /></button>
     {open ? <CalendarDatePicker id={popupId} label={label} value={value} onClose={close}

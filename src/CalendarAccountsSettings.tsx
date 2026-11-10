@@ -108,7 +108,7 @@ export function CalendarAccountsSettings({
                 <span className="accounts-list-actions">
                   {accounts.length > 1 ? (
                     <span className="account-reorder" role="group" aria-label={`Order for ${account.email}`}>
-                      <button className="btn-icon"
+                      <button className="btn-icon btn-icon-sm"
                         type="button"
                         title="Move up"
                         aria-label={`Move ${account.email} up`}
@@ -117,7 +117,7 @@ export function CalendarAccountsSettings({
                       >
                         <ChevronUp size={ICON_SIZE.sm} />
                       </button>
-                      <button className="btn-icon"
+                      <button className="btn-icon btn-icon-sm"
                         type="button"
                         title="Move down"
                         aria-label={`Move ${account.email} down`}

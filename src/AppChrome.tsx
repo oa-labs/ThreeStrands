@@ -47,7 +47,7 @@ export function FiltersButton({
           aria-expanded={open}
           onClick={() => setOpen((current) => !current)}
         >
-          <ListFilter size={ICON_SIZE.md} />
+          <ListFilter size={ICON_SIZE.lg} />
           {activeFilters.size > 0 ? <span className="filters-badge" aria-hidden="true">{activeFilters.size}</span> : null}
         </button>
       </HoverTooltip>

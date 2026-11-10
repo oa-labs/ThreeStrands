@@ -22,7 +22,7 @@ export function WorkspaceContextRail({ label, children, onReturn }: { label: str
   const size = useResizableWidth({ storageKey: "threestrands.workspaceContextWidth", minimumWidth: 300, defaultWidth: 340, maximumWidth: 520, reservedWidth: 58 + 626 });
   return <div className={`workspace-context-container${collapsed ? " collapsed" : ""}`} style={{ "--workspace-context-width": `${size.width}px` } as CSSProperties}>
     <button type="button" className="btn-icon workspace-context-toggle" aria-label={collapsed ? `Show ${label}` : `Hide ${label}`} aria-expanded={!collapsed} aria-controls={`workspace-${label.replaceAll(" ", "-")}`} onClick={() => setCollapsed((value) => !value)}>
-      {collapsed ? <PanelRightOpen size={ICON_SIZE.sm} /> : <PanelRightClose size={ICON_SIZE.sm} />}
+      {collapsed ? <PanelRightOpen size={ICON_SIZE.lg} /> : <PanelRightClose size={ICON_SIZE.lg} />}
     </button>
     <>
       <PanelResizeHandle {...size} panelSide="right" label={`Resize ${label}`} controlsId={`workspace-${label.replaceAll(" ", "-")}`} title="Resize context panel" />
