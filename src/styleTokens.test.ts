@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postcss, { type Declaration, type Rule } from "postcss";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
@@ -346,6 +347,41 @@ describe("icon sizes", () => {
       }
     }
     expect(raw).toEqual([]);
+  });
+
+  it("pairs each icon button size with its glyph size: .btn-icon with lg, .btn-icon-sm with sm", () => {
+    const dir = resolve(process.cwd(), "src");
+    const attribute = (element: ts.JsxOpeningLikeElement, name: string) => {
+      const found = element.attributes.properties.find((property) => ts.isJsxAttribute(property) && property.name.getText() === name);
+      return found && ts.isJsxAttribute(found) ? found.initializer?.getText() : undefined;
+    };
+    const mismatched: string[] = [];
+    let checked = 0;
+    for (const file of readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => name.endsWith(".tsx") && !name.includes(".test."))) {
+      const source = ts.createSourceFile(file, readFileSync(resolve(dir, file), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+      const visit = (node: ts.Node) => {
+        if (ts.isJsxElement(node)) {
+          const className = attribute(node.openingElement, "className");
+          if (className && /\bbtn-icon\b/.test(className)) {
+            const expected = /\bbtn-icon-sm\b/.test(className) ? "{ICON_SIZE.sm}" : "{ICON_SIZE.lg}";
+            const glyphs: string[] = [];
+            const collect = (child: ts.Node) => {
+              if (ts.isJsxSelfClosingElement(child) || ts.isJsxOpeningElement(child)) { const size = attribute(child, "size"); if (size) glyphs.push(size); }
+              ts.forEachChild(child, collect);
+            };
+            node.children.forEach(collect);
+            if (glyphs.length > 0) checked += 1;
+            for (const size of glyphs.filter((glyph) => glyph !== expected)) {
+              mismatched.push(`${file}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ${className} has ${size}`);
+            }
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+    expect(checked).toBeGreaterThan(50);
+    expect(mismatched).toEqual([]);
   });
 });
 

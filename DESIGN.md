@@ -447,7 +447,9 @@ row that does not set `align-items`.
 Icons take their size from `ICON_SIZE` in `src/iconSizes.ts`, chosen by the
 icon's container: `xs` (12) inline with meta text, `sm` (14) in small
 buttons, `md` (16) in standard buttons and fields, `lg` (18) in icon buttons
-and the app rail, `display` (28) for empty states.
+and the app rail, `display` (28) for empty states. An icon-only button pairs
+its size with its glyph: `.btn-icon` holds an `lg` icon, and the compact
+`.btn-icon-sm` holds an `sm` icon.
 
 Shadows come from one token per kind of surface: `--shadow-control`,
 `--shadow-raised`, `--shadow-popover` (menus, tooltips, suggestion lists),

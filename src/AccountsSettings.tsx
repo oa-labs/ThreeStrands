@@ -237,7 +237,7 @@ export function AccountsSettings({
               <div className="account-card-footer">
                 {accounts.length > 1 ? (
                   <span className="account-reorder" role="group" aria-label={`Order for ${account.email}`}>
-                    <button className="btn-icon"
+                    <button className="btn-icon btn-icon-sm"
                       type="button"
                       title="Move up"
                       aria-label={`Move ${account.email} up`}
@@ -246,7 +246,7 @@ export function AccountsSettings({
                     >
                       <ChevronUp size={ICON_SIZE.sm} />
                     </button>
-                    <button className="btn-icon"
+                    <button className="btn-icon btn-icon-sm"
                       type="button"
                       title="Move down"
                       aria-label={`Move ${account.email} down`}

@@ -290,7 +290,7 @@ export function SearchField({
           setDismissed(true);
           rememberSearch();
           onSaveSearch(draft);
-        }}><BookmarkPlus size={ICON_SIZE.md} /></button> : null}
+        }}><BookmarkPlus size={ICON_SIZE.lg} /></button> : null}
         {actions}
       </div> : null}
     </div>

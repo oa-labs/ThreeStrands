@@ -182,7 +182,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenNote
           <details className="files-help" onKeyDown={(event) => {
             if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
           }}>
-            <summary className="btn-icon" aria-label="About Files" title="About Files"><Info size={ICON_SIZE.sm} /></summary>
+            <summary className="btn-icon" aria-label="About Files" title="About Files"><Info size={ICON_SIZE.lg} /></summary>
             <div className="files-help-panel" role="note" aria-label="About Files"><p>Includes attachments from mail on this device, including archived conversations, and files in your notes when Files shows all accounts. Sender and direction filters show mail only. Stars stay on this device. Starring a file does not keep an offline copy.</p></div>
           </details>
         </div>
