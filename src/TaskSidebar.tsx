@@ -1,3 +1,6 @@
+import { noteTaskAsTask } from "./noteEntities";
+import { changeNoteItem, useNoteChanges } from "./noteMutations";
+import { NoteBacklinks } from "./NoteEntityContext";
 import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import type { CommandResult } from "./commands";
 import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, SquareCheckBig, Target, X } from "lucide-react";
@@ -71,6 +74,7 @@ export type TaskWorkspaceHandle = {
   selectPrevious(): void;
   openSelected(): void;
   openDetails(): void;
+  openTask(id: string): void;
   completeSelected(): void;
   reopenSelected(): void;
   moveSelected(direction: -1 | 1): void;
@@ -94,6 +98,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onOpenAgent?(id: string): void;
   onDelegate?(task: ThreadTask): void;
   onOpenThread(threadId: string): void;
+  onOpenNote?(id: string, markerId?: string): void;
   onTasksChanged?(): void;
   onUndoableCompletion?(result: CommandResult): () => void;
   onDraftFollowUp?(task: ThreadTask): void;
@@ -106,7 +111,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   sessions,
   accountOptions = [],
   agentTasks = [], onOpenAgent, onDelegate,
-  onOpenThread,
+  onOpenThread, onOpenNote,
   onTasksChanged,
   onUndoableCompletion,
   onDraftFollowUp,
@@ -145,6 +150,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [creatingTask, setCreatingTask] = useState(false);
   const [newTaskError, setNewTaskError] = useState<string | null>(null);
   const [lastAddedTitle, setLastAddedTitle] = useState<string | null>(null);
+  const [noteWarnings, setNoteWarnings] = useState<[string, string, string][]>([]);
+  const [requestedTaskId, setRequestedTaskId] = useState<string | null>(null);
+  const [taskQuery, setTaskQuery] = useState("");
   const [announcement, setAnnouncement] = useState("");
   const completionUndo = useRef<(() => void) | null>(null);
   const [completionToast, setCompletionToast] = useState<ThreadTask | null>(null);
@@ -166,12 +174,15 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     setError(null);
     try {
       // Every account's goals load so an empty pane can name the accounts that do have goals.
-      const [nextTasks, allGoals] = await Promise.all([
+      const [nextTasks, allGoals, noteTasks, warnings] = await Promise.all([
         mailClient.listTasks(accountId ?? undefined),
         mailClient.listGoals(),
+        accountId ? Promise.resolve([]) : mailClient.listNoteTasks(),
+        accountId ? Promise.resolve([]) : mailClient.noteTaskWarnings(),
       ]);
       if (generation!==loadGeneration.current) return;
-      setTasks(nextTasks);
+      setTasks([...nextTasks, ...noteTasks.map(noteTaskAsTask)]);
+      setNoteWarnings(warnings);
       setGoals(accountId ? allGoals.filter((goal) => goal.accountId === accountId) : allGoals);
       setOtherAccountGoals(accountId ? goalCountsByOtherAccount(allGoals, accountId) : []);
     } catch (reason) {
@@ -181,6 +192,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     }
   }, [accountId]);
 
+  useNoteChanges(load);
   const cancelLoads=useCallback(() => { loadGeneration.current++; }, []);
   useEffect(() => { void load(); return cancelLoads; }, [load, refreshKey, cancelLoads]);
   useEffect(() => {
@@ -191,11 +203,12 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   // A goal filter that no longer matches a goal (deleted, another account) falls back to all tasks.
   if (goalFilter?.goalId && !loading && !goalsById.has(goalFilter.goalId)) setGoalFilter(null);
   const filteredTasks = useMemo(() => {
-    if (!goalFilter) return tasks;
-    if (goalFilter.goalId === null) return tasks.filter((task) => !task.goalId || !goalsById.has(task.goalId));
+    const matching = tasks.filter((task) => `${task.title} ${task.notes ?? ""} ${task.noteSource?.noteTitle ?? ""}`.toLocaleLowerCase().includes(taskQuery.trim().toLocaleLowerCase()));
+    if (!goalFilter) return matching;
+    if (goalFilter.goalId === null) return matching.filter((task) => !task.goalId || !goalsById.has(task.goalId));
     const supporting = goalWithSupporters(goals, goalFilter.goalId);
-    return tasks.filter((task) => task.goalId && supporting.has(task.goalId));
-  }, [goalFilter, goals, goalsById, tasks]);
+    return matching.filter((task) => task.goalId && supporting.has(task.goalId));
+  }, [goalFilter, goals, goalsById, tasks, taskQuery]);
   // An edited goal removed meanwhile (sync, another window) closes its dialog instead of turning it into "Add goal".
   if (goalDialog?.goalId && !loading && !goalsById.has(goalDialog.goalId)) setGoalDialog(null);
   const filterGoal = goalFilter?.goalId ? goalsById.get(goalFilter.goalId) ?? null : null;
@@ -228,6 +241,18 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   }, [orderedTasks,loading]);
 
   useEffect(() => {
+    if (!requestedTaskId || loading) return;
+    const target = tasks.find((task) => task.id === requestedTaskId);
+    if (!target) { setRequestedTaskId(null); setError("Unavailable on this device"); return; }
+    const targetView = board || isActiveTaskStatus(target.status) ? "All" : "Completed";
+    if (view !== targetView) { setView(targetView); return; }
+    if (!orderedTasks.some((task) => task.id === requestedTaskId)) return;
+    setSelectedTaskId(requestedTaskId);
+    setRequestedTaskId(null);
+    requestAnimationFrame(() => window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "Task context" })));
+  }, [requestedTaskId, loading, tasks, board, view, setView, orderedTasks]);
+
+  useEffect(() => {
     if (selectedTaskId) taskCards.current.get(selectedTaskId)?.scrollIntoView?.({ block: "nearest" });
   }, [selectedTaskId]);
 
@@ -237,10 +262,17 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   const changeLayout = setLayout;
 
+  const writeStatus = useCallback(async (task: ThreadTask, status: TaskStatus) => {
+    if (!task.noteSource) return mailClient.setTaskStatus(task.id, status);
+    if (status !== "open" && status !== "completed") throw new Error("Note tasks support To Do and Done. Open Note to edit this item.");
+    if (task.noteSource.conflicted) throw new Error("Resolve the note conflict before changing this task.");
+    const note = await changeNoteItem(task.noteSource.noteId, task.noteSource.markerId, task.updatedAt, { checked: status === "completed" });
+    return { ...task, status, updatedAt: note.updatedAt, completedAt: status === "completed" ? new Date().toISOString() : null, noteSource: { ...task.noteSource, checked: status === "completed", updatedAt: note.updatedAt } };
+  }, []);
   const setStatus = useCallback(async (task: ThreadTask, status: TaskStatus) => {
     try {
       const previous = tasks.find((candidate) => candidate.id === task.id)?.status ?? task.status;
-      const operation=saveQueue.current.then(() => mailClient.setTaskStatus(task.id,status));
+      const operation=saveQueue.current.then(() => writeStatus(task,status));
       saveQueue.current=operation.catch(() => undefined);
       const updated = await operation;
       setTasks((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
@@ -250,14 +282,14 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       setAnnouncement(`${verb}: ${updated.title}`);
       clearCompletionToast();
       if (status === "completed") {
-        setCompletionToast(task);
+        setCompletionToast(task.noteSource ? { ...updated, status: task.status } : task);
         let undone = false;
         completionUndo.current = onUndoableCompletion?.({ message: `Completed: ${updated.title}`, undoAction: async () => {
           if (undone) return;
           undone = true;
           let restored;
           try {
-            const operation = saveQueue.current.then(() => mailClient.setTaskStatus(task.id, previous));
+            const operation = saveQueue.current.then(() => writeStatus(updated, previous));
             saveQueue.current = operation.catch(() => undefined);
             restored = await operation;
           }
@@ -278,7 +310,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     } catch (reason) {
       setError(errorMessage(reason));
     }
-  }, [clearCompletionToast, onTasksChanged, onUndoableCompletion, tasks]);
+  }, [clearCompletionToast, onTasksChanged, onUndoableCompletion, tasks, writeStatus]);
 
   // Saves run one at a time so a slower earlier response cannot overwrite a later edit.
   const updateTask = useCallback((taskId: string, request: Omit<UpdateTaskRequest, "id">) => {
@@ -378,7 +410,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   const dropCard = (drag: CardDrag) => {
     const task = tasks.find((candidate) => candidate.id === drag.taskId);
-    if (!task || !drag.over || drag.over === taskBoardColumn(task.status)) return;
+    if (!task || !drag.over || drag.over === taskBoardColumn(task.status) || (task.noteSource && (drag.over === "In Progress" || task.noteSource.conflicted))) return;
     if (!visibleBoardColumns.some((column) => column.name === drag.over)) return;
     setSelectedTaskId(task.id);
     void setStatus(task, taskBoardColumnStatus(drag.over));
@@ -392,10 +424,11 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       if (selectedTask?.threadId) onOpenThread(selectedTask.threadId);
     },
     openDetails: () => { if (selectedTask) openDetails(selectedTask.id); },
+    openTask: (id) => { setGoalFilter(null); setTaskQuery(""); setShowOlderDone(true); setRequestedTaskId(id); },
     completeSelected: () => { if (selectedTask && isActiveTaskStatus(selectedTask.status)) void setStatus(selectedTask, "completed"); },
     reopenSelected: () => { if (selectedTask && !isActiveTaskStatus(selectedTask.status)) void setStatus(selectedTask, "open"); },
     moveSelected: (direction) => {
-      const next = selectedTask ? adjacentTaskStatus(selectedTask.status, direction) : null;
+      const next = selectedTask ? selectedTask.noteSource ? direction === 1 && selectedTask.status === "open" ? "completed" : direction === -1 && selectedTask.status === "completed" ? "open" : null : adjacentTaskStatus(selectedTask.status, direction) : null;
       if (selectedTask && next) void setStatus(selectedTask, next);
     },
     selectAdjacentColumn: (direction) => {
@@ -412,7 +445,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     },
     toggleLayout: () => changeLayout(layout === "board" ? "list" : "board"),
     focusGoals: () => { setGoalsOpen(true); requestAnimationFrame(() => goalsPane.current?.focus()); },
-    linkSelectedToGoal: () => { if (selectedTask) setGoalLinkTaskId(selectedTask.id); },
+    linkSelectedToGoal: () => { if (selectedTask && !selectedTask.noteSource) setGoalLinkTaskId(selectedTask.id); },
     cycleView: (direction) => {
       const views: readonly TaskView[] = board ? BOARD_TASK_VIEWS : TASK_VIEWS;
       setView((current) => views[(Math.max(0, views.indexOf(current)) + direction + views.length) % views.length]);
@@ -421,8 +454,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   const renderCard = (task: ThreadTask) => {
     const active = isActiveTaskStatus(task.status);
-    const back = board ? adjacentTaskStatus(task.status, -1) : null;
-    const forward = board ? adjacentTaskStatus(task.status, 1) : null;
+    const back = board ? task.noteSource ? task.status === "completed" ? "open" : null : adjacentTaskStatus(task.status, -1) : null;
+    const forward = board ? task.noteSource ? task.status === "open" ? "completed" : null : adjacentTaskStatus(task.status, 1) : null;
     const due = formatDue(task);
     const kindLabel = TASK_CARD_KIND_LABELS[task.kind];
     const cardGoal = task.goalId ? goalsById.get(task.goalId) ?? null : null;
@@ -484,12 +517,13 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {cardGoal ? <small className="task-card-goal" title={`Supports ${cardGoal.title}`}><Target size={ICON_SIZE.xs} aria-hidden="true" /><span className="sr-only">Supports </span>{cardGoal.title}</small> : null}
         </span> : null}
       </button>
+      {task.noteSource ? <button type="button" className="btn-link" onClick={() => onOpenNote?.(task.noteSource!.noteId, task.noteSource!.markerId)}>Note · {task.noteSource.noteTitle}</button> : null}
       {board ? (back || forward || followUp) ? <div className="task-board-moves">
         {followUp}
-        {back ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[back]}`} onClick={() => void setStatus(task, back)}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" />{STATUS_LABELS[back]}</button> : null}
-        {forward ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[forward]}`} onClick={() => void setStatus(task, forward)}>{STATUS_LABELS[forward]}<ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
+        {back ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[back]}`} disabled={task.noteSource?.conflicted} onClick={() => void setStatus(task, back)}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" />{STATUS_LABELS[back]}</button> : null}
+        {forward ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[forward]}`} disabled={task.noteSource?.conflicted} onClick={() => void setStatus(task, forward)}>{STATUS_LABELS[forward]}<ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
       </div> : null : <>
-        <button type="button" className="btn-icon btn-icon-sm task-status-button" aria-label={active ? `Complete ${task.title}` : `Reopen ${task.title}`} onClick={() => void setStatus(task, active ? "completed" : "open")}>
+        <button type="button" disabled={task.noteSource?.conflicted} className="btn-icon btn-icon-sm task-status-button" aria-label={active ? `Complete ${task.title}` : `Reopen ${task.title}`} onClick={() => void setStatus(task, active ? "completed" : "open")}>
           {active ? <Check size={ICON_SIZE.sm} /> : <RotateCcw size={ICON_SIZE.sm} />}
         </button>
         {followUp}
@@ -521,7 +555,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const taskList = board ? <div className="task-board" style={{ "--task-board-columns": visibleBoardColumns.length } as CSSProperties}>
     {visibleBoardColumns.map((column) => {
       const headingId = `task-column-${column.name.replace(/\s/g, "-")}`;
-      const dropTarget = draggedTask && cardDrag?.over === column.name && taskBoardColumn(draggedTask.status) !== column.name;
+      const dropTarget = draggedTask && !(draggedTask.noteSource && column.name === "In Progress") && cardDrag?.over === column.name && taskBoardColumn(draggedTask.status) !== column.name;
       return <section key={column.name} className={`task-board-column${dropTarget ? " drop-target" : ""}`} aria-labelledby={headingId} data-board-column={column.name}>
         <header><h3 id={headingId}>{column.name}</h3><span className="task-view-count">{column.tasks.length}</span></header>
         <div className="task-board-cards">
@@ -567,6 +601,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {onCreateTask ? <button type="button" className="btn task-add-button" onClick={startNew}><Plus size={ICON_SIZE.md} />Add Task</button> : null}
         </div>
       </header>
+      {noteWarnings.map(([id, title, warning]) => <p key={id} className="form-error" role="alert">{title}: {warning}. Tasks from this note are unavailable. <button className="btn-link" onClick={() => onOpenNote?.(id)}>Open Note</button></p>)}
       {error ? <p className="form-error tasks-error" role="alert">
         <span>{error}</span>
         <button type="button" className="btn-icon btn-icon-sm" aria-label="Dismiss error" onClick={() => setError(null)}><X size={ICON_SIZE.sm} /></button>
@@ -582,6 +617,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       {!loading && tasks.length === 0 ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
       <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`}>
         <div className={board ? "tasks-board-pane" : "tasks-list-pane"}>
+          <label className="task-search"><span className="sr-only">Search tasks</span><input type="search" aria-label="Search tasks" placeholder="Search tasks" value={taskQuery} onChange={(event) => setTaskQuery(event.target.value)} /></label>
           <nav className="task-view-nav" aria-label="Task views">
             {(board ? BOARD_TASK_VIEWS : TASK_VIEWS).map((name) => {
               const count = filteredTasks.filter((task) => taskMatchesView(task, name, now)).length;
@@ -613,13 +649,19 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         <WorkspaceContextRail label="Task context" onReturn={() => taskCards.current.get(selectedTaskId ?? "")?.querySelector<HTMLElement>(".task-card-main")?.focus()}>
           <ContextSectionHeader title="Task Details" icon={<SquareCheckBig size={ICON_SIZE.xs} />} />
           {detailTask ? <>
-            <TaskDetailDialog embedded draftStore={taskDrafts.current} task={detailTask} goals={goals} position={detailPosition}
+            {detailTask.noteSource ? <>
+              <h3>{detailTask.title}</h3>
+              {detailTask.noteSource.conflicted ? <p role="status">Resolve this note's conflict before changing its tasks.</p> : null}
+              <button className="btn" onClick={() => onOpenNote?.(detailTask.noteSource!.noteId, detailTask.noteSource!.markerId)}>Open Note</button>
+              <button className="btn" disabled={detailTask.noteSource.conflicted} onClick={() => void changeNoteItem(detailTask.noteSource!.noteId, detailTask.noteSource!.markerId, detailTask.updatedAt, { task: false }).catch((reason) => setError(errorMessage(reason)))}>Convert to Checklist</button>
+            </> : <TaskDetailDialog embedded draftStore={taskDrafts.current} task={detailTask} goals={goals} position={detailPosition}
               onUpdate={(request) => updateTask(detailTask.id, request)} onSetStatus={(status) => void setStatus(detailTask, status)}
               onNavigate={moveSelection} onOpenThread={onOpenThread}
-              onClose={() => taskCards.current.get(detailTask.id)?.querySelector<HTMLElement>(".task-card-main")?.focus()} />
-            {onDelegate ? <button className="btn-link" onClick={() => onDelegate(detailTask)}>Delegate Work for This Task…</button> : null}
+              onClose={() => taskCards.current.get(detailTask.id)?.querySelector<HTMLElement>(".task-card-main")?.focus()} />}
+            {onDelegate && !detailTask.noteSource ? <button className="btn-link" onClick={() => onDelegate(detailTask)}>Delegate Work for This Task…</button> : null}
             {agentTasks.filter(d => d.task.linkedTaskId === detailTask.id).map(d => <button className="btn-link" key={d.task.id} onClick={() => onOpenAgent?.(d.task.id)}>{d.task.objective} · Agent work{d.task.unread ? " · New activity" : ""}</button>)}
-            <WorkspaceRelatedContext target={{ kind: "task", task: detailTask }} accountIds={accountId ? [accountId] : accountOptions} onOpenThread={onOpenThread} />
+            <NoteBacklinks reference={{ version: 1, kind: "task", id: detailTask.noteSource?.markerId ?? detailTask.id, ...(detailTask.noteSource ? { note: detailTask.noteSource.noteId } : {}) }} onOpenNote={onOpenNote} />
+            {!detailTask.noteSource ? <WorkspaceRelatedContext target={{ kind: "task", task: detailTask }} accountIds={accountId ? [accountId] : accountOptions} onOpenThread={onOpenThread} /> : null}
           </> : <p className="context-status">Select a task to see details and related information.</p>}
         </WorkspaceContextRail>
       </div>

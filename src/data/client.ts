@@ -1,3 +1,4 @@
+import type { NoteDocument, NoteTaskRecord, NoteReference, NoteCapture, NoteBacklink } from "../noteEntities";
 import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
@@ -411,6 +412,15 @@ export interface MailClient extends CorrespondenceClient {
   deleteSignature(id: string): Promise<void>;
   saveSignatureDefaults(defaults: SignatureDefaults): Promise<void>;
   deleteSignatureDefaults(account: string, address: string): Promise<void>;
+  noteLinkChoices(kind: NoteReference["kind"], query: string): Promise<import("../NoteLinkPicker").NoteLinkChoice[]>;
+  resolveNoteEvent(reference: NoteReference): Promise<ScheduleEvent | null>;
+  noteDocument(id: string): Promise<NoteDocument>;
+  noteTaskWarnings(): Promise<[string, string, string][]>;
+  listNoteTasks(): Promise<NoteTaskRecord[]>;
+  patchNoteItem(id: string, marker: string, expected: string, checked?: boolean, task?: boolean): Promise<Note>;
+  noteBacklinks(reference: NoteReference): Promise<NoteBacklink[]>;
+  resolveNoteConversation(reference: NoteReference): Promise<string | null>;
+  captureNoteConversation(date: string, thread: string, expected: string | null): Promise<NoteCapture>;
   listRecentNotes(limit: number): Promise<NoteSummary[]>;
   getNote(id: string): Promise<Note | null>;
   getDailyNote(date: string): Promise<Note | null>;
@@ -663,6 +673,15 @@ const tauriClient: MailClient = {
   deleteSignature: (id) => complete("delete_signature", { id }),
   saveSignatureDefaults: (defaults) => complete("save_signature_defaults", { defaults }),
   deleteSignatureDefaults: (account, address) => complete("delete_signature_defaults", { account, address }),
+  noteLinkChoices: (kind, query) => read("note_link_choices", { kind, query }),
+  resolveNoteEvent: (reference) => read("resolve_note_event", { reference }),
+  noteDocument: (id) => read("note_document", { id }),
+  noteTaskWarnings: () => read("note_task_warnings"),
+  listNoteTasks: () => read("list_note_tasks"),
+  patchNoteItem: (id, marker, expected, checked, task) => complete("patch_note_item", { id, marker, expected, checked: checked ?? null, task: task ?? null }),
+  noteBacklinks: (reference) => read("note_backlinks", { reference }),
+  resolveNoteConversation: (reference) => read("resolve_note_conversation", { reference }),
+  captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),
   listRecentNotes: (limit) => read("list_recent_notes", { limit }),
   getNote: (id) => read("get_note", { id }),
   getDailyNote: (date) => read("get_daily_note", { date }),

@@ -1,3 +1,7 @@
+import { captureConversation } from "./noteCapture";
+import { parseNoteReference, noteReferenceHref } from "./noteEntities";
+import { NoteBacklinks } from "./NoteEntityContext";
+import { MoreActionsMenu } from "./MoreActionsMenu";
 import { useAgentTasks, type AgentStart } from "./useAgentTasks";
 import type { Thread } from "./domain";
 import { useSignatures } from "./useSignatures";
@@ -498,7 +502,7 @@ export function App() {
   });
   const {
     draftFollowUp, taskWorkspaceRef, setSelectedTaskStatus, setTaskLayout,
-    setSelectedTaskHasThread, taskEditor, setTaskEditor, taskEditorAccountId, taskEditorGoals,
+    setSelectedTaskHasThread, setSelectedTaskIsNote, taskEditor, setTaskEditor, taskEditorAccountId, taskEditorGoals,
     submitTaskEditor, newTask, createWorkspaceTask,
   } = tasks;
   const {
@@ -635,10 +639,62 @@ export function App() {
     setSearchOpen(false);
     selectedThreadRowRef.current?.focus();
   }, [selectedThreadRowRef, setQuery, setSearchOpen, activeSavedSearch, goToInboxTab]);
+  const [notesReturnMail, setNotesReturnMail] = useState(false);
+  const openCapturedNote = (id: string, referenceHref?: string) => { setNotesReturnMail(true); openNote(id, undefined, referenceHref); };
+  const addToTodaysNote = async (): Promise<CommandResult> => {
+    if (!visibleDetail) return {};
+    try {
+      const thread = visibleDetail.thread;
+      const capture = await captureConversation(thread.id);
+      const href = noteReferenceHref({ version: 1, kind: "conversation", id: thread.providerThreadId, account: thread.accountId });
+      const action = { label: "Open Note", run: () => openCapturedNote(capture.note.id, href) };
+      if (!capture.added) { setNotice({ message: "Already in today's note", action }); return {}; }
+      return {
+        message: "Added to today's note", action,
+        undoAction: async () => {
+          try { await capture.undo(); }
+          catch (e) { setNotice({ message: errorMessage(e), action }); }
+        },
+      };
+    } catch (e) {
+      setNotice({ message: errorMessage(e), action: { label: "Open Today's Note", run: () => { setNotesReturnMail(true); workspaces.openTodaysNote(); } } });
+      return {};
+    }
+  };
+  const openEntityReference = async (href: string) => {
+    const ref = parseNoteReference(href);
+    if (!ref) throw new Error("Invalid note reference");
+    if (ref.kind === "conversation") {
+      const thread = await mailClient.resolveNoteConversation(ref);
+      if (!thread) throw new Error("Unavailable on this device");
+      jumpToThread(thread);
+    } else if (ref.kind === "task") {
+      if (ref.note) {
+        const note = await mailClient.getNote(ref.note);
+        if (!note || note.trashed) throw new Error("Unavailable on this device");
+        const doc = await mailClient.noteDocument(ref.note);
+        if (!doc.items.some((item) => item.id === ref.id)) throw new Error("Unavailable on this device");
+        openNote(ref.note, ref.id);
+      }
+      else {
+        const tasks = await mailClient.listTasks();
+        const task = tasks.find((task) => task.id === ref.id);
+        if (!task) throw new Error("Unavailable on this device");
+        navigation.switchAccount(null);
+        setRightWorkspace("tasks");
+        requestAnimationFrame(() => taskWorkspaceRef.current?.openTask(task.id));
+      }
+    } else {
+      const event = await mailClient.resolveNoteEvent(ref);
+      if (!event) throw new Error("Unavailable on this device");
+      openCalendarView(eventDate(event), event);
+    }
+  };
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
     delegateSelected,
     createCalendarEvent: () => { openCalendarView(); setCreateCalendarEventRequested(true); },
+    addToTodaysNote,
     snoozeSelected: openSnooze, returnSnoozedSelected: conversationSnooze.returnToInbox,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
@@ -809,12 +865,12 @@ export function App() {
     <main className={`app-shell${rightWorkspace === "agents" ? " agents-open" : rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "notes" ? " notes-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
-          showAllAccounts={splitInboxCatalog.views.some(isSavedSearchView)}
+          showAllAccounts={rightWorkspace === "tasks" || splitInboxCatalog.views.some(isSavedSearchView)}
           accounts={accounts}
           unreadCounts={unreadCounts}
           activeAccountId={activeAccountId}
-          onSwitch={context.switchAccount}
-          onShowAll={context.showAllAccounts}
+          onSwitch={(email) => { context.switchAccount(email); if (rightWorkspace === "tasks") setRightWorkspace("tasks"); }}
+          onShowAll={() => { context.showAllAccounts(); if (rightWorkspace === "tasks") setRightWorkspace("tasks"); }}
           onReorder={reorderNavbarAccounts}
         />
         <div className="sidebar-spacer" />
@@ -1229,6 +1285,7 @@ export function App() {
                 </div>
               </div>
               <div className="reader-actions">
+                <MoreActionsMenu label="Conversation actions" actions={[{ label: "Add to Today's Note", onSelect: () => executeById("notes.capture") }]} />
                 <HoverTooltip label={selected?.starred ? "Unstar" : "Star"} shortcut="s" placement="bottom">
                   <ActionButton
                     label={selected?.starred ? "Unstar" : "Star"}
@@ -1453,6 +1510,7 @@ export function App() {
             session={calendarSession}
             mailAccountIds={activeAccountId ? [activeAccountId] : accounts.map((account) => account.email)}
             onOpenThread={jumpToThread}
+            onOpenNote={openNote}
             anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
             initialEvent={calendarEventToOpen}
             onAnchorChange={setCalendarWeekAnchor}
@@ -1662,6 +1720,7 @@ export function App() {
             />
           ) : null}
           related={(person, meetingPeople) => visibleDetail ? <>
+            <NoteBacklinks reference={{ version: 1, kind: "conversation", id: visibleDetail.thread.providerThreadId, account: visibleDetail.thread.accountId }} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} onOpenNote={openNote} />
             <ThreadTasks
               thread={visibleDetail.thread}
               contactId={person?.contactId ?? null}
@@ -1700,7 +1759,7 @@ export function App() {
       /></Suspense></ErrorBoundary> : null}
       {agents.activity ? <aside className="agent-activity" role="status"><button className="btn-link agent-activity-action" onClick={() => { const id = agents.activity!.id; agents.patchView(id, { version: null, tab: agents.activity!.label.startsWith("Answer needed") ? "conversation" : "result" }); openAgent(id); }}>{agents.activity.label}</button><button className="btn-icon" aria-label="Dismiss agent notification" onClick={agents.dismissActivity}><X size={ICON_SIZE.sm} /></button></aside> : null}
       {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Agents…</p>}><AgentsWorkspace controller={agents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAgentPersonalTask} onOpenResearchSettings={() => openSettingsAt("research")} settingsOpen={settingsOpen} /></Suspense></ErrorBoundary> : null}
-      {rightWorkspace === "notes" ? <ErrorBoundary area="Notes" variant="side"><Suspense fallback={null}><NotesWorkspace request={notesRequest} onRequestConsumed={consumeNotesRequest} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} onOpenContact={contactCardActions.onOpenContact} /></Suspense></ErrorBoundary> : null}
+      {rightWorkspace === "notes" ? <ErrorBoundary area="Notes" variant="side"><Suspense fallback={null}><NotesWorkspace request={notesRequest} onRequestConsumed={consumeNotesRequest} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} onOpenContact={contactCardActions.onOpenContact} onOpenEntity={openEntityReference} onReturn={notesReturnMail ? () => { setRightWorkspace(null); setNotesReturnMail(false); } : undefined} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "files" ? <ErrorBoundary area="Files" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenNote={openNote} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "contacts" ? <ErrorBoundary area="Contacts" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} onOpenAiSettings={() => { setRightWorkspace(null); openSettingsAt("ai"); }} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "tasks" ? (
@@ -1712,6 +1771,7 @@ export function App() {
           onOpenAgent={openAgent}
           onDelegate={(task) => beginAgent({ accountId: task.accountId, sourceThreadId: task.threadId, linkedTaskId: task.id, objective: task.title })}
           ref={taskWorkspaceRef}
+          onOpenNote={openNote}
           accountId={activeAccountId}
           accountOptions={accounts.map((account) => account.email)}
           onOpenThread={jumpToThread}
@@ -1727,6 +1787,7 @@ export function App() {
           onSelectedTaskChange={(task) => {
             setSelectedTaskStatus(task?.status ?? null);
             setSelectedTaskHasThread(Boolean(task?.threadId));
+            setSelectedTaskIsNote(Boolean(task?.noteSource));
           }}
         />
         </ErrorBoundary>
@@ -1903,6 +1964,7 @@ export function App() {
       {notice ? (
         <div className="toast" role="status">
           {notice.message}
+          {notice.action ? <button className="btn-link" onClick={notice.action.run}>{notice.action.label}</button> : null}
           {notice.undo ? <button className="btn-link" onClick={notice.undo}>Undo</button> : null}
           <button className="btn-icon btn-icon-sm" aria-label="Dismiss" onClick={() => setNotice(null)}><X size={ICON_SIZE.sm} /></button>
         </div>

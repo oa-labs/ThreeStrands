@@ -561,9 +561,15 @@ pub(crate) async fn create_calendar_event(
     {
         return Err("Choose a calendar where you can create events".into());
     }
-    calendar::create_event(config.calendar_account(&account.email), &request)
-        .await
-        .map_err(AppError::from)
+    let event = calendar::create_event(config.calendar_account(&account.email), &request).await?;
+    state.database.cache_note_events(
+        &event.account_id,
+        &[],
+        "",
+        "",
+        std::slice::from_ref(&event),
+    )?;
+    Ok(event)
 }
 
 /// Finds the connected account for an edit and confirms it can still write to
@@ -601,9 +607,15 @@ pub(crate) async fn update_calendar_event(
     let email =
         writable_calendar_account(&state, &request.account_id, &request.calendar_id).await?;
     let config = state.auth_config.google()?;
-    calendar::update_event(config.calendar_account(&email), &request)
-        .await
-        .map_err(AppError::from)
+    let event = calendar::update_event(config.calendar_account(&email), &request).await?;
+    state.database.cache_note_events(
+        &event.account_id,
+        &[],
+        "",
+        "",
+        std::slice::from_ref(&event),
+    )?;
+    Ok(event)
 }
 
 #[tauri::command]
@@ -615,9 +627,11 @@ pub(crate) async fn delete_calendar_event(
 ) -> AppResult<()> {
     let email = writable_calendar_account(&state, &account_id, &calendar_id).await?;
     let config = state.auth_config.google()?;
-    calendar::delete_event(config.calendar_account(&email), &calendar_id, &event_id)
-        .await
-        .map_err(AppError::from)
+    calendar::delete_event(config.calendar_account(&email), &calendar_id, &event_id).await?;
+    state
+        .database
+        .forget_note_event(&account_id, &calendar_id, &event_id)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -785,6 +799,13 @@ pub(crate) async fn list_schedule_events(
         .await
         {
             Ok(mut events) => {
+                state.database.cache_note_events(
+                    &account.email,
+                    &calendar_ids,
+                    &time_min,
+                    &time_max,
+                    &events,
+                )?;
                 merged.append(&mut events);
             }
             Err(error) => errors.push(format!("{}: {error}", account.email)),

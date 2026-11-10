@@ -461,3 +461,84 @@ pub(crate) async fn notes_import_run(
     }
     Ok(outcome)
 }
+
+#[tauri::command]
+pub(crate) async fn note_document(
+    id: String,
+    state: State<'_, AppState>,
+) -> AppResult<crate::db::NoteDocument> {
+    let db = state.database.clone();
+    run_database_task(move || db.note_document(&id)).await
+}
+#[tauri::command]
+pub(crate) async fn list_note_tasks(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::db::NoteTask>> {
+    let db = state.database.clone();
+    run_database_task(move || db.list_note_tasks()).await
+}
+#[tauri::command]
+pub(crate) async fn patch_note_item(
+    id: String,
+    marker: String,
+    expected: String,
+    checked: Option<bool>,
+    task: Option<bool>,
+    state: State<'_, AppState>,
+) -> AppResult<Note> {
+    let db = state.database.clone();
+    run_database_task(move || db.patch_note_item(&id, &marker, &expected, checked, task)).await
+}
+#[tauri::command]
+pub(crate) async fn note_backlinks(
+    reference: crate::note_entities::NoteReference,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::models::NoteBacklink>> {
+    let db = state.database.clone();
+    run_database_task(move || db.note_backlinks(&reference)).await
+}
+#[tauri::command]
+pub(crate) async fn resolve_note_conversation(
+    reference: crate::note_entities::NoteReference,
+    state: State<'_, AppState>,
+) -> AppResult<Option<String>> {
+    let db = state.database.clone();
+    run_database_task(move || db.resolve_note_conversation(&reference)).await
+}
+#[tauri::command]
+pub(crate) async fn capture_note_conversation(
+    date: String,
+    thread: String,
+    expected: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::db::NoteCapture> {
+    let db = state.database.clone();
+    run_database_task(move || db.capture_note_conversation(&date, &thread, expected.as_deref()))
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn note_link_choices(
+    kind: String,
+    query: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::db::note_entities::NoteLinkChoice>> {
+    let db = state.database.clone();
+    run_database_task(move || db.note_link_choices(&kind, &query)).await
+}
+#[tauri::command]
+pub(crate) async fn resolve_note_event(
+    reference: crate::note_entities::NoteReference,
+    state: State<'_, AppState>,
+) -> AppResult<Option<crate::models::ScheduleEvent>> {
+    let db = state.database.clone();
+    run_database_task(move || db.resolve_note_event(&reference)).await
+}
+
+#[tauri::command]
+pub(crate) async fn note_task_warnings(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<(String, String, String)>> {
+    let db = state.database.clone();
+    run_database_task(move || db.note_task_warnings()).await
+}

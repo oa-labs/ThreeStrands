@@ -12,7 +12,7 @@ export function NoteEditor(props: Parameters<typeof RealNoteEditor>[0]) {
   const { ref, value, label, placeholder, readOnly = false, onChange, onLeave } = props;
   lastEditorProps.current = props;
   const box = useRef<HTMLTextAreaElement>(null);
-  useImperativeHandle(ref, (): NoteEditorHandle => ({ focus: () => box.current?.focus(), markdown: () => value }), [value]);
+  useImperativeHandle(ref, (): NoteEditorHandle => ({ focus: () => box.current?.focus(), markdown: () => value, insert: (text) => onChange(value + text), revealTask: () => box.current?.focus(), revealReference: () => box.current?.focus() }), [value, onChange]);
   return <textarea ref={box} aria-label={label} value={value} placeholder={placeholder} readOnly={readOnly}
     onChange={(event) => onChange(event.target.value)}
     onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onLeave(); } }} />;

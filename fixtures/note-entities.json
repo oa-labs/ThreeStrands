@@ -1,0 +1,88 @@
+[
+  {
+    "name": "both kinds",
+    "body": "- [ ] Milk\n- [X] Bread\n- () Send\n- (x) Confirm\n",
+    "kinds": [
+      false,
+      false,
+      true,
+      true
+    ],
+    "checked": [
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "name": "mixed nesting and ordered items",
+    "body": "1. ( ) Parent\n   - [ ] Child\n   - (X) Follow up\n",
+    "kinds": [
+      true,
+      false,
+      true
+    ],
+    "checked": [
+      false,
+      false,
+      true
+    ]
+  },
+  {
+    "name": "inert contexts",
+    "body": "```md\n- ( ) fenced\n```\n> - ( ) quoted\n    - ( ) indented code\n`- ( ) inline`\n- \\( ) escaped\n- [label](https://example.com)\n- ( ) \n<!--\n- ( ) comment\n-->\n",
+    "kinds": [],
+    "checked": []
+  },
+  {
+    "name": "prose and Unicode",
+    "body": "Call (maybe) tomorrow\n- ( ) 邮件 🐈\n- [] Café\n",
+    "kinds": [
+      true,
+      false
+    ],
+    "checked": [
+      false,
+      false
+    ]
+  },
+  {
+    "name": "fence marker mismatch",
+    "body": "~~~md\n- ( ) hidden\n```\n- ( ) still hidden\n~~~\n- ( ) visible\n",
+    "kinds": [
+      true
+    ],
+    "checked": [
+      false
+    ]
+  },
+  {
+    "name": "square plus list is still checklist",
+    "body": "+ [ ] Checklist\n* () Task\n",
+    "kinds": [
+      false,
+      true
+    ],
+    "checked": [
+      false,
+      false
+    ]
+  },
+  {
+    "name": "tab-indented code",
+    "body": "\t- ( ) Hidden code\n- ( ) Visible task\n",
+    "kinds": [
+      true
+    ],
+    "checked": [
+      false
+    ]
+  },
+  {
+    "name": "nonbreaking space is prose, not list indentation",
+    "body": " - ( ) Plain text\n",
+    "kinds": [],
+    "checked": []
+  }
+]

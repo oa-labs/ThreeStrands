@@ -50,8 +50,9 @@ impl Database {
     }
 
     pub fn remove_calendar_account(&self, email: &str) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute("DELETE FROM calendar_accounts WHERE email = ?1", [email])?;
+        self.with_transaction(|transaction| {
+            transaction.execute("DELETE FROM note_event_cache WHERE account = ?1", [email])?;
+            transaction.execute("DELETE FROM calendar_accounts WHERE email = ?1", [email])?;
             Ok(())
         })
     }

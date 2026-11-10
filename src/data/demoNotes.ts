@@ -1,9 +1,10 @@
-import type { Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
+import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKey, markdownEntityLink, type NoteDocument } from "../noteEntities";
+import type { Thread, ThreadTask, ScheduleEvent, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
 import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
-import { notePreview } from "../notePreview";
+import { notePreview, noteInlineText } from "../notePreview";
 import type { MailClient } from "./client";
 
-type DemoNotes = Pick<MailClient, "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
+type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "captureNoteConversation" | "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = collapseWhitespace;
@@ -22,8 +23,27 @@ function noteTitle(title: string): string {
 const preview = notePreview;
 
 /** In-memory notes for the browser demo and tests, following the native store's rules. */
-export function createDemoNotes(): DemoNotes {
+export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadTask[]; events(): ScheduleEvent[] } = { threads: () => [], tasks: () => [], events: () => [] }): DemoNotes {
   const notes = new Map<string, Note>();
+  const provisional = new Map<string, string>();
+  const itemId = (noteId: string, body: string, item: ReturnType<typeof noteItemRanges>[number], occurrence: number) => {
+    if (item.id) return item.id;
+    const key = JSON.stringify([noteId, body.slice(item.textStart, item.end), occurrence]);
+    if (!provisional.has(key)) provisional.set(key, crypto.randomUUID());
+    return provisional.get(key)!;
+  };
+  const normalize = (id: string, body: string) => {
+    const items = noteItemRanges(body);
+    if (items.filter((item) => item.task).length > MAX_NOTE_TASKS) throw new Error("This note has too many tasks (maximum 500)");
+    extractNoteEntityLinks(body);
+    const seen = new Set<string>();
+    const markers = items.map((item, i) => { const marker = itemId(id, body, item, i); const duplicate = seen.has(marker); seen.add(marker); return { item, marker: duplicate ? crypto.randomUUID() : marker, duplicate }; });
+    for (const { item, marker, duplicate } of markers.reverse()) if (item.task && (!item.id || duplicate)) {
+      const before = body.slice(0, item.end).replace(duplicate ? /[ \t]*<!-- threestrands-task:[^\n]* -->$/ : /$^/, "");
+      body = before + ` <!-- threestrands-task:${marker} -->` + body.slice(item.end);
+    }
+    return body;
+  };
   const visits = new Map<string, string>();
   // Each change gets a distinct, increasing time, as the native store's versions do.
   let clock = Date.now();
@@ -33,7 +53,7 @@ export function createDemoNotes(): DemoNotes {
     if (note.trashed) throw new Error("Restore this note to edit it");
     if (note.title === title && note.body === body) return note;
     if (note.title !== title && titleTaken(title, note.id)) throw new Error(`A note named “${title}” already exists`);
-    const next = { ...note, title, body, updatedAt: now() };
+    const next = { ...note, title, body: normalize(note.id, body), updatedAt: now() };
     notes.set(next.id, next);
     return next;
   };
@@ -51,7 +71,51 @@ export function createDemoNotes(): DemoNotes {
     notes.set(id, next);
     return structuredClone(next);
   };
+  const document = (note: Note): NoteDocument => {
+    const items = noteItemRanges(note.body).map((item, index) => ({ ...item, id: itemId(note.id, note.body, item, index), persisted: Boolean(item.id), title: noteInlineText(note.body.slice(item.textStart, item.end).replace(/<!--.*?-->/g, "").trim()) }));
+    const { links } = extractNoteEntityLinks(note.body);
+    return { items, links, warning: null };
+  };
   return {
+    async noteLinkChoices(kind, query) {
+      const conversation = sources.threads().map((thread) => ({ label: thread.subject || "(No subject)", detail: thread.accountId, reference: { version: 1 as const, kind: "conversation" as const, id: thread.providerThreadId, account: thread.accountId } }));
+      const ordinaryTasks = sources.tasks().map((task) => ({ label: task.title, detail: task.accountId, reference: { version: 1 as const, kind: "task" as const, id: task.id } }));
+      const noteTasks = [...notes.values()].filter((note) => !note.trashed).flatMap((note) => document(note).items.filter((item) => item.task).map((item) => ({ label: item.title, detail: `Note · ${note.title}`, reference: { version: 1 as const, kind: "task" as const, id: item.id, note: note.id } })));
+      const events = sources.events().flatMap((event) => {
+        const reference = { version: 1 as const, kind: "event" as const, id: event.id, account: event.accountId, calendar: event.calendarId };
+        return [{ label: event.title, detail: `${event.accountId} · ${event.calendarId} · ${event.start}${event.seriesId ? " · This occurrence" : ""}`, reference }, ...(event.seriesId ? [{ label: event.title, detail: `${event.accountId} · Entire series`, reference: { ...reference, id: event.seriesId } }] : [])];
+      });
+      return (kind === "conversation" ? conversation : kind === "task" ? [...ordinaryTasks, ...noteTasks] : events).filter((choice) => choice.label.toLowerCase().includes(query.toLowerCase())).slice(0, 50);
+    },
+    async resolveNoteEvent(reference) { return structuredClone(sources.events().find((event) => event.accountId === reference.account && event.calendarId === reference.calendar && (event.id === reference.id || event.seriesId === reference.id)) ?? null); },
+    async noteDocument(id) { return document(existing(id)); },
+    async noteTaskWarnings() { return []; },
+    async listNoteTasks() { return [...notes.values()].filter((note) => !note.trashed).flatMap((note) => document(note).items.filter((item) => item.task).map((item) => ({ id: `note:${note.id}:${item.id}`, markerId: item.id, noteId: note.id, noteTitle: note.title, title: item.title, checked: item.checked, updatedAt: note.updatedAt, completedAt: item.checked ? note.updatedAt : null, conflicted: false }))); },
+    async patchNoteItem(id, marker, expected, checked, task) {
+      const note = existing(id);
+      if (note.updatedAt !== expected || note.trashed) throw new Error("This note changed. Open it to resolve your changes.");
+      const item = document(note).items.find((item) => item.id === marker);
+      if (!item) throw new Error("This item changed. Open its note to try again.");
+      const round = task ?? item.task, state = (checked ?? item.checked) ? "x" : " ";
+      let body = note.body;
+      if (!item.persisted && (item.task || round)) body = body.slice(0, item.end) + ` <!-- threestrands-task:${item.id} -->` + body.slice(item.end);
+      body = body.slice(0, item.markerStart) + (round ? `(${state})` : `[${state}]`) + body.slice(item.markerEnd);
+      return structuredClone(edit(note, note.title, body));
+    },
+    async noteBacklinks(reference) { return [...notes.values()].filter((note) => !note.trashed).flatMap((note) => { const link = document(note).links.find((link) => noteReferenceKey(link.reference) === noteReferenceKey(reference)); return link ? [{ noteId: note.id, title: note.title, dailyDate: note.dailyDate, context: link.context, reference: link.reference }] : []; }); },
+    async resolveNoteConversation(reference) { return sources.threads().find((thread) => thread.accountId === reference.account && thread.providerThreadId === reference.id)?.id ?? null; },
+    async captureNoteConversation(date, thread, expected) {
+      const id = `daily:${date}`, note = notes.get(id);
+      if ((note?.updatedAt ?? null) !== expected || note?.trashed) throw new Error("Today's note changed. Open it before adding this conversation.");
+      const source = sources.threads().find((item) => item.id === thread);
+      if (!source) throw new Error("Conversation unavailable on this device");
+      const previousBody = note?.body ?? "", reference = { version: 1 as const, kind: "conversation" as const, id: source.providerThreadId, account: source.accountId };
+      if (extractNoteEntityLinks(previousBody).unclosedFence) throw new Error("Today's note ends inside a code block. Open it before adding this conversation.");
+      const added = !document(note ?? { body: "" } as Note).links.some((link) => noteReferenceKey(link.reference) === noteReferenceKey(reference));
+      const body = added ? `${previousBody}${previousBody && !previousBody.endsWith("\n") ? "\n" : ""}- ${markdownEntityLink(source.subject || "(No subject)", reference)}\n` : previousBody;
+      const next = note ? edit(note, note.title, body) : { id, title: date, body: normalize(id, body), dailyDate: date, createdAt: now(), updatedAt: now(), trashed: false, trashedAt: null };
+      notes.set(id, next); return { note: structuredClone(next), added, previousBody };
+    },
     async listRecentNotes(limit) {
       const recent = (note: Note) => [visits.get(note.id) ?? "", note.updatedAt].sort().at(-1)!;
       return [...notes.values()].filter((note) => !note.trashed)
@@ -88,6 +152,7 @@ export function createDemoNotes(): DemoNotes {
       if (titleTaken(cleaned, "")) throw new Error(`A note named “${cleaned}” already exists`);
       const time = now();
       const note: Note = { id: `demo-note-${crypto.randomUUID()}`, title: cleaned, body, dailyDate: null, createdAt: time, updatedAt: time, trashed: false, trashedAt: null };
+      note.body = normalize(note.id, note.body);
       notes.set(note.id, note);
       return structuredClone(note);
     },
@@ -185,6 +250,7 @@ export function createDemoNotes(): DemoNotes {
       if (!body) return { saved: true, note: null };
       const time = now();
       const note: Note = { id: `daily:${date}`, title: date, body, dailyDate: date, createdAt: time, updatedAt: time, trashed: false, trashedAt: null };
+      note.body = normalize(note.id, note.body);
       notes.set(note.id, note);
       return { saved: true, note: structuredClone(note) };
     },

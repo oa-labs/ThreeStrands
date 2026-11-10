@@ -1,3 +1,4 @@
+import { registerNoteOwner, NOTES_CHANGED } from "./noteMutations";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Note, NoteRelink, NoteSave } from "./domain";
 import { mailClient } from "./data/client";
@@ -116,6 +117,7 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
         }
       } else {
         clearNoteDraft(key);
+        showText({ title: result.note?.title ?? sent.title, body: result.note?.body ?? sent.body });
         markDirty(false);
       }
       setSaveState({ kind: "idle" });
@@ -266,6 +268,9 @@ export function useNoteEditor(target: NoteTarget | null, { onSaved, onReplaced, 
     setMissing(current.kind === "note" && !saveState.current);
     setSaveState({ kind: "idle" });
   }, [saveState]);
+
+  useEffect(() => targetKey ? registerNoteOwner(targetKey, { flush: save, unsaved, refresh, version: () => noteRef.current?.updatedAt ?? null }) : undefined, [targetKey, save, unsaved, refresh]);
+  useEffect(() => { const changed = () => { void refresh(); }; window.addEventListener(NOTES_CHANGED, changed); return () => window.removeEventListener(NOTES_CHANGED, changed); }, [refresh]);
 
   return { note, text, dirty, loading, missing, loadError, saveState, edit, flush: save, unsaved, refresh, keepMine, takeTheirs };
 }

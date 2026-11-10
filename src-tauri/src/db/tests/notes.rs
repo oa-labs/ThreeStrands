@@ -1079,3 +1079,352 @@ fn a_note_trashed_on_another_device_while_typing_comes_back_stale_not_as_an_erro
     assert!(save.saved);
     assert_eq!(save.note.unwrap().body, "typed on B");
 }
+
+#[test]
+fn note_tasks_project_save_toggle_convert_and_restore_without_creating_task_entities() {
+    let db = synced();
+    let note = db
+        .create_note("Checklist vs Tasks", "- [ ] Milk\n- ( ) Send proposal\n")
+        .unwrap();
+    let tasks = db.list_note_tasks().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].title, "Send proposal");
+    let marker = &tasks[0].marker_id;
+    let done = db
+        .patch_note_item(&note.id, marker, &note.updated_at, Some(true), None)
+        .unwrap();
+    assert!(db.list_note_tasks().unwrap()[0].checked);
+    assert!(done.body.contains("- [ ] Milk"));
+    assert!(done.body.contains("- (x) Send proposal"));
+    assert!(db
+        .patch_note_item(&note.id, marker, &note.updated_at, Some(false), None)
+        .is_err());
+    let square = db
+        .patch_note_item(&note.id, marker, &done.updated_at, None, Some(false))
+        .unwrap();
+    assert!(db.list_note_tasks().unwrap().is_empty());
+    let round = db
+        .patch_note_item(&note.id, marker, &square.updated_at, None, Some(true))
+        .unwrap();
+    assert_eq!(db.list_note_tasks().unwrap()[0].marker_id, *marker);
+    db.trash_note(&note.id).unwrap();
+    assert!(db.list_note_tasks().unwrap().is_empty());
+    assert!(db
+        .patch_note_item(&note.id, marker, &round.updated_at, Some(false), None)
+        .is_err());
+    db.restore_note(&note.id).unwrap();
+    assert_eq!(db.list_note_tasks().unwrap().len(), 1);
+    assert_eq!(
+        sql_count(
+            &db,
+            "SELECT count(*) FROM sync_values WHERE entity_type='task' AND entity_id=?1",
+            marker
+        ),
+        0
+    );
+    db.trash_note(&note.id).unwrap();
+    db.delete_note(&note.id).unwrap();
+    assert!(db.list_note_tasks().unwrap().is_empty());
+}
+
+#[test]
+fn captured_conversation_references_are_atomic_idempotent_and_preserve_authored_text() {
+    let db = database();
+    let before = db.get_daily_note(DAY).unwrap();
+    assert!(before.is_none());
+    let captured = db.capture_note_conversation(DAY, "welcome", None).unwrap();
+    assert!(captured.added);
+    let doc = db.note_document(&captured.note.id).unwrap();
+    assert_eq!(doc.links.len(), 1);
+    assert!(doc.items.is_empty());
+    let reference = &doc.links[0].reference;
+    assert_eq!(
+        db.resolve_note_conversation(reference).unwrap().as_deref(),
+        Some("welcome")
+    );
+    assert_eq!(db.note_backlinks(reference).unwrap().len(), 1);
+    let duplicate = db
+        .capture_note_conversation(DAY, "welcome", Some(&captured.note.updated_at))
+        .unwrap();
+    assert!(!duplicate.added);
+    assert_eq!(duplicate.note.updated_at, captured.note.updated_at);
+    assert!(db.capture_note_conversation(DAY, "roadmap", None).is_err());
+    let saved = db
+        .save_daily_note_edit(DAY, "User text\n```\n", Some(&captured.note.updated_at))
+        .unwrap()
+        .note
+        .unwrap();
+    assert!(db
+        .capture_note_conversation(DAY, "roadmap", Some(&saved.updated_at))
+        .is_err());
+    assert_eq!(db.get_note(&saved.id).unwrap().unwrap().body, saved.body);
+    db.trash_note(&saved.id).unwrap();
+    assert!(db.note_backlinks(reference).unwrap().is_empty());
+    assert!(db
+        .capture_note_conversation(DAY, "welcome", Some(&saved.updated_at))
+        .is_err());
+}
+
+#[test]
+fn note_task_projection_converges_and_conflicts_cannot_be_toggled() {
+    let a = synced();
+    let b = synced();
+    let note = a.create_note("Follow up", "- ( ) Call\n").unwrap();
+    sync_both(&a, &b);
+    let marker = a.list_note_tasks().unwrap()[0].marker_id.clone();
+    let remote = b.get_note(&note.id).unwrap().unwrap();
+    b.patch_note_item(&note.id, &marker, &remote.updated_at, Some(true), None)
+        .unwrap();
+    a.update_note(
+        &note.id,
+        "Follow up",
+        &(note.body.clone() + "\nLocal text\n"),
+    )
+    .unwrap();
+    sync_both(&a, &b);
+    assert_eq!(
+        a.list_note_tasks().unwrap()[0].checked,
+        b.list_note_tasks().unwrap()[0].checked
+    );
+    assert!(a.list_note_tasks().unwrap()[0].conflicted);
+    let current = a.get_note(&note.id).unwrap().unwrap();
+    assert!(a
+        .patch_note_item(
+            &note.id,
+            &marker,
+            &current.updated_at,
+            Some(!a.list_note_tasks().unwrap()[0].checked),
+            None
+        )
+        .is_err());
+    assert_eq!(a.get_note(&note.id).unwrap().unwrap().body, current.body);
+}
+
+#[test]
+fn event_note_links_keep_provider_identity_across_rescheduling_and_account_collisions() {
+    let db = database();
+    db.adopt_calendar_account("you@example.com").unwrap();
+    let mut event:crate::models::ScheduleEvent=serde_json::from_value(serde_json::json!({
+        "id":"cal:instance-original","seriesId":"cal:series","accountId":"you@example.com","calendarId":"cal",
+        "title":"Weekly review","start":"2026-11-10T09:00:00Z","end":"2026-11-10T10:00:00Z",
+        "allDay":false,"attendees":[],"attendeeResponses":{},"canRespond":false,"canEdit":true
+    })).unwrap();
+    db.cache_note_events("you@example.com", &[], "", "", std::slice::from_ref(&event))
+        .unwrap();
+    let choices = db.note_link_choices("event", "Weekly").unwrap();
+    assert_eq!(choices.len(), 2);
+    let instance = choices
+        .iter()
+        .find(|c| c.reference.id == event.id)
+        .unwrap()
+        .reference
+        .clone();
+    let series = choices
+        .iter()
+        .find(|c| c.reference.id == "cal:series")
+        .unwrap()
+        .reference
+        .clone();
+    let note = db
+        .create_note(
+            "Review notes",
+            &format!("[Meeting]({})", instance.href().unwrap()),
+        )
+        .unwrap();
+    event.start = "2026-11-11T14:00:00Z".into();
+    event.end = "2026-11-11T15:00:00Z".into();
+    db.cache_note_events("you@example.com", &[], "", "", std::slice::from_ref(&event))
+        .unwrap();
+    assert_eq!(
+        db.resolve_note_event(&instance).unwrap().unwrap().start,
+        event.start
+    );
+    assert!(db.resolve_note_event(&series).unwrap().is_some());
+    assert!(db
+        .resolve_note_event(&crate::note_entities::NoteReference {
+            account: Some("other@example.com".into()),
+            ..instance.clone()
+        })
+        .unwrap()
+        .is_none());
+    assert_eq!(db.note_backlinks(&instance).unwrap()[0].note_id, note.id);
+    db.forget_note_event("you@example.com", "cal", &event.id)
+        .unwrap();
+    assert!(db.resolve_note_event(&instance).unwrap().is_none());
+    assert_eq!(db.note_document(&note.id).unwrap().links.len(), 1);
+    db.cache_note_events("you@example.com", &[], "", "", std::slice::from_ref(&event))
+        .unwrap();
+    db.remove_calendar_account("you@example.com").unwrap();
+    assert!(db.resolve_note_event(&instance).unwrap().is_none());
+    db.adopt_calendar_account("you@example.com").unwrap();
+    assert!(db.resolve_note_event(&instance).unwrap().is_none());
+    assert_eq!(db.note_document(&note.id).unwrap().links.len(), 1);
+}
+
+#[test]
+fn conversation_note_links_follow_verified_aliases_but_never_match_subjects_or_other_accounts() {
+    let db = database();
+    let detail = db.get_thread("welcome").unwrap();
+    let reference = crate::note_entities::NoteReference {
+        version: 1,
+        kind: "conversation".into(),
+        id: "old-provider-id".into(),
+        account: Some(detail.thread.account_id.clone()),
+        calendar: None,
+        note: None,
+    };
+    let note = db
+        .create_note(
+            "Mail references",
+            &format!("[Mail]({})", reference.href().unwrap()),
+        )
+        .unwrap();
+    assert!(db.resolve_note_conversation(&reference).unwrap().is_none());
+    db.test_connection()
+        .unwrap()
+        .execute(
+            "INSERT INTO imap_thread_aliases(account_id,old_id,new_id) VALUES (?1,?2,?3)",
+            rusqlite::params![
+                detail.thread.account_id,
+                reference.id,
+                detail.thread.provider_thread_id
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        db.resolve_note_conversation(&reference).unwrap().as_deref(),
+        Some("welcome")
+    );
+    let current = crate::note_entities::NoteReference {
+        id: detail.thread.provider_thread_id,
+        ..reference.clone()
+    };
+    assert_eq!(db.note_backlinks(&current).unwrap()[0].note_id, note.id);
+    assert!(db
+        .resolve_note_conversation(&crate::note_entities::NoteReference {
+            account: Some("other@example.com".into()),
+            ..reference
+        })
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn v103_upgrade_indexes_existing_round_tasks_without_authoring_note_edits() {
+    let db = synced();
+    let note = db.create_note("Earlier note", "").unwrap();
+    let before = replica_fields(&db, &note.id);
+    {
+        let mut connection = db.test_connection().unwrap();
+        connection
+            .execute(
+                "UPDATE notes SET body='- [ ] Checklist\n- ( ) Existing task\n' WHERE id=?1",
+                [&note.id],
+            )
+            .unwrap();
+        connection.execute_batch("DROP TABLE note_tasks; DROP TABLE note_entity_links; DROP TABLE note_index_warnings; DROP TABLE note_event_cache; PRAGMA user_version=103;").unwrap();
+        crate::schema::migrate(&mut connection).unwrap();
+    }
+    assert_eq!(db.list_note_tasks().unwrap().len(), 1);
+    let loaded = db.get_note(&note.id).unwrap().unwrap();
+    assert_eq!(loaded.updated_at, note.updated_at);
+    assert_eq!(loaded.body, "- [ ] Checklist\n- ( ) Existing task\n");
+    assert_eq!(replica_fields(&db, &note.id), before);
+    assert!(!db.note_document(&note.id).unwrap().items[1].persisted);
+}
+
+#[test]
+fn adding_task_identity_past_the_body_budget_rolls_back_text_and_projection() {
+    let db = database();
+    let note = db.create_note("Budget", "Kept text").unwrap();
+    let body = format!("- ( ) {}", "x".repeat(MAX_NOTE_BODY_BYTES - 10));
+    assert!(note_body_bytes(&body) <= MAX_NOTE_BODY_BYTES);
+    assert!(db
+        .save_note(&note.id, &note.title, &body, &note.updated_at)
+        .is_err());
+    assert_eq!(db.get_note(&note.id).unwrap().unwrap(), note);
+    assert!(db.list_note_tasks().unwrap().is_empty());
+}
+
+#[test]
+fn received_over_limit_notes_remain_readable_with_warning_and_no_partial_task_index() {
+    let db = database();
+    let id = uuid::Uuid::new_v4().to_string();
+    let payload = serde_json::json!({"id":id,"title":"From an older device","body":"- ( ) Task\n".repeat(threestrands_sync_protocol::MAX_NOTE_TASKS+1),"createdAt":"2026-11-10T00:00:00Z","trashed":false});
+    db.upsert_synced_note(&id, &payload).unwrap();
+    assert!(db.list_note_tasks().unwrap().is_empty());
+    assert!(!db.get_note(&id).unwrap().unwrap().body.is_empty());
+    assert_eq!(db.note_task_warnings().unwrap().len(), 1);
+    assert!(db.note_document(&id).unwrap().warning.is_some());
+    let mut trimmed = payload.clone();
+    trimmed["body"] = serde_json::json!("- ( ) One task\n");
+    db.upsert_synced_note(&id, &trimmed).unwrap();
+    assert_eq!(db.list_note_tasks().unwrap().len(), 1);
+    assert!(db.note_task_warnings().unwrap().is_empty());
+}
+
+#[test]
+fn note_task_ids_and_entity_references_survive_folder_export_and_import() {
+    let source = database();
+    let note = source
+        .create_note("Outbound", "- ( ) Follow through\n")
+        .unwrap();
+    let marker = source.list_note_tasks().unwrap()[0].marker_id.clone();
+    let reference = crate::note_entities::NoteReference {
+        version: 1,
+        kind: "task".into(),
+        id: marker.clone(),
+        account: None,
+        calendar: None,
+        note: Some(note.id.clone()),
+    };
+    let saved = source
+        .update_note(
+            &note.id,
+            &note.title,
+            &format!("{}\n[Task]({})\n", note.body, reference.href().unwrap()),
+        )
+        .unwrap();
+    struct Folder(std::path::PathBuf);
+    impl Folder {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+    impl Drop for Folder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let folder =
+        Folder(std::env::temp_dir().join(format!("note-task-round-trip-{}", uuid::Uuid::new_v4())));
+    std::fs::create_dir(folder.path()).unwrap();
+    crate::notes_export::export(
+        folder.path(),
+        &source.notes_for_export().unwrap(),
+        &[],
+        |_| Ok(None),
+        false,
+    )
+    .unwrap();
+    let target = database();
+    let plan = crate::notes_import::plan(
+        folder.path(),
+        &crate::notes_import::Existing {
+            ids: HashSet::new(),
+            titles: HashSet::new(),
+        },
+    )
+    .unwrap();
+    let result = crate::notes_import::run(plan, |note, files| {
+        target.import_note(note, files).map_err(|e| e.to_string())
+    });
+    assert_eq!(result.notes, 1);
+    let imported = target.get_note(&note.id).unwrap().unwrap();
+    assert_eq!(imported.body, saved.body);
+    assert_eq!(target.list_note_tasks().unwrap()[0].marker_id, marker);
+    assert_eq!(
+        target.note_backlinks(&reference).unwrap()[0].note_id,
+        note.id
+    );
+}

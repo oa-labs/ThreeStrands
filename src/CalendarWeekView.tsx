@@ -1,3 +1,4 @@
+import { NoteBacklinks } from "./NoteEntityContext";
 import { readLocalStorage, writeLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { calendarAccountVisibility, showHiddenCalendarAccounts } from "./calendarVisibility";
 import { useWorkspaceCommands } from "./workspaceCommands";
@@ -253,6 +254,7 @@ export function CalendarWeekView({
   onCreated,
   mailAccountIds = [],
   onOpenThread = () => {},
+  onOpenNote,
   taskRefreshKey = 0,
   onTasksChanged,
   onNotice,
@@ -270,6 +272,7 @@ export function CalendarWeekView({
   active?: boolean;
   mailAccountIds?: string[];
   onOpenThread?(id: string): void;
+  onOpenNote?(id: string): void;
   anchor: Date;
   /** Opens these event details when arriving from a conversation. */
   initialEvent?: ScheduleEvent | null;
@@ -742,6 +745,7 @@ export function CalendarWeekView({
             if (!eventTrigger.current) document.getElementById("workspace-Meeting-context")?.focus();
           }} onUpdated={setSelectedEvent} />
           {bookedTask ? <BookedTask task={bookedTask} onChanged={tasksChanged} /> : null}
+          <NoteBacklinks reference={{ version: 1, kind: "event", id: selectedEvent.id, account: selectedEvent.accountId, calendar: selectedEvent.calendarId }} additional={selectedEvent.seriesId ? [{ version: 1, kind: "event", id: selectedEvent.seriesId, account: selectedEvent.accountId, calendar: selectedEvent.calendarId }] : []} onOpenNote={onOpenNote} />
           <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
         </> : <>
           <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} schedule={todayVisible ? { events, loading, error, reload } : undefined} />

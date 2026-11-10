@@ -44,6 +44,7 @@ export function useTaskActions({
   const taskWorkspaceRef = useRef<TaskWorkspaceHandle>(null);
   const [selectedTaskStatus, setSelectedTaskStatus] = useState<ThreadTask["status"] | null>(null);
   const [taskLayout, setTaskLayout] = useState<TaskLayout | null>(null);
+  const [selectedTaskIsNote, setSelectedTaskIsNote] = useState(false);
   const [selectedTaskHasThread, setSelectedTaskHasThread] = useState(false);
   const [taskEditor, setTaskEditor] = useState<TaskEditorState | null>(null);
   const newTask = useCallback(() => {
@@ -147,7 +148,7 @@ export function useTaskActions({
 
   return {
     draftFollowUp, taskWorkspaceRef, selectedTaskStatus, setSelectedTaskStatus, taskLayout,
-    setTaskLayout, selectedTaskHasThread, setSelectedTaskHasThread, taskEditor, setTaskEditor,
+    setTaskLayout, selectedTaskIsNote, setSelectedTaskIsNote, selectedTaskHasThread, setSelectedTaskHasThread, taskEditor, setTaskEditor,
     taskEditorAccountId, taskEditorGoals, submitTaskEditor, newTask, createWorkspaceTask,
   };
 }
