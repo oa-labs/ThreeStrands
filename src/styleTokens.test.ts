@@ -151,6 +151,14 @@ describe("form controls", () => {
     expect(button.get("font-size")).toBe("var(--text-control)");
   });
 
+  it("lets the shared search wrapper draw corners instead of the native search input", () => {
+    const input = new Map<string, string>();
+    css.walkRules(".search-box input", (rule) => rule.walkDecls((declaration) => { input.set(declaration.prop, declaration.value); }));
+    expect(input.get("appearance")).toBe("none");
+    expect(input.get("-webkit-appearance")).toBe("none");
+    expect(input.get("border-radius")).toBe("0");
+  });
+
   it("sizes text inputs, selects, and search fields from the shared control heights", () => {
     const raw: string[] = [];
     css.walkDecls(/^(height|min-height)$/, (declaration) => {

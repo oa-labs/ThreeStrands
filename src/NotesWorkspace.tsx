@@ -393,7 +393,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     <div className="notes-workspace-body">
       <div className="notes-list-pane">
         <div className="notes-search">
-          <label><span className="sr-only">Search Notes</span><input ref={search} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={query} placeholder="Search notes"
+          <label className="search-box"><span className="sr-only">Search Notes</span><input ref={search} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={query} placeholder="Search notes"
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== "Escape") return;
