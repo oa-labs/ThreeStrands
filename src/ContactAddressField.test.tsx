@@ -28,3 +28,17 @@ describe("email address paste cleanup", () => {
     expect(change).toHaveBeenCalledWith(["jane@example.com"]);
   });
 });
+
+describe("names on email badges", () => {
+  it("shows names given from outside and reports names the user adds", () => {
+    const onNamesChange = vi.fn();
+    const change = vi.fn();
+    const { rerender } = render(<EmailBadgeField label="Attendees" values={["pete@example.com"]} knownNames={new Map([["pete@example.com", "Pete B"]])} onChange={change} onNamesChange={onNamesChange} />);
+    expect(screen.getByText("Pete B")).toBeInTheDocument();
+    fireEvent.paste(screen.getByRole("textbox", { name: "Attendees" }), { clipboardData: { getData: () => "Ann Lee <ann@example.com>" } });
+    expect(change).toHaveBeenCalledWith(["pete@example.com", "ann@example.com"]);
+    expect(onNamesChange).toHaveBeenLastCalledWith(new Map([["ann@example.com", "Ann Lee"]]));
+    rerender(<EmailBadgeField label="Attendees" values={["pete@example.com", "ann@example.com"]} knownNames={new Map([["pete@example.com", "Pete B"]])} onChange={change} onNamesChange={onNamesChange} />);
+    expect(screen.getByText("Ann Lee")).toBeInTheDocument();
+  });
+});

@@ -129,3 +129,22 @@ describe("CalendarAgenda rows", () => {
     expect(label).toBe(`Now, ${new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).formatToParts(at(12, 5)).map((part) => part.type === "dayPeriod" ? part.value.toLocaleLowerCase() : part.value).join("")}`);
   });
 });
+
+describe("Add Note in the agenda", () => {
+  afterEach(cleanup);
+
+  it("offers Add Note on each event a note can link, and passes the event", () => {
+    const onAddNote = vi.fn();
+    const standup = event("Standup", 9, 10);
+    render(<CalendarAgenda today={day} calendars={calendars} onOpenEvent={vi.fn()} onAddNote={onAddNote}
+      schedule={{ events: [standup, event("Unfiled", 11, 12, { calendarId: undefined })], loading: false, error: null, reload: vi.fn() }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add Note for Standup" }));
+    expect(onAddNote).toHaveBeenCalledExactlyOnceWith(standup);
+    expect(screen.queryByRole("button", { name: "Add Note for Unfiled" })).not.toBeInTheDocument();
+  });
+
+  it("leaves Add Note out where it isn't offered", () => {
+    renderAgenda([event("Standup", 9, 10)]);
+    expect(screen.queryByRole("button", { name: /Add Note/ })).not.toBeInTheDocument();
+  });
+});

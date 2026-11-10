@@ -1,4 +1,9 @@
-import { captureConversation } from "./noteCapture";
+import { addMeetingToDailyNote, captureConversation } from "./noteCapture";
+import { MeetingNoteDialog } from "./MeetingNoteDialog";
+import { meetingEventReference } from "./meetingNoteEntry";
+import type { MeetingEntry } from "./noteMeetings";
+import { dailyNoteName } from "./noteDates";
+import type { ScheduleEvent } from "./domain";
 import { parseNoteReference, noteReferenceHref } from "./noteEntities";
 import { NoteBacklinks } from "./NoteEntityContext";
 import { MoreActionsMenu } from "./MoreActionsMenu";
@@ -662,6 +667,21 @@ export function App() {
       return {};
     }
   };
+  // Add Note for a calendar event, from an agenda, Today, the event's
+  // details, or the palette while those details are open.
+  const [meetingNoteEvent, setMeetingNoteEvent] = useState<ScheduleEvent | null>(null);
+  const [calendarSelectedEvent, setCalendarSelectedEvent] = useState<ScheduleEvent | null>(null);
+  const meetingOwnAddresses = useMemo(() => [...ownAddresses, ...calendar.accounts.map((account) => account.email)], [ownAddresses, calendar.accounts]);
+  const addMeeting = async (date: string, entry: MeetingEntry) => {
+    const added = await addMeetingToDailyNote(date, entry);
+    setMeetingNoteEvent(null);
+    const action = { label: "Open Note", run: () => openNote(added.note.id, undefined, noteReferenceHref(entry.event)) };
+    if (!added.added) { setNotice({ message: "Already in the note", action }); return; }
+    setNotice({
+      message: `Added to ${dailyNoteName(date)}`, action,
+      undo: () => void added.undo().catch((e) => setNotice({ message: errorMessage(e), action })),
+    });
+  };
   const openEntityReference = async (href: string) => {
     const ref = parseNoteReference(href);
     if (!ref) throw new Error("Invalid note reference");
@@ -700,6 +720,7 @@ export function App() {
     delegateSelected,
     createCalendarEvent: () => { openCalendarView(); setCreateCalendarEventRequested(true); },
     addToTodaysNote,
+    addMeetingNote: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => setMeetingNoteEvent(calendarSelectedEvent) : undefined,
     snoozeSelected: openSnooze, returnSnoozedSelected: conversationSnooze.returnToInbox,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
@@ -1516,6 +1537,8 @@ export function App() {
             mailAccountIds={activeAccountId ? [activeAccountId] : accounts.map((account) => account.email)}
             onOpenThread={jumpToThread}
             onOpenNote={openNote}
+            onAddNote={setMeetingNoteEvent}
+            onSelectedEventChange={setCalendarSelectedEvent}
             anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
             initialEvent={calendarEventToOpen}
             onAnchorChange={setCalendarWeekAnchor}
@@ -1754,6 +1777,7 @@ export function App() {
         calendars={calendar.calendars}
         onOpenThread={jumpToThread}
         onOpenEvent={(event) => openCalendarView(eventDate(event), event)}
+        onAddNote={setMeetingNoteEvent}
         onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
         onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         onOpenInbox={() => executeById("view.mail")}
@@ -1885,6 +1909,10 @@ export function App() {
             setNotice({ message: `Created the ${name} split` });
           }}
         />
+      ) : null}
+      {meetingNoteEvent ? (
+        <MeetingNoteDialog event={meetingNoteEvent} ownAddresses={meetingOwnAddresses} onClose={() => setMeetingNoteEvent(null)} onSubmit={addMeeting}
+          onOpenNote={(date) => { setMeetingNoteEvent(null); openNote(`daily:${date}`); }} />
       ) : null}
       {paletteOpen ? (
         <CommandPalette

@@ -1908,7 +1908,7 @@ describe("returning from a jump", () => {
     const title = entry === "Tomorrow" ? "Planning" : "Project review";
     const button = entry === "Next meeting"
       ? within(today).getByRole("button", { name: /^Next: Project review/ })
-      : within(within(today).getByRole("region", { name: entry })).getByRole("button", { name: new RegExp(title) });
+      : within(within(today).getByRole("region", { name: entry })).getByRole("button", { name: new RegExp(`^${title}`) });
     fireEvent.click(button);
     expect(await screen.findByRole("region", { name: `${title} details` })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Calendar week" })).toBeInTheDocument();

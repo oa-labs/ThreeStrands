@@ -144,6 +144,23 @@ describe("CalendarWeekView", () => {
     expect(screen.getByRole("complementary", { name: "Meeting context" })).toHaveFocus();
   });
 
+  it("offers Add Note in the agenda and the open event's details, and reports which event is open", async () => {
+    const meeting = { ...event("review", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Project review"), calendarId: "primary" };
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [meeting], errors: [] });
+    const onAddNote = vi.fn(), onSelectedEventChange = vi.fn();
+    renderWeek({ onAddNote, onSelectedEventChange });
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    fireEvent.click(await within(agenda).findByRole("button", { name: "Add Note for Project review" }));
+    expect(onAddNote).toHaveBeenLastCalledWith(meeting);
+    fireEvent.click(within(agenda).getByRole("button", { name: /^Project review/ }));
+    await screen.findByRole("region", { name: "Project review details" });
+    expect(onSelectedEventChange).toHaveBeenLastCalledWith(meeting);
+    fireEvent.click(screen.getByRole("button", { name: "Add Note" }));
+    expect(onAddNote).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Close Event Details" }));
+    await waitFor(() => expect(onSelectedEventChange).toHaveBeenLastCalledWith(null));
+  });
+
   it("keeps today's agenda while browsing another week and returns the grid to today on selection", async () => {
     const meeting = event("review", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Today's review");
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [meeting], errors: [] });

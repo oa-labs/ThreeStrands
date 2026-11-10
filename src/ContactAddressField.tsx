@@ -63,7 +63,7 @@ export function ContactAddressField({ addresses, disabled, onChange }: {
  * badges: anything else stays in the field with a hint, and is reported
  * through `onPendingChange` so the form can refuse to submit with it.
  */
-export function EmailBadgeField({ label, values, calendarAccount, disabled, onChange, onPendingChange }: {
+export function EmailBadgeField({ label, values, calendarAccount, disabled, onChange, onPendingChange, knownNames, onNamesChange }: {
   label: string;
   /** The account whose calendar holds the event; its mail history ranks suggestions. */
   calendarAccount?: string | null;
@@ -72,8 +72,12 @@ export function EmailBadgeField({ label, values, calendarAccount, disabled, onCh
   onChange(values: string[]): void;
   /** The text typed but not yet a badge. */
   onPendingChange?(text: string): void;
+  /** Names for addresses that arrive from outside, by lowercase address. */
+  knownNames?: ReadonlyMap<string, string>;
+  /** Names of people chosen from suggestions or typed with a name, by lowercase address. */
+  onNamesChange?(names: ReadonlyMap<string, string>): void;
 }) {
-  return <ContactMultiValueField kind="email" label={label} inputLabel={label} suggestContacts calendarAccount={calendarAccount} requireAddresses values={values} disabled={disabled} onChange={onChange} onPendingChange={onPendingChange} />;
+  return <ContactMultiValueField kind="email" label={label} inputLabel={label} suggestContacts calendarAccount={calendarAccount} requireAddresses values={values} disabled={disabled} onChange={onChange} onPendingChange={onPendingChange} knownNames={knownNames} onNamesChange={onNamesChange} />;
 }
 
 export function ContactLinksField({ links, disabled, onChange }: {
@@ -84,7 +88,9 @@ export function ContactLinksField({ links, disabled, onChange }: {
   return <ContactMultiValueField kind="link" label="Links" inputLabel="Links" values={links} disabled={disabled} onChange={onChange} />;
 }
 
-function ContactMultiValueField({ kind, label, inputLabel, primary = false, suggestContacts = false, calendarAccount = null, requireAddresses = false, values, disabled, onChange, onPendingChange }: {
+function ContactMultiValueField({ kind, label, inputLabel, primary = false, suggestContacts = false, calendarAccount = null, requireAddresses = false, values, disabled, onChange, onPendingChange, knownNames, onNamesChange }: {
+  knownNames?: ReadonlyMap<string, string>;
+  onNamesChange?(names: ReadonlyMap<string, string>): void;
   kind: "email" | "link";
   label: string;
   inputLabel: string;
@@ -123,6 +129,8 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
   const [activeIndex, setActiveIndex] = useState(0);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestId = useRef(0);
+  const reportNames = useEffectEvent((current: ReadonlyMap<string, string>) => onNamesChange?.(current));
+  useEffect(() => { if (names.size) reportNames(names); }, [names]);
   useEffect(() => () => {
     if (copiedTimer.current) clearTimeout(copiedTimer.current);
     if (debounce.current) clearTimeout(debounce.current);
@@ -134,7 +142,7 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
   const optionCount = groupOptions.length + contactOptions.length;
   const open = !dismissed && optionCount > 0;
   const active = Math.min(activeIndex, optionCount - 1);
-  const badgeName = (value: string) => names.get(value.toLocaleLowerCase()) ?? value;
+  const badgeName = (value: string) => names.get(value.toLocaleLowerCase()) ?? knownNames?.get(value.toLocaleLowerCase()) ?? value;
   // Badges that arrived from outside, such as a meeting suggestion's guests.
   const invalidValues = requireAddresses ? values.filter((value) => !isEmailAddress(value)) : [];
   const hint = rejected && draft.trim()

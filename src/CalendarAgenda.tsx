@@ -1,4 +1,4 @@
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, NotebookPen } from "lucide-react";
 import type { ReactNode } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
@@ -9,6 +9,7 @@ import { agendaConflicts, mentionsRecording } from "./todayInsights";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import type { CalendarOption, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
+import { meetingEventReference } from "./meetingNoteEntry";
 
 type Schedule = ReturnType<typeof useCalendarSchedule>;
 type AgendaProps = {
@@ -27,6 +28,8 @@ type AgendaProps = {
   showDate?: boolean;
   /** Says which meetings overlap another, and which of those are recorded. */
   markConflicts?: boolean;
+  /** Offers Add Note on each event that a note can link. */
+  onAddNote?(event: ScheduleEvent): void;
 };
 
 /** Events Tomorrow shows before "Show more". */
@@ -47,7 +50,7 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, showDate = true, markConflicts = false, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ today, calendars, onOpenEvent, onAddNote, now, tomorrow = false, showDate = true, markConflicts = false, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
   const colors = useCalendarColors();
   const selected = calendars.filter((calendar) => calendar.selected);
   const agenda = agendaEventsFor(events, today, calendars);
@@ -75,6 +78,7 @@ function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, showDate
       title={event.title}
       detail={detail}
       onActivate={() => onOpenEvent(event)}
+      actions={onAddNote && meetingEventReference(event) ? [<AddNoteButton key="note" event={event} onAddNote={onAddNote} />] : undefined}
     />);
   });
   if (now && pastCount > 0 && pastCount === agenda.length) rows.push(<NowDivider key="now" now={now} />);
@@ -92,6 +96,11 @@ function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, showDate
       {!loading && !error && agenda.length === 0 ? <p className="context-status">{selected.length ? `No events ${tomorrow ? "tomorrow" : "today"}.` : "Select a calendar to see today's agenda."}</p> : null}
     </>}
   />;
+}
+
+/** Add Note for one agenda event. */
+export function AddNoteButton({ event, onAddNote }: { event: ScheduleEvent; onAddNote(event: ScheduleEvent): void }) {
+  return <button type="button" className="btn-icon btn-icon-sm" aria-label={`Add Note for ${event.title}`} title="Add Note" onClick={() => onAddNote(event)}><NotebookPen size={ICON_SIZE.sm} aria-hidden="true" /></button>;
 }
 
 function NowDivider({ now }: { now: Date }) {

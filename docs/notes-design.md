@@ -4,7 +4,7 @@
 meowdown editor, [images and attachments](#images-and-attachments),
 [Import Markdown Folder](#import-markdown-folder), and the
 [linked notes and tasks proposal](#linked-notes-and-tasks-proposal).
-The [meeting notes proposal](#meeting-notes-proposal) is partly built.
+So is the [meeting notes proposal](#meeting-notes-proposal).
 What's still open is under [Later](#later).
 **Date:** 2026-11-09, updated 2026-11-10
 **Scope:** a Notes workspace for Markdown notes that travel through
@@ -1076,8 +1076,7 @@ behavior, and keep the user-facing changelog entry current.
 
 ## Meeting notes proposal
 
-**Status: steps 1 (contact references) and 2 (section insert) built; step 3
-(the Add Note dialog) proposed.**
+**Status: built.**
 Notes for a calendar event are among the
 most common notes people write. Today a user can link a note to an event
 (**Link to… → Event**), and the event's **Meeting context** lists the notes
@@ -1344,6 +1343,23 @@ Step 2, as built:
   Today's Note's Undo, which removes exactly the line and any heading it
   added. It then moves a meeting note the action created to Trash only if it
   is still empty and at its created version.
+
+Step 3, as built:
+
+- `MeetingNoteDialog` is titled **Add Note**. The attendee chips are the
+  event editor's `EmailBadgeField`, which now takes names from outside
+  (`knownNames`) and reports names chosen in it (`onNamesChange`). Names come
+  from contacts and the people the user emails; the user's own account and
+  calendar addresses are left out. A saved contact's id goes in the reference;
+  derived ids don't.
+- Add Note appears on agenda rows (Calendar's rail and Today), Today's
+  next-meeting card, and the open event's **Event details** heading. Events
+  without a calendar id can't be linked and don't offer it. The palette's
+  **Add Meeting to Daily Note** is enabled while Calendar has an event's
+  details open (`addMeetingNote` in the command context).
+- The notice says **Added to today's note** (or tomorrow's, yesterday's, or
+  "the note for <date>"), with **Open Note** and Undo, or **Already in the
+  note**. A refusal keeps the dialog open with its reason and **Open Note**.
 
 ### Open questions
 
