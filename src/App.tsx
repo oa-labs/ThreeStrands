@@ -148,6 +148,7 @@ import { useThreadSelection } from "./useThreadSelection";
 import { useTriageSession } from "./useTriageSession";
 import { useWorkspaces } from "./useWorkspaces";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { formatShortcut } from "./shortcutLabels";
 export { AccountSwitcher } from "./AccountSwitcher";
 export { messagesWithQueuedReplies } from "./queuedReplies";
 export { NOTICE_TIMEOUT_MS } from "./useNotice";
@@ -865,18 +866,18 @@ export function App() {
             <HoverTooltip label="Agents" shortcut="7"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (7)" onClick={() => navigateFromSidebar(context.openAgentsView)}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
           </div>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
-          <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail (⌘/Ctrl+R)"}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
+          <HoverTooltip title={checkingMail ? "Checking for mail…" : `Refresh mail (${formatShortcut("Mod+r")})`}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
           </button></HoverTooltip>
-          <HoverTooltip label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} shortcut="⌘D">
+          <HoverTooltip label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} shortcut="Mod+d">
             <button className="nav-button" aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} aria-keyshortcuts="Meta+D Control+D" onClick={() => executeById("theme.toggle")}>
               {effectiveThemeValue === "dark" ? <Sun size={ICON_SIZE.lg} /> : <Moon size={ICON_SIZE.lg} />}
             </button>
           </HoverTooltip>
-          <HoverTooltip label="Command Palette" shortcut="⌘K">
+          <HoverTooltip label="Command Palette" shortcut="Mod+k">
             <button
               className="nav-button"
-              aria-label="Command Palette (⌘K)"
+              aria-label={`Command Palette (${formatShortcut("Mod+k")})`}
               onClick={() => executeById("palette.open")}
             >
               <CommandIcon size={ICON_SIZE.lg} />
@@ -890,7 +891,7 @@ export function App() {
               </button>
             </HoverTooltip>
           ) : null}
-          <HoverTooltip title="Settings (⌘,)"><button className="nav-button" aria-label="Settings (⌘,)" onClick={() => executeById("settings.open")}>
+          <HoverTooltip title={`Settings (${formatShortcut("Mod+,")})`}><button className="nav-button" aria-label={`Settings (${formatShortcut("Mod+,")})`} onClick={() => executeById("settings.open")}>
             <SettingsIcon size={ICON_SIZE.lg} />
           </button></HoverTooltip>
         </div>
@@ -910,7 +911,7 @@ export function App() {
                     if (input) input.indeterminate = draftSelection.checkedIds.size < correspondence.drafts.length;
                   }}
                   checked={draftSelection.checkedIds.size === correspondence.drafts.length}
-                  aria-label="Select All Drafts" title="Select all drafts (⌘/Ctrl+A)" aria-keyshortcuts="Meta+A Control+A"
+                  aria-label="Select All Drafts" title={`Select all drafts (${formatShortcut("Mod+a")})`} aria-keyshortcuts="Meta+A Control+A"
                   onChange={(event) => event.target.checked ? draftSelection.selectAll() : draftSelection.clear()}
                 />
               </label>
@@ -945,7 +946,7 @@ export function App() {
                     if (input) input.indeterminate = outboxChecks.checkedIds.size < checkableOutbox.length;
                   }}
                   checked={outboxChecks.checkedIds.size === checkableOutbox.length}
-                  aria-label="Select All Messages" title="Select all messages you can act on (⌘/Ctrl+A)" aria-keyshortcuts="Meta+A Control+A"
+                  aria-label="Select All Messages" title={`Select all messages you can act on (${formatShortcut("Mod+a")})`} aria-keyshortcuts="Meta+A Control+A"
                   onChange={(event) => event.target.checked ? outboxChecks.selectAll() : outboxChecks.clear()}
                 />
               </label>
@@ -1197,7 +1198,7 @@ export function App() {
             <header className="reader-header">
               <div>
                 {returnStep ? (
-                  <HoverTooltip label={`Back to ${returnStep.origin.label}`} shortcut="Esc" placement="bottom">
+                  <HoverTooltip label={`Back to ${returnStep.origin.label}`} shortcut="Escape" placement="bottom">
                     <button type="button" className="btn-link reader-back" onClick={() => executeById("navigation.back")}>
                       <ArrowLeft size={ICON_SIZE.sm} aria-hidden="true" />
                       <span className="reader-back-label">Back to {returnStep.origin.label}</span>
@@ -1205,7 +1206,7 @@ export function App() {
                   </HoverTooltip>
                 ) : null}
                 {correspondence.parkedDraft ? (
-                  <HoverTooltip label="Return to Draft" shortcut="g c" placement="bottom">
+                  <HoverTooltip label="Return to Draft" shortcut="g then c" placement="bottom">
                     <button type="button" className="btn-link reader-back" onClick={() => executeById("draft.resume")}>
                       <Pencil size={ICON_SIZE.sm} aria-hidden="true" />
                       <span className="reader-back-label">Return to Draft: {correspondence.parkedDraft.subject || "(no subject)"}</span>
@@ -1251,13 +1252,13 @@ export function App() {
                   </ActionButton>
                 </HoverTooltip>
                 {canUnsubscribe ? (
-                  <HoverTooltip label="Unsubscribe" shortcut="⌘U" placement="bottom">
-                    <ActionButton label="Unsubscribe" shortcut="⌘U" onClick={() => executeById("thread.unsubscribe")}>
+                  <HoverTooltip label="Unsubscribe" shortcut="Mod+u" placement="bottom">
+                    <ActionButton label="Unsubscribe" shortcut="Mod+u" onClick={() => executeById("thread.unsubscribe")}>
                       <Unlink size={ICON_SIZE.lg} />
                     </ActionButton>
                   </HoverTooltip>
                 ) : null}
-                <HoverTooltip label="Manage Labels" shortcut="L" placement="bottom">
+                <HoverTooltip label="Manage Labels" shortcut="l" placement="bottom">
                   <ActionButton label="Labels" shortcut="l" onClick={() => executeById("labels.open")}>
                     <Tag size={ICON_SIZE.lg} />
                   </ActionButton>
@@ -1267,8 +1268,8 @@ export function App() {
                 </HoverTooltip> : null}
                 {mailbox === "snoozed" ? <HoverTooltip label="Return to Inbox" placement="bottom"><ActionButton label="Return to Inbox" onClick={() => executeById("thread.returnSnoozed")}><Inbox size={ICON_SIZE.lg} /></ActionButton></HoverTooltip> : null}
                 {mailbox === "trash" || mailbox === "snoozed" ? null : selected?.archived ? (
-                  <HoverTooltip label="Mark not done" shortcut="Shift+E" placement="bottom">
-                    <ActionButton label="Mark Not Done" shortcut="Shift+E" onClick={() => executeById("thread.unarchive")}>
+                  <HoverTooltip label="Mark not done" shortcut="Shift+e" placement="bottom">
+                    <ActionButton label="Mark Not Done" shortcut="Shift+e" onClick={() => executeById("thread.unarchive")}>
                       <Inbox size={ICON_SIZE.lg} />
                     </ActionButton>
                   </HoverTooltip>
@@ -1475,7 +1476,7 @@ export function App() {
         </ErrorBoundary>
       ) : null}
       {sideDrawerShown ? (
-        <HoverTooltip label={`Hide ${scheduleShown ? "schedule" : "context"}`} shortcut="Esc" placement="bottom">
+        <HoverTooltip label={`Hide ${scheduleShown ? "schedule" : "context"}`} shortcut="Escape" placement="bottom">
           <button type="button" className="btn-icon side-drawer-close" aria-label={`Hide ${scheduleShown ? "Schedule" : "Context"}`} onClick={() => setSideDrawerOpen(false)}>
             <PanelRightClose size={ICON_SIZE.lg} />
           </button>

@@ -38,6 +38,7 @@ import { AiUsageSummary } from "./AiUsageSummary";
 import { AiActivityList } from "./AiActivityList";
 import { MIN_PROACTIVE_DWELL_SECONDS } from "./proactiveBrief";
 import { ICON_SIZE } from "./iconSizes";
+import { formatShortcut } from "./shortcutLabels";
 
 /**
  * `onChange` must run after every saved field, not just the switches: it
@@ -278,7 +279,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           <div className="settings-toggle-list">
             <SettingsToggle
               label="Reading"
-              description="Get Brief summarizes the open conversation and suggests tasks and meetings. Ask About This Conversation answers questions; press q or ⌘J to ask, and Escape returns to shortcuts. Other emails are shared only for a question where you choose Search all mail."
+              description={`Get Brief summarizes the open conversation and suggests tasks and meetings. Ask About This Conversation answers questions; press q or ${formatShortcut("Mod+j")} to ask, and Escape returns to shortcuts. Other emails are shared only for a question where you choose Search all mail.`}
               checked={reading}
               onChange={(value) => updateArea("reading", value)}
             />

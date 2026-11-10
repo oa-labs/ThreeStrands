@@ -61,7 +61,7 @@ export function renderShortcutTables(): string {
       const rows = entries
         .map((entry) => {
           const keys = entry.keys
-            .map((key) => `<span class="docs-keys">${shortcutDisplaySteps(key).map((step) => `<kbd>${escapeHtml(step)}</kbd>`).join(" <small>then</small> ")}</span>`)
+            .map((key) => `<span class="docs-keys">${shortcutDisplaySteps(key, "any").map((step) => `<kbd>${escapeHtml(step)}</kbd>`).join(" <small>then</small> ")}</span>`)
             .join(" <small>or</small> ");
           return `<tr><th scope="row">${escapeHtml(entry.title)}</th><td>${keys}</td></tr>`;
         })

@@ -234,8 +234,8 @@ it("moves between a new draft and its context panel with F6 or Mod+Shift+P, and 
 it("shows the command palette's shortcut in its navigation tooltip", async () => {
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-  const button = screen.getByRole("button", { name: "Command Palette (⌘K)" });
-  expect(button.parentElement?.querySelector("[role=tooltip]")).toHaveTextContent("Command Palette⌘K");
+  const button = screen.getByRole("button", { name: "Command Palette (Ctrl+K)" });
+  expect(button.parentElement?.querySelector("[role=tooltip]")).toHaveTextContent("Command PaletteCtrl+K");
 });
 
 it("shows a conversation participant on the next meeting and opens its details in the calendar", async () => {
@@ -1241,7 +1241,7 @@ it("reloads the inbox after reconnecting an imported account", async () => {
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
   expect((await screen.findByRole("radio", { name: /demo@example\.com.*Needs reconnect/ })).querySelector(".account-reconnect-badge")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Settings (Ctrl+,)" }));
   const dialog = await screen.findByRole("dialog", { name: "Settings" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
   const callsBeforeReconnect = listCalls;
@@ -1271,7 +1271,7 @@ it("reloads the inbox and reports the error when reconnecting an account fails",
 
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-  fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Settings (Ctrl+,)" }));
   const dialog = await screen.findByRole("dialog", { name: "Settings" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
   const callsBeforeReconnect = listCalls;

@@ -382,11 +382,11 @@ describe("Composer formatting hints", () => {
 
     select(editor.firstChild!, 0, 5);
     const hints = screen.getByLabelText("Formatting shortcuts");
-    expect(hints).toHaveTextContent("Bold Ctrl B");
-    expect(hints).toHaveTextContent("Italics Ctrl I");
-    expect(hints).toHaveTextContent("Strikethrough Ctrl Shift X");
-    expect(hints).toHaveTextContent("Code Block Ctrl Shift 0");
-    expect(hints).toHaveTextContent("Bulleted List Ctrl Shift 8");
+    expect(hints).toHaveTextContent("Bold Ctrl+B");
+    expect(hints).toHaveTextContent("Italics Ctrl+I");
+    expect(hints).toHaveTextContent("Strikethrough Ctrl+Shift+X");
+    expect(hints).toHaveTextContent("Code Block Ctrl+Shift+0");
+    expect(hints).toHaveTextContent("Bulleted List Ctrl+Shift+8");
     expect(hints).not.toHaveTextContent("Underline");
     expect(screen.queryByText(/Send has a 10-second undo window/)).not.toBeInTheDocument();
 
@@ -1348,7 +1348,7 @@ describe("Composer Reply Assist", () => {
     render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const trigger = await screen.findByRole("button", { name: /Draft Reply/ });
     expect(trigger.querySelector("svg.lucide-sparkles")).not.toBeNull();
-    expect(trigger).toHaveAttribute("title", "Draft a reply with AI (Ctrl J)");
+    expect(trigger).toHaveAttribute("title", "Draft a reply with AI (Ctrl+J)");
     expect(trigger.querySelector("kbd")).toBeNull();
     expect(within(screen.getByRole("group", { name: "Writing tools" })).getByRole("button", { name: "Draft Reply" })).toBe(trigger);
 
@@ -2176,14 +2176,14 @@ describe("Composer send options", () => {
     const trigger = screen.getByRole("button", { name: "Send options" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send Later" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send" })).toHaveTextContent("Send Ctrl Enter");
+    expect(screen.getByRole("button", { name: "Send" })).toHaveTextContent("Send Ctrl+Enter");
     fireEvent.keyDown(trigger, { key: "ArrowDown" });
     const later = screen.getByRole("menuitem", { name: "Send Later…" });
     const archive = screen.getByRole("menuitem", { name: "Send & Archive" });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(later).toHaveFocus();
-    expect(later).toHaveTextContent("Ctrl Shift L");
-    expect(archive).toHaveTextContent("Ctrl Shift Enter");
+    expect(later).toHaveTextContent("Ctrl+Shift+L");
+    expect(archive).toHaveTextContent("Ctrl+Shift+Enter");
     fireEvent.keyDown(later, { key: "ArrowDown" });
     expect(archive).toHaveFocus();
     fireEvent.keyDown(archive, { key: "Home" });

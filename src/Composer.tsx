@@ -23,9 +23,10 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import type { DraftReviewActions } from "./draftReview";
-import { composeKeyLabel, optionalFormattingHints, plainTextToHtml, selectionFormattingHints } from "./richText";
+import { optionalFormattingHints, plainTextToHtml, selectionFormattingHints } from "./richText";
 import { ScheduleSendPicker } from "./ScheduleSendPicker";
 import { ComposeSendActions } from "./ComposeSendActions";
+import { formatShortcut } from "./shortcutLabels";
 
 export type ComposerHandle = {
   draftReview: DraftReviewActions;
@@ -447,7 +448,7 @@ export const Composer = forwardRef<ComposerHandle, {
       {signatures.signatures.map((signature) => <option key={signature.id} value={signature.id}>{signature.name}</option>)}
       <option value="__manage_signatures__" data-action="manage">Manage signatures…</option>
     </select></label> : null}
-    {replyAssistEnabled ? <button type="button" className="btn btn-sm reply-assist-trigger" title={`Draft a reply with AI (${composeKeyLabel("Mod+j")})`} aria-keyshortcuts="Meta+J Control+J" disabled={busy} onClick={draftReplyWithAI}>
+    {replyAssistEnabled ? <button type="button" className="btn btn-sm reply-assist-trigger" title={`Draft a reply with AI (${formatShortcut("Mod+j")})`} aria-keyshortcuts="Meta+J Control+J" disabled={busy} onClick={draftReplyWithAI}>
       <Sparkles size={ICON_SIZE.md} /> Draft Reply
     </button> : null}
     {reviewEnabled ? <button type="button" className="btn btn-sm draft-review-trigger" title="Get feedback on this draft from AI" aria-expanded={reviewOpen} disabled={busy} onClick={() => setReviewOpen((open) => !open)}>
@@ -556,7 +557,7 @@ export const Composer = forwardRef<ComposerHandle, {
       {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list" aria-label="Attachments">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : a.messageId ? "Download required" : "Attached on another device · Attach it again here"}</small></span>{!a.ready && a.messageId && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
       <footer>
         <ComposeSendActions busy={busy} onSend={() => send()} onSchedule={openSchedule} onSendAndArchive={onSendAndArchive} />
-        <button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files" title={`Attach Files (${composeKeyLabel("Mod+Shift+a")})`} aria-keyshortcuts="Meta+Shift+A Control+Shift+A"><Paperclip size={ICON_SIZE.lg} /></button>
+        <button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files" title={`Attach Files (${formatShortcut("Mod+Shift+a")})`} aria-keyshortcuts="Meta+Shift+A Control+Shift+A"><Paperclip size={ICON_SIZE.lg} /></button>
         <div className="compose-draft-status">
           <span className="save-status" role="status" title={status.detail}>{status.text}</span>
           <button className="btn-icon" disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash size={ICON_SIZE.lg} /></button>
@@ -564,7 +565,7 @@ export const Composer = forwardRef<ComposerHandle, {
       </footer>
       <p className="compose-note">
         {textSelected
-          ? <span className="compose-format-hints" aria-label="Formatting shortcuts">{selectionFormattingHints.map((shortcut) => <span key={shortcut.id} className={optionalFormattingHints[shortcut.id] ? `compose-format-hint-optional-${optionalFormattingHints[shortcut.id]}` : undefined}>{shortcut.title} <kbd>{composeKeyLabel(shortcut.key)}</kbd></span>)}</span>
+          ? <span className="compose-format-hints" aria-label="Formatting shortcuts">{selectionFormattingHints.map((shortcut) => <span key={shortcut.id} className={optionalFormattingHints[shortcut.id] ? `compose-format-hint-optional-${optionalFormattingHints[shortcut.id]}` : undefined}>{shortcut.title} <kbd>{formatShortcut(shortcut.key)}</kbd></span>)}</span>
           : "Send has a 10-second undo window."}
         {!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}
       </p>

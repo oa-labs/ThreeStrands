@@ -286,7 +286,7 @@ describe("conversation labels", () => {
       await screen.findByRole("status");
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
 
-      fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+      fireEvent.click(screen.getByRole("button", { name: "Settings (Ctrl+,)" }));
       const settings = await screen.findByRole("dialog", { name: "Settings" });
       fireEvent.click(within(settings).getByRole("button", { name: "Split Inboxes" }));
       fireEvent.change(within(settings).getByRole("combobox", { name: "Match By" }), {
@@ -571,7 +571,7 @@ describe("read state and auto-read", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     expect(screen.getByRole("button", { name: "Mark Read (u)" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings (Ctrl+,)" }));
     const settings = await screen.findByRole("dialog", { name: "Settings" });
     // Settings remembers its last section; mark-read timing lives on Reading & Triage.
     fireEvent.click(within(settings).getByRole("button", { name: "Reading & Triage" }));
@@ -688,7 +688,7 @@ describe("conversation shortcuts", () => {
   it("confirms and sends unsubscribe with Cmd+u", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    expect(await screen.findByRole("button", { name: "Unsubscribe (⌘U)" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Unsubscribe (Ctrl+U)" })).toBeVisible();
 
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "u", metaKey: true }));
@@ -1551,7 +1551,7 @@ describe("Escape dismissal", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
     const composer = await screen.findByRole("dialog", { name: "New Message" });
-    fireEvent.click(screen.getByRole("button", { name: "Command Palette (⌘K)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette (Ctrl+K)" }));
 
     const filter = await screen.findByRole("textbox", { name: "Filter Commands" });
     fireEvent.keyDown(filter, { key: "Escape" });
@@ -2019,7 +2019,7 @@ describe("getting started checklist", () => {
 
   it("opens help directly from the command palette", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Command Palette (⌘K)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Command Palette (Ctrl+K)" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Help and Documentation" } });
     fireEvent.click(screen.getByRole("button", { name: /Help and Documentation/ }));
     expect(openUrl).toHaveBeenLastCalledWith("https://www.threestrands.app/docs/index.html");
@@ -2030,7 +2030,7 @@ describe("getting started checklist", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     expect(await screen.findByRole("button", { name: "Getting Started, 5 steps left" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Command Palette (⌘K)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette (Ctrl+K)" }));
     await screen.findByRole("textbox", { name: "Filter Commands" });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(await screen.findByRole("button", { name: "Getting Started, 4 steps left" })).toBeInTheDocument();
@@ -2060,7 +2060,7 @@ describe("getting started checklist", () => {
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Getting Started" })).getByRole("button", { name: "Hide Getting Started" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: /^Getting Started, / })).toBeNull());
 
-    fireEvent.click(screen.getByRole("button", { name: "Command Palette (⌘K)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette (Ctrl+K)" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Getting Started" } });
     fireEvent.click(screen.getByRole("button", { name: /Getting Started/ }));
     expect(await screen.findByRole("dialog", { name: "Getting Started" })).toBeInTheDocument();

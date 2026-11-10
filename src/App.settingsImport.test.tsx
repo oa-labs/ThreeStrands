@@ -83,7 +83,7 @@ describe("settings import navigation", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings (Ctrl+,)" }));
     // Settings is lazy-loaded; the first import can outlast the default wait on slow CI runners.
     const dialog = await screen.findByRole("dialog", { name: "Settings" }, { timeout: 10_000 });
     fireEvent.click(within(dialog).getByRole("button", { name: "Data Transfer" }));
@@ -140,7 +140,7 @@ describe("settings section keyboard navigation", () => {
   it("reopens the last section from the sidebar, keyboard shortcut, and command palette", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const settingsButton = screen.getByRole("button", { name: "Settings (⌘,)" });
+    const settingsButton = screen.getByRole("button", { name: "Settings (Ctrl+,)" });
     settingsButton.focus();
     fireEvent.click(settingsButton);
     let dialog = await screen.findByRole("dialog", { name: "Settings" });
@@ -159,7 +159,7 @@ describe("settings section keyboard navigation", () => {
     expect(within(dialog).getByRole("button", { name: "Mail Accounts" })).toHaveAttribute("aria-current", "true");
     fireEvent.keyDown(window, { key: "Escape" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Command Palette (⌘K)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette (Ctrl+K)" }));
     const palette = await screen.findByRole("dialog", { name: "Command Palette" });
     fireEvent.click(within(palette).getByRole("button", { name: /Open Settings/ }));
     dialog = await screen.findByRole("dialog", { name: "Settings" });
@@ -169,7 +169,7 @@ describe("settings section keyboard navigation", () => {
   it("restores the last section after restarting the app", async () => {
     const { unmount } = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings (Ctrl+,)" }));
     let dialog = await screen.findByRole("dialog", { name: "Settings" });
     const appearance = within(dialog).getByRole("button", { name: "Appearance" });
     fireEvent.keyDown(appearance, { key: "ArrowDown" });
@@ -178,7 +178,7 @@ describe("settings section keyboard navigation", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings (Ctrl+,)" }));
     dialog = await screen.findByRole("dialog", { name: "Settings" });
     expect(within(dialog).getByRole("button", { name: "Default Apps" })).toHaveAttribute("aria-current", "true");
     expect(within(dialog).getByRole("button", { name: "Default Apps" })).toHaveFocus();
@@ -187,7 +187,7 @@ describe("settings section keyboard navigation", () => {
   it("keeps IMAP entry inside the Settings modal keyboard boundary", async () => {
     const { container } = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const settingsButton = screen.getByRole("button", { name: "Settings (⌘,)" });
+    const settingsButton = screen.getByRole("button", { name: "Settings (Ctrl+,)" });
     settingsButton.focus();
     fireEvent.click(settingsButton);
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
@@ -223,7 +223,7 @@ describe("settings section keyboard navigation", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     act(() => holdRecoveryPhrase("one two three four"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings (Ctrl+,)" }));
     const recovery = await screen.findByRole("dialog", { name: "Save Your Recovery Phrase" });
     try {
       expect(recovery.parentElement).not.toHaveAttribute("aria-hidden");

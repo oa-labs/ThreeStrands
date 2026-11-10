@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sanitizeMessageHtml } from "./SafeMessage";
 import { collapseQuotedHistoryHtml } from "./quotedHistory";
+import { formatShortcutStep } from "./shortcutLabels";
 import {
   applyCodeBlockEnter,
   applyListShortcut,
   composeHtmlToText,
   draftTextToComposeHtml,
   applyFormattingShortcut,
-  composeKeyLabel,
   formattingShortcutFor,
   formattingShortcuts,
   forwardedComposeHtml,
@@ -94,25 +94,15 @@ describe("Superhuman formatting shortcuts", () => {
 });
 
 describe("selection formatting hints", () => {
-  it.each([
-    ["MacIntel", "⌘ ⇧ ↵", "⌘ J"],
-    ["Win32", "Ctrl Shift Enter", "Ctrl J"],
-    ["Linux x86_64", "Ctrl Shift Enter", "Ctrl J"],
-  ])("uses platform-specific compose shortcut labels on %s", (platform, send, reply) => {
-    expect(composeKeyLabel("Mod+Shift+Enter", platform)).toBe(send);
-    expect(composeKeyLabel("Mod+j", platform)).toBe(reply);
-    expect(composeKeyLabel("Tab", platform)).toBe("TAB");
-  });
-
   it("offers the everyday formats with footer-style key labels", () => {
-    expect(selectionFormattingHints.map(({ title, key }) => [title, composeKeyLabel(key, "MacIntel")])).toEqual([
-      ["Bold", "⌘ B"],
-      ["Italics", "⌘ I"],
-      ["Hyperlink", "⌘ K"],
-      ["Strikethrough", "⌘ ⇧ X"],
-      ["Code Block", "⌘ ⇧ 0"],
-      ["Bulleted List", "⌘ ⇧ 8"],
-      ["Numbered List", "⌘ ⇧ 7"],
+    expect(selectionFormattingHints.map(({ title, key }) => [title, formatShortcutStep(key, "mac")])).toEqual([
+      ["Bold", "⌘B"],
+      ["Italics", "⌘I"],
+      ["Hyperlink", "⌘K"],
+      ["Strikethrough", "⇧⌘X"],
+      ["Code Block", "⇧⌘0"],
+      ["Bulleted List", "⇧⌘8"],
+      ["Numbered List", "⇧⌘7"],
     ]);
   });
 });

@@ -5,6 +5,7 @@ import { snippetBodyPreview } from "./snippets";
 import { SnippetEditor } from "./SnippetPicker";
 import { useSettingsOperation } from "./settingsOperations";
 import { ICON_SIZE } from "./iconSizes";
+import { formatShortcut } from "./shortcutLabels";
 
 export function SnippetsSettings({
   snippets,
@@ -30,7 +31,7 @@ export function SnippetsSettings({
         <div>
           <h3>Snippets</h3>
           <p>
-            Canned text you can insert into a reply with <kbd>⌘/Ctrl ;</kbd>. Use{" "}
+            Canned text you can insert into a reply with <kbd>{formatShortcut("Mod+;")}</kbd>. Use{" "}
             <code>{"{first_name}"}</code> to insert the recipient's first name.
           </p>
         </div>
@@ -41,7 +42,7 @@ export function SnippetsSettings({
       {orderedSnippets.length === 0 ? (
         <div className="accounts-empty">
           <strong>No snippets yet</strong>
-          <p>Add one above, or create one from the snippet picker (<kbd>⌘/Ctrl ;</kbd>) while composing.</p>
+          <p>Add one above, or create one from the snippet picker (<kbd>{formatShortcut("Mod+;")}</kbd>) while composing.</p>
         </div>
       ) : (
         <ul className="accounts-list">

@@ -37,6 +37,7 @@ import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { defaultEventCalendar, openTasksFor, showCalendar, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
 import type { Notice } from "./useNotice";
+import { formatShortcut } from "./shortcutLabels";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
 /** Calendar accounts collapsed in the week view's calendar list, remembered on this device. */
@@ -558,7 +559,7 @@ export function CalendarWeekView({
               <HoverTooltip title={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`}><button type="button" className="btn-icon" aria-label={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`} onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
               <HoverTooltip title={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`}><button type="button" className="btn-icon" aria-label={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`} onClick={() => moveWeek(1)}><ChevronRight size={ICON_SIZE.lg} /></button></HoverTooltip>
             </div>
-            <button type="button" className="btn" title="New Event (b, Shift+N)" aria-keyshortcuts="b Shift+N" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event</button>
+            <button type="button" className="btn" title={`New event (b, ${formatShortcut("Shift+n")})`} aria-keyshortcuts="b Shift+N" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event</button>
           </div>
         </header>
         {error ? (

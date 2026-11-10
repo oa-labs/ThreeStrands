@@ -41,13 +41,6 @@ export const selectionFormattingHints = ["format.bold", "format.italic", "format
  */
 export const optionalFormattingHints: Record<string, 1 | 2> = { "format.bullets": 1, "format.numbers": 2 };
 
-/** Render compact compose hints using the current platform's modifier. */
-export function composeKeyLabel(key: string, platform = navigator.platform): string {
-  const mac = /Mac|iPhone|iPad|iPod/i.test(platform);
-  return key.split(/\+(?=.)/).map((part) => part === "Mod" ? (mac ? "⌘" : "Ctrl")
-    : part === "Shift" ? (mac ? "⇧" : "Shift") : part === "Enter" ? (mac ? "↵" : "Enter") : part.toUpperCase()).join(" ");
-}
-
 export function formattingShortcutFor(event: KeyboardEvent): FormattingShortcut | undefined {
   return formattingShortcuts.find((shortcut) => matchesShortcut(event, shortcut.key));
 }

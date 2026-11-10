@@ -1,8 +1,8 @@
 import { ChevronDown, Send } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { ICON_SIZE } from "./iconSizes";
-import { composeKeyLabel } from "./richText";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+import { formatShortcut } from "./shortcutLabels";
 
 export function ComposeSendActions({ busy, onSend, onSchedule, onSendAndArchive }: {
   busy: boolean;
@@ -38,8 +38,8 @@ export function ComposeSendActions({ busy, onSend, onSchedule, onSendAndArchive 
   }} onBlur={(event) => {
     if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
   }}>
-    <button type="button" className="btn btn-primary send-button" aria-label="Send" aria-keyshortcuts="Meta+Enter Control+Enter" title={`Send (${composeKeyLabel("Mod+Enter")})`} onClick={onSend} disabled={busy}>
-      <Send size={ICON_SIZE.md} /> Send <kbd aria-hidden="true">{composeKeyLabel("Mod+Enter")}</kbd>
+    <button type="button" className="btn btn-primary send-button" aria-label="Send" aria-keyshortcuts="Meta+Enter Control+Enter" title={`Send (${formatShortcut("Mod+Enter")})`} onClick={onSend} disabled={busy}>
+      <Send size={ICON_SIZE.md} /> Send <kbd aria-hidden="true">{formatShortcut("Mod+Enter")}</kbd>
     </button>
     <button ref={trigger} type="button" className="btn btn-primary compose-send-options" aria-label="Send options" aria-haspopup="menu" aria-expanded={open && !busy} aria-controls={open && !busy ? menuId : undefined} title="Send options" disabled={busy} onClick={() => setOpen((value) => !value)} onKeyDown={(event) => {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -72,10 +72,10 @@ function SendOptionsMenu({ id, onClose, onSchedule, onSendAndArchive }: {
     items[next]?.focus();
   }}>
     <button type="button" className="compose-send-menu-item" role="menuitem" aria-label="Send Later…" aria-keyshortcuts="Meta+Shift+L Control+Shift+L" onClick={onSchedule}>
-      Send Later… <kbd aria-hidden="true">{composeKeyLabel("Mod+Shift+L")}</kbd>
+      Send Later… <kbd aria-hidden="true">{formatShortcut("Mod+Shift+L")}</kbd>
     </button>
     {onSendAndArchive ? <button type="button" className="compose-send-menu-item" role="menuitem" aria-label="Send & Archive" aria-keyshortcuts="Meta+Shift+Enter Control+Shift+Enter" onClick={onSendAndArchive}>
-      Send &amp; archive <kbd aria-hidden="true">{composeKeyLabel("Mod+Shift+Enter")}</kbd>
+      Send &amp; Archive <kbd aria-hidden="true">{formatShortcut("Mod+Shift+Enter")}</kbd>
     </button> : null}
   </div>;
 }

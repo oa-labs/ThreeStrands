@@ -21,6 +21,7 @@ import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddres
 import { formatMailTimestamp } from "./threadPresentation";
 import { outboxBatchAbility, outboxEditAsNewSource, outboxEntryTime, selectedOutboxEntry, type OutboxEntry } from "./outboxView";
 import { selectionGestureFor, type SelectionGesture } from "./threadSelection";
+import { formatShortcut } from "./shortcutLabels";
 
 /**
  * Plain, honest label for an outbox item's raw state string. Only the states
@@ -491,7 +492,7 @@ export function useCorrespondence(
     focusDraftBody,
     renderComposer,
     overlay: <>
-      {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button className="btn-link" title="Undo Send (z or ⌘/Ctrl+Z outside editing fields)" onClick={() => void undo(pending.id)}>Undo Send</button></div>}
+      {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button className="btn-link" title={`Undo send (z or ${formatShortcut("Mod+z")} outside editing fields)`} onClick={() => void undo(pending.id)}>Undo Send</button></div>}
       {closing && <div className="exit-backdrop"><div className="exit-notice" tabIndex={-1} role="dialog" aria-modal="true" aria-label="Closing ThreeStrands" onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Tab") { e.preventDefault(); e.currentTarget.querySelector("button")?.focus(); } }}><span>Saving drafts and finishing pending delivery before closing… Queued mail remains saved for the next launch.</span>{pending && <button className="btn" onClick={() => void undo(pending.id)}>Undo Queued Send</button>}</div></div>}
       {error && <div className="compose-notice" role="alert">{error}<button className="btn-icon btn-icon-sm" aria-label="Dismiss Compose Error" onClick={() => setError("")}><X size={ICON_SIZE.sm} /></button></div>}
     </>,

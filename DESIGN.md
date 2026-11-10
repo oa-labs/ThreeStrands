@@ -354,6 +354,18 @@ the control, the tooltip describes what it does. Dynamic content (email
 subjects, contact names, user-entered text) is exempt — this convention
 governs application chrome, not sender or user data.
 
+## Shortcut notation
+
+Show a key binding in the reader's own platform notation, formatted by
+`src/shortcutLabels.ts` from the registry form (`"Mod+Shift+l"`), never
+typed out by hand. On a Mac that is the macOS menu form: glyphs in the order
+⌃⌥⇧⌘ with no separators (⇧⌘L). On Windows and Linux it is text joined by
+`+` (Ctrl+Shift+L). A letter is capitalized after a modifier and left as
+typed when pressed alone, because `l` and Shift+L are different bindings.
+Sequences read as steps: "g then i". Help, tooltips, accessible names, and
+composer hints all use this one form. The marketing site, whose readers may
+be on any platform, keeps its cross-platform form (⌘/Ctrl + Shift + l).
+
 ## Typography
 
 Text is sized by role, not by pixel value. `src/styles.css` defines nine size

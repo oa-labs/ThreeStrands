@@ -4,7 +4,7 @@ const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwM
 
 test("creates an imported signature, sets defaults, and preserves its images and snapshot after restart", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "Signatures", exact: true }).click();
   await settings.getByRole("button", { name: "Add Signature" }).click();
@@ -61,7 +61,7 @@ test("creates an imported signature, sets defaults, and preserves its images and
   await expect(composer.getByRole("textbox", { name: "Message Body" })).toHaveText("Hello 😀");
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
   // Updating the library cannot rewrite the draft's snapshot.
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   await settings.getByRole("button", { name: "Signatures", exact: true }).click();
   await settings.getByRole("button", { name: "Edit", exact: true }).click();
   const edit = page.getByRole("dialog", { name: "Edit Signature" });
@@ -85,7 +85,7 @@ test("creates an imported signature, sets defaults, and preserves its images and
 
 test("signature forms contain keyboard focus and suspend letter commands until dismissed", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "Signatures", exact: true }).click();
   const add = settings.getByRole("button", { name: "Add Signature" });
@@ -111,7 +111,7 @@ test("signature forms contain keyboard focus and suspend letter commands until d
 
 test("imports a Gmail signature after review and applies it to new messages", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "Signatures", exact: true }).click();
   const trigger = settings.getByRole("button", { name: "Import from Gmail…" });
@@ -167,7 +167,7 @@ for (const layout of ["table", "flow"] as const) {
       const { mailClient } = await import(modulePath);
       mailClient.listGmailSignatures = async (account: string) => [{ address: account, html: source }];
     }, html);
-    await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+    await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
     const settings = page.getByRole("dialog", { name: "Settings", exact: true });
     await settings.getByRole("button", { name: "Signatures", exact: true }).click();
     await settings.getByRole("button", { name: "Import from Gmail…" }).click();
@@ -221,7 +221,7 @@ for (const layout of ["table", "flow"] as const) {
       const { mailClient } = await import(modulePath);
       mailClient.listGmailSignatures = async (account: string) => [{ address: account, html: source }];
     }, html);
-    await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+    await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
     const settings = page.getByRole("dialog", { name: "Settings", exact: true });
     await settings.getByRole("button", { name: "Signatures", exact: true }).click();
     await settings.getByRole("button", { name: "Import from Gmail…" }).click();
@@ -294,7 +294,7 @@ for (const theme of ["light", "dark"] as const) {
   test(`Jodit formatting and popups stay within the signature modal in ${theme} mode`, async ({ page }) => {
     await page.goto("/");
     await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
-    await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+    await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
     const settings = page.getByRole("dialog", { name: "Settings", exact: true });
     await settings.getByRole("button", { name: "Signatures", exact: true }).click();
     await settings.getByRole("button", { name: "Add Signature" }).click();

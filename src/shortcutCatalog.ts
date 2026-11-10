@@ -1,5 +1,6 @@
 import { commands, shortcutSteps, type Command } from "./commands";
 import { formattingShortcuts } from "./richText";
+import { formatShortcutStep, type ShortcutPlatform } from "./shortcutLabels";
 
 /**
  * The bound shortcuts shown in the in-app Keyboard Shortcuts dialog and on the
@@ -36,12 +37,10 @@ export function shortcutGroups(extraCommands: Command[] = []): ShortcutGroup[] {
   })).filter((group) => group.entries.length > 0);
 }
 
-/** Splits on "+" separators only, so a literal plus key ("Mod++") survives as its own part. */
-export function formatShortcutStep(step: string): string {
-  return step.split(/\+(?=.)/).map((part) => (part === "Mod" ? "⌘/Ctrl" : part)).join(" + ");
-}
-
-/** A shortcut's key presses in order, formatted for display ("g then i" → ["g", "i"]). */
-export function shortcutDisplaySteps(key: string): string[] {
-  return shortcutSteps(key).map(formatShortcutStep);
+/**
+ * A shortcut's key presses in order, formatted for display ("g then i" → ["g", "i"]).
+ * The app shows the reader's own platform; the site passes "any".
+ */
+export function shortcutDisplaySteps(key: string, platform?: ShortcutPlatform): string[] {
+  return shortcutSteps(key).map((step) => formatShortcutStep(step, platform));
 }

@@ -21,7 +21,6 @@ import type { FontFamily } from "./settings";
 import { formatMailTimestamp } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 import { selectedMessageQuote } from "./selectedMessageQuote";
-import { formatShortcutStep } from "./shortcutCatalog";
 import { useTrustReport } from "./SenderSections";
 import type { TrustLink } from "./senderSignals";
 import { TrustBadge, TrustBanner } from "./TrustBadge";
@@ -231,7 +230,7 @@ export const MessageCard = memo(function MessageCard({
               </button>
             </HoverTooltip>
             {senderAccount && onEditAsNew ? (
-              <HoverTooltip label="Edit as new" shortcut={formatShortcutStep("Shift+c")} placement="bottom">
+              <HoverTooltip label="Edit as new" shortcut="Shift+c" placement="bottom">
                 <button
                   type="button"
                   className="btn-icon btn-icon-sm"

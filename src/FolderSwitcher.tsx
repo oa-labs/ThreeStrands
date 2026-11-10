@@ -4,15 +4,16 @@ import type { MailboxKind } from "./commands";
 import { MAILBOX_TITLES } from "./mailboxTitles";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { ICON_SIZE } from "./iconSizes";
+import { formatShortcut } from "./shortcutLabels";
 
 const FOLDER_OPTIONS = [
-  { id: "inbox", label: "Inbox", shortcut: "G I" },
-  { id: "snoozed", label: "Snoozed", shortcut: "G Z" },
-  { id: "allMail", label: "All Mail", shortcut: "G A" },
-  { id: "sent", label: "Sent", shortcut: "G S" },
-  { id: "drafts", label: "Drafts", shortcut: "G D" },
-  { id: "outbox", label: "Outbox", shortcut: "G O" },
-  { id: "trash", label: "Trash", shortcut: "G T" },
+  { id: "inbox", label: "Inbox", shortcut: "g then i" },
+  { id: "snoozed", label: "Snoozed", shortcut: "g then z" },
+  { id: "allMail", label: "All Mail", shortcut: "g then a" },
+  { id: "sent", label: "Sent", shortcut: "g then s" },
+  { id: "drafts", label: "Drafts", shortcut: "g then d" },
+  { id: "outbox", label: "Outbox", shortcut: "g then o" },
+  { id: "trash", label: "Trash", shortcut: "g then t" },
 ] as const;
 
 export type FolderId = (typeof FOLDER_OPTIONS)[number]["id"];
@@ -89,7 +90,7 @@ export function FolderSwitcher({
                 </span>
                 <span className="folder-menu-meta" aria-hidden="true">
                   {count > 0 ? <span>{count}</span> : null}
-                  {option.shortcut ? <kbd>{option.shortcut}</kbd> : null}
+                  {option.shortcut ? <kbd>{formatShortcut(option.shortcut)}</kbd> : null}
                 </span>
               </button>
             );

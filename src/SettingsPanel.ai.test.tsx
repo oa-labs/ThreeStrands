@@ -206,7 +206,7 @@ describe("AI provider feature settings", () => {
 
   it("turns the whole Reading area off together and explains how to enter and leave chat", () => {
     render(<AiProviderSettings />);
-    expect(screen.getByText(/press q or ⌘J to ask, and Escape returns to shortcuts/)).toBeInTheDocument();
+    expect(screen.getByText(/press q or Ctrl\+J to ask, and Escape returns to shortcuts/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "Reading" }));
     expect(readAiFeatures()).toMatchObject({ summarize: false, actionExtraction: false, threadChat: false });
   });

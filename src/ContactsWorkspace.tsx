@@ -21,6 +21,7 @@ import { KEEP_IN_TOUCH_FREQUENCIES, KEEP_IN_TOUCH_GROUPS, UPCOMING_BIRTHDAY_DAYS
 import type { ContactsView } from "./contactsView";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
+import { formatShortcut } from "./shortcutLabels";
 
 export type { ContactsView };
 const byGroupName = (a:ContactGroup,b:ContactGroup) => a.name.localeCompare(b.name,undefined,{sensitivity:"base"})||a.id.localeCompare(b.id);
@@ -212,7 +213,7 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettin
   const listSize=useContactListWidth();
   return <section className="contacts-workspace" aria-label="Contacts">
     {merging?<MergeContactsDialog contacts={profiles.filter(item=>checkedIds.includes(item.id))} onClose={()=>setMerging(false)} onMerged={merged=>{setMerging(false);setProfileRevision(current=>current+1);stopSelecting();setProfile(merged);setDraft(draftFrom(merged));setSelectedId(merged.id);void load(merged);void loadKeepInTouch();void loadGroups();onSaved();}}/>:null}
-    <header className="contacts-header"><div><span className="eyebrow">Address book <span className="eyebrow-account">· {accountId??"All accounts"}</span></span><h1>Contacts</h1></div><div className="contacts-header-actions"><ContactManagement hasUnsavedChanges={unsaved} addresses={profile?.addresses??[]} onChanged={()=>{void load();void loadKeepInTouch();void loadGroups();onSaved();}}/><button type="button" className="btn" title="New Group (Shift+G)" aria-keyshortcuts="Shift+G" onClick={startNewGroup}><Users size={ICON_SIZE.md}/>New Group</button><button type="button" className="btn" title="New Contact (Shift+N)" aria-keyshortcuts="Shift+N" onClick={startNew}><Plus size={ICON_SIZE.md}/>New Contact</button></div></header>
+    <header className="contacts-header"><div><span className="eyebrow">Address book <span className="eyebrow-account">· {accountId??"All accounts"}</span></span><h1>Contacts</h1></div><div className="contacts-header-actions"><ContactManagement hasUnsavedChanges={unsaved} addresses={profile?.addresses??[]} onChanged={()=>{void load();void loadKeepInTouch();void loadGroups();onSaved();}}/><button type="button" className="btn" title={`New group (${formatShortcut("Shift+g")})`} aria-keyshortcuts="Shift+G" onClick={startNewGroup}><Users size={ICON_SIZE.md}/>New Group</button><button type="button" className="btn" title={`New contact (${formatShortcut("Shift+n")})`} aria-keyshortcuts="Shift+N" onClick={startNew}><Plus size={ICON_SIZE.md}/>New Contact</button></div></header>
     <div className="contacts-workspace-body" style={{ "--contact-list-width": `${listSize.width}px` } as CSSProperties}>
       <div className="contacts-list-pane"><PanelResizeHandle {...listSize} label="Resize contact list" controlsId="contact-list-panel" title="Drag to resize the contact list. Use arrow keys to adjust; double-click to reset."/>
       <aside id="contact-list-panel" className="contacts-list-panel" aria-label="Contact list">
@@ -246,7 +247,7 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettin
           {profile?<KeepInTouchSection profile={profile} onChanged={onSectionChanged}/>:null}
           {profile?<ContactGroupsSection groups={profileGroups} busy={busy} onOpenGroup={openGroup} onAdd={()=>setGroupPicker({contactIds:[profile.id],source:"profile"})} onRemove={groupId=>removeFromGroup(groupId,profile.id)}/>:null}
           {profile?.id.startsWith("derived:mac:") ? <p className="settings-hint">From Mac Contacts. Changes saved here create an independent ThreeStrands profile and do not change Apple Contacts.</p> : null}
-          {unsaved?<div className="contact-save-bar" role="region" aria-label="Save changes"><span>{adding?"New contact":"Unsaved changes"}</span><div><button type="button" className="btn" disabled={busy} onClick={discard}>Discard</button><button type="button" className="btn btn-primary" title="Save contact (⌘/Ctrl+Enter)" aria-keyshortcuts="Meta+Enter Control+Enter" disabled={busy} onClick={()=>void save()}><Check size={ICON_SIZE.md}/>Save contact</button></div></div>:null}
+          {unsaved?<div className="contact-save-bar" role="region" aria-label="Save changes"><span>{adding?"New contact":"Unsaved changes"}</span><div><button type="button" className="btn" disabled={busy} onClick={discard}>Discard</button><button type="button" className="btn btn-primary" title={`Save contact (${formatShortcut("Mod+Enter")})`} aria-keyshortcuts="Meta+Enter Control+Enter" disabled={busy} onClick={()=>void save()}><Check size={ICON_SIZE.md}/>Save contact</button></div></div>:null}
           </div></div>
           {showRail?<aside className="contact-context-rail" aria-label="Contact context">
             {aiEnabled?<ContactEnrichmentCard ready={aiReady} onOpenSettings={onOpenAiSettings} suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}

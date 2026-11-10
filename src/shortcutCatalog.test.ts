@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { commands, type Command } from "./commands";
 import { formattingShortcuts } from "./richText";
-import { formatShortcutStep, SHORTCUT_GROUP_ORDER, shortcutDisplaySteps, shortcutGroups, localShortcuts } from "./shortcutCatalog";
+import { SHORTCUT_GROUP_ORDER, shortcutDisplaySteps, shortcutGroups, localShortcuts } from "./shortcutCatalog";
 
 describe("shortcut catalog", () => {
   it("lists every bound command and formatting shortcut once, in group order", () => {
@@ -23,10 +23,11 @@ describe("shortcut catalog", () => {
     expect(navigation.entries.at(-1)).toEqual({ id: "account.1", title: "Switch to Work", keys: ["g then 1"] });
   });
 
-  it("formats modifiers and sequences the way the app displays them", () => {
-    expect(formatShortcutStep("Mod+Shift+Enter")).toBe("⌘/Ctrl + Shift + Enter");
-    expect(formatShortcutStep("Mod++")).toBe("⌘/Ctrl + +");
-    expect(shortcutDisplaySteps("g then i")).toEqual(["g", "i"]);
-    expect(shortcutDisplaySteps("Mod+k")).toEqual(["⌘/Ctrl + k"]);
+  it("splits sequences into steps in the reader's notation, or the site's when asked", () => {
+    expect(shortcutDisplaySteps("g then i", "mac")).toEqual(["g", "i"]);
+    expect(shortcutDisplaySteps("Mod+k", "mac")).toEqual(["⌘K"]);
+    expect(shortcutDisplaySteps("Mod+k", "other")).toEqual(["Ctrl+K"]);
+    expect(shortcutDisplaySteps("Mod+Shift+Enter", "any")).toEqual(["⌘/Ctrl + Shift + Enter"]);
+    expect(shortcutDisplaySteps("Mod++", "any")).toEqual(["⌘/Ctrl + +"]);
   });
 });

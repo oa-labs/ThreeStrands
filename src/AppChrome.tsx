@@ -12,6 +12,7 @@ import { shortcutDisplaySteps, shortcutGroups } from "./shortcutCatalog";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
+import { formatShortcut } from "./shortcutLabels";
 
 export function FiltersButton({
   activeFilters,
@@ -112,7 +113,7 @@ export function HoverTooltip({
   return (
     <span className={`tooltip-anchor tooltip-${placement}`} title={title}>
       {children}
-      <span className="hover-tooltip" role="tooltip"><strong>{tooltipLabel}</strong>{shortcut ? <kbd>{shortcut}</kbd> : null}</span>
+      <span className="hover-tooltip" role="tooltip"><strong>{tooltipLabel}</strong>{shortcut ? <kbd>{formatShortcut(shortcut)}</kbd> : null}</span>
     </span>
   );
 }
@@ -133,7 +134,7 @@ export function ActionButton({
   /** For a button that shows and hides a panel: whether the panel is showing. */
   expanded?: boolean;
 }) {
-  return <button className="btn-icon action-button" aria-label={shortcut ? `${label} (${shortcut})` : label} aria-expanded={expanded} disabled={disabled} onClick={onClick}>{children}<span>{label}</span>{shortcut ? <kbd>{shortcut}</kbd> : null}</button>;
+  return <button className="btn-icon action-button" aria-label={shortcut ? `${label} (${formatShortcut(shortcut)})` : label} aria-expanded={expanded} disabled={disabled} onClick={onClick}>{children}<span>{label}</span>{shortcut ? <kbd>{formatShortcut(shortcut)}</kbd> : null}</button>;
 }
 
 export function CommandPalette({

@@ -3,6 +3,7 @@ import type { CSSProperties, RefObject } from "react";
 import { ActionButton, HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
 import type { MutationTemplate } from "./threadMutations";
+import { formatShortcut } from "./shortcutLabels";
 
 /** Actions for the conversations checked in a thread mailbox's list. */
 export function ConversationBatchToolbar({
@@ -30,7 +31,7 @@ export function ConversationBatchToolbar({
           ref={selectAllRef}
           type="checkbox"
           checked={allVisibleChecked}
-          aria-label="Select All Conversations" title="Select all visible conversations (⌘/Ctrl+A)" aria-keyshortcuts="Meta+A Control+A"
+          aria-label="Select All Conversations" title={`Select all visible conversations (${formatShortcut("Mod+a")})`} aria-keyshortcuts="Meta+A Control+A"
           onChange={(event) => event.target.checked ? onSelectAll() : onClearSelection()}
         />
       </label>

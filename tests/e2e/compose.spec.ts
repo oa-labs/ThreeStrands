@@ -46,7 +46,7 @@ for (const mode of ["new", "reply"] as const) {
 
 test("C creates mail from the selected mailbox after switching accounts", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add Account" }).click();
@@ -73,7 +73,7 @@ async function enableDraftReview(page: import("@playwright/test").Page) {
   });
   await page.evaluate('import("/src/aiSettings.ts").then(({ setAiApiKey }) => setAiApiKey("test-key"))');
   // Closing settings refreshes availability without reopening the draft.
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Close", exact: true }).click();
   await expect(settings).not.toBeVisible();
@@ -843,7 +843,7 @@ test("the composer uses one From picker for a multi-identity account and records
 
 test("Find Times includes selected coworkers and marks their inaccessible calendars", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Calendar Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Connect Calendar", exact: true }).click();
@@ -874,7 +874,7 @@ test("Find Times includes selected coworkers and marks their inaccessible calend
 
 test("availability calendars are independent of visibility and update an open Find Times search", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Calendar Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Connect Calendar", exact: true }).click();
@@ -896,7 +896,7 @@ test("availability calendars are independent of visibility and update an open Fi
   await expect(shown.getByRole("checkbox")).toBeChecked();
   await settings.getByRole("button", { name: "Close", exact: true }).click();
   await expect(times.getByRole("note")).toHaveCount(0);
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   await expect(availability.getByRole("checkbox")).toBeChecked();
 });
 

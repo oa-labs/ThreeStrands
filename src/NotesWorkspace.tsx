@@ -25,6 +25,7 @@ import { useNoteSyntaxMode } from "./noteSyntaxMode";
 import { useNoteEditor } from "./useNoteEditor";
 import { replicatedSyncConflicts, replicatedSyncDeviceRoster, type DeviceRosterEntry, type FrontierConflict } from "./replicatedSync";
 import type { NotesRequest } from "./useWorkspaces";
+import { formatShortcut } from "./shortcutLabels";
 
 /** Most notes the Recent list shows. */
 const RECENT_LIMIT = 200;
@@ -328,7 +329,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     <header className="notes-header">
       <h1>Notes</h1>
       <div className="notes-header-actions">
-        <button type="button" className="btn" title="New note (Shift+N)" aria-keyshortcuts="Shift+N" onClick={() => setCreating(true)}><Plus size={ICON_SIZE.md} aria-hidden="true" />New Note</button>
+        <button type="button" className="btn" title={`New note (${formatShortcut("Shift+n")})`} aria-keyshortcuts="Shift+N" onClick={() => setCreating(true)}><Plus size={ICON_SIZE.md} aria-hidden="true" />New Note</button>
       </div>
     </header>
     <div className="notes-workspace-body">

@@ -87,7 +87,7 @@ describe("App chrome", () => {
 
     fireEvent.change(input, { target: { value: "command palette" } });
     const palette = screen.getByRole("button", { name: /Command Palette/ });
-    expect(within(palette).getByText("⌘/Ctrl + k").tagName).toBe("KBD");
+    expect(within(palette).getByText("Ctrl+K").tagName).toBe("KBD");
     expect(palette).not.toHaveTextContent("Mod");
 
     fireEvent.change(input, { target: { value: "go to inbox" } });
@@ -98,9 +98,9 @@ describe("App chrome", () => {
 
     fireEvent.change(input, { target: { value: "font size" } });
     const increase = screen.getByRole("button", { name: /Increase Font Size/ });
-    expect(within(increase).getByText("⌘/Ctrl + =")).toBeInTheDocument();
-    expect(within(increase).getByText("⌘/Ctrl + +")).toBeInTheDocument();
-    expect(within(screen.getByRole("button", { name: /Decrease Font Size/ })).getByText("⌘/Ctrl + -")).toBeInTheDocument();
+    expect(within(increase).getByText("Ctrl+=")).toBeInTheDocument();
+    expect(within(increase).getByText("Ctrl++")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: /Decrease Font Size/ })).getByText("Ctrl+-")).toBeInTheDocument();
   });
 
   it("shows a shortcut that repeats a key as two distinct steps", () => {
@@ -127,7 +127,7 @@ describe("App chrome", () => {
     view.rerender(<ShortcutHelp onClose={close} />);
     const help = screen.getByRole("dialog", { name: "Keyboard Shortcuts" });
     const paletteRow = within(help).getByText("Command Palette", { selector: "dt" }).parentElement!;
-    expect(within(paletteRow).getByText("⌘/Ctrl + k").tagName).toBe("KBD");
+    expect(within(paletteRow).getByText("Ctrl+K").tagName).toBe("KBD");
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(close).toHaveBeenCalledTimes(1);

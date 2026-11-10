@@ -298,7 +298,7 @@ test("keeps a sender contact card open while moving to its copy button", async (
 test("confirms unsubscribe with Cmd/Ctrl+U when the message advertises one-click support", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Unsubscribe (⌘U)" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Unsubscribe \((⌘|Ctrl\+)U\)$/ })).toBeVisible();
 
   await page.keyboard.press("ControlOrMeta+u");
   const dialog = page.getByRole("dialog", { name: "Unsubscribe" });
@@ -326,9 +326,9 @@ test("searches and opens the command palette", async ({ page }) => {
   await page.keyboard.press("ControlOrMeta+k");
   const palette = page.getByRole("dialog", { name: "Command Palette" });
   await expect(palette).toBeVisible();
-  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText("⌘/Ctrl + =");
-  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText("⌘/Ctrl + +");
-  await expect(palette.getByRole("button", { name: /Decrease Font Size/ })).toContainText("⌘/Ctrl + -");
+  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText(/⌘=|Ctrl\+=/);
+  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText(/⌘\+|Ctrl\+\+/);
+  await expect(palette.getByRole("button", { name: /Decrease Font Size/ })).toContainText(/⌘-|Ctrl\+-/);
 });
 
 test("dismisses search with Escape", async ({ page }) => {
@@ -403,7 +403,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
   // Connect a second account from Settings → Accounts.
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
@@ -494,7 +494,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await expect(page.locator(".thread-row .account-dot").first()).toBeVisible();
 
   // Removing the second account keeps the first account identifiable and its inbox unaffected.
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   const cardSecond = settings.locator("li", { hasText: "demo-2@example.com" });
@@ -513,7 +513,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
 
 test("saves an independent sender name for each account", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add Account" }).click();
@@ -533,7 +533,7 @@ test("saves an independent sender name for each account", async ({ page }) => {
   await expect(personalName).toHaveValue("Joel Reed");
   await expect(workName).toHaveValue("Joel at Work");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await expect(settings.getByRole("textbox", { name: "Sender name for demo@example.com" })).toHaveValue("Joel Reed");
   await expect(settings.getByRole("textbox", { name: "Sender name for demo-2@example.com" })).toHaveValue("Joel at Work");
@@ -542,7 +542,7 @@ test("saves an independent sender name for each account", async ({ page }) => {
 test("reorders navbar accounts by dragging their icons", async ({ page }) => {
   await page.goto("/");
 
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add Account" }).click();
@@ -568,7 +568,7 @@ test("reorders navbar accounts by dragging their icons", async ({ page }) => {
 
 test("the account color picker keeps the last color picked, even while dragging rapidly", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   const swatch = settings.locator('input[aria-label="Color for demo@example.com"]');
@@ -598,7 +598,7 @@ test("the account color picker keeps the last color picked, even while dragging 
   // intermediate flicker, must be what was actually saved.
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await expect(settings.locator('input[aria-label="Color for demo@example.com"]')).toHaveValue("#abcdef");
@@ -609,7 +609,7 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   const cardOnly = settings.locator("li", { hasText: "demo@example.com" });
@@ -675,7 +675,7 @@ test("marks an unread conversation read after the configured delay", async ({ pa
   const welcome = threadOptions(page).filter({ hasText: "Welcome to ThreeStrands" });
   await expect(welcome.locator(".unread-dot")).toHaveClass(/visible/);
 
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Reading & Triage", exact: true }).click();
   await settings.getByRole("spinbutton", { name: "Mark Read Delay in Seconds" }).fill("1");
@@ -692,7 +692,7 @@ test("leaves an opened conversation unread when mark read after opening is Never
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Reading & Triage", exact: true }).click();
   await settings.getByRole("spinbutton", { name: "Mark Read Delay in Seconds" }).fill("1");
@@ -719,7 +719,7 @@ test("loads message images according to the privacy setting", async ({ page }) =
   await expect(messageImage).not.toHaveAttribute("src");
   await expect(page.getByText("Images are blocked in this message.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Privacy", exact: true }).click();
   await settings.getByRole("checkbox", { name: "Load Remote Images Automatically" }).check();
@@ -733,7 +733,7 @@ test("keeps sync diagnostics and crash reports together in Settings", async ({ p
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Diagnostics", exact: true }).click();
 
@@ -749,7 +749,7 @@ test("Reading & Triage can mark archives read before the timer and Undo restores
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Mark Read (u)" })).toBeVisible();
-  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await page.getByRole("button", { name: /^Settings \((⌘|Ctrl\+),\)$/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Reading & Triage" }).click();
   const option = settings.getByRole("checkbox", { name: "Mark Read When Archiving" });
@@ -809,15 +809,15 @@ test("shows folder labels and shortcuts in the header menu", async ({ page }) =>
   const trigger = page.getByRole("button", { name: "Choose folder, current folder Inbox" });
   await trigger.click();
   const folders = page.getByRole("group", { name: "Folders" });
-  await expect(folders.getByRole("button", { name: "Inbox" }).locator("kbd")).toHaveText("G I");
-  await expect(folders.getByRole("button", { name: "Drafts" }).locator("kbd")).toHaveText("G D");
-  await expect(folders.getByRole("button", { name: "Outbox" }).locator("kbd")).toHaveText("G O");
+  await expect(folders.getByRole("button", { name: "Inbox" }).locator("kbd")).toHaveText("g then i");
+  await expect(folders.getByRole("button", { name: "Drafts" }).locator("kbd")).toHaveText("g then d");
+  await expect(folders.getByRole("button", { name: "Outbox" }).locator("kbd")).toHaveText("g then o");
   await trigger.click();
 
   await page.getByRole("button", { name: "Labels (l)" }).hover();
   const labelsTooltip = page.getByRole("tooltip").filter({ hasText: "Manage Labels" });
   await expect(labelsTooltip).toBeVisible();
-  await expect(labelsTooltip.locator("kbd")).toHaveText("L");
+  await expect(labelsTooltip.locator("kbd")).toHaveText("l");
 
 });
 
@@ -1074,7 +1074,7 @@ test("a Brief's offered slots reach calendar checks and a reply without a meetin
       {sourceText:"2) Wednesday, November 4, 2099 at 7 PM for one hour",localStart:"2099-11-04T19:00",durationMinutes:60,timeZone:"America/New_York"},
     ]}});
   });
-  await page.getByRole("button",{name:"Settings (⌘,)"}).click();
+  await page.getByRole("button",{name:/^Settings \((⌘|Ctrl\+),\)$/}).click();
   const settings = page.getByRole("dialog",{name:"Settings"});
   await settings.getByRole("button",{name:"Calendar Accounts",exact:true}).click();
   await settings.getByRole("button",{name:"Connect Calendar",exact:true}).click();
