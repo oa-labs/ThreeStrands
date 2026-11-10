@@ -11,6 +11,7 @@ import { formatNoteDate } from "./noteDates";
 import { noteTitleKey as noteTitleKeyOf } from "./noteWikiLinks";
 import type { ContactProfile, Note } from "./domain";
 import { todayTarget, writeLastNoteTarget } from "./noteDrafts";
+import { markdownEntityLink } from "./noteEntities";
 import { replicatedSyncConflicts, replicatedSyncDeviceRoster, replicatedSyncResolveConflict, type FrontierConflict } from "./replicatedSync";
 
 // The editor has its own tests; here a text box stands in for it.
@@ -95,6 +96,8 @@ describe("Notes workspace", () => {
     fireEvent.keyDown(firstRow, { key: "k" });
     expect(secondRow).toHaveFocus();
 
+    // "Saved" confirms a save; it doesn't greet every note opened.
+    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
     fireEvent.keyDown(secondRow, { key: "Enter" });
     const body = screen.getByRole("textbox", { name: "Note text" });
     await waitFor(() => expect(body).toHaveFocus());
@@ -108,6 +111,27 @@ describe("Notes workspace", () => {
     expect(secondRow).toHaveFocus();
     await waitFor(async () => expect((await mailClient.getNote(second.id))?.body).toBe("second body, edited"));
     await waitFor(() => expect(screen.getByText("Saved")).toHaveAttribute("role", "status"));
+  });
+
+  it("says Saved after a save, then clears it", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Quiet"), "");
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    const body = await screen.findByRole("textbox", { name: "Note text" });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+    // The clock moves only when the test moves it, so a busy machine can't clear "Saved" early.
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(body, { target: { value: "typed" } });
+      fireEvent.blur(body);
+      await act(() => vi.advanceTimersByTimeAsync(0));
+      expect(screen.getByText("Saved")).toHaveAttribute("role", "status");
+      await act(() => vi.advanceTimersByTimeAsync(1999));
+      expect(screen.getByText("Saved")).toBeInTheDocument();
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("creates a note from the New Note dialog and opens it for writing", async () => {
@@ -311,6 +335,7 @@ describe("Notes workspace", () => {
       expect(screen.getByRole("textbox", { name: "Note text" })).toHaveAttribute("readonly");
       expect(screen.getByRole("textbox", { name: "Title" })).toHaveAttribute("readonly");
       expect(screen.queryByRole("button", { name: "Move to Trash" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Link to…" })).not.toBeInTheDocument();
 
       fireEvent.click(within(banner).getByRole("button", { name: "Restore" }));
       await waitFor(() => expect(screen.queryByRole("region", { name: "Note in Trash" })).not.toBeInTheDocument());
@@ -513,6 +538,20 @@ describe("Notes workspace", () => {
       expect(onOpenContact).toHaveBeenCalledWith("c-ada");
     });
 
+    it("lists what the note links to, and adds a link from the Links section or the command", async () => {
+      const href = markdownEntityLink("Quarterly plan", { version: 1, kind: "conversation", id: "thread-q", account: "acct-1" });
+      const note = await mailClient.createNote(uniqueTitle("Linked"), `See ${href}`);
+      await openNote(note.id);
+      const links = within(await rail().findByRole("region", { name: /Links/ }));
+      expect(await links.findByRole("button", { name: /Quarterly plan/ })).toBeInTheDocument();
+      fireEvent.click(links.getByRole("button", { name: "Link to…" }));
+      const picker = await screen.findByRole("dialog", { name: "Link to…" });
+      fireEvent.keyDown(picker, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Link to…" })).not.toBeInTheDocument());
+      act(() => runWorkspaceCommand("notes.link"));
+      expect(await screen.findByRole("dialog", { name: "Link to…" })).toBeInTheDocument();
+    });
+
     it("saves a renamed title when the field is left and says what happened to links", async () => {
       const target = await mailClient.createNote(uniqueTitle("Before"), "");
       const linking = await mailClient.createNote(uniqueTitle("Mentions"), `See [[${target.title}]]`);
@@ -521,7 +560,7 @@ describe("Notes workspace", () => {
       const renamed = uniqueTitle("After");
       fireEvent.change(title, { target: { value: renamed } });
       fireEvent.blur(title);
-      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Updated links in 1 note."));
+      expect(await screen.findByText("Updated links in 1 note.")).toHaveAttribute("role", "status");
       expect((await mailClient.getNote(linking.id))?.body).toBe(`See [[${renamed}]]`);
     });
 

@@ -4,7 +4,7 @@ import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./not
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowLeft, FilePlus, GitCompareArrows, NotebookText, Plus, RotateCcw, Trash2, UserRound } from "lucide-react";
+import { ArrowLeft, CalendarDays, Circle, CircleCheck, FilePlus, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Square, Trash2, UserRound } from "lucide-react";
 import type { ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSummary } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -42,6 +42,8 @@ const PEOPLE_LOOKUPS = 30;
 /** Most notes a search lists. */
 const SEARCH_LIMIT = 50;
 const SEARCH_DELAY_MS = 150;
+/** How long "Saved" stays after a save before it clears. */
+const SAVED_SHOWN_MS = 2000;
 const MATCH_START = "\u0001";
 const MATCH_END = "\u0002";
 
@@ -56,6 +58,9 @@ function MatchSnippet({ text }: { text: string }) {
     return <span key={index}><mark>{match}</mark>{rest.join(MATCH_END)}</span>;
   })}</>;
 }
+
+/** Each linked kind's glyph in the Links section. */
+const LINK_ICON = { conversation: <Mail size={ICON_SIZE.sm} />, task: <CircleCheck size={ICON_SIZE.sm} />, event: <CalendarDays size={ICON_SIZE.sm} /> } as const;
 
 type Row = { key: string; target: NoteTarget; title: string; detail: ReactNode; date?: string };
 
@@ -115,6 +120,14 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const [linkPicker, setLinkPicker] = useState(false);
   const [people, setPeople] = useState<ContactProfile[]>([]);
   const [relinkNotice, setRelinkNotice] = useState<string | null>(null);
+  /** The note last saved here, so "Saved" confirms typing rather than greeting every note opened. */
+  const [lastSave, setLastSave] = useState<{ noteId: string } | null>(null);
+  // Each save is a new object, so a later save restarts the wait.
+  useEffect(() => {
+    if (!lastSave) return;
+    const timer = window.setTimeout(() => setLastSave(null), SAVED_SHOWN_MS);
+    return () => window.clearTimeout(timer);
+  }, [lastSave]);
   const rows = useRef(new Map<string, HTMLButtonElement>());
   const search = useRef<HTMLInputElement>(null);
   const titleInput = useRef<HTMLInputElement>(null);
@@ -160,6 +173,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const openNoteId = useRef<string | null>(null);
   const onSaved = useCallback((note: Note, relink?: NoteRelink) => {
     showSaved(note);
+    setLastSave({ noteId: note.id });
     loadLinks(openNoteId.current);
     if (!relink) return;
     setRelinkNotice(relinkMessage(relink));
@@ -332,17 +346,20 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     else select(todayTarget());
   });
 
+  const stale = editor.saveState.kind === "stale" ? editor.saveState : null;
+  const daily = target.kind === "daily";
+  const readOnly = Boolean(stale) || editor.loading || inTrash || noteConflicts.length > 0;
   useWorkspaceCommands({
     "notes.new": () => setCreating(true),
     "notes.search": () => requestAnimationFrame(() => search.current?.focus()),
     "notes.trash": () => void moveToTrash(),
+    "notes.link": () => { if (!readOnly) setLinkPicker(true); },
   });
 
-  const stale = editor.saveState.kind === "stale" ? editor.saveState : null;
-  const daily = target.kind === "daily";
-  const readOnly = Boolean(stale) || editor.loading || inTrash || noteConflicts.length > 0;
   const entityItemsCurrent = entityDocument?.noteId === noteId && entityDocument?.version === editor.note?.updatedAt;
-  const status = editor.loading ? "Loading note…" : editor.saveState.kind === "saving" ? "Saving…" : editor.dirty ? "Not saved yet" : editor.note ? "Saved" : "";
+  const saved = !editor.loading && editor.saveState.kind !== "saving" && !editor.dirty && Boolean(editor.note) && lastSave?.noteId === editor.note?.id;
+  const status = editor.loading ? "Loading note…" : editor.saveState.kind === "saving" ? "Saving…" : editor.dirty ? "Not saved yet" : saved ? "Saved" : "";
+  const entityLinks = (entityDocument?.noteId === noteId ? entityDocument.links : []).filter((link, index, all) => all.findIndex((other) => other.href === link.href) === index);
   const editorTitle = daily ? formatNoteDate(target.date) : editor.text.title;
 
   return <section className="notes-workspace" aria-label="Notes" onKeyDown={(event) => {
@@ -451,26 +468,27 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
                     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); returnToList(); }
                     if (event.key === "Enter") { event.preventDefault(); body.current?.focus(); }
                   }} />}
+              {editor.saveState.kind === "error" ? null : <p className="notes-save-status" role="status">{status}</p>}
               {editor.note && !inTrash ? <button type="button" className="btn btn-icon" title="Move to Trash (#)" aria-label="Move to Trash" aria-keyshortcuts="#" disabled={busy || Boolean(stale)} onClick={() => void moveToTrash()}><Trash2 size={ICON_SIZE.lg} aria-hidden="true" /></button> : null}
             </div>
-            {!readOnly ? <div className="notes-header-actions"><button type="button" className="btn btn-sm" onClick={() => setLinkPicker(true)}>Link to…</button></div> : null}
+            {relinkNotice ? <p className="notes-relink-notice" role="status">{relinkNotice}</p> : null}
             <NoteEditor ref={body} noteKey={selectedKey} value={editor.text.body} label="Note text" readOnly={readOnly} mode={syntaxMode} files={files}
               placeholder={daily ? "Write about the day" : "Write in Markdown"}
               onChange={(value) => editor.edit({ body: value })} onLeave={returnToList}
               onOpenEntity={(href) => void act(async () => { if (!parseNoteReference(href)) throw new Error("Invalid note reference"); await editor.flush(); if (editor.unsaved()) throw new Error("Save or resolve this note before opening its link."); await onOpenEntity?.(href); })}
               onSearchLinks={searchLinks} onOpenLink={(title) => void openLink(title)} />
-            {editor.saveState.kind === "error" ? <p className="form-error" role="alert">{editor.saveState.message}</p>
-              : <p className="notes-save-status" role="status">{status}{relinkNotice ? ` ${relinkNotice}` : ""}</p>}
+            {editor.saveState.kind === "error" ? <p className="form-error" role="alert">{editor.saveState.message}</p> : null}
           </>}
       </div>
       <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow}>
         <ContextSectionHeader title="Note details" />
         {entityDocument?.warning ? <p role="alert" className="form-error">{entityDocument.warning}</p> : null}
-        {(["conversation", "task", "event"] as const).map((kind) => {
-          const rows = (entityDocument?.noteId === noteId ? entityDocument.links : []).filter((link, index, all) => link.reference.kind === kind && all.findIndex((other) => other.href === link.href) === index) ?? [];
-          return rows.length ? <ContextSection key={kind} id={`note-${kind}-links`} title={{ conversation: "Conversations", task: "Tasks", event: "Events" }[kind]} count={rows.length} rows={rows.map((link) => <ContextRow key={link.href} title={link.label} detail={link.reference.account} onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null;
-        })}
-        {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <ContextSection id="note-checklist-tasks" title="Checklists and tasks" count={entityDocument.items.length} rows={entityDocument.items.map((item) => <ContextRow key={item.id} title={item.title} detail={item.task ? "Task" : "Checklist"} control={<input type="checkbox" className={item.task ? "note-round-checkbox" : undefined} checked={item.checked} disabled={readOnly || busy || !entityItemsCurrent} aria-label={`${item.task ? "Task" : "Checklist"}: ${item.title}`} onChange={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { checked: !item.checked }); })} />} actions={[<button key="convert" className="btn-link" disabled={readOnly || busy || !entityItemsCurrent} onClick={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { task: !item.task }); })}>Convert to {item.task ? "Checklist" : "Task"}</button>]} />)} /> : null}
+        {entityLinks.length || !readOnly ? <ContextSection id="note-links" title="Links" count={entityLinks.length}
+          actions={!readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
+          note={entityLinks.length ? null : "Link a conversation, task, or event."}
+          rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind]} title={link.label} detail={link.reference.account}
+            onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null}
+        {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <ContextSection id="note-checklist-tasks" title="Checklists and tasks" count={entityDocument.items.length} rows={entityDocument.items.map((item) => <ContextRow key={item.id} title={item.title} control={<input type="checkbox" className={item.task ? "note-round-checkbox" : undefined} checked={item.checked} disabled={readOnly || busy || !entityItemsCurrent} aria-label={`${item.task ? "Task" : "Checklist"}: ${item.title}`} onChange={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { checked: !item.checked }); })} />} trailing={<button type="button" className="btn-icon btn-icon-sm" aria-label={`Convert to ${item.task ? "Checklist" : "Task"}`} title={`Convert to ${item.task ? "Checklist" : "Task"}`} disabled={readOnly || busy || !entityItemsCurrent} onClick={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { task: !item.task }); })}>{item.task ? <Square size={ICON_SIZE.sm} aria-hidden="true" /> : <Circle size={ICON_SIZE.sm} aria-hidden="true" />}</button>} />)} /> : null}
         {editor.note ? <dl className="notes-details">
           <div><dt>Created</dt><dd>{formatTime(editor.note.createdAt)}</dd></div>
           <div><dt>Changed</dt><dd>{formatTime(editor.note.updatedAt)}</dd></div>

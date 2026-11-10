@@ -3740,7 +3740,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .notes-list-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-secondary); }
 .notes-list-detail mark { color: var(--text); background: color-mix(in srgb, var(--accent) 30%, transparent); border-radius: var(--radius-xs); }
 .notes-list-pane > .context-status { padding: var(--space-3) var(--list-row-inset); }
-.notes-editor-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) var(--pane-inset) var(--pane-end-padding); overflow: auto; }
+/* The note body keeps the editor's gutter for its block handles; the heading lines up with the text inside it. */
+.notes-editor-pane { --note-gutter: 3.5rem; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) var(--pane-inset) var(--pane-end-padding); overflow: auto; }
 .notes-editor-title { margin: 0; font-size: var(--text-pane-title); font-weight: var(--weight-semibold); line-height: var(--leading-tight); }
 input.notes-editor-title { box-sizing: border-box; width: 100%; height: auto; padding: 0; border: 0; background: transparent; color: var(--text); font-family: inherit; }
 input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-xs); }
@@ -3773,7 +3774,11 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .note-editor-body [popover]:is(prosekit-autocomplete-positioner, prosekit-menu-positioner, prosekit-popover-positioner, prosekit-inline-popover-positioner, prosekit-tooltip-positioner, prosekit-block-handle-positioner) { border: 0; padding: 0; }
 .note-editor-body [popover][data-state="closed"]:is(prosekit-autocomplete-positioner, prosekit-menu-positioner, prosekit-popover-positioner, prosekit-inline-popover-positioner, prosekit-tooltip-positioner, prosekit-block-handle-positioner) { display: none; }
 .note-editor-surface .ProseMirror[contenteditable="false"], input.notes-editor-title[readonly] { color: var(--muted); }
-.notes-editor-heading { display: flex; align-items: center; gap: var(--space-2); }
+.notes-editor-heading { display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--note-gutter); }
+.note-editor-surface { --meowdown-gutter: var(--note-gutter); }
+/* A checked item stays readable; only its checkbox shows it's done. */
+.note-editor-surface .ProseMirror .prosemirror-flat-list[data-list-kind="task"][data-list-checked] { opacity: 1; }
+.notes-relink-notice { margin: 0; padding-inline: var(--note-gutter); color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); }
 .notes-editor-heading .notes-editor-title { flex: 1; min-width: 0; }
 .notes-list-heading { margin: 0 0 var(--space-2); padding-inline: var(--list-row-inset); }
 .notes-list-conflict { flex: none; display: inline-flex; color: var(--warning); }
@@ -3792,13 +3797,16 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .notes-diff-added { background: color-mix(in srgb, var(--success) 12%, transparent); }
 .sync-note-conflict { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; }
 .sync-note-conflict p { margin: 0; }
-.notes-save-status { margin: 0; min-height: calc(var(--text-meta) * var(--leading-normal)); color: var(--muted); font-size: var(--text-meta); }
+.notes-save-status { flex: none; margin: 0; color: var(--muted); font-size: var(--text-meta); white-space: nowrap; }
+
 .notes-stale { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--warning); border-radius: var(--radius-md); background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
 .notes-stale p { margin: 0; font-size: var(--text-secondary); line-height: var(--leading-normal); }
 .notes-stale-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .notes-editor-pane > .context-status, .notes-editor-pane > .form-error { margin: 0; }
 .notes-workspace .workspace-context-rail { font-size: var(--text-body); line-height: var(--leading-normal); }
-.notes-details { display: grid; gap: var(--space-2); margin: 0 0 var(--space-3); padding-left: calc(var(--context-row-inset) + var(--context-glyph-column)); font-size: var(--text-secondary); }
+.notes-details { display: grid; gap: var(--space-2); margin: 0; padding: var(--space-3) 0 var(--space-3) calc(var(--context-row-inset) + var(--context-glyph-column)); border-bottom: 1px solid var(--border); font-size: var(--text-secondary); }
+.workspace-context-rail > .context-section-header + .notes-details { padding-top: 0; }
+.workspace-context-rail > .notes-details:last-child { border-bottom: 0; }
 .notes-details > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); align-items: baseline; gap: var(--space-2); }
 .notes-details dt { color: var(--muted); font-size: var(--text-meta); }
 .notes-details dd { min-width: 0; margin: 0; }

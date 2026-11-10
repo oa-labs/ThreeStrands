@@ -381,7 +381,7 @@ describe("command registry", () => {
     expect(today.enabled({ ...context, composerActive: true })).toBe(false);
   });
 
-  it.each([["notes.new", ["Shift+n"]], ["notes.trash", ["#"]]])("offers %s only in Notes, outside text fields", (id, keys) => {
+  it.each([["notes.new", ["Shift+n"]], ["notes.trash", ["#"]], ["notes.link", []]])("offers %s only in Notes, outside text fields", (id, keys) => {
     const command = commands.find((item) => item.id === id)!;
     expect(command.keys).toEqual(keys);
     expect(command.allowInEditable).toBe(false);

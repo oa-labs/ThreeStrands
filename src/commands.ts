@@ -217,6 +217,7 @@ export const commands: Command[] = [
   workspaceCommand("agents.new", "New Delegated Task", ["Shift+n"], "agents"),
   workspaceCommand("notes.new", "New Note", ["Shift+n"], "notes"),
   workspaceCommand("notes.trash", "Move Note to Trash", ["#"], "notes"),
+  workspaceCommand("notes.link", "Link to Conversation, Task, or Event…", [], "notes"),
   workspaceCommand("files.open", "Open Selected File", ["o"], "files"),
   workspaceCommand("files.save", "Save Selected File As…", ["Mod+Shift+s"], "files"),
   workspaceCommand("files.star", "Toggle File Star", ["s"], "files"),
