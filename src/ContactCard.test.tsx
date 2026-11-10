@@ -28,13 +28,13 @@ describe("ContactCard",()=>{
   it("toggles favorite from a heart button and shows an error when saving fails",async()=>{
     vi.mocked(mailClient.saveContactProfile).mockRejectedValueOnce(new Error("Address belongs to another contact")).mockResolvedValueOnce({...bob,favorite:true});
     render(<Host initial={bob}/>);
-    const heart=screen.getByRole("button",{name:"Add favorite"});
+    const heart=screen.getByRole("button",{name:"Add Favorite"});
     expect(heart).toHaveAttribute("aria-pressed","false");
-    expect(heart).not.toHaveTextContent("Add favorite");
+    expect(heart).not.toHaveTextContent("Add Favorite");
     fireEvent.click(heart);
     expect(await screen.findByRole("alert")).toHaveTextContent("Address belongs to another contact");
-    fireEvent.click(screen.getByRole("button",{name:"Add favorite"}));
-    expect(await screen.findByRole("button",{name:"Remove favorite"})).toHaveAttribute("aria-pressed","true");
+    fireEvent.click(screen.getByRole("button",{name:"Add Favorite"}));
+    expect(await screen.findByRole("button",{name:"Remove Favorite"})).toHaveAttribute("aria-pressed","true");
     expect(mailClient.saveContactProfile).toHaveBeenLastCalledWith({...bob,favorite:true});
   });
 
@@ -62,16 +62,16 @@ describe("ContactCard",()=>{
     render(<Host initial={null}/>);
     const heading=screen.getByRole("heading",{name:"Bob Lee"});
     expect(within(heading).queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button",{name:"Add favorite"})).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button",{name:"Save to contacts"}));
+    expect(screen.queryByRole("button",{name:"Add Favorite"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Save to Contacts"}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:null,displayName:"Bob Lee",addresses:["bob@example.com"]})));
-    expect(await screen.findByRole("button",{name:"Add favorite"})).toBeInTheDocument();
+    expect(await screen.findByRole("button",{name:"Add Favorite"})).toBeInTheDocument();
   });
 
   it("holds back save and favorite until the lookup finishes",()=>{
     render(<ContactCard email="bob@example.com" fallbackName="Bob Lee" profile={null} loaded={false} facts={[]} onOpenContact={vi.fn()} onProfileSaved={vi.fn()} onError={vi.fn()}/>);
-    expect(screen.queryByRole("button",{name:"Save to contacts"})).not.toBeInTheDocument();
-    expect(screen.queryByRole("button",{name:"Add favorite"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Save to Contacts"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Add Favorite"})).not.toBeInTheDocument();
   });
 
   it("shows the contact URL as a text hyperlink after the address and leaves out the about text",()=>{

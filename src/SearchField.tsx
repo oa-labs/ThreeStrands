@@ -235,7 +235,7 @@ export function SearchField({
                 type="button"
                 className={`btn-icon btn-icon-sm search-toggle ${inboxOnly ? "active" : ""}`}
                 aria-pressed={inboxOnly}
-                aria-label="Search only the Inbox"
+                aria-label="Search Only the Inbox"
                 title={inboxOnly ? "Searching only the Inbox. Click to search all mail." : "Searching all mail. Click to search only the Inbox."}
                 onClick={onToggleInboxOnly}
               >

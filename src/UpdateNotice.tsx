@@ -65,7 +65,7 @@ export function UpdateNotice() {
   }
 
   const dismiss = (
-    <button className="btn-icon btn-icon-sm" aria-label="Dismiss update" onClick={() => { setDismissedVersion(update.version); setInstallState("idle"); }}>
+    <button className="btn-icon btn-icon-sm" aria-label="Dismiss Update" onClick={() => { setDismissedVersion(update.version); setInstallState("idle"); }}>
       <X size={ICON_SIZE.sm} />
     </button>
   );

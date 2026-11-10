@@ -415,7 +415,7 @@ describe("MessageCard", () => {
       expect(await within(card).findByText("Analyst · Engines Ltd")).toBeInTheDocument();
       expect(within(card).getByText(/7 emails since/)).toBeInTheDocument();
       expect(within(card).getByRole("button", { name: "Copy email address" })).toBeInTheDocument();
-      expect(within(card).getByRole("button", { name: "Add favorite" })).toBeInTheDocument();
+      expect(within(card).getByRole("button", { name: "Add Favorite" })).toBeInTheDocument();
       // The card names the person without adding a heading to the reader.
       expect(within(card).queryByRole("heading")).not.toBeInTheDocument();
 

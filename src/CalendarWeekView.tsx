@@ -191,7 +191,7 @@ function CalendarList({
       <header>
         <CalendarDays size={ICON_SIZE.lg} />
         <h3>Calendars</h3>
-        <HoverTooltip title="Add calendar account"><button type="button" className="btn-icon btn-icon-sm" aria-label="Add calendar account" onClick={onAdd}><Plus size={ICON_SIZE.sm} /></button></HoverTooltip>
+        <HoverTooltip title="Add calendar account"><button type="button" className="btn-icon btn-icon-sm" aria-label="Add Calendar Account" onClick={onAdd}><Plus size={ICON_SIZE.sm} /></button></HoverTooltip>
       </header>
       {accounts.length === 0 ? <p className="calendar-list-empty">No calendar accounts connected.</p> : null}
       {hidden.length > 0 ? (
@@ -408,7 +408,7 @@ export function CalendarWeekView({
   const bookTask = async (task: ThreadTask, day: Date, startMinutes: number) => {
     const calendar = defaultEventCalendar(writableCalendars(accounts, calendars), task.accountId);
     if (!calendar) {
-      onNotice?.({ message: "Connect a Google Calendar account with event access to book time for tasks." });
+      onNotice?.({ message: "Connect a Google Calendar account with event access to book time for tasks" });
       return;
     }
     try {
@@ -559,8 +559,8 @@ export function CalendarWeekView({
             <button type="button" className="btn" aria-expanded={navigationOpen} aria-label={showsHiddenCount ? `Calendars, ${visibility.shown} of ${visibility.total} accounts shown` : undefined} onClick={() => setNavigationOpen((value) => !value)}><CalendarDays size={ICON_SIZE.sm} />Calendars{showsHiddenCount ? <span className="calendar-shown-count" aria-hidden="true">{visibility.shown}/{visibility.total}</span> : null}</button>
             <button type="button" className="btn" title="Today (t)" aria-keyshortcuts="t" onClick={goToToday}>Today</button>
             <div className="calendar-week-nav">
-              <HoverTooltip title={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`}><button type="button" className="btn-icon" aria-label={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`} onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
-              <HoverTooltip title={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`}><button type="button" className="btn-icon" aria-label={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`} onClick={() => moveWeek(1)}><ChevronRight size={ICON_SIZE.lg} /></button></HoverTooltip>
+              <HoverTooltip title={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`}><button type="button" className="btn-icon" aria-label={`Previous ${mode === "week" || mode === "workweek" ? "Week" : "Range"} (-)`} onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
+              <HoverTooltip title={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`}><button type="button" className="btn-icon" aria-label={`Next ${mode === "week" || mode === "workweek" ? "Week" : "Range"} (=)`} onClick={() => moveWeek(1)}><ChevronRight size={ICON_SIZE.lg} /></button></HoverTooltip>
             </div>
             <button type="button" className="btn" title={`New event (b, ${formatShortcut("Shift+n")})`} aria-keyshortcuts="b Shift+N" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event…</button>
           </div>

@@ -48,7 +48,7 @@ it("follows a new message's recipients in the context panel instead of the conve
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
   expect(screen.getByRole("complementary", { name: "Conversation context" })).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+  fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
   const composer = await screen.findByRole("dialog", { name: "New Message" });
   const panel = await screen.findByRole("complementary", { name: "Compose context" });
   expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
@@ -213,7 +213,7 @@ it("searches a conversation with the profile chosen in its context panel", async
 it("moves between a new draft and its context panel with F6 or Mod+Shift+P, and Escape in the panel returns to the draft", async () => {
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-  fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+  fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
   const composer = await screen.findByRole("dialog", { name: "New Message" });
   const panel = await screen.findByRole("complementary", { name: "Compose context" });
   const body = within(composer).getByRole("textbox", { name: "Message Body" });
@@ -1044,7 +1044,7 @@ it("opens archived contact timeline email in All Mail and keeps it selected afte
     expect(await screen.findByRole("listbox", { name: "All Mail" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Phase 1: read and triage" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
 
     expect(await screen.findByRole("heading", { name: "Phase 1: read and triage" })).toBeInTheDocument();
     expect(screen.getByRole("listbox", { name: "All Mail" })).toBeInTheDocument();
@@ -1124,7 +1124,7 @@ it("refreshes the open conversation when its inbox row receives a sent reply", a
 
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
 
   await waitFor(() => {
     const bodies = screen.getAllByTestId("message-body") as HTMLIFrameElement[];
@@ -1185,7 +1185,7 @@ it("keeps an unsaved reply mounted when a refresh changes its conversation place
     editor.insertAdjacentHTML("afterbegin", "<p>Do not lose this long reply.</p>");
     fireEvent.input(editor);
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
 
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument());
     const refreshedEditor = screen.getByRole("textbox", { name: "Message Body" });
@@ -1212,7 +1212,7 @@ it("reloads the local inbox after a refresh even when one account sync fails", a
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
   const callsBeforeRefresh = listCalls;
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
 
   await waitFor(() => expect(listCalls).toBeGreaterThan(callsBeforeRefresh));
 });

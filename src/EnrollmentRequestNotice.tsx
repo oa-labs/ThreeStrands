@@ -48,7 +48,7 @@ export function EnrollmentRequestNotice({ suppressed, onReview }: { suppressed: 
       <div className="toast enrollment-request-toast" role="status" aria-live="polite">
         <Smartphone className="enrollment-request-icon" size={ICON_SIZE.lg} aria-hidden="true" />
         <span className="enrollment-request-message">A device request was resolved. No action is needed here.</span>
-        <button className="btn-icon btn-icon-sm" aria-label="Dismiss status message" onClick={() => setResolvedNotice(false)}><X size={ICON_SIZE.sm} /></button>
+        <button className="btn-icon btn-icon-sm" aria-label="Dismiss Status Message" onClick={() => setResolvedNotice(false)}><X size={ICON_SIZE.sm} /></button>
       </div>
     );
   }
@@ -63,7 +63,7 @@ export function EnrollmentRequestNotice({ suppressed, onReview }: { suppressed: 
       </span>
       <button className="btn-link" onClick={onReview}>Review</button>
       <button className="btn-icon btn-icon-sm"
-        aria-label="Dismiss on this device"
+        aria-label="Dismiss on This Device"
         onClick={() => setDismissed((current) => {
           const next = new Set([...current, ...visible.map((request) => request.requestId)]);
           dismissedIds.current = next;

@@ -47,7 +47,7 @@ describe("EnrollmentRequestNotice", () => {
     vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([request("req-1")]);
     try {
       render(<EnrollmentRequestNotice suppressed={false} onReview={vi.fn()} />);
-      fireEvent.click(await screen.findByRole("button", { name: "Dismiss on this device" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Dismiss on This Device" }));
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
       await waitFor(() => expect(listenMock).toHaveBeenCalledWith("replicated-sync-status", expect.any(Function)));
 
@@ -102,7 +102,7 @@ describe("EnrollmentRequestNotice", () => {
 
       await waitFor(() => expect(screen.queryByText("A new device is asking to join Replicated Sync.")).not.toBeInTheDocument());
       expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Dismiss on this device" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Dismiss on This Device" })).not.toBeInTheDocument();
     } finally {
       Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
     }

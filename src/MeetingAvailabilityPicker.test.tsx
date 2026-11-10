@@ -64,7 +64,7 @@ describe("meeting rescheduling", () => {
     let resolveFirst!: (value: MeetingAvailabilityResult) => void;
     vi.mocked(mailClient.meetingAvailability).mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
     render(picker());
-    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next Week" }));
     await screen.findByRole("complementary", { name: "Suggested times" });
     resolveFirst({ ...result, guests: [{ email: "stale@example.com", checked: false, busy: [] }] });
     await waitFor(() => expect(screen.queryByText("stale@example.com")).not.toBeInTheDocument());

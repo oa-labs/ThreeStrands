@@ -674,7 +674,7 @@ describe("conversation shortcuts", () => {
     fireEvent.change(search, { target: { value: "Welcome" } });
     // Search covers all mail by default, so the archived thread is found
     // without narrowing or widening anything.
-    const inboxOnly = await screen.findByRole("button", { name: "Search only the Inbox" });
+    const inboxOnly = await screen.findByRole("button", { name: "Search Only the Inbox" });
     expect(inboxOnly).toHaveAttribute("aria-pressed", "false");
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
@@ -946,7 +946,7 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Conversation" })).not.toBeInTheDocument();
 
-    fireEvent.click(within(week).getByRole("button", { name: "Next week (=)" }));
+    fireEvent.click(within(week).getByRole("button", { name: "Next Week (=)" }));
     const selectedWeekStart = week.querySelector(".calendar-week-day-label")?.textContent;
     const selectedMonth = within(week).getByRole("region", { name: "Month picker" }).querySelector("h3")?.textContent;
     expect(selectedWeekStart).toBeTruthy();
@@ -1056,7 +1056,7 @@ describe("keyboard-first task and action workspaces", () => {
     await screen.findByRole("region", { name: "Inbox" });
 
     const navbar = screen.getByRole("navigation", { name: "Mailboxes" });
-    const composeButton = within(navbar).getByRole("button", { name: "New message (c)" });
+    const composeButton = within(navbar).getByRole("button", { name: "New Message (c)" });
     const composeGroup = composeButton.closest(".sidebar-compose");
     expect(composeGroup).toContainElement(composeButton);
     expect(composeGroup?.nextElementSibling).toContainElement(within(navbar).getByRole("button", { name: "Today (0)" }));
@@ -1075,7 +1075,7 @@ describe("keyboard-first task and action workspaces", () => {
     expect(secondaryGroup).toContainElement(agentsButton);
     const separator = secondaryGroup?.nextElementSibling;
     expect(separator).toHaveClass("sidebar-nav-separator");
-    expect(separator?.nextElementSibling).toContainElement(within(navbar).getByRole("button", { name: "Refresh mail" }));
+    expect(separator?.nextElementSibling).toContainElement(within(navbar).getByRole("button", { name: "Refresh Mail" }));
   });
 
   it("badges the navbar Contacts button with reminders that are due and opens on Keep in Touch from the palette", async () => {
@@ -1091,7 +1091,7 @@ describe("keyboard-first task and action workspaces", () => {
     await screen.findByRole("region", { name: "Inbox" });
 
     const navbar = screen.getByRole("navigation", { name: "Mailboxes" });
-    const contactsButton = await within(navbar).findByRole("button", { name: "Contacts (5), 2 due to reconnect" });
+    const contactsButton = await within(navbar).findByRole("button", { name: "Contacts (5), 2 Due to Reconnect" });
     expect(contactsButton.querySelector(".nav-button-badge")).toHaveTextContent("2");
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
@@ -1488,7 +1488,7 @@ describe("Escape dismissal", () => {
   it.each(["Inbox (1)", "Today (0)", "Calendar (2)", "Tasks (3)", "Notes (4)", "Contacts (5)", "Files (6)", "Agents (7)"])("saves a new message before sidebar navigation to %s", async (destination) => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const compose = screen.getByRole("button", { name: "New message (c)" });
+    const compose = screen.getByRole("button", { name: "New Message (c)" });
     const inbox = screen.getByRole("button", { name: "Inbox (1)" });
     fireEvent.click(compose);
     const subject = await screen.findByRole("textbox", { name: "Subject" });
@@ -1512,7 +1512,7 @@ describe("Escape dismissal", () => {
   it("keeps the draft open when saving before sidebar navigation fails", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
     const subject = await screen.findByRole("textbox", { name: "Subject" });
     fireEvent.change(subject, { target: { value: "Unsaved draft" } });
     const save = vi.spyOn(mailClient, "saveDraft").mockRejectedValue(new Error("Draft save unavailable"));
@@ -1521,7 +1521,7 @@ describe("Escape dismissal", () => {
       fireEvent.click(notes);
       await screen.findAllByText(/Draft save unavailable/);
       expect(notes).not.toHaveClass("active");
-      expect(screen.getByRole("button", { name: "New message (c)" })).toHaveClass("active");
+      expect(screen.getByRole("button", { name: "New Message (c)" })).toHaveClass("active");
       expect(subject).toHaveValue("Unsaved draft");
     } finally {
       save.mockRestore();
@@ -1534,7 +1534,7 @@ describe("Escape dismissal", () => {
   it("closes the composer when focus is in a field", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
 
     const recipient = await screen.findByRole("textbox", { name: "To" });
     recipient.focus();
@@ -1549,7 +1549,7 @@ describe("Escape dismissal", () => {
   it("closes only the topmost popup when overlays are stacked", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
     const composer = await screen.findByRole("dialog", { name: "New Message" });
     fireEvent.click(screen.getByRole("button", { name: "Command Palette (Ctrl+K)" }));
 
@@ -1684,7 +1684,7 @@ describe("Drafts folder", () => {
     expect(toolbar).toHaveTextContent("2 selected");
 
     const restore = vi.spyOn(mailClient, "restoreDraft").mockResolvedValue(draft);
-    fireEvent.click(within(toolbar).getByRole("button", { name: "Discard 1 Failed" }));
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Discard 1 Failed Messages" }));
     await waitFor(() => expect(discard).toHaveBeenCalledWith(draft.id));
     expect(recover).toHaveBeenCalledWith("failed");
     expect(cancel).not.toHaveBeenCalled();
@@ -1753,7 +1753,7 @@ describe("Drafts folder", () => {
     const roadmap = await mailClient.getThread("roadmap");
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
     const subject = await screen.findByRole("textbox", { name: "Subject" });
     fireEvent.click(subject);
     fireEvent.change(subject, { target: { value: "Half-written note" } });
@@ -2028,17 +2028,17 @@ describe("getting started checklist", () => {
   it("checks off the connected account, the palette, and an archive as they happen", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    expect(await screen.findByRole("button", { name: "Getting Started, 5 steps left" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Getting Started, 5 Steps Left" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Command Palette (Ctrl+K)" }));
     await screen.findByRole("textbox", { name: "Filter Commands" });
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(await screen.findByRole("button", { name: "Getting Started, 4 steps left" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Getting Started, 4 Steps Left" })).toBeInTheDocument();
 
     await archiveSelected();
-    expect(await screen.findByRole("button", { name: "Getting Started, 3 steps left" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Getting Started, 3 Steps Left" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Getting Started, 3 steps left" }));
+    fireEvent.click(screen.getByRole("button", { name: "Getting Started, 3 Steps Left" }));
     const dialog = await screen.findByRole("dialog", { name: "Getting Started" });
     expect(within(dialog).getByRole("listitem", { name: "Connect a mail account, done" })).toBeInTheDocument();
     expect(within(dialog).getByRole("listitem", { name: "Archive a conversation, done" })).toBeInTheDocument();
@@ -2047,7 +2047,7 @@ describe("getting started checklist", () => {
 
   it("opens from a step into the matching place in the app", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /^Getting Started, \d+ steps left$/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Getting Started, \d+ Steps Left$/ }));
     const dialog = await screen.findByRole("dialog", { name: "Getting Started" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Show Shortcuts" }));
     expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
@@ -2056,7 +2056,7 @@ describe("getting started checklist", () => {
 
   it("can be hidden from the sidebar and reopened from the command palette", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /^Getting Started, \d+ steps left$/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Getting Started, \d+ Steps Left$/ }));
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Getting Started" })).getByRole("button", { name: "Hide Getting Started" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: /^Getting Started, / })).toBeNull());
 

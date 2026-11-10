@@ -159,7 +159,7 @@ export function ContactGroupDetail({
       <div className="contact-profile-actions">
         {onCompose ? <button type="button" className="btn btn-sm" disabled={busy || !toLine} onClick={() => onCompose(toLine)}><Mail size={ICON_SIZE.sm} />Email Group</button> : null}
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setAdding(true)}><UserPlus size={ICON_SIZE.sm} />Add Members</button>
-        <button type="button" className="btn-icon" aria-label="Delete group" disabled={busy} onClick={() => setConfirmDelete(true)}><Trash size={ICON_SIZE.lg} /></button>
+        <button type="button" className="btn-icon" aria-label="Delete Group" disabled={busy} onClick={() => setConfirmDelete(true)}><Trash size={ICON_SIZE.lg} /></button>
       </div>
     </div>
     {confirmDelete ? <InlineConfirm

@@ -149,7 +149,7 @@ describe("CalendarWeekView", () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [meeting], errors: [] });
     renderWeek();
     await within(screen.getByRole("region", { name: "Today's agenda" })).findByRole("button", { name: /Today's review/ });
-    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next Week (=)" }));
     expect(screen.getByText("Sun 27")).toBeInTheDocument();
     const agenda = screen.getByRole("region", { name: "Today's agenda" });
     fireEvent.click(await within(agenda).findByRole("button", { name: /Today's review/ }));
@@ -218,7 +218,7 @@ describe("CalendarWeekView", () => {
       return { events: [], errors: [] };
     });
     renderWeek();
-    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next Week (=)" }));
     const agenda = screen.getByRole("region", { name: "Today's agenda" });
     const button = await within(agenda).findByRole("button", { name: "Try Again" });
     expect(agenda).not.toHaveTextContent("No events today.");
@@ -331,13 +331,13 @@ describe("CalendarWeekView", () => {
     expect(new Date(listScheduleEvents.mock.calls[0][0])).toEqual(new Date(2026, 8, 20));
     expect(new Date(listScheduleEvents.mock.calls[0][1])).toEqual(new Date(2026, 8, 27));
 
-    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next Week (=)" }));
     await waitFor(() => expect(listScheduleEvents).toHaveBeenCalledTimes(6));
     expect(listScheduleEvents).toHaveBeenCalledWith(new Date(2026, 8, 27).toISOString(), new Date(2026, 9, 4).toISOString(), expect.any(String));
     expect(listScheduleEvents).toHaveBeenCalledWith(new Date(2026, 8, 22).toISOString(), new Date(2026, 8, 23).toISOString(), expect.any(String));
     await screen.findByText("Sun 27");
 
-    fireEvent.click(screen.getByRole("button", { name: "Previous week (-)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous Week (-)" }));
     await screen.findByText("Sun 20");
   });
 
@@ -399,7 +399,7 @@ describe("CalendarWeekView", () => {
     await waitFor(() => expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(3));
     // Let the speculative request finish before navigating.
     await act(async () => {});
-    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next Week (=)" }));
     expect(calendarGrid().getByRole("button", { name: /Cached planning/ })).toBeInTheDocument();
     expect(screen.queryByText("Loading schedule…")).not.toBeInTheDocument();
     await act(async () => { resolve({ events: [], errors: [] }); });
@@ -740,7 +740,7 @@ describe("CalendarWeekView", () => {
     // 14:30 with a 64px hour row.
     expect((indicators[0] as HTMLElement).style.top).toBe(`${14.5 * 64}px`);
 
-    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next Week (=)" }));
     await screen.findByText("Sun 27");
     expect(container.querySelectorAll("[data-testid='calendar-now-indicator']")).toHaveLength(0);
   });
@@ -1013,7 +1013,7 @@ describe("CalendarWeekView", () => {
       const row = (await within(openTasks()).findByRole("button", { name: /Write proposal/ })).closest<HTMLElement>(".context-row")!;
       dragTask(row, column, 9 * 64);
       fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 9 * 64 });
-      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "Connect a Google Calendar account with event access to book time for tasks." }));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "Connect a Google Calendar account with event access to book time for tasks" }));
       expect(create).not.toHaveBeenCalled();
     });
 
@@ -1275,7 +1275,7 @@ describe("CalendarWeekView", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
 
     listScheduleEvents.mockRejectedValue(new Error("offline"));
-    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next Week (=)" }));
     fireEvent.click(within(await screen.findByRole("alert")).getByRole("button", { name: "Calendar Accounts" }));
     expect(props.onOpenSettings).toHaveBeenCalled();
   });

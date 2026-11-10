@@ -322,7 +322,7 @@ describe("TaskSidebar", () => {
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not load tasks");
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss error" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss Error" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 

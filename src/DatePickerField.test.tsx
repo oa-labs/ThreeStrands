@@ -31,7 +31,7 @@ describe("DatePickerField", () => {
     expect(within(picker).getByRole("grid", { name: "January 2026" })).toBeInTheDocument();
     expect(within(picker).getByRole("button", { name: "Saturday, January 31, 2026" })).toHaveFocus();
     expect(within(picker).getByRole("gridcell", { selected: true })).toHaveTextContent("31");
-    fireEvent.click(within(picker).getByRole("button", { name: "Next month" }));
+    fireEvent.click(within(picker).getByRole("button", { name: "Next Month" }));
     expect(within(picker).getByRole("grid", { name: "February 2026" })).toBeInTheDocument();
     fireEvent.click(within(picker).getByRole("button", { name: "Saturday, February 28, 2026" }));
     expect(screen.getByLabelText("Start date")).toHaveValue("2026-02-28");
@@ -39,7 +39,7 @@ describe("DatePickerField", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
     open();
-    fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous Month" }));
     expect(screen.getByRole("grid", { name: "January 2026" })).toBeInTheDocument();
   });
 

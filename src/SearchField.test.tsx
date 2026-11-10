@@ -88,9 +88,9 @@ describe("SearchField", () => {
 
   it("offers the Inbox Only filter as soon as there is text to search", () => {
     const { input, props } = renderField();
-    expect(screen.queryByRole("button", { name: "Search only the Inbox" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Search Only the Inbox" })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "r" } });
-    const toggle = screen.getByRole("button", { name: "Search only the Inbox" });
+    const toggle = screen.getByRole("button", { name: "Search Only the Inbox" });
     expect(toggle).toHaveAttribute("aria-pressed", "false");
     expect(toggle).not.toHaveTextContent("Inbox Only");
     fireEvent.click(toggle);
@@ -99,7 +99,7 @@ describe("SearchField", () => {
 
   it("shows the compact Inbox Only filter as pressed while the search is narrowed", () => {
     renderField("roadmap", { inboxOnly: true });
-    const toggle = screen.getByRole("button", { name: "Search only the Inbox" });
+    const toggle = screen.getByRole("button", { name: "Search Only the Inbox" });
     expect(toggle).toHaveAttribute("aria-pressed", "true");
     expect(toggle).not.toHaveTextContent("Inbox Only");
   });

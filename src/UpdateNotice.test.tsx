@@ -101,7 +101,7 @@ describe("UpdateNotice", () => {
     vi.mocked(appUpdate.checkForAppUpdate).mockResolvedValue(update());
     render(<UpdateNotice />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Dismiss update" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss Update" }));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
     await act(async () => { await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS); });
