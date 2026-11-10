@@ -5,7 +5,8 @@
 [Later](#later).
 **Date:** 2026-11-09
 **Scope:** a Notes workspace for Markdown notes that travel through
-replicated sync
+replicated sync. The [linked notes and tasks proposal](#linked-notes-and-tasks-proposal)
+below specifies a follow-on; it is not implemented.
 
 Notes adds a fourth kind of content beside mail, calendar, and tasks: the
 user's own Markdown notes, with a daily note, `[[wiki links]]`, and
@@ -695,12 +696,350 @@ Known gaps:
 Each step ships with its tests. Steps 2 through 5 each add a changelog entry
 under `### New` or `### Improved` as they become visible.
 
+## Linked notes and tasks proposal
+
+**Status: specified, not built.** This extends the built Notes workspace.
+It covers **Add to Today's Note** from Mail, explicit links between notes
+and conversations, tasks, and calendar events, and Markdown tasks in the
+existing **Tasks** workspace. It adds no AI processing.
+
+### User contract
+
+- Capture a conversation in today's note without leaving the email being
+  read. Return to that exact conversation after opening the note.
+- Insert a link to a conversation, task, or event in any note. See the
+  referring notes from the linked item's context panel.
+- Checklists stay in their notes as square checkboxes. Tasks use round
+  checkboxes and appear in **Tasks**; checking a task in either place
+  changes the same item. Users can explicitly convert between the two.
+  Merely linking to an existing task creates no new task.
+
+### Add to Today's Note
+
+Add **Add to Today's Note** to the conversation actions menu and command
+palette, enabled for the focused conversation. No default keyboard shortcut
+in this release. It appends a bullet containing the subject as an internal
+conversation link; an empty subject displays **(No subject)**. Escape
+Markdown punctuation in the label. Do not copy message HTML, quoted text,
+attachments, or an AI summary. The result is a reference, not a task:
+
+```markdown
+- [Project proposal](threestrands:conversation/<encoded-reference>)
+```
+
+- Resolve today's date in the device's local timezone once when the action
+  starts. Use the existing `daily:YYYY-MM-DD` identity, including offline.
+  Crossing midnight while the action saves does not change its destination.
+- Append at the end, separated from existing text by a newline. If the body
+  ends inside an unclosed fenced code block, refuse the append and offer
+  **Open Today's Note**; never hide the capture inside code or repair the
+  user's Markdown automatically.
+- On success, stay in Mail with the same focused message and expansion
+  state. Announce **Added to today's note**, with **Open Note** and **Undo**.
+  Opening selects the inserted reference. Returning to Mail restores the
+  conversation and message focus. The action does not mark mail read.
+- Repeating the action for a conversation already linked in that day's
+  saved note adds nothing; show **Already in today's note** with **Open
+  Note**. Compare canonical targets, not labels. A deliberate second link
+  typed by the user is allowed.
+- Flush an open daily-note draft before appending, using the existing save
+  guard. If it cannot save, leave the draft intact and refuse the append.
+  A dirty draft found while its editor is closed also requires resolution
+  before capture; never append behind an unsaved draft.
+- Use a version-checked native transaction to create/append and rebuild the
+  indexes. A stale version returns a retryable result, without overwriting
+  text. Retry only after reading the new body and checking for a duplicate.
+  A body conflict, Trash, permanent deletion racing the write, or a size
+  limit refuses the action with the existing resolution/open-note path.
+  Do not restore or recreate a deleted note silently. Show success only
+  after the local transaction commits; offline sync may follow later.
+- **Undo** removes only this capture, with the same version check. If the
+  note has changed since capture, offer to open it instead of restoring an
+  old body. If capture created the daily note, Undo may leave an empty note;
+  it must not delete unrelated edits.
+
+Two offline devices capturing different conversations into the same daily
+note still produce the existing whole-body conflict. This proposal does
+not introduce an append CRDT or promise automatic text merging.
+
+### Explicit links and backlinks
+
+The note editor's **Link to…** action offers **Conversation**, **Task**,
+and **Event**, with local search and account/calendar labels so identical
+names are distinguishable. Selection inserts an ordinary Markdown link
+with an application destination. Existing `[[note links]]` keep their
+current meaning. Mail capture uses the same reference builder.
+
+| Target | Durable reference |
+| --- | --- |
+| Conversation | Account identity plus provider conversation identity, resolved through the existing mail identity mappings; never a device-local database row alone |
+| Existing task | Replicated task id |
+| Note task | Owning note id plus stable task marker id, described below |
+| Event | Account/calendar identity plus provider event identity; include recurrence identity for a specific occurrence |
+
+An event picker must distinguish **This occurrence** and **Entire series**
+for a recurring event. Rescheduling an occurrence must preserve its link;
+its current start time alone is not an identity. A conversation's focused
+message may be an optional navigation anchor, with conversation fallback if
+that message is unavailable. Do not guess a different conversation from a
+subject, sender, or matching Message-ID header.
+
+Use `threestrands:conversation/…`, `threestrands:task/…`, and
+`threestrands:event/…` destinations, with versioned, strictly validated,
+percent-encoded reference payloads. These are inert Markdown references,
+not OS deep-link registration. The native resolver maps account identities
+on this device using established mappings; an unknown account or target
+stays unavailable until it can be resolved safely.
+
+- Handle recognized destinations inside Notes before the external-link
+  opener. Dispatch to typed navigation callbacks; never navigate the webview
+  or send them to the OS. Keep the external `http`/`https`/`mailto`
+  allowlist. Reject malformed references, unknown versions and kinds,
+  extra fields, and oversized payloads. Never interpret a reference as a
+  command, file path, SQL fragment, or remote URL to fetch.
+- A missing, deleted, disconnected, or not-yet-synchronized target keeps
+  its authored label and shows **Unavailable on this device** on activation.
+  Linking does not fetch mail, connect an account, or create the target.
+  Target title changes do not rewrite authored labels.
+- Parse links outside escaped text, code, and inert metadata. Build a
+  local `note_entity_links` index on every body projection, including
+  imports and conflict resolutions. Deduplicate by note and canonical
+  target for backlinks; retain occurrences for navigation. Derive these
+  rows from Markdown rather than synchronizing a second relationship list.
+- Notes' context panel adds **Conversations**, **Tasks**, and **Events**
+  sections for explicit outgoing references. Mail, task detail, and event
+  detail add **Notes** backlinks showing the note title and referring
+  excerpt. Exclude notes in Trash; restore rebuilds their visibility.
+  Use the existing context rail components, collapse behavior, and
+  three-row **Show more** limit. Keep explicit links distinct from
+  automatically suggested related context.
+- Opening a backlink selects its occurrence in the note. A title rename
+  does not break entity links. Deleting a target leaves a broken link;
+  unlinking never deletes either item.
+- Export keeps these destinations, labels, and task ids verbatim. Other
+  Markdown apps can read their text but cannot open application references.
+  Reimport preserves references without inventing missing accounts or
+  targets. Notes and relationships remain outside settings export.
+
+### Markdown checklists and tasks
+
+Follow [Reflect's task/checklist distinction](https://reflect.academy/tasks-beta):
+checklists are note-local items, while tasks are actionable items collected
+in the Tasks workspace. Use different shapes and explicit creation actions.
+The parenthesized Markdown below is ThreeStrands' format choice; Reflect's
+page describes its UI and shortcuts, not this storage syntax.
+
+| Kind | Unchecked Markdown | Checked Markdown | Editor appearance | Appears in Tasks |
+| --- | --- | --- | --- | --- |
+| Checklist | `- [ ] Item` or `- [] Item` | `- [x] Item` | Square checkbox | No |
+| Task | `- ( ) Item` or `- () Item` | `- (x) Item` | Round checkbox | Yes |
+
+```markdown
+- [ ] Milk
+- [x] Bread
+- ( ) Send the proposal
+- (x) Confirm the venue
+```
+
+`[X]` and `(X)` also mean checked. Accept unordered and ordered list
+items, including nested items. Require whitespace between the closing
+marker and nonempty item text. Parentheses elsewhere are ordinary prose;
+`[label](destination)` remains a link, and code, escaped markers, empty
+items, and blockquotes create neither checklist items nor tasks. Each
+nested item is independent, including mixed checklist/task lists; checking
+or converting a parent never changes its children. The task title is the
+item's first-line inline text, with Markdown formatting removed. Following
+paragraphs and child items remain note content, not part of that title.
+
+The editor's slash menu offers **Checklist** and **Task**, inserting the
+corresponding syntax. The item menu offers **Convert to Task** for a
+checklist and **Convert to Checklist** for a task. Tasks also offers
+**Convert to Checklist** for note tasks; other task sources keep their
+existing actions. Conversion changes only the item's marker family and
+preserves text, checked state, indentation, children, links, and any
+persisted task id. A checked checklist becomes a completed task.
+
+Saving a conversion to Task adds exactly one task to the projection and
+normal task queries. Saving a conversion to Checklist removes it from
+Tasks, including counts, search, and Completed, without deleting the
+item from its note. Keep any existing task-id metadata inert on a checklist
+so conversion back or Undo restores the same task identity. An old task
+link to a converted checklist opens that item in its note with a
+**Checklist** indicator; it does not recreate a task. Fresh checklists need
+no task id, and neither reading nor checking them assigns one. Conversion
+uses the same guarded save and draft handling as other note mutations.
+
+Preserve the marker family when toggling: `[]` may become `[x]`, and `()`
+may become `(x)`; toggling never converts a checklist into a task. The
+editor may normalize spacing only after an actual edit, with documented
+round-trip fixtures. Both kinds use accessible checkbox semantics in
+Hide/Hybrid mode, with square versus round styling and accessible labels
+that identify the kind. Show mode preserves their distinct source syntax.
+This requires extending the editor's parser/serializer, not a regex
+replacement of the full body. Existing and imported standard Markdown
+checkboxes remain checklists; do not automatically promote them to tasks.
+
+**One source of truth.** A note task's title, completion, and existence
+come from the saved Markdown body. Project them into a local `note_tasks`
+table in the same transaction as the note; do not create independent
+replicated `Task` entities for these round task items. This avoids two sync
+fields disagreeing about whether one task is done. Unsaved typing may
+preview a task in the editor but does not enter Tasks until saved. Square
+checklist items never enter `note_tasks`, even when they retain an inert
+task-id marker after conversion.
+
+**Stable identity.** At the first authored save/import, attach an inert
+trailing marker to each new task item, for example
+`<!-- threestrands-task:<uuid> -->`. It is metadata text, never live HTML.
+The editor hides it in Hide/Hybrid mode and preserves it byte for byte;
+Show mode and export expose the Markdown source. Moving, rewording, or
+checking the item preserves its id. Copying an item within a note assigns
+a fresh id to the copy on save; the first occurrence keeps the original.
+Identity is `(noteId, markerId)`, so copying to a different note creates a
+distinct task. Reject malformed marker ids as metadata; do not execute or
+render arbitrary comments or HTML.
+
+Existing unmarked parenthesized tasks must appear without rewriting a note
+on read. Unmarked square checklist items remain excluded.
+Give them deterministic provisional ids derived from note id, first-line
+source text without the checkbox state, and occurrence among identical
+items. On their first mutation/save, persist that same id as a marker.
+Reordering or editing an unmarked item can change provisional identity;
+there is no stored task metadata to lose in this first release. Do not
+create durable links to provisional ids: creating such a link first saves
+the marker through the guarded mutation path. Two devices promoting the
+same unchanged item derive the same id. An imported duplicate marker is
+repaired during the explicit import/save, never during passive projection.
+
+**Tasks integration.** Extend the task query and UI model with a
+`source: mail | standalone | note` discriminator rather than pretending
+notes belong to a mail account. Existing mail/standalone task storage and
+account filtering retain their meaning.
+
+- Note tasks appear in **All** and **Anytime**, or **Completed**, in list
+  and board layouts, with a **Note · <title/date>** source link. Include
+  them in task counts and existing text search. Account-specific task
+  views exclude them; the all-accounts view includes them, even with no
+  mail accounts connected. Linking a note to mail does not assign its
+  tasks to that mail account.
+- A daily note's date is context, not a due date. Do not put its undated
+  tasks in **Today**, **Upcoming**, or **Overdue** just because of
+  the note's date. First release note tasks support open/completed only;
+  due dates, goals, waiting/follow-up, in-progress, recurrence, delegation,
+  and automatic reply completion require a later metadata design. Hide
+  unsupported task actions, including dropping a note task into
+  **In Progress**; keep existing tasks' full behavior.
+- Checking in Tasks patches only the owning Markdown marker, preserving
+  surrounding text. Changing the title is done in the note through
+  **Open Note**. The source link focuses that item. A Markdown link to
+  an existing task shows a reference, not a second task row; checking a
+  checklist or task item containing that link checks that item only,
+  without completing the referenced task.
+- Route changes through the note's draft/save owner. Flush an open draft
+  before applying a version-checked patch, then update the editor from the
+  committed result. On stale, conflicted, trashed, deleted, or unsavable
+  bodies, keep both views unchanged, preserve drafts, and offer **Open
+  Note** to resolve. Do not silently retry against a different item.
+- Note tasks disappear when their item is removed or the note goes to
+  Trash, and return on Undo/restore with the same persisted ids. Permanent
+  deletion removes the local projection. They are never silently converted
+  to standalone tasks. Conflicted notes show the chosen working body's
+  tasks with a conflict indicator and disabled mutations until resolution;
+  rebuilding from the selected version removes losing-version tasks.
+- Completion time is local derived history in this first release, not a
+  fabricated synchronized timestamp. Completed note tasks appear in
+  **Completed**; order them by locally observed completion, with stable
+  note/task-id tie breaks. Rebuilding may lose that local history.
+
+### Storage, compatibility, and limits
+
+Use one native Markdown parser for checklist/task kinds and ranges, marker
+ids, explicit links,
+and patching. Share fixtures with the editor so rendered tasks and indexed
+tasks agree. Body projections update `notes`, search, wiki links, entity
+links, and note tasks atomically. A failed save leaves all of them unchanged.
+Opening Notes or Tasks never normalizes or saves Markdown. Marker bytes
+count toward existing note and total limits; an over-limit insertion keeps
+the draft and reports the usual error without truncation.
+
+Put new numeric bounds in `crates/sync-protocol` beside note limits:
+`MAX_NOTE_TASKS` = 500 round task items per note (square checklist items
+do not count toward this task limit), `MAX_NOTE_ENTITY_LINKS` = 500
+entity-link occurrences per note, and `MAX_NOTE_REFERENCE_BYTES` = 2,048
+UTF-8 bytes per encoded destination. Test below, exactly at, and above
+each bound. Task text remains governed by the note body limit; do not
+apply the existing standalone-task title limit or truncate the stored text.
+Never index only a silent prefix of a saved note: refuse a new over-limit
+edit/import with an explanation. Existing or received over-limit content
+stays readable, with an explicit indexing warning and no partial task list.
+
+This first release adds local derived tables and extends Markdown syntax;
+it adds no replicated entity type or settings-transfer field. Older devices
+may edit a note using their older editor and strip unknown markers or
+normalize the parenthesized task syntax. Before shipping, prove preservation with
+older-editor fixtures or require all devices to update and block unsupported
+mixed-version writes using a protocol compatibility gate. Do not claim
+identity survives an older editor until that boundary is verified.
+
+### Acceptance and delivery
+
+1. **References and capture.** Ship the validated reference codec, native
+   identity resolution, Markdown index, guarded daily append, Mail action,
+   and **Open Note**/**Undo** behavior together.
+2. **Navigation and backlinks.** Add the picker, typed navigation, and
+   context sections across Notes, Mail, Tasks, and Calendar. Cover event
+   occurrences and unresolved targets before enabling the event picker.
+3. **Markdown checklists and tasks.** Ship distinct parser/editor kinds,
+   square/round rendering, creation and conversion actions, stable task
+   markers, native projection, unified task queries/counts/search, and
+   guarded task writes in both views together. Keep checklists out of Tasks
+   throughout; do not advertise round tasks before aggregation works.
+
+Automated coverage must include:
+
+- Capture into missing/existing daily notes, device-local midnight, repeated
+  capture, fenced-code tails, Undo after further edits, and preservation of
+  focused mail message and expansion state. No full message content copied.
+- Dirty open/closed drafts, stale versions, Trash, deletion races, size
+  failures, and two offline captures producing a recoverable body conflict.
+- Account collisions, missing identities, rebuilds, task links, recurring
+  series versus occurrences, reschedules, and backlinks after rename,
+  Trash/restore, import, and conflict resolution.
+- Distinct checklist/task marker families, square/round rendering,
+  accessible kind labels, slash-menu creation, case/spacing, ordered and
+  mixed nested items, duplicate text, copied/moved tasks, deterministic
+  marker assignment on two devices, and
+  negative fixtures for code, escaping, blockquotes, prose parentheses,
+  Markdown links, empty items, forged ids, and hostile HTML/destinations.
+- Checklist toggles never create tasks or ids; existing/imported square
+  checkboxes stay checklists and never affect task counts or search.
+  Both conversion directions preserve text, checked state, children,
+  links, and existing ids; checked-to-task enters Completed. Conversion
+  to checklist removes the task from every query, count, and board;
+  conversion back and Undo restore its identity. Existing task links
+  navigate to converted checklists without recreating tasks. Failed or
+  conflicted conversions leave the body and Tasks unchanged.
+- The same round task appears once and toggles in both directions; all-accounts
+  and account-specific filtering, counts, search, Completed/Anytime,
+  list/board parity, unsupported actions, no invented due dates, conflict
+  read-only behavior, and item removal/restoration.
+- Editor load-without-write and marker-preserving round trips, export/import,
+  old-editor compatibility, parser boundaries, and atomic failure leaving
+  body and projections unchanged. Security-negative fixtures must prove
+  internal links cannot escape into OS/webview navigation or remote fetches.
+
+Test parsers and storage natively, hooks/components directly, and retain
+slim App tests for capture wiring and cross-workspace return navigation.
+Run the required frontend, Rust, and mail-triage E2E checks for the eventual
+implementation. Add user-facing changelog entries as these slices ship;
+this proposal alone changes no application behavior.
+
 ## Later
 
 - **v2: Folder mirror.** Keep a chosen folder in step with notes in both
   directions, for users who edit in other tools.
 - Tags beyond plain-text search.
-- "Add to Today's Note" from a mail conversation, and linking notes to
-  conversations, tasks, and events.
+- Implement the [linked notes and tasks proposal](#linked-notes-and-tasks-proposal):
+  mail capture, entity links/backlinks, and Markdown tasks in Tasks.
 - Asking AI about notes, with a private flag per note.
 - Merging concurrent text edits.
