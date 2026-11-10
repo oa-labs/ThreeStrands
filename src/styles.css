@@ -3779,7 +3779,8 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .note-editor-body [popover]:is(prosekit-autocomplete-positioner, prosekit-menu-positioner, prosekit-popover-positioner, prosekit-inline-popover-positioner, prosekit-tooltip-positioner, prosekit-block-handle-positioner) { border: 0; padding: 0; }
 .note-editor-body [popover][data-state="closed"]:is(prosekit-autocomplete-positioner, prosekit-menu-positioner, prosekit-popover-positioner, prosekit-inline-popover-positioner, prosekit-tooltip-positioner, prosekit-block-handle-positioner) { display: none; }
 .note-editor-surface .ProseMirror[contenteditable="false"], input.notes-editor-title[readonly] { color: var(--muted); }
-.notes-editor-heading { display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--note-gutter); }
+/* Reserve the Trash button's height even for an empty daily note, so saving or switching notes cannot shift the title and body. */
+.notes-editor-heading { display: flex; flex-shrink: 0; align-items: center; min-height: var(--control-h); gap: var(--space-2); padding-inline: var(--note-gutter); }
 .note-editor-surface { --meowdown-gutter: var(--note-gutter); }
 /* A checked item stays readable; only its checkbox shows it's done. */
 .note-editor-surface .ProseMirror .prosemirror-flat-list[data-list-kind="task"][data-list-checked] { opacity: 1; }

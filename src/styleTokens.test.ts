@@ -41,6 +41,20 @@ function spacePx(name: string): number {
 }
 
 describe("spacing", () => {
+  it("reserves the note heading's action height even when the note has no Trash button", () => {
+    const value = (selector: string, prop: string) => {
+      let result: string | undefined;
+      css.walkRules(selector, (r) => r.walkDecls(prop, (d) => { result = d.value; }));
+      return result;
+    };
+    expect(value(".notes-editor-heading", "min-height")).toBe(value(".btn-icon", "height"));
+    expect(value(".notes-editor-heading", "min-height")).toBe("var(--control-h)");
+    expect(value(".notes-editor-heading", "flex-shrink")).toBe("0");
+    expect(value(".notes-editor-heading", "align-items")).toBe("center");
+    // A long daily title can still make the heading grow when it wraps.
+    expect(value(".notes-editor-heading", "height")).toBeUndefined();
+  });
+
   it("aligns member-list selection marks with the dialog's search and header inset", () => {
     let gutter = "", inset = "";
     css.walkRules(".contact-member-picker .label-list", (r) => r.walkDecls("padding", (d) => { gutter = d.value.split(" ")[1]; }));
