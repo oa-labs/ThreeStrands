@@ -49,6 +49,7 @@ const MIGRATIONS: &[Migration] = &[
     (102, to_v102),
     (103, to_v103),
     (104, to_v104),
+    (105, to_v105),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1377,7 +1378,37 @@ fn to_v104(tx: &rusqlite::Transaction) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS note_entity_link_targets ON note_entity_links(href);
         CREATE TABLE IF NOT EXISTS note_index_warnings(note_id TEXT PRIMARY KEY,warning TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS note_event_cache(account TEXT NOT NULL,calendar TEXT NOT NULL,id TEXT NOT NULL, start TEXT NOT NULL,end TEXT NOT NULL,body TEXT NOT NULL, PRIMARY KEY(account,calendar,id));").map_err(error)?;
-    // Index pre-existing Markdown without authoring edits or generating anchors.
+    // Pre-existing Markdown is indexed by v105, which every database
+    // reaching this step also runs, once the index has its target column.
+    Ok(())
+}
+
+/// Note links are matched by the target they name rather than their exact
+/// text, so a contact reference with and without a contact id is one target.
+/// Every note is indexed again: a device that received contact references
+/// before it understood them has none of them indexed yet.
+fn to_v105(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let has_target: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('note_entity_links') WHERE name='target')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(error)?;
+    if !has_target {
+        tx.execute_batch(
+            "ALTER TABLE note_entity_links ADD COLUMN target TEXT NOT NULL DEFAULT '';
+             DROP INDEX IF EXISTS note_entity_link_targets;
+             CREATE INDEX note_entity_link_targets ON note_entity_links(target);",
+        )
+        .map_err(error)?;
+    }
+    reindex_notes(tx)
+}
+
+/// Rebuilds every note's derived task and link rows from its stored text,
+/// without editing a note or publishing a change.
+fn reindex_notes(tx: &rusqlite::Transaction) -> Result<(), String> {
     let ids = {
         let mut q = tx.prepare("SELECT id FROM notes").map_err(error)?;
         let rows = q

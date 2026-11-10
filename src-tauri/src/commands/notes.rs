@@ -506,6 +506,14 @@ pub(crate) async fn resolve_note_conversation(
     run_database_task(move || db.resolve_note_conversation(&reference)).await
 }
 #[tauri::command]
+pub(crate) async fn resolve_note_contact(
+    reference: crate::note_entities::NoteReference,
+    state: State<'_, AppState>,
+) -> AppResult<Option<String>> {
+    let db = state.database.clone();
+    run_database_task(move || db.resolve_note_contact(&reference)).await
+}
+#[tauri::command]
 pub(crate) async fn capture_note_conversation(
     date: String,
     thread: String,

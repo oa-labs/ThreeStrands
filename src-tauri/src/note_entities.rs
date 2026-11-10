@@ -17,6 +17,24 @@ pub struct NoteReference {
     pub calendar: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// A contact reference's saved contact id, when there was one. The
+    /// reference's `id` is the person's address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact: Option<String>,
+}
+/// An address as contact lookup stores it: trimmed and ASCII-lowercased.
+pub fn normalize_contact_address(address: &str) -> String {
+    address.trim().to_ascii_lowercase()
+}
+fn is_contact_address(id: &str) -> bool {
+    let mut parts = id.split('@');
+    let (Some(local), Some(domain), None) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && !id.chars().any(char::is_whitespace)
+        && normalize_contact_address(id) == id
 }
 impl NoteReference {
     pub fn validate(&self) -> bool {
@@ -26,14 +44,36 @@ impl NoteReference {
             && self.account.as_deref().is_none_or(valid)
             && self.calendar.as_deref().is_none_or(valid)
             && self.note.as_deref().is_none_or(valid)
+            && self.contact.as_deref().is_none_or(valid)
+            && (self.kind == "contact" || self.contact.is_none())
             && match self.kind.as_str() {
                 "conversation" => {
                     self.account.is_some() && self.calendar.is_none() && self.note.is_none()
                 }
                 "task" => self.account.is_none() && self.calendar.is_none(),
                 "event" => self.account.is_some() && self.calendar.is_some() && self.note.is_none(),
+                "contact" => {
+                    is_contact_address(&self.id)
+                        && self.account.is_none()
+                        && self.calendar.is_none()
+                        && self.note.is_none()
+                }
                 _ => false,
             }
+    }
+    /// The target this reference names, as the link index keys it. A contact
+    /// reference names its address, so links written with and without a
+    /// contact id, or before and after a merge, are one target.
+    pub fn target(&self) -> Result<String, String> {
+        if self.kind == "contact" {
+            Self {
+                contact: None,
+                ..self.clone()
+            }
+            .href()
+        } else {
+            self.href()
+        }
     }
     pub fn href(&self) -> Result<String, String> {
         if !self.validate() {
@@ -70,7 +110,7 @@ impl NoteReference {
             .decode_utf8()
             .ok()?;
         let json: serde_json::Value = serde_json::from_str(&decoded).ok()?;
-        if ["account", "calendar", "note"]
+        if ["account", "calendar", "note", "contact"]
             .iter()
             .any(|key| json.get(key).is_some_and(serde_json::Value::is_null))
         {
@@ -545,6 +585,7 @@ mod tests {
             account: Some("you@example.com".into()),
             calendar: None,
             note: None,
+            contact: None,
         }
     }
     #[test]
@@ -586,6 +627,78 @@ mod tests {
             links.iter().map(|l| l.label.as_str()).collect::<Vec<_>>(),
             ["One", "Two"]
         );
+    }
+    fn contact(id: &str, contact: Option<&str>) -> NoteReference {
+        NoteReference {
+            version: 1,
+            kind: "contact".into(),
+            id: id.into(),
+            account: None,
+            calendar: None,
+            note: None,
+            contact: contact.map(Into::into),
+        }
+    }
+    #[test]
+    fn contact_references_name_a_normalized_address_and_one_target() {
+        for valid in [
+            "pete@example.com",
+            "pete.b+ops@example.co.uk",
+            "δοκιμή@example.com",
+        ] {
+            let reference = contact(valid, Some("c1"));
+            assert_eq!(
+                NoteReference::parse(&reference.href().unwrap()),
+                Some(reference)
+            );
+        }
+        for invalid in [
+            "Pete@example.com",
+            " pete@example.com",
+            "pete example@example.com",
+            "pete",
+            "@example.com",
+            "pete@",
+            "a@b@example.com",
+        ] {
+            assert!(!contact(invalid, None).validate(), "{invalid}");
+        }
+        assert_eq!(
+            normalize_contact_address("  Pete@Example.COM "),
+            "pete@example.com"
+        );
+        // The contact id is a hint: with or without it, one target.
+        assert_eq!(
+            contact("pete@example.com", Some("c1")).target().unwrap(),
+            contact("pete@example.com", None).target().unwrap()
+        );
+        assert_ne!(
+            contact("pete@example.com", None).target().unwrap(),
+            contact("frank@example.com", None).target().unwrap()
+        );
+        // Only a contact reference carries a contact id, and it carries
+        // nothing else.
+        let mut task = reference();
+        task.contact = Some("c1".into());
+        assert!(!task.validate());
+        for extra in [
+            serde_json::json!({"version":1,"kind":"contact","id":"pete@example.com","account":"you@example.com"}),
+            serde_json::json!({"version":1,"kind":"contact","id":"pete@example.com","note":"n"}),
+            serde_json::json!({"version":1,"kind":"contact","id":"pete@example.com","contact":null}),
+            serde_json::json!({"version":1,"kind":"contact","id":"pete@example.com","contact":""}),
+            serde_json::json!({"version":1,"kind":"contact","id":"pete@example.com","name":"Pete"}),
+        ] {
+            let href = format!(
+                "threestrands:contact/{}",
+                percent_encoding::utf8_percent_encode(
+                    &extra.to_string(),
+                    percent_encoding::NON_ALPHANUMERIC
+                )
+            );
+            assert!(NoteReference::parse(&href).is_none(), "{extra}");
+        }
+        let long = format!("{}@example.com", "a".repeat(MAX_NOTE_REFERENCE_BYTES));
+        assert!(contact(&long, None).href().is_err());
     }
     #[test]
     fn wiki_links_and_nested_brackets_do_not_capture_a_later_entity_links_label() {

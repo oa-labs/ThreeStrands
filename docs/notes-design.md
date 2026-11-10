@@ -4,7 +4,7 @@
 meowdown editor, [images and attachments](#images-and-attachments),
 [Import Markdown Folder](#import-markdown-folder), and the
 [linked notes and tasks proposal](#linked-notes-and-tasks-proposal).
-The [meeting notes proposal](#meeting-notes-proposal) is not built yet.
+The [meeting notes proposal](#meeting-notes-proposal) is partly built.
 What's still open is under [Later](#later).
 **Date:** 2026-11-09, updated 2026-11-10
 **Scope:** a Notes workspace for Markdown notes that travel through
@@ -1076,7 +1076,8 @@ behavior, and keep the user-facing changelog entry current.
 
 ## Meeting notes proposal
 
-**Status: proposed, not built.** Notes for a calendar event are among the
+**Status: step 1 (contact references) built; steps 2 and 3 proposed.**
+Notes for a calendar event are among the
 most common notes people write. Today a user can link a note to an event
 (**Link to… → Event**), and the event's **Meeting context** lists the notes
 that link to it. But there is no way to start a note from the event itself.
@@ -1295,6 +1296,30 @@ Automated coverage:
   `mailto:`, or fetch; a hostile address or label renders as text.
 - Old-editor round trip of contact references, and a slim App test for the
   agenda button and the palette command reaching the dialog.
+
+### Implementation notes
+
+Step 1, as built:
+
+- `note_entity_links` gained a `target` column (migration 105): the link's
+  `NoteReference::target()`, which is its href for every kind but a contact
+  reference, whose target drops the contact id. Backlinks query by target and
+  return each note's first matching link with its own href, so opening the
+  row finds that exact text. Migration 105 indexes every note again, which
+  also indexes contact references a device received before it understood
+  them; migration 104 no longer indexes, since 105 always follows it.
+- `resolve_note_contact` opens the saved contact by id, then the saved
+  contact that owns the address, then, beyond the proposal, the contact the
+  app derives from mail the user sent to that address
+  (`derived:<address>`). Only with none of those does the link say **No
+  contact for <address> on this device**.
+- Contacts' **Contact context** lists the Notes section for all of the
+  contact's addresses, and now shows for a contact with notes but no email
+  and no AI features (`useNoteBacklinks`).
+- People resolves at most `PEOPLE_LOOKUPS` (30) contact references and title
+  links together, contact references first.
+- Nothing writes contact references yet, so users see no change until step
+  3; the changelog entry comes with it.
 
 ### Open questions
 

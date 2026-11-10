@@ -194,12 +194,20 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   useEffect(() => { const changed = () => reloadAll(); window.addEventListener(NOTES_CHANGED, changed); return () => window.removeEventListener(NOTES_CHANGED, changed); }, [reloadAll]);
   const pendingFocus = useRef<Extract<NotesRequest, { kind: "note" }> | null>(null);
   useEffect(() => { loadLinks(noteId); }, [noteId, loadLinks]);
-  // People: the note's links whose titles are saved contacts' names.
+  // People: the note's contact references, then its links whose titles are
+  // saved contacts' names, up to PEOPLE_LOOKUPS lookups in all.
   const linkTitles = links?.noteId === noteId ? links.links.links : null;
+  const contactReferences = useMemo(() => {
+    if (entityDocument?.noteId !== noteId) return [];
+    const seen = new Set<string>();
+    return entityDocument.links.map((link) => link.reference).filter((reference) => reference.kind === "contact" && !seen.has(reference.id) && seen.add(reference.id));
+  }, [entityDocument, noteId]);
   useEffect(() => {
-    if (!linkTitles?.length) { setPeople([]); return; }
+    if (!linkTitles?.length && !contactReferences.length) { setPeople([]); return; }
     let active = true;
-    void Promise.all(linkTitles.slice(0, PEOPLE_LOOKUPS).map((title) => mailClient.listContactProfiles(title, 5).then((found) => found.find((contact) => contact.displayName && noteTitleKey(contact.displayName) === noteTitleKey(title)))))
+    const referenced = contactReferences.slice(0, PEOPLE_LOOKUPS).map((reference) => mailClient.resolveNoteContact(reference).then((id) => id ? mailClient.getContactProfile(id) : null));
+    const named = (linkTitles ?? []).slice(0, PEOPLE_LOOKUPS - referenced.length).map((title) => mailClient.listContactProfiles(title, 5).then((found) => found.find((contact) => contact.displayName && noteTitleKey(contact.displayName) === noteTitleKey(title))));
+    void Promise.all([...referenced, ...named])
       .then((found) => {
         if (!active) return;
         const unique = new Map<string, ContactProfile>();
@@ -207,7 +215,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
         setPeople([...unique.values()]);
       }, logBackgroundFailure("Linked people"));
     return () => { active = false; };
-  }, [linkTitles]);
+  }, [linkTitles, contactReferences]);
 
   useEffect(() => { reloadAll(); }, [reloadAll, refreshKey]);
   // Another device's changes arrive with replicated sync.
@@ -359,7 +367,8 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const entityItemsCurrent = entityDocument?.noteId === noteId && entityDocument?.version === editor.note?.updatedAt;
   const saved = !editor.loading && editor.saveState.kind !== "saving" && !editor.dirty && Boolean(editor.note) && lastSave?.noteId === editor.note?.id;
   const status = editor.loading ? "Loading note…" : editor.saveState.kind === "saving" ? "Saving…" : editor.dirty ? "Not saved yet" : saved ? "Saved" : "";
-  const entityLinks = (entityDocument?.noteId === noteId ? entityDocument.links : []).filter((link, index, all) => all.findIndex((other) => other.href === link.href) === index);
+  // Contact references are listed under People rather than Links.
+  const entityLinks = (entityDocument?.noteId === noteId ? entityDocument.links : []).filter((link, index, all) => link.reference.kind !== "contact" && all.findIndex((other) => other.href === link.href) === index);
   const editorTitle = daily ? formatNoteDate(target.date) : editor.text.title;
 
   return <section className="notes-workspace" aria-label="Notes" onKeyDown={(event) => {
@@ -488,7 +497,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
         {entityLinks.length || !readOnly ? <ContextSection id="note-links" title="Links" count={entityLinks.length}
           actions={!readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
           note={entityLinks.length ? null : "Link a conversation, task, or event."}
-          rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind]} title={link.label} detail={link.reference.account}
+          rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind as keyof typeof LINK_ICON]} title={link.label} detail={link.reference.account}
             onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null}
         {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <ContextSection id="note-checklist-tasks" title="Checklists and tasks" count={entityDocument.items.length} rows={entityDocument.items.map((item) => <ContextRow key={item.id} title={item.title} control={<input type="checkbox" className={item.task ? "note-round-checkbox" : undefined} checked={item.checked} disabled={readOnly || busy || !entityItemsCurrent} aria-label={`${item.task ? "Task" : "Checklist"}: ${item.title}`} onChange={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { checked: !item.checked }); })} />} trailing={<button type="button" className="btn-icon btn-icon-sm" aria-label={`Convert to ${item.task ? "Checklist" : "Task"}`} title={`Convert to ${item.task ? "Checklist" : "Task"}`} disabled={readOnly || busy || !entityItemsCurrent} onClick={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { task: !item.task }); })}>{item.task ? <Square size={ICON_SIZE.sm} aria-hidden="true" /> : <Circle size={ICON_SIZE.sm} aria-hidden="true" />}</button>} />)} /> : null}
         {editor.note ? <dl className="notes-details">
@@ -505,7 +514,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
               title={linkedDay(title) ? formatNoteDate(title) : title} detail={linkedDay(title) ? "No note for this day yet" : "Create this note"} disabled={busy} onActivate={() => void openLink(title)} />)} /> : null}
           {people.length && onOpenContact ? <ContextSection id="notes-people" title="People" count={people.length}
             rows={people.map((contact) => <ContextRow key={contact.id} icon={<UserRound size={ICON_SIZE.sm} />}
-              title={contact.displayName} detail={contact.company ?? contact.addresses[0]} onActivate={() => onOpenContact(contact.id)} />)} /> : null}
+              title={contact.displayName ?? contact.addresses[0]} detail={contact.company ?? contact.addresses[0]} onActivate={() => onOpenContact(contact.id)} />)} /> : null}
         </> : null}
       </WorkspaceContextRail>
     </div>

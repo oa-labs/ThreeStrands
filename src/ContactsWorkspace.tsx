@@ -20,6 +20,8 @@ import { KEEP_IN_TOUCH_FREQUENCIES, KEEP_IN_TOUCH_GROUPS, UPCOMING_BIRTHDAY_DAYS
 
 import type { ContactsView } from "./contactsView";
 import { ICON_SIZE } from "./iconSizes";
+import { NoteBacklinkSection, useNoteBacklinks } from "./NoteEntityContext";
+import { contactNoteReferences } from "./noteEntities";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 import { formatShortcut } from "./shortcutLabels";
 
@@ -61,13 +63,16 @@ async function encodePhoto(file:File):Promise<string>{
   if(data.length>87_000)throw new Error("Photo is too large to save after resizing"); return data;
 }
 
-export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettings,initialContactId=null,accountId=null,initialView="all",view:controlledView,onViewChange,onKeepInTouchChanged}:{onOpenThread(id:string):void;onCompose?(to:string):void;onOpenAiSettings?():void;onSaved():void;initialContactId?:string|null;accountId?:string|null;initialView?:ContactsView;view?:ContactsView;onViewChange?(view:ContactsView):void;onKeepInTouchChanged?():void}){
+export function ContactsWorkspace({onOpenThread,onOpenNote,onCompose,onSaved,onOpenAiSettings,initialContactId=null,accountId=null,initialView="all",view:controlledView,onViewChange,onKeepInTouchChanged}:{onOpenThread(id:string):void;/** Opens a note from the contact's Notes section. */onOpenNote?(id:string,markerId?:string,referenceHref?:string):void;onCompose?(to:string):void;onOpenAiSettings?():void;onSaved():void;initialContactId?:string|null;accountId?:string|null;initialView?:ContactsView;view?:ContactsView;onViewChange?(view:ContactsView):void;onKeepInTouchChanged?():void}){
   // The view is controlled when the app owns it (so Tab can switch it and it
   // is remembered); standalone renders fall back to local state.
   const [localView,setLocalView]=useState<ContactsView>(initialView);const view=controlledView??localView;const changeView=(next:ContactsView)=>{setLocalView(next);onViewChange?.(next);};const [kitProfiles,setKitProfiles]=useState<ContactProfile[]>([]);const [selecting,setSelecting]=useState(false);const [checkedIds,setCheckedIds]=useState<string[]>([]);const [bulkNotice,setBulkNotice]=useState<string|null>(null);
   const [kitLoaded,setKitLoaded]=useState(false);
   const [merging,setMerging]=useState(false);const [profileRevision,setProfileRevision]=useState(0);
   const [query,setQuery]=useState("");const [profiles,setProfiles]=useState<ContactProfile[]>([]);const [allSelectedId,setAllSelectedId]=useContactsSelection("all",accountId);const [kitSelectedId,setKitSelectedId]=useContactsSelection("keepInTouch",accountId);const selectedId=view==="keepInTouch"?kitSelectedId:allSelectedId;const setSelectedId=view==="keepInTouch"?setKitSelectedId:setAllSelectedId;const [profile,setProfile]=useState<ContactProfile|null>(null);
+  const addressKey=profile?.addresses.join("\n")??"";
+  const noteReferences=useMemo(()=>contactNoteReferences(addressKey?addressKey.split("\n"):[]),[addressKey]);
+  const noteMentions=useNoteBacklinks(onOpenNote?noteReferences:[]);
   const [timeline,setTimeline]=useState<ContactTimelineItem[]>([]);const [timelineHasMore,setTimelineHasMore]=useState(false);const [draft,setDraft]=useState<SaveContactRequest>(empty());const [loading,setLoading]=useState(true);const [busy,setBusy]=useState(false);const [error,setError]=useState<string|null>(null);const [adding,setAdding]=useState(false);const [confirmDelete,setConfirmDelete]=useState(false);const [suggestions,setSuggestions]=useState<ContactFieldSuggestion[]>([]);const [enrichNotice,setEnrichNotice]=useState<{text:string;failed:boolean}|null>(null);const [enriching,setEnriching]=useState(false);const [moreEmailsAvailable,setMoreEmailsAvailable]=useState(false);const [emailsReviewed,setEmailsReviewed]=useState(0);const [revealedFields,setRevealedFields]=useState<OptionalField[]>([]);
   const [groups,setGroups]=useState<ContactGroup[]>([]);const [selectedGroupId,setSelectedGroupId]=useContactsSelection("groups",accountId);const [bookProfiles,setBookProfiles]=useState<ContactProfile[]>([]);const [groupPicker,setGroupPicker]=useState<{contactIds:string[];source:"profile"|"bulk"}|null>(null);const [creatingGroup,setCreatingGroup]=useState(false);
   const searchRef=useRef<HTMLInputElement>(null);
@@ -176,7 +181,7 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettin
   const hiddenFields=OPTIONAL_FIELDS.filter(item=>!showField(item.field));
   // Reference material and AI help sit in a rail beside the form, like the
   // context panel beside an open email.
-  const showRail=!!profile&&(aiEnabled||timeline.length>0);
+  const showRail=!!profile&&(aiEnabled||timeline.length>0||noteMentions.rows.length>0||!!noteMentions.error);
   // A suggestion disappears the moment its field is filled in, so one can
   // never overwrite typing the user did while enrichment was running.
   const visibleSuggestions=suggestions.filter(item=>enrichFieldIsEmpty(draft,item.field));
@@ -251,6 +256,7 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettin
           </div></div>
           {showRail?<aside className="contact-context-rail" aria-label="Contact context">
             {aiEnabled?<ContactEnrichmentCard ready={aiReady} onOpenSettings={onOpenAiSettings} suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}
+            {profile?<NoteBacklinkSection rows={noteMentions.rows} error={noteMentions.error} onOpenNote={onOpenNote}/>:null}
             {profile?<ContactFilesSection key={`${profile.id}:${profileRevision}`} contactId={profile.id} onShowMessage={threadId=>onOpenThread(threadId)}/>:null}
             {timeline.length?<RecentEmailsSection items={timeline} limit={CONTACT_RECENT_EMAIL_ROWS} onOpenThread={onOpenThread} onLoadOlder={timelineHasMore?()=>void loadOlder():undefined}/>:null}
           </aside>:null}

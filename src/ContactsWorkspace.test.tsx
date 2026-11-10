@@ -7,7 +7,7 @@ import { mailClient } from "./data/client";
 import { clearAiApiKey, setAiApiKey } from "./aiSettings";
 import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
 
-vi.mock("./data/client",()=>({mailClient:{rankContactGroupCandidates:vi.fn().mockResolvedValue([]),listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),contactGroupTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn(),resolveContactIds:vi.fn(),listContactGroups:vi.fn(),createContactGroup:vi.fn(),renameContactGroup:vi.fn(),addContactGroupMembers:vi.fn(),removeContactGroupMembers:vi.fn(),deleteContactGroup:vi.fn(),mergeContacts:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{rankContactGroupCandidates:vi.fn().mockResolvedValue([]),listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),contactGroupTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn(),resolveContactIds:vi.fn(),listContactGroups:vi.fn(),createContactGroup:vi.fn(),renameContactGroup:vi.fn(),addContactGroupMembers:vi.fn(),removeContactGroupMembers:vi.fn(),deleteContactGroup:vi.fn(),mergeContacts:vi.fn(),noteBacklinks:vi.fn()}}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:"Founder",company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:3,receivedCount:2,lastInteractedAt:"2026-09-20T00:00:00Z",birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const favoriteContact:ContactProfile={...jane,id:"contact:favorite@example.com",displayName:"Favorite Person",favorite:true,addresses:["favorite@example.com"],lastInteractedAt:"2026-09-10T00:00:00Z"};
@@ -508,6 +508,21 @@ describe("ContactsWorkspace",()=>{
     await waitFor(()=>expect(within(recent).getAllByRole("button",{name:/^Subject/})).toHaveLength(22));
     expect(mailClient.contactTimeline).toHaveBeenLastCalledWith(jane.id,20,20,undefined);
     expect(within(recent).queryByRole("button",{name:"Load older emails"})).not.toBeInTheDocument();
+  });
+
+  it("lists notes that mention any of the person's addresses and opens one at its mention",async()=>{
+    const onOpenNote=vi.fn();
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue({...jane,addresses:["jane@example.com","Jane.Doe@Work.example"]});
+    const mention={version:1 as const,kind:"contact" as const,id:"jane.doe@work.example",contact:jane.id};
+    vi.mocked(mailClient.noteBacklinks).mockImplementation(async reference=>reference.id==="jane.doe@work.example"?[{noteId:"daily:2026-11-10",title:"2026-11-10",dailyDate:"2026-11-10",context:"9:30am met with Jane Doe for Planning",reference:mention}]:[]);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onOpenNote={onOpenNote} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const rail=screen.getByRole("complementary",{name:"Contact context"});
+    const notes=await within(rail).findByRole("region",{name:"Notes"});
+    expect(mailClient.noteBacklinks).toHaveBeenCalledWith({version:1,kind:"contact",id:"jane@example.com"});
+    expect(mailClient.noteBacklinks).toHaveBeenCalledWith({version:1,kind:"contact",id:"jane.doe@work.example"});
+    fireEvent.click(within(notes).getByRole("button",{name:/2026-11-10/}));
+    expect(onOpenNote).toHaveBeenCalledWith("daily:2026-11-10",undefined,expect.stringMatching(/^threestrands:contact\//));
   });
 
   it("lists the person's files in the rail and opens them or their email",async()=>{

@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { mailClient } from "./data/client";
 import type { WorkspaceFile } from "./domain";
+import { noteReferenceHref } from "./noteEntities";
+import { lastEditorProps } from "./test/NoteEditorStub";
 
 vi.mock("./NoteEditor", () => import("./test/NoteEditorStub"));
 
@@ -40,4 +42,22 @@ it("opens a note found from the command palette", async () => {
   fireEvent.click(within(notes).getByRole("button", { name: new RegExp(note.title) }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
   expect(screen.queryByRole("textbox", { name: "Filter Commands" })).not.toBeInTheDocument();
+});
+
+it("opens a contact linked from a note in Contacts, and lists the note on the contact", async () => {
+  localStorage.clear();
+  const contact = await mailClient.saveContactProfile({ id: null, displayName: "Pete Linkfollow", role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses: ["pete.linkfollow@example.com"], birthday: null });
+  const href = noteReferenceHref({ version: 1, kind: "contact", id: "pete.linkfollow@example.com", contact: contact.id });
+  const note = await mailClient.createNote("Meeting with Pete", `- met with [Pete](${href})`);
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Notes (4)" }));
+  fireEvent.click(await within(screen.getByRole("list", { name: "Notes" })).findByRole("button", { name: new RegExp(note.title) }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+  lastEditorProps.current!.onOpenEntity!(noteReferenceHref({ version: 1, kind: "contact", id: "nobody.saved@example.com" }));
+  expect(await screen.findByText("No contact for nobody.saved@example.com on this device")).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title);
+  lastEditorProps.current!.onOpenEntity!(href);
+  expect(await screen.findByDisplayValue("Pete Linkfollow")).toBeInTheDocument();
+  const notes = await within(await screen.findByRole("complementary", { name: "Contact context" })).findByRole("region", { name: "Notes" });
+  expect(within(notes).getByRole("button", { name: /Meeting with Pete/ })).toBeInTheDocument();
 });

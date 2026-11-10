@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { docToMarkdown, markdownToDoc } from "@meowdown/core";
-import { fromEditorMarkdown, toEditorMarkdown, extractNoteEntityLinks, noteItemRanges, noteReferenceHref, parseNoteReference, MAX_NOTE_REFERENCE_BYTES } from "./noteEntities";
+import { contactNoteReferences, fromEditorMarkdown, toEditorMarkdown, extractNoteEntityLinks, noteItemRanges, noteReferenceHref, noteReferenceKey, normalizeContactAddress, parseNoteReference, MAX_NOTE_REFERENCE_BYTES } from "./noteEntities";
 
 const fixtures = JSON.parse(readFileSync("fixtures/note-entities.json", "utf8")) as { name: string; body: string; kinds: boolean[]; checked: boolean[] }[];
 const ID = "4ec77948-4813-5e64-93f9-c660ae48947f";
@@ -33,6 +33,24 @@ describe("note entity Markdown contract", () => {
   it("shares byte-identical canonical reference encoding with native", () => {
     const fixtures = JSON.parse(readFileSync("fixtures/note-references.json", "utf8")) as { reference: Parameters<typeof noteReferenceHref>[0]; href: string }[];
     for (const fixture of fixtures) { expect(noteReferenceHref(fixture.reference)).toBe(fixture.href); expect(parseNoteReference(fixture.href)).toEqual(fixture.reference); }
+  });
+  it("names a contact by its normalized address, with the contact id only as a hint", () => {
+    const pete = { version: 1 as const, kind: "contact" as const, id: "pete@example.com" };
+    expect(parseNoteReference(noteReferenceHref({ ...pete, contact: "c1" }))).toEqual({ ...pete, contact: "c1" });
+    expect(noteReferenceKey({ ...pete, contact: "c1" })).toBe(noteReferenceKey(pete));
+    for (const id of ["Pete@example.com", " pete@example.com", "pete example@example.com", "pete", "@example.com", "pete@", "a@b@example.com"]) expect(() => noteReferenceHref({ ...pete, id }), id).toThrow();
+    const encoded = (value: object) => `threestrands:contact/${encodeURIComponent(JSON.stringify(value))}`;
+    for (const extra of [{ account: "you@example.com" }, { note: "n" }, { contact: "" }, { contact: null }, { name: "Pete" }]) expect(parseNoteReference(encoded({ ...pete, ...extra }))).toBeNull();
+    expect(parseNoteReference(encoded({ version: 1, kind: "task", id: "t", contact: "c1" }))).toBeNull();
+    expect(contactNoteReferences([" Pete@Example.com", "pete@example.com", "not an address", "frank@example.com"]).map((r) => r.id)).toEqual(["pete@example.com", "frank@example.com"]);
+    expect(normalizeContactAddress(" Pete@Example.COM ")).toBe("pete@example.com");
+  });
+  it("the previously shipped editor keeps contact links byte for byte", () => {
+    const href = noteReferenceHref({ version: 1, kind: "contact", id: "pete.b+ops@example.com", contact: "c-1" });
+    const body = `- 9:30am met with [Pete B](${href}) for planning\n\nOther paragraph\n`;
+    const oldEditorOutput = docToMarkdown(markdownToDoc(body));
+    expect(oldEditorOutput).toContain(`[Pete B](${href})`);
+    expect(extractNoteEntityLinks(oldEditorOutput).links.map((link) => link.href)).toEqual([href]);
   });
   it("indexes quoted links but keeps quoted code inert", () => {
     const href = noteReferenceHref({ version: 1, kind: "task", id: "task" });

@@ -1954,7 +1954,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
     },
     ...demoSignatureClient,
-    ...createDemoNotes({ threads: () => threads, tasks: () => tasks, events: () => scheduleEvents.filter((event) => calendarAccounts.some((account) => account.email === event.accountId && account.status === "connected")) }),
+    ...createDemoNotes({ threads: () => threads, tasks: () => tasks, contacts: () => savedContactProfiles, events: () => scheduleEvents.filter((event) => calendarAccounts.some((account) => account.email === event.accountId && account.status === "connected")) }),
     async listSnippets() {
       return structuredClone(snippets);
     },

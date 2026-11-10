@@ -24,5 +24,22 @@
       "note": "daily:2026-11-10"
     },
     "href": "threestrands:task/%7B%22version%22%3A1%2C%22kind%22%3A%22task%22%2C%22id%22%3A%224ec77948%2D4813%2D5e64%2D93f9%2Dc660ae48947f%22%2C%22note%22%3A%22daily%3A2026%2D11%2D10%22%7D"
+  },
+  {
+    "reference": {
+      "version": 1,
+      "kind": "contact",
+      "id": "pete.b+ops@example.com"
+    },
+    "href": "threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22pete%2Eb%2Bops%40example%2Ecom%22%7D"
+  },
+  {
+    "reference": {
+      "version": 1,
+      "kind": "contact",
+      "id": "pete.b+ops@example.com",
+      "contact": "c-7f3a"
+    },
+    "href": "threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22pete%2Eb%2Bops%40example%2Ecom%22%2C%22contact%22%3A%22c%2D7f3a%22%7D"
   }
 ]

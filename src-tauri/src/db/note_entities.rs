@@ -74,7 +74,8 @@ pub(crate) fn index(tx: &Transaction<'_>, note: &Note) -> DbResult<()> {
         tx.execute("INSERT INTO note_tasks(note_id,marker_id,title,checked,completed_at) VALUES (?1,?2,?3,?4,?5)",params![note.id,item.id,item.title,item.checked,completed])?;
     }
     for (position, link) in parsed.links.iter().enumerate() {
-        tx.execute("INSERT INTO note_entity_links(note_id,position,href,context,start) VALUES (?1,?2,?3,?4,?5)",params![note.id,position as i64,link.href,link.context,link.start as i64])?;
+        let target = link.reference.target().map_err(DatabaseError::invalid)?;
+        tx.execute("INSERT INTO note_entity_links(note_id,position,href,target,context,start) VALUES (?1,?2,?3,?4,?5,?6)",params![note.id,position as i64,link.href,target,link.context,link.start as i64])?;
     }
     Ok(())
 }
@@ -169,8 +170,10 @@ impl Database {
             }
             let mut rows=std::collections::BTreeMap::new();
             for reference in references {
-                let mut q=c.prepare("SELECT n.id,n.title,n.daily_date,l.context FROM note_entity_links l JOIN notes n ON n.id=l.note_id WHERE l.href=?1 AND n.trashed=0 GROUP BY n.id ORDER BY n.title,n.id")?;
-                for row in q.query_map([reference.href().map_err(DatabaseError::invalid)?],|r|Ok(NoteBacklink{reference:Some(reference.clone()),note_id:r.get(0)?,title:r.get(1)?,daily_date:r.get(2)?,context:r.get(3)?}))? {
+                // Each note's first occurrence; its own href, so opening the
+                // backlink can find that exact link in the note's text.
+                let mut q=c.prepare("SELECT n.id,n.title,n.daily_date,l.context,l.href,MIN(l.position) FROM note_entity_links l JOIN notes n ON n.id=l.note_id WHERE l.target=?1 AND n.trashed=0 GROUP BY n.id ORDER BY n.title,n.id")?;
+                for row in q.query_map([reference.target().map_err(DatabaseError::invalid)?],|r|{let href:String=r.get(4)?;Ok(NoteBacklink{reference:Some(NoteReference::parse(&href).unwrap_or_else(||reference.clone())),note_id:r.get(0)?,title:r.get(1)?,daily_date:r.get(2)?,context:r.get(3)?})})? {
                     let row=row?;rows.entry(row.note_id.clone()).or_insert(row);
                 }
             }
@@ -196,6 +199,40 @@ impl Database {
             .optional()?)
         })
     }
+    /// The contact a contact reference opens: its saved contact while that
+    /// still exists, else the saved contact that now owns the address (a
+    /// merge moves addresses to the contact it keeps), else the address's
+    /// contact derived from mail. Never creates a contact.
+    pub fn resolve_note_contact(&self, reference: &NoteReference) -> DbResult<Option<String>> {
+        if !reference.validate() || reference.kind != "contact" {
+            return Err(DatabaseError::invalid("Invalid contact reference"));
+        }
+        let saved = self.with_connection(|c| {
+            if let Some(id) = &reference.contact {
+                let exists: bool = c.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM contacts WHERE id=?1)",
+                    [id],
+                    |r| r.get(0),
+                )?;
+                if exists {
+                    return Ok(Some(id.clone()));
+                }
+            }
+            Ok(c.query_row(
+                "SELECT contact_id FROM contact_addresses WHERE email=?1",
+                [&reference.id],
+                |r| r.get(0),
+            )
+            .optional()?)
+        })?;
+        if saved.is_some() {
+            return Ok(saved);
+        }
+        let derived = format!("derived:{}", reference.id);
+        Ok(self
+            .get_contact_profile(&derived)?
+            .map(|profile| profile.id))
+    }
     pub fn capture_note_conversation(
         &self,
         date: &str,
@@ -212,7 +249,7 @@ impl Database {
             )?;
             let reference = NoteReference {
                 version: 1, kind: "conversation".into(), id: provider,
-                account: Some(account), calendar: None, note: None,
+                account: Some(account), calendar: None, note: None, contact: None,
             };
             let href = reference.href().map_err(DatabaseError::invalid)?;
             let id = crate::notes::daily_note_id(date);
@@ -298,17 +335,17 @@ impl Database {
                     let mut q=c.prepare("SELECT subject,account_id,provider_thread_id FROM threads WHERE instr(lower(subject),lower(?1))>0 ORDER BY last_message_at DESC LIMIT 50")?;
                     for r in q.query_map([query],|r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))? {
                         let (label,account,id)=r?;
-                        choices.push(NoteLinkChoice{label:if label.is_empty(){"(No subject)".into()}else{label},detail:account.clone(),reference:NoteReference{version:1,kind:kind.into(),id,account:Some(account),calendar:None,note:None}});
+                        choices.push(NoteLinkChoice{label:if label.is_empty(){"(No subject)".into()}else{label},detail:account.clone(),reference:NoteReference{version:1,kind:kind.into(),id,account:Some(account),calendar:None,note:None,contact:None}});
                     }
                 }
                 "task" => {
                     let mut q=c.prepare("SELECT title,account_id,id FROM tasks WHERE instr(lower(title),lower(?1))>0 ORDER BY updated_at DESC LIMIT 50")?;
                     for r in q.query_map([query],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))? {
-                        let (label,detail,id)=r?; choices.push(NoteLinkChoice{label,detail,reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:None}});
+                        let (label,detail,id)=r?; choices.push(NoteLinkChoice{label,detail,reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:None,contact:None}});
                     }
                     let mut q=c.prepare("SELECT t.title,n.title,t.marker_id,n.id FROM note_tasks t JOIN notes n ON n.id=t.note_id WHERE n.trashed=0 AND instr(lower(t.title),lower(?1))>0 LIMIT 50")?;
                     for r in q.query_map([query],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))? {
-                        let (label,detail,id,note)=r?; choices.push(NoteLinkChoice{label,detail:format!("Note · {detail}"),reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:Some(note)}});
+                        let (label,detail,id,note)=r?; choices.push(NoteLinkChoice{label,detail:format!("Note · {detail}"),reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:Some(note),contact:None}});
                     }
                 }
                 "event" => {
@@ -316,7 +353,7 @@ impl Database {
                     for r in q.query_map([],|r|r.get::<_,String>(0))? {
                         let event:crate::models::ScheduleEvent=serde_json::from_str(&r?).map_err(super::serialization_error)?;
                         if !event.title.to_lowercase().contains(&query.to_lowercase()){continue;}
-                        let reference=NoteReference{version:1,kind:kind.into(),id:event.id.clone(),account:Some(event.account_id.clone()),calendar:Some(event.calendar_id.clone()),note:None};
+                        let reference=NoteReference{version:1,kind:kind.into(),id:event.id.clone(),account:Some(event.account_id.clone()),calendar:Some(event.calendar_id.clone()),note:None,contact:None};
                         let detail=format!("{} · {} · {}",event.account_id,event.calendar_id,event.start);
                         choices.push(NoteLinkChoice{label:event.title.clone(),detail:format!("{detail}{}",if event.series_id.is_some(){" · This occurrence"}else{""}),reference:reference.clone()});
                         if let Some(series)=event.series_id { if !choices.iter().any(|c|c.reference.id==series && c.reference.account==reference.account && c.reference.calendar==reference.calendar) {choices.push(NoteLinkChoice{label:event.title,detail:format!("{detail} · Entire series"),reference:NoteReference{id:series,..reference}});} }

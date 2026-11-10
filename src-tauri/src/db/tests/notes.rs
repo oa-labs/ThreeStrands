@@ -1272,6 +1272,7 @@ fn conversation_note_links_follow_verified_aliases_but_never_match_subjects_or_o
         account: Some(detail.thread.account_id.clone()),
         calendar: None,
         note: None,
+        contact: None,
     };
     let note = db
         .create_note(
@@ -1377,6 +1378,7 @@ fn note_task_ids_and_entity_references_survive_folder_export_and_import() {
         account: None,
         calendar: None,
         note: Some(note.id.clone()),
+        contact: None,
     };
     let saved = source
         .update_note(
@@ -1427,4 +1429,193 @@ fn note_task_ids_and_entity_references_survive_folder_export_and_import() {
         target.note_backlinks(&reference).unwrap()[0].note_id,
         note.id
     );
+}
+
+fn saved_contact(db: &Database, name: &str, addresses: &[&str]) -> crate::models::ContactProfile {
+    db.save_contact_profile(&crate::models::SaveContactRequest {
+        birthday: None,
+        keep_in_touch: None,
+        id: None,
+        display_name: Some(name.into()),
+        role: None,
+        company: None,
+        location: None,
+        bio: None,
+        notes: None,
+        links: vec![],
+        photo_data: None,
+        favorite: false,
+        addresses: addresses.iter().map(|a| a.to_string()).collect(),
+    })
+    .unwrap()
+}
+
+fn contact_reference(address: &str, contact: Option<&str>) -> crate::note_entities::NoteReference {
+    crate::note_entities::NoteReference {
+        version: 1,
+        kind: "contact".into(),
+        id: address.into(),
+        account: None,
+        calendar: None,
+        note: None,
+        contact: contact.map(Into::into),
+    }
+}
+
+#[test]
+fn contact_references_resolve_through_merges_and_share_backlinks() {
+    let db = database();
+    let pete = saved_contact(&db, "Pete B", &["pete@example.com"]);
+    let work = saved_contact(&db, "Pete (work)", &["pete@work.example"]);
+    let with_id = contact_reference("pete@example.com", Some(&pete.id));
+    let without_id = contact_reference("pete@example.com", None);
+    let first = db
+        .create_note(
+            "Standup",
+            &format!("- met with [Pete B]({})", with_id.href().unwrap()),
+        )
+        .unwrap();
+    let second = db
+        .create_note(
+            "Planning",
+            &format!(
+                "[Pete]({}) and [again]({})",
+                without_id.href().unwrap(),
+                with_id.href().unwrap()
+            ),
+        )
+        .unwrap();
+    let third = db
+        .create_note(
+            "Vendor call",
+            &format!(
+                "[Pete]({})",
+                contact_reference("pete@work.example", Some(&work.id))
+                    .href()
+                    .unwrap()
+            ),
+        )
+        .unwrap();
+
+    assert_eq!(
+        db.resolve_note_contact(&with_id).unwrap(),
+        Some(pete.id.clone())
+    );
+    assert_eq!(
+        db.resolve_note_contact(&without_id).unwrap(),
+        Some(pete.id.clone())
+    );
+
+    // One target for an address, whichever form the link took; each row keeps
+    // the note's own first link so opening it finds that text.
+    let rows = db.note_backlinks(&without_id).unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.note_id.as_str())
+            .collect::<HashSet<_>>(),
+        HashSet::from([first.id.as_str(), second.id.as_str()])
+    );
+    let planning = rows.iter().find(|row| row.note_id == second.id).unwrap();
+    assert_eq!(planning.reference.as_ref(), Some(&without_id));
+    assert_eq!(db.note_backlinks(&with_id).unwrap().len(), 2);
+
+    // Merging Pete into the work contact deletes Pete's record; the link
+    // follows the address to the contact that kept it.
+    db.merge_contacts(&work.id, std::slice::from_ref(&pete.id))
+        .unwrap();
+    assert_eq!(
+        db.resolve_note_contact(&with_id).unwrap(),
+        Some(work.id.clone())
+    );
+    let merged = db.get_contact_profile(&work.id).unwrap().unwrap();
+    let all: HashSet<String> = merged
+        .addresses
+        .iter()
+        .flat_map(|address| {
+            db.note_backlinks(&contact_reference(address, None))
+                .unwrap()
+        })
+        .map(|row| row.note_id)
+        .collect();
+    assert_eq!(
+        all,
+        HashSet::from([first.id.clone(), second.id.clone(), third.id.clone()])
+    );
+
+    // Trash hides the backlink; an address nobody owns resolves to nothing.
+    db.trash_note(&first.id).unwrap();
+    assert_eq!(db.note_backlinks(&without_id).unwrap().len(), 1);
+    assert_eq!(
+        db.resolve_note_contact(&contact_reference("nobody@example.com", None))
+            .unwrap(),
+        None
+    );
+    assert!(db.resolve_note_contact(&reference_of_kind("task")).is_err());
+}
+
+fn reference_of_kind(kind: &str) -> crate::note_entities::NoteReference {
+    crate::note_entities::NoteReference {
+        version: 1,
+        kind: kind.into(),
+        id: "x".into(),
+        account: None,
+        calendar: None,
+        note: None,
+        contact: None,
+    }
+}
+
+#[test]
+fn upgrading_indexes_contact_references_received_before_they_were_understood() {
+    let db = database();
+    let reference = contact_reference("pete@example.com", Some("c1"));
+    let note = db
+        .create_note(
+            "Standup",
+            &format!("- met with [Pete B]({})", reference.href().unwrap()),
+        )
+        .unwrap();
+    {
+        // The note arrived on a version that indexed links by text and
+        // didn't know contact references.
+        let mut connection = db.test_connection().unwrap();
+        connection
+            .execute_batch(
+                "DROP INDEX note_entity_link_targets;
+                 ALTER TABLE note_entity_links DROP COLUMN target;
+                 CREATE INDEX note_entity_link_targets ON note_entity_links(href);
+                 DELETE FROM note_entity_links;
+                 PRAGMA user_version=104;",
+            )
+            .unwrap();
+        crate::schema::migrate(&mut connection).unwrap();
+    }
+    let rows = db
+        .note_backlinks(&contact_reference("pete@example.com", None))
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].note_id, note.id);
+    assert_eq!(
+        db.get_note(&note.id).unwrap().unwrap().updated_at,
+        note.updated_at
+    );
+}
+
+#[test]
+fn a_contact_reference_to_someone_only_mailed_opens_their_derived_contact() {
+    let db = database();
+    db.adopt_account("you@example.com").unwrap();
+    let mut sent =
+        crate::db::test_support::message("sent", "thread", "2026-09-01T12:00:00Z", "hello");
+    sent.from = "you@example.com".into();
+    sent.to = vec!["Jane <jane@example.com>".into()];
+    db.upsert_thread("you@example.com", &[sent]).unwrap();
+    let reference = contact_reference("jane@example.com", None);
+    assert_eq!(
+        db.resolve_note_contact(&reference).unwrap().as_deref(),
+        Some("derived:jane@example.com")
+    );
+    // Saving Jane later makes the same link open the saved contact.
+    let jane = saved_contact(&db, "Jane", &["jane@example.com"]);
+    assert_eq!(db.resolve_note_contact(&reference).unwrap(), Some(jane.id));
 }

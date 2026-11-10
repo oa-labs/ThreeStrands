@@ -564,6 +564,27 @@ describe("Notes workspace", () => {
       expect(onOpenContact).toHaveBeenCalledWith("c-ada");
     });
 
+    it("lists contact links under People rather than Links, once per contact", async () => {
+      const pete = markdownEntityLink("Pete B", { version: 1, kind: "contact", id: "pete@example.com", contact: "c-pete" });
+      const peteAgain = markdownEntityLink("Pete", { version: 1, kind: "contact", id: "pete@example.com" });
+      const frank = markdownEntityLink("Frank", { version: 1, kind: "contact", id: "frank@example.com" });
+      const thread = markdownEntityLink("Agenda", { version: 1, kind: "conversation", id: "thread-a", account: "acct-1" });
+      const note = await mailClient.createNote(uniqueTitle("Standup"), `- met with ${pete}, ${frank} for ${thread}\n- ${peteAgain}`);
+      const resolve = vi.spyOn(mailClient, "resolveNoteContact").mockImplementation(async (reference) => reference.id === "pete@example.com" ? "c-pete" : null);
+      vi.spyOn(mailClient, "getContactProfile").mockImplementation(async (id) => id === "c-pete" ? { id: "c-pete", displayName: "Pete Brown", company: null, addresses: ["pete@example.com"] } as unknown as ContactProfile : null);
+      const onOpenContact = vi.fn();
+      await openNote(note.id, { onOpenContact });
+      const people = within(await rail().findByRole("region", { name: /People/ }));
+      expect(people.getAllByRole("button", { name: /Pete Brown/ })).toHaveLength(1);
+      expect(people.queryByRole("button", { name: /Frank/ })).not.toBeInTheDocument();
+      expect(resolve).toHaveBeenCalledTimes(2);
+      const links = within(rail().getByRole("region", { name: /Links/ }));
+      expect(links.getByRole("button", { name: /Agenda/ })).toBeInTheDocument();
+      expect(links.queryByRole("button", { name: /Pete|Frank/ })).not.toBeInTheDocument();
+      fireEvent.click(people.getByRole("button", { name: /Pete Brown/ }));
+      expect(onOpenContact).toHaveBeenCalledWith("c-pete");
+    });
+
     it("lists what the note links to, and adds a link from the Links section or the command", async () => {
       const href = markdownEntityLink("Quarterly plan", { version: 1, kind: "conversation", id: "thread-q", account: "acct-1" });
       const note = await mailClient.createNote(uniqueTitle("Linked"), `See ${href}`);

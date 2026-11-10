@@ -420,6 +420,8 @@ export interface MailClient extends CorrespondenceClient {
   patchNoteItem(id: string, marker: string, expected: string, checked?: boolean, task?: boolean): Promise<Note>;
   noteBacklinks(reference: NoteReference): Promise<NoteBacklink[]>;
   resolveNoteConversation(reference: NoteReference): Promise<string | null>;
+  /** The contact a contact reference opens, or null when this device has none. */
+  resolveNoteContact(reference: NoteReference): Promise<string | null>;
   captureNoteConversation(date: string, thread: string, expected: string | null): Promise<NoteCapture>;
   listRecentNotes(limit: number): Promise<NoteSummary[]>;
   getNote(id: string): Promise<Note | null>;
@@ -681,6 +683,7 @@ const tauriClient: MailClient = {
   patchNoteItem: (id, marker, expected, checked, task) => complete("patch_note_item", { id, marker, expected, checked: checked ?? null, task: task ?? null }),
   noteBacklinks: (reference) => read("note_backlinks", { reference }),
   resolveNoteConversation: (reference) => read("resolve_note_conversation", { reference }),
+  resolveNoteContact: (reference) => read("resolve_note_contact", { reference }),
   captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),
   listRecentNotes: (limit) => read("list_recent_notes", { limit }),
   getNote: (id) => read("get_note", { id }),

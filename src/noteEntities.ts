@@ -1,7 +1,10 @@
 import { notePreview, noteInlineText } from "./notePreview";
 import type { Note, NoteBacklink, ThreadTask } from "./domain";
 
-export type NoteReference = { version: 1; kind: "conversation" | "task" | "event"; id: string; account?: string; calendar?: string; note?: string };
+/** An inert link from a note to an item elsewhere in the app. A contact
+ * reference's `id` is the person's address, normalized as contact lookup
+ * normalizes it; `contact` is the saved contact's id when there was one. */
+export type NoteReference = { version: 1; kind: "conversation" | "task" | "event" | "contact"; id: string; account?: string; calendar?: string; note?: string; contact?: string };
 export type NoteItem = { id: string; title: string; checked: boolean; task: boolean; start: number; markerStart: number; markerEnd: number; end: number; persisted: boolean };
 export type EntityLink = { reference: NoteReference; href: string; label: string; context: string; start: number };
 export type NoteDocument = { items: NoteItem[]; links: EntityLink[]; warning: string | null };
@@ -12,32 +15,52 @@ export const MAX_NOTE_REFERENCE_BYTES = 2048;
 export const MAX_NOTE_TASKS = 500;
 export const MAX_NOTE_ENTITY_LINKS = 500;
 const utf8 = (text: string) => new TextEncoder().encode(text).length;
+const FIELDS = ["account", "calendar", "note", "contact"] as const;
+
+/** An address as contact lookup stores it: trimmed and ASCII-lowercased. */
+export function normalizeContactAddress(address: string): string {
+  return address.trim().replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+const contactAddress = (id: string) => /^[^\s@]+@[^\s@]+$/u.test(id) && normalizeContactAddress(id) === id;
 
 export function parseNoteReference(href: string): NoteReference | null {
   if (utf8(href) > MAX_NOTE_REFERENCE_BYTES) return null;
-  const match = /^threestrands:(conversation|task|event)\/(.+)$/.exec(href);
+  const match = /^threestrands:(conversation|task|event|contact)\/(.+)$/.exec(href);
   if (!match) return null;
   try {
     const r: unknown = JSON.parse(decodeURIComponent(match[2]));
     if (!r || typeof r !== "object" || Array.isArray(r)) return null;
     const v = r as Record<string, unknown>;
-    if (Object.keys(v).some((k) => !["version", "kind", "id", "account", "calendar", "note"].includes(k))) return null;
+    if (Object.keys(v).some((k) => !["version", "kind", "id", ...FIELDS].includes(k))) return null;
     const valid = (v: unknown) => typeof v === "string" && v.length > 0 && !/[\u0000-\u001f\u007f-\u009f\ud800-\udfff]/u.test(v);
     if (v.version !== 1 || v.kind !== match[1] || !valid(v.id)) return null;
-    for (const k of ["account", "calendar", "note"]) if (k in v && !valid(v[k])) return null;
+    for (const k of FIELDS) if (k in v && !valid(v[k])) return null;
+    if (v.kind !== "contact" && "contact" in v) return null;
     if (v.kind === "conversation" && (!valid(v.account) || "calendar" in v || "note" in v)) return null;
     if (v.kind === "task" && ("account" in v || "calendar" in v)) return null;
     if (v.kind === "event" && (!valid(v.account) || !valid(v.calendar) || "note" in v)) return null;
+    if (v.kind === "contact" && (!contactAddress(v.id as string) || "account" in v || "calendar" in v || "note" in v)) return null;
     return v as NoteReference;
   } catch { return null; }
 }
 export function noteReferenceHref(reference: NoteReference): string {
-  const canonical = { version: reference.version, kind: reference.kind, id: reference.id, ...(reference.account !== undefined ? { account: reference.account } : {}), ...(reference.calendar !== undefined ? { calendar: reference.calendar } : {}), ...(reference.note !== undefined ? { note: reference.note } : {}) };
+  const canonical = { version: reference.version, kind: reference.kind, id: reference.id, ...(reference.account !== undefined ? { account: reference.account } : {}), ...(reference.calendar !== undefined ? { calendar: reference.calendar } : {}), ...(reference.note !== undefined ? { note: reference.note } : {}), ...(reference.contact !== undefined ? { contact: reference.contact } : {}) };
   const href = `threestrands:${reference.kind}/${encodeURIComponent(JSON.stringify(canonical)).replace(/[!'()*._~-]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`;
   if (!parseNoteReference(href)) throw new Error("Invalid note reference");
   return href;
 }
+/** The target a reference names. A contact reference names its address, so
+ * links written with and without a contact id, or before and after a merge,
+ * are one target. */
 export function noteReferenceKey(r: NoteReference): string { return JSON.stringify([r.kind, r.account ?? null, r.calendar ?? null, r.note ?? null, r.id]); }
+/** Contact references naming each of a contact's addresses, for its Notes
+ * backlinks. Addresses a reference can't hold are left out. */
+export function contactNoteReferences(addresses: string[]): NoteReference[] {
+  return [...new Set(addresses.map(normalizeContactAddress))].flatMap((id) => {
+    const reference: NoteReference = { version: 1, kind: "contact", id };
+    try { noteReferenceHref(reference); return [reference]; } catch { return []; }
+  });
+}
 export function markdownEntityLink(label: string, reference: NoteReference): string {
   return `[${label.replace(/[\r\n]/g, " ").replace(/[\\`*_[\]{}()#+.!|<>~-]/g, "\\$&")}](${noteReferenceHref(reference)})`;
 }
