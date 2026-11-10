@@ -48,6 +48,45 @@ test.describe("email rendering fixtures", () => {
     await page.waitForLoadState("load");
   });
 
+  for (const fixture of ["wideNestedNewsletter", "wideFixedFlow"]) {
+    test(`${fixture} fits the reader on load and pane resize without clipping`, async ({ page }) => {
+      await openRenderingFixture(page, `/tests/email-rendering.html?fixture=${fixture}&zoom=100`);
+      const frame = page.locator("iframe.message-body");
+      const content = frame.contentFrame();
+      const link = content.getByRole("link", { name: "Right edge details" });
+      for (const width of [1200, 700, 390, 1200]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect.poll(() => frame.evaluate((element) => {
+          const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+          return root.scrollWidth - root.clientWidth;
+        })).toBeLessThanOrEqual(0);
+        await expect.poll(async () => {
+          const frameBox = (await frame.boundingBox())!;
+          const linkBox = (await link.boundingBox())!;
+          return linkBox.x >= frameBox.x
+            && linkBox.x + linkBox.width <= frameBox.x + frameBox.width + 1
+            && linkBox.y + linkBox.height <= frameBox.y + frameBox.height + 1;
+        }).toBe(true);
+      }
+      if (fixture === "wideNestedNewsletter") {
+        await page.getByRole("button", { name: "Load images", exact: true }).click();
+        await expect(content.getByAltText("Newsletter banner")).toHaveAttribute("src", /^data:/);
+        await expect.poll(() => frame.evaluate((element) => {
+          const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+          return root.scrollWidth - root.clientWidth;
+        })).toBeLessThanOrEqual(0);
+      }
+      const before = (await link.boundingBox())!.width;
+      await page.getByRole("combobox", { name: "Email zoom", exact: true }).selectOption("150");
+      await expect.poll(async () => (await link.boundingBox())!.width / before).toBeCloseTo(1.5, 1);
+      await page.getByRole("combobox", { name: "Email zoom", exact: true }).selectOption("100");
+      await expect.poll(() => frame.evaluate((element) => {
+        const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+        return root.scrollWidth - root.clientWidth;
+      })).toBeLessThanOrEqual(0);
+    });
+  }
+
   for (const fixture of ["gradientTable", "gradientFlow"]) {
     test(`${fixture} keeps generated backgrounds and readable sender text`, async ({ page }) => {
       await openRenderingFixture(page, `/tests/email-rendering.html?theme=light&fixture=${fixture}`);
@@ -489,8 +528,15 @@ test.describe("email rendering fixtures", () => {
       const cells = content.locator("tr").first().locator("td");
       await expect(cells).toHaveCount(columnWidths.length);
       for (const [index, width] of columnWidths.entries()) {
-        await expect.poll(async () => Math.round((await cells.nth(index).boundingBox())?.width ?? 0)).toBe(width);
+        // Fit-to-reader scales the document; declared column geometry must
+        // stay intact in the sender's CSS pixels, including a zero-width table.
+        await expect.poll(() => cells.nth(index).evaluate((cell) => Math.round(cell.getBoundingClientRect().width / Number(cell.ownerDocument.body.style.zoom)))).toBe(width);
       }
+      const frame = page.locator("iframe.message-body");
+      await expect.poll(() => frame.evaluate((element) => {
+        const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+        return root.scrollWidth - root.clientWidth;
+      })).toBeLessThanOrEqual(0);
       // Collapsed columns wrap a word per line and clip it; sized columns keep
       // each row's text visible on a short row.
       const cell = content.getByText(text);

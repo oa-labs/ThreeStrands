@@ -52,6 +52,23 @@ const legacyDimensionAttributes = "<p>Legacy dimension attributes</p>" + legacyD
 export const emailRenderingFixtures = {
   gradientTable: `<table bgcolor="#f6f6f6"><tr><td><table style="background:#f6f6f6 linear-gradient(-12deg, #f6f6f6 35%, #0b2157 35.3%) repeat-x;background-size:auto 500px"><tr><td><div style="background:#0b2157"><div style="height:30px">&nbsp;</div><table align="left"><tr><td><h2 style="color:#fefefe">Gradient headline</h2><p style="color:#fefefe">Readable table content</p></td></tr></table></div></td></tr></table></td></tr></table>`,
   gradientFlow: `<style>.gradient-panel {background:radial-gradient(circle at center, #223366, #0b2157);color:#ffffff;padding:24px}</style><section class="gradient-panel"><h2>Gradient headline</h2><p>Readable flow content</p></section>`,
+  // Nested fixed-width tables with mobile overrides: the outer table's
+  // max-width cannot shrink the inner table's intrinsic minimum width.
+  wideNestedNewsletter: `
+    <style>@media only screen and (max-width:480px) { .newsletter { width:100% !important } .newsletter-content { width:92% !important } }</style>
+    <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+      <table width="800" style="width:800px" class="newsletter" cellpadding="0" cellspacing="0"><tr><td align="center">
+        <table width="744" style="width:744px" class="newsletter-content"><tr><td>
+          <h2>Newsletter headline</h2><p>Current message content</p>
+          <img width="744" height="120" src="https://example.com/banner.png" alt="Newsletter banner">
+          <a href="https://example.com/details">Right edge details</a>
+        </td></tr></table>
+      </td></tr></table>
+    </td></tr></table>`,
+  wideFixedFlow: `
+    <div style="width:960px;min-width:960px;display:flex;justify-content:space-between">
+      <p>Current message content</p><a href="https://example.com/details">Right edge details</a>
+    </div>`,
   legacyDimensionAttributes,
   zoomTable: `
     <table cellpadding="0" cellspacing="0" style="width:240px;font-family:Arial;font-size:12px;line-height:18px"><tr>
