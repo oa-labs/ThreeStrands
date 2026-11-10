@@ -633,6 +633,9 @@ describe("ThreadAssist", () => {
     render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [event], onReview, onDiscard }, scheduling: { calendarConnected: true, onOpenCalendarEvent } })} />);
     const line = (await screen.findByText(/is already on your calendar/)).closest(".proposal-on-calendar") as HTMLElement;
     const open = within(line).getByRole("button", { name: "Open in Calendar" });
+    // The actions get their own row under the sentence rather than a column beside it.
+    expect(open.parentElement).toHaveClass("proposal-on-calendar-actions");
+    expect(open.parentElement?.previousElementSibling).toHaveTextContent(/is already on your calendar\.$/);
     // Named the same on the calendar, so the line does not repeat the title.
     expect(line).toHaveTextContent(/^Entrepreneur Day 2026 is already on your calendar\.Open in Calendar$/);
     fireEvent.click(open);

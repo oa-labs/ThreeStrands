@@ -319,8 +319,10 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
   const onCalendar = matchedEvent ? <p className="proposal-on-calendar">
     <CircleCheck size={ICON_SIZE.xs} aria-hidden="true" />
     <span><strong>{proposal.title}</strong> is already on your calendar{titlesDiffer(proposal.title, matchedEvent.title) ? <> as {matchedEvent.title}</> : null}.</span>
+    {where?.joinUrl || scheduling.onOpenCalendarEvent ? <span className="proposal-on-calendar-actions">
     {where?.joinUrl ? <a className="proposal-on-calendar-join" href={where.joinUrl} title={where.joinUrl} onClick={(event) => { event.preventDefault(); void openUrl(where.joinUrl!); }}><Video size={ICON_SIZE.sm} aria-hidden="true" />Join</a> : null}
     {scheduling.onOpenCalendarEvent ? <button type="button" className="btn-link" onClick={() => scheduling.onOpenCalendarEvent!(matchedEvent)}><CalendarCheck size={ICON_SIZE.sm} aria-hidden="true" />Open in Calendar</button> : null}
+    </span> : null}
   </p> : null;
   return <>{onCalendar}<article className="action-proposal-card" hidden={matched}>
     <div className="action-proposal-card-top">

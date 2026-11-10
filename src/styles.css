@@ -1690,10 +1690,11 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .ai-usage-prices input { min-width: 0; height: var(--control-h); padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font: inherit; }
 .action-proposal-card p { margin: 0; color: var(--muted); }
 .action-proposal-card[hidden] { display: none; }
-.proposal-on-calendar { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-1-5); margin: 0; color: var(--muted); font-size: var(--text-secondary); overflow-wrap: anywhere; }
-.proposal-on-calendar > svg { flex: 0 0 auto; align-self: center; color: var(--success); }
-.proposal-on-calendar > span { flex: 1 1 12em; min-width: 0; }
+/* The sentence reads first, with its check beside it; the actions sit below, lined up with the words. */
+.proposal-on-calendar { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-1) var(--space-1-5); margin: 0; color: var(--muted); font-size: var(--text-secondary); overflow-wrap: anywhere; }
+.proposal-on-calendar > svg { margin-top: 0.2em; color: var(--success); }
 .proposal-on-calendar strong { color: var(--text); font-weight: var(--weight-semibold); }
+.proposal-on-calendar-actions { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
 .proposal-on-calendar .btn-link, .proposal-on-calendar-join { display: inline-flex; align-items: center; gap: var(--space-1); }
 .proposal-evidence { color: var(--muted); font-size: var(--text-meta); }
 .proposal-evidence > summary { display: inline-flex; align-items: center; gap: var(--space-1); list-style: none; cursor: pointer; }
