@@ -71,6 +71,41 @@ describe("SafeMessage", () => {
     expect(doc.body.style.zoom).toBe("1");
   });
 
+  it("fits overflowing content in place, refits on image load, and keeps resources blocked", () => {
+    const resolveImage = vi.fn();
+    const html = '<div style="width:960px;zoom:20;background:url(https://tracker.invalid/bg)"><a href="https://example.com">Details</a><img src="https://tracker.invalid/image" onerror="parent.compromised=true"></div><script>parent.compromised=true</script>';
+    const { rerender } = render(<SafeMessage html={html} resolveImage={resolveImage} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const doc = frame.contentDocument!;
+    Object.defineProperty(doc.documentElement, "clientWidth", { configurable: true, value: 480 });
+    Object.defineProperty(doc.documentElement, "scrollWidth", { configurable: true, value: 960 });
+    loadFrame(frame);
+    expect(doc.body.style.zoom).toBe("0.5");
+    const root = doc.querySelector("[data-email-root]")!;
+    const markup = root.innerHTML;
+    const srcdoc = frame.srcdoc;
+    const range = doc.createRange();
+    range.selectNodeContents(root.querySelector("a")!);
+    doc.getSelection()!.addRange(range);
+    rerender(<SafeMessage html={html} resolveImage={resolveImage} emailZoom={150} />);
+    expect(doc.body.style.zoom).toBe("0.75");
+    Object.defineProperty(doc.documentElement, "scrollWidth", { configurable: true, value: 1200 });
+    fireEvent.load(doc.querySelector("img")!);
+    expect(Number(doc.body.style.zoom)).toBeCloseTo(0.6);
+    Object.defineProperty(doc.documentElement, "clientWidth", { configurable: true, value: 1200 });
+    fireEvent(doc.defaultView!, new Event("resize"));
+    expect(doc.body.style.zoom).toBe("1.5");
+    expect(doc.getSelection()!.toString()).toBe("Details");
+    expect(root.innerHTML).toBe(markup);
+    expect(frame.srcdoc).toBe(srcdoc);
+    expect(doc.querySelector("script, [onerror], img[src]")).toBeNull();
+    expect(root.querySelector("div")!.style.backgroundImage).toBe("");
+    expect(root.querySelector("div")!.style.zoom).toBe("");
+    expect(resolveImage).not.toHaveBeenCalled();
+    expect(frame.srcdoc).toContain("script-src 'none'");
+    expect(frame.srcdoc).toContain("img-src data:");
+  });
+
   it("applies email zoom to plain text independently of the minimum font size", () => {
     const { rerender } = render(<SafeMessage html="" text="Plain text" emailZoom={125} emailMinimumFontSize={18} />);
     expect(screen.getByTestId("message-body")).toHaveStyle({ fontSize: "max(18px, var(--text-reading))" });

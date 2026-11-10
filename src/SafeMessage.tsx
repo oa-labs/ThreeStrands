@@ -797,13 +797,25 @@ export function SafeMessage({
     fillResolvedImages(frameDoc, resolvedImagesRef.current);
 
     const resize = () => {
+      // Measure at the sender's natural scale on every layout change, so a
+      // narrow pane can recover its original scale when widened. Fixed tables
+      // and min-width flow layouts can exceed max-width through intrinsic
+      // sizing. Shrink the whole document rather than clipping content or
+      // rewriting author widths. Explicit reader zoom is relative to this fit.
+      // Zoom is reader-owned; this adds no sender CSS or resource capability.
+      frameDoc.body.style.zoom = "1";
+      const viewportWidth = frameDoc.documentElement.clientWidth;
+      const contentWidth = Math.max(frameDoc.documentElement.scrollWidth, frameDoc.body.scrollWidth);
+      const fit = viewportWidth > 0 && contentWidth > viewportWidth ? viewportWidth / contentWidth : 1;
+      const effectiveZoom = fit * zoomRef.current;
+      frameDoc.body.style.zoom = String(effectiveZoom);
       // Root scrollHeight is at least the current iframe viewport height,
       // so it cannot shrink after zooming out. Root offsetHeight measures
       // flow content (including collapsed margins); body scrollHeight adds
       // overflowing content in unzoomed units. Use the larger content size.
       const contentHeight = Math.max(
         frameDoc.documentElement?.offsetHeight ?? 0,
-        (frameDoc.body?.scrollHeight ?? 0) * zoomRef.current,
+        (frameDoc.body?.scrollHeight ?? 0) * effectiveZoom,
       );
       const height = contentHeight || frameDoc.documentElement?.scrollHeight || 0;
       const nextHeight = emailFrameHeight(Math.ceil(height));
@@ -823,10 +835,22 @@ export function SafeMessage({
       resize();
     };
     frameDoc.defaultView?.addEventListener("resize", onResize);
+    // Proxied images can change intrinsic overflow without changing the
+    // body's observed width. Refit once their dimensions become available.
+    frameDoc.addEventListener("load", resize, true);
 
     let observer: ResizeObserver | undefined;
+    let resizeAnimation: number | undefined;
     if (frameDoc.body && typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(resize);
+      // Fitting writes layout styles. Defer those writes out of observer
+      // delivery so they cannot create an undelivered-notification loop.
+      observer = new ResizeObserver(() => {
+        if (resizeAnimation !== undefined) return;
+        resizeAnimation = requestAnimationFrame(() => {
+          resizeAnimation = undefined;
+          resize();
+        });
+      });
       observer.observe(frameDoc.body);
     }
 
@@ -889,7 +913,9 @@ export function SafeMessage({
     cleanupRef.current = () => {
       resizeFrameRef.current = null;
       observer?.disconnect();
+      if (resizeAnimation !== undefined) cancelAnimationFrame(resizeAnimation);
       frameDoc.defaultView?.removeEventListener("resize", onResize);
+      frameDoc.removeEventListener("load", resize, true);
       frameDoc.removeEventListener("click", onClick);
       frameDoc.removeEventListener("keydown", onKeyDown);
       frameDoc.removeEventListener("mouseover", onLinkEnter);
