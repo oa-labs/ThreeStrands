@@ -46,7 +46,7 @@ export function useCommandUndo(setNotice: (notice: Notice | null) => void) {
       // action becomes the global Undo target.
       void command.undo?.(result).catch(() => setNotice({ message: "Undo could not be saved" }));
     };
-    if (showNotice) setNotice({ message: result.message ?? command.title, undo: undoThisAction });
+    if (showNotice) setNotice({ message: result.message ?? command.title, undo: undoThisAction, ...(result.action ? { action: result.action } : {}) });
     return undoThisAction;
   }, [setNotice, undoLastAction]);
   return { canUndoAction, canUndoArchive, undoLastAction, rememberUndo, lastUndoOrder };

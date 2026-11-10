@@ -42,6 +42,7 @@ mod transport_validation;
 use threestrands_mail_mime::{html_plain_text, mime, sender_trust};
 use threestrands_mail_text::{quoted_history, search_query};
 mod net_safety;
+mod note_entities;
 mod notes;
 mod notes_export;
 mod notes_import;
@@ -1779,6 +1780,15 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::notes::find_note_by_title,
         commands::notes::notes_export_choose_folder,
         commands::notes::notes_export_write,
+        commands::notes::note_link_choices,
+        commands::notes::resolve_note_event,
+        commands::notes::note_document,
+        commands::notes::list_note_tasks,
+        commands::notes::note_task_warnings,
+        commands::notes::patch_note_item,
+        commands::notes::note_backlinks,
+        commands::notes::resolve_note_conversation,
+        commands::notes::capture_note_conversation,
         commands::notes::note_links,
         commands::notes::notes_storage,
         commands::notes::notes_import_choose_folder,

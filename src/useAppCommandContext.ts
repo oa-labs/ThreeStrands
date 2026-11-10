@@ -40,6 +40,7 @@ type Options = {
   draftSelection: ReturnType<typeof useDraftSelection>;
   selectAllOutbox(): void;
   createCalendarEvent?: () => void;
+  addToTodaysNote?: () => Promise<CommandResult>;
   delegateSelected?: () => void;
   snoozeSelected?: (ids: string[]) => void;
   returnSnoozedSelected?: (ids: string[]) => Promise<CommandResult>;
@@ -84,7 +85,7 @@ type Options = {
 
 /** Binds global commands to the current domain controllers and interaction scope. */
 export function useAppCommandContext({
-  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, delegateSelected, snoozeSelected, returnSnoozedSelected,
+  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, addToTodaysNote, delegateSelected, snoozeSelected, returnSnoozedSelected,
   recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox, mutateIds, view, ui,
 }: Options) {
   const outboxEditSource = useMemo(() => outboxEditAsNewSource(outboxSelection.selectedEntry), [outboxSelection.selectedEntry]);
@@ -101,7 +102,7 @@ export function useAppCommandContext({
   const { selected, selectedIndex, visibleThreads, toggleChecked, toggleMessageFilter, checkedIds, setCheckedIds } = selection;
   const targetIds = useMemo(() => checkedIds.size > 0 ? [...checkedIds] : selected ? [selected.id] : [], [checkedIds, selected]);
   const targetThreads = useMemo(() => mailboxThreads.threads.filter((thread) => targetIds.includes(thread.id)), [mailboxThreads.threads, targetIds]);
-  const { taskWorkspaceRef, taskLayout, selectedTaskStatus, selectedTaskHasThread, newTask } = tasks;
+  const { taskWorkspaceRef, taskLayout, selectedTaskStatus, selectedTaskHasThread, selectedTaskIsNote, newTask } = tasks;
   const { canUndoAction, canUndoArchive, undoLastAction } = undo;
   const { includeArchived, searchOpen, setSearchOpen } = mailboxThreads;
   const { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox } = view;
@@ -188,7 +189,9 @@ export function useAppCommandContext({
     calendarWeekActive: rightWorkspace === "week",
     selectedTaskStatus,
     selectedTaskHasThread,
+    selectedTaskIsNote,
     createCalendarEvent,
+    addToTodaysNote,
     delegateSelected,
     openAgentsView: workspaces.openAgentsView,
     snoozeSelected: () => snoozeSelected?.(targetIds),
@@ -336,10 +339,11 @@ export function useAppCommandContext({
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
   }), [
-    createCalendarEvent, snoozeSelected, returnSnoozedSelected, correspondence.context, parkedDraft, openDraft, openDraftRow, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
+    createCalendarEvent,
+    addToTodaysNote, snoozeSelected, returnSnoozedSelected, correspondence.context, parkedDraft, openDraft, openDraftRow, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
     selectedId, selected, canUnsubscribe, returnStep, goBack, canReturnFromCalendar, returnFromCalendar, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
-    goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
+    goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread, selectedTaskIsNote,
     aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, correspondence.activeDraft?.mode, refreshMail, toggleSchedule, showMailContext, openTasks, openMailView, openTasksView,
     openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openNotesView, openTodaysNote, openTodayView, getSuggestions,
     openThreadChat, newTask, canUndoAction, canUndoArchive, switchAccount, toggleMessageFilter, setRightWorkspace,

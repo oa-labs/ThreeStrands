@@ -1,0 +1,28 @@
+[
+  {
+    "reference": {
+      "version": 1,
+      "kind": "task",
+      "id": "a.b_c-~"
+    },
+    "href": "threestrands:task/%7B%22version%22%3A1%2C%22kind%22%3A%22task%22%2C%22id%22%3A%22a%2Eb%5Fc%2D%7E%22%7D"
+  },
+  {
+    "reference": {
+      "version": 1,
+      "kind": "conversation",
+      "id": "邮件/(a)",
+      "account": "you@example.com"
+    },
+    "href": "threestrands:conversation/%7B%22version%22%3A1%2C%22kind%22%3A%22conversation%22%2C%22id%22%3A%22%E9%82%AE%E4%BB%B6%2F%28a%29%22%2C%22account%22%3A%22you%40example%2Ecom%22%7D"
+  },
+  {
+    "reference": {
+      "version": 1,
+      "kind": "task",
+      "id": "4ec77948-4813-5e64-93f9-c660ae48947f",
+      "note": "daily:2026-11-10"
+    },
+    "href": "threestrands:task/%7B%22version%22%3A1%2C%22kind%22%3A%22task%22%2C%22id%22%3A%224ec77948%2D4813%2D5e64%2D93f9%2Dc660ae48947f%22%2C%22note%22%3A%22daily%3A2026%2D11%2D10%22%7D"
+  }
+]

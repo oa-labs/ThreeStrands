@@ -1,3 +1,5 @@
+import { notePreview } from "./notePreview";
+import { fromEditorMarkdown, toEditorMarkdown } from "./noteEntities";
 import "@meowdown/core/style.css";
 import "@meowdown/react/style.css";
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
@@ -12,6 +14,9 @@ export type NoteEditorHandle = {
   focus(): void;
   /** The Markdown the editor holds now, as it would be saved. */
   markdown(): string;
+  insert(markdown: string): void;
+  revealTask(markerId: string): void;
+  revealReference(href: string): void;
 };
 
 /** The editor library's name for each Markdown Syntax choice. */
@@ -84,7 +89,7 @@ function EscapeLeaves({ onLeave }: { onLeave(): void }) {
  * rewrites it. Escape hands focus back to the note list once the editor has
  * nothing of its own to close.
  */
-export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, files, onChange, onLeave, onSearchLinks, onOpenLink }: {
+export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, files, onChange, onLeave, onSearchLinks, onOpenLink, onOpenEntity }: {
   ref?: Ref<NoteEditorHandle>;
   /** Changes when another note opens, which starts a fresh editor. */
   noteKey: string;
@@ -101,6 +106,7 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   onSearchLinks?(query: string): Promise<NoteLinkSuggestion[]>;
   /** Opens the note a `[[link]]` names. */
   onOpenLink?(title: string): void;
+  onOpenEntity?(href: string): void;
 }) {
   const editor = useRef<EditorHandle>(null);
   const surface = useRef<HTMLDivElement>(null);
@@ -112,11 +118,31 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   const [generation, setGeneration] = useState(0);
   const refocus = useRef(false);
   const latestChange = useRef(onChange);
-  const latestLinks = useRef({ onSearchLinks, onOpenLink });
+  const latestLinks = useRef({ onSearchLinks, onOpenLink, onOpenEntity });
   const latestFiles = useRef(files);
-  useEffect(() => { latestChange.current = onChange; latestLinks.current = { onSearchLinks, onOpenLink }; latestFiles.current = files; });
+  useEffect(() => { latestChange.current = onChange; latestLinks.current = { onSearchLinks, onOpenLink, onOpenEntity }; latestFiles.current = files; });
 
-  useImperativeHandle(ref, () => ({ focus: () => editor.current?.focus(), markdown: () => editor.current?.getMarkdown() ?? shown.current }), []);
+  useImperativeHandle(ref, () => ({ focus: () => editor.current?.focus(), markdown: () => fromEditorMarkdown(editor.current?.getMarkdown() ?? toEditorMarkdown(shown.current), shown.current), insert: (markdown) => editor.current?.insertMarkdown(toEditorMarkdown(markdown)), revealTask: (id) => {
+    const e = editor.current?.getEditor();
+    if (!e) return;
+    let at: number | null = null;
+    let paragraph = 1;
+    e.state.doc.descendants((node, pos) => {
+      if (node.isTextblock) paragraph = pos + 1;
+      if (node.textContent.includes(`threestrands-task:${id}`) && node.isTextblock) at ??= pos + 1;
+      if (typeof node.attrs.content === "string" && node.attrs.content.includes(`threestrands-task:${id}`)) at ??= paragraph;
+    });
+    if (at !== null) { editor.current?.setSelection({ type: "text", anchor: at, head: at }); editor.current?.focus(); editor.current?.scrollIntoView(); }
+  }, revealReference: (href) => {
+    const e = editor.current?.getEditor();
+    if (!e) return;
+    let at: number | null = null;
+    e.state.doc.descendants((node, pos) => {
+      if (node.isTextblock && node.textContent.includes(href)) at ??= pos + Math.max(1, node.textContent.indexOf(href));
+      if (node.attrs.href === href) at ??= pos;
+    });
+    if (at !== null) { editor.current?.setSelection({ type: "text", anchor: at, head: at }); editor.current?.focus(); editor.current?.scrollIntoView(); }
+  } }), []);
 
   useEffect(() => {
     if (value === shown.current) return;
@@ -130,13 +156,45 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
     editor.current?.focus();
   }, [generation]);
 
+  useEffect(() => {
+    let dispose: (() => void) | undefined;
+    const timer = window.setTimeout(() => {
+      const view = editor.current?.getEditor()?.view;
+      const base = view?.someProp("nodeViews", (nodes) => nodes.list);
+      if (!view || !base) return;
+      const original = view.props.nodeViews;
+      // Label controls inside the node view that owns them. Mutating rendered
+      // editor DOM from an observer would race ProseMirror's reconciliation.
+      view.setProps({ nodeViews: { ...original, list: (node, ...args) => {
+        const rendered = base(node, ...args);
+        const decorate = (current: typeof node) => {
+          if (!(rendered.dom instanceof HTMLElement)) return;
+          const checkbox = rendered.dom.querySelector<HTMLInputElement>(':scope > .list-marker input[type="checkbox"]');
+          if (!checkbox || current.attrs.kind !== "task") return;
+          checkbox.setAttribute("aria-label", `${current.attrs.marker === "+" ? "Task" : "Checklist"}: ${notePreview(current.firstChild?.textContent ?? "")}`);
+          checkbox.tabIndex = readOnly ? -1 : 0;
+          checkbox.disabled = readOnly;
+        };
+        decorate(node);
+        return { ...rendered, update: (next, ...rest) => { if (!rendered.update?.(next, ...rest)) return false; decorate(next); return true; } };
+      } } });
+      dispose = () => { if (!view.isDestroyed) view.setProps({ nodeViews: original }); };
+
+    }, 0);
+    return () => { window.clearTimeout(timer); dispose?.(); };
+  }, [generation, noteKey, readOnly]);
+
   const handleDocChange = useCallback(() => {
-    const markdown = editor.current?.getMarkdown();
+    const raw = editor.current?.getMarkdown();
+    const markdown = raw === undefined ? undefined : fromEditorMarkdown(raw, shown.current);
     if (markdown === undefined || markdown === shown.current) return;
     shown.current = markdown;
     latestChange.current(markdown);
   }, []);
-  const handleLink = useCallback(({ href }: { href: string }) => openNoteLink(href), []);
+  const handleLink = useCallback(({ href }: { href: string }) => {
+    if (href.startsWith("threestrands:")) latestLinks.current.onOpenEntity?.(href);
+    else openNoteLink(href);
+  }, []);
   const handleWikilink = useCallback(({ target }: { target: string }) => latestLinks.current.onOpenLink?.(target), []);
   const searchLinks = useCallback(async (query: string) => linkMenuItems(query, await latestLinks.current.onSearchLinks?.(query) ?? []), []);
   // The editor library wants each of these to stay the same function.
@@ -147,7 +205,13 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   const openImage = useCallback(({ src }: { src: string }) => { if (attachmentIdOf(src)) latestFiles.current?.open(src); }, []);
   const reducedMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  return <div ref={surface} className="note-editor-body" onClickCapture={(event) => {
+  return <div ref={surface} className="note-editor-body" onKeyDownCapture={(event) => {
+    if (readOnly || !(event.target instanceof HTMLInputElement) || event.target.type !== "checkbox" || ![" ", "Enter"].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    event.target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  }} onAuxClickCapture={(event) => {
+    if (event.target instanceof Element && event.target.closest("a[href]")) event.preventDefault();
+  }} onClickCapture={(event) => {
     // A link in a note never navigates the app's own window, even read-only;
     // the editor reports the click and `openNoteLink` decides what opens.
     if (event.target instanceof Element && event.target.closest("a[href]")) event.preventDefault();
@@ -156,8 +220,12 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
       key={`${noteKey}:${generation}`}
       handleRef={editor}
       mode={MARK_MODE[mode]}
-      initialMarkdown={value}
+      initialMarkdown={toEditorMarkdown(value)}
       onDocChange={handleDocChange}
+      onSlashMenuSearch={(query) => [
+        { label: "Checklist", keywords: ["square"], onSelect: () => editor.current?.getEditor()?.commands.wrapInSquareTask() },
+        { label: "Task", keywords: ["round", "todo"], onSelect: () => editor.current?.getEditor()?.commands.wrapInCircleTask() },
+      ].filter((item) => item.label.toLowerCase().includes(query))}
       onLinkClick={handleLink}
       onWikilinkClick={handleWikilink}
       onWikilinkSearch={onSearchLinks ? searchLinks : undefined}

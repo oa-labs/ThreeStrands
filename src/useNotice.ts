@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type Notice = { message: string; undo?: () => void };
+export type Notice = { message: string; undo?: () => void; action?: { label: string; run(): void } };
 
 export const NOTICE_TIMEOUT_MS = 6000;
 

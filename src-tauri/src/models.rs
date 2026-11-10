@@ -73,9 +73,12 @@ pub struct UpdateCalendarEventRequest {
     pub attendees: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduleEvent {
+    /// Provider recurrence master identity, independent of an instance start.
+    #[serde(default)]
+    pub series_id: Option<String>,
     pub id: String,
     /// iCalendar identity shared by calendar copies and recurring instances.
     pub uid: Option<String>,
@@ -1396,6 +1399,8 @@ pub struct NoteSearchHit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteBacklink {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<crate::note_entities::NoteReference>,
     pub note_id: String,
     pub title: String,
     pub daily_date: Option<String>,

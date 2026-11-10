@@ -35,6 +35,40 @@ describe("TaskSidebar", () => {
     localStorage.clear();
   });
 
+  it("includes note tasks without inventing an account or due date, and writes completion to the note", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listGoals").mockResolvedValue([]);
+    vi.spyOn(mailClient, "noteTaskWarnings").mockResolvedValue([]);
+    const record = { id: "note:daily:2026-11-10:marker", markerId: "marker", noteId: "daily:2026-11-10", noteTitle: "2026-11-10", title: "Send proposal", checked: false, updatedAt: "v1", completedAt: null as string | null, conflicted: false };
+    vi.spyOn(mailClient, "listNoteTasks").mockImplementation(async () => [{ ...record }]);
+    const ordinary = vi.spyOn(mailClient, "setTaskStatus");
+    const patch = vi.spyOn(mailClient, "patchNoteItem").mockImplementation(async (_id, _marker, _expected, checked) => {
+      record.checked = checked!; record.updatedAt = "v2"; record.completedAt = checked ? new Date().toISOString() : null;
+      return { id: record.noteId, title: record.noteTitle, dailyDate: "2026-11-10", body: "- (x) Send proposal", updatedAt: "v2", createdAt: "v1", trashed: false, trashedAt: null };
+    });
+    const open = vi.fn();
+    render(<TaskSidebar accountId={null} onOpenThread={vi.fn()} onOpenNote={open} />);
+    expect(await screen.findByText("Send proposal", { selector: "strong" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Note · 2026-11-10" }));
+    expect(open).toHaveBeenCalledWith(record.noteId, record.markerId);
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete Send proposal" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledWith(record.noteId, "marker", "v1", true, undefined));
+    expect(ordinary).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^Completed/ }));
+    expect(await screen.findByRole("button", { name: "Reopen Send proposal" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Due date" })).not.toBeInTheDocument();
+  });
+
+  it("excludes note tasks from an explicit account scope", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listGoals").mockResolvedValue([]);
+    const notes = vi.spyOn(mailClient, "listNoteTasks");
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    await screen.findByText("No tasks yet. Press d to add one.");
+    expect(notes).not.toHaveBeenCalled();
+  });
+
   it("stays read-only until Add Task opens the quick-add dialog", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     const onCreateTask = vi.fn();
@@ -50,7 +84,7 @@ describe("TaskSidebar", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Add Task" });
     expect(dialog).toHaveAttribute("data-shortcut-scope", "modal");
-    expect(workspace.querySelector("input, select, textarea")).toBeNull();
+    expect(workspace.querySelector("input:not([type=search]), select, textarea")).toBeNull();
     expect(within(dialog).getByRole("textbox", { name: "Task Title" })).toHaveFocus();
     expect(within(dialog).getByRole("textbox", { name: "Task Title" })).toHaveAttribute("writingsuggestions", "false");
     expect(workspace.closest('[aria-hidden="true"]')).not.toBeNull();

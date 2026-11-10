@@ -86,6 +86,7 @@ export type CommandContext = {
   calendarWeekActive: boolean;
   selectedTaskStatus: TaskStatus | null;
   selectedTaskHasThread: boolean;
+  selectedTaskIsNote?: boolean;
   selectNextMessage(): void;
   selectPreviousMessage(): void;
   archiveSelected(): Promise<CommandResult>;
@@ -125,6 +126,7 @@ export type CommandContext = {
   openNotesView?(): void;
   /** Opens Notes on today's daily note. */
   openTodaysNote?(): void;
+  addToTodaysNote?(): Promise<CommandResult>;
   openAgentsView?(): void;
   delegateSelected?(): void;
   openTodayView?(): void;
@@ -151,6 +153,7 @@ export type CommandContext = {
 
 export type CommandResult = {
   message?: string;
+  action?: { label: string; run(): void };
   undoAction?: () => Promise<void>;
   /** Identifies an archive undo, including archives made through batch actions. */
   undoKind?: "archive";
@@ -413,7 +416,7 @@ export const commands: Command[] = [
     title: "Link Task to a Goal",
     keys: ["Shift+g"],
     group: "Triage",
-    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus !== null && !context.composerActive,
+    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus !== null && !context.selectedTaskIsNote && !context.composerActive,
     run: (context) => complete(context.linkTaskToGoal),
   },
   {
@@ -657,6 +660,11 @@ export const commands: Command[] = [
   {
     id: "view.notes", title: "Go to Notes View", keys: ["4"], group: "Navigation",
     enabled: (c) => !c.composerActive, run: (c) => complete(() => c.openNotesView?.()),
+  },
+  {
+    id: "notes.capture", title: "Add to Today's Note", keys: [], group: "Triage",
+    enabled: (c) => c.focusedPane === "mail" && Boolean(c.selectedId) && !c.composerActive && Boolean(c.addToTodaysNote),
+    run: (c) => c.addToTodaysNote?.() ?? Promise.resolve({}), undo: undoResult,
   },
   {
     id: "notes.today", title: "Open Today's Note", keywords: ["daily", "journal", "notes"], keys: [], group: "Navigation",

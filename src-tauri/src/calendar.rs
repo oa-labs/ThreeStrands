@@ -450,6 +450,7 @@ pub struct FreeBusyResult {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GoogleEvent {
+    recurring_event_id: Option<String>,
     id: String,
     #[serde(rename = "iCalUID")]
     uid: Option<String>,
@@ -1496,6 +1497,9 @@ fn normalize_events(
             let attendees = event_people(event.organizer.as_ref(), &event.attendees);
             let attendee_responses = attendee_responses(&event.attendees, &attendees);
             Some(ScheduleEvent {
+                series_id: event
+                    .recurring_event_id
+                    .map(|id| format!("{calendar_id}:{id}")),
                 id: format!("{calendar_id}:{}", event.id),
                 uid: event.uid,
                 account_id: account_id.to_string(),
@@ -2017,6 +2021,7 @@ mod tests {
         let events = normalize_events(
             vec![
                 GoogleEvent {
+                    recurring_event_id: None,
                     uid: None,
                     id: "timed".into(),
                     summary: Some("Planning".into()),
@@ -2080,6 +2085,7 @@ mod tests {
                     extended_properties: None,
                 },
                 GoogleEvent {
+                    recurring_event_id: None,
                     uid: None,
                     id: "all-day".into(),
                     summary: None,

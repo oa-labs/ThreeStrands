@@ -1,4 +1,4 @@
-import { splitWikiLink } from "./noteWikiLinks";
+import { collapseWhitespace, splitWikiLink } from "./noteWikiLinks";
 
 /** Most characters of a note shown under its title in the list, as natively. */
 export const NOTE_PREVIEW_CHARS = 140;
@@ -15,13 +15,20 @@ function stripBlockMarkers(line: string): string {
     const before = line;
     line = line.trimStart().replace(/^>/, "").trimStart();
     line = line.replace(/^#{1,6}(?= )/, "").trimStart();
-    line = line.replace(/^[-*+] /, "").replace(/^\d+[.)] /, "").replace(/^\[[ xX]\] /, "");
+    line = line.replace(/^[-*+] /, "").replace(/^\d+[.)] /, "").replace(/^(?:\[[ xX]?\]|\([ xX]?\)) /, "");
     if (line === before) return line;
   }
 }
 
 function inlinePlain(line: string): string {
   const chars = [...line];
+  const nextPositions = (needle: string[]) => {
+    const positions = new Int32Array(chars.length + 1); positions.fill(-1);
+    let next = -1;
+    for (let i = chars.length - 1; i >= 0; i--) { if (needle.every((ch, n) => chars[i + n] === ch)) next = i; positions[i] = next; }
+    return positions;
+  };
+  const squares = nextPositions(["]"]), parens = nextPositions([")"]), angles = nextPositions([">"]), protocols = nextPositions([":", "/", "/"]);
   let out = "";
   let index = 0;
   const run = (ch: string) => { let count = 0; while (chars[index + count] === ch) count++; return count; };
@@ -30,7 +37,7 @@ function inlinePlain(line: string): string {
     const next = chars[index + 1];
     if (ch === "\\" && next !== undefined && /[!-/:-@[-`{-~]/.test(next)) { out += next; index += 2; continue; }
     if (ch === "[" && next === "[") {
-      const close = chars.indexOf("]", index + 2);
+      const close = squares[index + 2] ?? -1;
       const inner = close >= 0 && chars[close + 1] === "]" ? chars.slice(index + 2, close).join("") : null;
       if (inner !== null && !inner.includes("[")) {
         const { target, label } = splitWikiLink(inner);
@@ -40,8 +47,8 @@ function inlinePlain(line: string): string {
     }
     if (ch === "!" && next === "[") { index++; continue; }
     if (ch === "[") {
-      const close = chars.indexOf("]", index + 1);
-      const end = close >= 0 && chars[close + 1] === "(" ? chars.indexOf(")", close + 2) : -1;
+      const close = squares[index + 1];
+      const end = close >= 0 && chars[close + 1] === "(" ? parens[close + 2] : -1;
       if (end >= 0) { out += inlinePlain(chars.slice(index + 1, close).join("")); index = end + 1; continue; }
       out += ch; index++; continue;
     }
@@ -53,9 +60,10 @@ function inlinePlain(line: string): string {
       continue;
     }
     if (ch === "<") {
-      const end = chars.indexOf(">", index);
-      const inside = chars.slice(index + 1, end < 0 ? chars.length : end).join("");
-      if (inside.includes("://")) { out += inside; index = end < 0 ? chars.length : end + 1; continue; }
+      const end = angles[index + 1], until = end < 0 ? chars.length : end;
+      if (protocols[index + 1] >= 0 && protocols[index + 1] < until) {
+        out += chars.slice(index + 1, until).join(""); index = end < 0 ? chars.length : end + 1; continue;
+      }
     }
     if ((ch === "*" || ch === "`") || ((ch === "~" || ch === "=") && next === ch)) { index += run(ch); continue; }
     if (ch === "_") {
@@ -96,3 +104,6 @@ export function notePreview(body: string): string {
   const text = notePlainText(body);
   return [...text].length <= NOTE_PREVIEW_CHARS ? text : `${[...text].slice(0, NOTE_PREVIEW_CHARS - 1).join("")}…`;
 }
+
+/** Inline task titles and link labels keep literal list-like prefixes. */
+export function noteInlineText(text: string): string { return collapseWhitespace(inlinePlain(text)); }

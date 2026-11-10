@@ -144,6 +144,7 @@ export type UpdateCalendarEventRequest = {
 export type AttendeeResponseStatus = "accepted" | "declined" | "tentative" | "needsAction";
 
 export type ScheduleEvent = {
+  seriesId?: string | null;
   id: string;
   /** iCalendar identity shared by calendar copies and recurring instances. */
   uid?: string | null;
@@ -275,6 +276,9 @@ export type TaskStatus = "open" | "in_progress" | "completed" | "cancelled";
 export type TaskDueKind = "none" | "date" | "datetime";
 
 export type ThreadTask = {
+  source?: "mail" | "standalone" | "note";
+  /** A note task has no account; accountId is empty in this legacy presentation shape. */
+  noteSource?: import("./noteEntities").NoteTaskRecord;
   id: string;
   accountId: string;
   threadId: string | null;
@@ -1048,7 +1052,7 @@ export type NoteRelink = { updated: number; keptOldLink: string[] };
 export type NoteTitle = { id: string; title: string; dailyDate: string | null };
 
 /** Another note's link to this one, with the line it sits on. */
-export type NoteBacklink = { noteId: string; title: string; dailyDate: string | null; context: string };
+export type NoteBacklink = { reference?: import("./noteEntities").NoteReference; noteId: string; title: string; dailyDate: string | null; context: string };
 
 /** A note's links: notes that link here, titles it links to that no note
  * has yet, and every title it links to. */

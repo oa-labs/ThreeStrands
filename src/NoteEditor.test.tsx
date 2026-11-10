@@ -51,6 +51,11 @@ const ROUND_TRIP: Record<string, string> = {
   headings: "# One\n\n## Two\n\nText under.\n",
   "nested lists": "- a\n  - b\n    - c\n- d\n",
   "ordered list": "1. one\n2. two\n",
+  "round task list": "- ( ) todo\n- (x) done\n",
+  "persisted round task": "- ( ) Proposal <!-- threestrands-task:4ec77948-4813-5e64-93f9-c660ae48947f -->\n",
+  "compact checklists": "- [] Milk\n",
+  "compact round tasks": "- () Send mail\n",
+  "uppercase checked items": "- [X] Checklist\n- (X) Task\n",
   "task list": "- [ ] todo\n- [x] done\n",
   "code block": "```js\nconst a = 1;\n```\n",
   links: "See [site](https://example.com) and <https://example.org>.\n",
@@ -67,6 +72,38 @@ describe("NoteEditor", () => {
     const { ref, onChange } = await editorFor(markdown);
     expect(ref.current!.markdown()).toBe(markdown);
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("renders square checklists and round tasks as different list markers", async () => {
+    const { box, onChange } = await editorFor("- [ ] Shopping\n- ( ) Proposal\n");
+    const items = box.querySelectorAll('[data-list-kind="task"]');
+    expect(items).toHaveLength(2);
+    expect(items[0]).not.toHaveAttribute("data-list-marker", "+");
+    expect(items[1]).toHaveAttribute("data-list-marker", "+");
+    expect(await screen.findByRole("checkbox", { name: "Checklist: Shopping" })).not.toBeChecked();
+    expect(await screen.findByRole("checkbox", { name: "Task: Proposal" })).not.toBeChecked();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("hides task identity metadata in the editor without losing it on save", async () => {
+    const id = "4ec77948-4813-5e64-93f9-c660ae48947f";
+    const source = `- ( ) Proposal <!-- threestrands-task:${id} -->\n`;
+    const { box, ref } = await editorFor(source);
+    expect(box.querySelector("[data-html-comment]")).toBeInTheDocument();
+    expect(box.textContent).not.toContain(id);
+    expect(ref.current!.markdown()).toBe(source);
+  });
+
+  it("prevents internal reference links from navigating on a middle click", async () => {
+    const { noteReferenceHref } = await import("./noteEntities");
+    const href = noteReferenceHref({ version: 1, kind: "task", id: "task-id" });
+    const { container } = await editorFor(`[Task](${href})\n`);
+    const anchor = container.querySelector("a[href]")!;
+    expect(anchor).not.toBeNull();
+    const event = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+    anchor.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(openUrl).not.toHaveBeenCalled();
   });
 
   it("writes a table's delimiter row in its own form", async () => {

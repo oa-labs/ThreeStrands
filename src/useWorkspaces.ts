@@ -14,7 +14,7 @@ import { NARROW_LAYOUT_QUERY, useMediaQuery } from "./useMediaQuery";
 
 export type RightWorkspace = "contacts" | "tasks" | "notes" | "week" | "files" | "today" | "agents" | null;
 /** A request for the Notes workspace to carry out once it is open; `id` tells repeats apart. */
-export type NotesRequest = { kind: "today"; id: number } | { kind: "note"; noteId: string; id: number };
+export type NotesRequest = { kind: "today"; id: number } | { kind: "note"; noteId: string; markerId?: string; referenceHref?: string; id: number };
 // Keep-in-touch reminders fall due as time passes and as mail arrives,
 // without any local edit, so the Contacts badge is re-read on this cadence.
 const KEEP_IN_TOUCH_REFRESH_MS = 5 * 60_000;
@@ -146,8 +146,8 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     setNotesRequest({ kind: "today", id: ++notesRequestId.current });
     setRightWorkspace("notes");
   }, []);
-  const openNote = useCallback((noteId: string) => {
-    setNotesRequest({ kind: "note", noteId, id: ++notesRequestId.current });
+  const openNote = useCallback((noteId: string, markerId?: string, referenceHref?: string) => {
+    setNotesRequest({ kind: "note", noteId, markerId, referenceHref, id: ++notesRequestId.current });
     setRightWorkspace("notes");
   }, []);
   const openTodayView = useCallback(() => setRightWorkspace("today"), []);

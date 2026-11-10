@@ -57,7 +57,7 @@ fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     })
 }
 
-fn get(tx: &Transaction<'_>, id: &str) -> DbResult<Option<Note>> {
+pub(crate) fn get(tx: &Transaction<'_>, id: &str) -> DbResult<Option<Note>> {
     Ok(tx
         .query_row(
             &format!("SELECT {NOTE_COLUMNS} FROM notes WHERE id=?1"),
@@ -304,6 +304,7 @@ fn store(
 }
 
 fn index(tx: &Transaction<'_>, note: &Note) -> DbResult<()> {
+    super::note_entities::index(tx, note)?;
     tx.execute("DELETE FROM note_links WHERE note_id=?1", [&note.id])?;
     tx.execute("DELETE FROM note_search WHERE note_id=?1", [&note.id])?;
     for (position, link) in extract_links(&note.body).iter().enumerate() {
@@ -325,6 +326,9 @@ fn remove(tx: &Transaction<'_>, id: &str) -> DbResult<()> {
         "DELETE FROM note_links WHERE note_id=?1",
         "DELETE FROM note_search WHERE note_id=?1",
         "DELETE FROM note_visits WHERE note_id=?1",
+        "DELETE FROM note_tasks WHERE note_id=?1",
+        "DELETE FROM note_entity_links WHERE note_id=?1",
+        "DELETE FROM note_index_warnings WHERE note_id=?1",
     ] {
         tx.execute(statement, [id])?;
     }
@@ -362,7 +366,12 @@ fn field_in_conflict(tx: &Transaction<'_>, id: &str, field: &str) -> DbResult<bo
 
 /// Applies a local edit of title and body, writing only when one changed.
 /// A field in conflict can't be edited until the user picks a version.
-fn edit(tx: &Transaction<'_>, mut note: Note, title: String, body: &str) -> DbResult<Note> {
+pub(super) fn edit(
+    tx: &Transaction<'_>,
+    mut note: Note,
+    title: String,
+    body: &str,
+) -> DbResult<Note> {
     if note.trashed {
         return Err(DatabaseError::invalid("Restore this note to edit it"));
     }
@@ -373,7 +382,8 @@ fn edit(tx: &Transaction<'_>, mut note: Note, title: String, body: &str) -> DbRe
         changed.insert("title".to_string());
     }
     if note.body != body {
-        note.body = body.to_string();
+        note.body =
+            crate::note_entities::normalize(&note.id, body).map_err(DatabaseError::invalid)?;
         changed.insert("body".to_string());
     }
     if changed.is_empty() {
@@ -390,7 +400,9 @@ fn edit(tx: &Transaction<'_>, mut note: Note, title: String, body: &str) -> DbRe
     get(tx, &note.id)?.ok_or(DatabaseError::NotFound("Note"))
 }
 
-fn create(tx: &Transaction<'_>, note: Note) -> DbResult<Note> {
+fn create(tx: &Transaction<'_>, mut note: Note) -> DbResult<Note> {
+    note.body =
+        crate::note_entities::normalize(&note.id, &note.body).map_err(DatabaseError::invalid)?;
     let payload = sync_payload(&note);
     let bytes = check_sync_limits(tx, &note, &payload)?;
     let fields = payload
@@ -498,7 +510,11 @@ fn relink(tx: &Transaction<'_>, id: &str, old_key: &str, new_title: &str) -> DbR
     Ok(result)
 }
 
-fn save_daily_in(tx: &Transaction<'_>, date: &str, body: &str) -> DbResult<Option<Note>> {
+pub(super) fn save_daily_in(
+    tx: &Transaction<'_>,
+    date: &str,
+    body: &str,
+) -> DbResult<Option<Note>> {
     let id = daily_note_id(date);
     match get(tx, &id)? {
         Some(note) => {
@@ -531,7 +547,7 @@ fn save_daily_in(tx: &Transaction<'_>, date: &str, body: &str) -> DbResult<Optio
 /// over `current`. Trashing (here or on another device) changes no text, so
 /// it leaves `updated_at` alone; a note in Trash is never current, so the
 /// editor offers its choices instead of a save that would be refused.
-fn is_current(current: Option<&Note>, expected_updated_at: Option<&str>) -> bool {
+pub(super) fn is_current(current: Option<&Note>, expected_updated_at: Option<&str>) -> bool {
     current.map(|note| note.updated_at.as_str()) == expected_updated_at
         && !current.is_some_and(|note| note.trashed)
 }
@@ -912,6 +928,7 @@ impl Database {
                     params![title_key(&note.title), id, MAX_LIST_ROWS as i64],
                     |row| {
                         Ok(NoteBacklink {
+                            reference: None,
                             note_id: row.get(0)?,
                             title: row.get(1)?,
                             daily_date: row.get(2)?,

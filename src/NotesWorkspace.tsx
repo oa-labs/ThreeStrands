@@ -1,3 +1,6 @@
+import { NoteLinkPicker } from "./NoteLinkPicker";
+import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./noteEntities";
+import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowLeft, FilePlus, GitCompareArrows, NotebookText, Plus, RotateCcw, Trash2, UserRound } from "lucide-react";
@@ -81,8 +84,10 @@ type ListView = "notes" | "trash";
  * surface entered with Enter or a click and left with Escape. Trash sits at
  * the bottom of the list, and a trashed note opens read-only.
  */
-export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact }: {
+export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact, onOpenEntity, onReturn }: {
   request?: NotesRequest | null;
+  onOpenEntity?(href: string): Promise<void>;
+  onReturn?(): void;
   /** Acknowledge the request after selecting its target. */
   onRequestConsumed?(id: number): void;
   refreshKey?: string;
@@ -104,6 +109,8 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [links, setLinks] = useState<{ noteId: string; links: NoteLinks } | null>(null);
+  const [entityDocument, setEntityDocument] = useState<(NoteDocument & { noteId: string; version: string }) | null>(null);
+  const [linkPicker, setLinkPicker] = useState(false);
   const [people, setPeople] = useState<ContactProfile[]>([]);
   const [relinkNotice, setRelinkNotice] = useState<string | null>(null);
   const rows = useRef(new Map<string, HTMLButtonElement>());
@@ -169,6 +176,15 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     void refresh().catch(logBackgroundFailure("Note refresh"));
   }, [loadRecent, loadTrash, loadConflicts, loadLinks, refresh, files]);
   const noteId = editor.note?.id ?? null;
+  useEffect(() => {
+    let active = true;
+    const version = editor.note?.updatedAt ?? "";
+    setEntityDocument((current) => current?.noteId === noteId ? current : null);
+    if (noteId) void mailClient.noteDocument(noteId).then((value) => { if (active) setEntityDocument({ ...value, noteId, version }); }, (e) => { if (active) setActionError(errorMessage(e)); });
+    return () => { active = false; };
+  }, [noteId, editor.note?.updatedAt]);
+  useEffect(() => { const changed = () => reloadAll(); window.addEventListener(NOTES_CHANGED, changed); return () => window.removeEventListener(NOTES_CHANGED, changed); }, [reloadAll]);
+  const pendingFocus = useRef<Extract<NotesRequest, { kind: "note" }> | null>(null);
   useEffect(() => { loadLinks(noteId); }, [noteId, loadLinks]);
   // People: the note's links whose titles are saved contacts' names.
   const linkTitles = links?.noteId === noteId ? links.links.links : null;
@@ -202,9 +218,19 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     if (!request) return;
     setQuery("");
     setListView("notes");
+    if (request.kind === "note") pendingFocus.current = request;
     select(request.kind === "today" ? todayTarget() : parseNoteTargetKey(request.noteId));
     onRequestConsumed?.(request.id);
   }, [request, select, onRequestConsumed]);
+  useEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending || editor.loading || editor.note?.id !== pending.noteId || selectedKey !== pending.noteId) return;
+    pendingFocus.current = null;
+    requestAnimationFrame(() => {
+      if (pending.markerId) body.current?.revealTask(pending.markerId);
+      else if (pending.referenceHref) body.current?.revealReference(pending.referenceHref);
+    });
+  }, [request, selectedKey, editor.loading, editor.note]);
 
   useEffect(() => {
     if (!query.trim()) { setHits(null); return; }
@@ -313,11 +339,13 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const stale = editor.saveState.kind === "stale" ? editor.saveState : null;
   const daily = target.kind === "daily";
   const readOnly = Boolean(stale) || editor.loading || inTrash || noteConflicts.length > 0;
+  const entityItemsCurrent = entityDocument?.noteId === noteId && entityDocument?.version === editor.note?.updatedAt;
   const status = editor.loading ? "Loading note…" : editor.saveState.kind === "saving" ? "Saving…" : editor.dirty ? "Not saved yet" : editor.note ? "Saved" : "";
   const editorTitle = daily ? formatNoteDate(target.date) : editor.text.title;
 
   return <section className="notes-workspace" aria-label="Notes" onKeyDown={(event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
+    if (event.key === "Escape" && onReturn) { event.preventDefault(); onReturn(); return; }
     if (!["j", "k", "ArrowDown", "ArrowUp"].includes(event.key)) return;
     if (!(event.target instanceof HTMLElement) || !event.target.closest(".notes-list")) return;
     event.preventDefault(); event.stopPropagation();
@@ -327,6 +355,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   }}>
     <header className="notes-header">
       <h1>Notes</h1>
+      {onReturn ? <button type="button" className="btn-link" onClick={onReturn}>Back to Mail</button> : null}
       <div className="notes-header-actions">
         <button type="button" className="btn" title="New note (Shift+N)" aria-keyshortcuts="Shift+N" onClick={() => setCreating(true)}><Plus size={ICON_SIZE.md} aria-hidden="true" />New Note</button>
       </div>
@@ -422,9 +451,11 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
                   }} />}
               {editor.note && !inTrash ? <button type="button" className="btn btn-icon" title="Move to Trash (#)" aria-label="Move to Trash" aria-keyshortcuts="#" disabled={busy || Boolean(stale)} onClick={() => void moveToTrash()}><Trash2 size={ICON_SIZE.lg} aria-hidden="true" /></button> : null}
             </div>
+            {!readOnly ? <div className="notes-header-actions"><button type="button" className="btn btn-sm" onClick={() => setLinkPicker(true)}>Link to…</button></div> : null}
             <NoteEditor ref={body} noteKey={selectedKey} value={editor.text.body} label="Note text" readOnly={readOnly} mode={syntaxMode} files={files}
               placeholder={daily ? "Write about the day" : "Write in Markdown"}
               onChange={(value) => editor.edit({ body: value })} onLeave={returnToList}
+              onOpenEntity={(href) => void act(async () => { if (!parseNoteReference(href)) throw new Error("Invalid note reference"); await editor.flush(); if (editor.unsaved()) throw new Error("Save or resolve this note before opening its link."); await onOpenEntity?.(href); })}
               onSearchLinks={searchLinks} onOpenLink={(title) => void openLink(title)} />
             {editor.saveState.kind === "error" ? <p className="form-error" role="alert">{editor.saveState.message}</p>
               : <p className="notes-save-status" role="status">{status}{relinkNotice ? ` ${relinkNotice}` : ""}</p>}
@@ -432,6 +463,12 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
       </div>
       <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow}>
         <ContextSectionHeader title="Note details" />
+        {entityDocument?.warning ? <p role="alert" className="form-error">{entityDocument.warning}</p> : null}
+        {(["conversation", "task", "event"] as const).map((kind) => {
+          const rows = (entityDocument?.noteId === noteId ? entityDocument.links : []).filter((link, index, all) => link.reference.kind === kind && all.findIndex((other) => other.href === link.href) === index) ?? [];
+          return rows.length ? <ContextSection key={kind} id={`note-${kind}-links`} title={{ conversation: "Conversations", task: "Tasks", event: "Events" }[kind]} count={rows.length} rows={rows.map((link) => <ContextRow key={link.href} title={link.label} detail={link.reference.account} onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null;
+        })}
+        {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <ContextSection id="note-checklist-tasks" title="Checklists and tasks" count={entityDocument.items.length} rows={entityDocument.items.map((item) => <ContextRow key={item.id} title={item.title} detail={item.task ? "Task" : "Checklist"} control={<input type="checkbox" className={item.task ? "note-round-checkbox" : undefined} checked={item.checked} disabled={readOnly || busy || !entityItemsCurrent} aria-label={`${item.task ? "Task" : "Checklist"}: ${item.title}`} onChange={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { checked: !item.checked }); })} />} actions={[<button key="convert" className="btn-link" disabled={readOnly || busy || !entityItemsCurrent} onClick={() => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, { task: !item.task }); })}>Convert to {item.task ? "Checklist" : "Task"}</button>]} />)} /> : null}
         {editor.note ? <dl className="notes-details">
           <div><dt>Created</dt><dd>{formatTime(editor.note.createdAt)}</dd></div>
           <div><dt>Changed</dt><dd>{formatTime(editor.note.updatedAt)}</dd></div>
@@ -450,6 +487,20 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
         </> : null}
       </WorkspaceContextRail>
     </div>
+    {linkPicker ? <NoteLinkPicker onClose={() => setLinkPicker(false)} onSelect={async (choice) => {
+      // Stabilize a provisional target before storing a durable task link.
+      if (choice.reference.kind === "task" && choice.reference.note) {
+        await prepareNoteMutation(choice.reference.note);
+        const target = await mailClient.getNote(choice.reference.note);
+        if (!target) throw new Error("Unavailable on this device");
+        const doc = await mailClient.noteDocument(target.id);
+        const item = doc.items.find((item) => item.id === choice.reference.id && item.task);
+        if (!item) throw new Error("Unavailable on this device");
+        if (!item.persisted) await changeNoteItem(target.id, item.id, target.updatedAt, { checked: item.checked });
+      }
+      body.current?.insert(markdownEntityLink(choice.label, choice.reference));
+      setLinkPicker(false);
+    }} /> : null}
     {creating ? <NewNoteDialog onClose={() => setCreating(false)} onCreated={(note) => {
       setCreating(false);
       setListView("notes");

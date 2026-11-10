@@ -48,6 +48,7 @@ const MIGRATIONS: &[Migration] = &[
     (101, to_v101),
     (102, to_v102),
     (103, to_v103),
+    (104, to_v104),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1366,6 +1367,33 @@ fn to_v102(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v104(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS note_tasks (
+        note_id TEXT NOT NULL, marker_id TEXT NOT NULL, title TEXT NOT NULL,
+        checked INTEGER NOT NULL, completed_at TEXT, PRIMARY KEY(note_id,marker_id));
+        CREATE TABLE IF NOT EXISTS note_entity_links (
+        note_id TEXT NOT NULL, position INTEGER NOT NULL, href TEXT NOT NULL,
+        context TEXT NOT NULL, start INTEGER NOT NULL, PRIMARY KEY(note_id,position));
+        CREATE INDEX IF NOT EXISTS note_entity_link_targets ON note_entity_links(href);
+        CREATE TABLE IF NOT EXISTS note_index_warnings(note_id TEXT PRIMARY KEY,warning TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS note_event_cache(account TEXT NOT NULL,calendar TEXT NOT NULL,id TEXT NOT NULL, start TEXT NOT NULL,end TEXT NOT NULL,body TEXT NOT NULL, PRIMARY KEY(account,calendar,id));").map_err(error)?;
+    // Index pre-existing Markdown without authoring edits or generating anchors.
+    let ids = {
+        let mut q = tx.prepare("SELECT id FROM notes").map_err(error)?;
+        let rows = q
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(error)?;
+        rows
+    };
+    for id in ids {
+        let note = crate::db::notes::get(tx, &id).map_err(error)?.unwrap();
+        crate::db::note_entities::index(tx, &note).map_err(error)?;
+    }
+    Ok(())
+}
+
 /// Outbox reconciliation that runs on every open, independent of schema
 /// version: a send interrupted mid-flight is marked uncertain, an undo window
 /// is re-armed briefly, and an overdue scheduled send is surfaced.
@@ -1635,6 +1663,11 @@ mod tests {
 
     /// Objects each migration above the v74 baseline adds, in `schema_objects` form.
     const ABOVE_BASELINE_OBJECTS: &[&str] = &[
+        "table:note_tasks",
+        "table:note_entity_links",
+        "index:note_entity_link_targets",
+        "table:note_index_warnings",
+        "table:note_event_cache",
         "table:imap_label_snapshots",
         "table:imap_server_capabilities",
         "table:imap_message_identities",

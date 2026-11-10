@@ -6,7 +6,7 @@
 **Date:** 2026-11-09
 **Scope:** a Notes workspace for Markdown notes that travel through
 replicated sync. The [linked notes and tasks proposal](#linked-notes-and-tasks-proposal)
-below specifies a follow-on; it is not implemented.
+below records the linked-notes and task integration built after v1.
 
 Notes adds a fourth kind of content beside mail, calendar, and tasks: the
 user's own Markdown notes, with a daily note, `[[wiki links]]`, and
@@ -698,7 +698,7 @@ under `### New` or `### Improved` as they become visible.
 
 ## Linked notes and tasks proposal
 
-**Status: specified, not built.** This extends the built Notes workspace.
+**Status: implemented in `linked-notes-tasks`.** This extends the built Notes workspace.
 It covers **Add to Today's Note** from Mail, explicit links between notes
 and conversations, tasks, and calendar events, and Markdown tasks in the
 existing **Tasks** workspace. It adds no AI processing.
@@ -852,8 +852,8 @@ item's first-line inline text, with Markdown formatting removed. Following
 paragraphs and child items remain note content, not part of that title.
 
 The editor's slash menu offers **Checklist** and **Task**, inserting the
-corresponding syntax. The item menu offers **Convert to Task** for a
-checklist and **Convert to Checklist** for a task. Tasks also offers
+corresponding syntax. Each item's context row offers **Convert to Task**
+for a checklist and **Convert to Checklist** for a task. Tasks also offers
 **Convert to Checklist** for note tasks; other task sources keep their
 existing actions. Conversion changes only the item's marker family and
 preserves text, checked state, indentation, children, links, and any
@@ -891,8 +891,8 @@ task-id marker after conversion.
 **Stable identity.** At the first authored save/import, attach an inert
 trailing marker to each new task item, for example
 `<!-- threestrands-task:<uuid> -->`. It is metadata text, never live HTML.
-The editor hides it in Hide/Hybrid mode and preserves it byte for byte;
-Show mode and export expose the Markdown source. Moving, rewording, or
+The editor keeps this metadata hidden in every syntax mode and preserves
+it byte for byte; export exposes the stored Markdown source. Moving, rewording, or
 checking the item preserves its id. Copying an item within a note assigns
 a fresh id to the copy on save; the first occurrence keeps the original.
 Identity is `(noteId, markerId)`, so copying to a different note creates a
@@ -976,10 +976,10 @@ stays readable, with an explicit indexing warning and no partial task list.
 This first release adds local derived tables and extends Markdown syntax;
 it adds no replicated entity type or settings-transfer field. Older devices
 may edit a note using their older editor and strip unknown markers or
-normalize the parenthesized task syntax. Before shipping, prove preservation with
-older-editor fixtures or require all devices to update and block unsupported
-mixed-version writes using a protocol compatibility gate. Do not claim
-identity survives an older editor until that boundary is verified.
+normalize the parenthesized task syntax. The previous pinned editor's
+round-trip fixture verifies preservation of both the parentheses and task
+markers. Keep that compatibility fixture when upgrading the editor; an
+upgrade that cannot preserve them needs an explicit compatibility gate.
 
 ### Acceptance and delivery
 
@@ -1030,16 +1030,40 @@ Automated coverage must include:
 
 Test parsers and storage natively, hooks/components directly, and retain
 slim App tests for capture wiring and cross-workspace return navigation.
-Run the required frontend, Rust, and mail-triage E2E checks for the eventual
-implementation. Add user-facing changelog entries as these slices ship;
-this proposal alone changes no application behavior.
+Run the required frontend, Rust, and mail-triage E2E checks when changing this
+behavior, and keep the user-facing changelog entry current.
+
+### Implementation notes
+
+- Native parsing and source patches live in `note_entities.rs`; `db/note_entities.rs`
+  owns the local task, entity-link, warning, and cached-event tables (migration
+  104). Note saves/imports and replicated projection rebuild those indexes
+  with the note. Existing unmarked tasks are indexed during migration without
+  changing their bodies or publishing edits.
+- The editor adapts the stored parenthesized tasks to meowdown's existing
+  round-checkbox representation. Identity comments are hidden block atoms in
+  the editing view and return to their original trailing position on save.
+  Shared Markdown and reference-codec fixtures, previous-editor compatibility,
+  and browser coverage protect that boundary, including adding a second task.
+- **Link to…** searches cached conversations, existing tasks, and events already
+  loaded in Calendar. Event creation, edits, deletion, and successful Calendar
+  range loads maintain the local event cache. Following a note link never
+  starts a provider request; an event outside the cache needs its dates loaded
+  in Calendar first. Series links resolve to an available cached occurrence.
+  Removing a calendar account clears its cached events while preserving note links.
+- Task scope controls include **All accounts** even with one mail account.
+  Changing the scope while in Tasks keeps Tasks open. Note tasks join the
+  all-accounts query; account-specific queries continue to exclude them.
+- Task mutations coordinate with the open editor's save owner, advancing the
+  expected version only through that owner's own successful flush. Closed
+  drafts, external changes, conflicts, and limit failures require resolution.
+  Conversions keep each row mounted while its refreshed projection loads, so
+  keyboard focus is retained.
 
 ## Later
 
 - **v2: Folder mirror.** Keep a chosen folder in step with notes in both
   directions, for users who edit in other tools.
 - Tags beyond plain-text search.
-- Implement the [linked notes and tasks proposal](#linked-notes-and-tasks-proposal):
-  mail capture, entity links/backlinks, and Markdown tasks in Tasks.
 - Asking AI about notes, with a private flag per note.
 - Merging concurrent text edits.

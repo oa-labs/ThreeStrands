@@ -34,6 +34,30 @@ const noteList = () => within(screen.getByRole("list", { name: "Notes" }));
 describe("Notes workspace", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.mocked(replicatedSyncConflicts).mockResolvedValue([]); localStorage.clear(); });
 
+  it("converts checklists and tasks explicitly while retaining item identity", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Mixed items"), "- [ ] Local only\n- (x) Shared task\n");
+    const original = (await mailClient.listNoteTasks()).find((task) => task.noteId === note.id)!;
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    await screen.findByRole("region", { name: "Checklists and tasks" });
+    const context = () => within(screen.getByRole("region", { name: "Checklists and tasks" }));
+    fireEvent.click(context().getByRole("checkbox", { name: "Checklist: Local only" }));
+    await waitFor(async () => expect((await mailClient.getNote(note.id))?.body).toContain("- [x] Local only"));
+    expect((await mailClient.listNoteTasks()).filter((task) => task.noteId === note.id)).toHaveLength(1);
+    await waitFor(() => expect(context().getByRole("button", { name: "Convert to Task" })).toBeEnabled());
+    fireEvent.click(context().getByRole("button", { name: "Convert to Task" }));
+    await waitFor(async () => expect((await mailClient.listNoteTasks()).filter((task) => task.noteId === note.id)).toHaveLength(2));
+    const promoted = (await mailClient.listNoteTasks()).find((task) => task.noteId === note.id && task.title === "Local only")!;
+    expect(promoted.checked).toBe(true);
+    await waitFor(() => expect(context().getAllByRole("button", { name: "Convert to Checklist" })[0]).toBeEnabled());
+    fireEvent.click(context().getAllByRole("button", { name: "Convert to Checklist" })[0]);
+    await waitFor(async () => expect((await mailClient.listNoteTasks()).filter((task) => task.noteId === note.id)).toHaveLength(1));
+    expect((await mailClient.listNoteTasks()).find((task) => task.noteId === note.id)?.markerId).toBe(original.markerId);
+    await waitFor(() => expect(context().getByRole("button", { name: "Convert to Task" })).toBeEnabled());
+    await waitFor(() => expect(context().getByRole("button", { name: "Convert to Task" })).toBeEnabled());
+    fireEvent.click(context().getByRole("button", { name: "Convert to Task" }));
+    await waitFor(async () => expect((await mailClient.listNoteTasks()).find((task) => task.noteId === note.id && task.title === "Local only")?.markerId).toBe(promoted.markerId));
+  });
+
   it("opens on today's note without taking focus or writing anything", async () => {
     const update = vi.spyOn(mailClient, "updateNote");
     const daily = vi.spyOn(mailClient, "saveDailyNote");

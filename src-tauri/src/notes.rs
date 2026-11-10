@@ -235,7 +235,7 @@ fn link_at(chars: &[char], start: usize) -> Option<(LinkSpan, usize)> {
     None
 }
 
-fn line_context(line: &str) -> String {
+pub(crate) fn line_context(line: &str) -> String {
     let line = line.trim();
     if line.chars().count() <= MAX_LINK_CONTEXT_CHARS {
         return line.to_string();
@@ -309,7 +309,7 @@ fn strip_block_markers(mut line: &str) -> &str {
         if digits > 0 && (line[digits..].starts_with(". ") || line[digits..].starts_with(") ")) {
             line = &line[digits + 2..];
         }
-        for task in ["[ ] ", "[x] ", "[X] "] {
+        for task in ["[ ] ", "[x] ", "[X] ", "[] ", "( ) ", "(x) ", "(X) ", "() "] {
             if let Some(rest) = line.strip_prefix(task) {
                 line = rest;
             }
@@ -320,9 +320,27 @@ fn strip_block_markers(mut line: &str) -> &str {
     }
 }
 
+/// Next matching punctuation at each character, so malformed, bracket-heavy
+/// source remains linear rather than rescanning the rest of a long line.
+fn next_positions(chars: &[char], needle: &[char]) -> Vec<usize> {
+    let mut positions = vec![chars.len(); chars.len() + 1];
+    let mut next = chars.len();
+    for i in (0..chars.len()).rev() {
+        if chars[i..].starts_with(needle) {
+            next = i;
+        }
+        positions[i] = next;
+    }
+    positions
+}
+
 /// Inline Markdown as its visible text.
-fn inline_plain(line: &str) -> String {
+pub(crate) fn inline_plain(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
+    let squares = next_positions(&chars, &[']']);
+    let parens = next_positions(&chars, &[')']);
+    let angles = next_positions(&chars, &['>']);
+    let protocols = next_positions(&chars, &[':', '/', '/']);
     let mut out = String::with_capacity(line.len());
     let mut index = 0;
     while index < chars.len() {
@@ -353,7 +371,7 @@ fn inline_plain(line: &str) -> String {
                 }
             }
             '!' if chars.get(index + 1) == Some(&'[') => index += 1,
-            '[' => match markdown_link(&chars, index) {
+            '[' => match markdown_link(&chars, index, &squares, &parens) {
                 Some((text, end)) => {
                     out.push_str(&inline_plain(&text));
                     index = end;
@@ -370,16 +388,8 @@ fn inline_plain(line: &str) -> String {
                     .find(|at| chars[*at..].starts_with(&['-', '-', '>']))
                     .map_or(chars.len(), |at| at + 3);
             }
-            '<' if chars[index + 1..]
-                .iter()
-                .take_while(|c| **c != '>')
-                .collect::<String>()
-                .contains("://") =>
-            {
-                let end = chars[index..]
-                    .iter()
-                    .position(|c| *c == '>')
-                    .map_or(chars.len(), |offset| index + offset);
+            '<' if protocols[index + 1] < angles[index + 1] => {
+                let end = angles[index + 1];
                 out.extend(&chars[index + 1..end]);
                 index = (end + 1).min(chars.len());
             }
@@ -414,12 +424,20 @@ fn inline_plain(line: &str) -> String {
 }
 
 /// `[text](destination)` starting at `start`: the text, and the index past `)`.
-fn markdown_link(chars: &[char], start: usize) -> Option<(String, usize)> {
-    let close = start + 1 + chars[start + 1..].iter().position(|c| *c == ']')?;
-    if chars.get(close + 1) != Some(&'(') {
+fn markdown_link(
+    chars: &[char],
+    start: usize,
+    squares: &[usize],
+    parens: &[usize],
+) -> Option<(String, usize)> {
+    let close = squares[start + 1];
+    if close == chars.len() || chars.get(close + 1) != Some(&'(') {
         return None;
     }
-    let end = close + 2 + chars[close + 2..].iter().position(|c| *c == ')')?;
+    let end = parens[close + 2];
+    if end == chars.len() {
+        return None;
+    }
     Some((chars[start + 1..close].iter().collect(), end + 1))
 }
 
@@ -492,6 +510,10 @@ mod tests {
             "#hashtag and # heading"
         );
         assert_eq!(plain_text(""), "");
+        assert_eq!(
+            plain_text("- () Round task\n- (X) Done\n- [] Checklist"),
+            "Round task Done Checklist"
+        );
         assert_eq!(
             plain_text("See ![](attachment:0123456789abcdef0123456789abcdef)<!-- {\"width\":320} --> and [Plan.pdf](attachment:0123456789abcdef0123456789abcdef) <!-- open"),
             "See and Plan.pdf"

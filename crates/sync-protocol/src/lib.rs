@@ -26,6 +26,10 @@ pub const MAX_SYNCED_DRAFTS_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_NOTE_BODY_BYTES: usize = 96 * 1024;
 /// Most characters in a note's title.
 pub const MAX_NOTE_TITLE_CHARS: usize = 200;
+/// Local indexes refuse partial results above these bounds.
+pub const MAX_NOTE_TASKS: usize = 500;
+pub const MAX_NOTE_ENTITY_LINKS: usize = 500;
+pub const MAX_NOTE_REFERENCE_BYTES: usize = 2_048;
 /// Most bytes every note together may take in a snapshot, measured as the
 /// JSON encoding of each note's fields. A snapshot holds at most 4 MB after
 /// compression, shared with every other synchronized type. Text that

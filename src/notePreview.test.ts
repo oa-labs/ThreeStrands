@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NOTE_PREVIEW_CHARS, notePlainText, notePreview } from "./notePreview";
+import { NOTE_PREVIEW_CHARS, notePlainText, notePreview, noteInlineText } from "./notePreview";
 
 // The same cases as `plain_text` in src-tauri/src/notes.rs.
 describe("note previews", () => {
@@ -8,6 +8,8 @@ describe("note previews", () => {
     expect(notePlainText(body)).toBe("The Basics Dates (LOCKED): Friday Lodging old new code see VRBO https://a.b quoted task Ada Plan photo let snake_case = 1; a b 1 2 *literal* 3 4");
     expect(notePlainText("#hashtag and # heading")).toBe("#hashtag and # heading");
     expect(notePlainText("")).toBe("");
+    expect(noteInlineText("1. **Send** [mail](https://example.com)")).toBe("1. Send mail");
+    expect(notePlainText("- () Round task\n- (X) Done\n- [] Checklist")).toBe("Round task Done Checklist");
     expect(notePlainText("See ![](attachment:0123456789abcdef0123456789abcdef)<!-- {\"width\":320} --> and [Plan.pdf](attachment:0123456789abcdef0123456789abcdef) <!-- open")).toBe("See and Plan.pdf");
   });
 
