@@ -562,7 +562,7 @@ export function CalendarWeekView({
               <HoverTooltip title={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`}><button type="button" className="btn-icon" aria-label={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`} onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
               <HoverTooltip title={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`}><button type="button" className="btn-icon" aria-label={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`} onClick={() => moveWeek(1)}><ChevronRight size={ICON_SIZE.lg} /></button></HoverTooltip>
             </div>
-            <button type="button" className="btn" title={`New event (b, ${formatShortcut("Shift+n")})`} aria-keyshortcuts="b Shift+N" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event</button>
+            <button type="button" className="btn" title={`New event (b, ${formatShortcut("Shift+n")})`} aria-keyshortcuts="b Shift+N" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event…</button>
           </div>
         </header>
         {error ? (

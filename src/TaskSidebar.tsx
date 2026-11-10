@@ -598,7 +598,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             <button type="button" className="segment" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={ICON_SIZE.md} />List</button>
             <button type="button" className="segment" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={ICON_SIZE.md} />Board</button>
           </div>
-          {onCreateTask ? <button type="button" className="btn task-add-button" onClick={startNew}><Plus size={ICON_SIZE.md} />Add Task</button> : null}
+          {onCreateTask ? <button type="button" className="btn task-add-button" onClick={startNew}><Plus size={ICON_SIZE.md} />Add Task…</button> : null}
         </div>
       </header>
       {noteWarnings.map(([id, title, warning]) => <p key={id} className="form-error" role="alert">{title}: {warning}. Tasks from this note are unavailable. <button className="btn-link" onClick={() => onOpenNote?.(id)}>Open Note</button></p>)}

@@ -4,6 +4,7 @@ import { Modal } from "./AppChrome";
 import { mailClient } from "./data/client";
 import type { ContactFormat, ContactImportPreview, ContactProfile } from "./domain";
 import { errorMessage } from "./errors";
+import { plural } from "./plural";
 
 const name = (profile: Pick<ContactProfile, "displayName" | "addresses">) => profile.displayName || profile.addresses[0];
 
@@ -28,7 +29,7 @@ export function ContactManagement({ addresses, onChanged, hasUnsavedChanges = fa
   const importContacts = () => run(async () => {
     if (!preview) return;
     const result = await mailClient.importContacts(preview.contacts);
-    setNotice(`Imported ${result.imported} contacts. Skipped ${result.skipped + preview.skipped}.`);
+    setNotice(`Imported ${plural(result.imported, "contact")}. Skipped ${result.skipped + preview.skipped}.`);
     setPreview(null); setMode(null); onChanged();
   });
   const suggestions = () => run(async () => { setSuppressed(await mailClient.listContactSuppressions()); setMode("suggestions"); });
@@ -51,7 +52,7 @@ export function ContactManagement({ addresses, onChanged, hasUnsavedChanges = fa
         </div> : null}
         {mode === "system" ? <MacContactsSettings onChanged={onChanged}/> : null}
         {mode === "import" && preview ? <>
-          <p>{preview.contacts.length} contacts ready to import. Existing profiles are kept; records sharing an existing email address are skipped.</p>
+          <p>{plural(preview.contacts.length, "contact")} ready to import. Existing profiles are kept; records sharing an existing email address are skipped.</p>
           {preview.skipped ? <p>{preview.skipped} records without valid email addresses were skipped.</p> : null}
           {preview.warnings.length ? <div className="notice"><p>Review before importing:</p><ul>{preview.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div> : null}
           <details><summary>Contacts to import</summary><ul>{preview.contacts.map((contact, index) => <li key={index}>{name(contact)} — {contact.addresses.join(", ")}</li>)}</ul></details>
@@ -92,7 +93,7 @@ export function MergeContactsDialog({ contacts, onClose, onMerged }: { contacts:
       <p>The retained profile keeps its primary address, photo, and configured reminder. Missing details are filled from the other profiles; conflicting text details are added to Notes. Additional photos and reminder configurations are not retained.</p>
       <label>Profile to Keep<select value={targetId} disabled={busy} onChange={event => setTargetId(event.target.value)}>{contacts.map(contact => <option key={contact.id} value={contact.id}>{name(contact)} — {contact.addresses[0]}</option>)}</select></label>
       {error ? <p className="contacts-error" role="alert">{error}</p> : null}
-      <div className="modal-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy || contacts.length < 2} onClick={() => void merge()}>Merge {contacts.length} contacts</button></div>
+      <div className="modal-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy || contacts.length < 2} onClick={() => void merge()}>Merge {plural(contacts.length, "contact")}</button></div>
     </div>
   </Modal>;
 }

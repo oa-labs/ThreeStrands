@@ -1591,7 +1591,7 @@ describe("Drafts folder", () => {
     const [first] = screen.getAllByRole("option", { name: /\(no subject\)/ });
     first.focus();
     fireEvent.keyDown(first, { key: "#", code: "Digit3", shiftKey: true });
-    expect(await screen.findByRole("heading", { name: "1 drafts" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "1 draft" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("option", { name: /\(no subject\)/ }));
     const discard = await screen.findByRole("button", { name: "Discard Draft" });
@@ -1865,7 +1865,7 @@ describe("account selection persistence", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tasks (3)" }));
     const workspace = screen.getByRole("region", { name: "Tasks" });
     expect(workspace.querySelector(".tasks-sidebar-header")).toHaveTextContent("All accounts");
-    fireEvent.click(within(workspace).getByRole("button", { name: "Add Task" }));
+    fireEvent.click(within(workspace).getByRole("button", { name: "Add Task…" }));
     const form = screen.getByRole("dialog", { name: "Add Task" });
     fireEvent.change(within(form).getByRole("textbox", { name: "Task Title" }), { target: { value: "Review plan" } });
     expect(within(form).getByRole("button", { name: "Add Task" })).toBeDisabled();
@@ -1924,7 +1924,7 @@ describe("returning from a jump", () => {
     const today = await openTodayWithCalendar();
     fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
     const week = await screen.findByRole("region", { name: "Calendar week" });
-    fireEvent.click(within(week).getByRole("button", { name: "New Event" }));
+    fireEvent.click(within(week).getByRole("button", { name: "New Event…" }));
     const dialog = await screen.findByRole("dialog", { name: "New Event" });
 
     fireEvent.keyDown(within(dialog).getByLabelText("Title"), { key: "Escape" });

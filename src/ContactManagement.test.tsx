@@ -65,6 +65,17 @@ describe("contact management", () => {
     expect(changed).toHaveBeenCalledOnce();
   });
 
+  it("counts a single contact in the singular", async () => {
+    vi.mocked(mailClient.previewContactImport).mockResolvedValue({ contacts: [request], skipped: 0, warnings: [] });
+    vi.mocked(mailClient.importContacts).mockResolvedValue({ imported: 1, skipped: 0 });
+    render(<ContactManagement addresses={[]} onChanged={vi.fn()}/>); open();
+    fireEvent.click(screen.getByRole("button", { name: "Import CSV or vCard…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Review contact import" });
+    expect(within(dialog).getByText(/^1 contact ready to import\./)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Import contacts" }));
+    await screen.findByText("Imported 1 contact. Skipped 0.");
+  });
+
   it("leaves cancellation harmless and keeps a failed import review available for retry", async () => {
     vi.mocked(mailClient.previewContactImport).mockResolvedValueOnce(null).mockResolvedValueOnce({ contacts: [request], warnings: [], skipped: 0 });
     vi.mocked(mailClient.importContacts).mockRejectedValue(new Error("Import could not be saved"));

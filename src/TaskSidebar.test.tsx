@@ -78,7 +78,7 @@ describe("TaskSidebar", () => {
     const workspace = screen.getByRole("region", { name: "Tasks" });
     expect(within(workspace).queryByRole("textbox")).not.toBeInTheDocument();
     expect(within(workspace).queryByRole("combobox")).not.toBeInTheDocument();
-    const addTask = screen.getByRole("button", { name: "Add Task" });
+    const addTask = screen.getByRole("button", { name: "Add Task…" });
     addTask.focus();
     fireEvent.click(addTask);
 
@@ -104,7 +104,7 @@ describe("TaskSidebar", () => {
       .mockResolvedValueOnce(workspaceTask("task-1", { title: "Retry me" }));
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Task…" }));
     const dialog = screen.getByRole("dialog", { name: "Add Task" });
     const input = within(dialog).getByRole("textbox", { name: "Task Title" });
     fireEvent.change(input, { target: { value: "Retry me" } });
@@ -333,7 +333,7 @@ describe("TaskSidebar", () => {
       .mockResolvedValueOnce(workspaceTask("task-2", { title: "Second" }));
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Task…" }));
     const dialog = screen.getByRole("dialog", { name: "Add Task" });
     const input = within(dialog).getByRole("textbox", { name: "Task Title" });
     fireEvent.change(input, { target: { value: "First" } });
@@ -354,7 +354,7 @@ describe("TaskSidebar", () => {
     const onCreateTask = vi.fn().mockResolvedValue(workspaceTask("work-task", { accountId: "work@example.com" }));
     render(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
     expect(screen.getByText("· All accounts")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Task…" }));
     const form = screen.getByRole("dialog", { name: "Add Task" });
     fireEvent.change(within(form).getByRole("textbox", { name: "Task Title" }), { target: { value: "Review proposal" } });
     expect(within(form).getByRole("button", { name: "Add Task" })).toBeDisabled();
@@ -402,7 +402,7 @@ describe("TaskSidebar", () => {
     const header = screen.getByRole("region", { name: "Tasks" }).querySelector<HTMLElement>(".tasks-sidebar-header")!;
     expect(within(header).getByText("you@example.com", { exact: false })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
-    const addTask = screen.getByRole("button", { name: "Add Task" });
+    const addTask = screen.getByRole("button", { name: "Add Task…" });
     expect(addTask).toHaveClass("btn", "task-add-button");
     expect(addTask).toHaveTextContent("Add Task");
     expect(addTask.querySelector("svg")).not.toBeNull();
@@ -417,7 +417,7 @@ describe("TaskSidebar", () => {
     const onCreateTask = vi.fn().mockResolvedValue(created);
     const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Task…" }));
     const form = screen.getByRole("dialog", { name: "Add Task" });
     fireEvent.change(within(form).getByRole("textbox", { name: "Task Title" }), { target: { value: "  Call the contractor  " } });
     fireEvent.click(within(form).getByRole("button", { name: "Add Task" }));
@@ -1195,7 +1195,7 @@ describe("TaskSidebar goals", () => {
     await waitFor(() => expect(card.querySelector(".task-card-goal")).toHaveTextContent("Supports Ship IMAP"));
 
     fireEvent.click(within(screen.getByRole("complementary", { name: "Goals" })).getByRole("button", { name: /^Ship IMAP/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Task…" }));
     const form = screen.getByRole("dialog", { name: "Add Task" });
     expect(form).toHaveTextContent("Supports Ship IMAP");
     expect(within(form).queryByRole("combobox", { name: "Account" })).not.toBeInTheDocument();

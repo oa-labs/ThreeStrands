@@ -153,6 +153,7 @@ import { useTriageSession } from "./useTriageSession";
 import { useWorkspaces } from "./useWorkspaces";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { formatShortcut } from "./shortcutLabels";
+import { plural } from "./plural";
 export { AccountSwitcher } from "./AccountSwitcher";
 export { messagesWithQueuedReplies } from "./queuedReplies";
 export { NOTICE_TIMEOUT_MS } from "./useNotice";
@@ -1085,10 +1086,10 @@ export function App() {
                   <div className="mailbox-title-row">
                     <h1>
                       {mailbox === "drafts"
-                        ? `${correspondence.drafts.length} drafts`
+                        ? plural(correspondence.drafts.length, "draft")
                         : mailbox === "outbox"
                           ? `${outboxSelection.entries.length} outgoing`
-                          : `${visibleThreads.length} conversations`}
+                          : plural(visibleThreads.length, "conversation")}
                     </h1>
                     {isThreadMailbox ? (
                       <div className="mailbox-header-actions">

@@ -360,7 +360,7 @@ describe("CalendarWeekView", () => {
     const controls = container.querySelector(".calendar-week-controls")!;
 
     expectSharedButtons(controls);
-    const newEvent = screen.getByRole("button", { name: "New Event" });
+    const newEvent = screen.getByRole("button", { name: "New Event…" });
     expect(newEvent).toHaveClass("btn");
     expect(newEvent.querySelector("svg")).not.toBeNull();
     expect(controls.lastElementChild).toBe(newEvent);
@@ -1191,7 +1191,7 @@ describe("CalendarWeekView", () => {
   it("keeps the dialog open on a save error and excludes read-only calendars", async () => {
     vi.spyOn(mailClient, "createCalendarEvent").mockRejectedValue(new Error("Reconnect this calendar account"));
     renderWeek();
-    fireEvent.click(screen.getByRole("button", { name: "New Event" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Event…" }));
     const dialog = await screen.findByRole("dialog", { name: "New Event" });
     expect(within(dialog).getByRole("option", { name: /joel@example.com/ })).toBeInTheDocument();
     expect(within(dialog).queryByRole("option", { name: /Holidays/ })).not.toBeInTheDocument();
