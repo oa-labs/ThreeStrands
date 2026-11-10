@@ -132,9 +132,37 @@ pub(crate) fn index(tx: &Transaction<'_>, note: &Note) -> DbResult<()> {
     }
     for (position, link) in parsed.links.iter().enumerate() {
         let target = link.reference.target().map_err(DatabaseError::invalid)?;
-        tx.execute("INSERT INTO note_entity_links(note_id,position,href,target,context,start) VALUES (?1,?2,?3,?4,?5,?6)",params![note.id,position as i64,link.href,target,link.context,link.start as i64])?;
+        let series = series_target(tx, &link.reference)?;
+        tx.execute("INSERT INTO note_entity_links(note_id,position,href,target,series,context,start) VALUES (?1,?2,?3,?4,?5,?6,?7)",params![note.id,position as i64,link.href,target,series,link.context,link.start as i64])?;
     }
     Ok(())
+}
+/// The recurring series an event link counts toward: the one the link names,
+/// else the one this device's event cache knows for that occurrence.
+fn series_target(tx: &Transaction<'_>, reference: &NoteReference) -> DbResult<Option<String>> {
+    if reference.kind != "event" {
+        return Ok(None);
+    }
+    if reference.series.is_some() {
+        return reference.series_target().map_err(DatabaseError::invalid);
+    }
+    let cached: Option<String> = tx
+        .query_row(
+            "SELECT json_extract(body,'$.seriesId') FROM note_event_cache WHERE account=?1 AND calendar=?2 AND id=?3",
+            params![reference.account, reference.calendar, reference.id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    match cached.filter(|series| *series != reference.id) {
+        Some(series) => NoteReference {
+            series: Some(series),
+            ..reference.clone()
+        }
+        .series_target()
+        .map_err(DatabaseError::invalid),
+        None => Ok(None),
+    }
 }
 /// Follow only verified, account-scoped provider aliases. A cycle or a
 /// chain beyond the established provider bound is unavailable, never guessed.
@@ -229,7 +257,7 @@ impl Database {
             for reference in references {
                 // Each note's first occurrence; its own href, so opening the
                 // backlink can find that exact link in the note's text.
-                let mut q=c.prepare("SELECT n.id,n.title,n.daily_date,l.context,l.href,MIN(l.position) FROM note_entity_links l JOIN notes n ON n.id=l.note_id WHERE l.target=?1 AND n.trashed=0 GROUP BY n.id ORDER BY n.title,n.id")?;
+                let mut q=c.prepare("SELECT n.id,n.title,n.daily_date,l.context,l.href,MIN(l.position) FROM note_entity_links l JOIN notes n ON n.id=l.note_id WHERE (l.target=?1 OR l.series=?1) AND n.trashed=0 GROUP BY n.id ORDER BY n.title,n.id")?;
                 for row in q.query_map([reference.target().map_err(DatabaseError::invalid)?],|r|{let href:String=r.get(4)?;Ok(NoteBacklink{reference:Some(NoteReference::parse(&href).unwrap_or_else(||reference.clone())),note_id:r.get(0)?,title:r.get(1)?,daily_date:r.get(2)?,context:r.get(3)?})})? {
                     let row=row?;rows.entry(row.note_id.clone()).or_insert(row);
                 }
@@ -316,6 +344,7 @@ impl Database {
                 calendar: None,
                 note: None,
                 contact: None,
+                series: None,
             };
             let href = reference.href().map_err(DatabaseError::invalid)?;
             let start = begin_daily_insert(tx, date, expected, &MESSAGES)?;
@@ -453,6 +482,14 @@ impl Database {
             for calendar in calendars { tx.execute("DELETE FROM note_event_cache WHERE account=?1 AND calendar=?2 AND julianday(start)<julianday(?4) AND julianday(end)>julianday(?3)",params![account,calendar,min,max])?; }
             for event in events {
                 tx.execute("INSERT INTO note_event_cache VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(account,calendar,id) DO UPDATE SET start=excluded.start,end=excluded.end,body=excluded.body",params![event.account_id,event.calendar_id,event.id,event.start,event.end,serde_json::to_string(event).map_err(super::serialization_error)?])?;
+                // Links written before their series was known count toward it
+                // once this device learns which series the occurrence is in.
+                if let Some(series) = event.series_id.as_ref().filter(|series| **series != event.id) {
+                    let occurrence = NoteReference { version: 1, kind: "event".into(), id: event.id.clone(), account: Some(event.account_id.clone()), calendar: Some(event.calendar_id.clone()), note: None, contact: None, series: Some(series.clone()) };
+                    if let (Ok(target), Ok(Some(series))) = (occurrence.target(), occurrence.series_target()) {
+                        tx.execute("UPDATE note_entity_links SET series=?2 WHERE target=?1 AND series IS NULL", params![target, series])?;
+                    }
+                }
             }
             Ok(())
         })
@@ -479,17 +516,17 @@ impl Database {
                     let mut q=c.prepare("SELECT subject,account_id,provider_thread_id FROM threads WHERE instr(lower(subject),lower(?1))>0 ORDER BY last_message_at DESC LIMIT 50")?;
                     for r in q.query_map([query],|r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))? {
                         let (label,account,id)=r?;
-                        choices.push(NoteLinkChoice{label:if label.is_empty(){"(No subject)".into()}else{label},detail:account.clone(),reference:NoteReference{version:1,kind:kind.into(),id,account:Some(account),calendar:None,note:None,contact:None}});
+                        choices.push(NoteLinkChoice{label:if label.is_empty(){"(No subject)".into()}else{label},detail:account.clone(),reference:NoteReference{version:1,kind:kind.into(),id,account:Some(account),calendar:None,note:None,contact:None,series:None}});
                     }
                 }
                 "task" => {
                     let mut q=c.prepare("SELECT title,account_id,id FROM tasks WHERE instr(lower(title),lower(?1))>0 ORDER BY updated_at DESC LIMIT 50")?;
                     for r in q.query_map([query],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))? {
-                        let (label,detail,id)=r?; choices.push(NoteLinkChoice{label,detail,reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:None,contact:None}});
+                        let (label,detail,id)=r?; choices.push(NoteLinkChoice{label,detail,reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:None,contact:None,series:None}});
                     }
                     let mut q=c.prepare("SELECT t.title,n.title,t.marker_id,n.id FROM note_tasks t JOIN notes n ON n.id=t.note_id WHERE n.trashed=0 AND instr(lower(t.title),lower(?1))>0 LIMIT 50")?;
                     for r in q.query_map([query],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))? {
-                        let (label,detail,id,note)=r?; choices.push(NoteLinkChoice{label,detail:format!("Note · {detail}"),reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:Some(note),contact:None}});
+                        let (label,detail,id,note)=r?; choices.push(NoteLinkChoice{label,detail:format!("Note · {detail}"),reference:NoteReference{version:1,kind:kind.into(),id,account:None,calendar:None,note:Some(note),contact:None,series:None}});
                     }
                 }
                 "event" => {
@@ -497,10 +534,10 @@ impl Database {
                     for r in q.query_map([],|r|r.get::<_,String>(0))? {
                         let event:crate::models::ScheduleEvent=serde_json::from_str(&r?).map_err(super::serialization_error)?;
                         if !event.title.to_lowercase().contains(&query.to_lowercase()){continue;}
-                        let reference=NoteReference{version:1,kind:kind.into(),id:event.id.clone(),account:Some(event.account_id.clone()),calendar:Some(event.calendar_id.clone()),note:None,contact:None};
+                        let reference=NoteReference{version:1,kind:kind.into(),id:event.id.clone(),account:Some(event.account_id.clone()),calendar:Some(event.calendar_id.clone()),note:None,contact:None,series:event.series_id.clone().filter(|series|*series!=event.id)};
                         let detail=format!("{} · {} · {}",event.account_id,event.calendar_id,event.start);
                         choices.push(NoteLinkChoice{label:event.title.clone(),detail:format!("{detail}{}",if event.series_id.is_some(){" · This occurrence"}else{""}),reference:reference.clone()});
-                        if let Some(series)=event.series_id { if !choices.iter().any(|c|c.reference.id==series && c.reference.account==reference.account && c.reference.calendar==reference.calendar) {choices.push(NoteLinkChoice{label:event.title,detail:format!("{detail} · Entire series"),reference:NoteReference{id:series,..reference}});} }
+                        if let Some(series)=event.series_id { if !choices.iter().any(|c|c.reference.id==series && c.reference.account==reference.account && c.reference.calendar==reference.calendar) {choices.push(NoteLinkChoice{label:event.title,detail:format!("{detail} · Entire series"),reference:NoteReference{id:series,series:None,..reference}});} }
                     }
                 }
                 _ => return Err(DatabaseError::invalid("Unknown note link kind")),

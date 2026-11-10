@@ -4,7 +4,9 @@ import type { Note, NoteBacklink, ThreadTask } from "./domain";
 /** An inert link from a note to an item elsewhere in the app. A contact
  * reference's `id` is the person's address, normalized as contact lookup
  * normalizes it; `contact` is the saved contact's id when there was one. */
-export type NoteReference = { version: 1; kind: "conversation" | "task" | "event" | "contact"; id: string; account?: string; calendar?: string; note?: string; contact?: string };
+export type NoteReference = { version: 1; kind: "conversation" | "task" | "event" | "contact"; id: string; account?: string; calendar?: string; note?: string; contact?: string;
+  /** An event occurrence's recurring series, so the link also counts toward that series. */
+  series?: string };
 export type NoteItem = { id: string; title: string; checked: boolean; task: boolean; start: number; markerStart: number; markerEnd: number; end: number; persisted: boolean };
 export type EntityLink = { reference: NoteReference; href: string; label: string; context: string; start: number };
 export type NoteDocument = { items: NoteItem[]; links: EntityLink[]; warning: string | null };
@@ -15,7 +17,7 @@ export const MAX_NOTE_REFERENCE_BYTES = 2048;
 export const MAX_NOTE_TASKS = 500;
 export const MAX_NOTE_ENTITY_LINKS = 500;
 const utf8 = (text: string) => new TextEncoder().encode(text).length;
-const FIELDS = ["account", "calendar", "note", "contact"] as const;
+const FIELDS = ["account", "calendar", "note", "contact", "series"] as const;
 
 /** An address as contact lookup stores it: trimmed and ASCII-lowercased. */
 export function normalizeContactAddress(address: string): string {
@@ -36,6 +38,7 @@ export function parseNoteReference(href: string): NoteReference | null {
     if (v.version !== 1 || v.kind !== match[1] || !valid(v.id)) return null;
     for (const k of FIELDS) if (k in v && !valid(v[k])) return null;
     if (v.kind !== "contact" && "contact" in v) return null;
+    if ("series" in v && (v.kind !== "event" || v.series === v.id)) return null;
     if (v.kind === "conversation" && (!valid(v.account) || "calendar" in v || "note" in v)) return null;
     if (v.kind === "task" && ("account" in v || "calendar" in v)) return null;
     if (v.kind === "event" && (!valid(v.account) || !valid(v.calendar) || "note" in v)) return null;
@@ -44,7 +47,7 @@ export function parseNoteReference(href: string): NoteReference | null {
   } catch { return null; }
 }
 export function noteReferenceHref(reference: NoteReference): string {
-  const canonical = { version: reference.version, kind: reference.kind, id: reference.id, ...(reference.account !== undefined ? { account: reference.account } : {}), ...(reference.calendar !== undefined ? { calendar: reference.calendar } : {}), ...(reference.note !== undefined ? { note: reference.note } : {}), ...(reference.contact !== undefined ? { contact: reference.contact } : {}) };
+  const canonical = { version: reference.version, kind: reference.kind, id: reference.id, ...(reference.account !== undefined ? { account: reference.account } : {}), ...(reference.calendar !== undefined ? { calendar: reference.calendar } : {}), ...(reference.note !== undefined ? { note: reference.note } : {}), ...(reference.contact !== undefined ? { contact: reference.contact } : {}), ...(reference.series !== undefined ? { series: reference.series } : {}) };
   const href = `threestrands:${reference.kind}/${encodeURIComponent(JSON.stringify(canonical)).replace(/[!'()*._~-]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`;
   if (!parseNoteReference(href)) throw new Error("Invalid note reference");
   return href;
@@ -53,6 +56,8 @@ export function noteReferenceHref(reference: NoteReference): string {
  * links written with and without a contact id, or before and after a merge,
  * are one target. */
 export function noteReferenceKey(r: NoteReference): string { return JSON.stringify([r.kind, r.account ?? null, r.calendar ?? null, r.note ?? null, r.id]); }
+/** The series an event occurrence counts toward, keyed as a link to that whole series is. */
+export function noteReferenceSeriesKey(r: NoteReference): string | null { return r.kind === "event" && r.series ? noteReferenceKey({ ...r, id: r.series, series: undefined }) : null; }
 /** Contact references naming each of a contact's addresses, for its Notes
  * backlinks. Addresses a reference can't hold are left out. */
 export function contactNoteReferences(addresses: string[]): NoteReference[] {

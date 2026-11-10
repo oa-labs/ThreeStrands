@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { docToMarkdown, markdownToDoc } from "@meowdown/core";
-import { contactNoteReferences, fromEditorMarkdown, toEditorMarkdown, extractNoteEntityLinks, noteItemRanges, noteReferenceHref, noteReferenceKey, normalizeContactAddress, parseNoteReference, MAX_NOTE_REFERENCE_BYTES } from "./noteEntities";
+import { contactNoteReferences, fromEditorMarkdown, toEditorMarkdown, extractNoteEntityLinks, noteItemRanges, noteReferenceHref, noteReferenceKey, noteReferenceSeriesKey, normalizeContactAddress, parseNoteReference, MAX_NOTE_REFERENCE_BYTES } from "./noteEntities";
 
 const fixtures = JSON.parse(readFileSync("fixtures/note-entities.json", "utf8")) as { name: string; body: string; kinds: boolean[]; checked: boolean[] }[];
 const ID = "4ec77948-4813-5e64-93f9-c660ae48947f";
@@ -44,6 +44,17 @@ describe("note entity Markdown contract", () => {
     expect(parseNoteReference(encoded({ version: 1, kind: "task", id: "t", contact: "c1" }))).toBeNull();
     expect(contactNoteReferences([" Pete@Example.com", "pete@example.com", "not an address", "frank@example.com"]).map((r) => r.id)).toEqual(["pete@example.com", "frank@example.com"]);
     expect(normalizeContactAddress(" Pete@Example.COM ")).toBe("pete@example.com");
+  });
+  it("names an event occurrence with or without its series, and keys the series like a link to it", () => {
+    const occurrence = { version: 1 as const, kind: "event" as const, id: "standup_1112", account: "you@example.com", calendar: "work", series: "standup" };
+    expect(parseNoteReference(noteReferenceHref(occurrence))).toEqual(occurrence);
+    expect(noteReferenceKey(occurrence)).toBe(noteReferenceKey({ ...occurrence, series: undefined }));
+    expect(noteReferenceSeriesKey(occurrence)).toBe(noteReferenceKey({ ...occurrence, id: "standup", series: undefined }));
+    expect(noteReferenceSeriesKey({ ...occurrence, series: undefined })).toBeNull();
+    const encoded = (value: object) => `threestrands:${(value as { kind: string }).kind}/${encodeURIComponent(JSON.stringify(value))}`;
+    expect(parseNoteReference(encoded({ ...occurrence, series: "standup_1112" }))).toBeNull();
+    expect(parseNoteReference(encoded({ version: 1, kind: "task", id: "t", series: "s" }))).toBeNull();
+    expect(parseNoteReference(encoded({ ...occurrence, series: null }))).toBeNull();
   });
   it("the previously shipped editor keeps contact links byte for byte", () => {
     const href = noteReferenceHref({ version: 1, kind: "contact", id: "pete.b+ops@example.com", contact: "c-1" });

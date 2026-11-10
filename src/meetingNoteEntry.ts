@@ -7,7 +7,9 @@ import type { MeetingEntry } from "./noteMeetings";
 
 /** The occurrence a meeting line links, or null for an event without a calendar. */
 export function meetingEventReference(event: ScheduleEvent): NoteReference | null {
-  return event.calendarId ? { version: 1, kind: "event", id: event.id, account: event.accountId, calendar: event.calendarId } : null;
+  if (!event.calendarId) return null;
+  const series = event.seriesId && event.seriesId !== event.id ? { series: event.seriesId } : {};
+  return { version: 1, kind: "event", id: event.id, account: event.accountId, calendar: event.calendarId, ...series };
 }
 
 /** The event's start day in this device's time zone, `YYYY-MM-DD`: the daily note it goes in. */

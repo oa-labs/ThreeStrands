@@ -21,6 +21,10 @@ pub struct NoteReference {
     /// reference's `id` is the person's address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact: Option<String>,
+    /// An event occurrence's recurring series, when it has one, so the link
+    /// also counts toward every note about that series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
 }
 /// An address as contact lookup stores it: trimmed and ASCII-lowercased.
 pub fn normalize_contact_address(address: &str) -> String {
@@ -45,7 +49,10 @@ impl NoteReference {
             && self.calendar.as_deref().is_none_or(valid)
             && self.note.as_deref().is_none_or(valid)
             && self.contact.as_deref().is_none_or(valid)
+            && self.series.as_deref().is_none_or(valid)
             && (self.kind == "contact" || self.contact.is_none())
+            && (self.kind == "event" || self.series.is_none())
+            && self.series.as_deref() != Some(self.id.as_str())
             && match self.kind.as_str() {
                 "conversation" => {
                     self.account.is_some() && self.calendar.is_none() && self.note.is_none()
@@ -63,16 +70,28 @@ impl NoteReference {
     }
     /// The target this reference names, as the link index keys it. A contact
     /// reference names its address, so links written with and without a
-    /// contact id, or before and after a merge, are one target.
+    /// contact id, or before and after a merge, are one target; an event
+    /// occurrence names itself, with or without its series.
     pub fn target(&self) -> Result<String, String> {
-        if self.kind == "contact" {
-            Self {
-                contact: None,
+        Self {
+            contact: None,
+            series: None,
+            ..self.clone()
+        }
+        .href()
+    }
+    /// The target of the recurring series an event occurrence belongs to:
+    /// the same target a link to the entire series has.
+    pub fn series_target(&self) -> Result<Option<String>, String> {
+        match (&self.series, self.kind.as_str()) {
+            (Some(series), "event") => Self {
+                id: series.clone(),
+                series: None,
                 ..self.clone()
             }
             .href()
-        } else {
-            self.href()
+            .map(Some),
+            _ => Ok(None),
         }
     }
     pub fn href(&self) -> Result<String, String> {
@@ -110,7 +129,7 @@ impl NoteReference {
             .decode_utf8()
             .ok()?;
         let json: serde_json::Value = serde_json::from_str(&decoded).ok()?;
-        if ["account", "calendar", "note", "contact"]
+        if ["account", "calendar", "note", "contact", "series"]
             .iter()
             .any(|key| json.get(key).is_some_and(serde_json::Value::is_null))
         {
@@ -586,6 +605,7 @@ mod tests {
             calendar: None,
             note: None,
             contact: None,
+            series: None,
         }
     }
     #[test]
@@ -637,6 +657,7 @@ mod tests {
             calendar: None,
             note: None,
             contact: contact.map(Into::into),
+            series: None,
         }
     }
     #[test]
@@ -699,6 +720,55 @@ mod tests {
         }
         let long = format!("{}@example.com", "a".repeat(MAX_NOTE_REFERENCE_BYTES));
         assert!(contact(&long, None).href().is_err());
+    }
+    #[test]
+    fn an_event_occurrence_names_itself_and_counts_toward_its_series() {
+        let occurrence = NoteReference {
+            version: 1,
+            kind: "event".into(),
+            id: "standup_1112".into(),
+            account: Some("you@example.com".into()),
+            calendar: Some("work".into()),
+            note: None,
+            contact: None,
+            series: Some("standup".into()),
+        };
+        let bare = NoteReference {
+            series: None,
+            ..occurrence.clone()
+        };
+        let whole = NoteReference {
+            id: "standup".into(),
+            ..bare.clone()
+        };
+        assert_eq!(
+            NoteReference::parse(&occurrence.href().unwrap()),
+            Some(occurrence.clone())
+        );
+        assert_eq!(occurrence.target().unwrap(), bare.target().unwrap());
+        assert_eq!(
+            occurrence.series_target().unwrap(),
+            Some(whole.target().unwrap())
+        );
+        assert_eq!(bare.series_target().unwrap(), None);
+        // A series names only an event occurrence, never itself.
+        assert!(!NoteReference {
+            series: Some("standup_1112".into()),
+            ..occurrence.clone()
+        }
+        .validate());
+        let mut task = reference();
+        task.series = Some("s".into());
+        assert!(!task.validate());
+        let json = serde_json::json!({"version":1,"kind":"event","id":"e","account":"a","calendar":"c","series":null});
+        assert!(NoteReference::parse(&format!(
+            "threestrands:event/{}",
+            percent_encoding::utf8_percent_encode(
+                &json.to_string(),
+                percent_encoding::NON_ALPHANUMERIC
+            )
+        ))
+        .is_none());
     }
     #[test]
     fn wiki_links_and_nested_brackets_do_not_capture_a_later_entity_links_label() {

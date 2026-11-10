@@ -1273,6 +1273,7 @@ fn conversation_note_links_follow_verified_aliases_but_never_match_subjects_or_o
         calendar: None,
         note: None,
         contact: None,
+        series: None,
     };
     let note = db
         .create_note(
@@ -1379,6 +1380,7 @@ fn note_task_ids_and_entity_references_survive_folder_export_and_import() {
         calendar: None,
         note: Some(note.id.clone()),
         contact: None,
+        series: None,
     };
     let saved = source
         .update_note(
@@ -1459,6 +1461,7 @@ fn contact_reference(address: &str, contact: Option<&str>) -> crate::note_entiti
         calendar: None,
         note: None,
         contact: contact.map(Into::into),
+        series: None,
     }
 }
 
@@ -1562,6 +1565,7 @@ fn reference_of_kind(kind: &str) -> crate::note_entities::NoteReference {
         calendar: None,
         note: None,
         contact: None,
+        series: None,
     }
 }
 
@@ -1630,6 +1634,7 @@ fn meeting(event: &str, link_note: bool) -> crate::note_meetings::MeetingEntry {
             calendar: Some("work".into()),
             note: None,
             contact: None,
+            series: None,
         },
         time: "9:30am".into(),
         attendees: vec![crate::note_meetings::MeetingAttendee {
@@ -1810,4 +1815,109 @@ fn a_meeting_is_refused_while_its_days_note_is_in_conflict() {
     assert!(error.contains("conflict"), "{error}");
     assert_eq!(a.get_daily_note(DAY).unwrap().unwrap().body, current.body);
     assert!(notes_titled(&a, "CS Leadership -Sync-").is_empty());
+}
+
+fn standup(id: &str, series: Option<&str>) -> crate::note_entities::NoteReference {
+    crate::note_entities::NoteReference {
+        version: 1,
+        kind: "event".into(),
+        id: id.into(),
+        account: Some("you@example.com".into()),
+        calendar: Some("work".into()),
+        note: None,
+        contact: None,
+        series: series.map(Into::into),
+    }
+}
+
+fn schedule_event(id: &str, series: Option<&str>) -> crate::models::ScheduleEvent {
+    serde_json::from_value(serde_json::json!({
+        "id": id, "seriesId": series, "accountId": "you@example.com", "calendarId": "work",
+        "title": "Standup", "start": "2026-11-12T15:00:00Z", "end": "2026-11-12T15:15:00Z", "allDay": false,
+        "attendees": [], "attendeeResponses": {}, "canRespond": false, "canEdit": true,
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_recurring_series_lists_the_notes_about_every_occurrence() {
+    let db = database();
+    db.adopt_calendar_account("you@example.com").unwrap();
+    let link = |label: &str, reference: &crate::note_entities::NoteReference| {
+        format!("[{label}]({})", reference.href().unwrap())
+    };
+    let tuesday = db
+        .create_note(
+            "Tuesday standup",
+            &link("Standup", &standup("standup_1110", Some("standup"))),
+        )
+        .unwrap();
+    let series = db
+        .create_note("Standup notes", &link("Standup", &standup("standup", None)))
+        .unwrap();
+    // Written before this device knew the occurrence's series.
+    let thursday = db
+        .create_note(
+            "Thursday standup",
+            &link("Standup", &standup("standup_1112", None)),
+        )
+        .unwrap();
+    let other = db
+        .create_note(
+            "Retro",
+            &link("Retro", &standup("retro_1112", Some("retro"))),
+        )
+        .unwrap();
+    let ids = |rows: Vec<crate::models::NoteBacklink>| {
+        rows.into_iter()
+            .map(|row| row.note_id)
+            .collect::<HashSet<_>>()
+    };
+
+    // An occurrence lists only its own notes, whichever form its link took.
+    assert_eq!(
+        ids(db.note_backlinks(&standup("standup_1110", None)).unwrap()),
+        HashSet::from([tuesday.id.clone()])
+    );
+    assert_eq!(
+        ids(db
+            .note_backlinks(&standup("standup_1110", Some("standup")))
+            .unwrap()),
+        HashSet::from([tuesday.id.clone()])
+    );
+    let whole = standup("standup", None);
+    assert_eq!(
+        ids(db.note_backlinks(&whole).unwrap()),
+        HashSet::from([tuesday.id.clone(), series.id.clone()])
+    );
+
+    // Loading Thursday in Calendar tells this device its series, and the
+    // older link counts from then on; so does a note written afterwards.
+    db.cache_note_events(
+        "you@example.com",
+        &["work".into()],
+        "2026-11-12T00:00:00Z",
+        "2026-11-13T00:00:00Z",
+        &[schedule_event("standup_1112", Some("standup"))],
+    )
+    .unwrap();
+    assert_eq!(
+        ids(db.note_backlinks(&whole).unwrap()),
+        HashSet::from([tuesday.id.clone(), series.id.clone(), thursday.id.clone()])
+    );
+    let later = db
+        .create_note(
+            "Thursday follow-up",
+            &link("Standup", &standup("standup_1112", None)),
+        )
+        .unwrap();
+    assert!(ids(db.note_backlinks(&whole).unwrap()).contains(&later.id));
+    assert!(!ids(db.note_backlinks(&whole).unwrap()).contains(&other.id));
+
+    // Link to… offers the occurrence with its series, and the series alone.
+    let choices = db.note_link_choices("event", "standup").unwrap();
+    assert!(choices
+        .iter()
+        .any(|choice| choice.reference == standup("standup_1112", Some("standup"))));
+    assert!(choices.iter().any(|choice| choice.reference == whole));
 }

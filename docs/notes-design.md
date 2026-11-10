@@ -1361,6 +1361,40 @@ Step 3, as built:
   "the note for <date>"), with **Open Note** and Undo, or **Already in the
   note**. A refusal keeps the dialog open with its reason and **Open Note**.
 
+### Recurring series
+
+An occurrence's notes alone don't answer "what have we said in this weekly
+meeting?" Each occurrence has its own event id, so its links don't find the
+notes about the series' other occurrences. So an event reference can also
+name its series:
+
+```json
+{ "version": 1, "kind": "event", "id": "<occurrence id>", "account": "…", "calendar": "…", "series": "<series id>" }
+```
+
+- **Writing.** Add Note and **Link to… → This occurrence** record the
+  event's `seriesId` when it has one other than its own id. **Entire
+  series** links name the series as their `id`, without `series`.
+- **Validation.** `series` is accepted only on event references and never
+  equals `id`. It is a hint like a contact reference's `contact`: the
+  occurrence's target leaves it out, so an occurrence linked with and
+  without it is one target.
+- **Index.** `note_entity_links.series` (migration 106) holds the target of
+  the series an event link counts toward: the link's own `series`, else the
+  series this device's event cache knows for that occurrence. Loading dates
+  in Calendar fills in links written before their series was known
+  (`cache_note_events`). Migration 106 indexes every note again; 105 no
+  longer does, since 106 always follows it.
+- **Backlinks.** A query for the series matches links whose target or
+  series is the series, so it lists notes about the series as a whole and
+  about any occurrence. The event's context panel shows **Notes** (this
+  occurrence) and **Series notes** (the rest of the series, newest day
+  first).
+- **Compatibility.** Earlier versions accept no `series` field, so on a
+  device not yet updated an occurrence link written this way shows its text
+  but can't be followed, as with contact references. Occurrence links
+  written before this change keep working everywhere.
+
 ### Open questions
 
 - Should the agenda's button read **Open Note** when that day's note already
@@ -1376,7 +1410,8 @@ Nothing below is planned for the next release.
 - **v2: Folder mirror.** Keep a chosen folder in step with notes in both
   directions, for users who edit in other tools.
 - Tags beyond plain-text search.
-- Asking AI about notes, with a private flag per note.
+- Asking AI about notes, with a private flag per note. See the sketch
+  below for summaries of a recurring meeting.
 - Merging concurrent text edits.
 - Note tasks with due dates, waiting, recurrence, and the other task states
   (see [Tasks integration](#markdown-checklists-and-tasks)).
@@ -1384,3 +1419,32 @@ Nothing below is planned for the next release.
   loading its dates in Calendar.
 - Splitting snapshots by entity type, which would lift the 3.5 MiB notes
   limit (see [Size limits](#size-limits)).
+
+### Sketch: summarizing a meeting series
+
+Thirty notes for one weekly meeting are less useful than a view of its
+themes, decisions, and open issues. The data to build one is in place: a
+series lists every note about it ([Recurring series](#recurring-series)),
+each meeting line has its date, attendees as contact references, and its
+place in the note, and note tasks carry their open or done state. A design
+should settle these before building:
+
+- **What is sent.** Only each meeting's own part of a note (its list item
+  and the items nested under it, or the meeting note), not the whole daily
+  note, which holds unrelated writing. Open and done note tasks from those
+  parts go with them. The user sees which notes and how much text before
+  anything is sent.
+- **Consent and privacy.** Its own AI feature switch and provider choice,
+  like the existing AI features, and a per-note private flag (Reflect's
+  `private: true`) that keeps a note out. Nothing runs in the background;
+  each summary is asked for.
+- **Where results go.** A summary is a proposal shown beside the series
+  (themes, decisions, open issues with their tasks, people). Keeping it
+  writes a dated `## Summary` section into the meeting note through the
+  guarded save, so it syncs and can be undone like any edit. It never
+  edits, merges, or deletes the meeting notes themselves.
+- **Cleanup.** Suggestions such as "these open items repeat across six
+  meetings; make one task" are offered one at a time and applied through the
+  existing conversion and Trash paths, never as a bulk rewrite.
+- **Size.** A long series is summarized in date-ordered batches, with the
+  previous summary as context, so cost and prompt size stay bounded.

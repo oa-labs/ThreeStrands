@@ -320,6 +320,7 @@ mod tests {
                 calendar: None,
                 note: None,
                 contact: None,
+                series: None,
             },
         };
         let entry = |count: usize| MeetingEntry {
@@ -331,6 +332,7 @@ mod tests {
                 calendar: Some("cal".into()),
                 note: None,
                 contact: None,
+                series: None,
             },
             time: "9:30am".into(),
             attendees: (0..count).map(attendee).collect(),

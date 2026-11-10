@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDemoNotes } from "./demoNotes";
+import { noteReferenceHref } from "../noteEntities";
 
 describe("demo notes", () => {
   it("follows the native title rules", async () => {
@@ -67,5 +68,13 @@ describe("demo notes", () => {
     expect(next.createdMeetingNote).toBe(false);
     expect(next.meetingNote?.id).toBe(first.meetingNote?.id);
     await expect(notes.addMeetingToDailyNote("2026-11-12", null, entry("c"))).rejects.toThrow("changed");
+  });
+  it("lists a series' notes from every occurrence, and an occurrence's own only", async () => {
+    const notes = createDemoNotes();
+    const event = (id: string, series?: string) => ({ version: 1 as const, kind: "event" as const, id, account: "you@example.com", calendar: "work", ...(series ? { series } : {}) });
+    const tuesday = await notes.createNote("Tuesday", `[Standup](${noteReferenceHref(event("s_1110", "s"))})`);
+    const whole = await notes.createNote("Standup", `[Standup](${noteReferenceHref(event("s"))})`);
+    expect((await notes.noteBacklinks(event("s"))).map((row) => row.noteId).sort()).toEqual([tuesday.id, whole.id].sort());
+    expect((await notes.noteBacklinks(event("s_1110"))).map((row) => row.noteId)).toEqual([tuesday.id]);
   });
 });

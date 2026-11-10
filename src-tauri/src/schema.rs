@@ -50,6 +50,7 @@ const MIGRATIONS: &[Migration] = &[
     (103, to_v103),
     (104, to_v104),
     (105, to_v105),
+    (106, to_v106),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1385,8 +1386,8 @@ fn to_v104(tx: &rusqlite::Transaction) -> Result<(), String> {
 
 /// Note links are matched by the target they name rather than their exact
 /// text, so a contact reference with and without a contact id is one target.
-/// Every note is indexed again: a device that received contact references
-/// before it understood them has none of them indexed yet.
+/// v106 indexes every note again, which also indexes contact references a
+/// device received before it understood them.
 fn to_v105(tx: &rusqlite::Transaction) -> Result<(), String> {
     let has_target: bool = tx
         .query_row(
@@ -1400,6 +1401,28 @@ fn to_v105(tx: &rusqlite::Transaction) -> Result<(), String> {
             "ALTER TABLE note_entity_links ADD COLUMN target TEXT NOT NULL DEFAULT '';
              DROP INDEX IF EXISTS note_entity_link_targets;
              CREATE INDEX note_entity_link_targets ON note_entity_links(target);",
+        )
+        .map_err(error)?;
+    }
+    // Every database reaching this step also runs v106, which indexes every
+    // note once the index has its series column.
+    Ok(())
+}
+
+/// An event link also records the recurring series its occurrence belongs
+/// to, so a series lists the notes about every one of its occurrences.
+fn to_v106(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let has_series: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('note_entity_links') WHERE name='series')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(error)?;
+    if !has_series {
+        tx.execute_batch(
+            "ALTER TABLE note_entity_links ADD COLUMN series TEXT;
+             CREATE INDEX note_entity_link_series ON note_entity_links(series);",
         )
         .map_err(error)?;
     }
@@ -1697,6 +1720,7 @@ mod tests {
         "table:note_tasks",
         "table:note_entity_links",
         "index:note_entity_link_targets",
+        "index:note_entity_link_series",
         "table:note_index_warnings",
         "table:note_event_cache",
         "table:imap_label_snapshots",

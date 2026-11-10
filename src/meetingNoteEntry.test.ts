@@ -9,8 +9,9 @@ const event = (overrides: Partial<ScheduleEvent> = {}): ScheduleEvent => ({
 });
 
 describe("a meeting's entry from its event", () => {
-  it("links the occurrence on its calendar, and nothing without one", () => {
-    expect(meetingEventReference(event({ seriesId: "series" }))).toEqual({ version: 1, kind: "event", id: "evt-1", account: "you@example.com", calendar: "work" });
+  it("links the occurrence on its calendar, with its series, and nothing without a calendar", () => {
+    expect(meetingEventReference(event({ seriesId: "series" }))).toEqual({ version: 1, kind: "event", id: "evt-1", account: "you@example.com", calendar: "work", series: "series" });
+    expect(meetingEventReference(event({ seriesId: "evt-1" }))).toEqual({ version: 1, kind: "event", id: "evt-1", account: "you@example.com", calendar: "work" });
     expect(meetingEventReference(event({ calendarId: undefined }))).toBeNull();
   });
 

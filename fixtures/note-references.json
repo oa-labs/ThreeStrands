@@ -41,5 +41,16 @@
       "contact": "c-7f3a"
     },
     "href": "threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22pete%2Eb%2Bops%40example%2Ecom%22%2C%22contact%22%3A%22c%2D7f3a%22%7D"
+  },
+  {
+    "reference": {
+      "version": 1,
+      "kind": "event",
+      "id": "standup_20261112T150000Z",
+      "account": "you@example.com",
+      "calendar": "work",
+      "series": "standup"
+    },
+    "href": "threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22standup%5F20261112T150000Z%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%2C%22series%22%3A%22standup%22%7D"
   }
 ]

@@ -1,4 +1,4 @@
-import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKey, markdownEntityLink, type NoteDocument } from "../noteEntities";
+import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKey, noteReferenceSeriesKey, markdownEntityLink, type NoteDocument } from "../noteEntities";
 import type { ContactProfile, Thread, ThreadTask, ScheduleEvent, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
 import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
 import { notePreview, noteInlineText } from "../notePreview";
@@ -103,7 +103,10 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
       body = body.slice(0, item.markerStart) + (round ? `(${state})` : `[${state}]`) + body.slice(item.markerEnd);
       return structuredClone(edit(note, note.title, body));
     },
-    async noteBacklinks(reference) { return [...notes.values()].filter((note) => !note.trashed).flatMap((note) => { const link = document(note).links.find((link) => noteReferenceKey(link.reference) === noteReferenceKey(reference)); return link ? [{ noteId: note.id, title: note.title, dailyDate: note.dailyDate, context: link.context, reference: link.reference }] : []; }); },
+    async noteBacklinks(reference) {
+      const key = noteReferenceKey(reference);
+      return [...notes.values()].filter((note) => !note.trashed).flatMap((note) => { const link = document(note).links.find((link) => noteReferenceKey(link.reference) === key || noteReferenceSeriesKey(link.reference) === key); return link ? [{ noteId: note.id, title: note.title, dailyDate: note.dailyDate, context: link.context, reference: link.reference }] : []; });
+    },
     async resolveNoteContact(reference) {
       const contacts = sources.contacts?.() ?? [];
       return (contacts.find((contact) => contact.id === reference.contact) ?? contacts.find((contact) => contact.addresses.includes(reference.id)))?.id ?? null;

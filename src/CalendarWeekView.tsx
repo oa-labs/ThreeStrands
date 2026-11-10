@@ -1,4 +1,4 @@
-import { NoteBacklinks } from "./NoteEntityContext";
+import { EventNoteBacklinks } from "./NoteEntityContext";
 import { readLocalStorage, writeLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { calendarAccountVisibility, showHiddenCalendarAccounts } from "./calendarVisibility";
 import { useWorkspaceCommands } from "./workspaceCommands";
@@ -756,7 +756,7 @@ export function CalendarWeekView({
             if (!eventTrigger.current) document.getElementById("workspace-Meeting-context")?.focus();
           }} onUpdated={setSelectedEvent} />
           {bookedTask ? <BookedTask task={bookedTask} onChanged={tasksChanged} /> : null}
-          <NoteBacklinks reference={{ version: 1, kind: "event", id: selectedEvent.id, account: selectedEvent.accountId, calendar: selectedEvent.calendarId }} additional={selectedEvent.seriesId ? [{ version: 1, kind: "event", id: selectedEvent.seriesId, account: selectedEvent.accountId, calendar: selectedEvent.calendarId }] : []} onOpenNote={onOpenNote} />
+          {meetingEventReference(selectedEvent) ? <EventNoteBacklinks occurrence={meetingEventReference(selectedEvent)!} onOpenNote={onOpenNote} /> : null}
           <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
         </> : <>
           <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} onAddNote={onAddNote} schedule={todayVisible ? { events, loading, error, reload } : undefined} />
