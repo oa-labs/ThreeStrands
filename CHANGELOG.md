@@ -4,6 +4,37 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.208.0 — 2026-11-09
+
+### New
+- Add conversations to today's note and link notes to conversations, tasks, and calendar events, with links back to your notes in each item's context. Round tasks in notes appear in **Tasks** and can be checked in either place; square checklists stay in their notes.
+- **Notes** (<kbd>4</kbd>) keeps a note for each day and notes of your own, formatted as you write in Markdown, linked with `[[Title]]` (each note lists the notes that link to it), saved as you type, holding pictures and files you paste or drag in (which **Files** lists too), kept in Trash until you delete them, and imported from a Reflect folder or exported to a folder of Markdown files from **Settings → Notes**. With cross-device sync on, notes reach your other devices, and a note changed on two devices at once lets you compare the versions and choose; update every device before you start writing.
+- Save a mail search with a name, one account or All accounts, **Inbox Only**, and quick filters, then open it as a tab alongside your Split Inboxes without routing mail out of Main. Create, rename, edit, reorder, or delete saved views in **Settings → Split Inboxes**; existing saved searches appear automatically and stay on this computer.
+
+### Improved
+- Dates in Mail, contact history, and Files now use consistent month and day labels, with the year included for older dates. File date filters always show the year, while detail timestamps retain the time.
+- Formatted emails now use the same line spacing as other mail clients unless the sender sets their own, so short notes and signatures are no longer spread out. Plain-text emails keep their current spacing.
+- Create and apply labels directly from **Manage Labels** on Gmail IMAP accounts, including nested and non-English names.
+- Mail search leaves more room for your query with compact Inbox and Clear controls. Save Search now sits beside Saved searches outside the input.
+- Get Brief now lines up with Find Times when the conversation actions wrap onto another row, with matching icon sizes.
+- The view shortcuts follow the sidebar order: <kbd>5</kbd> now opens Contacts, <kbd>6</kbd> Files, and <kbd>7</kbd> Agents.
+- Mail search now shows up to five entries under **Recent searches** and remembers searches you submit, save, or use to open a conversation, rather than recording unfinished typing when focus moves away. The close button sits closer to the search box’s right edge.
+- The sidebar is easier to scan, with more space below Compose and a smaller gap before Files and Agents.
+- Dialog titles, buttons, and commands now use the same name and capitalization for the same action. For example, scheduling uses **Send Later** throughout, retry buttons all say **Try Again**, and the command palette lists **New Event** and **New Group** under the names the toolbars show.
+- Keyboard shortcuts now look the same everywhere in the app, written the way your platform writes them: ⇧⌘L on a Mac, Ctrl+Shift+L on Windows and Linux.
+- Status notices, the Outbox batch actions, and the names screen readers announce for icon-only buttons now use consistent punctuation and capitalization.
+
+### Fixed
+- Emails written in Outlook or Word no longer show extra blank space between lines or paragraphs. Their paragraph spacing, text sizes, and table padding now appear as the sender set them.
+- Composing an email now highlights the pencil icon. Sidebar navigation works while composing and saves your draft before switching views.
+- Editing a note’s title now pauses pending automatic saves, so unfinished names do not get saved or rewrite links in other notes. Leaving the title still saves the completed rename, including when a body save is already in progress.
+- Exporting and importing Notes now preserves note titles and the links between them, including titles with special characters or long Unicode text. A leading heading stays in the note when the file has an explicit title.
+- Returning to Notes now restores the last note you opened, even after opening a note from Files or jumping to today’s note.
+- Notes created with the same title on different devices now receive distinct, consistent titles after syncing. Both notes remain available to open, edit, and link to.
+- Icon buttons now come in two consistent sizes, so controls such as the search bar's buttons, account reorder arrows, and **Find a Time**'s week arrows match the buttons around them.
+- IMAP accounts with native labels now correctly recognize label names containing quotation marks or backslashes.
+- Counts of one now read naturally, such as "1 draft", "1 conversation", and "Imported 1 contact".
+
 ## 0.207.1 — 2026-11-06
 
 ### Improved
