@@ -1,3 +1,4 @@
+import { formatDiagnosticDateTime } from "./dateFormatting";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -568,7 +569,7 @@ describe("syncOverview", () => {
   it("uses the most recent success across healthy connectors", () => {
     const older = { ...folder, lastSuccessAt: "2026-09-20T10:00:00Z" };
     const newer = { ...folder, instanceId: "b", lastSuccessAt: "2026-09-22T10:00:00Z" };
-    expect(syncOverview([older, newer], 2).text).toBe(`Syncing · 2 devices · last synced ${new Date("2026-09-22T10:00:00Z").toLocaleString()}`);
+    expect(syncOverview([older, newer], 2).text).toBe(`Syncing · 2 devices · last synced ${formatDiagnosticDateTime(new Date("2026-09-22T10:00:00Z"))}`);
     expect(syncOverview([folder], 2).text).toBe("Syncing · 2 devices · not synced yet");
   });
 });
@@ -655,7 +656,7 @@ describe("device names and activity", () => {
     const devices = within(await screen.findByRole("list", { name: "Devices" })).getAllByRole("listitem");
     expect(devices[0]).toHaveTextContent("Desk");
     expect(devices[0]).toHaveTextContent("This device");
-    expect(devices[0]).toHaveTextContent(`Last change ${new Date("2026-09-22T10:00:00Z").toLocaleString()}`);
+    expect(devices[0]).toHaveTextContent(`Last change ${formatDiagnosticDateTime(new Date("2026-09-22T10:00:00Z"))}`);
     expect(devices[1]).toHaveTextContent("No changes yet");
   });
 

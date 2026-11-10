@@ -1,3 +1,4 @@
+import { formatDateTime, formatFullDate } from "./dateFormatting";
 import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
@@ -148,8 +149,8 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenNote
     ...(type ? [{ id: "type", label: `Type: ${type[0].toUpperCase()}${type.slice(1)}`, clear: () => setType("") }] : []),
     ...(direction ? [{ id: "direction", label: direction === "sent" ? "Sent" : "Received", clear: () => setDirection("") }] : []),
     ...(!accountId && scope && accountIds.includes(scope) ? [{ id: "account", label: `Account: ${scope}`, clear: () => setScope("") }] : []),
-    ...(after ? [{ id: "after", label: `From: ${new Date(localDayStart(after)).toLocaleDateString()}`, clear: () => setAfter("") }] : []),
-    ...(before ? [{ id: "before", label: `Through: ${new Date(localDayStart(before)).toLocaleDateString()}`, clear: () => setBefore("") }] : []),
+    ...(after ? [{ id: "after", label: `From: ${formatFullDate(new Date(localDayStart(after)))}`, clear: () => setAfter("") }] : []),
+    ...(before ? [{ id: "before", label: `Through: ${formatFullDate(new Date(localDayStart(before)))}`, clear: () => setBefore("") }] : []),
   ];
   const showAccount = scoped.length > 1;
   const file = files.find((item) => keyFor(item)===selected);
@@ -234,7 +235,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenNote
             <h2 className="file-detail-name">{file.attachment.filename}</h2>
             <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)} · {formatAttachmentSize(file.attachment.size)}</p>
             <dl className="file-detail-metadata">
-              <div><dt>Added</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
+              <div><dt>Added</dt><dd>{formatDateTime(new Date(file.sentAt))}</dd></div>
             </dl>
             {risk ? <p className="file-detail-risk" role="note"><TriangleAlert size={ICON_SIZE.sm} aria-hidden="true" />{risk.reason}</p> : null}
             {file.availability === "syncing" ? <p className="file-detail-meta" role="status">This file is still on its way from another device. It arrives the next time notes sync.</p> : null}
@@ -248,7 +249,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenNote
             <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)}{attachmentMeetingTitle(file) ? ` · ${file.attachment.filename}` : ""} · {formatAttachmentSize(file.attachment.size)}</p>
             <dl className="file-detail-metadata">
               <div><dt>From</dt><dd><FileSender file={file} own={accountIds} onOpenContact={onOpenContact} />{parseAddress(file.sender).email !== senderName(file) ? <span className="file-detail-sender-email">{parseAddress(file.sender).email}</span> : null}</dd></div>
-              <div><dt>{file.direction === "sent" ? "Sent" : "Received"}</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
+              <div><dt>{file.direction === "sent" ? "Sent" : "Received"}</dt><dd>{formatDateTime(new Date(file.sentAt))}</dd></div>
               {showAccount ? <div><dt>Account</dt><dd>{file.accountId}</dd></div> : null}
             </dl>
             {risk ? <p className="file-detail-risk" role="note"><TriangleAlert size={ICON_SIZE.sm} aria-hidden="true" />{risk.reason}</p> : null}

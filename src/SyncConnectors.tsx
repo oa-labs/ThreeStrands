@@ -1,3 +1,4 @@
+import { formatDiagnosticDateTime } from "./dateFormatting";
 import { useId, useState, type ReactNode } from "react";
 import {
   replicatedSyncAddFolder,
@@ -533,7 +534,7 @@ export function ConnectorCard({ transport, operation, refresh }: { transport: Re
           {!transport.headDiscovery ? (
             <span className="account-card-email">Storage only: other devices can’t discover new changes through this connector on its own.</span>
           ) : null}
-          {transport.lastSuccessAt ? <span className="account-card-email">Last synced {new Date(transport.lastSuccessAt).toLocaleString()}</span> : null}
+          {transport.lastSuccessAt ? <span className="account-card-email">Last synced {formatDiagnosticDateTime(new Date(transport.lastSuccessAt))}</span> : null}
         </div>
         <button type="button" className="btn" disabled={busy} aria-expanded={panel === "edit"} onClick={() => { setName(transport.label ?? ""); setPanel("edit"); }}>
           Edit…

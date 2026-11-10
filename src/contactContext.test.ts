@@ -44,8 +44,8 @@ describe("describeActivity", () => {
     expect(describeActivity(activity(), now)).toEqual(["31 emails since Oct 2024", "Monthly, usually early in the month", "You last wrote Mar 4"]);
   });
 
-  it("uses month and year for an older latest message and omits a missing cadence", () => {
-    expect(describeActivity(activity({ lastSentAt: local(2025, 6, 10), recentReceivedAt: [] }), now)).toEqual(["31 emails since Oct 2024", "You last wrote Jun 2025"]);
+  it("keeps day and year for an older latest message and omits a missing cadence", () => {
+    expect(describeActivity(activity({ lastSentAt: local(2025, 6, 10), recentReceivedAt: [] }), now)).toEqual(["31 emails since Oct 2024", "You last wrote Jun 10, 2025"]);
   });
 
   it("describes a single email by its date and says nothing without history", () => {

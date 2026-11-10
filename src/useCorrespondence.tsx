@@ -1,3 +1,4 @@
+import { formatDateTime } from "./dateFormatting";
 import { nextUndoOrder } from "./undoOrder";
 import { runBeforeExitTasks } from "./beforeExit";
 import { type SignatureState } from "./signatures";
@@ -660,9 +661,9 @@ export function OutboxDetail({
             <div className="subject-row"><h2>{s.subject || "(no subject)"}</h2></div>
             <div className="outbox-detail-status">
               <small>{formatScheduledTime(s.scheduledAt,s.timeZone)} · Sends from {ownerName(s)}</small>
-              {s.timeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone && <small>On this computer: {new Date(s.scheduledAt).toLocaleString()}</small>}
+              {s.timeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone && <small>On this computer: {formatDateTime(new Date(s.scheduledAt))}</small>}
               <p className="outbox-detail-problem">{s.state === "scheduled" && s.scheduledAt <= clock ? `Scheduled time passed; awaiting an update from ${ownerName(s)}` : `Last reported status: ${s.state}`}</p>
-              <small>Report changed {new Date(s.statusChangedAt).toLocaleString()}{s.lastContactAt ? ` · Last contact ${new Date(s.lastContactAt).toLocaleString()}` : ""}</small>
+              <small>Report changed {formatDateTime(new Date(s.statusChangedAt))}{s.lastContactAt ? ` · Last contact ${formatDateTime(new Date(s.lastContactAt))}` : ""}</small>
             </div>
           </div>
         </header>

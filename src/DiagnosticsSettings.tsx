@@ -1,3 +1,4 @@
+import { formatDiagnosticDateTime } from "./dateFormatting";
 import { AiDiagnosticsSettings } from "./AiDiagnosticsSettings";
 import { CircleAlert, CircleCheck } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -69,7 +70,7 @@ function SyncDiagnosticsDetails({
     <dl className="diagnostics">
       <dt>State</dt><dd>{status?.state ?? "unknown"}</dd>
       <dt>Last successful sync</dt>
-      <dd>{status?.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Never"}</dd>
+      <dd>{status?.lastSuccessfulSync ? formatDiagnosticDateTime(new Date(status.lastSuccessfulSync)) : "Never"}</dd>
       {accountCount <= 1 ? (
         <>
           <dt>History cursor</dt>
@@ -118,7 +119,7 @@ export function DiagnosticsSettings({
           <strong>{summary}</strong>
           <span>
             {status?.lastSuccessfulSync
-              ? `Last synced ${new Date(status.lastSuccessfulSync).toLocaleString()}`
+              ? `Last synced ${formatDiagnosticDateTime(new Date(status.lastSuccessfulSync))}`
               : "Not synced yet"}
             {pendingCount ? ` · ${plural(pendingCount, "change")} waiting to sync` : ""}
           </span>
@@ -165,7 +166,7 @@ export function DiagnosticsSettings({
               <small>
                 {plural(mutation.attempts, "attempt")}
                 {" · "}
-                {new Date(mutation.createdAt).toLocaleString()}
+                {formatDiagnosticDateTime(new Date(mutation.createdAt))}
               </small>
             </li>
           ))}
@@ -190,7 +191,7 @@ export function DiagnosticsSettings({
               <small>
                 Thread {entry.threadId}
                 {" · "}
-                {new Date(entry.createdAt).toLocaleString()}
+                {formatDiagnosticDateTime(new Date(entry.createdAt))}
               </small>
             </li>
           ))}

@@ -97,8 +97,8 @@ describe("ContactCard",()=>{
   });
 
   it("puts the job title before the history line",()=>{
-    render(<Host initial={{...bob,role:"Managing Director"}} facts={["31 emails since Oct 2024","You last wrote Jun 2025"]}/>);
-    const activity=screen.getByText("31 emails since Oct 2024 · You last wrote Jun 2025");
+    render(<Host initial={{...bob,role:"Managing Director"}} facts={["31 emails since Oct 2024","You last wrote Jun 10, 2025"]}/>);
+    const activity=screen.getByText("31 emails since Oct 2024 · You last wrote Jun 10, 2025");
     expect(screen.getByText("Managing Director · Acme").compareDocumentPosition(activity)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
@@ -117,7 +117,7 @@ describe("useContactLookup",()=>{
     rerender({enabled:true});
     await waitFor(()=>expect(result.current.loaded).toBe(true));
     expect(result.current.profile).toEqual(bob);
-    expect(result.current.facts).toEqual(["31 emails since Oct 2024","You last wrote Jun 2025"]);
+    expect(result.current.facts).toEqual(["31 emails since Oct 2024","You last wrote Jun 10, 2025"]);
     expect(mailClient.contactActivity).toHaveBeenCalledWith(bob.id);
   });
 

@@ -442,6 +442,11 @@ describe("Files workspace", () => {
     expect(screen.getAllByText("Any date")).toHaveLength(2);
     fireEvent.change(screen.getByLabelText("From Date"),{target:{value:"2026-10-01"}});
     expect(screen.getByLabelText("From Date")).not.toHaveAttribute("aria-description");
+    const from = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date(2026, 9, 1));
+    expect(screen.getByRole("button", { name: `Remove From: ${from} filter` })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Through Date"), { target: { value: "2027-01-05" } });
+    const through = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date(2027, 0, 5));
+    fireEvent.click(screen.getByRole("button", { name: `Remove Through: ${through} filter` }));
     fireEvent.click(screen.getByRole("button",{name:/Remove From:/}));
     expect(screen.getByLabelText("From Date")).toHaveValue("");
     await waitFor(()=>expect(query).toHaveBeenCalled());
