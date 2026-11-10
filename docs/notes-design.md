@@ -1,9 +1,11 @@
 # Notes workspace design
 
-**Status:** v1 built: all five steps, with the meowdown editor, plus
-[images and attachments](#images-and-attachments). v2 items are under
-[Later](#later).
-**Date:** 2026-11-09
+**Status:** Built and shipped in 0.208.0: all five v1 steps with the
+meowdown editor, [images and attachments](#images-and-attachments),
+[Import Markdown Folder](#import-markdown-folder), and the
+[linked notes and tasks proposal](#linked-notes-and-tasks-proposal).
+What's still open is under [Later](#later).
+**Date:** 2026-11-09, updated 2026-11-10
 **Scope:** a Notes workspace for Markdown notes that travel through
 replicated sync. The [linked notes and tasks proposal](#linked-notes-and-tasks-proposal)
 below records the linked-notes and task integration built after v1.
@@ -15,8 +17,8 @@ an MIT-licensed, open-source notes app built on a folder of Markdown files.
 The workspace is laid out like Mail: a list of notes on the left, the open
 note in the middle, and the context panel on the right.
 
-This document records the decisions for v1, what v1 leaves out, and the
-order of work.
+This document records the decisions for v1, what v1 leaves out, the
+order of work, and the features built on top of v1.
 
 ## Decisions
 
@@ -29,8 +31,9 @@ order of work.
   Markdown syntax by default. It can also reveal syntax around the cursor or
   show it all the time. v1 matches that behavior; see [Editor](#editor) for
   the candidate library and the rules any editor must follow.
-- **Importing an existing Reflect folder is v2.** The v1 export layout and
-  front matter are chosen so a later import reads the same shape.
+- **Import reads the export's shape.** The export layout and front matter
+  were chosen so an import reads the same shape. Import was planned for v2
+  and is now built; see [Import Markdown Folder](#import-markdown-folder).
 
 ## Why records rather than a folder
 
@@ -210,10 +213,9 @@ Recent lists, and that is intended.
 
 A device on an earlier version can't open a snapshot that holds a note. It
 stops receiving changes from updated devices until it is updated, and
-nothing is lost meanwhile. Add Notes to the data boundary in
-[cross-device sync](cross-device-sync.md) with the release that ships it,
-and tell users to update every device before writing notes, as for snooze
-schedules.
+nothing is lost meanwhile. [Cross-device sync](cross-device-sync.md#notes)
+lists Notes in its data boundary, and the 0.208.0 changelog tells users to
+update every device before writing notes.
 
 ### Settings export
 
@@ -309,8 +311,10 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 - A search box above the list searches titles and note text as the user
   types, through the local search index, and lists the matches in place of
   the list. Escape clears it, then returns to the list.
-- `j`/`k` and Up/Down move through the list, and Enter puts focus in the
-  editor, as in Mail.
+- `j`/`k` and Up/Down move through the list, as in Mail. Space and
+  Shift+Space page through the open note, as they page a message. Enter
+  starts writing in the open note from anywhere in Notes outside a text
+  field.
 - **Trash** sits at the bottom. A trashed note opens read-only with
   **Restore** and **Delete Permanently**, which confirms first, with Cancel
   focused. Restoring a note whose title another note took meanwhile is
@@ -329,8 +333,9 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
   stylesheet hides closed ones and clears the browser's popover border,
   which otherwise shows as an empty box in the middle of the window.
 - A button beside the title, and `#` in the list, move the note to Trash.
-- A quiet status line shows "Saved" or "Too long to sync", plus the conflict
-  banner when there is one.
+- A quiet status beside the Trash button shows "Saved" for two seconds
+  after a save (not when a note is merely opened), or "Too long to sync".
+  The conflict banner shows above the note when there is one.
 
 ### Context panel (right)
 
@@ -376,8 +381,9 @@ device), and the sections below follow it.
 ### Search
 
 Note search uses the local FTS5 index. **Search Current View** searches
-notes while Notes is open. Listing matching notes in `⌘K` beside its other
-results is not built yet.
+notes while Notes is open. The command palette (`⌘K`) also lists up to five
+matching notes below the matching commands, each with its highlighted
+excerpt, from anywhere in the app; choosing one opens it in Notes.
 
 ## Editor
 
@@ -698,7 +704,9 @@ under `### New` or `### Improved` as they become visible.
 
 ## Linked notes and tasks proposal
 
-**Status: implemented in `linked-notes-tasks`.** This extends the built Notes workspace.
+**Status: implemented and shipped in 0.208.0.** This extends the built Notes
+workspace. Where the built UI differs from the proposal, the
+[implementation notes](#implementation-notes) say so.
 It covers **Add to Today's Note** from Mail, explicit links between notes
 and conversations, tasks, and calendar events, and Markdown tasks in the
 existing **Tasks** workspace. It adds no AI processing.
@@ -1051,6 +1059,11 @@ behavior, and keep the user-facing changelog entry current.
   starts a provider request; an event outside the cache needs its dates loaded
   in Calendar first. Series links resolve to an available cached occurrence.
   Removing a calendar account clears its cached events while preserving note links.
+- Notes' context panel has one **Links** section, rather than separate
+  **Conversations**, **Tasks**, and **Events** sections. **Link to…** sits
+  in that section and in the command palette (**Link to Conversation, Task,
+  or Event…**). In **Checklists and tasks**, each row converts with one
+  small icon button rather than a **Convert to …** link.
 - Task scope controls include **All accounts** even with one mail account.
   Changing the scope while in Tasks keeps Tasks open. Note tasks join the
   all-accounts query; account-specific queries continue to exclude them.
@@ -1062,8 +1075,16 @@ behavior, and keep the user-facing changelog entry current.
 
 ## Later
 
+Nothing below is planned for the next release.
+
 - **v2: Folder mirror.** Keep a chosen folder in step with notes in both
   directions, for users who edit in other tools.
 - Tags beyond plain-text search.
 - Asking AI about notes, with a private flag per note.
 - Merging concurrent text edits.
+- Note tasks with due dates, waiting, recurrence, and the other task states
+  (see [Tasks integration](#markdown-checklists-and-tasks)).
+- Following a link to an event outside the local event cache without first
+  loading its dates in Calendar.
+- Splitting snapshots by entity type, which would lift the 3.5 MiB notes
+  limit (see [Size limits](#size-limits)).

@@ -1888,6 +1888,8 @@ export function App() {
           execute={executeCommand}
           extraCommands={paletteExtraCommands}
           onClose={() => setPaletteOpen(false)}
+          searchNotes={mailClient.searchNotes}
+          onOpenNote={openNote}
         />
       ) : null}
       {shortcutHelpOpen ? (

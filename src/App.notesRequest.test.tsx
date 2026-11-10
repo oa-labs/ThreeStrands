@@ -29,3 +29,15 @@ it("consumes the Files note jump so the Notes sidebar restores the last note", a
   fireEvent.click(screen.getByRole("button", { name: "Notes (4)" }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(last.title));
 });
+
+it("opens a note found from the command palette", async () => {
+  localStorage.clear();
+  const note = await mailClient.createNote("Palette quarterly plan", "zephyrine milestones");
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /^Command Palette/ }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Filter Commands" }), { target: { value: "zephyrine" } });
+  const notes = await screen.findByRole("region", { name: "Notes" });
+  fireEvent.click(within(notes).getByRole("button", { name: new RegExp(note.title) }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+  expect(screen.queryByRole("textbox", { name: "Filter Commands" })).not.toBeInTheDocument();
+});

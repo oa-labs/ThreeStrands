@@ -25,6 +25,7 @@ import { NoteConflictBanner } from "./NoteConflictBanner";
 import { noteConflictsById } from "./noteConflicts";
 import { noteTargetKey, parseNoteTargetKey, readLastNoteTarget, todayTarget, writeLastNoteTarget, type NoteTarget } from "./noteDrafts";
 import { formatNoteDate } from "./noteDates";
+import { NoteMatchSnippet, noteLabel } from "./NoteMatchSnippet";
 import { useNoteSyntaxMode } from "./noteSyntaxMode";
 import { useNoteEditor } from "./useNoteEditor";
 import { replicatedSyncConflicts, replicatedSyncDeviceRoster, type DeviceRosterEntry, type FrontierConflict } from "./replicatedSync";
@@ -45,20 +46,8 @@ const SEARCH_LIMIT = 50;
 const SEARCH_DELAY_MS = 150;
 /** How long "Saved" stays after a save before it clears. */
 const SAVED_SHOWN_MS = 2000;
-const MATCH_START = "\u0001";
-const MATCH_END = "\u0002";
-
-const noteLabel = (note: { title: string; dailyDate: string | null }) => note.dailyDate ? formatNoteDate(note.dailyDate) : note.title;
 const summaryTarget = (note: { id: string; dailyDate: string | null }): NoteTarget => note.dailyDate ? { kind: "daily", date: note.dailyDate } : { kind: "note", id: note.id };
 const formatTime = (value: string) => formatDateTime(new Date(value));
-
-function MatchSnippet({ text }: { text: string }) {
-  const [before, ...matches] = text.split(MATCH_START);
-  return <>{before}{matches.map((segment, index) => {
-    const [match, ...rest] = segment.split(MATCH_END);
-    return <span key={index}><mark>{match}</mark>{rest.join(MATCH_END)}</span>;
-  })}</>;
-}
 
 /** Each linked kind's glyph in the Links section. */
 const LINK_ICON = { conversation: <Mail size={ICON_SIZE.sm} />, task: <CircleCheck size={ICON_SIZE.sm} />, event: <CalendarDays size={ICON_SIZE.sm} /> } as const;
@@ -271,7 +260,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const noteConflicts = editor.note ? conflicts.get(editor.note.id) ?? [] : [];
 
   const list: Row[] = hits
-    ? hits.map((hit) => ({ key: hit.id, target: summaryTarget(hit), title: noteLabel(hit), detail: <MatchSnippet text={hit.matchSnippet} /> }))
+    ? hits.map((hit) => ({ key: hit.id, target: summaryTarget(hit), title: noteLabel(hit), detail: <NoteMatchSnippet text={hit.matchSnippet} /> }))
     : listView === "trash"
       ? trashed.map((note): Row => ({ key: note.id, target: summaryTarget(note), title: noteLabel(note), detail: note.preview || "No text", date: note.trashedAt ?? note.updatedAt }))
       : [

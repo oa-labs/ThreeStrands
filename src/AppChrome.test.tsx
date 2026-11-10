@@ -1,8 +1,8 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandContext } from "./commands";
-import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, Modal, ShortcutHelp } from "./AppChrome";
+import { ActionButton, CommandPalette, PALETTE_NOTE_LIMIT, FiltersButton, HoverTooltip, Modal, ShortcutHelp } from "./AppChrome";
 
 afterEach(cleanup);
 
@@ -79,6 +79,62 @@ describe("App chrome", () => {
     }
     fireEvent.change(input, { target: { value: "new widget" } });
     expect(screen.queryByRole("button", { name: /Add Task From Conversation/ })).not.toBeInTheDocument();
+  });
+
+  it("lists notes matching the typed text below the commands and opens one", async () => {
+    vi.useFakeTimers();
+    try {
+      const searchNotes = vi.fn(async (_query: string, limit: number) => [
+        { id: "n1", title: "Budget review", dailyDate: null, matchSnippet: "the \u0001budget\u0002 for Q3" },
+        { id: "daily:2026-11-09", title: "2026-11-09", dailyDate: "2026-11-09", matchSnippet: "\u0001budget\u0002 call" },
+      ].slice(0, limit));
+      const onOpenNote = vi.fn();
+      const onClose = vi.fn();
+      render(<CommandPalette context={context} execute={vi.fn()} onClose={onClose} searchNotes={searchNotes} onOpenNote={onOpenNote} />);
+      const input = screen.getByRole("textbox", { name: "Filter Commands" });
+
+      fireEvent.change(input, { target: { value: "  budget " } });
+      expect(searchNotes).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      expect(searchNotes).toHaveBeenCalledTimes(1);
+      expect(searchNotes).toHaveBeenCalledWith("budget", PALETTE_NOTE_LIMIT);
+
+      const notes = screen.getByRole("region", { name: "Notes" });
+      const daily = within(notes).getByRole("button", { name: /Monday, November 9, 2026/ });
+      expect(within(notes).getByRole("button", { name: /Budget review/ })).toBeInTheDocument();
+      expect(within(daily).getByText("budget").tagName).toBe("MARK");
+
+      fireEvent.click(daily);
+      expect(onOpenNote).toHaveBeenCalledWith("daily:2026-11-09");
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops note results when the text is cleared or the search fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const searchNotes = vi.fn().mockResolvedValueOnce([{ id: "n1", title: "Plan", dailyDate: null, matchSnippet: "plan" }]).mockRejectedValueOnce(new Error("index busy"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      render(<CommandPalette context={context} execute={vi.fn()} onClose={vi.fn()} searchNotes={searchNotes} onOpenNote={vi.fn()} />);
+      const input = screen.getByRole("textbox", { name: "Filter Commands" });
+
+      fireEvent.change(input, { target: { value: "plan" } });
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      expect(screen.getByRole("region", { name: "Notes" })).toBeInTheDocument();
+
+      fireEvent.change(input, { target: { value: "" } });
+      expect(screen.queryByRole("region", { name: "Notes" })).not.toBeInTheDocument();
+
+      fireEvent.change(input, { target: { value: "plans" } });
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      expect(screen.queryByRole("region", { name: "Notes" })).not.toBeInTheDocument();
+      expect(searchNotes).toHaveBeenCalledTimes(2);
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows readable shortcut keys in the command palette", () => {

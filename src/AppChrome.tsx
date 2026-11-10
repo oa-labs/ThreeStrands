@@ -13,6 +13,13 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 import { formatShortcut } from "./shortcutLabels";
+import type { NoteSearchHit } from "./domain";
+import { logBackgroundFailure } from "./errors";
+import { NoteMatchSnippet, noteLabel } from "./NoteMatchSnippet";
+
+/** Most notes the palette lists under its commands. */
+export const PALETTE_NOTE_LIMIT = 5;
+const PALETTE_NOTE_DELAY_MS = 150;
 
 export function FiltersButton({
   activeFilters,
@@ -142,21 +149,39 @@ export function CommandPalette({
   execute,
   extraCommands = [],
   onClose,
+  searchNotes,
+  onOpenNote,
 }: {
   context: CommandContext;
   execute(command: Command): void;
   extraCommands?: Command[];
   onClose(): void;
+  /** Lists notes matching the typed text below the commands. */
+  searchNotes?(query: string, limit: number): Promise<NoteSearchHit[]>;
+  onOpenNote?(noteId: string): void;
 }) {
   const [filter, setFilter] = useState("");
+  const [noteHits, setNoteHits] = useState<NoteSearchHit[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => inputRef.current?.focus(), []);
+  useEffect(() => {
+    const query = filter.trim();
+    if (!query || !searchNotes || !onOpenNote) { setNoteHits([]); return; }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void searchNotes(query, PALETTE_NOTE_LIMIT).then(
+        (found) => { if (active) setNoteHits(found.slice(0, PALETTE_NOTE_LIMIT)); },
+        (reason) => { if (active) setNoteHits([]); logBackgroundFailure("Searching notes from the palette")(reason); },
+      );
+    }, PALETTE_NOTE_DELAY_MS);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [filter, searchNotes, onOpenNote]);
   const visible = [...commands, ...extraCommands].filter((command) => commandMatchesFilter(command, filter));
   return (
     <Modal title="Command Palette" onClose={onClose} shortcutScope="palette" initialFocusRef={inputRef}>
       <label className="palette-search">
         <Search size={ICON_SIZE.lg} />
-        <input ref={inputRef} {...SEARCH_INPUT_ATTRIBUTES} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Type a command" aria-label="Filter Commands" />
+        <input ref={inputRef} {...SEARCH_INPUT_ATTRIBUTES} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Type a command or search notes" aria-label="Filter Commands" />
       </label>
       <div className="command-list">
         {visible.map((command) => (
@@ -165,6 +190,15 @@ export function CommandPalette({
             <span>{command.keys.map((key) => <ShortcutKeys key={key} shortcut={key} />)}</span>
           </button>
         ))}
+        {noteHits.length && onOpenNote ? (
+          <section className="command-section" aria-label="Notes">
+            {noteHits.map((hit) => (
+              <button key={hit.id} className="command-item command-note" onClick={() => { onOpenNote(hit.id); onClose(); }}>
+                <span><small>Note</small>{noteLabel(hit)}<small className="command-note-snippet"><NoteMatchSnippet text={hit.matchSnippet} /></small></span>
+              </button>
+            ))}
+          </section>
+        ) : null}
       </div>
     </Modal>
   );
