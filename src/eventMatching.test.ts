@@ -87,6 +87,46 @@ describe("findCalendarMatch", () => {
   });
 });
 
+describe("events with people from the conversation", () => {
+  it("recognizes an invitation titled differently from the email when someone on it wrote or received the email", () => {
+    // A reminder email names the call one way; the organizer's invitation names it another.
+    const reminder = { title: "Central Region Chairs call", people: ["chair@example.org", "robert@example.org"] };
+    const invitation = event({ id: "invite", title: "FY2026/2027 US Central Accelerator Call", attendees: ["robert@example.org", "organizer@example.org"] });
+    expect(findCalendarMatch(reminder, slot, [invitation])).toEqual({ kind: "same", event: invitation });
+
+    // A one-to-one lunch arranged by reply, with an address cased differently on the calendar.
+    const lunch = { title: "Lunch to talk about the grant", location: "Café Luna", people: ["dana@example.com"] };
+    const booked = event({ id: "booked", title: "Dana / Joel", location: "Downtown", attendees: ["Dana@Example.com"], start: minutes(START, 10), end: minutes(START, 70) });
+    expect(findCalendarMatch(lunch, slot, [booked])).toEqual({ kind: "same", event: booked });
+  });
+
+  it("needs the time to agree, and never matches an all-day event or one without the conversation's people", () => {
+    const identity = { title: "Chairs call", people: ["robert@example.org"] };
+    const at = (offset: number) => event({ title: "Accelerator Call", attendees: ["robert@example.org"], start: minutes(START, offset), end: minutes(START, offset + 60) });
+    expect(findCalendarMatch(identity, slot, [at(SAME_EVENT_START_TOLERANCE_MINUTES)])?.kind).toBe("same");
+    expect(findCalendarMatch(identity, slot, [at(SAME_EVENT_START_TOLERANCE_MINUTES + 1)])).toBeNull();
+    const allDay = event({ title: "Offsite", allDay: true, start: "2026-11-17", end: "2026-11-18", attendees: ["robert@example.org"] });
+    const strangers = event({ title: "Budget review", attendees: ["someone@example.net"] });
+    const unknown = event({ title: "Budget review" });
+    expect(findCalendarMatch(identity, slot, [allDay, strangers, unknown])).toBeNull();
+    expect(findCalendarMatch({ title: identity.title }, slot, [at(0)])).toBeNull();
+  });
+
+  it("prefers a title match over a shared person, and a shared person over a shared place", () => {
+    const identity = { title: "Entrepreneur Day 2026", location: "1435 Bedford Ave, Pittsburgh, PA 15219", people: ["host@example.org"] };
+    const titled = event({ id: "titled", title: "Entrepreneur Day 2026", start: minutes(START, 10) });
+    const withHost = event({ id: "with-host", title: "Prep call", attendees: ["host@example.org"] });
+    const venue = event({ id: "venue", title: "Open house", location: "1435 Bedford Ave, Pittsburgh, PA 15219" });
+    expect(findCalendarMatch(identity, slot, [venue, withHost, titled])?.event.id).toBe("titled");
+    expect(findCalendarMatch(identity, slot, [venue, withHost])).toEqual({ kind: "same", event: withHost });
+  });
+
+  it("does not use people to match a bare day", () => {
+    const allDay = event({ title: "Offsite", allDay: true, start: "2026-11-17", end: "2026-11-18", attendees: ["robert@example.org"] });
+    expect(findDayMatch({ title: "Chairs call", people: ["robert@example.org"] }, "2026-11-17", [allDay])).toBeNull();
+  });
+});
+
 describe("events added from the same email", () => {
   const identity = { title: "Entrepreneur Day 2026", sourceMessageId: "message-1" };
   const tagged = (overrides: Partial<ScheduleEvent>) => event({ sourceMessageId: "message-1", ...overrides });

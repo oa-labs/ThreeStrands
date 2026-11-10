@@ -5,7 +5,7 @@ import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
 import { AVAILABILITY_SECTION_ID } from "./RecipientSections";
-import { briefScope, meetingPlace, ownNamesIn, participantName, participantsText, reminderTask, ThreadAssist, uncertaintyNote, type ThreadAssistProps } from "./ThreadAssist";
+import { briefScope, conversationPeople, meetingPlace, proposalDueText, ownNamesIn, participantName, participantsText, reminderTask, ThreadAssist, uncertaintyNote, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -128,6 +128,36 @@ describe("participantName", () => {
     expect(participantName("Van Dyke, Dick")).toBe("Van Dyke, Dick");
     expect(participantName("a, b, c")).toBe("a, b, c");
     expect(participantName("Finance team,")).toBe("Finance team,");
+  });
+});
+
+describe("conversationPeople", () => {
+  it("lists everyone else who wrote or received a message, once each and lowercased", () => {
+    const messages = [
+      { sender: "Chair <Chair@Example.org>", recipients: ["Joel <you@example.com>", "robert@example.org"], cc: ["Dana <dana@example.com>"] },
+      { sender: "you@example.com", recipients: ["chair@example.org"], cc: [] },
+    ];
+    expect(conversationPeople(messages, ["YOU@example.com"])).toEqual(["chair@example.org", "dana@example.com", "robert@example.org"]);
+    expect(conversationPeople([{ sender: "you@example.com", recipients: ["Undisclosed recipients:;"] }], ["you@example.com"])).toEqual([]);
+  });
+});
+
+describe("proposalDueText", () => {
+  it("reads a due day as task lists do, with the time when one was given", () => {
+    const now = new Date();
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 11, 0);
+    const day = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+    const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(tomorrow);
+    expect(proposalDueText({ dueKind: "date", dueValue: day })).toBe("Tomorrow");
+    expect(proposalDueText({ dueKind: "datetime", dueValue: tomorrow.toISOString() })).toBe(`Tomorrow, ${time}`);
+    expect(proposalDueText({ dueKind: "date", dueValue: "2031-12-01" })).not.toContain("2031-12-01");
+    expect(proposalDueText({ dueKind: "none", dueValue: null })).toBeNull();
+    expect(proposalDueText({ dueKind: "datetime", dueValue: "not a time" })).toBeNull();
+  });
+
+  it("shows on a suggested task card", () => {
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [{ ...taskProposal, dueValue: "2031-12-01" }] } })} />);
+    expect(screen.getByText(/^Complete the requested setup\. · Due /)).not.toHaveTextContent("2031-12-01");
   });
 });
 
@@ -566,7 +596,7 @@ describe("ThreadAssist", () => {
     expect(check).toHaveBeenCalledTimes(1);
   });
 
-  it("recognizes a suggested event already on the calendar by its title and opens it there", async () => {
+  it("folds a suggested event already on the calendar by its title into a line that opens it there", async () => {
     clearScheduleCache();
     const start = new Date(Date.now() + 4 * 86_400_000).toISOString();
     const end = new Date(Date.parse(start) + 2 * 3_600_000).toISOString();
@@ -583,22 +613,44 @@ describe("ThreadAssist", () => {
     const onReview = vi.fn();
     const onDiscard = vi.fn();
     render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [event], onReview, onDiscard }, scheduling: { calendarConnected: true, onOpenCalendarEvent } })} />);
-    expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
-    const open = screen.getByRole("button", { name: "Open in Calendar" });
+    const line = (await screen.findByText(/is already on your calendar/)).closest(".proposal-on-calendar") as HTMLElement;
+    const open = within(line).getByRole("button", { name: "Open in Calendar" });
+    // Named the same on the calendar, so the line does not repeat the title.
+    expect(line).toHaveTextContent(/^Entrepreneur Day 2026 is already on your calendar\.Open in Calendar$/);
     fireEvent.click(open);
     expect(onOpenCalendarEvent).toHaveBeenCalledWith(added);
 
-    // The scheduler's line says when; the email's wording of it would repeat it.
-    await waitFor(() => expect(screen.queryByText("November 17 at 4:00 PM")).not.toBeInTheDocument());
-    // One row of actions: Edit waits in ⋯ with Add Again, and Dismiss sits beside Open in Calendar.
-    const card = open.closest("article") as HTMLElement;
-    expect(card.querySelectorAll(".proposal-actions")).toHaveLength(0);
-    expect(within(card).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
-    fireEvent.click(within(card).getByRole("button", { name: "More actions" }));
-    fireEvent.click(within(card).getByRole("menuitem", { name: "Edit" }));
-    expect(onReview).toHaveBeenCalledWith(0, event, "edit");
-    fireEvent.click(within(card).getByRole("button", { name: "Dismiss" }));
-    expect(onDiscard).toHaveBeenCalledWith(0);
+    // Nothing else is asked of the user: the card, its time, and its actions are put away.
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
+    expect(screen.queryByText("November 17 at 4:00 PM")).not.toBeInTheDocument();
+    expect(onReview).not.toHaveBeenCalled();
+    expect(onDiscard).not.toHaveBeenCalled();
+  });
+
+  it("folds a reminder email's event when someone from the conversation is on a calendar event at that time", async () => {
+    clearScheduleCache();
+    const start = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    const end = new Date(Date.parse(start) + 3_600_000).toISOString();
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start, end }], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+    const invitation = { id: "invite", accountId: "you@example.com", title: "FY2026/2027 US Central Accelerator Call", allDay: false, start, end, attendees: ["robert@example.org", "organizer@example.org"] };
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [invitation], errors: [] });
+    const reminder: ThreadDetail = { ...detail, messages: [{ ...detail.messages[0], sender: "Chair <chair@example.org>", recipients: ["you@example.com", "Robert <robert@example.org>"] }] };
+    const call: ActionProposal = {
+      type: "meeting", intent: "attend", title: "Central Region Chairs call", participants: [], location: null,
+      rawTimeLanguage: "Wednesday at 11am EST", normalizedStart: start, normalizedEnd: end, eventDate: null,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: 60,
+      timeZone: "America/New_York", confidence: 0.9, evidence: { sourceMessageId: "message-1", excerpt: "our call is Wednesday at 11am EST" },
+    };
+    render(<ThreadAssist {...props({ detail: reminder, ownEmails: ["you@example.com"], suggestions: { requested: true, proposals: [call, taskProposal] }, scheduling: { calendarConnected: true, onOpenCalendarEvent: vi.fn() } })} />);
+    const line = (await screen.findByText(/is already on your calendar/)).closest(".proposal-on-calendar") as HTMLElement;
+    expect(within(line).getByRole("button", { name: "Open in Calendar" })).toBeInTheDocument();
+    expect(line).toHaveTextContent("Central Region Chairs call is already on your calendar as FY2026/2027 US Central Accelerator Call.");
+    expect(screen.queryByText(/Conflicts with/)).not.toBeInTheDocument();
+    // Other suggestions stay as cards.
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Add Task…" })).toBeInTheDocument();
   });
 
   it("offers to join an online meeting from the link on its calendar copy", async () => {
@@ -621,7 +673,8 @@ describe("ThreadAssist", () => {
     expect(screen.queryByRole("link", { name: "Join" })).not.toBeInTheDocument();
     const join = await screen.findByRole("link", { name: "Join" });
     expect(join).toHaveAttribute("title", "https://meet.example.com/council");
-    expect(join.closest(".proposal-detail")).toHaveTextContent("Microsoft Teams · Join");
+    // The event folds to one line, which keeps the way in.
+    expect(join.closest(".proposal-on-calendar")).toHaveTextContent("Finance Council is already on your calendar.");
     fireEvent.click(join);
     expect(openUrl).toHaveBeenCalledWith("https://meet.example.com/council");
   });

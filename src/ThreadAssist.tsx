@@ -2,7 +2,7 @@ import { formatCompactDate } from "./dateFormatting";
 import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { useId, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, MapPin, RefreshCw, RotateCcw, Sparkles, Users, Video } from "lucide-react";
+import { CalendarCheck, Check, ChevronDown, ChevronRight, CircleAlert, CircleCheck, Copy, MapPin, RefreshCw, RotateCcw, Sparkles, Users, Video } from "lucide-react";
 import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, Message, ScheduleEvent, TaskProposal, ThreadDetail } from "./domain";
 import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { FindTimesCard } from "./FindTimesCard";
@@ -17,6 +17,7 @@ import { ICON_SIZE } from "./iconSizes";
 import { ContextSectionHeader, useRememberedCollapse } from "./ContextSections";
 import { latestInvitationMessage, withoutInvitationMeetings } from "./calendarInvitations";
 import { AVAILABILITY_SECTION_ID } from "./RecipientSections";
+import { formatDue } from "./taskViews";
 
 export const THREAD_ASSIST_ID = "thread-assist";
 /** Remembers whether Suggested is collapsed, apart from the Brief around it. */
@@ -215,6 +216,29 @@ export function uncertaintyNote(proposal: ActionProposal): string | null {
   return "Some details may be wrong";
 }
 
+/**
+ * Everyone else who wrote or received a message in the conversation, as
+ * lowercased addresses, so a calendar event they are on at a suggestion's
+ * time reads as that suggestion already added.
+ */
+export function conversationPeople(messages: readonly Pick<Message, "sender" | "recipients" | "cc">[], ownEmails: string[]): string[] {
+  const own = new Set(ownEmails.map((email) => email.trim().toLowerCase()));
+  const people = messages.flatMap((message) => [message.sender, ...message.recipients, ...(message.cc ?? [])])
+    .map((address) => parseAddress(address).email.trim().toLowerCase())
+    .filter((email) => email.includes("@") && !own.has(email));
+  return [...new Set(people)].sort();
+}
+
+/** When a suggested task is due, as task lists show it, with the time when one was given: "Tomorrow, 11:00 AM". */
+export function proposalDueText(proposal: Pick<TaskProposal, "dueKind" | "dueValue">): string | null {
+  if (!proposal.dueValue || proposal.dueKind === "none") return null;
+  const at = new Date(proposal.dueKind === "date" ? `${proposal.dueValue}T12:00:00` : proposal.dueValue);
+  if (Number.isNaN(at.getTime())) return null;
+  const date = formatDue({ dueKind: proposal.dueKind, dueValue: proposal.dueValue });
+  if (proposal.dueKind !== "datetime") return date;
+  return `${date}, ${new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(at)}`;
+}
+
 /** A local `YYYY-MM-DD` the given number of days from `now`. */
 function localDay(now: Date, days: number): string {
   const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + days);
@@ -247,9 +271,11 @@ export function reminderTask(meeting: MeetingProposal, now: Date): TaskProposal 
  * the email's time words opens the evidence it came from; once the meeting is
  * on the calendar the scheduler shows when it is, so the card drops the quote
  * and moves its own actions into the scheduler's row: Dismiss beside Open in
- * Calendar, Edit in ⋯.
+ * Calendar, Edit in ⋯. A meeting found on the calendar needs nothing more
+ * from the user, so the card folds to one line that opens it there; the
+ * hidden card keeps checking, so the suggestion returns if the event goes.
  */
-function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEmails, ownNames }: {
+function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEmails, ownNames, people: conversation }: {
   proposal: ActionProposal;
   index: number;
   source: string | null;
@@ -257,6 +283,8 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
   scheduling: ThreadAssistProps["scheduling"];
   ownEmails: string[];
   ownNames: string[];
+  /** The conversation's other people, to recognize an event already on the calendar. */
+  people: string[];
 }) {
   const [matchedEvent, setMatchedEvent] = useState<ScheduleEvent | null>(null);
   const matched = matchedEvent !== null;
@@ -287,7 +315,14 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
   const remind = proposal.type === "meeting" && proposal.intent === "schedule"
     ? [{ label: "Remind Me", onSelect: () => suggestions.onReview(-1, reminderTask(proposal, new Date()), "accept") }]
     : [];
-  return <article className="action-proposal-card">
+  const due = proposal.type === "task" ? proposalDueText(proposal) : null;
+  const onCalendar = matchedEvent ? <p className="proposal-on-calendar">
+    <CircleCheck size={ICON_SIZE.xs} aria-hidden="true" />
+    <span><strong>{proposal.title}</strong> is already on your calendar{titlesDiffer(proposal.title, matchedEvent.title) ? <> as {matchedEvent.title}</> : null}.</span>
+    {where?.joinUrl ? <a className="proposal-on-calendar-join" href={where.joinUrl} title={where.joinUrl} onClick={(event) => { event.preventDefault(); void openUrl(where.joinUrl!); }}><Video size={ICON_SIZE.sm} aria-hidden="true" />Join</a> : null}
+    {scheduling.onOpenCalendarEvent ? <button type="button" className="btn-link" onClick={() => scheduling.onOpenCalendarEvent!(matchedEvent)}><CalendarCheck size={ICON_SIZE.sm} aria-hidden="true" />Open in Calendar</button> : null}
+  </p> : null;
+  return <>{onCalendar}<article className="action-proposal-card" hidden={matched}>
     <div className="action-proposal-card-top">
       <div className="action-proposal-card-header">
         <span className="proposal-kind">{kind}</span>
@@ -307,7 +342,7 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
         <a href={where.joinUrl} title={where.joinUrl} onClick={(event) => { event.preventDefault(); void openUrl(where.joinUrl!); }}>{where.place ? "Join" : "Join video meeting"}</a>
       </span></p> : where?.place ? <p className="proposal-detail"><MapPin size={ICON_SIZE.sm} aria-hidden="true" /><span><EventLocation location={where.place} /></span></p> : null}
       {people ? <p className="proposal-detail"><Users size={ICON_SIZE.sm} aria-hidden="true" /><span>{people}</span></p> : null}
-    </> : proposal.notes || proposal.dueValue ? <p>{[proposal.notes, proposal.dueValue ? `Due ${proposal.dueValue}` : null].filter(Boolean).join(" · ")}</p> : null}
+    </> : proposal.notes || due ? <p>{[proposal.notes, due ? `Due ${due}` : null].filter(Boolean).join(" · ")}</p> : null}
     {proposal.type === "meeting" && proposal.intent === "schedule" && scheduling.offeredTimesShown ? <div className="meeting-scheduler" role="group" aria-label="Schedule">
       <p className="context-status">The email offers times for this meeting.</p>
       <div className="meeting-scheduler-actions">
@@ -324,7 +359,7 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
       onReplyWithTimes={scheduling.onReplyWithTimes}
       onConfirmTime={scheduling.onConfirmTime}
       onOpenCalendarSettings={scheduling.onOpenCalendarSettings}
-      identity={{ title: proposal.title, location: proposal.location, sourceMessageId: proposal.evidence.sourceMessageId }}
+      identity={{ title: proposal.title, location: proposal.location, sourceMessageId: proposal.evidence.sourceMessageId, people: conversation }}
       onOpenCalendarEvent={scheduling.onOpenCalendarEvent}
       onMatchChange={setMatchedEvent}
       matchedActions={dismiss}
@@ -334,12 +369,18 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
       <button type="button" className="btn btn-sm btn-primary" onClick={() => suggestions.onReview(index, proposal, "accept")}>Add Task…</button>
     </div> : null}
     {quote ? null : evidence}
-  </article>;
+  </article></>;
+}
+
+/** Whether the calendar names an event differently enough to say what it is called there. */
+function titlesDiffer(suggested: string, calendar: string): boolean {
+  return suggested.trim().toLocaleLowerCase() !== calendar.trim().toLocaleLowerCase();
 }
 
 export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, upcoming = false, ownEmails = [], error, onRun, onOpenSettings }: ThreadAssistProps) {
   const { thread } = detail;
   const ownNames = ownNamesIn(detail.messages ?? [], ownEmails);
+  const people = conversationPeople(detail.messages ?? [], ownEmails);
   const [copiedSummary, setCopiedSummary] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
   const [collapsed, toggleCollapsed] = useRememberedCollapse(THREAD_ASSIST_ID);
@@ -489,6 +530,7 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
                 scheduling={scheduling}
                 ownEmails={ownEmails}
                 ownNames={ownNames}
+                people={people}
               />)}
             </div> : null}
             {offerSuggestions ? suggestionsButton : null}
