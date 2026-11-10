@@ -19,7 +19,7 @@
   "containerEnv": {
     "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
   },
-  "postCreateCommand": "sudo chown -R vscode:vscode node_modules target src-tauri/target /home/vscode/.cargo/registry /home/vscode/.claude /home/vscode/.codex &&pnpm install --frozen-lockfile && pnpm exec playwright install --with-deps chromium",
+  "postCreateCommand": "sudo chown -R vscode:vscode node_modules target src-tauri/target /home/vscode/.cargo/registry /home/vscode/.claude /home/vscode/.codex &&pnpm install --frozen-lockfile && pnpm exec playwright install --with-deps chromium webkit",
   "forwardPorts": [1420],
   "hostRequirements": {
     "cpus": 4,

@@ -29,7 +29,7 @@ pnpm install
 pnpm dev       # browser preview with fixture mail
 pnpm lint
 pnpm test
-pnpm test:e2e  # first run: pnpm exec playwright install chromium
+pnpm test:e2e  # first run: pnpm exec playwright install chromium webkit
 pnpm build
 pnpm tauri dev # native app with local SQLite
 ```
@@ -58,7 +58,7 @@ background checks rust-analyzer runs in your editor.
 `.devcontainer/dev` is a native-architecture Ubuntu container (arm64 on Apple
 Silicon) for day-to-day work, so that code runs in Linux, not on your Mac. In
 VS Code, run **Dev Containers: Reopen in Container** and pick **ThreeStrands
-development**. It installs the locked dependencies and Playwright's Chromium,
+development**. It installs the locked dependencies and Playwright's Chromium and WebKit,
 and keeps `node_modules` and both Cargo `target` directories in named volumes
 so they never mix with macOS build output.
 

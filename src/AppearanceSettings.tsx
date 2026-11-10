@@ -164,7 +164,7 @@ export function AppearanceSettings({
       </div>
 
       <h3>Email Zoom</h3>
-      <p className="settings-hint" id="email-zoom-hint">Scales email text, images, and spacing together without enlarging app controls. Try 125% for easier reading. For the sender’s original proportions, turn Minimum Email Font Size off. Higher zoom may wrap content or require sideways scrolling.</p>
+      <p className="settings-hint" id="email-zoom-hint">Scales email text, images, and spacing together without enlarging app controls. Try 125% for easier reading. For the sender’s original proportions, turn Minimum Email Font Size off. Higher zoom may wrap content. Wide layouts are scaled to fit the reader.</p>
       <div className="settings-row">
         <input
           type="range"

@@ -797,17 +797,20 @@ export function SafeMessage({
     fillResolvedImages(frameDoc, resolvedImagesRef.current);
 
     const resize = () => {
-      // Measure at the sender's natural scale on every layout change, so a
-      // narrow pane can recover its original scale when widened. Fixed tables
-      // and min-width flow layouts can exceed max-width through intrinsic
-      // sizing. Shrink the whole document rather than clipping content or
-      // rewriting author widths. Explicit reader zoom is relative to this fit.
+      // Apply the requested zoom before fitting. Enlarging an already-fitted
+      // fixed layout would reintroduce horizontal scrolling. Fluid layouts
+      // can reflow at the requested zoom; fixed layouts shrink only as much
+      // as needed to keep all content inside the reader.
+      // Root scrollWidth already includes zoom in both WebKit and Chromium.
+      // Body scrollWidth uses rounded, unzoomed pixels; multiplying it would
+      // mistake rounding for overflow and needlessly shrink fluid content.
       // Zoom is reader-owned; this adds no sender CSS or resource capability.
-      frameDoc.body.style.zoom = "1";
+      const requestedZoom = zoomRef.current;
+      frameDoc.body.style.zoom = String(requestedZoom);
       const viewportWidth = frameDoc.documentElement.clientWidth;
-      const contentWidth = Math.max(frameDoc.documentElement.scrollWidth, frameDoc.body.scrollWidth);
+      const contentWidth = frameDoc.documentElement.scrollWidth;
       const fit = viewportWidth > 0 && contentWidth > viewportWidth ? viewportWidth / contentWidth : 1;
-      const effectiveZoom = fit * zoomRef.current;
+      const effectiveZoom = fit * requestedZoom;
       frameDoc.body.style.zoom = String(effectiveZoom);
       // Root scrollHeight is at least the current iframe viewport height,
       // so it cannot shrink after zooming out. Root offsetHeight measures

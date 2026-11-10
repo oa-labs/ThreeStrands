@@ -54,19 +54,22 @@ test.describe("email rendering fixtures", () => {
       const frame = page.locator("iframe.message-body");
       const content = frame.contentFrame();
       const link = content.getByRole("link", { name: "Right edge details" });
-      for (const width of [1200, 700, 390, 1200]) {
-        await page.setViewportSize({ width, height: 900 });
-        await expect.poll(() => frame.evaluate((element) => {
-          const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
-          return root.scrollWidth - root.clientWidth;
-        })).toBeLessThanOrEqual(0);
-        await expect.poll(async () => {
-          const frameBox = (await frame.boundingBox())!;
-          const linkBox = (await link.boundingBox())!;
-          return linkBox.x >= frameBox.x
-            && linkBox.x + linkBox.width <= frameBox.x + frameBox.width + 1
-            && linkBox.y + linkBox.height <= frameBox.y + frameBox.height + 1;
-        }).toBe(true);
+      for (const zoom of [100, 125, 150, 200, 50, 100]) {
+        await page.getByRole("combobox", { name: "Email zoom", exact: true }).selectOption(String(zoom));
+        for (const width of [1200, 700, 390, 1200]) {
+          await page.setViewportSize({ width, height: 900 });
+          await expect.poll(() => frame.evaluate((element) => {
+            const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+            return root.scrollWidth - root.clientWidth;
+          })).toBeLessThanOrEqual(0);
+          await expect.poll(async () => {
+            const frameBox = (await frame.boundingBox())!;
+            const linkBox = (await link.boundingBox())!;
+            return linkBox.x >= frameBox.x
+              && linkBox.x + linkBox.width <= frameBox.x + frameBox.width + 1
+              && linkBox.y + linkBox.height <= frameBox.y + frameBox.height + 1;
+          }).toBe(true);
+        }
       }
       if (fixture === "wideNestedNewsletter") {
         await page.getByRole("button", { name: "Load images", exact: true }).click();
@@ -76,9 +79,13 @@ test.describe("email rendering fixtures", () => {
           return root.scrollWidth - root.clientWidth;
         })).toBeLessThanOrEqual(0);
       }
-      const before = (await link.boundingBox())!.width;
       await page.getByRole("combobox", { name: "Email zoom", exact: true }).selectOption("150");
-      await expect.poll(async () => (await link.boundingBox())!.width / before).toBeCloseTo(1.5, 1);
+      // Increasing the reading preference must not enlarge a fixed layout
+      // beyond the pane. This also checks the native app's WebKit engine.
+      await expect.poll(() => frame.evaluate((element) => {
+        const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+        return root.scrollWidth - root.clientWidth;
+      })).toBeLessThanOrEqual(0);
       await page.getByRole("combobox", { name: "Email zoom", exact: true }).selectOption("100");
       await expect.poll(() => frame.evaluate((element) => {
         const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
@@ -132,6 +139,7 @@ test.describe("email rendering fixtures", () => {
             return { textWidth: range.getBoundingClientRect().width, gap: link.left - text.right, height: element.getBoundingClientRect().height };
           });
           const baseline = await measure();
+          const layoutWidth = await body.locator("table, .zoom-row").first().evaluate((element) => element.getBoundingClientRect().width);
           expect(baseline.gap).toBeGreaterThan(0);
           const control = page.getByRole("combobox", { name: "Email zoom" });
           const controlBox = (await control.boundingBox())!;
@@ -143,16 +151,24 @@ test.describe("email rendering fixtures", () => {
           });
           for (const zoom of [125, 200, 50, 100]) {
             await control.selectOption(String(zoom));
-            await expect(body).toHaveCSS("zoom", String(zoom / 100));
+            await expect.poll(() => frame.evaluate((element) => {
+              const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+              return root.scrollWidth - root.clientWidth;
+            })).toBeLessThanOrEqual(0);
+            const effectiveZoom = await body.evaluate((element) => Number(element.style.zoom));
+            expect(effectiveZoom).toBeLessThanOrEqual(zoom / 100);
+            const availableWidth = (await frame.boundingBox())!.width;
+            expect(effectiveZoom).toBeGreaterThanOrEqual(Math.min(zoom / 100, availableWidth / layoutWidth) - 0.01);
+            if (width === 1200) expect(effectiveZoom).toBeCloseTo(zoom / 100, 2);
             const metrics = await measure();
             // A static font avoids system optical-size changes; allow a
             // pixel for WebKit's integer text-rectangle rounding.
-            expect(Math.abs(metrics.textWidth - baseline.textWidth * zoom / 100)).toBeLessThanOrEqual(1);
+            expect(Math.abs(metrics.textWidth - baseline.textWidth * effectiveZoom)).toBeLessThanOrEqual(1);
             // The flow gap and table-cell padding are both authored as 16px.
             // Table columns may redistribute spare width when constrained.
-            expect(metrics.gap).toBeGreaterThanOrEqual(16 * zoom / 100);
-            if (fixture === "zoomFlow") expect(metrics.gap).toBeCloseTo(baseline.gap * zoom / 100, 0);
-            expect((await image.boundingBox())!.width).toBeCloseTo(24 * zoom / 100, 0);
+            expect(metrics.gap).toBeGreaterThanOrEqual(16 * effectiveZoom - 0.01);
+            if (fixture === "zoomFlow") expect(metrics.gap).toBeCloseTo(baseline.gap * effectiveZoom, 0);
+            expect((await image.boundingBox())!.width).toBeCloseTo(24 * effectiveZoom, 0);
             await expect.poll(async () => (await frame.boundingBox())!.height).toBeGreaterThanOrEqual(Math.floor(metrics.height));
             await expect.poll(async () => (await frame.boundingBox())!.height).toBeLessThanOrEqual(Math.ceil(metrics.height) + 1);
             const markerTop = await frame.contentFrame().locator("[data-quoted-history-fold]").evaluate((element) => element.getBoundingClientRect().top);

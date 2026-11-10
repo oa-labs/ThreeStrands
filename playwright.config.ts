@@ -19,6 +19,12 @@ export default defineConfig({
   },
   projects: [
     {
+      name: "webkit-email-layout",
+      testMatch: "email-rendering.spec.ts",
+      grep: /fits the reader/,
+      use: { browserName: "webkit" },
+    },
+    {
       name: "chromium",
       use: { browserName: "chromium" },
     },
