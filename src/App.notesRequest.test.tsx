@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { mailClient } from "./data/client";
 import type { WorkspaceFile } from "./domain";
 import { noteReferenceHref } from "./noteEntities";
+import { clearScheduleCache } from "./calendarScheduleCache";
 import { lastEditorProps } from "./test/NoteEditorStub";
 
 vi.mock("./NoteEditor", () => import("./test/NoteEditorStub"));
@@ -60,4 +61,32 @@ it("opens a contact linked from a note in Contacts, and lists the note on the co
   expect(await screen.findByDisplayValue("Pete Linkfollow")).toBeInTheDocument();
   const notes = await within(await screen.findByRole("complementary", { name: "Contact context" })).findByRole("region", { name: "Notes" });
   expect(within(notes).getByRole("button", { name: /Meeting with Pete/ })).toBeInTheDocument();
+});
+
+it("adds a meeting from Today's next-meeting card to today's note, and Undo takes it out", async () => {
+  localStorage.clear();
+  clearScheduleCache();
+  const start = new Date(Date.now() + 10 * 60_000);
+  const meeting = { id: "app-meeting", accountId: "calendar@example.com", calendarId: "primary", title: "Wiring review", allDay: false,
+    start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString(), attendees: ["dana.wiring@example.com"] };
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" }]);
+  vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([{ id: "primary", accountId: "calendar@example.com", name: "Work", primary: true, selected: true, writable: true }]);
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [meeting], errors: [] });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
+  await screen.findByRole("button", { name: /^Next: Wiring review/ });
+  fireEvent.click(screen.getByRole("button", { name: "Add Note" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Add Note" }));
+  expect(dialog.getByText("dana.wiring@example.com")).toBeInTheDocument();
+  fireEvent.click(dialog.getByRole("button", { name: "Add to Daily Note" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(/Added to (today|tomorrow)'s note/);
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Note" })).not.toBeInTheDocument());
+  const day = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+  const body = (await mailClient.getDailyNote(day))?.body ?? "";
+  expect(body.startsWith("## Meetings\n\n- [")).toBe(true);
+  expect(body).toContain("](threestrands:event/");
+  expect(body).toContain(" met with [dana\\.wiring@example\\.com](threestrands:contact/");
+  expect(body.endsWith(" for Wiring review\n")).toBe(true);
+  await act(async () => { screen.getByRole("button", { name: "Undo" }).click(); });
+  await waitFor(async () => expect((await mailClient.getDailyNote(day))?.body ?? "").toBe(""));
 });

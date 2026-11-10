@@ -1,5 +1,6 @@
 import { formatCompactDate } from "./dateFormatting";
-import { ContactRound, ListPlus, Mail, Send, Video, X } from "lucide-react";
+import { ContactRound, ListPlus, Mail, NotebookPen, Send, Video, X } from "lucide-react";
+import { meetingEventReference } from "./meetingNoteEntry";
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { CalendarAgenda } from "./CalendarAgenda";
@@ -32,6 +33,8 @@ export type TodayWorkspaceProps = {
   calendars: CalendarOption[];
   onOpenThread(threadId: string): void;
   onOpenEvent(event: ScheduleEvent): void;
+  /** Add Note for an event: its line in that day's note. */
+  onAddNote?(event: ScheduleEvent): void;
   onEditTask(task: ThreadTask): void;
   onTasksChanged(): void;
   onOpenInbox(): void;
@@ -70,7 +73,7 @@ function ScheduledToday(props: TodayWorkspaceProps) {
 
 function TodayLayout({
   accountId, refreshKey, taskRefreshKey, calendars, schedule,
-  onOpenThread, onOpenEvent, onEditTask, onTasksChanged, onOpenInbox, onOpenCalendar, onOpenTasks, onOpenContact, onOpenKeepInTouch,
+  onOpenThread, onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenInbox, onOpenCalendar, onOpenTasks, onOpenContact, onOpenKeepInTouch,
 }: TodayWorkspaceProps & { schedule: Schedule | null }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -211,14 +214,14 @@ function TodayLayout({
         <h1>{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h1>
         {dayLine ? <p className="today-day-shape">{dayLine}</p> : null}
       </div>
-      {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} /> : null}
+      {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} onAddNote={onAddNote} /> : null}
     </header>
     <div className="today-columns">
       <div className="today-column" role="group" aria-label="Agenda">
         {schedule ? <>
           {/* The page heading already names today, so its agenda leaves the date out. */}
-          <CalendarAgenda today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
-          <CalendarAgenda today={addDays(startOfLocalDay(now), 1)} tomorrow calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
+          <CalendarAgenda today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
+          <CalendarAgenda today={addDays(startOfLocalDay(now), 1)} tomorrow calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}
@@ -301,7 +304,7 @@ function TodayLayout({
   </section>;
 }
 
-function NextMeeting({ event, now, onOpenEvent }: { event: ScheduleEvent; now: Date; onOpenEvent(event: ScheduleEvent): void }) {
+function NextMeeting({ event, now, onOpenEvent, onAddNote }: { event: ScheduleEvent; now: Date; onOpenEvent(event: ScheduleEvent): void; onAddNote?(event: ScheduleEvent): void }) {
   const { joinUrl } = meetingPlace(event.location ?? null, event.conferenceUrl);
   const minutes = Math.round((eventDate(event).getTime() - now.getTime()) / 60_000);
   const label = minutes <= 0
@@ -310,6 +313,7 @@ function NextMeeting({ event, now, onOpenEvent }: { event: ScheduleEvent; now: D
   return <div className="today-next">
     <button type="button" className="btn-link" onClick={() => onOpenEvent(event)}>{label}</button>
     {joinUrl ? <button type="button" className="btn btn-sm" onClick={() => void openUrl(joinUrl)}><Video size={ICON_SIZE.sm} />Join</button> : null}
+    {onAddNote && meetingEventReference(event) ? <button type="button" className="btn btn-sm" onClick={() => onAddNote(event)}><NotebookPen size={ICON_SIZE.sm} />Add Note</button> : null}
   </div>;
 }
 

@@ -8,8 +8,9 @@ import { ContextSectionHeader } from "./ContextSections";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { BookedTask, CalendarTasks, useAccountTasks } from "./CalendarTasks";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
-import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { CalendarDays, ChevronLeft, ChevronRight, NotebookPen, Plus } from "lucide-react";
+import { meetingEventReference } from "./meetingNoteEntry";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { EventViewer, eventCalendarLabel } from "./CalendarSidebar";
 import { HoverTooltip } from "./AppChrome";
 import {
@@ -255,6 +256,8 @@ export function CalendarWeekView({
   mailAccountIds = [],
   onOpenThread = () => {},
   onOpenNote,
+  onAddNote,
+  onSelectedEventChange,
   taskRefreshKey = 0,
   onTasksChanged,
   onNotice,
@@ -273,6 +276,10 @@ export function CalendarWeekView({
   mailAccountIds?: string[];
   onOpenThread?(id: string): void;
   onOpenNote?(id: string): void;
+  /** Add Note for an event: its line in that day's note. */
+  onAddNote?(event: ScheduleEvent): void;
+  /** Reports the event whose details are open, for commands that act on it. */
+  onSelectedEventChange?(event: ScheduleEvent | null): void;
   anchor: Date;
   /** Opens these event details when arriving from a conversation. */
   initialEvent?: ScheduleEvent | null;
@@ -318,6 +325,9 @@ export function CalendarWeekView({
   }, range.step);
 
   useEffect(() => { setSelectedEvent((current) => current && days.some((day) => occursOnDay(current, day)) ? current : null); }, [days]);
+  const reportSelection = useEffectEvent((event: ScheduleEvent | null) => onSelectedEventChange?.(event));
+  useEffect(() => { reportSelection(selectedEvent); }, [selectedEvent]);
+  useEffect(() => () => reportSelection(null), []);
   const restoredInitial=useRef(session?.current?.initialEvent===initialEvent && !!session?.current);
   useEffect(() => { if (restoredInitial.current) { restoredInitial.current=false; return; } if (initialEvent) { setMode(rangeForEvent(initialEvent, readCalendarRange())); setSelectedEvent(initialEvent); } }, [initialEvent]);
   useEffect(() => { if (!loading) setSelectedEvent((current) => current ? events.find((event) => sameEvent(current, event)) ?? (initialEvent && sameEvent(current, initialEvent) ? current : null) : null); }, [events, loading, initialEvent]);
@@ -739,7 +749,8 @@ export function CalendarWeekView({
       </aside> : null}
       <WorkspaceContextRail label="Meeting context" onReturn={() => (eventTrigger.current?.isConnected ? eventTrigger.current : gridRef.current)?.focus()}>
         {selectedEvent ? <>
-          <ContextSectionHeader title="Event details" icon={<CalendarDays size={ICON_SIZE.xs} />} />
+          <ContextSectionHeader title="Event details" icon={<CalendarDays size={ICON_SIZE.xs} />}
+            actions={onAddNote && meetingEventReference(selectedEvent) ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Add Note" title="Add Note" onClick={() => onAddNote(selectedEvent)}><NotebookPen size={ICON_SIZE.sm} aria-hidden="true" /></button> : undefined} />
           <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} calendarLabel={eventCalendarLabel(selectedEvent, calendars)} onDismiss={() => {
             setSelectedEvent(null);
             if (!eventTrigger.current) document.getElementById("workspace-Meeting-context")?.focus();
@@ -748,7 +759,7 @@ export function CalendarWeekView({
           <NoteBacklinks reference={{ version: 1, kind: "event", id: selectedEvent.id, account: selectedEvent.accountId, calendar: selectedEvent.calendarId }} additional={selectedEvent.seriesId ? [{ version: 1, kind: "event", id: selectedEvent.seriesId, account: selectedEvent.accountId, calendar: selectedEvent.calendarId }] : []} onOpenNote={onOpenNote} />
           <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
         </> : <>
-          <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} schedule={todayVisible ? { events, loading, error, reload } : undefined} />
+          <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} onAddNote={onAddNote} schedule={todayVisible ? { events, loading, error, reload } : undefined} />
           <CalendarTasks
             tasks={openTasks}
             loading={tasksLoading}

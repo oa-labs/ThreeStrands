@@ -362,6 +362,18 @@ describe("TodayWorkspace", () => {
       expect(screen.getByText(/^3 meetings · Double-booked at .+ \(CS Updates is recorded\) · Last meeting ends/, { selector: ".today-day-shape" })).toBeInTheDocument();
     });
 
+    it("offers Add Note on the next meeting and today's agenda when it can", async () => {
+      const next = event("next", 5, { title: "Design sync" });
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [next] });
+      const onAddNote = vi.fn();
+      renderToday({ calendarConnected: true, onAddNote });
+      await screen.findByRole("button", { name: /^Next: Design sync/ });
+      fireEvent.click(screen.getByRole("button", { name: "Add Note" }));
+      expect(onAddNote).toHaveBeenLastCalledWith(next);
+      fireEvent.click(within(screen.getByRole("region", { name: "Today's agenda" })).getByRole("button", { name: "Add Note for Design sync" }));
+      expect(onAddNote).toHaveBeenCalledTimes(2);
+    });
+
     it("names a meeting under way as now, with when it ends", async () => {
       const ongoing = event("ongoing", -10, { title: "Standup" });
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [ongoing] });

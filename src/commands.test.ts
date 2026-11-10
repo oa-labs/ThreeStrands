@@ -393,6 +393,17 @@ describe("command registry", () => {
     expect(command.enabled({ ...noopContext(), focusedPane: "notes", composerActive: true })).toBe(false);
   });
 
+  it("adds the open calendar event to its day's note only when there is one to add", async () => {
+    const command = commands.find((item) => item.id === "notes.meeting")!;
+    const addMeetingNote = vi.fn();
+    expect(command.keys).toEqual([]);
+    expect(command.enabled(noopContext())).toBe(false);
+    expect(command.enabled({ ...noopContext(), addMeetingNote })).toBe(true);
+    expect(command.enabled({ ...noopContext(), addMeetingNote, composerActive: true })).toBe(false);
+    await command.run({ ...noopContext(), addMeetingNote });
+    expect(addMeetingNote).toHaveBeenCalledOnce();
+  });
+
   it("routes the Contacts shortcut to the address book outside the composer", async () => {
     const command = commands.find((candidate) => candidate.id === "view.contacts");
     const openContactsView = vi.fn();
