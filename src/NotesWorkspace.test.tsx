@@ -546,9 +546,13 @@ describe("Notes workspace", () => {
       const other = await mailClient.createNote(uniqueTitle("Pickable"), "");
       const note = await mailClient.createNote(uniqueTitle("Pickable self"), "");
       await openNote(note.id);
-      const found = await lastEditorProps.current!.onSearchLinks!("pickable");
-      expect(found.map((item) => item.title)).toContain(other.title);
-      expect(found.map((item) => item.title)).not.toContain(note.title);
+      // The workspace learns which note is open in an effect after the title
+      // shows, so search again until it has.
+      await waitFor(async () => {
+        const found = (await lastEditorProps.current!.onSearchLinks!("pickable")).map((item) => item.title);
+        expect(found).toContain(other.title);
+        expect(found).not.toContain(note.title);
+      });
     });
 
     it("lists linked people who are saved contacts and opens them in Contacts", async () => {
