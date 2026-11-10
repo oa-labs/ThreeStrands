@@ -517,7 +517,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.noteBacklinks).mockImplementation(async reference=>reference.id==="jane.doe@work.example"?[{noteId:"daily:2026-11-10",title:"2026-11-10",dailyDate:"2026-11-10",context:"9:30am met with Jane Doe for Planning",reference:mention}]:[]);
     render(<ContactsWorkspace onOpenThread={vi.fn()} onOpenNote={onOpenNote} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    const rail=screen.getByRole("complementary",{name:"Contact context"});
+    const rail=await screen.findByRole("complementary",{name:"Contact context"});
     const notes=await within(rail).findByRole("region",{name:"Notes"});
     expect(mailClient.noteBacklinks).toHaveBeenCalledWith({version:1,kind:"contact",id:"jane@example.com"});
     expect(mailClient.noteBacklinks).toHaveBeenCalledWith({version:1,kind:"contact",id:"jane.doe@work.example"});

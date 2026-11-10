@@ -234,6 +234,7 @@ describe("Notes workspace", () => {
     await screen.findByRole("button", { name: /^Today/ });
     fireEvent.keyDown(document.body, { key: "/" });
     const search = screen.getByRole("searchbox", { name: "Search Notes" });
+    expect(search.closest("label")).toHaveClass("search-box");
     await waitFor(() => expect(search).toHaveFocus());
     fireEvent.change(search, { target: { value: "forecast" } });
     const results = within(await screen.findByRole("list", { name: "Matching notes" }));
