@@ -4,6 +4,7 @@
 meowdown editor, [images and attachments](#images-and-attachments),
 [Import Markdown Folder](#import-markdown-folder), and the
 [linked notes and tasks proposal](#linked-notes-and-tasks-proposal).
+The [meeting notes proposal](#meeting-notes-proposal) is not built yet.
 What's still open is under [Later](#later).
 **Date:** 2026-11-09, updated 2026-11-10
 **Scope:** a Notes workspace for Markdown notes that travel through
@@ -1072,6 +1073,236 @@ behavior, and keep the user-facing changelog entry current.
   drafts, external changes, conflicts, and limit failures require resolution.
   Conversions keep each row mounted while its refreshed projection loads, so
   keyboard focus is retained.
+
+## Meeting notes proposal
+
+**Status: proposed, not built.** Notes for a calendar event are among the
+most common notes people write. Today a user can link a note to an event
+(**Link to… → Event**), and the event's **Meeting context** lists the notes
+that link to it. But there is no way to start a note from the event itself.
+This proposal adds that, following
+Reflect's calendar flow: an **Add Note** button on
+each event writes one line about the meeting into that day's note, and can
+also link a note named after the meeting. Attendees link to their contact
+records.
+
+### User contract
+
+- From any event in an agenda, record the meeting in that day's daily note
+  without leaving the view.
+- The line says when the meeting was, who was there, and what it was. The
+  time opens the event, each attendee opens their contact, and the meeting
+  name can open a note shared by every occurrence of that meeting.
+- A contact's record lists every note that mentions them, so a person's
+  meeting history is one click away.
+- Nothing is copied from the event beyond its title, start time, and
+  attendees. The event's description, location, and conference link stay out
+  of the note.
+
+### Add Note
+
+**Entry points.** An **Add Note** button on each event row in the agendas
+(`CalendarAgenda` in Calendar's rail and in Today, and Today's next-meeting
+card), in the event's **Meeting context**, and the palette command **Add
+Meeting to Daily Note**, enabled when an event is selected. No default
+keyboard shortcut in this release.
+
+**The dialog** opens over the current view, with focus in **Meeting name**:
+
+- A header showing the event's start time (`formatClockTime`), or **All
+  day**.
+- **Meeting name**, filled with the event's title. Changing it changes only
+  the note text, never the event.
+- **Attendees**, as removable chips, filled from the event's attendees
+  without the user's own account addresses. Each chip shows the saved
+  contact's name when one owns the address, else the address. **Add
+  attendee** searches contacts like a recipient field, and accepts a typed
+  address that no contact has.
+- **Create backlinked note**, a checkbox, off by default. When checked, the
+  dialog shows the note title it will link (see [Meeting note](#meeting-note)),
+  and says whether that note exists or will be created.
+- **Cancel** and **Add to Daily Note**. Enter submits; Escape cancels.
+
+The dialog never changes the event and never contacts a provider.
+
+### The daily-note line
+
+The line goes into the daily note for the event's start date in the device's
+local time zone, which may not be today. An event in the past or the future
+writes to its own day's note.
+
+```markdown
+## Meetings
+
+- [9:30am](threestrands:event/…) met with [Pete B](threestrands:contact/…), [Mike Carpenter](threestrands:contact/…), [Frank Jackson](threestrands:contact/…), [Mark Williams](threestrands:contact/…) for CS Leadership Meeting (and Sales Mtg)
+```
+
+- **Time.** The start time, formatted as the agenda shows it, links to the
+  occurrence (the event reference already used by **Link to…**, including
+  its recurrence identity). An all-day event's link text is **All day**.
+- **Attendees.** Each is a [contact reference](#contact-references), in the
+  dialog's order, separated by commas as Reflect writes them. With no
+  attendees left, the line drops `met with … ` and reads `- [9:30am](…) for
+  <name>`.
+- **Meeting name.** Plain text, or, with **Create backlinked note**, a
+  `[[Title]]` link to the [meeting note](#meeting-note).
+- Link labels and the plain meeting name escape Markdown punctuation, and
+  line breaks become spaces, as **Add to Today's Note** does.
+
+**Placement.** The line is appended to the note's `## Meetings` section: the
+first `## Meetings` heading (matched by normalized text) outside code, up to
+the next heading of the same or a higher level. It goes after the section's
+last non-blank line. Without such a heading, `## Meetings`, a blank line,
+and the line are appended at the end of the note, separated from existing
+text by a blank line. Lines are not reordered by time in this release.
+
+**Repeats.** If the note already links this occurrence anywhere (the same
+canonical event reference, not the same text), nothing is added, and the
+notice says **Already in the note** with **Open Note**. A line the user
+typed linking the same event counts.
+
+**Saving** reuses the guarded capture path of **Add to Today's Note**,
+generalized from "append a conversation to today's note" to "insert lines
+into a section of a given day's note" (`capture_note_conversation` becomes
+one caller of the shared insert):
+
+- An open or closed unsaved draft of that day's note is saved first, or the
+  action is refused and the draft is kept.
+- The write is a version-checked native transaction. A stale version, a body
+  conflict, Trash, a permanent deletion racing the write, an unclosed code
+  fence at the insertion point, or the size limits refuse the whole action,
+  with **Open Note**. Nothing is written in part, and a deleted note is
+  never recreated silently.
+- On success the user stays where they were. The notice says **Added to
+  <weekday>'s note** (or **today's note**), with **Open Note** and **Undo**.
+  **Open Note** selects the inserted line.
+- **Undo** removes exactly the inserted line, and the `## Meetings` heading
+  if this action added it, under the same version check. It also moves a
+  meeting note this action created to Trash, if that note is still empty
+  and unchanged. If either note changed since, Undo offers to open it
+  instead.
+
+Two offline devices adding meetings to the same day still produce the
+existing whole-body conflict for that daily note. This proposal adds no text
+merging.
+
+### Meeting note
+
+With **Create backlinked note** checked, the meeting name becomes a
+`[[Title]]` link, and the note with that title is created if it doesn't
+exist. Recurring meetings use the same title each time, so every occurrence
+links the same running note, whose backlinks list each day's line.
+
+- **Title.** The meeting name, made valid with the existing title rules:
+  `[`, `]`, and `|` become `-`, repeated spaces collapse, and the title is
+  cut to 200 characters at a character boundary. A name that is a date gets
+  " (meeting)". An empty name uses **Meeting**.
+- **Existing note.** A note outside Trash whose title matches by normalized
+  key is linked, not duplicated. That is the expected case from a meeting's
+  second occurrence on.
+- **New note.** Created in the same transaction as the daily-note line, with
+  an empty body, so it appears in Recent and search. Two devices that create
+  the same meeting note offline get the existing title rule: the lowest id
+  keeps the title, the other gets a number, and `[[Title]]` links resolve to
+  the one keeping it.
+- The meeting note holds no event link of its own; the event is reached from
+  the daily line, and the event's **Notes** backlinks list the daily note.
+
+### Contact references
+
+A fourth kind of note reference, beside `conversation`, `task`, and
+`event`, with the same codec, strict validation, 2,048-byte limit
+(`MAX_NOTE_REFERENCE_BYTES`), and entity-link index:
+
+```json
+{ "version": 1, "kind": "contact", "id": "pete@example.com", "contact": "<contact id>" }
+```
+
+- **`id` is the attendee's address**, normalized as contact lookup
+  normalizes it. **`contact`** is the saved contact's id when there was one,
+  and is optional. No other fields are accepted for this kind.
+- **Why the address.** Merging contacts deletes the merged-away contacts
+  (`merge_contacts`), so a contact id alone would break; the merge moves
+  addresses to the contact it keeps. The address is also all an event
+  gives for someone not yet saved.
+- **Resolving.** Following a link opens the contact by id when it still
+  exists, else the saved contact that now owns the address, in **Contacts**.
+  With neither, it shows **No contact for <address> on this device**. It
+  never creates a contact, sends mail, or fetches anything.
+- **Labels** are the name written at insertion and don't change when the
+  contact is renamed, like other references.
+- **Link to…** doesn't offer contacts in this release; only **Add Note**
+  writes them. The editor renders and preserves them as it does other
+  application links.
+
+**Backlinks.** The entity-link index keys a contact reference by its address,
+so references written before and after a merge, or with and without a
+contact id, are one target. The contact's **Contact context** in Contacts
+gets a **Notes** section (`NoteBacklinks`), queried for every address the
+contact has, with the referring line as each row's detail. Notes in Trash
+are left out, as elsewhere.
+
+**People section.** Notes' **People** section lists contact references'
+contacts as well as `[[Name]]` links that match a contact's name,
+deduplicated by contact. Contact references are not `[[links]]`, so they
+never appear under **Unlinked**.
+
+**Privacy.** Attendee addresses become note text. They sync encrypted with
+the note and are written verbatim by **Export to Markdown Folder**, as every
+reference is. That fits notes being the user's own content; the dialog
+lets the user remove any attendee before adding.
+
+### Compatibility
+
+No new entity type or settings-transfer field. A device on 0.208.0 parses a
+`contact` reference as an unknown kind: it shows the label and refuses to
+follow it, and its editor must keep the text unchanged. The previous
+editor's round-trip fixture gains a contact reference before this ships.
+The `## Meetings` heading and the line are ordinary Markdown that every
+version and other Markdown apps read.
+
+### Delivery
+
+1. **Contact references.** The codec kind, native parsing and the address
+   key in `note_entity_links`, resolution and navigation into Contacts, the
+   **Notes** section on contacts, and People.
+2. **Section insert.** The shared native insert (section lookup, fence
+   check, repeat check, version check, optional meeting-note creation) and
+   Undo, with **Add to Today's Note** moved onto it unchanged.
+3. **Add Note.** The dialog and its entry points, wiring, and the changelog
+   entry.
+
+Automated coverage:
+
+- Codec: valid contact references; missing or extra fields; uppercase or
+  malformed addresses; below, at, and above the reference byte limit.
+- Resolution: by id; by address after the id was merged away; an unsaved
+  address; a contact deleted; backlinks shared across merged contacts and
+  across references with and without an id.
+- Line text: punctuation escaping, line breaks, all-day events, no
+  attendees, the user's own addresses excluded, attendees added by address.
+- Placement: an existing section in the middle of a note, at the end, a
+  `## Meetings` inside a code fence ignored, no section, an empty note, a
+  missing daily note, and a past and a future date. Repeats by canonical
+  event, including a user-typed link.
+- Meeting note: new title, existing title, title sanitizing (brackets, pipe,
+  a date, 200-character cut), a same-titled note in Trash, and two devices
+  creating it offline.
+- Refusals leave both notes and all indexes unchanged: open and closed
+  drafts, a stale version, conflict, Trash, permanent deletion, size limits.
+  Undo after further edits offers to open the note.
+- Security-negative: contact references never navigate the webview, open a
+  `mailto:`, or fetch; a hostile address or label renders as text.
+- Old-editor round trip of contact references, and a slim App test for the
+  agenda button and the palette command reaching the dialog.
+
+### Open questions
+
+- Should the agenda's button read **Open Note** when that day's note already
+  links the occurrence? That needs a per-row lookup against the entity-link
+  index; this proposal checks on click instead.
+- Should lines in `## Meetings` be kept in time order?
+- Should **Link to…** offer contacts once contact references exist?
 
 ## Later
 
