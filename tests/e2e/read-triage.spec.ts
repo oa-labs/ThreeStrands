@@ -1040,7 +1040,7 @@ test("calendar and contacts creation shortcuts stay in their current workspace",
   await page.getByRole("button", { name: "Calendar (2)" }).click();
   await expect(page.getByRole("button", { name: "New Event", exact: true })).toBeVisible();
   await page.keyboard.press("Shift+n");
-  const event = page.getByRole("dialog", { name: "New event" });
+  const event = page.getByRole("dialog", { name: "New Event" });
   await expect(event).toBeVisible();
   await event.getByRole("textbox", { name: "Title" }).fill("Keyboard meeting");
   await page.keyboard.press("Escape");

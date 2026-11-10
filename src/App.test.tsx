@@ -1203,7 +1203,7 @@ describe("keyboard-first task and action workspaces", () => {
       await waitFor(() => expect(workspace.querySelector("#task-task-roadmap")).toHaveAttribute("aria-current", "true"));
       // Close the dialog the click opened; Enter reopens it from the keyboard.
       fireEvent.keyDown(window, { key: "Escape" });
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Task details" })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Task Details" })).not.toBeInTheDocument());
       fireEvent.keyDown(document.body, { key: "Enter" });
       const details = within(await screen.findByRole("complementary", { name: "Task context" }));
       const titleField = details.getByRole("textbox", { name: "Title" });
@@ -1219,7 +1219,7 @@ describe("keyboard-first task and action workspaces", () => {
       fireEvent.change(details.getByLabelText("Due Date"), { target: { value: "2026-09-30" } });
       fireEvent.keyDown(details.getByLabelText("Due Date"), { key: "Escape" });
       await waitFor(() => expect(updateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "task-roadmap", dueKind: "date", dueValue: "2026-09-30" })));
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Task details" })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Task Details" })).not.toBeInTheDocument());
 
       fireEvent.keyDown(document.body, { key: "o" });
       await screen.findByRole("heading", { name: "Phase 1: read and triage" });
@@ -1925,10 +1925,10 @@ describe("returning from a jump", () => {
     fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
     const week = await screen.findByRole("region", { name: "Calendar week" });
     fireEvent.click(within(week).getByRole("button", { name: "New Event" }));
-    const dialog = await screen.findByRole("dialog", { name: "New event" });
+    const dialog = await screen.findByRole("dialog", { name: "New Event" });
 
     fireEvent.keyDown(within(dialog).getByLabelText("Title"), { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "New Event" })).not.toBeInTheDocument();
     expect(week).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(await screen.findByRole("region", { name: "Today" })).toBeInTheDocument();

@@ -188,7 +188,7 @@ export function CreateCalendarEventDialog({
   }
 
   return (
-    <Modal title="New event" className="calendar-event-modal" onClose={onClose} dismissible={!saving}>
+    <Modal title="New Event" className="calendar-event-modal" onClose={onClose} dismissible={!saving}>
       <form className="modal-form" onSubmit={(event) => { void submit(event); }} onKeyDown={(keyEvent) => {
         if ((keyEvent.metaKey || keyEvent.ctrlKey) && keyEvent.key === "Enter") {
           keyEvent.preventDefault();
@@ -378,7 +378,7 @@ export function EditCalendarEventDialog({
   }
 
   return (
-    <Modal title="Edit event" className={`calendar-event-modal${findingTime && !allDay ? " calendar-event-modal-scheduling" : ""}`} onClose={onClose} dismissible={!saving}>
+    <Modal title="Edit Event" className={`calendar-event-modal${findingTime && !allDay ? " calendar-event-modal-scheduling" : ""}`} onClose={onClose} dismissible={!saving}>
       <form className="modal-form" onSubmit={(formEvent) => { void submit(formEvent); }} onKeyDown={(keyEvent) => {
         if ((keyEvent.metaKey || keyEvent.ctrlKey) && keyEvent.key === "Enter") {
           keyEvent.preventDefault();

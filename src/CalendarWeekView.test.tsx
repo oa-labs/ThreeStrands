@@ -81,24 +81,24 @@ describe("CalendarWeekView", () => {
     expect(toggleSchedule).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "September 2026", level: 1 })).toBeInTheDocument();
     fireEvent.keyDown(document.body, { key: "N", shiftKey: true });
-    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const dialog = screen.getByRole("dialog", { name: "New Event" });
     const title = within(dialog).getByRole("textbox", { name: "Title" });
     fireEvent.change(title, { target: { value: "Meeting" } });
     fireEvent.keyDown(title, { key: "N", shiftKey: true });
     fireEvent.keyDown(title, { key: "t" });
     expect(title).toHaveValue("Meeting");
-    expect(screen.getAllByRole("dialog", { name: "New event" })).toHaveLength(1);
+    expect(screen.getAllByRole("dialog", { name: "New Event" })).toHaveLength(1);
     await waitFor(() => expect(onCreated).not.toHaveBeenCalled());
   });
   it("handles an event creation request arriving from Mail once", async () => {
     const onCreateEventRequestHandled = vi.fn();
     const props = { accounts, calendars, onToggleCalendar: vi.fn(), onAddCalendarAccount: vi.fn(), onOpenSettings: vi.fn(), onCreateEventRequestHandled };
     const { rerender } = render(<StatefulWeekView {...props} createEventRequested />);
-    expect(await screen.findByRole("dialog", { name: "New event" })).toBeVisible();
+    expect(await screen.findByRole("dialog", { name: "New Event" })).toBeVisible();
     expect(onCreateEventRequestHandled).toHaveBeenCalledOnce();
     rerender(<StatefulWeekView {...props} createEventRequested={false} />);
-    fireEvent.click(within(screen.getByRole("dialog", { name: "New event" })).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("dialog", { name: "New Event" })).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "New Event" })).not.toBeInTheDocument();
     expect(onCreateEventRequestHandled).toHaveBeenCalledOnce();
   });
 
@@ -220,7 +220,7 @@ describe("CalendarWeekView", () => {
     renderWeek();
     fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
     const agenda = screen.getByRole("region", { name: "Today's agenda" });
-    const button = await within(agenda).findByRole("button", { name: "Retry agenda" });
+    const button = await within(agenda).findByRole("button", { name: "Try Again" });
     expect(agenda).not.toHaveTextContent("No events today.");
     retry = true;
     fireEvent.click(button);
@@ -559,7 +559,7 @@ describe("CalendarWeekView", () => {
       renderWeek();
       fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       fireEvent.click(within(screen.getByRole("region", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
-      const form = screen.getByRole("dialog", { name: "Edit event" });
+      const form = screen.getByRole("dialog", { name: "Edit Event" });
       expect(within(form).getByLabelText("Title")).toHaveValue("Planning");
       expectEventDateTime(within(form), "Starts", "2026-09-22T09:00");
       expectEventDateTime(within(form), "Ends", "2026-09-22T10:00");
@@ -586,7 +586,7 @@ describe("CalendarWeekView", () => {
         description: "Agenda",
         attendees: ["jane@example.com", "theo@example.com"],
       }));
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit event" })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit Event" })).not.toBeInTheDocument());
       expect(screen.getByRole("region", { name: "Quarterly planning details" })).toBeInTheDocument();
       expect(calendarGrid().getByRole("button", { name: /^Quarterly planning/ })).toBeInTheDocument();
     });
@@ -600,7 +600,7 @@ describe("CalendarWeekView", () => {
       expect(offsiteDays).toHaveLength(2);
       fireEvent.click(offsiteDays[0]);
       fireEvent.click(within(screen.getByRole("region", { name: "Offsite details" })).getByRole("button", { name: "Edit Event" }));
-      const form = screen.getByRole("dialog", { name: "Edit event" });
+      const form = screen.getByRole("dialog", { name: "Edit Event" });
       expect(within(form).getByLabelText("All day")).toBeChecked();
       expectEventDateTime(within(form), "Starts", "2026-09-23");
       // Google's end date is exclusive; the form shows the last day.
@@ -619,7 +619,7 @@ describe("CalendarWeekView", () => {
       renderWeek();
       fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       fireEvent.click(within(screen.getByRole("region", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
-      const form = screen.getByRole("dialog", { name: "Edit event" });
+      const form = screen.getByRole("dialog", { name: "Edit Event" });
       changeEventDateTime(within(form), "Ends", "2026-09-22T08:00");
       fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
       expect(await within(form).findByRole("alert")).toHaveTextContent("The end time must be after the start time.");
@@ -638,13 +638,13 @@ describe("CalendarWeekView", () => {
       renderWeek();
       fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       fireEvent.click(within(screen.getByRole("region", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
-      const form = screen.getByRole("dialog", { name: "Edit event" });
+      const form = screen.getByRole("dialog", { name: "Edit Event" });
       fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
       expect(await within(form).findByRole("alert")).toHaveTextContent("Calendar write access was denied.");
       // Pointer presses inside the portaled dialog must not dismiss the event popup underneath.
       fireEvent.pointerDown(within(form).getByLabelText("Title"));
       fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
-      expect(screen.queryByRole("dialog", { name: "Edit event" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Edit Event" })).not.toBeInTheDocument();
       expect(screen.getByRole("region", { name: "Planning details" })).toBeInTheDocument();
     });
   });
@@ -884,7 +884,7 @@ describe("CalendarWeekView", () => {
     it("says when there are no open tasks and retries a failed load", async () => {
       vi.mocked(mailClient.listTasks).mockRejectedValueOnce(new Error("offline"));
       renderWeek({ mailAccountIds: ["joel@example.com"] });
-      fireEvent.click(await within(openTasks()).findByRole("button", { name: "Retry tasks" }));
+      fireEvent.click(await within(openTasks()).findByRole("button", { name: "Try Again" }));
       expect(await within(openTasks()).findByText("No open tasks.")).toBeInTheDocument();
     });
 
@@ -914,7 +914,7 @@ describe("CalendarWeekView", () => {
       expect(container.querySelector(".calendar-create-selection")).not.toBeInTheDocument();
       expect(row).not.toHaveClass("calendar-task-dragging");
       // Dropping books at once; it never opens New Event.
-      expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "New Event" })).not.toBeInTheDocument();
       await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: expect.any(String), undo: expect.any(Function) }));
       // ICU versions differ on the space before "am" (plain or narrow no-break).
       expect(onNotice.mock.calls[0]![0].message.replace(/\s/gu, " ")).toBe("Booked Tue 9:15–9:45 am for “Write proposal”");
@@ -995,7 +995,7 @@ describe("CalendarWeekView", () => {
       renderWeek({ mailAccountIds: ["joel@example.com"] });
       fireEvent.click(await within(openTasks()).findByRole("button", { name: /Write proposal/ }));
 
-      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      const dialog = await screen.findByRole("dialog", { name: "New Event" });
       expect(within(dialog).getByLabelText("Title")).toHaveValue("Write proposal");
       expectEventDateTime(within(dialog), "Starts", "2026-09-22T15:00");
       expectEventDateTime(within(dialog), "Ends", "2026-09-22T15:30");
@@ -1131,7 +1131,7 @@ describe("CalendarWeekView", () => {
 
     fireEvent.pointerDown(column, { button: 0, pointerId: 1, clientY: 9.25 * 64 });
     fireEvent.pointerUp(column, { button: 0, pointerId: 1, clientY: 9.25 * 64 });
-    const dialog = await screen.findByRole("dialog", { name: "New event" });
+    const dialog = await screen.findByRole("dialog", { name: "New Event" });
     expectEventDateTime(within(dialog), "Starts", "2026-09-22T09:15");
     expectEventDateTime(within(dialog), "Ends", "2026-09-22T10:15");
     expect(within(dialog).getByLabelText("Calendar")).toHaveValue("joel@example.com\nprimary");
@@ -1150,7 +1150,7 @@ describe("CalendarWeekView", () => {
       allDay: false, location: "",
       attendees: ["ada@example.com", "bob@example.com"], description: "Review the plan",
     }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New Event" })).not.toBeInTheDocument());
     expect(await screen.findByRole("region", { name: "Planning details" })).toBeInTheDocument();
     expect(onCreated).toHaveBeenCalledOnce();
   });
@@ -1168,7 +1168,7 @@ describe("CalendarWeekView", () => {
     expect(container.querySelector(".calendar-create-selection")).toHaveStyle({ top: `${9 * 64}px`, height: `${2.5 * 64}px` });
     fireEvent.pointerUp(column, { button: 0, pointerId: 2, clientY: 11.25 * 64 });
 
-    const dialog = await screen.findByRole("dialog", { name: "New event" });
+    const dialog = await screen.findByRole("dialog", { name: "New Event" });
     expectEventDateTime(within(dialog), "Ends", "2026-09-22T11:30");
     fireEvent.change(within(dialog).getByLabelText("Calendar"), { target: { value: "joel@example.com\nteam" } });
     fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Team sync" } });
@@ -1183,7 +1183,7 @@ describe("CalendarWeekView", () => {
     vi.spyOn(column, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
     fireEvent.pointerDown(column, { button: 0, pointerId: 3, clientY: 23.75 * 64 });
     fireEvent.pointerUp(column, { button: 0, pointerId: 3, clientY: 23.75 * 64 });
-    const dialog = await screen.findByRole("dialog", { name: "New event" });
+    const dialog = await screen.findByRole("dialog", { name: "New Event" });
     expectEventDateTime(within(dialog), "Starts", "2026-09-22T23:45");
     expectEventDateTime(within(dialog), "Ends", "2026-09-23T00:45");
   });
@@ -1192,7 +1192,7 @@ describe("CalendarWeekView", () => {
     vi.spyOn(mailClient, "createCalendarEvent").mockRejectedValue(new Error("Reconnect this calendar account"));
     renderWeek();
     fireEvent.click(screen.getByRole("button", { name: "New Event" }));
-    const dialog = await screen.findByRole("dialog", { name: "New event" });
+    const dialog = await screen.findByRole("dialog", { name: "New Event" });
     expect(within(dialog).getByRole("option", { name: /joel@example.com/ })).toBeInTheDocument();
     expect(within(dialog).queryByRole("option", { name: /Holidays/ })).not.toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Planning" } });

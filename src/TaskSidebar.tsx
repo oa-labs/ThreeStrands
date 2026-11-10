@@ -611,7 +611,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           onLeave={() => { setGoalsOpen(false); (selectedTaskId ? taskCards.current.get(selectedTaskId)?.querySelector<HTMLElement>(".task-card-main") : null)?.focus(); }}
         /></div> : null}
         <WorkspaceContextRail label="Task context" onReturn={() => taskCards.current.get(selectedTaskId ?? "")?.querySelector<HTMLElement>(".task-card-main")?.focus()}>
-          <ContextSectionHeader title="Task details" icon={<SquareCheckBig size={ICON_SIZE.xs} />} />
+          <ContextSectionHeader title="Task Details" icon={<SquareCheckBig size={ICON_SIZE.xs} />} />
           {detailTask ? <>
             <TaskDetailDialog embedded draftStore={taskDrafts.current} task={detailTask} goals={goals} position={detailPosition}
               onUpdate={(request) => updateTask(detailTask.id, request)} onSetStatus={(status) => void setStatus(detailTask, status)}

@@ -164,7 +164,7 @@ export function CalendarTasks({ tasks, loading, error, reload, events, now, mult
     limit={OPEN_TASK_ROWS}
     footer={<>
       {loading && shown.length === 0 ? <p className="context-status" role="status">Loading open tasks…</p> : null}
-      {error ? <p className="context-status">Open tasks couldn't be loaded. <button type="button" className="btn-link" onClick={reload}>Retry tasks</button></p> : null}
+      {error ? <p className="context-status">Open tasks couldn't be loaded. <button type="button" className="btn-link" onClick={reload}>Try Again</button></p> : null}
       {!loading && !error && shown.length === 0 ? <p className="context-status">No open tasks.</p> : null}
     </>}
   />;

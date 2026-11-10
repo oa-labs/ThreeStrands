@@ -471,8 +471,8 @@ test("reply send options support keyboard navigation and send-and-archive withou
   await trigger.focus();
   await trigger.press("ArrowDown");
   const menu = reply.getByRole("menu", { name: "Send options" });
-  const later = menu.getByRole("menuitem", { name: "Send later…" });
-  const archive = menu.getByRole("menuitem", { name: "Send & archive" });
+  const later = menu.getByRole("menuitem", { name: "Send Later…" });
+  const archive = menu.getByRole("menuitem", { name: "Send & Archive" });
   await expect(later).toBeFocused();
   await page.keyboard.press("End");
   await expect(archive).toBeFocused();
@@ -754,9 +754,9 @@ test("scheduled send survives reload, reschedules, and requires confirmation aft
   await composer.getByRole("textbox", { name: "Message Body" }).fill("Preserved scheduled content");
   await composer.getByRole("button", { name: "Send options" }).click();
   await expect(composer.getByRole("menuitem")).toHaveCount(1);
-  await expect(composer.getByRole("menuitem", { name: "Send later…", exact: true })).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+L Control+Shift+L");
-  await composer.getByRole("menuitem", { name: "Send later…" }).click();
-  const picker = page.getByRole("dialog", { name: "Send later" });
+  await expect(composer.getByRole("menuitem", { name: "Send Later…", exact: true })).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+L Control+Shift+L");
+  await composer.getByRole("menuitem", { name: "Send Later…" }).click();
+  const picker = page.getByRole("dialog", { name: "Send Later" });
   await expect(picker).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(picker).not.toBeVisible();
@@ -766,7 +766,7 @@ test("scheduled send survives reload, reschedules, and requires confirmation aft
   await expect(picker).toBeVisible();
   await picker.getByLabel("Schedule timezone").fill("UTC");
   await picker.getByLabel("Scheduled date and time").fill("2026-10-11T09:00");
-  await picker.getByRole("button", { name: "Schedule email" }).click();
+  await picker.getByRole("button", { name: "Send Later" }).click();
   await expect(composer).not.toBeVisible();
   await page.reload();
   await (await openFolders(page)).getByRole("button", { name: /Outbox/ }).click();
@@ -776,9 +776,9 @@ test("scheduled send survives reload, reschedules, and requires confirmation aft
   const detail = page.getByRole("region", { name: "Outgoing message" });
   await expect(detail.getByLabel("Message content", { exact: true }).contentFrame().locator("body")).toContainText("Preserved scheduled content");
   await detail.getByRole("button", { name: "Reschedule", exact: true }).click();
-  const reschedule = page.getByRole("dialog", { name: "Reschedule email" });
+  const reschedule = page.getByRole("dialog", { name: "Reschedule Email" });
   await reschedule.getByLabel("Scheduled date and time").fill("2026-10-12T09:00");
-  await reschedule.getByRole("button", { name: "Save schedule" }).click();
+  await reschedule.getByRole("button", { name: "Reschedule" }).click();
   await page.clock.setSystemTime(new Date("2026-10-12T09:01:01Z"));
   await page.reload();
   await (await openFolders(page)).getByRole("button", { name: /Outbox/ }).click();

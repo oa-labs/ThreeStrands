@@ -4,7 +4,7 @@ test("delegates from mail, preserves a draft across views, answers, and revises 
   await page.goto("/");
   await page.getByRole("option", { name: /Welcome to ThreeStrands/ }).click();
   await page.getByRole("button", { name: "Delegate Work…", exact: true }).click();
-  const form = page.getByRole("form", { name: "New delegated task" });
+  const form = page.getByRole("form", { name: "New Delegated Task" });
   await expect(form.getByText("Linked to the selected conversation.")).toBeVisible();
   await form.getByRole("button", { name: "Enable local demonstration" }).click();
   await form.getByRole("button", { name: "Start demonstration" }).click();

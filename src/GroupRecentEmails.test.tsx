@@ -34,7 +34,7 @@ describe("group recent emails", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load older emails" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable");
     expect(screen.getByRole("button", { name: /Conversation 0/ })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Retry loading emails" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
     expect(await screen.findByRole("button", { name: /Conversation 20/ })).toBeVisible();
     expect(mailClient.contactGroupTimeline).toHaveBeenLastCalledWith("board", 20, 20, undefined);
   });

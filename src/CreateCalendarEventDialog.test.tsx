@@ -149,7 +149,7 @@ describe("CreateCalendarEventDialog", () => {
       onCreated={onCreated}
     />);
 
-    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const dialog = screen.getByRole("dialog", { name: "New Event" });
     expect(within(dialog).getByLabelText("Title")).toHaveValue("Website kickoff");
     expect(within(dialog).getByRole("button", { name: "Remove jane@example.com" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Remove bob@example.com" })).toBeInTheDocument();
@@ -232,7 +232,7 @@ describe("CreateCalendarEventDialog", () => {
       onCreated={vi.fn()}
     />);
 
-    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const dialog = screen.getByRole("dialog", { name: "New Event" });
     expect(within(dialog).getByLabelText("All day")).toBeChecked();
     expectEventDateTime(within(dialog), "Starts", "2026-11-07");
     expectEventDateTime(within(dialog), "Ends", "2026-11-07");
@@ -250,7 +250,7 @@ describe("CreateCalendarEventDialog", () => {
       start: "2026-10-01", end: "2026-10-02", allDay: true });
     render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
       calendars={calendars} initialTitle="Planning" onClose={vi.fn()} onCreated={vi.fn()} />);
-    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const dialog = screen.getByRole("dialog", { name: "New Event" });
     expect(within(dialog).getByLabelText("All day")).not.toBeChecked();
     fireEvent.click(within(dialog).getByLabelText("All day"));
     expectEventDateTime(within(dialog), "Starts", "2026-10-01");
@@ -273,7 +273,7 @@ describe("CreateCalendarEventDialog", () => {
     const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
     render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
       calendars={calendars} initialTitle="Sync" initialInvitees={["jane@example.com"]} onClose={vi.fn()} onCreated={vi.fn()} />);
-    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const dialog = screen.getByRole("dialog", { name: "New Event" });
     const input = within(dialog).getByRole("textbox", { name: "Invite People" });
     expect(input).toHaveAttribute("autocorrect", "off");
 
@@ -326,7 +326,7 @@ describe("CreateCalendarEventDialog", () => {
     const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
     render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
       calendars={calendars} initialTitle="Sync" initialInvitees={["jane@example.com", "Bob"]} onClose={vi.fn()} onCreated={vi.fn()} />);
-    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const dialog = screen.getByRole("dialog", { name: "New Event" });
     expect(within(dialog).getByText("Bob").closest(".recipient-chip")).toHaveClass("invalid");
     expect(within(dialog).getByText("jane@example.com").closest(".recipient-chip")).not.toHaveClass("invalid");
     expect(within(dialog).getByRole("alert")).toHaveTextContent("“Bob” isn't an email address. Remove it or type a full address.");
@@ -352,7 +352,7 @@ describe("CreateCalendarEventDialog", () => {
     const onClose = vi.fn();
     render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
       calendars={calendars} initialTitle="Sync" initialInvitees={["jane@example.com"]} onClose={onClose} onCreated={vi.fn()} />);
-    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const dialog = screen.getByRole("dialog", { name: "New Event" });
     const input = within(dialog).getByRole("textbox", { name: "Invite People" });
 
     // A space continues a name being looked up rather than committing it.
@@ -410,7 +410,7 @@ describe("CreateCalendarEventDialog", () => {
     const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
     render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
       calendars={calendars} initialTitle="Sync" initialInvitees={["jane@example.com"]} onClose={vi.fn()} onCreated={vi.fn()} />);
-    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const dialog = screen.getByRole("dialog", { name: "New Event" });
     const input = within(dialog).getByRole("textbox", { name: "Invite People" });
 
     fireEvent.focus(input);

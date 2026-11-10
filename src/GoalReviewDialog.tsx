@@ -43,7 +43,7 @@ export function GoalReviewDialog({
   };
 
   return (
-    <Modal title="Review goals" className="task-editor-modal task-detail-modal goal-review-modal" onClose={onClose}>
+    <Modal title="Review Goals" className="task-editor-modal task-detail-modal goal-review-modal" onClose={onClose}>
       <div className="modal-form goal-review">
         {pending.length ? <>
           <p className="goal-review-intro">These goals' periods have ended. Settle each one; its tasks keep their link either way.</p>

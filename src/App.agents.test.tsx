@@ -12,7 +12,7 @@ describe("Agents workspace wiring", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("option", { name: /Welcome to ThreeStrands/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Delegate Work…" }));
-    await screen.findByRole("form", { name: "New delegated task" });
+    await screen.findByRole("form", { name: "New Delegated Task" });
     expect(screen.getByText("Linked to the selected conversation.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
     fireEvent.keyDown(window, { key: "7" });

@@ -303,5 +303,5 @@ export function TaskDetailDialog({
         </footer>
       </div>
   );
-  return embedded ? content : <Modal title="Task details" className="task-editor-modal task-detail-modal" onClose={close} initialFocusRef={bodyRef}>{content}</Modal>;
+  return embedded ? content : <Modal title="Task Details" className="task-editor-modal task-detail-modal" onClose={close} initialFocusRef={bodyRef}>{content}</Modal>;
 }

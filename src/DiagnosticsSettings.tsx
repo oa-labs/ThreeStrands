@@ -145,11 +145,11 @@ export function DiagnosticsSettings({
       {failed.length ? (
         <DiagnosticsIssue
           title={`${plural(failed.length, "change")} couldn’t be applied on the server`}
-          description="The mail server rejected these, so they only took effect in ThreeStrands. Each change shows why below. Retry once the cause is fixed, such as after reconnecting an account, or dismiss them."
+          description="The mail server rejected these, so they only took effect in ThreeStrands. Each change shows why below. Try again once the cause is fixed, such as after reconnecting an account, or dismiss them."
           actions={actions ? (
             <>
               <button className="btn btn-sm" type="button" disabled={pending !== null} onClick={() => runFor("retry", actions.retryFailed)}>
-                {pending === "retry" ? "Retrying…" : "Retry"}
+                {pending === "retry" ? "Trying Again…" : "Try Again"}
               </button>
               <button className="btn btn-sm" type="button" disabled={pending !== null} onClick={() => runFor("dismiss-failed", actions.dismissProblems)}>
                 Dismiss

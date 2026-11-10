@@ -463,7 +463,7 @@ describe("TaskSidebar", () => {
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     await screen.findByRole("region", { name: "To Do" });
-    expect(screen.queryByRole("region", { name: "Task details" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Task Details" })).not.toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "Resize task detail" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
@@ -1340,7 +1340,7 @@ describe("TaskSidebar goals", () => {
 
     const prompt = await screen.findByText("3 goals from a past period need review.");
     fireEvent.click(within(prompt.closest(".goal-review-prompt") as HTMLElement).getByRole("button", { name: "Review" }));
-    const dialog = within(screen.getByRole("dialog", { name: "Review goals" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Review Goals" }));
     expect(dialog.getAllByRole("listitem").map((item) => item.getAttribute("aria-label"))).toEqual(["Carry", "Drop", "Win"]);
 
     fireEvent.click(within(dialog.getByRole("listitem", { name: "Win" })).getByRole("button", { name: "Achieved" }));
@@ -1363,7 +1363,7 @@ describe("TaskSidebar goals", () => {
     const view = renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Review" }));
-    const row = within(screen.getByRole("dialog", { name: "Review goals" }).querySelector("li")!);
+    const row = within(screen.getByRole("dialog", { name: "Review Goals" }).querySelector("li")!);
     fireEvent.click(row.getByRole("button", { name: `Carry to ${formatPeriod(quarter)}` }));
     expect(await row.findByRole("alert")).toHaveTextContent("Unlink them first");
     fireEvent.click(screen.getByRole("button", { name: "Finish later" }));

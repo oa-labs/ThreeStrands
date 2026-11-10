@@ -196,7 +196,7 @@ describe("invitation card responses", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not check invitation: Offline");
     expect(screen.queryByRole("button", { name: "Going" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
     expect(await screen.findByRole("button", { name: "Going" })).toBeEnabled();
   });
 
@@ -204,7 +204,7 @@ describe("invitation card responses", () => {
     vi.mocked(mailClient.previewCalendarAttachment).mockRejectedValueOnce(new Error("Invalid calendar file"));
     render(<InvitationCard {...props()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not read invitation: Invalid calendar file");
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
     expect(await screen.findByRole("button", { name: "Going" })).toBeEnabled();
   });
 

@@ -57,6 +57,6 @@ export function FileStarButton({ messageId, attachmentId, filename, accountId, s
         {labeled ? <span aria-hidden="true">{starred ? "Unstar" : "Star"}</span> : null}
       </button>
     </HoverTooltip>
-    {error ? <span className="form-error" role="alert">{error}<button type="button" className="btn-link" onClick={() => { reads.delete(messageId); setError(null); void readStars(messageId).then((stars) => setStarred(stars.some(([m,a]) => m===messageId && a===attachmentId))).catch((reason) => setError(errorMessage(reason))); }}>Retry</button></span> : null}
+    {error ? <span className="form-error" role="alert">{error}<button type="button" className="btn-link" onClick={() => { reads.delete(messageId); setError(null); void readStars(messageId).then((stars) => setStarred(stars.some(([m,a]) => m===messageId && a===attachmentId))).catch((reason) => setError(errorMessage(reason))); }}>Try Again</button></span> : null}
   </span>;
 }

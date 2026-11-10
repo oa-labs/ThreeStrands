@@ -38,7 +38,7 @@ export function ScheduleSendPicker({ onClose, onSchedule, initialAt, initialZone
     return () => { active = false; };
   }, [localTime, timeZone]);
   const selected = choices.find((v) => String(v.offsetSeconds) === offset);
-  return <Modal title={initialAt ? "Reschedule email" : "Send later"} initialFocusRef={input} onClose={() => { if (!submitting.current) onClose(); }}>
+  return <Modal title={initialAt ? "Reschedule Email" : "Send Later"} initialFocusRef={input} onClose={() => { if (!submitting.current) onClose(); }}>
     <form className="schedule-send-form" onSubmit={(event) => {
       event.preventDefault();
       if (!selected || submitting.current) return;
@@ -56,7 +56,7 @@ export function ScheduleSendPicker({ onClose, onSchedule, initialAt, initialZone
       <p>If the scheduled time is missed, confirm sending on this computer.</p>
       {info?.sharing && <p>Account, subject, schedule, and status are shared encrypted with your sync group. Recipients, message bodies, and attachments stay on this computer.</p>}
       {error && <p role="alert">{error}</p>}
-      <div className="schedule-send-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn btn-primary" type="submit" disabled={busy || !selected || selected.scheduledAt <= Date.now() || !info}>{initialAt ? "Save schedule" : "Schedule email"}</button></div>
+      <div className="schedule-send-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn btn-primary" type="submit" disabled={busy || !selected || selected.scheduledAt <= Date.now() || !info}>{initialAt ? "Reschedule" : "Send Later"}</button></div>
     </form>
   </Modal>;
 }

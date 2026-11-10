@@ -34,8 +34,8 @@ function NewAgentTask({ controller, accounts, research, onSetup }: { controller:
   const ready = Boolean(research?.config.enabled && research?.config.searchEnabled && research?.config.verified && research?.modelKeyConfigured && research?.searchKeyConfigured);
   const { tasks, error } = usePersonalTasks(seed.accountId);
   const change = (patch: Partial<AgentStart>) => controller.setStart({ ...seed, ...patch });
-  return <form className="agent-new" aria-label="New delegated task" onSubmit={e => { e.preventDefault(); if (mode === "demo") void controller.create({ ...seed, workflow: "fixture_research_v1" }); else if (ready && consent) void controller.createResearch({task:{...seed,workflow:"web_research_v1"},subjects:subjects.split("\n").map(s=>s.trim()).filter(Boolean),consent}); }}>
-    <h2>New delegated task</h2>
+  return <form className="agent-new" aria-label="New Delegated Task" onSubmit={e => { e.preventDefault(); if (mode === "demo") void controller.create({ ...seed, workflow: "fixture_research_v1" }); else if (ready && consent) void controller.createResearch({task:{...seed,workflow:"web_research_v1"},subjects:subjects.split("\n").map(s=>s.trim()).filter(Boolean),consent}); }}>
+    <h2>New Delegated Task</h2>
     <p className="agent-hint" id={`${id}-scope`}>{mode === "demo" ? "The local demonstration asks a question and prepares a sample report. It sends no email or web requests and has no provider charges." : "Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic. Exa receives only the public subjects you review below, with fixed research terms. Page hosts receive your IP. The source email is linked for navigation; its body and addresses are not sent."}</p>
     {!controller.enabled ? <button type="button" className="btn" disabled={controller.busy} onClick={() => void controller.enable(true)}>{mode === "demo" ? "Enable local demonstration" : "Enable delegated work"}</button> : null}
     <div className="agent-field">
@@ -50,7 +50,7 @@ function NewAgentTask({ controller, accounts, research, onSetup }: { controller:
     </div>
     {mode === "web" ? <>
       {!ready ? <p role="status">Web research is not configured. Save separate research keys and check connections.</p> : null}
-      <button type="button" className="btn" onClick={onSetup}>Research settings</button>
+      <button type="button" className="btn" onClick={onSetup}>Research Settings</button>
       <div className="agent-field">
         <label className="agent-field-label" htmlFor={`${id}-subjects`}>Public search subjects (one per line)</label>
         <textarea id={`${id}-subjects`} value={subjects} onChange={e=>setSubjects(e.target.value)} aria-describedby={`${id}-public-help`} />
@@ -115,7 +115,7 @@ export function AgentTaskDetail({ detail: d, controller: c, onOpenThread, onOpen
         {d.task.linkedTaskId ? <button className="btn-link" onClick={() => onOpenTask(d.task.linkedTaskId!)}>Open personal task</button> : null}
         {["queued", "running", "waiting_for_input"].includes(d.run.state) ? <button className="btn" disabled={c.busy} onClick={() => act("pause")}>Pause</button> : null}
         {d.run.state === "paused" ? <button className="btn" disabled={c.busy || !c.enabled} onClick={() => act("resume")}>Resume</button> : null}
-        {d.run.state === "failed" ? <button className="btn" disabled={c.busy || !c.enabled} onClick={() => act("retry")}>Retry</button> : null}
+        {d.run.state === "failed" ? <button className="btn" disabled={c.busy || !c.enabled} onClick={() => act("retry")}>Try Again</button> : null}
         {!["completed", "cancelled"].includes(d.run.state) ? <button className="btn" disabled={c.busy} onClick={() => act("cancel")}>Cancel work</button> : null}
         <button className="btn" disabled={c.busy} onClick={() => act(d.task.archived ? "unarchive" : "archive")}>{d.task.archived ? "Unarchive" : "Archive"}</button>
         <button className="btn" onClick={() => setDeleting(true)}>Delete delegated task</button>
@@ -175,9 +175,9 @@ export function AgentsWorkspace({ controller: c, accounts, accountId, onOpenThre
       e.preventDefault(); const index = rows.findIndex(d => d.task.id === c.selectedId); c.select(rows[Math.max(0, Math.min(rows.length - 1, index + (["j", "ArrowDown"].includes(e.key) ? 1 : -1)))].task.id);
     }
   }}>
-    <header className="agents-toolbar"><h1>Agents <span className="agent-preview">Preview</span></h1><button className="btn" onClick={begin}>New delegated task</button><button className="btn" disabled={c.busy} onClick={() => void c.refresh()}>Refresh agents</button>{c.enabled ? <button className="btn" disabled={c.busy || !c.loaded} onClick={() => void c.enable(false)} title="Pauses queued and running tasks until you choose Resume All.">Pause All</button> : null}<button className="btn" onClick={onOpenResearchSettings}>Research settings</button></header>
+    <header className="agents-toolbar"><h1>Agents <span className="agent-preview">Preview</span></h1><button className="btn" onClick={begin}>New Delegated Task</button><button className="btn" disabled={c.busy} onClick={() => void c.refresh()}>Refresh Agents</button>{c.enabled ? <button className="btn" disabled={c.busy || !c.loaded} onClick={() => void c.enable(false)} title="Pauses queued and running tasks until you choose Resume All.">Pause All</button> : null}<button className="btn" onClick={onOpenResearchSettings}>Research Settings</button></header>
     {paused ? <div className="agents-paused" role="status"><PauseCircle size={ICON_SIZE.sm} aria-hidden="true" /><span><strong>Delegated work is paused.</strong> {waiting ? `${waiting === 1 ? "1 task is" : `${waiting} tasks are`} waiting to resume.` : "No tasks will run until you resume."}</span><button className="btn" disabled={c.busy} onClick={() => void c.resumeAll()}>Resume All</button></div> : null}
-    {c.error ? <p className="form-error" role="alert">{c.error} <button className="btn-link" onClick={() => void c.refresh()}>Retry loading agents</button></p> : null}
+    {c.error ? <p className="form-error" role="alert">{c.error} <button className="btn-link" onClick={() => void c.refresh()}>Try Again</button></p> : null}
     <div className="agents-layout"><nav className="agent-list" aria-label="Delegated tasks">
       <label>Find delegated work<input ref={search} type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>
       <label>Show<select value={filter} onChange={e => setFilter(e.target.value)}><option value="active">Unarchived</option><option value="needs_input">Needs input</option><option value="finished">Finished</option><option value="archived">Archived</option></select></label>

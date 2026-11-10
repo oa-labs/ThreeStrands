@@ -204,12 +204,12 @@ const workspaceCommand = (id: WorkspaceCommandId, title: string, keys: string[],
 
 export const commands: Command[] = [
   {
-    id: "calendar.new", title: "New Calendar Event", keys: ["b", "Shift+n"], group: "Application",
+    id: "calendar.new", title: "New Event", keywords: ["calendar"], keys: ["b", "Shift+n"], group: "Application",
     enabled: (c) => !c.composerActive && (c.focusedPane === "calendar" || (c.focusedPane === "mail" && Boolean(c.createCalendarEvent))),
     run: (c) => complete(() => c.focusedPane === "calendar" ? runWorkspaceCommand("calendar.new") : c.createCalendarEvent?.()),
   },
   workspaceCommand("contacts.new", "New Contact", ["Shift+n"], "contacts"),
-  workspaceCommand("contacts.newGroup", "New Contact Group", ["Shift+g"], "contacts"),
+  workspaceCommand("contacts.newGroup", "New Group", ["Shift+g"], "contacts"),
   workspaceCommand("contacts.save", "Save Contact", ["Mod+Enter"], "contacts", true),
   workspaceCommand("agents.new", "New Delegated Task", ["Shift+n"], "agents"),
   workspaceCommand("notes.new", "New Note", ["Shift+n"], "notes"),
@@ -254,11 +254,11 @@ export const commands: Command[] = [
     enabled: (c) => !c.composerActive && c.focusedPane === "mail" && !c.calendarWeekActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
     run: (c) => complete(c.goToPreviousSplitTab),
   },
-  { id: "draft.schedule", title: "Send later", keys: ["Mod+Shift+L"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(() => c.scheduleDraft?.()) },
+  { id: "draft.schedule", title: "Send Later", keys: ["Mod+Shift+L"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(() => c.scheduleDraft?.()) },
   // Plain t is text in a draft, so the composer toggles the calendar with a modifier.
   { id: "draft.calendar", title: "Show / Hide Calendar", keywords: ["schedule", "availability"], keys: ["Mod+Shift+t"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleSchedule) },
   { id: "draft.send", title: "Send Draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
-  { id: "draft.sendAndMarkDone", title: "Send & archive", keywords: ["mark done"], keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
+  { id: "draft.sendAndMarkDone", title: "Send & Archive", keywords: ["mark done"], keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
   // The open draft in the Drafts folder is what "#" deletes there, matching
   // the composer's trash button. Typing "#" in a composer field still types.
   { id: "draft.discard", title: "Discard Draft", keys: ["#"], group: "Compose", enabled: (c) => c.composerActive && c.focusedPane === "mail" && c.mailbox === "drafts", run: (c) => complete(c.discardDraft) },
@@ -648,7 +648,7 @@ export const commands: Command[] = [
   },
   {
     id: "view.tasks",
-    title: "Go to Task View",
+    title: "Go to Tasks View",
     keys: ["3"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
@@ -680,7 +680,7 @@ export const commands: Command[] = [
     enabled: (c) => !c.composerActive, run: (c) => complete(() => c.openAgentsView?.()),
   },
   {
-    id: "agents.delegate", title: "Delegate Work from Conversation", keywords: ["research", "invitation", "agent"], keys: [], group: "Application",
+    id: "agents.delegate", title: "Delegate Work From Conversation", keywords: ["research", "invitation", "agent"], keys: [], group: "Application",
     enabled: (c) => isThreadMailbox(c) && Boolean(c.selectedId && c.delegateSelected) && !c.composerActive,
     run: (c) => complete(() => c.delegateSelected?.()),
   },

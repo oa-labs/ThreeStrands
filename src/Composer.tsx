@@ -546,7 +546,7 @@ export const Composer = forwardRef<ComposerHandle, {
             <button className="btn btn-sm" onClick={onClose}>Close</button>
           </div>
         ) : null}
-        {error && !remote && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
+        {error && !remote && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Try Again</button></div>}
         {reviewEnabled && reviewOpen ? (
           <DraftReviewSection actions={draftReview} account={draft.account} goal={reviewGoal} onGoalChange={setReviewGoal} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onOpenWritingProfile={review?.onOpenWritingProfile} onClose={() => setReviewOpen(false)} onApplied={revealReviewedDraft} />
         ) : null}

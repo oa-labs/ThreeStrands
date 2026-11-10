@@ -93,7 +93,7 @@ describe("DiagnosticsSettings", () => {
     expect(screen.getByText("Sync is healthy")).toBeInTheDocument();
     expect(screen.getByText(/2 changes waiting to sync/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try Again" })).not.toBeInTheDocument();
   });
 
   it("shows permanently rejected mailbox operations with their reason once", () => {
@@ -133,7 +133,7 @@ describe("DiagnosticsSettings", () => {
     render(<DiagnosticsSettings status={rejected} accountCount={1} actions={handlers} />);
     const issue = screen.getByRole("group", { name: "1 change couldn’t be applied on the server" });
 
-    fireEvent.click(within(issue).getByRole("button", { name: "Retry" }));
+    fireEvent.click(within(issue).getByRole("button", { name: "Try Again" }));
     await waitFor(() => expect(handlers.retryFailed).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(within(issue).getByRole("button", { name: "Dismiss" })).toBeEnabled());
 

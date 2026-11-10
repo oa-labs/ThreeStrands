@@ -337,7 +337,7 @@ function S3ConnectorForm({ operation, refresh, onAdded }: { operation: Operation
         <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(policy)}>Copy policy</button>
       </Disclosure>
       <div className="settings-row">
-        <button type="button" className="btn" disabled={busy || !s3FormComplete(form)} onClick={runTest}>Test connection</button>
+        <button type="button" className="btn" disabled={busy || !s3FormComplete(form)} onClick={runTest}>Test Connection</button>
         <button type="button" className="btn btn-primary" disabled={busy || !test || !s3TestPassed(test)} onClick={add}>Add connector</button>
       </div>
       {test ? <S3TestResults test={test} /> : <p className="settings-hint">Test the connection before adding it.</p>}
@@ -392,7 +392,7 @@ function IpfsConnectorForm({ operation, refresh, onAdded }: { operation: Operati
         <button type="button" className="btn" disabled={busy} onClick={() => { setBaseUrl(FILEBASE_RPC_URL); setProbe(null); }}>
           Fill in Filebase URL
         </button>
-        <button type="button" className="btn" disabled={busy || !baseUrl} onClick={test}>Test connection</button>
+        <button type="button" className="btn" disabled={busy || !baseUrl} onClick={test}>Test Connection</button>
       </div>
       {probe?.versionOk ? (
         <p className="settings-hint">{`Reachable · ${probe.headDiscoveryAvailable ? "supports sync discovery through bucket pins" : "bucket pins unavailable"}`}</p>

@@ -6,7 +6,7 @@ invitation-evaluation workflow in phase 4.
 
 ## Setup and delegation
 
-**Settings → Web Research** (also reached from **Agents → Research settings**)
+**Settings → Web Research** (also reached from **Agents → Research Settings**)
 holds a separate Anthropic key and the required paid Exa key in the
 operating-system keychain, using the phase-0 service and
 account names. Existing AI provider settings and credentials remain untouched.

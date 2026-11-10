@@ -86,7 +86,7 @@ export function MergeContactsDialog({ contacts, onClose, onMerged }: { contacts:
     try { const profile = await mailClient.mergeContacts(targetId, contacts.filter(contact => contact.id !== targetId).map(contact => contact.id)); onMerged(profile); }
     catch (reason) { setError(errorMessage(reason)); setBusy(false); }
   };
-  return <Modal title="Merge contacts" onClose={onClose} dismissible={!busy} className="contact-management-dialog">
+  return <Modal title="Merge Contacts" onClose={onClose} dismissible={!busy} className="contact-management-dialog">
     <div className="modal-form">
       <p>Choose the profile to keep. The other selected profiles will be removed. Addresses, notes, links, favorites, and group memberships are combined.</p>
       <p>The retained profile keeps its primary address, photo, and configured reminder. Missing details are filled from the other profiles; conflicting text details are added to Notes. Additional photos and reminder configurations are not retained.</p>

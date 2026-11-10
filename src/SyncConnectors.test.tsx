@@ -139,7 +139,7 @@ describe("adding an S3 connector", () => {
     vi.mocked(sync.replicatedSyncAddS3).mockResolvedValue(null);
     const form = await openS3Form();
     expect(within(form).getByLabelText("Secret Access Key")).toHaveAttribute("type", "password");
-    const test = within(form).getByRole("button", { name: "Test connection" });
+    const test = within(form).getByRole("button", { name: "Test Connection" });
     const add = within(form).getByRole("button", { name: "Add connector" });
     expect(test).toBeDisabled();
     expect(add).toBeDisabled();
@@ -176,7 +176,7 @@ describe("adding an S3 connector", () => {
     });
     const form = await openS3Form();
     fillS3(form);
-    fireEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Test Connection" }));
 
     const results = await within(form).findByRole("list", { name: "Connection test results" });
     expect(within(results).getByText(/Can delete/).closest("li")).toHaveClass("sync-probe-failed");
@@ -223,7 +223,7 @@ describe("adding an IPFS connector", () => {
     vi.mocked(sync.replicatedSyncProbeIpfsRpc).mockResolvedValue({ versionOk: true, headDiscoveryAvailable: true });
     const form = await openIpfsForm();
     expect(within(form).getByLabelText("Access Token (Optional)")).toHaveAttribute("type", "password");
-    const test = within(form).getByRole("button", { name: "Test connection" });
+    const test = within(form).getByRole("button", { name: "Test Connection" });
     expect(test).toBeDisabled();
     expect(within(form).getByRole("button", { name: "Add IPFS RPC endpoint" })).toBeDisabled();
 
@@ -243,7 +243,7 @@ describe("adding an IPFS connector", () => {
     vi.mocked(sync.replicatedSyncProbeIpfsRpc).mockResolvedValue({ versionOk: true, headDiscoveryAvailable: false });
     const form = await openIpfsForm();
     fillIpfs(form, "https://ipfs.example.com:5001", "");
-    fireEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Test Connection" }));
 
     expect(await within(form).findByText("Reachable · bucket pins unavailable")).toBeInTheDocument();
   });
@@ -252,7 +252,7 @@ describe("adding an IPFS connector", () => {
     vi.mocked(sync.replicatedSyncProbeIpfsRpc).mockResolvedValue({ versionOk: false, headDiscoveryAvailable: false });
     const form = await openIpfsForm();
     fillIpfs(form, "https://not-ipfs.example.com", "bucket-token");
-    fireEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Test Connection" }));
 
     expect(await within(form).findByText("Could not reach an IPFS RPC endpoint at that URL.")).toBeInTheDocument();
     expect(within(form).queryByText(/^Reachable/)).not.toBeInTheDocument();
@@ -264,7 +264,7 @@ describe("adding an IPFS connector", () => {
     vi.mocked(sync.replicatedSyncAddIpfsRpc).mockResolvedValue(ipfsStatus);
     const form = await openIpfsForm();
     fillIpfs(form, "https://ipfs.example.com:5001", "   ");
-    fireEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Test Connection" }));
     await waitFor(() => expect(sync.replicatedSyncProbeIpfsRpc).toHaveBeenCalledWith("https://ipfs.example.com:5001", null));
 
     await waitFor(() => expect(within(form).getByRole("button", { name: "Add IPFS RPC endpoint" })).toBeEnabled());

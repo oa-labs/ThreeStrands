@@ -208,7 +208,7 @@ const scenes: Scene[] = [
     capture: async (page) => {
       await page.keyboard.press("2");
       await page.getByRole("button", { name: "New Event", exact: true }).click();
-      const event = page.getByRole("dialog", { name: "New event", exact: true });
+      const event = page.getByRole("dialog", { name: "New Event", exact: true });
       await event.getByLabel("Title", { exact: true }).fill("Q4 launch rollout review");
       await event.getByLabel("Invite People", { exact: true }).fill("priya@harborlight.example");
       await event.getByLabel("Location", { exact: true }).fill("Harborlight · Studio 2");

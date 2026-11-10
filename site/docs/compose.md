@@ -83,8 +83,8 @@ With [AI assistance](ai.html) turned on, click **Review** below your message to 
 ## Send, Undo, and Send Later {#send-undo-and-send-later}
 
 - **Send** with <kbd>⌘/Ctrl + Enter</kbd>. You have ten seconds to click **Undo Send**.
-- **Send & archive** in **Send options** sends and archives the conversation. Its shortcut is <kbd>⌘/Ctrl + Shift + Enter</kbd>.
-- **Send later…** in **Send options**, or <kbd>⌘/Ctrl + Shift + l</kbd>. Choose the date, time, and timezone, then **Schedule email**.
+- **Send & Archive** in **Send options** sends and archives the conversation. Its shortcut is <kbd>⌘/Ctrl + Shift + Enter</kbd>.
+- **Send Later…** in **Send options**, or <kbd>⌘/Ctrl + Shift + l</kbd>. Choose the date, time, and timezone, then **Send Later**.
 
 Scheduled mail is sent from the computer where you scheduled it, so keep ThreeStrands running there and the computer awake and online. If the time passes while it's off, ThreeStrands asks you to confirm before sending.
 

@@ -64,8 +64,8 @@ export function WorkspaceRelatedContext({ target, accountIds, onOpenThread }: { 
   const conversationReason = sharedReason(conversations);
   return <>
     {loading ? <p className="context-status" role="status">Finding related information…</p> : null}
-    {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Retry context</button></p> : null}
-    {fileError ? <p className="form-error" role="alert">{fileError}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Retry files</button></p> : null}
+    {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Try Again</button></p> : null}
+    {fileError ? <p className="form-error" role="alert">{fileError}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Try Again</button></p> : null}
     {files.length ? <ContextSection id="workspace-files" title="Files" count={files.length} limit={CONTEXT_POLICY.rows} note={fileReason} rows={files.map((file) => <WorkspaceFileRow key={`${file.messageId}:${file.attachment.id}`} file={file} showReason={!fileReason} onOpenThread={onOpenThread} />)} /> : null}
     {conversations.length ? <ContextSection id="workspace-conversations" title="Conversations" count={conversations.length} note={conversationReason} rows={conversations.map((item) => <ContextRow key={item.threadId} icon={<MessageSquareText size={ICON_SIZE.sm} />} title={item.subject} date={formatHistoryDate(item.sentAt)} detail={conversationReason || !item.reason ? item.accountId : `${item.reason} · ${item.accountId}`} onActivate={() => onOpenThread(item.threadId)} />)} /> : null}
     {!loading && !error && !fileError && !conversations.length ? <p className="context-status">No related information found in synchronized mail.</p> : null}

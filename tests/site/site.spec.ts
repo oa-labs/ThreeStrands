@@ -829,7 +829,7 @@ test.describe("docs", () => {
   test("documents the current compose and scheduling controls and the limits of Trust", async ({ page }) => {
     await page.goto("./docs/compose.html");
     const writing = page.locator(".docs-body");
-    for (const claim of ["Import from Gmail…", "Regenerate from Signature", "Send & archive", "Send options", "Sent and Edit as New", "Finished sends move to Sent"]) {
+    for (const claim of ["Import from Gmail…", "Regenerate from Signature", "Send & Archive", "Send options", "Sent and Edit as New", "Finished sends move to Sent"]) {
       await expect(writing).toContainText(claim);
     }
     await expect(writing).not.toContainText("Send & Mark Done");

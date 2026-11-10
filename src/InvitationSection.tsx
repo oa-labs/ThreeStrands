@@ -49,7 +49,7 @@ export function InvitationResponse({ invitation, sourceMessageId, ...props }: In
     if (!calendarConnected) return <><p className="context-status">Connect a calendar to respond to this invitation.</p><button type="button" className="btn-link" onClick={onOpenCalendarSettings}>Calendar Settings</button></>;
     if (!uid) return <p className="context-status">This invitation has no event identifier, so it can’t be matched to your calendar.</p>;
     if (lookup.kind === "checking") return <p className="context-status" role="status">Checking your calendar…</p>;
-    if (lookup.kind === "error") return <><p className="context-status" role="alert">{lookup.message}</p><button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}>Retry</button></>;
+    if (lookup.kind === "error") return <><p className="context-status" role="alert">{lookup.message}</p><button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}>Try Again</button></>;
     if (lookup.kind === "missing") return <p className="context-status">This invitation isn’t on a connected calendar yet.</p>;
     return <>
       <CalendarResponseControls invitation event={lookup.event} onUpdated={(event) => setLookup({ kind: "found", event })} />

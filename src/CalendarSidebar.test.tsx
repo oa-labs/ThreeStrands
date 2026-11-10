@@ -48,7 +48,7 @@ describe("calendar sidebar", () => {
     expect(declarations(".calendar-event-viewer-details + .btn")).toMatchObject({ "margin-top": "var(--space-3)" });
     fireEvent.click(screen.getByRole("button", { name: "Reschedule" }));
     expect(await screen.findByRole("complementary", { name: "Suggested times" })).toBeVisible();
-    expect(screen.getByRole("dialog", { name: "Edit event" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Edit Event" })).toBeVisible();
     view.unmount();
     render(<EventViewer event={{ ...event, canEdit: false }} onDismiss={vi.fn()} onUpdated={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Reschedule" })).not.toBeInTheDocument();

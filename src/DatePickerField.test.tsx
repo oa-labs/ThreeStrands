@@ -75,7 +75,7 @@ describe("DatePickerField", () => {
 
   it("takes Escape before the event dialog and returns focus to the date", () => {
     const close = vi.fn();
-    render(<Modal title="New event" onClose={close}><Field /></Modal>);
+    render(<Modal title="New Event" onClose={close}><Field /></Modal>);
     open();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Choose start date" })).not.toBeInTheDocument();

@@ -459,7 +459,7 @@ describe("conversation brief", () => {
 
       fireEvent.click(option);
       fireEvent.click(within(offered).getByRole("button", { name: "Accept & Add to Calendar" }));
-      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      const dialog = await screen.findByRole("dialog", { name: "New Event" });
       expect(within(dialog).getByLabelText("Title")).toHaveValue("Budget review");
       expect(within(dialog).getByLabelText("Location")).toHaveValue("Alloy26");
       expect(within(dialog).getByRole("button", { name: "Remove jane@example.com" })).toBeInTheDocument();
@@ -484,7 +484,7 @@ describe("conversation brief", () => {
       expect(check).toHaveBeenCalledWith(expect.objectContaining({ start: meeting.normalizedStart, end: meeting.normalizedEnd }));
       fireEvent.click(within(schedule).getByRole("button", { name: "Add to Calendar" }));
 
-      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      const dialog = await screen.findByRole("dialog", { name: "New Event" });
       expect(within(dialog).getByLabelText("Title")).toHaveValue("Budget review");
       expect(within(dialog).getByRole("button", { name: "Remove jane@example.com" })).toBeInTheDocument();
       expect(within(dialog).getByLabelText("Description")).toHaveValue("Scheduled from “Welcome to ThreeStrands”.\n\n“command palette”");
@@ -510,7 +510,7 @@ describe("conversation brief", () => {
     it("defaults the event to the primary calendar of the account the email arrived on", async () => {
       const { schedule } = await openWithMeeting(meetingAt(1), ["calendar@example.com", DEMO_ACCOUNT_ID]);
       fireEvent.click(await within(schedule).findByRole("button", { name: "Add to Calendar" }));
-      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      const dialog = await screen.findByRole("dialog", { name: "New Event" });
       await waitFor(() => expect(within(dialog).getByLabelText("Calendar")).toHaveValue(`${DEMO_ACCOUNT_ID}\nprimary`));
     });
 
@@ -530,7 +530,7 @@ describe("conversation brief", () => {
       expect(within(panel).getByText("Event")).toBeInTheDocument();
       expect(within(schedule).getByText(/· Time not set$/)).toBeInTheDocument();
       fireEvent.click(within(schedule).getByRole("button", { name: "Add to Calendar" }));
-      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      const dialog = await screen.findByRole("dialog", { name: "New Event" });
       expect(within(dialog).getByLabelText("All day")).not.toBeChecked();
       expect(within(dialog).getByLabelText("Start date")).toHaveValue(date);
       expect(within(dialog).getByLabelText("Start time")).toHaveValue("");
@@ -588,7 +588,7 @@ describe("conversation brief", () => {
       fireEvent.click(review);
       const card = within(panel).getByText("Budget review").closest("article")!;
       fireEvent.click(await within(card).findByRole("button", { name: "Add to Calendar" }));
-      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      const dialog = await screen.findByRole("dialog", { name: "New Event" });
       await waitFor(() => expect(within(dialog).getByLabelText("Calendar")).toHaveValue("calendar@example.com\nprimary"));
       fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
       expect(await within(dialog).findByRole("alert")).toHaveTextContent("Could not save event");

@@ -59,7 +59,7 @@ test("b creates an event from Mail and Calendar without snoozing mail", async ({
   await expect(rows.first()).toBeVisible();
   await rows.first().focus();
   await page.keyboard.press("b");
-  const dialog = page.getByRole("dialog", { name: "New event" });
+  const dialog = page.getByRole("dialog", { name: "New Event" });
   await expect(dialog).toBeVisible();
   await expect(page.getByRole("dialog", { name: "Snooze Conversation" })).toHaveCount(0);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();

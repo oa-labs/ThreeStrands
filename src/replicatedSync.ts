@@ -61,7 +61,7 @@ export type ConnectorCredentials =
   | ({ kind: "s3" } & S3Credentials)
   | { kind: "ipfs_rpc"; token: string };
 
-/** What "Test connection" found for a candidate S3 connector. Each check
+/** What "Test Connection" found for a candidate S3 connector. Each check
  * after the first failure stays `false`. */
 export type S3ConnectionTest = {
   /** Whether the endpoint answered at all. */

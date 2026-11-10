@@ -122,6 +122,27 @@ function noopContext(): CommandContext {
 }
 
 describe("command registry", () => {
+  it("names every command in title style, as DESIGN.md requires for menu items", () => {
+    const minor = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to"]);
+    const offenders = commands.map((command) => command.title).filter((title) => {
+      const words = title.split(/\s+/).filter((word) => /^[A-Za-z]/.test(word));
+      return words.some((word, index) => {
+        const edge = index === 0 || index === words.length - 1;
+        if (!edge && minor.has(word)) return false;
+        return word.split("-").some((part) => /^[a-z]/.test(part));
+      });
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps calendar and contact-group creation findable under the names their workspaces use", () => {
+    const event = commands.find((command) => command.id === "calendar.new")!;
+    const group = commands.find((command) => command.id === "contacts.newGroup")!;
+    expect(event.title).toBe("New Event");
+    expect(commandMatchesFilter(event, "calendar event")).toBe(true);
+    expect(group.title).toBe("New Group");
+  });
+
   it("uses Superhuman's h for Remind Me and b for creating a calendar event", async () => {
     const snooze = commands.find((command) => command.id === "thread.snooze")!;
     const create = commands.find((command) => command.id === "calendar.new")!;

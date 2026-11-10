@@ -42,7 +42,7 @@ export function GroupRecentEmails({ groupId, accountId, onOpenThread }: {
     onLoadOlder={hasMore && !loading && !error ? () => setOffset(items.length) : undefined}
     closing={<>
       {loading ? <p className="context-status" role="status">Loading emails…</p>
-        : error ? <div><p className="context-status contacts-error" role="alert">{error}</p><button type="button" className="btn-link context-link-button" onClick={() => setRetry(value => value + 1)}>Retry loading emails</button></div>
+        : error ? <div><p className="context-status contacts-error" role="alert">{error}</p><button type="button" className="btn-link context-link-button" onClick={() => setRetry(value => value + 1)}>Try Again</button></div>
         : !items.length ? <p className="context-status">No emails with current group members{accountId ? " in this account" : ""}.</p> : null}
     </>}
   />;

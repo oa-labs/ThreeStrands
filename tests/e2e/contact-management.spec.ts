@@ -16,7 +16,7 @@ test("merges saved people and suppresses suggestions while allowing an explicit 
   await contacts.getByRole("checkbox", { name: "Select Primary Person" }).check();
   await contacts.getByRole("checkbox", { name: "Select Other Person" }).check();
   await contacts.getByRole("button", { name: "Merge…" }).click();
-  const merge = page.getByRole("dialog", { name: "Merge contacts" });
+  const merge = page.getByRole("dialog", { name: "Merge Contacts" });
   await merge.getByLabel("Profile to keep").selectOption({ label: "Primary Person — primary@example.com" });
   await merge.getByRole("button", { name: "Merge 2 contacts" }).click();
   await expect(merge).not.toBeVisible();

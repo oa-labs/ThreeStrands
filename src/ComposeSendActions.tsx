@@ -71,10 +71,10 @@ function SendOptionsMenu({ id, onClose, onSchedule, onSendAndArchive }: {
       : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
     items[next]?.focus();
   }}>
-    <button type="button" className="compose-send-menu-item" role="menuitem" aria-label="Send later…" aria-keyshortcuts="Meta+Shift+L Control+Shift+L" onClick={onSchedule}>
-      Send later… <kbd aria-hidden="true">{composeKeyLabel("Mod+Shift+L")}</kbd>
+    <button type="button" className="compose-send-menu-item" role="menuitem" aria-label="Send Later…" aria-keyshortcuts="Meta+Shift+L Control+Shift+L" onClick={onSchedule}>
+      Send Later… <kbd aria-hidden="true">{composeKeyLabel("Mod+Shift+L")}</kbd>
     </button>
-    {onSendAndArchive ? <button type="button" className="compose-send-menu-item" role="menuitem" aria-label="Send & archive" aria-keyshortcuts="Meta+Shift+Enter Control+Shift+Enter" onClick={onSendAndArchive}>
+    {onSendAndArchive ? <button type="button" className="compose-send-menu-item" role="menuitem" aria-label="Send & Archive" aria-keyshortcuts="Meta+Shift+Enter Control+Shift+Enter" onClick={onSendAndArchive}>
       Send &amp; archive <kbd aria-hidden="true">{composeKeyLabel("Mod+Shift+Enter")}</kbd>
     </button> : null}
   </div>;

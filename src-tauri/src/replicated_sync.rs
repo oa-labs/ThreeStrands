@@ -1648,7 +1648,7 @@ pub struct ReplicatedSyncTransportStatus {
     pub storage_bytes: Option<u64>,
 }
 
-/// What "Test connection" reports for a candidate S3 connector.
+/// What "Test Connection" reports for a candidate S3 connector.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct S3ConnectionTest {
@@ -1761,7 +1761,7 @@ impl ReplicatedSync {
         }
     }
 
-    /// "Test connection" for a candidate S3 connector, persisting nothing:
+    /// "Test Connection" for a candidate S3 connector, persisting nothing:
     /// the permission checklist, plus — when the key can list and read —
     /// whether the bucket and prefix already hold a sync group. `Err` only
     /// when the config or credentials are invalid before any request.

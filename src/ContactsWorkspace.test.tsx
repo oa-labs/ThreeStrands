@@ -94,7 +94,7 @@ describe("ContactsWorkspace",()=>{
     expect(screen.getByRole("button",{name:"Merge…"})).toBeDisabled();
     fireEvent.click(screen.getByRole("checkbox",{name:"Select Newer Person"}));
     fireEvent.click(screen.getByRole("button",{name:"Merge…"}));
-    const dialog=screen.getByRole("dialog",{name:"Merge contacts"});
+    const dialog=screen.getByRole("dialog",{name:"Merge Contacts"});
     fireEvent.change(within(dialog).getByLabelText("Profile to Keep"),{target:{value:jane.id}});
     fireEvent.click(within(dialog).getByRole("button",{name:"Merge 2 contacts"}));
     await waitFor(()=>expect(mailClient.mergeContacts).toHaveBeenCalledWith(jane.id,[newerContact.id]));
@@ -103,7 +103,7 @@ describe("ContactsWorkspace",()=>{
     expect(onSaved).toHaveBeenCalledOnce();
     expect(mailClient.listContactGroups).toHaveBeenCalledTimes(2);
     expect(mailClient.listKeepInTouch).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole("dialog",{name:"Merge contacts"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog",{name:"Merge Contacts"})).not.toBeInTheDocument();
   });
 
   it("requires selecting only saved profiles before merging",async()=>{

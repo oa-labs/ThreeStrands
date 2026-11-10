@@ -200,7 +200,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenNote
           {filterChips.map((filter) => <button type="button" key={filter.id} className="file-filter-chip" aria-label={`Remove ${filter.label} filter`} onClick={filter.clear}>{filter.label}<X size={ICON_SIZE.xs} /></button>)}
           <button type="button" className="btn-link" onClick={() => { setSender(""); setType(""); setDirection(""); setScope(""); setAfter(""); setBefore(""); }}>Clear filters</button>
         </div> : null}
-        {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn" onClick={() => setLoad((current) => ({ ...current, attempt: current.attempt+1 }))}>Retry</button></p> : null}
+        {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn" onClick={() => setLoad((current) => ({ ...current, attempt: current.attempt+1 }))}>Try Again</button></p> : null}
         <div className="file-list-heading" aria-hidden="true"><span className="file-list-heading-main"><span>Filename</span><span>Sender</span><span>Date</span><span>Size</span></span><span className="file-list-star-heading" /></div>
         <div className="files-list" role="list" aria-label="File list">
           {files.map((item) => <div key={keyFor(item)} role="listitem" className={`file-list-item${selected===keyFor(item) ? " selected" : ""}`}>

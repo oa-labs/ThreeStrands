@@ -10,7 +10,7 @@ reviewed: 0.194.0
 1. Confirm which account is selected and whether the computer is online. ThreeStrands polls while running and catches up on launch or resume; it cannot poll while closed or suspended.
 2. Check the inbox's last-check status and **Settings → Diagnostics → Sync Health** for the last successful sync and errors.
 3. If authentication needs attention, reconnect in **Settings → Mail Accounts**. For Bridge, keep Bridge running and recheck its current credentials and certificate.
-4. After fixing the cause, use **Retry** for rejected changes in Diagnostics. **Dismiss** clears a reported problem; it does not make the server apply it.
+4. After fixing the cause, use **Try Again** for rejected changes in Diagnostics. **Dismiss** clears a reported problem; it does not make the server apply it.
 
 Expect last-successful-sync status to update after a successful connection. If the provider's own app also cannot find new mail, investigate the provider connection. [Get help](get-help.html) with persistent errors instead of deleting the local database.
 

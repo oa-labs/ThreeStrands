@@ -403,7 +403,7 @@ pub(crate) mod secret_store {
 
 // ================================= Connector =================================
 
-/// What "Test connection" reports, per kind.
+/// What "Test Connection" reports, per kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ConnectorProbe {

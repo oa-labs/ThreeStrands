@@ -337,7 +337,7 @@ fn is_not_found(status: reqwest::StatusCode, body: &str) -> bool {
 
 // ================================= Transport =================================
 
-/// What "Test connection" reports before the user saves a connector, so a
+/// What "Test Connection" reports before the user saves a connector, so a
 /// missing permission is explained up front instead of surfacing later as
 /// a stuck enrollment.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]

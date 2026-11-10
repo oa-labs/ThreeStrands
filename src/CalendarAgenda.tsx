@@ -88,7 +88,7 @@ function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, showDate
     limit={tomorrow ? TOMORROW_AGENDA_ROWS : rows.length}
     footer={<>
       {loading ? <p className="context-status" role="status">Loading {tomorrow ? "tomorrow's" : "today's"} agenda…</p> : null}
-      {error ? <p className="context-status">{name} couldn't be fully loaded. <button type="button" className="btn-link" onClick={reload}>Retry agenda</button></p> : null}
+      {error ? <p className="context-status">{name} couldn't be fully loaded. <button type="button" className="btn-link" onClick={reload}>Try Again</button></p> : null}
       {!loading && !error && agenda.length === 0 ? <p className="context-status">{selected.length ? `No events ${tomorrow ? "tomorrow" : "today"}.` : "Select a calendar to see today's agenda."}</p> : null}
     </>}
   />;

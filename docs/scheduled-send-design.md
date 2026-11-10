@@ -199,7 +199,7 @@ delivery result.
 
 ## UI and command behavior
 
-- **Send later** is available beside Send, in the command palette, and through
+- **Send Later** is available beside Send, in the command palette, and through
   **Command+Shift+L** on macOS (**Ctrl+Shift+L** elsewhere) while composing.
   The shortcut opens the picker; it does not queue or send the message.
   Flush autosave before scheduling and retain all existing compose checks and native validation.

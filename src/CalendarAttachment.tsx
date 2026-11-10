@@ -159,7 +159,7 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
     <AttachmentChip messageId={messageId} attachment={attachment} icon={<CalendarDays size={ICON_SIZE.sm} aria-hidden="true" />} starrable={Boolean(threadId)} onOpen={open} onSave={save} />
     {invitationActions && attachment.size <= MAX_PREVIEWABLE_SIZE ? <>
       <p role="alert">Could not read invitation{previewError ? `: ${previewError}` : "."}</p>
-      <button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}>Retry</button>
+      <button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}>Try Again</button>
     </> : null}
   </div>;
   if (!preview) {

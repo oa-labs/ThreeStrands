@@ -238,11 +238,11 @@ describe("replicated sync setup steps", () => {
     const url = within(ipfs).getByRole("textbox", { name: "RPC Base URL" });
     expect(url).toHaveValue("");
     expect(url).not.toHaveAttribute("placeholder", "https://rpc.filebase.io");
-    expect(within(ipfs).getByRole("button", { name: "Test connection" })).toBeDisabled();
+    expect(within(ipfs).getByRole("button", { name: "Test Connection" })).toBeDisabled();
 
     fireEvent.click(within(ipfs).getByRole("button", { name: "Fill in Filebase URL" }));
     expect(url).toHaveValue("https://rpc.filebase.io");
-    expect(within(ipfs).getByRole("button", { name: "Test connection" })).toBeEnabled();
+    expect(within(ipfs).getByRole("button", { name: "Test Connection" })).toBeEnabled();
   });
 
   it("marks the connector step done and summarizes it once one is configured", async () => {

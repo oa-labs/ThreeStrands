@@ -40,7 +40,7 @@ system's keychain, never in the app database.
 
 ### S3 storage
 
-- **Test connection** checks that the key can list, write, read, and delete
+- **Test Connection** checks that the key can list, write, read, and delete
   under the prefix, and whether the prefix already holds a sync group. A
   connector can be added only after the current settings pass that test.
 - The least a key needs is `s3:ListBucket` limited to the prefix, plus

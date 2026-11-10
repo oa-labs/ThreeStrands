@@ -18,13 +18,13 @@ function Harness() {
   return <><button onClick={() => show(!shown)}>Switch workspace</button>{shown ? <AgentsWorkspace controller={c} accounts={dataset.accounts} accountId={null} onOpenThread={openThread} onOpenTask={openTask} onOpenResearchSettings={openResearchSettings} /> : <p>Another workspace</p>}</>;
 }
 async function start() {
-  fireEvent.click(await screen.findByRole("button", { name: "New delegated task" }));
+  fireEvent.click(await screen.findByRole("button", { name: "New Delegated Task" }));
   fireEvent.click(screen.getByRole("button", { name: "Enable local demonstration" }));
   expect(await screen.findByRole("button", { name: "Pause All" })).toBeEnabled();
   fireEvent.change(screen.getByRole("textbox", { name: "What would you like to find out?" }), { target: { value: "Evaluate the podcast invitation" } });
   fireEvent.click(screen.getByRole("button", { name: "Start demonstration" }));
   await screen.findByRole("article", { name: "Delegated task details" });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Agents" }));
   const tab = screen.queryByRole("tab", { name: "Conversation" }); if (tab) fireEvent.click(tab);
   await screen.findByRole("textbox", { name: "Your answer" });
 }
@@ -67,7 +67,7 @@ describe("delegated workspace", () => {
 
   it("explains unsupported research, keeps drafts after failure, and requires deliberate deletion", async () => {
     render(<Harness />);
-    fireEvent.click(await screen.findByRole("button", { name: "New delegated task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New Delegated Task" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Work" }), { target: { value: "web" } });
     expect(screen.getByRole("button", { name: "Start research" })).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("Web research is not configured");
@@ -102,9 +102,9 @@ describe("delegated workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Failed revision/ }));
     expect(screen.getByText("No linked conversation is available.")).toBeInTheDocument();
     expect(screen.getByText("Previous completed result")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Retry$/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Try Again" })).toBeEnabled();
     d.run.state = "completed"; d.artifacts = [];
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Agents" }));
     await screen.findByText("This task finished without a report.");
   });
 });
@@ -119,7 +119,7 @@ describe("real research entry",()=> {
     const d=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Check the show",workflow:"fixture_research_v1"});
     const create=vi.spyOn(mailClient,"createAgentResearchTask").mockResolvedValue({...d,task:{...d.task,workflow:"web_research_v1"}});
     render(<Harness />);
-    fireEvent.click(await screen.findByRole("button",{name:"New delegated task"}));
+    fireEvent.click(await screen.findByRole("button",{name:"New Delegated Task"}));
     fireEvent.change(screen.getByRole("combobox",{name:"Work"}),{target:{value:"web"}});
     fireEvent.change(screen.getByRole("textbox",{name:"What would you like to find out?"}),{target:{value:"Assess audience fit"}});
     expect(screen.getByText(/Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic/)).toBeVisible();
@@ -137,7 +137,7 @@ describe("real research entry",()=> {
     function Workspace({settingsOpen}:{settingsOpen:boolean}) {const c=useAgentTasks();return <AgentsWorkspace controller={c} accounts={dataset.accounts} accountId={null} onOpenThread={openThread} onOpenTask={openTask} onOpenResearchSettings={openResearchSettings} settingsOpen={settingsOpen} />;}
     openResearchSettings.mockReset();
     const view=render(<Workspace settingsOpen={false} />);
-    fireEvent.click(await screen.findByRole("button",{name:"Research settings"}));
+    fireEvent.click(await screen.findByRole("button",{name:"Research Settings"}));
     expect(openResearchSettings).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await waitFor(()=>expect(read).toHaveBeenCalledTimes(1));
