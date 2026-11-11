@@ -344,11 +344,26 @@ describe("conversation participant layout", () => {
     expect(lastDeclaration(".context-row-wrap .context-row-title", "white-space")).toBe("normal");
   });
 
-  it("keeps the workspace rail's first heading clear of the collapse toggle", () => {
-    // The toggle is absolutely placed, so a section's count badge slid under it when only direct headings reserved space.
+  it("gives the workspace rail's first heading its full width, except beside the narrow window's close button", () => {
+    /** A property's values for `selector`, outside and inside the narrow-window query. */
+    const values = (selector: string, property: string) => {
+      const found = { wide: [] as string[], narrow: [] as string[] };
+      css.walkRules((rule) => {
+        if (!rule.selectors.includes(selector)) return;
+        const narrow = rule.parent?.type === "atrule" && (rule.parent as postcss.AtRule).params === "(max-width: 900px)";
+        rule.walkDecls(property, (declaration) => { found[narrow ? "narrow" : "wide"].push(declaration.value); });
+      });
+      return found;
+    };
+    // A wide window hides the rail from its divider, so no button floats over its first heading there.
+    expect(values(".workspace-context-close", "display")).toEqual({ wide: ["none"], narrow: ["inline-flex"] });
+    // In a narrow window the close button is absolutely placed, so a section's count badge would slide under it.
     expect(lastDeclaration(".workspace-context-toggle", "position")).toBe("absolute");
-    expect(lastDeclaration(".workspace-context-rail > .context-section-header:first-child", "padding-right")).toBe("var(--space-8)");
-    expect(lastDeclaration(".workspace-context-rail > :first-child > .context-section-header:first-child", "padding-right")).toBe("var(--space-8)");
+    for (const heading of [".workspace-context-rail > .context-section-header:first-child", ".workspace-context-rail > :first-child > .context-section-header:first-child"]) {
+      expect(values(heading, "padding-right")).toEqual({ wide: [], narrow: ["var(--space-8)"] });
+    }
+    // The divider sits between the rail and the view, not at the window's edge.
+    expect(lastDeclaration(".workspace-context-container > .panel-resizer", "left")).toBe("-4px");
   });
 
   it("draws section counts as badges", () => {

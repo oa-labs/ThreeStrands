@@ -182,6 +182,15 @@ describe("command registry", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "T", shiftKey: true }), today.keys[0]!)).toBe(false);
   });
 
+  it("toggles the side panel with a plain backslash in the views that have one", () => {
+    const toggle = commands.find((command) => command.id === "sidePanel.toggle")!;
+    expect(toggle.keys).toEqual(["\\"]);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "\\" }), toggle.keys[0]!)).toBe(true);
+    for (const pane of ["notes", "files", "tasks", "calendar"] as const) expect(toggle.enabled({ ...noopContext(), focusedPane: pane })).toBe(true);
+    for (const pane of ["mail", "contacts", "today", "agents"] as const) expect(toggle.enabled({ ...noopContext(), focusedPane: pane })).toBe(false);
+    expect(toggle.enabled({ ...noopContext(), focusedPane: "notes", composerActive: true })).toBe(false);
+  });
+
   it("toggles the calendar from a draft with Command or Control + Shift + T", () => {
     const calendar = commands.find((command) => command.id === "draft.calendar")!;
     const toggleSchedule = vi.fn();

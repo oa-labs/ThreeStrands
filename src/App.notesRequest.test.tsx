@@ -130,3 +130,15 @@ it("adds a meeting from a daily note's agenda in Notes, and the open note shows 
   expect(await screen.findByText("Added to today's note")).toBeInTheDocument();
   await waitFor(() => expect((screen.getByRole("textbox", { name: "Note text" }) as HTMLTextAreaElement).value).toMatch(/^## Meetings\n\n- \[.+\) for Rail sync\n$/));
 });
+
+it("hides and shows the Notes side panel with a backslash", async () => {
+  localStorage.clear();
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Notes (4)" }));
+  expect(await screen.findByRole("complementary", { name: "Note context" })).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: "\\" });
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "Note context" })).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "Show Note context" })).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: "\\" });
+  expect(await screen.findByRole("complementary", { name: "Note context" })).toBeInTheDocument();
+});

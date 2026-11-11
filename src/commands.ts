@@ -207,6 +207,9 @@ const workspaceCommand = (id: WorkspaceCommandId, title: string, keys: string[],
   run: () => complete(() => runWorkspaceCommand(id)),
 });
 
+/** The views whose side panel Toggle Side Panel hides and shows. */
+const SIDE_PANEL_PANES: readonly FocusedPane[] = ["notes", "files", "tasks", "calendar"];
+
 export const commands: Command[] = [
   {
     id: "calendar.new", title: "New Event", keywords: ["calendar"], keys: ["b", "Shift+n"], group: "Application",
@@ -229,6 +232,12 @@ export const commands: Command[] = [
   // The same keys page Calendar's days.
   { ...workspaceCommand("notes.previousDay", "Previous Day's Note", ["-"], "notes"), group: "Navigation", repeatable: true },
   { ...workspaceCommand("notes.nextDay", "Next Day's Note", ["="], "notes"), group: "Navigation", repeatable: true },
+  {
+    // Every view with a side panel; Mail's panel joins once it shares the workspace panel.
+    id: "sidePanel.toggle", title: "Toggle Side Panel", keywords: ["context", "sidebar", "hide", "show", "collapse"], keys: ["\\"], group: "Application",
+    enabled: (c) => !c.composerActive && SIDE_PANEL_PANES.includes(c.focusedPane),
+    run: () => complete(() => runWorkspaceCommand("sidePanel.toggle")),
+  },
   workspaceCommand("files.open", "Open Selected File", ["o"], "files"),
   workspaceCommand("files.save", "Save Selected File As…", ["Mod+Shift+s"], "files"),
   workspaceCommand("files.star", "Toggle File Star", ["s"], "files"),

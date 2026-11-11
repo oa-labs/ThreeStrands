@@ -196,6 +196,16 @@ sections collapse from the label. Dates in the panel use one short form
 the weekday. Rows do not repeat what the section already establishes, such as
 the selected person's address under each of their emails.
 
+A view's side panel resizes from its left edge and hides by being dragged
+past that edge: below half its narrowest width it collapses to a strip at
+the window's edge, whose button, or a drag back out, shows it again. The
+panel has no hide button of its own, so nothing floats over its first
+section. **Toggle Side Panel** (`\`) hides and shows it, and narrowing it
+past its minimum from the focused divider hides it too. One width holds
+across every view; whether it is hidden is remembered per view. A narrow
+window opens the panel over the view instead, with a close button and
+Escape. Notes, Files, Tasks, and Calendar share this panel today.
+
 Keep the panel short by construction rather than by available height: a
 section without content is left out, including Tasks (added with `d`) and
 Recent emails, lists show three rows before "Show more", and a section
@@ -246,6 +256,7 @@ Current primary commands are:
 - `d`: add a task linked to the selected conversation in Mail, or a blank,
   standalone task in the Tasks view;
 - `t`: go to today in Calendar and Notes, otherwise toggle Calendar;
+- `\`: hide or show the side panel in Notes, Files, Tasks, and Calendar;
 - `Shift+A`: show the conversation's suggestions in the context panel,
   fetching them if missing (`a` remains Reply All);
 - `i`: summarize the conversation into the context panel's brief;
