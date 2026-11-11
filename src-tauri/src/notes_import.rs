@@ -7,6 +7,10 @@
 //! summary, with what can't be imported and why, before [`run`] writes
 //! anything.
 //!
+//! [`plan_file`] shares these parsing rules for a single chosen file, but
+//! always creates a fresh regular note. It never scans neighboring notes;
+//! attachment access is confined to the file's containing folder.
+//!
 //! - **Daily notes** are `YYYY-MM-DD.md` files in a folder named `daily`.
 //!   Every other `.md` file is a regular note, whatever folder it is in.
 //! - **Titles** come from `title:` in the front matter, else a leading
@@ -651,6 +655,48 @@ struct Draft {
 /// Reads `folder` and decides what an import would do.
 pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, String> {
     let files = walk(folder)?;
+    plan_paths(folder, files, existing, false)
+}
+
+/// Reads only the chosen Markdown file. Importing a file always makes a new
+/// regular note, even when it was exported with an id or lives under `daily`.
+/// Linked attachments are confined to its containing folder, as in folder import.
+pub(crate) fn plan_file(path: &Path, existing: &Existing) -> Result<ImportPlan, String> {
+    if !fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file()) {
+        return Err("Choose a regular Markdown file, not a folder or symbolic link.".into());
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !extension.eq_ignore_ascii_case("md") && !extension.eq_ignore_ascii_case("markdown") {
+        return Err("Choose a Markdown file (.md or .markdown).".into());
+    }
+    let folder = path.parent().ok_or("The file has no containing folder.")?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("The file name isn't valid text.")?;
+    let plan = plan_paths(folder, vec![name.to_string()], existing, true)?;
+    // A single-file import has no preview: refuse reported problems rather
+    // than silently importing part of the chosen note.
+    if !plan.problems.is_empty() {
+        return Err(plan
+            .problems
+            .iter()
+            .map(|problem| format!("{}: {}", problem.file, problem.reason))
+            .collect::<Vec<_>>()
+            .join("\n"));
+    }
+    Ok(plan)
+}
+
+fn plan_paths(
+    folder: &Path,
+    files: Vec<String>,
+    existing: &Existing,
+    single: bool,
+) -> Result<ImportPlan, String> {
     let mut problems = Vec::new();
     let mut drafts: Vec<Draft> = Vec::new();
     let mut sources: HashMap<String, usize> = HashMap::new();
@@ -659,7 +705,7 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
 
     for relative in &files {
         let lower = relative.to_lowercase();
-        if lower.ends_with(".reflect.md") {
+        if !single && lower.ends_with(".reflect.md") {
             // Reflect's description of a picture or PDF, not a note.
             continue;
         }
@@ -670,7 +716,7 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
             });
             continue;
         }
-        if !lower.ends_with(".md") {
+        if !single && !lower.ends_with(".md") {
             continue;
         }
         if drafts.len() == MAX_IMPORT_NOTES {
@@ -695,10 +741,12 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
         };
         let parsed = parse(&text);
         let (dir, file_name) = relative.rsplit_once('/').unwrap_or(("", relative.as_str()));
-        let stem = &file_name[..file_name.len() - 3];
+        let stem = file_name
+            .rsplit_once('.')
+            .map_or(file_name, |(stem, _)| stem);
         let parent = dir.rsplit('/').next().unwrap_or_default();
-        let daily =
-            (parent.eq_ignore_ascii_case("daily") && is_daily_date(stem)).then(|| stem.to_string());
+        let daily = (!single && parent.eq_ignore_ascii_case("daily") && is_daily_date(stem))
+            .then(|| stem.to_string());
 
         let mut body = parsed.body.clone();
         let explicit_title = value(&parsed, "title").filter(|title| !title.trim().is_empty());
@@ -738,11 +786,15 @@ pub(crate) fn plan(folder: &Path, existing: &Existing) -> Result<ImportPlan, Str
         }
 
         let source_id = value(&parsed, "id").map(str::to_string);
-        let id = match (&daily, &source_id) {
-            (Some(date), _) => daily_note_id(date),
-            (None, Some(id)) if is_uuid(id) => id.clone(),
-            (None, Some(id)) => hashed_id(id),
-            (None, None) => hashed_id(relative),
+        let id = if single {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            match (&daily, &source_id) {
+                (Some(date), _) => daily_note_id(date),
+                (None, Some(id)) if is_uuid(id) => id.clone(),
+                (None, Some(id)) => hashed_id(id),
+                (None, None) => hashed_id(relative),
+            }
         };
         let mut id = id;
         if let Some(&first) = sources.get(&id) {

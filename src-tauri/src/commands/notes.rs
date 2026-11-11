@@ -422,9 +422,55 @@ pub(crate) async fn set_note_attachment_star(
     run_database_task(move || database.set_note_attachment_star(&id, starred)).await
 }
 
-/// Asks for a folder of Markdown notes to import and reads it, without
-/// writing anything. The plan stays here for [`notes_import_run`]; the page
-/// sees only its summary.
+/// Imports the one Markdown file chosen in the native picker. No path from
+/// the page can reach this command, and folder-import plans stay untouched.
+#[tauri::command]
+pub(crate) async fn import_note_file(state: State<'_, AppState>) -> AppResult<Option<Note>> {
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .set_title("Import a Markdown note")
+        .add_filter("Markdown", &["md", "markdown"])
+        .pick_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = file.path().to_path_buf();
+    let database = state.database.clone();
+    let note = tokio::task::spawn_blocking(move || {
+        let (ids, titles) = database
+            .note_identities()
+            .map_err(|error| error.to_string())?;
+        let plan = notes_import::plan_file(&path, &notes_import::Existing { ids, titles })?;
+        let id = plan
+            .notes
+            .first()
+            .ok_or("The file holds no note to import.")?
+            .note
+            .id
+            .clone();
+        let outcome = notes_import::run(plan, |note, files| {
+            database
+                .import_note(note, files)
+                .map_err(|error| error.to_string())
+        });
+        if outcome.notes != 1 {
+            return Err(outcome.problems.first().map_or_else(
+                || "The note could not be imported.".to_string(),
+                |problem| problem.reason.clone(),
+            ));
+        }
+        database
+            .get_note(&id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "The imported note could not be read.".to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    kick_replicated_sync(&state);
+    Ok(Some(note))
+}
+
+/// Reads a folder without writing, keeping its plan for `notes_import_run`.
 #[tauri::command]
 pub(crate) async fn notes_import_choose_folder(
     state: State<'_, AppState>,

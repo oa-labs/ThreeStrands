@@ -4,7 +4,7 @@ import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./not
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, CircleCheck, FilePlus, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, CircleCheck, FilePlus, FileUp, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
 import type { CalendarOption, ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSearchScope, NoteSummary, ScheduleEvent } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -330,6 +330,21 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     setActionError(null);
     try { await action(); } catch (reason) { setActionError(errorMessage(reason)); } finally { setBusy(false); }
   };
+  const importNote = () => act(async () => {
+    await editor.flush();
+    if (editor.unsaved()) throw new Error("This note has changes that weren't saved. Resolve them before importing a note.");
+    const note = await mailClient.importNoteFile();
+    if (!note) return;
+    showSaved(note);
+    setSearchRevision((value) => value + 1);
+    // Preserve any edits made while the file picker was open, too.
+    await editor.flush();
+    if (editor.unsaved()) throw new Error("The imported note is in Notes. Save or resolve this note's changes before opening it.");
+    setQuery("");
+    setListView("notes");
+    select({ kind: "note", id: note.id });
+    setFocusEditor(true);
+  });
   /** Opens the note a `[[link]]` names: that day's note for a date, the note with the title, or a new note with it. */
   const openLink = (title: string) => act(async () => {
     await editor.flush();
@@ -432,7 +447,8 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
       <h1>Notes</h1>
       {onReturn ? <button type="button" className="btn-link" onClick={onReturn}>Back to Mail</button> : null}
       <div className="notes-header-actions">
-        <button type="button" className="btn" title={`New note (${formatShortcut("Shift+n")})`} aria-keyshortcuts="Shift+N" onClick={() => setCreating(true)}><Plus size={ICON_SIZE.md} aria-hidden="true" />New Note</button>
+        <button type="button" className="btn" disabled={busy} title={`New note (${formatShortcut("Shift+n")})`} aria-keyshortcuts="Shift+N" onClick={() => setCreating(true)}><Plus size={ICON_SIZE.md} aria-hidden="true" />New Note</button>
+        <button type="button" className="btn" disabled={busy || editor.loading} title="Import a Markdown file" onClick={() => void importNote()}><FileUp size={ICON_SIZE.md} aria-hidden="true" />Import Note</button>
       </div>
     </header>
     <div className="notes-workspace-body">

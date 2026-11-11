@@ -54,6 +54,10 @@ Press <kbd>#</kbd> in the list, or click the trash button beside the title, to m
 
 ## Import Your Notes {#import-your-notes}
 
+To add one Markdown file, click **Import Note** beside **New Note**. Choose a `.md` or `.markdown` file; ThreeStrands adds it and opens it for writing. The title comes from `title:` in its front matter, then a leading heading, then the file name. If that title is already taken, a number is added. Each import makes a new regular note, leaving existing notes and daily notes as they are.
+
+Linked pictures and files inside the Markdown file's folder come with it. Links outside that folder and pictures on the internet stay as links. If the note is too large or cannot be read, ThreeStrands shows the reason and leaves the current note open.
+
 **Settings → Notes → Import Markdown Folder** adds the notes in a folder you choose, such as your Reflect folder or an earlier export from ThreeStrands. First ThreeStrands reads the folder and tells you how many notes, daily notes, and files it found, and lists anything it can't import and why. Nothing changes until you click **Import Notes**.
 
 Files named by date in a `daily` folder become daily notes, and every other Markdown file becomes a note, titled by its first heading. Links between your notes keep working, and pictures and files the notes link to come along. Notes you already have are skipped, so importing the same folder again adds nothing and never replaces your notes. A note too long to sync is listed rather than cut short.
