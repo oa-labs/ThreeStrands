@@ -7,6 +7,8 @@ export const SETTINGS_HELP: Record<SettingsSection, { slug: string; section?: st
   accounts: { slug: "mail-accounts" },
   calendarAccounts: { slug: "calendar", section: "connect-google-calendar" },
   availability: { slug: "calendar", section: "schedule" },
+  availabilityAccounts: { slug: "calendar", section: "availability-profiles" },
+  meetingTypes: { slug: "calendar", section: "availability-profiles" },
   replicatedSync: { slug: "sync" },
   appearance: { slug: "appearance" },
   reading: { slug: "triage", section: "mark-as-read" },

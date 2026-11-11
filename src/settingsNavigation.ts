@@ -8,6 +8,8 @@ const sections: Record<SettingsSection, true> = {
   accounts: true,
   calendarAccounts: true,
   availability: true,
+  availabilityAccounts: true,
+  meetingTypes: true,
   splitInboxes: true,
   mutedSenders: true,
   snippets: true,

@@ -17,7 +17,7 @@ import type { Accent } from "./accent";
 import type { Theme } from "./theme";
 import type { AfterTriage, FontFamily } from "./settings";
 
-export type SettingsSection = "reading" | "replicatedSync" | "appearance" | "defaultApps" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "mutedSenders" | "snippets" | "signatures" | "writingProfile" | "notes" | "ai" | "research" | "privacy" | "diagnostics" | "data";
+export type SettingsSection = "reading" | "replicatedSync" | "appearance" | "defaultApps" | "accounts" | "calendarAccounts" | "availability" | "availabilityAccounts" | "meetingTypes" | "splitInboxes" | "mutedSenders" | "snippets" | "signatures" | "writingProfile" | "notes" | "ai" | "research" | "privacy" | "diagnostics" | "data";
 
 export type SyncDiagnosticsActions = {
   retryFailed(): Promise<void>;

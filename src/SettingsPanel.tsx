@@ -7,6 +7,7 @@ import {
   ArrowLeftRight,
   BellOff,
   CalendarDays,
+  Coffee,
   Globe,
   Check,
   Clock,
@@ -20,6 +21,7 @@ import {
   Sparkles,
   Signature,
   TextQuote,
+  UserCog,
   UserPen,
   type LucideIcon,
 } from "lucide-react";
@@ -37,7 +39,8 @@ import { AppearanceSettings, StartupSettings } from "./AppearanceSettings";
 import { ReadingSettings } from "./ReadingSettings";
 import { NotesSettings } from "./NotesSettings";
 import { AccountsSettings } from "./AccountsSettings";
-import { AvailabilitySettings } from "./AvailabilitySettings";
+import { AvailabilityProfilesSettings } from "./AvailabilitySettings";
+import { AvailabilityAccountDefaultsSettings, MeetingTypeProfilesSettings } from "./AvailabilityChoiceSettings";
 import { CalendarAccountsSettings } from "./CalendarAccountsSettings";
 import { SplitInboxesSettings } from "./SplitInboxesSettings";
 import { MutedSendersSettings } from "./MutedSendersSettings";
@@ -60,7 +63,7 @@ import type {
 } from "./settingsPanelTypes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
-type SettingsGroup = "General" | "Accounts" | "Workflow" | "Integrations" | "System";
+type SettingsGroup = "General" | "Accounts" | "Workflow" | "Availability" | "Integrations" | "System";
 
 type SettingsSectionDefinition = {
   id: SettingsSection;
@@ -73,7 +76,7 @@ type SettingsSectionDefinition = {
   autosaves?: boolean;
 };
 
-const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Integrations", "System"];
+const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Availability", "Integrations", "System"];
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and what it opens to.", keywords: "theme light dark accent color font size family email zoom magnification minimum email font size accessibility start startup launch open today", icon: Palette, autosaves: true },
@@ -87,7 +90,10 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
   { id: "writingProfile", label: "Writing Profile", group: "Workflow", description: "Tell Draft Review who you are and how to review your email, for each account.", keywords: "about you review instructions draft review feedback ai sales tone role company", icon: UserPen, autosaves: true },
   { id: "notes", label: "Notes", group: "Workflow", description: "Choose how the note editor shows Markdown, and import or export your notes.", keywords: "notes markdown syntax editor formatting hide hybrid show wysiwyg import export folder files backup reflect obsidian sync space storage", icon: NotebookPen, autosaves: true },
-  { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock, autosaves: true },
+  // Profiles define hours; accounts and meeting types choose profiles.
+  { id: "availability", label: "Profiles", group: "Availability", description: "Set when you’re willing to meet, with a profile for each part of your life.", keywords: "availability profiles available working hours timezone duration slot increment drive time buffer default meetings", icon: Clock, autosaves: true },
+  { id: "availabilityAccounts", label: "Account Defaults", group: "Availability", description: "Choose the profile each email account normally uses.", keywords: "availability profile mail account usual hours default", icon: UserCog, autosaves: true },
+  { id: "meetingTypes", label: "Meeting Types", group: "Availability", description: "Choose the profile lunch, coffee, and other invitations use.", keywords: "availability profile breakfast lunch dinner coffee invitation meeting type hours", icon: Coffee, autosaves: true },
   { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
   { id: "research", label: "Web Research", group: "Integrations", description: "Let delegated tasks in Agents research the web with Anthropic and Exa.", keywords: "agents delegated research anthropic claude exa search api key connections limits cost", icon: Globe },
   { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted", icon: Network },
@@ -135,6 +141,8 @@ export function Settings({
   onOpenNote?(noteId: string): void;
 }) {
   const [signatureAccount, setSignatureAccount] = useState<string | undefined>(undefined);
+  // Kept here so Meeting Types' Edit Profile can open Profiles on that profile.
+  const [availabilityProfileId, setAvailabilityProfileId] = useState<string | undefined>(undefined);
   const [settingsQuery, setSettingsQuery] = useState("");
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const selectedSectionButtonRef = useRef<HTMLButtonElement>(null);
@@ -322,12 +330,33 @@ export function Settings({
             />
           ) : null}
           {section === "availability" ? (
-            <AvailabilitySettings
+            <AvailabilityProfilesSettings
               preferences={preferences.availabilityPreferences}
               onChange={preferences.setAvailabilityPreferences}
               profiles={preferences.availabilityProfiles}
               onProfilesChange={preferences.setAvailabilityProfiles}
               accounts={mailAccounts.accounts}
+              selectedProfileId={availabilityProfileId}
+              onSelectProfile={setAvailabilityProfileId}
+            />
+          ) : null}
+          {section === "availabilityAccounts" ? (
+            <AvailabilityAccountDefaultsSettings
+              profiles={preferences.availabilityProfiles}
+              onProfilesChange={preferences.setAvailabilityProfiles}
+              accounts={mailAccounts.accounts}
+              onOpenProfiles={() => onSectionChange("availability")}
+            />
+          ) : null}
+          {section === "meetingTypes" ? (
+            <MeetingTypeProfilesSettings
+              profiles={preferences.availabilityProfiles}
+              onProfilesChange={preferences.setAvailabilityProfiles}
+              onEditProfile={(id) => {
+                setAvailabilityProfileId(id);
+                onSectionChange("availability");
+              }}
+              onOpenProfiles={() => onSectionChange("availability")}
             />
           ) : null}
           {section === "splitInboxes" ? (

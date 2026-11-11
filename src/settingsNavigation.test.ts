@@ -7,7 +7,7 @@ describe("remembered settings section", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each<SettingsSection>([
-    "appearance", "reading", "defaultApps", "accounts", "calendarAccounts", "availability",
+    "appearance", "reading", "defaultApps", "accounts", "calendarAccounts", "availability", "availabilityAccounts", "meetingTypes",
     "splitInboxes", "snippets", "signatures", "ai", "research", "replicatedSync", "privacy", "diagnostics", "data",
   ])("restores %s from device storage", (section) => {
     saveSettingsSection(section);

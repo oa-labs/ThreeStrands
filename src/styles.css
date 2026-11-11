@@ -4003,7 +4003,34 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 /* The one action that sends something gets its own row; the rest follow it. */
 .proposed-times-actions > .btn-primary { flex: 1 1 100%; }
 
-.availability-meeting-types { display: grid; gap: var(--space-3); border: 0; padding: 0; margin: 0; min-width: 0; }
+/* Availability pages. Profiles define hours; Account Defaults and Meeting Types
+   choose a profile, in rows whose selectors line up in one column. */
+.availability-settings { width: 100%; max-width: 720px; }
+.availability-settings h4 { margin: var(--space-3) 0 0; color: var(--muted); font-size: var(--text-secondary); font-weight: var(--weight-semibold); }
+.availability-profile-list { display: grid; gap: var(--space-1-5); width: 100%; }
+.availability-profile-item { display: grid; gap: var(--space-0-5); width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.availability-profile-item:hover { background: var(--hover); }
+.availability-profile-item[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.availability-profile-item-name { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.availability-profile-item-name strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--weight-semibold); }
+.availability-profile-item-summary { color: var(--muted); font-size: var(--text-secondary); overflow-wrap: anywhere; }
+.availability-default-badge { flex-shrink: 0; padding: 0 var(--space-1-5); border-radius: var(--radius-pill); color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); font-size: var(--text-micro); font-weight: var(--weight-semibold); }
+.availability-profile-editor, .availability-shared-settings { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); width: 100%; margin-top: var(--space-2); padding: var(--space-3) var(--space-4) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.settings-section .availability-profile-editor > h3, .settings-section .availability-shared-settings > h3 { margin: 0; color: var(--text); }
+.availability-choice-list { display: grid; width: 100%; container-type: inline-size; border-top: 1px solid var(--border); }
+.availability-choice-columns, .availability-choice-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, 16rem); align-items: center; gap: var(--space-1-5) var(--space-3); }
+.availability-choice-list.has-actions :is(.availability-choice-columns, .availability-choice-row) { grid-template-columns: minmax(0, 1fr) minmax(12rem, 16rem) 6.5rem; }
+.availability-choice-columns { padding-block: var(--space-1-5); border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-semibold); }
+.availability-choice-row { padding-block: var(--space-2); border-bottom: 1px solid var(--border); }
+.availability-choice-subject { display: grid; min-width: 0; font-weight: var(--weight-semibold); }
+.availability-choice-subject strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.availability-choice-subject small { color: var(--muted); font-size: var(--text-secondary); font-weight: var(--weight-regular); overflow-wrap: anywhere; }
+.availability-choice-row select { width: 100%; min-width: 0; height: var(--control-h); padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background-color: var(--input); font-size: var(--text-body); }
+.availability-choice-row .btn-link { justify-self: start; }
+@container (max-width: 480px) {
+  .availability-choice-columns { display: none; }
+  .availability-choice-row, .availability-choice-list.has-actions .availability-choice-row { grid-template-columns: minmax(0, 1fr); }
+}
 .availability-hours { display: grid; gap: var(--space-1); min-width: 0; }
 .availability-hours > .btn-link { justify-self: start; }
 .availability-profile-select { display: grid; gap: var(--space-1); font-weight: var(--weight-medium); }

@@ -39,7 +39,7 @@ When a draft changed both here and elsewhere, review the composer's version choi
 
 ## Calendar Availability Looks Wrong {#calendar-availability-looks-wrong}
 
-In **Settings → Calendar Accounts**, distinguish **Calendars shown in the sidebar** from **Calendars used for availability**. Check **Settings → Availability** for timezone, working-hour blocks, and Drive Time Buffer. Check the date range and morning/afternoon filters in Find Times.
+In **Settings → Calendar Accounts**, distinguish **Calendars shown in the sidebar** from **Calendars used for availability**. Check **Settings → Availability → Profiles** for timezone, available hours, and Drive Time Buffer, and **Account Defaults** and **Meeting Types** for which profile applies. Check the date range and morning/afternoon filters in Find Times.
 
 **Availability unknown** or **Calendar check details** means not every calendar could be checked; it does not mean a guest is free. Reconnect the named account or review access permissions before relying on the times. See [Calendar](calendar.html).
 

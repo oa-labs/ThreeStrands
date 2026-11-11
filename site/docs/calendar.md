@@ -22,11 +22,11 @@ Google Calendar is the only calendar provider today. CalDAV is not yet supported
 
 <ts-shot scene="today-schedule" alt="The day's schedule beside the inbox, with free time marked against working hours."></ts-shot>
 
-Press <kbd>t</kbd> to switch the column on the right of your mail between the conversation's details and the day's schedule, and <kbd>-</kbd> or <kbd>=</kbd> to move between days. ThreeStrands remembers which one you chose, even after you visit another view or restart the app. Set your timezone and working hours in **Settings → Availability**. A day can have several blocks, such as 9:00–12:00 and 13:00–17:00; suggestions leave the lunch gap free. **Drive Time Buffer**, at the bottom of that page, reserves time before and after timed events with a location when suggesting times or checking conflicts.
+Press <kbd>t</kbd> to switch the column on the right of your mail between the conversation's details and the day's schedule, and <kbd>-</kbd> or <kbd>=</kbd> to move between days. ThreeStrands remembers which one you chose, even after you visit another view or restart the app. Set your available hours in **Settings → Availability → Profiles**, and your timezone under **Shared Settings** on the same page. A day can have several blocks, such as 9:00–12:00 and 13:00–17:00; suggestions leave the lunch gap free. **Drive Time Buffer**, below a profile’s hours, reserves time before and after timed events with a location when suggesting times or checking conflicts.
 
 ## Find Times Beside a Conversation {#find-times-beside-a-conversation}
 
-Find Times works without AI, using your calendar and working hours. Connect a calendar first and set your timezone and working-hour blocks in **Settings → Availability**.
+Find Times works without AI, using your calendar and working hours. Connect a calendar first and set your timezone and available hours in **Settings → Availability → Profiles**.
 
 1. Open a conversation or a reply draft.
 2. Click **Find Times** at the top of its side panel, beside **Get Brief**. It appears when the conversation has a meeting to arrange, offered times, or a task to schedule, and whenever you're writing a reply.
@@ -57,13 +57,13 @@ When writing to people at your work domain, **Include coworkers** lists them. Ch
 
 If you meet at different times for different parts of your life, such as work hours on your work account and evenings for a personal one, keep a profile for each:
 
-1. In **Settings → Availability**, click **Add Profile**. The new profile starts with your current hours.
-2. Name it, then set its working hours, **Default Duration**, and **Drive Time Buffer**.
-3. Under **Account Defaults**, choose the profile each mail account uses.
+1. In **Settings → Availability → Profiles**, click **Add Profile**. The new profile starts with your current hours.
+2. Name it, then set its **Available Hours**, **Default Duration**, and **Drive Time Buffer**.
+3. In **Settings → Availability → Account Defaults**, choose the profile each mail account usually uses.
 
-Find Times, checks of times someone offered, and **Find a time** in the event editor then use the profile of the account the email or event belongs to. To use other hours for one conversation or message, choose a profile under **Hours** in Find Times; the choice lasts until you quit ThreeStrands. Accounts without a profile of their own use the default one; **Make Default** changes which one that is. Timezone and **Slot Increment** are shared by every profile, and every calendar used for availability still counts as busy, whichever profile is in use.
+Find Times, checks of times someone offered, and **Find a time** in the event editor then use the profile of the account the email or event belongs to. To use other hours for one conversation or message, choose a profile under **Hours** in Find Times; the choice lasts until you quit ThreeStrands. Accounts without a profile of their own use the default one; **Make Default** changes which one that is. Timezone and **Slot Increment**, under **Shared Settings**, apply to every profile, and every calendar used for availability still counts as busy, whichever profile is in use.
 
-For invitations to lunch, breakfast, dinner, or coffee, associate a profile under **Meeting Types** in **Settings → Availability**. For example, keep lunch out of your normal meeting hours and create a Lunch profile containing only the times you want to offer for lunch. When Find Times with AI recognizes a lunch invitation, it uses that profile’s hours and shows **Hours: Lunch** above the time controls. Calendar conflicts and buffers still apply.
+For invitations to lunch, breakfast, dinner, or coffee, associate a profile in **Settings → Availability → Meeting Types**; **Edit Profile** there opens that profile’s hours. For example, keep lunch out of your normal meeting hours and create a Lunch profile containing only the times you want to offer for lunch. When Find Times with AI recognizes a lunch invitation, it uses that profile’s hours and shows **Hours: Lunch** above the time controls. Calendar conflicts and buffers still apply.
 
 If a recognized meeting type has no associated profile, choose hours on the card before searching. You can change the hours for that conversation or draft; **Use Automatic Hours** returns to automatic selection. If the selected hours have no openings, ThreeStrands shows no times rather than offering a different part of your day.
 
