@@ -862,6 +862,29 @@ describe("keyboard-first task and action workspaces", () => {
     expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
   });
 
+  it("hides Mail's side panel with a backslash or its divider, keeps it mounted, and remembers it apart from other views", async () => {
+    localStorage.clear();
+    const { container } = render(<App />);
+    await screen.findByRole("button", { name: "Archive (e)" });
+    const shell = container.querySelector("main.app-shell")!;
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    expect(screen.getByRole("separator", { name: "Resize Context" })).toHaveAttribute("aria-controls", panel.id);
+    fireEvent.keyDown(window, { key: "\\" });
+    expect(shell).toHaveClass("side-panel-collapsed");
+    // Hidden by the layout, the panel keeps its state for when it returns.
+    expect(panel).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show Context" }));
+    expect(shell).not.toHaveClass("side-panel-collapsed");
+    fireEvent.keyDown(window, { key: "\\" });
+    expect(shell).toHaveClass("side-panel-collapsed");
+    fireEvent.click(screen.getByRole("button", { name: "Notes (4)" }));
+    expect(await screen.findByRole("complementary", { name: "Note context" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
+    await waitFor(() => expect(shell).toHaveClass("side-panel-collapsed"));
+    fireEvent.keyDown(window, { key: "\\" });
+    expect(shell).not.toHaveClass("side-panel-collapsed");
+  });
+
   it("opens task entry as a modal without changing the right workspace", async () => {
     render(<App />);
     await screen.findByRole("button", { name: "Archive (e)" });

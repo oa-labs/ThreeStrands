@@ -1038,7 +1038,7 @@ test("batch shortcuts act on checked mail and Select All preserves email text se
 test("calendar and contacts creation shortcuts stay in their current workspace", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Calendar (2)" }).click();
-  await expect(page.getByRole("button", { name: "New Event", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New Event…", exact: true })).toBeVisible();
   await page.keyboard.press("Shift+n");
   const event = page.getByRole("dialog", { name: "New Event" });
   await expect(event).toBeVisible();

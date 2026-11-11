@@ -107,12 +107,13 @@ test("a [[link]] picks a note, opens it, shows as a backlink, and follows a rena
   await link.click();
   await expect(notes.getByRole("textbox", { name: "Title" })).toHaveValue("Garden plan");
   const backlinks = page.getByRole("complementary", { name: "Note context" }).getByRole("region", { name: /Backlinks/ });
-  await expect(backlinks.getByRole("button", { name: /Weekend/ })).toContainText("Work on [[Garden plan]]");
+  // The backlink shows the linking line as text, not its Markdown.
+  await expect(backlinks.getByRole("button", { name: /Weekend/ })).toContainText("Work on Garden plan");
 
   const title = notes.getByRole("textbox", { name: "Title" });
   await title.fill("Vegetable garden");
   await title.press("Enter");
-  await expect(notes.getByRole("status")).toContainText("Updated links in 1 note.");
+  await expect(notes.getByRole("status").filter({ hasText: "Updated links" })).toHaveText("Updated links in 1 note.");
   await backlinks.getByRole("button", { name: /Weekend/ }).click();
   await expect(body.locator(".md-wikilink-view-preview", { hasText: "Vegetable garden" })).toBeVisible();
 });
@@ -260,7 +261,7 @@ test("a note's task link selects the exact task and its backlink returns to the 
   await page.keyboard.press("4");
   const notes = page.getByRole("region", { name: "Notes", exact: true });
   await notes.getByRole("list", { name: "Notes" }).getByRole("button", { name: /Task reference source/ }).click();
-  await page.getByRole("complementary", { name: "Note context" }).getByRole("region", { name: "Tasks", exact: true }).getByRole("button", { name: "Linked target task" }).click();
+  await page.getByRole("complementary", { name: "Note context" }).getByRole("region", { name: "Links", exact: true }).getByRole("button", { name: "Linked target task" }).click();
   const tasks = page.getByRole("region", { name: "Tasks", exact: true });
   await expect(tasks.locator(".task-card.selected strong")).toHaveText("Linked target task");
   const context = page.getByRole("complementary", { name: "Task context" });

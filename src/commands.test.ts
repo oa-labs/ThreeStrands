@@ -186,8 +186,8 @@ describe("command registry", () => {
     const toggle = commands.find((command) => command.id === "sidePanel.toggle")!;
     expect(toggle.keys).toEqual(["\\"]);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "\\" }), toggle.keys[0]!)).toBe(true);
-    for (const pane of ["notes", "files", "tasks", "calendar"] as const) expect(toggle.enabled({ ...noopContext(), focusedPane: pane })).toBe(true);
-    for (const pane of ["mail", "contacts", "today", "agents"] as const) expect(toggle.enabled({ ...noopContext(), focusedPane: pane })).toBe(false);
+    for (const pane of ["mail", "contacts", "notes", "files", "tasks", "calendar"] as const) expect(toggle.enabled({ ...noopContext(), focusedPane: pane })).toBe(true);
+    for (const pane of ["today", "agents"] as const) expect(toggle.enabled({ ...noopContext(), focusedPane: pane })).toBe(false);
     expect(toggle.enabled({ ...noopContext(), focusedPane: "notes", composerActive: true })).toBe(false);
   });
 

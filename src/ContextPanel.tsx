@@ -245,7 +245,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
   }, [timeline, senderHistory.history, detail?.thread.id]);
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   return (
-    <aside className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
+    <aside id="mail-side-panel" className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
       {detail && reply ? reply.checks : null}
       {detail ? null : idle}
       {detail ? <div className="context-ai-row">

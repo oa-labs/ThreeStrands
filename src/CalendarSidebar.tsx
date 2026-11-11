@@ -318,7 +318,7 @@ export function CalendarSidebar({
   useDaySwipe(sidebarRef, moveDay);
 
   return (
-    <aside className="calendar-sidebar" aria-label="Schedule" ref={sidebarRef}>
+    <aside id="mail-side-panel" className="calendar-sidebar" aria-label="Schedule" ref={sidebarRef}>
       <header className="calendar-sidebar-header">
         <div className="calendar-sidebar-heading">
           {visibility ? (
