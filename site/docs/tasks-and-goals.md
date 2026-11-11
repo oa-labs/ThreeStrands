@@ -10,6 +10,7 @@ reviewed: 0.179.0
 - **From a conversation** — press <kbd>d</kbd>, or click **+ Add task** in the conversation's Tasks section. The task stays linked to the conversation.
 - **On its own** — press <kbd>3</kbd> for Tasks and click **Add Task**.
 - **From a promise** — **Today** lists things you said you would do in your sent mail under **You said you would**; turn one into a task from there.
+- **In a note** — type `/Task` in a [note](notes.html#write) for a round task. It appears in **Tasks**, and checking it off in either place checks it off in both. **Open Note** in its details opens the note.
 
 Each task has a **Type**:
 

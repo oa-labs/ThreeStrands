@@ -70,6 +70,8 @@ Split Inboxes move high-volume mail into its own tab, so the main inbox stays fo
 
 Press <kbd>Tab</kbd> and <kbd>Shift + Tab</kbd> to move between tabs. Each routing split belongs to one account, so its tab appears when that account is in focus. Deleting a split never deletes mail.
 
+Starred conversations also appear in an automatic **Starred** tab, including read and archived mail, so follow-ups stay easy to find. The tab hides while nothing is starred; turn off **Show Starred inbox automatically** in **Settings → Split Inboxes** to remove it.
+
 **Settings → Split Inboxes → Add Saved Search** adds a reusable search to the same tab bar. Saved searches can belong to one account or **All accounts**, and can include archived mail. They show matching mail without routing it out of Main. Use the same settings section to rename, edit, reorder, and delete saved views. Saved searches and their tab positions stay on this computer; existing routing splits retain their settings-transfer and sync behavior.
 
 ## Search {#search}
@@ -79,6 +81,7 @@ Press <kbd>/</kbd> in Mail to search local messages and, when online, older mail
 ## Moving Around {#moving-around}
 
 - <kbd>0</kbd> opens Today, and <kbd>1</kbd>–<kbd>7</kbd> switch between Mail, Calendar, Tasks, Notes, Contacts, Files, and Agents.
+- <kbd>\\</kbd> hides the side panel beside the conversation, and brings it back. You can also drag its left edge to resize it, or past that edge to hide it.
 - <kbd>g</kbd> then <kbd>i</kbd>, <kbd>a</kbd>, <kbd>t</kbd>, <kbd>d</kbd>, <kbd>o</kbd>, or <kbd>s</kbd> goes to Inbox, All Mail, Trash, Drafts, Outbox, or Sent.
 - <kbd>Escape</kbd> goes back after you jump from one conversation to another, for example from a task or a contact, and returns to Today after you open an email or event from it.
 

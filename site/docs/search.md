@@ -56,4 +56,4 @@ Local results are available offline for cached mail. Server results need a conne
 
 IMAP server searches include All Mail and user folders, so mail stored outside your Inbox can be found too. Searches that reach a time, folder, or result limit show partial coverage; narrow the query or name a folder to search more precisely. Supported label-based servers can also evaluate their native search syntax.
 
-Search follows the current workspace: in **Files** it searches filenames and senders, and in **Contacts** it searches contacts. Return to **Mail** to use mail operators. If you still cannot find something, use [missing-message troubleshooting](troubleshooting.html#a-message-is-missing).
+Search follows the current workspace: in **Files** it searches filenames and senders, in **Contacts** it searches contacts, and in **Notes** it searches [your notes](notes.html#find-a-note). Return to **Mail** to use mail operators. If you still cannot find something, use [missing-message troubleshooting](troubleshooting.html#a-message-is-missing).

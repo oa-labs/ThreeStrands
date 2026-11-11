@@ -18,6 +18,7 @@ A line under the date summarizes your remaining meetings, free time, conflicts, 
 - Finished and declined events are dimmed; **Now** separates what is still ahead.
 - **Tomorrow** shows the first few events the next day.
 - **Join** opens your next online meeting.
+- **Add Note**, beside your next meeting or on any event in the agenda, writes a line about the meeting in that day's note. See [Meeting Notes](notes.html#meeting-notes).
 - Overlapping meetings are marked. **Recorded** means the invitation says a session will be recorded; it does not guarantee a recording will be available.
 
 ## Work Through Mail and Tasks {#work-through-mail-and-tasks}
