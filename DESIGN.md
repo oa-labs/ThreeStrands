@@ -204,7 +204,13 @@ section. **Toggle Side Panel** (`\`) hides and shows it, and narrowing it
 past its minimum from the focused divider hides it too. One width holds
 across every view; whether it is hidden is remembered per view. A narrow
 window opens the panel over the view instead, with a close button and
-Escape. Notes, Files, Tasks, and Calendar share this panel today.
+Escape. Every view's side panel works this way: Mail's right column
+(context, a draft's context, or the schedule), the panel beside a contact
+or group, and the Notes, Files, Tasks, and Calendar panels. Mail's column
+stays mounted while hidden, and `t`, Show Context, picking a person, and
+F6 bring it back; in a window too narrow for it, it is the drawer, and `\`
+opens and closes that. Where Contacts stacks its panel under the profile,
+the panel is part of the page and doesn't hide.
 
 Keep the panel short by construction rather than by available height: a
 section without content is left out, including Tasks (added with `d`) and
@@ -256,7 +262,8 @@ Current primary commands are:
 - `d`: add a task linked to the selected conversation in Mail, or a blank,
   standalone task in the Tasks view;
 - `t`: go to today in Calendar and Notes, otherwise toggle Calendar;
-- `\`: hide or show the side panel in Notes, Files, Tasks, and Calendar;
+- `\`: hide or show the side panel (in Mail, open or close the drawer in a
+  narrow window);
 - `Shift+A`: show the conversation's suggestions in the context panel,
   fetching them if missing (`a` remains Reply All);
 - `i`: summarize the conversation into the context panel's brief;

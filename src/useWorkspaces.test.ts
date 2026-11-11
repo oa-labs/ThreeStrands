@@ -151,6 +151,33 @@ describe("Mail's right column", () => {
     vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue([]);
   });
 
+  it("shows a hidden right column again for t, actions that fill it, and the schedule on a day", async () => {
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue(connected);
+    const hook = render(thread("t1"));
+    await waitFor(() => expect(hook.result.current.calendarConnected).toBe(true));
+    const hide = () => act(() => hook.result.current.mailPanel.setCollapsed(true));
+
+    // t on a hidden context column shows the schedule, rather than swapping it while hidden.
+    hide();
+    act(() => hook.result.current.toggleSchedule());
+    await waitFor(() => expect(hook.result.current.scheduleShown).toBe(true));
+    expect(hook.result.current.mailPanel.collapsed).toBe(false);
+    // t on a hidden schedule shows the schedule again.
+    hide();
+    act(() => hook.result.current.toggleSchedule());
+    await waitFor(() => expect(hook.result.current.mailPanel.collapsed).toBe(false));
+    expect(hook.result.current.scheduleShown).toBe(true);
+
+    hide();
+    act(() => hook.result.current.showMailContext());
+    expect(hook.result.current.mailPanel.collapsed).toBe(false);
+    hide();
+    act(() => hook.result.current.openCalendarAt(new Date(2026, 10, 12)));
+    expect(hook.result.current.mailPanel.collapsed).toBe(false);
+    localStorage.removeItem("threestrands.workspaceContext.collapsed.Mail");
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue([]);
+  });
+
   it.each([null, "today", "tasks"] as const)("returns from an event jump to %s", (workspace) => {
     const hook = render(thread("t1"));
     const day = new Date(2026, 10, 6);

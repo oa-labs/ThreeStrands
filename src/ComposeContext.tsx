@@ -206,7 +206,7 @@ export function ComposeContext({
   }));
 
   return (
-    <aside className="context-panel compose-context" aria-label="Compose context" tabIndex={-1} onKeyDown={onKeyDown}>
+    <aside id="mail-side-panel" className="context-panel compose-context" aria-label="Compose context" tabIndex={-1} onKeyDown={onKeyDown}>
       <ComposeChecksSection
         draft={draft}
         accounts={accounts}

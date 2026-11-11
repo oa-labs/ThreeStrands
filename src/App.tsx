@@ -80,6 +80,7 @@ import { ConversationBatchToolbar } from "./ConversationBatchToolbar";
 import { ContactMeetings } from "./ContactMeetings";
 import { ContextPanel } from "./ContextPanel";
 import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
+import { SidePanelControls } from "./SidePanel";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { mailClient } from "./data/client";
@@ -156,7 +157,7 @@ import { useThreadIntelligence } from "./useThreadIntelligence";
 import { useThreadMutations } from "./useThreadMutations";
 import { useThreadSelection } from "./useThreadSelection";
 import { useTriageSession } from "./useTriageSession";
-import { useWorkspaces } from "./useWorkspaces";
+import { MAIL_SIDE_PANEL_ID, useWorkspaces } from "./useWorkspaces";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { formatShortcut } from "./shortcutLabels";
 import { plural } from "./plural";
@@ -333,7 +334,7 @@ export function App() {
     calendarEventToOpen, openCalendarAt, contactAddressBookTarget, contactsView, setContactsView,
     keepInTouchDueCount, refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openContactsView, contactCardActions,
-    scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen,
+    scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen, mailPanel,
     contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView, notesRequest, consumeNotesRequest, openNote,
   } = workspaces;
   const agents = useAgentTasks();
@@ -623,6 +624,7 @@ export function App() {
   // F6 / Mod+Shift+P: from the draft into the context panel, and back to the caret.
   const { focusDraftBody, activeDraft } = correspondence;
   // In a narrow window the panel is a drawer: it opens to take focus and closes on the way back.
+  const { collapsed: mailPanelCollapsed, setCollapsed: setMailPanelCollapsed } = mailPanel;
   const toggleContextPanelFocus = useCallback(() => {
     const panel = document.querySelector<HTMLElement>(".context-panel");
     if (!panel) return;
@@ -632,10 +634,14 @@ export function App() {
     } else if (narrowLayout && !sideDrawerOpen) {
       setSideDrawerOpen(true);
       window.requestAnimationFrame(() => focusContextPanel(panel));
+    } else if (!narrowLayout && mailPanelCollapsed) {
+      // A hidden column comes back to take focus.
+      setMailPanelCollapsed(false);
+      window.requestAnimationFrame(() => focusContextPanel(panel));
     } else {
       focusContextPanel(panel);
     }
-  }, [focusDraftBody, narrowLayout, setSideDrawerOpen, sideDrawerOpen]);
+  }, [focusDraftBody, narrowLayout, setSideDrawerOpen, sideDrawerOpen, mailPanelCollapsed, setMailPanelCollapsed]);
   const contextPanelKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
     if (!activeDraft) return;
     handleContextPanelKeyDown(event, focusDraftBody);
@@ -908,7 +914,7 @@ export function App() {
 
   return (
     <AvailabilityProfileChoiceContext.Provider value={profileChoice(threadProfileKey, "conversation", visibleDetail?.thread.accountId)}>
-    <main className={`app-shell${rightWorkspace === "agents" ? " agents-open" : rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "notes" ? " notes-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "agents" ? " agents-open" : rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "notes" ? " notes-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}${mailInView && !narrowLayout && mailPanelCollapsed ? " side-panel-collapsed" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px`, "--side-panel-width": `${mailPanel.size.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           showAllAccounts={rightWorkspace === "tasks" || splitInboxCatalog.views.some(isSavedSearchView)}
@@ -1581,6 +1587,7 @@ export function App() {
         </Suspense>
         </ErrorBoundary>
       ) : null}
+      {mailInView && !narrowLayout ? <SidePanelControls panel={mailPanel} label={scheduleShown ? "Schedule" : "Context"} controlsId={MAIL_SIDE_PANEL_ID} /> : null}
       {sideDrawerShown ? (
         <HoverTooltip label={`Hide ${scheduleShown ? "schedule" : "context"}`} shortcut="Escape" placement="bottom">
           <button type="button" className="btn-icon side-drawer-close" aria-label={`Hide ${scheduleShown ? "Schedule" : "Context"}`} onClick={() => setSideDrawerOpen(false)}>

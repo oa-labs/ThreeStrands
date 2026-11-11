@@ -366,6 +366,14 @@ describe("conversation participant layout", () => {
     expect(lastDeclaration(".workspace-context-container > .panel-resizer", "left")).toBe("-4px");
   });
 
+  it("hides Mail's and Contacts' side panels in the layout, except where Contacts stacks its panel under the profile", () => {
+    expect(lastDeclaration(".app-shell.side-panel-collapsed > :is(.context-panel, .calendar-sidebar, .pane-error.side)", "display")).toBe("none");
+    expect(lastDeclaration(".app-shell.side-panel-collapsed", "grid-template-columns")).toMatch(/ 36px$/);
+    expect(lastDeclaration(".contact-profile-layout.has-rail.side-panel-collapsed", "grid-template-columns")).toBe("minmax(0,1fr)");
+    expect(lastDeclaration(".contact-profile-layout.has-rail > .contact-context-rail[hidden]", "display")).toBe("block");
+    expect(lastDeclaration(".contact-profile-layout.has-rail > :is(.side-panel-edge, .side-panel-strip)", "display")).toBe("none");
+  });
+
   it("draws section counts as badges", () => {
     expect(lastDeclaration(".context-count", "border")).toBe("1px solid var(--border)");
     expect(lastDeclaration(".context-count", "border-radius")).toBe("var(--radius-xs)");

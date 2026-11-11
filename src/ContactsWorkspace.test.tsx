@@ -1,8 +1,9 @@
 import { installTestShortcuts } from "./test/commandContext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ContactGroup, ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
+import { runWorkspaceCommand } from "./workspaceCommands";
 import { mailClient } from "./data/client";
 import { clearAiApiKey, setAiApiKey } from "./aiSettings";
 import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
@@ -481,6 +482,26 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(within(card).getByRole("button",{name:"AI Settings"}));
     expect(onOpenAiSettings).toHaveBeenCalledTimes(1);
     expect(mailClient.enrichContact).not.toHaveBeenCalled();
+  });
+
+  it("hides the context rail with Toggle Side Panel or its divider, for contacts and groups alike",async()=>{
+    localStorage.setItem("threestrands.settings.ai.provider","openai");
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const rail=screen.getByRole("complementary",{name:"Contact context"});
+    expect(screen.getByRole("separator",{name:"Resize Contact context"})).toHaveAttribute("aria-controls",rail.id);
+    act(()=>runWorkspaceCommand("sidePanel.toggle"));
+    expect(screen.queryByRole("complementary",{name:"Contact context"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Show Contact context"}));
+    expect(screen.getByRole("complementary",{name:"Contact context"})).toBeInTheDocument();
+    act(()=>runWorkspaceCommand("sidePanel.toggle"));
+    cleanup();
+    const board:ContactGroup={id:"group-hidden",name:"Hidden board",memberIds:[jane.id],createdAt:"2026-10-01T00:00:00Z",updatedAt:"2026-10-01T00:00:00Z"};
+    vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} initialView="groups"/>);
+    expect(await screen.findByRole("button",{name:"Show Group context"})).toBeInTheDocument();
+    expect(screen.queryByRole("complementary",{name:"Group context"})).not.toBeInTheDocument();
   });
 
   it("puts profile suggestions and recent emails in the context rail",async()=>{

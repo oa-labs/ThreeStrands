@@ -11,6 +11,12 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 import type { SettingsSection } from "./settingsPanelTypes";
 import type { Notice } from "./useNotice";
 import { NARROW_LAYOUT_QUERY, useMediaQuery } from "./useMediaQuery";
+import { useSidePanel } from "./SidePanel";
+import { useWorkspaceCommands } from "./workspaceCommands";
+
+/** The id every Mail right-column panel carries: the context, the draft's context, or the schedule. */
+export const MAIL_SIDE_PANEL_ID = "mail-side-panel";
+const mailSidePanel = () => document.getElementById(MAIL_SIDE_PANEL_ID);
 
 export type RightWorkspace = "contacts" | "tasks" | "notes" | "week" | "files" | "today" | "agents" | null;
 /** A request for the Notes workspace to carry out once it is open; `id` tells repeats apart. */
@@ -42,6 +48,10 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
   const [drawerRequested, setDrawerRequested] = useState(false);
   useEffect(() => { setDrawerRequested(false); }, [narrowLayout]);
   const sideDrawerOpen = narrowLayout && drawerRequested;
+  // A wide window's right column hides as the other views' side panels do;
+  // a narrow window's is the drawer instead.
+  const mailPanel = useSidePanel({ view: "Mail", panel: mailSidePanel, toggleCommand: false });
+  const { setCollapsed: setMailPanelCollapsed } = mailPanel;
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
   // Event jumps preserve the underlying reader; Escape only needs to restore its workspace.
@@ -101,9 +111,12 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
    */
   const toggleSchedule = useCallback(() => {
     const inMail = rightWorkspace === null;
+    // A hidden column comes back on the schedule rather than swapping what it hides.
+    const columnHidden = !narrowLayout && mailPanel.collapsed;
     setRightWorkspace(null);
+    setMailPanelCollapsed(false);
     // A closed drawer opens on the schedule rather than swapping what it hides.
-    if (inMail && scheduleShown && (!narrowLayout || drawerRequested)) {
+    if (inMail && scheduleShown && !columnHidden && (!narrowLayout || drawerRequested)) {
       setSideColumn("context");
       return;
     }
@@ -119,20 +132,27 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
       .catch((reason: unknown) => {
         setNotice({ message: errorMessage(reason) });
       });
-  }, [drawerRequested, narrowLayout, openSettingsAt, refreshCalendarAccounts, rightWorkspace, scheduleShown, setNotice]);
+  }, [drawerRequested, narrowLayout, openSettingsAt, refreshCalendarAccounts, rightWorkspace, scheduleShown, setNotice, mailPanel.collapsed, setMailPanelCollapsed]);
   /** Brings Mail back with the context column, for actions that show something in it. */
   const showMailContext = useCallback(() => {
     setRightWorkspace(null);
     setSideColumn("context");
     setDrawerRequested(true);
-  }, []);
+    setMailPanelCollapsed(false);
+  }, [setMailPanelCollapsed]);
   const [calendarSidebarStart, setCalendarSidebarStart] = useState<{ key: number; date: Date } | null>(null);
   const openCalendarAt = useCallback((date: Date) => {
     setCalendarSidebarStart((current) => ({ key: (current?.key ?? 0) + 1, date }));
     setRightWorkspace(null);
     setSideColumn("schedule");
     setDrawerRequested(true);
-  }, []);
+    setMailPanelCollapsed(false);
+  }, [setMailPanelCollapsed]);
+
+  // Toggle Side Panel: the drawer in a narrow window, the column otherwise.
+  useWorkspaceCommands({
+    "sidePanel.toggle": () => { if (narrowLayout) setDrawerRequested((open) => !open); else mailPanel.setHidden(!mailPanel.collapsed); },
+  }, rightWorkspace === null);
 
   const openAgentsView = useCallback(() => setRightWorkspace("agents"), []);
   const openFilesView = useCallback(() => setRightWorkspace("files"), []);
@@ -195,7 +215,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openCalendarAt, toggleSchedule, openTasks,
     sideColumn, setSideColumn, scheduleShown, showMailContext, openTasksView,
-    narrowLayout, sideDrawerOpen, setSideDrawerOpen: setDrawerRequested,
+    narrowLayout, sideDrawerOpen, setSideDrawerOpen: setDrawerRequested, mailPanel,
     openAgentsView, openFilesView, openNotesView, openTodaysNote, openNote, notesRequest, consumeNotesRequest, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
     contextPersonEmail, openCalendarView, canReturnFromCalendar, returnFromCalendar,
   };

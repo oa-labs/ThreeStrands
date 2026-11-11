@@ -10,6 +10,11 @@ import type { ContactFieldSuggestion, ContactGroup, ContactProfile, ContactTimel
 import { readAiRequestConfig } from "./aiSettings";
 import { errorMessage } from "./errors";
 import { PanelResizeHandle, useContactListWidth } from "./PanelResizeHandle";
+import { SidePanelControls, useSidePanel } from "./SidePanel";
+
+/** The id of the side panel beside a contact or a group: one is shown at a time. */
+const CONTACTS_SIDE_PANEL_ID = "contacts-side-panel";
+const contactsSidePanel = () => document.getElementById(CONTACTS_SIDE_PANEL_ID);
 import { KeepInTouchSection } from "./KeepInTouchSection";
 import { useContactsSelection } from "./useContactsSelection";
 import { GroupRecentEmails } from "./GroupRecentEmails";
@@ -181,6 +186,8 @@ export function ContactsWorkspace({onOpenThread,onOpenNote,onCompose,onSaved,onO
   const hiddenFields=OPTIONAL_FIELDS.filter(item=>!showField(item.field));
   // Reference material and AI help sit in a rail beside the form, like the
   // context panel beside an open email.
+  const sidePanel=useSidePanel({view:"Contacts",panel:contactsSidePanel});
+  const railStyle={"--side-panel-width":`${sidePanel.size.width}px`} as CSSProperties;
   const showRail=!!profile&&(aiEnabled||timeline.length>0||noteMentions.rows.length>0||!!noteMentions.error);
   // A suggestion disappears the moment its field is filled in, so one can
   // never overwrite typing the user did while enrichment was running.
@@ -235,9 +242,9 @@ export function ContactsWorkspace({onOpenThread,onOpenNote,onCompose,onSaved,onO
         {view==="keepInTouch"&&!kitGroups.reminders.length&&!kitGroups.birthdays.length?<p className="contacts-empty">{needle?"No reminders match this search.":"No keep-in-touch reminders yet. Choose a frequency on a contact, or use Select in All Contacts to set one for several people at once."}</p>:null}
       </aside></div>
       <section className="contact-profile-panel" aria-label="Contact details">
-        {view==="groups"?selectedGroup?<div className="contact-profile-layout has-rail"><div className="contact-profile-main"><div className="contact-profile-column"><ContactGroupDetail key={selectedGroup.id} group={selectedGroup} profiles={bookProfiles} busy={busy} onOpenContact={openContact} onCompose={onCompose} onRename={name=>renameGroup(selectedGroup.id,name)} onDelete={()=>deleteGroup(selectedGroup.id)} onAddMembers={(contactIds,emails)=>addToGroup(selectedGroup.id,contactIds,emails)} onRemoveMember={contactId=>removeFromGroup(selectedGroup.id,contactId)}/></div></div><aside className="contact-context-rail" aria-label="Group context"><GroupRecentEmails key={JSON.stringify([selectedGroup.id,selectedGroup.memberIds,accountId,profileRevision])} groupId={selectedGroup.id} accountId={accountId} onOpenThread={onOpenThread}/></aside></div>
+        {view==="groups"?selectedGroup?<div className={`contact-profile-layout has-rail${sidePanel.collapsed?" side-panel-collapsed":""}`} style={railStyle}><div className="contact-profile-main"><div className="contact-profile-column"><ContactGroupDetail key={selectedGroup.id} group={selectedGroup} profiles={bookProfiles} busy={busy} onOpenContact={openContact} onCompose={onCompose} onRename={name=>renameGroup(selectedGroup.id,name)} onDelete={()=>deleteGroup(selectedGroup.id)} onAddMembers={(contactIds,emails)=>addToGroup(selectedGroup.id,contactIds,emails)} onRemoveMember={contactId=>removeFromGroup(selectedGroup.id,contactId)}/></div></div><SidePanelControls panel={sidePanel} label="Group context" controlsId={CONTACTS_SIDE_PANEL_ID}/><aside id={CONTACTS_SIDE_PANEL_ID} hidden={sidePanel.collapsed} className="contact-context-rail" aria-label="Group context"><GroupRecentEmails key={JSON.stringify([selectedGroup.id,selectedGroup.memberIds,accountId,profileRevision])} groupId={selectedGroup.id} accountId={accountId} onOpenThread={onOpenThread}/></aside></div>
         :<div className="contacts-empty-state"><ContactRound size={ICON_SIZE.display}/><p>{groups.length?"Select a group to see its members":"Create a group to email several people at once"}</p></div>
-        :adding||profile?<div className={`contact-profile-layout${showRail?" has-rail":""}`}><div className="contact-profile-main"><div className="contact-profile-column">
+        :adding||profile?<div className={`contact-profile-layout${showRail?` has-rail${sidePanel.collapsed?" side-panel-collapsed":""}`:""}`} style={showRail?railStyle:undefined}><div className="contact-profile-main"><div className="contact-profile-column">
           <div className="contact-profile-top"><div className="contact-identity"><label className="contact-avatar large" title="Contact photo">{avatar?<img src={avatar} alt=""/>:<span>{initial||<UserRound/>}</span>}<input type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" aria-label="Upload Contact Photo" onChange={async event=>{const file=event.target.files?.[0];if(!file)return;try{setField("photoData",await encodePhoto(file));}catch(reason){setError(errorMessage(reason));}}}/></label><div><input ref={newContactName} className="contact-name-input" aria-label="Name" placeholder="Name" value={draft.displayName??""} onChange={event=>setField("displayName",event.target.value)}/><input aria-label="Role" placeholder="Role or title" value={draft.role??""} onChange={event=>setField("role",event.target.value)}/>{scopedProfile?<p className="contact-identity-meta">{[`${scopedProfile.sentCount} sent`,`${scopedProfile.receivedCount} received`,lastContact?`Last contact ${formatKeepInTouchDate(lastContact)}`:null].filter(Boolean).join(" · ")}</p>:null}</div></div>
             <div className="contact-profile-actions">{confirmDelete?<div className="contact-delete-confirm"><span>Delete this profile?</span><button type="button" className="btn btn-sm" onClick={()=>setConfirmDelete(false)}>Cancel</button><button type="button" className="btn btn-sm btn-danger" onClick={()=>void deleteProfile()}>Confirm</button></div>:<><button type="button" className="btn-icon" aria-label="Favorite Contact" aria-pressed={draft.favorite} disabled={busy} onClick={()=>void toggleFavorite()}><Heart size={ICON_SIZE.lg} fill={draft.favorite?"currentColor":"none"}/></button>{profile&&!profile.id.startsWith("derived:")?<button type="button" className="btn-icon" aria-label="Delete Contact" onClick={()=>void deleteProfile()}><Trash size={ICON_SIZE.lg}/></button>:null}</>}</div></div>
           <div ref={editorRef} className="contact-editor-grid"><ContactAddressField addresses={draft.addresses} disabled={busy} onChange={addresses=>setField("addresses",addresses)}/>
@@ -254,7 +261,8 @@ export function ContactsWorkspace({onOpenThread,onOpenNote,onCompose,onSaved,onO
           {profile?.id.startsWith("derived:mac:") ? <p className="settings-hint">From Mac Contacts. Changes saved here create an independent ThreeStrands profile and do not change Apple Contacts.</p> : null}
           {unsaved?<div className="contact-save-bar" role="region" aria-label="Save changes"><span>{adding?"New contact":"Unsaved changes"}</span><div><button type="button" className="btn" disabled={busy} onClick={discard}>Discard</button><button type="button" className="btn btn-primary" title={`Save contact (${formatShortcut("Mod+Enter")})`} aria-keyshortcuts="Meta+Enter Control+Enter" disabled={busy} onClick={()=>void save()}><Check size={ICON_SIZE.md}/>Save contact</button></div></div>:null}
           </div></div>
-          {showRail?<aside className="contact-context-rail" aria-label="Contact context">
+          {showRail?<SidePanelControls panel={sidePanel} label="Contact context" controlsId={CONTACTS_SIDE_PANEL_ID}/>:null}
+          {showRail?<aside id={CONTACTS_SIDE_PANEL_ID} hidden={sidePanel.collapsed} className="contact-context-rail" aria-label="Contact context">
             {aiEnabled?<ContactEnrichmentCard ready={aiReady} onOpenSettings={onOpenAiSettings} suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}
             {profile?<NoteBacklinkSection rows={noteMentions.rows} error={noteMentions.error} onOpenNote={onOpenNote}/>:null}
             {profile?<ContactFilesSection key={`${profile.id}:${profileRevision}`} contactId={profile.id} onShowMessage={threadId=>onOpenThread(threadId)}/>:null}
