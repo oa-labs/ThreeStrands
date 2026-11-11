@@ -1,8 +1,9 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
 import type { NoteReference } from "./noteEntities";
-import { EventNoteBacklinks } from "./NoteEntityContext";
+import { EventNoteAction, EventNoteBacklinks } from "./NoteEntityContext";
+import { notesChanged } from "./noteMutations";
 
 const occurrence: NoteReference = { version: 1, kind: "event", id: "standup_1112", account: "you@example.com", calendar: "work", series: "standup" };
 const row = (noteId: string, title: string, dailyDate: string | null) => ({ noteId, title, dailyDate, context: `Line in ${title}`, reference: occurrence });
@@ -27,5 +28,24 @@ describe("an event's notes", () => {
     expect(await screen.findByRole("region", { name: "Notes" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Series notes" })).not.toBeInTheDocument();
     expect(backlinks).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the event note action", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  it("reflects occurrence links and refreshes when a linked note is added or removed", async () => {
+    const backlinks = vi.spyOn(mailClient, "noteBacklinks").mockResolvedValue([]);
+    const onActivate = vi.fn();
+    render(<EventNoteAction occurrence={occurrence} onActivate={onActivate} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Note" }));
+    expect(onActivate).toHaveBeenCalledOnce();
+    backlinks.mockResolvedValue([row("existing", "Existing meeting note", null)]);
+    await act(async () => { await notesChanged("existing"); });
+    fireEvent.click(await screen.findByRole("button", { name: "Open Note" }));
+    expect(onActivate).toHaveBeenCalledTimes(2);
+    expect(backlinks.mock.calls.every(([reference]) => reference.id === occurrence.id)).toBe(true);
+    backlinks.mockResolvedValue([]);
+    await act(async () => { await notesChanged("existing"); });
+    expect(await screen.findByRole("button", { name: "Add Note" })).toBeInTheDocument();
   });
 });

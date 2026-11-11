@@ -161,6 +161,18 @@ describe("CalendarWeekView", () => {
     await waitFor(() => expect(onSelectedEventChange).toHaveBeenLastCalledWith(null));
   });
 
+  it("offers Open Note in event details when that occurrence already has a note", async () => {
+    const meeting = { ...event("noted-review", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Noted review"), calendarId: "primary" };
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [meeting], errors: [] });
+    vi.spyOn(mailClient, "noteBacklinks").mockResolvedValue([{ noteId: "existing", title: "Review notes", dailyDate: null, context: "" }]);
+    const onAddNote = vi.fn();
+    renderWeek({ onAddNote });
+    fireEvent.click(await within(screen.getByRole("region", { name: "Today's agenda" })).findByRole("button", { name: /^Noted review/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Note" }));
+    expect(onAddNote).toHaveBeenCalledExactlyOnceWith(meeting);
+    expect(screen.getByRole("region", { name: "Notes" })).toHaveTextContent("Review notes");
+  });
+
   it("keeps today's agenda while browsing another week and returns the grid to today on selection", async () => {
     const meeting = event("review", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Today's review");
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [meeting], errors: [] });

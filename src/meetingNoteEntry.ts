@@ -2,7 +2,7 @@ import type { ScheduleEvent } from "./domain";
 import { formatClockTime } from "./agendaEvents";
 import { eventDate } from "./calendarTime";
 import { isEmailAddress } from "./emailAddress";
-import { normalizeContactAddress, type NoteReference } from "./noteEntities";
+import { normalizeContactAddress, type NoteBacklink, type NoteReference } from "./noteEntities";
 import type { MeetingEntry } from "./noteMeetings";
 
 /** The occurrence a meeting line links, or null for an event without a calendar. */
@@ -44,4 +44,11 @@ export function meetingEntry(event: ScheduleEvent, choice: { name: string; atten
       return { label: choice.names.get(address) ?? address, reference: { version: 1, kind: "contact", id: address, ...(contact && !contact.startsWith("derived:") ? { contact } : {}) } };
     }),
   };
+}
+
+/** Prefer a dedicated meeting note over its daily-note entry. Existing links
+ * remain available in the Notes section when more than one note links here. */
+export function primaryMeetingNote(rows: readonly NoteBacklink[]): NoteBacklink | undefined {
+  return [...rows].sort((a, b) => Number(Boolean(a.dailyDate)) - Number(Boolean(b.dailyDate))
+    || (b.dailyDate ?? "").localeCompare(a.dailyDate ?? "") || a.noteId.localeCompare(b.noteId))[0];
 }

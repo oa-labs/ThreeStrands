@@ -1,6 +1,6 @@
 import { addMeetingToDailyNote, captureConversation } from "./noteCapture";
 import { MeetingNoteDialog } from "./MeetingNoteDialog";
-import { meetingEventReference } from "./meetingNoteEntry";
+import { meetingEventReference, primaryMeetingNote } from "./meetingNoteEntry";
 import type { MeetingEntry } from "./noteMeetings";
 import { dailyNoteName } from "./noteDates";
 import type { ScheduleEvent } from "./domain";
@@ -671,6 +671,19 @@ export function App() {
   // details, or the palette while those details are open.
   const [meetingNoteEvent, setMeetingNoteEvent] = useState<ScheduleEvent | null>(null);
   const [calendarSelectedEvent, setCalendarSelectedEvent] = useState<ScheduleEvent | null>(null);
+  const openMeetingNote = async (event: ScheduleEvent) => {
+    const reference = meetingEventReference(event);
+    if (!reference) return;
+    try {
+      // Recheck on activation so changes since the rail loaded cannot create
+      // another entry through Today, the agenda, or the command palette.
+      const existing = primaryMeetingNote(await mailClient.noteBacklinks(reference));
+      if (existing) openNote(existing.noteId, undefined, noteReferenceHref(reference));
+      else setMeetingNoteEvent(event);
+    } catch (reason) {
+      setNotice({ message: errorMessage(reason) });
+    }
+  };
   const meetingOwnAddresses = useMemo(() => [...ownAddresses, ...calendar.accounts.map((account) => account.email)], [ownAddresses, calendar.accounts]);
   const addMeeting = async (date: string, entry: MeetingEntry) => {
     const added = await addMeetingToDailyNote(date, entry);
@@ -720,7 +733,7 @@ export function App() {
     delegateSelected,
     createCalendarEvent: () => { openCalendarView(); setCreateCalendarEventRequested(true); },
     addToTodaysNote,
-    addMeetingNote: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => setMeetingNoteEvent(calendarSelectedEvent) : undefined,
+    addMeetingNote: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => { void openMeetingNote(calendarSelectedEvent); } : undefined,
     snoozeSelected: openSnooze, returnSnoozedSelected: conversationSnooze.returnToInbox,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
@@ -1537,7 +1550,7 @@ export function App() {
             mailAccountIds={activeAccountId ? [activeAccountId] : accounts.map((account) => account.email)}
             onOpenThread={jumpToThread}
             onOpenNote={openNote}
-            onAddNote={setMeetingNoteEvent}
+            onAddNote={(event) => { void openMeetingNote(event); }}
             onSelectedEventChange={setCalendarSelectedEvent}
             anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
             initialEvent={calendarEventToOpen}
@@ -1779,7 +1792,7 @@ export function App() {
         calendars={calendar.calendars}
         onOpenThread={jumpToThread}
         onOpenEvent={(event) => openCalendarView(eventDate(event), event)}
-        onAddNote={setMeetingNoteEvent}
+        onAddNote={(event) => { void openMeetingNote(event); }}
         onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
         onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         onOpenInbox={() => executeById("view.mail")}

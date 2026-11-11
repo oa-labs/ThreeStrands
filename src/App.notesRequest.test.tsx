@@ -90,3 +90,23 @@ it("adds a meeting from Today's next-meeting card to today's note, and Undo take
   await act(async () => { screen.getByRole("button", { name: "Undo" }).click(); });
   await waitFor(async () => expect((await mailClient.getDailyNote(day))?.body ?? "").toBe(""));
 });
+
+it("opens an existing occurrence note from Today instead of showing the add dialog", async () => {
+  clearScheduleCache();
+  const start = new Date(Date.now() + 10 * 60_000);
+  const meeting = { id: "already-noted-meeting", accountId: "calendar@example.com", calendarId: "primary", title: "Existing review", allDay: false,
+    start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString() };
+  const href = noteReferenceHref({ version: 1, kind: "event", id: meeting.id, account: meeting.accountId, calendar: meeting.calendarId });
+  const note = await mailClient.createNote("Existing review notes", `[Meeting](${href})`);
+  const add = vi.spyOn(mailClient, "addMeetingToDailyNote");
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" }]);
+  vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([{ id: "primary", accountId: "calendar@example.com", name: "Work", primary: true, selected: true, writable: true }]);
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [meeting], errors: [] });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
+  await screen.findByRole("button", { name: /^Next: Existing review/ });
+  fireEvent.click(screen.getByRole("button", { name: "Add Note" }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+  expect(screen.queryByRole("dialog", { name: "Add Note" })).not.toBeInTheDocument();
+  expect(add).not.toHaveBeenCalled();
+});

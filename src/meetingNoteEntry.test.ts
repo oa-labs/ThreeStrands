@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ScheduleEvent } from "./domain";
-import { meetingAttendees, meetingDate, meetingEntry, meetingEventReference, meetingTime } from "./meetingNoteEntry";
+import { meetingAttendees, meetingDate, meetingEntry, meetingEventReference, meetingTime, primaryMeetingNote } from "./meetingNoteEntry";
 import { dailyNoteName } from "./noteDates";
 
 const event = (overrides: Partial<ScheduleEvent> = {}): ScheduleEvent => ({
@@ -51,5 +51,16 @@ describe("naming a day's note in a notice", () => {
   it("names other days by date, with the year only when it differs", () => {
     expect(dailyNoteName("2026-11-17", now)).toBe("the note for Tuesday, November 17");
     expect(dailyNoteName("2027-01-04", now)).toBe("the note for Monday, January 4, 2027");
+  });
+});
+
+describe("an event's primary note", () => {
+  const row = (noteId: string, dailyDate: string | null) => ({ noteId, title: noteId, dailyDate, context: "", reference: meetingEventReference(event())! });
+  it("prefers a dedicated note to daily entries and chooses consistently among existing links", () => {
+    const rows = [row("daily:2026-11-11", "2026-11-11"), row("b", null), row("a", null)];
+    expect(primaryMeetingNote(rows)?.noteId).toBe("a");
+    expect(primaryMeetingNote([...rows].reverse())?.noteId).toBe("a");
+    expect(primaryMeetingNote([row("old", "2026-11-10"), rows[0]!])?.noteId).toBe("daily:2026-11-11");
+    expect(primaryMeetingNote([])).toBeUndefined();
   });
 });
