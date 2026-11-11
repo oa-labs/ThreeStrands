@@ -222,9 +222,12 @@ note turns read-only until the user keeps one version. A note two devices
 changed before syncing is also read-only, under a banner that compares the
 versions, until the user chooses one. `#` moves the selected note to Trash,
 which sits at the bottom of the list; a trashed note is read-only, and
-**Delete Permanently** asks first. A note's context rail lists Backlinks,
-Unlinked links, and linked People; a title saves when its field is left,
-because renaming rewrites links in other notes.
+**Delete Permanently** asks first. A note's context rail starts with a month
+calendar: choosing a day opens that day's note, a dot marks each day whose
+note has text, and paging the month opens nothing. A daily note's rail then
+lists that day's agenda, where Add Note records a meeting in the note. The
+rail goes on to Backlinks, Unlinked links, and linked People; a title saves
+when its field is left, because renaming rewrites links in other notes.
 
 Opening a workspace must not steal focus or open a form. Workspace cards and
 candidate choices should use buttons and semantic disclosure elements. A plus,
@@ -238,9 +241,11 @@ Current primary commands are:
 - `Shift+N` in Notes: name a new note in a dialog;
 - `#`: move the selected conversation to Trash in Mail, or the open note in
   Notes;
+- `-` and `=`: the previous and next day in Calendar, or the previous and
+  next day's note in Notes;
 - `d`: add a task linked to the selected conversation in Mail, or a blank,
   standalone task in the Tasks view;
-- `t`: toggle Calendar;
+- `t`: go to today in Calendar and Notes, otherwise toggle Calendar;
 - `Shift+A`: show the conversation's suggestions in the context panel,
   fetching them if missing (`a` remains Reply All);
 - `i`: summarize the conversation into the context panel's brief;

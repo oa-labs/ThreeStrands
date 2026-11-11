@@ -110,3 +110,23 @@ it("opens an existing occurrence note from Today instead of showing the add dial
   expect(screen.queryByRole("dialog", { name: "Add Note" })).not.toBeInTheDocument();
   expect(add).not.toHaveBeenCalled();
 });
+
+it("adds a meeting from a daily note's agenda in Notes, and the open note shows it", async () => {
+  localStorage.clear();
+  clearScheduleCache();
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  const meeting = { id: "notes-rail-meeting", accountId: "calendar@example.com", calendarId: "primary", title: "Rail sync", allDay: false,
+    start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString() };
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" }]);
+  vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([{ id: "primary", accountId: "calendar@example.com", name: "Work", primary: true, selected: true, writable: true }]);
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [meeting], errors: [] });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Notes (4)" }));
+  const agenda = within(await screen.findByRole("region", { name: "Agenda" }));
+  fireEvent.click(await agenda.findByRole("button", { name: "Add Note for Rail sync" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Add Note" }));
+  fireEvent.click(dialog.getByRole("button", { name: "Add to Daily Note" }));
+  expect(await screen.findByText("Added to today's note")).toBeInTheDocument();
+  await waitFor(() => expect((screen.getByRole("textbox", { name: "Note text" }) as HTMLTextAreaElement).value).toMatch(/^## Meetings\n\n- \[.+\) for Rail sync\n$/));
+});

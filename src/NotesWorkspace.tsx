@@ -4,8 +4,8 @@ import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./not
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowLeft, CalendarDays, CircleCheck, FilePlus, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
-import type { ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSearchScope, NoteSummary } from "./domain";
+import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, CircleCheck, FilePlus, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
+import type { CalendarOption, ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSearchScope, NoteSummary, ScheduleEvent } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { formatHistoryDate } from "./contactContext";
@@ -34,6 +34,10 @@ import { replicatedSyncConflicts, replicatedSyncDeviceRoster, type DeviceRosterE
 import type { NotesRequest } from "./useWorkspaces";
 import { formatShortcut } from "./shortcutLabels";
 import { scrollBehavior } from "./useReaderActions";
+import { NotesDayCalendar } from "./NotesDayCalendar";
+import { CalendarAgenda } from "./CalendarAgenda";
+import { parseCalendarDate } from "./DatePickerField";
+import { addDays, dateInputValue } from "./calendarTime";
 
 /** Most notes the Recent list shows. */
 const RECENT_LIMIT = 200;
@@ -81,9 +85,11 @@ export function relinkMessage({ updated, keptOldLink }: NoteRelink): string | nu
  * context on the right. The list is read mode, where Space and Shift+Space
  * page the open note; the note is a writing surface entered with Enter or a
  * click and left with Escape. Trash sits at
- * the bottom of the list, and a trashed note opens read-only.
+ * the bottom of the list, and a trashed note opens read-only. The rail's
+ * calendar opens any day's note, and a daily note lists that day's agenda,
+ * where Add Note writes a meeting into it.
  */
-export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact, onOpenEntity, onReturn }: {
+export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact, onOpenEntity, onReturn, calendars, onOpenEvent, onAddNote }: {
   request?: NotesRequest | null;
   onOpenEntity?(href: string): Promise<void>;
   onReturn?(): void;
@@ -92,6 +98,11 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   refreshKey?: string;
   /** Opens a saved contact in Contacts, for the People section. */
   onOpenContact?(id: string): void;
+  /** The user's calendars; a daily note lists its day's agenda when there are any. */
+  calendars?: CalendarOption[];
+  onOpenEvent?(event: ScheduleEvent): void;
+  /** Add Note on an agenda event: records the meeting in its day's note. */
+  onAddNote?(event: ScheduleEvent): void;
 }) {
   const [target, setTarget] = useState<NoteTarget>(() => readLastNoteTarget() ?? todayTarget());
   const [initialSearch] = useState(readNotesSearchState);
@@ -331,6 +342,14 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     showSaved(created);
     select({ kind: "note", id: created.id });
   });
+  /** Opens `date`'s note, from the calendar or the day arrows, in the Notes list. */
+  const [dayChosen, setDayChosen] = useState(0);
+  const selectDay = (date: string) => { setListView("notes"); select({ kind: "daily", date }); setDayChosen((count) => count + 1); };
+  /** Opens the note `days` days from the open daily note's; nothing while a regular note is open. */
+  const shiftDay = (days: number) => {
+    const day = target.kind === "daily" ? parseCalendarDate(target.date) : null;
+    if (day) selectDay(dateInputValue(addDays(day, days)));
+  };
   const searchLinks = useCallback(async (query: string): Promise<NoteLinkSuggestion[]> => {
     const found = await mailClient.suggestNoteTitles(query, LINK_SUGGESTIONS);
     return found.filter((note) => note.id !== openNoteId.current).map((note) => ({ title: note.title }));
@@ -387,6 +406,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     "notes.pageDown": () => pageNote(1),
     "notes.pageUp": () => pageNote(-1),
     "notes.write": () => { if (!readOnly) setFocusEditor(true); },
+    "notes.previousDay": () => shiftDay(-1),
+    "notes.nextDay": () => shiftDay(1),
+    "notes.goToday": () => selectDay(todayTarget().date),
   });
 
   const entityItemsCurrent = entityDocument?.noteId === noteId && entityDocument?.version === editor.note?.updatedAt;
@@ -507,7 +529,11 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             </div> : null}
             {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
             <div className="notes-editor-heading">
-              {daily ? <h2 className="notes-editor-title">{editorTitle}</h2>
+              {daily ? <div className="notes-day-title">
+                <h2 className="notes-editor-title">{editorTitle}</h2>
+                <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Day" title={`Previous Day (${formatShortcut("-")})`} aria-keyshortcuts="-" onClick={() => shiftDay(-1)}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" /></button>
+                <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Day" title={`Next Day (${formatShortcut("=")})`} aria-keyshortcuts="=" onClick={() => shiftDay(1)}><ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button>
+              </div>
                 : <input ref={titleInput} className="notes-editor-title" aria-label="Title" value={editor.text.title} readOnly={readOnly} maxLength={200}
                   {...SEARCH_INPUT_ATTRIBUTES}
                   onChange={(event) => editor.edit({ title: event.target.value })}
@@ -529,6 +555,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
           </>}
       </div>
       <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow}>
+        <NotesDayCalendar selected={daily ? target.date : null} today={today.date} onSelect={selectDay} revision={searchRevision} reveal={dayChosen} />
+        {daily && calendars?.length && onOpenEvent ? <CalendarAgenda key={target.date} today={parseCalendarDate(target.date) ?? new Date()} day="chosen" id="notes-agenda" showDate={false}
+          calendars={calendars} onOpenEvent={onOpenEvent} onAddNote={onAddNote} /> : null}
         <ContextSectionHeader title="Note details" icon={<NotebookText size={ICON_SIZE.xs} />} />
         {entityDocument?.warning ? <p role="alert" className="form-error">{entityDocument.warning}</p> : null}
         {!entityLinks.length && !readOnly ? <section className="note-links-empty" aria-label="Links">

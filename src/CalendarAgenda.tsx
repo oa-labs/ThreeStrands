@@ -22,14 +22,28 @@ type AgendaProps = {
    * dimmed and a Now divider sits before the rest.
    */
   now?: Date;
-  /** Lists the day as Tomorrow, showing its first few events before "Show more". */
-  tomorrow?: boolean;
+  /**
+   * Which day the agenda names: today, tomorrow (showing its first few events
+   * before "Show more"), or a day the page has chosen, such as a daily note's.
+   */
+  day?: AgendaDay;
+  /** The section's id, for its remembered collapse; defaults by `day`. */
+  id?: string;
   /** Names the day under the heading; left out where the page already says which day it is. */
   showDate?: boolean;
   /** Says which meetings overlap another, and which of those are recorded. */
   markConflicts?: boolean;
   /** Offers Add Note on each event that a note can link. */
   onAddNote?(event: ScheduleEvent): void;
+};
+
+type AgendaDay = "today" | "tomorrow" | "chosen";
+
+/** How the section and its states name each kind of day. */
+const AGENDA_TEXT: Record<AgendaDay, { id: string; title: string; loading: string; empty: string }> = {
+  today: { id: "calendar-agenda", title: "Today's agenda", loading: "Loading today's agenda…", empty: "No events today." },
+  tomorrow: { id: "calendar-agenda-tomorrow", title: "Tomorrow", loading: "Loading tomorrow's agenda…", empty: "No events tomorrow." },
+  chosen: { id: "calendar-agenda-day", title: "Agenda", loading: "Loading this day's agenda…", empty: "No events on this day." },
 };
 
 /** Events Tomorrow shows before "Show more". */
@@ -50,7 +64,7 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ today, calendars, onOpenEvent, onAddNote, now, tomorrow = false, showDate = true, markConflicts = false, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ today, calendars, onOpenEvent, onAddNote, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
   const colors = useCalendarColors();
   const selected = calendars.filter((calendar) => calendar.selected);
   const agenda = agendaEventsFor(events, today, calendars);
@@ -82,18 +96,18 @@ function Agenda({ today, calendars, onOpenEvent, onAddNote, now, tomorrow = fals
     />);
   });
   if (now && pastCount > 0 && pastCount === agenda.length) rows.push(<NowDivider key="now" now={now} />);
-  const name = tomorrow ? "Tomorrow" : "Today's agenda";
+  const text = AGENDA_TEXT[day];
   return <ContextSection
-    id={tomorrow ? "calendar-agenda-tomorrow" : "calendar-agenda"}
-    title={name}
+    id={id ?? text.id}
+    title={text.title}
     note={showDate ? today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : undefined}
     count={agenda.length}
     rows={rows}
-    limit={tomorrow ? TOMORROW_AGENDA_ROWS : rows.length}
+    limit={day === "tomorrow" ? TOMORROW_AGENDA_ROWS : rows.length}
     footer={<>
-      {loading ? <p className="context-status" role="status">Loading {tomorrow ? "tomorrow's" : "today's"} agenda…</p> : null}
-      {error ? <p className="context-status">{name} couldn't be fully loaded. <button type="button" className="btn-link" onClick={reload}>Try Again</button></p> : null}
-      {!loading && !error && agenda.length === 0 ? <p className="context-status">{selected.length ? `No events ${tomorrow ? "tomorrow" : "today"}.` : "Select a calendar to see today's agenda."}</p> : null}
+      {loading ? <p className="context-status" role="status">{text.loading}</p> : null}
+      {error ? <p className="context-status">{text.title} couldn't be fully loaded. <button type="button" className="btn-link" onClick={reload}>Try Again</button></p> : null}
+      {!loading && !error && agenda.length === 0 ? <p className="context-status">{selected.length ? text.empty : `Select a calendar to see ${day === "chosen" ? "this day's" : "today's"} agenda.`}</p> : null}
     </>}
   />;
 }

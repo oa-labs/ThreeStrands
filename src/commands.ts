@@ -226,6 +226,9 @@ export const commands: Command[] = [
   { ...workspaceCommand("notes.pageDown", "Scroll Note Down", ["Space"], "notes"), group: "Navigation", repeatable: true },
   { ...workspaceCommand("notes.pageUp", "Scroll Note Up", ["Shift+Space"], "notes"), group: "Navigation", repeatable: true },
   { ...workspaceCommand("notes.write", "Edit Note", ["Enter"], "notes"), group: "Navigation" },
+  // The same keys page Calendar's days.
+  { ...workspaceCommand("notes.previousDay", "Previous Day's Note", ["-"], "notes"), group: "Navigation", repeatable: true },
+  { ...workspaceCommand("notes.nextDay", "Next Day's Note", ["="], "notes"), group: "Navigation", repeatable: true },
   workspaceCommand("files.open", "Open Selected File", ["o"], "files"),
   workspaceCommand("files.save", "Save Selected File As…", ["Mod+Shift+s"], "files"),
   workspaceCommand("files.star", "Toggle File Star", ["s"], "files"),
@@ -627,11 +630,13 @@ export const commands: Command[] = [
   },
   {
     id: "calendar.today",
-    title: "Today in Calendar / Toggle Schedule",
+    title: "Today in Calendar or Notes / Toggle Schedule",
     keys: ["t"],
     group: "Application",
     enabled: (context) => !context.composerActive,
-    run: (context) => complete(() => context.focusedPane === "calendar" ? runWorkspaceCommand("calendar.goToday") : context.toggleSchedule()),
+    run: (context) => complete(() => context.focusedPane === "calendar" ? runWorkspaceCommand("calendar.goToday")
+      : context.focusedPane === "notes" ? runWorkspaceCommand("notes.goToday")
+      : context.toggleSchedule()),
   },
   {
     id: "view.today",

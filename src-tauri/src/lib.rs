@@ -1767,6 +1767,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         // Notes
         commands::notes::list_recent_notes,
         commands::notes::list_trashed_notes,
+        commands::notes::list_daily_note_dates,
         commands::notes::get_note,
         commands::notes::get_daily_note,
         commands::notes::create_note,

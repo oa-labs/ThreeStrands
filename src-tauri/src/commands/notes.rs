@@ -31,6 +31,16 @@ pub(crate) async fn list_trashed_notes(
 }
 
 #[tauri::command]
+pub(crate) async fn list_daily_note_dates(
+    from: String,
+    to: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<String>> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_daily_note_dates(&from, &to)).await
+}
+
+#[tauri::command]
 pub(crate) async fn get_note(id: String, state: State<'_, AppState>) -> AppResult<Option<Note>> {
     let database = state.database.clone();
     run_database_task(move || database.get_note(&id)).await
