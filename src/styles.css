@@ -3619,10 +3619,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .workspace-context-container.collapsed { width: 36px; border-left: 1px solid var(--border); background: var(--surface); }
 .workspace-context-rail.context-panel { grid-column: auto; grid-row: auto; width: 100%; padding-top: var(--space-3); }
 .workspace-context-toggle { position: absolute; top: var(--space-2); right: var(--space-2); z-index: var(--z-local-front); }
+/* A wide window hides the panel by dragging its divider (or with \), so only the hidden panel's strip holds a button. */
+.workspace-context-close { display: none; }
+/* The divider sits on the panel's left edge, between it and the view, and stays on the strip once hidden so a drag shows it again. */
+.workspace-context-container > .panel-resizer { right: auto; left: -4px; }
 .workspace-context-rail > .context-section-header:first-child { margin-bottom: var(--space-4); }
-/* The rail's first heading, direct or inside its first section, clears the absolutely placed collapse toggle. */
-.workspace-context-rail > .context-section-header:first-child,
-.workspace-context-rail > :first-child > .context-section-header:first-child { padding-right: var(--space-8); }
 .workspace-context-rail .task-detail-form { padding: 0 0 var(--space-4); }
 .workspace-context-rail .task-detail-row { grid-template-columns: minmax(0, 1fr); }
 .workspace-context-rail .task-detail-hints { flex-direction: column; align-items: flex-start; }
@@ -3871,11 +3872,15 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
   .workspace-context-container:not(.collapsed) { position: absolute; right: 0; top: 0; bottom: 0; z-index: var(--z-local-panel); width: min(var(--workspace-context-width, 340px), calc(100% - 36px)); box-shadow: var(--shadow-floating); }
   .workspace-context-container.collapsed { grid-column: 2; }
   .workspace-context-container .panel-resizer { display: none; }
+  .workspace-context-close { display: inline-flex; }
+  /* There, the rail's first heading, direct or inside its first section, clears the absolutely placed close button. */
+  .workspace-context-rail > .context-section-header:first-child,
+  .workspace-context-rail > :first-child > .context-section-header:first-child { padding-right: var(--space-8); }
   .workspace-calendar-navigation { display: block; }
   .workspace-goals-drawer, .workspace-calendar-navigation { right: var(--space-3); z-index: var(--z-local-popover); }
 }
 
-.workspace-context-container.collapsed .panel-resizer, .workspace-context-rail[hidden] { display: none; }
+.workspace-context-rail[hidden] { display: none; }
 
 .signature-preview-paper .message-frame { background: var(--signature-paper); }
 .signature-image-options summary { cursor: pointer; color: var(--secondary); font-size: var(--text-secondary); }

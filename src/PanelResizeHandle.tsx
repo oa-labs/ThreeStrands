@@ -91,6 +91,7 @@ export function PanelResizeHandle({
   controlsId,
   title,
   panelSide = "left",
+  collapse,
 }: {
   width: number;
   minWidth: number;
@@ -102,15 +103,34 @@ export function PanelResizeHandle({
   title: string;
   /** Which side of the handle the resizable panel sits on; drag and arrow-key direction follow it. */
   panelSide?: "left" | "right";
+  /**
+   * Lets the handle hide the panel: a drag narrower than `threshold` hides
+   * it, and a drag back out past `threshold` shows it, at its minimum width
+   * or more. Shrinking past the minimum with the keyboard hides it too. While
+   * hidden, the handle is for the pointer only; the panel's own button and
+   * shortcut show it from the keyboard.
+   */
+  collapse?: { collapsed: boolean; threshold: number; onChange(collapsed: boolean): void };
 }) {
   const drag = useRef<{ x: number; width: number; pointerId: number } | null>(null);
+  const collapsed = collapse?.collapsed ?? false;
+  /** Follows a drag to `next`: hides or shows the panel across the threshold, else resizes it. */
+  const dragTo = (next: number) => {
+    if (collapse && next < collapse.threshold) {
+      if (!collapsed) collapse.onChange(true);
+      return;
+    }
+    if (collapsed) collapse?.onChange(false);
+    resize(next);
+  };
   const [dragging, setDragging] = useState(false);
   const direction = panelSide === "left" ? 1 : -1;
   return (
     <div
       className={`panel-resizer${dragging ? " dragging" : ""}`}
       role="separator"
-      tabIndex={0}
+      tabIndex={collapsed ? -1 : 0}
+      aria-hidden={collapsed || undefined}
       aria-label={label}
       aria-orientation="vertical"
       aria-controls={controlsId}
@@ -124,12 +144,13 @@ export function PanelResizeHandle({
         event.preventDefault();
         event.currentTarget.focus();
         event.currentTarget.setPointerCapture(event.pointerId);
-        drag.current = { x: event.clientX, width, pointerId: event.pointerId };
+        // A hidden panel starts the drag from no width, so it shows once dragged past the threshold.
+        drag.current = { x: event.clientX, width: collapsed ? 0 : width, pointerId: event.pointerId };
         setDragging(true);
       }}
       onPointerMove={(event) => {
         if (drag.current?.pointerId === event.pointerId) {
-          resize(drag.current.width + direction * (event.clientX - drag.current.x));
+          dragTo(drag.current.width + direction * (event.clientX - drag.current.x));
         }
       }}
       onPointerUp={(event) => {
@@ -143,8 +164,9 @@ export function PanelResizeHandle({
         drag.current = null;
         setDragging(false);
       }}
-      onDoubleClick={() => resize(defaultWidth)}
+      onDoubleClick={() => { if (!collapsed) resize(defaultWidth); }}
       onKeyDown={(event) => {
+        if (collapsed) return;
         const target = event.key === "Home" ? minWidth
           : event.key === "End" ? maxWidth : null;
         if (target !== null) {
@@ -159,7 +181,9 @@ export function PanelResizeHandle({
         if (delta !== null) {
           event.preventDefault();
           event.stopPropagation();
-          resize(width + direction * delta);
+          const next = width + direction * delta;
+          if (collapse && next < minWidth && width <= minWidth) collapse.onChange(true);
+          else resize(next);
         }
       }}
     />
