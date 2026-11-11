@@ -178,6 +178,22 @@ describe("AvailabilitySettings profiles", () => {
     expect(latest.profiles).toEqual(withChurch);
   });
 
+  it("associates meeting types with profiles and keeps them attached when the default changes", () => {
+    const latest = renderWithProfiles();
+    fireEvent.change(screen.getByRole("combobox", { name: "Lunch Hours" }), { target: { value: "church" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Dinner Hours" }), { target: { value: "default" } });
+    expect(latest.profiles.meetingTypeProfiles).toEqual({ lunch: "church", dinner: "default" });
+    fireEvent.click(screen.getByRole("button", { name: "Church" }));
+    fireEvent.click(screen.getByRole("button", { name: "Make Default" }));
+    expect(latest.profiles.meetingTypeProfiles).toEqual({ lunch: "church", dinner: "default" });
+    fireEvent.click(screen.getByRole("button", { name: "Work" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Profile" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Delete Work confirmation" })).getByRole("button", { name: "Delete Profile" }));
+    expect(latest.profiles.meetingTypeProfiles).toEqual({ lunch: "church" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Lunch Hours" }), { target: { value: "" } });
+    expect(latest.profiles.meetingTypeProfiles).toEqual({});
+  });
+
   it("renames a profile, refusing a name another profile has", () => {
     const latest = renderWithProfiles();
     fireEvent.click(screen.getByRole("button", { name: "Church" }));

@@ -190,6 +190,10 @@ export type AvailabilityPreferences = {
   driveTimeBufferMinutes: number;
 };
 
+/** Meeting purposes that can select explicitly configured hours. */
+export const MEETING_TYPES = ["breakfast", "lunch", "dinner", "coffee"] as const;
+export type MeetingType = typeof MEETING_TYPES[number];
+
 /** A named set of hours, such as Work or Church, that shares the timezone and slot increment. */
 export type AvailabilityProfile = {
   id: string;
@@ -209,6 +213,8 @@ export type AvailabilityProfiles = {
   otherProfiles: AvailabilityProfile[];
   /** Profile id by lowercased mail account email; absent means the default profile. */
   accountDefaults: Record<string, string>;
+  /** Profile used for each recognized meeting type; omitted by older exports. */
+  meetingTypeProfiles?: Partial<Record<MeetingType, string>>;
 };
 
 export type MeetingAvailabilityRequest = {
@@ -892,6 +898,7 @@ export type CheckedProposedTime = {
 };
 
 export type TimeSearch = {
+  meetingType?: MeetingType | null;
   proposedTimes?: ProposedTime[];
   rangeStart: string;
   rangeEnd: string;

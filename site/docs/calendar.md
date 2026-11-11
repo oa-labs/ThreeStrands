@@ -61,7 +61,11 @@ If you meet at different times for different parts of your life, such as work ho
 2. Name it, then set its working hours, **Default Duration**, and **Drive Time Buffer**.
 3. Under **Account Defaults**, choose the profile each mail account uses.
 
-Find Times, checks of times someone offered, and **Find a time** in the event editor then use the profile of the account the email or event belongs to. To use other hours for one conversation or message, choose a profile under **Usual Hours** in Find Times; the choice lasts until you quit ThreeStrands. Accounts without a profile of their own use the default one; **Make Default** changes which one that is. Timezone and **Slot Increment** are shared by every profile, and every calendar used for availability still counts as busy, whichever profile is in use.
+Find Times, checks of times someone offered, and **Find a time** in the event editor then use the profile of the account the email or event belongs to. To use other hours for one conversation or message, choose a profile under **Hours** in Find Times; the choice lasts until you quit ThreeStrands. Accounts without a profile of their own use the default one; **Make Default** changes which one that is. Timezone and **Slot Increment** are shared by every profile, and every calendar used for availability still counts as busy, whichever profile is in use.
+
+For invitations to lunch, breakfast, dinner, or coffee, associate a profile under **Meeting Types** in **Settings → Availability**. For example, keep lunch out of your normal meeting hours and create a Lunch profile containing only the times you want to offer for lunch. When Find Times with AI recognizes a lunch invitation, it uses that profile’s hours and shows **Hours: Lunch** above the time controls. Calendar conflicts and buffers still apply.
+
+If a recognized meeting type has no associated profile, choose hours on the card before searching. You can change the hours for that conversation or draft; **Use Automatic Hours** returns to automatic selection. If the selected hours have no openings, ThreeStrands shows no times rather than offering a different part of your day.
 
 <ts-shot scene="find-times" alt="Find Times shows open calendar slots beside the conversation, with selected times ready for a reply."></ts-shot>
 

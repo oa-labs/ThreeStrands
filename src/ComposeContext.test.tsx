@@ -375,10 +375,11 @@ describe("Find Times with AI", () => {
     expect(await within(section()).findByRole("button", { name: "Insert 1 Time" })).toBeInTheDocument();
   });
 
-  it("adjusts the search on screen, including chip changes, from the user's words", async () => {
+  it("adjusts the search on screen, preserving its meeting type and chip changes, from the user's words", async () => {
+    const lunchSearch = { ...search, meetingType: "lunch" as const };
     vi.mocked(mailClient.findTimes)
-      .mockResolvedValueOnce(search)
-      .mockResolvedValueOnce({ ...search, weekdays: [4], reason: "Thursday afternoon, as you asked." })
+      .mockResolvedValueOnce(lunchSearch)
+      .mockResolvedValueOnce({ ...lunchSearch, weekdays: [4], reason: "Thursday afternoon, as you asked." })
       .mockRejectedValueOnce(new Error("AI provider timed out."));
     renderPanel({ calendarConnected: true, findTimesAi: true, draft: reply });
     fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
@@ -399,7 +400,7 @@ describe("Find Times with AI", () => {
       instruction: "only Thursday",
       current: {
         rangeStart: new Date(search.rangeStart).toISOString(), rangeEnd: new Date(search.rangeEnd).toISOString(), durationMinutes: 30,
-        weekdays: [4, 5], dayStart: null, dayEnd: "12:00", reason: search.reason,
+        weekdays: [4, 5], dayStart: null, dayEnd: "12:00", reason: search.reason, meetingType: "lunch",
       },
       userTimeZone: "UTC",
     });

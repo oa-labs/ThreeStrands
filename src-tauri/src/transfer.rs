@@ -100,6 +100,8 @@ pub struct AvailabilityProfiles {
     /// Profile id by lowercased mail account email; absent means the default profile.
     #[serde(default)]
     pub account_defaults: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub meeting_type_profiles: BTreeMap<String, String>,
 }
 
 impl Default for AvailabilityProfiles {
@@ -111,6 +113,7 @@ impl Default for AvailabilityProfiles {
             },
             other_profiles: Vec::new(),
             account_defaults: BTreeMap::new(),
+            meeting_type_profiles: BTreeMap::new(),
         }
     }
 }
@@ -397,6 +400,13 @@ fn validate_availability_profiles(
             drive_time_buffer_minutes: profile.drive_time_buffer_minutes,
         })
         .map_err(|_| invalid())?;
+    }
+    for (meeting_type, id) in &profiles.meeting_type_profiles {
+        if !crate::ai::find_times::MEETING_TYPES.contains(&meeting_type.as_str())
+            || !ids.contains(id.as_str())
+        {
+            return Err(invalid());
+        }
     }
     for (account, id) in &profiles.account_defaults {
         validate_required_text(
@@ -2661,6 +2671,7 @@ mod tests {
                         default_duration_minutes: 60,
                         drive_time_buffer_minutes: 15,
                     }],
+                    meeting_type_profiles: BTreeMap::new(),
                     account_defaults: BTreeMap::from([(
                         "other@example.net".to_string(),
                         "church".to_string(),
@@ -3408,6 +3419,40 @@ mod tests {
             serialized["availabilityProfiles"]["defaultProfile"]["name"],
             "Work"
         );
+    }
+
+    #[test]
+    fn meeting_type_profiles_round_trip_and_preceding_profiles_still_import() {
+        let mut payload = current_fixture_payload();
+        let prior = serde_json::to_value(&payload.preferences).unwrap();
+        assert!(prior["availabilityProfiles"]
+            .get("meetingTypeProfiles")
+            .is_none());
+        let imported: TransferPreferences = serde_json::from_value(prior).unwrap();
+        imported.validate().unwrap();
+        assert!(imported
+            .availability_profiles
+            .meeting_type_profiles
+            .is_empty());
+
+        payload
+            .preferences
+            .availability_profiles
+            .meeting_type_profiles = BTreeMap::from([("lunch".into(), "church".into())]);
+        payload.preferences.validate().unwrap();
+        let serialized = serde_json::to_value(&payload.preferences).unwrap();
+        let restored: TransferPreferences = serde_json::from_value(serialized).unwrap();
+        assert_eq!(
+            restored.availability_profiles.meeting_type_profiles["lunch"],
+            "church"
+        );
+        for (kind, id) in [("unknown", "church"), ("lunch", "missing")] {
+            payload
+                .preferences
+                .availability_profiles
+                .meeting_type_profiles = BTreeMap::from([(kind.into(), id.into())]);
+            assert!(payload.preferences.validate().is_err());
+        }
     }
 
     #[test]

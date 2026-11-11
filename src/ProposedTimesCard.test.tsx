@@ -45,14 +45,14 @@ describe("proposed times", () => {
     const evenings = { ...preferences, workingWindows:[{weekday:6,start:"18:00",end:"22:00"}] };
     const view = render(<AvailabilityProfileChoiceContext.Provider value={choice("work")}><ProposedTimesCard {...props()} /></AvailabilityProfileChoiceContext.Provider>);
     await waitFor(() => expect(check).toHaveBeenCalledOnce());
-    const profile = await screen.findByRole("combobox",{name:"Usual Hours"});
+    const profile = await screen.findByRole("combobox",{name:"Hours"});
     expect(profile).toHaveAccessibleDescription();
     fireEvent.change(profile,{target:{value:"church"}});
     expect(onSelect).toHaveBeenCalledWith("church");
 
     view.rerender(<AvailabilityProfileChoiceContext.Provider value={choice("church")}><ProposedTimesCard {...props()} preferences={evenings} /></AvailabilityProfileChoiceContext.Provider>);
     await waitFor(() => expect(check).toHaveBeenLastCalledWith(expect.objectContaining({ preferences: evenings })));
-    expect(screen.getByRole("combobox",{name:"Usual Hours"})).toHaveValue("church");
+    expect(screen.getByRole("combobox",{name:"Hours"})).toHaveValue("church");
   });
 
   it("keeps an actionable warning for invalid offered-time metadata and reads the enabled Brief again", async () => {

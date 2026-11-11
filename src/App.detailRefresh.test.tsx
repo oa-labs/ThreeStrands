@@ -171,6 +171,46 @@ it("finds times in a conversation's context panel with its account's availabilit
   }
 });
 
+it("selects the associated lunch hours after Find Times reads the conversation", async () => {
+  clearScheduleCache();
+  const lunchHours = [{ weekday: 2, start: "12:00", end: "13:30" }];
+  saveAvailabilityProfiles({ defaultProfile: { id: "default", name: "Meetings" },
+    otherProfiles: [{ id: "lunch", name: "Lunch", workingWindows: lunchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+    accountDefaults: {}, meetingTypeProfiles: { lunch: "lunch" },
+  });
+  saveAiProvider("openai");
+  saveAiFeatures({ ...DEFAULT_AI_FEATURES, proactiveBriefs: false, draftAssist: true });
+  await setAiApiKey("test-key");
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+    { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+  ]);
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+  vi.spyOn(mailClient, "findTimes").mockResolvedValue({
+    meetingType: "lunch", rangeStart: new Date(Date.now() + 3600000).toISOString(), rangeEnd: new Date(Date.now() + 86400000 * 7).toISOString(),
+    durationMinutes: null, weekdays: [], dayStart: null, dayEnd: null, reason: "Your draft asks Jimmy to grab lunch.",
+  });
+  const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+  try {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    await screen.findByRole("dialog", { name: "Reply Message" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    const availability = await within(panel).findByRole("region", { name: "Availability" });
+    fireEvent.click(within(availability).getByRole("button", { name: "Find Times" }));
+    await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({
+      preferences: expect.objectContaining({ workingWindows: lunchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }),
+    })));
+    expect(within(availability).getByRole("combobox", { name: "Hours" })).toHaveValue("lunch");
+  } finally {
+    localStorage.removeItem("threestrands.demoCorrespondence");
+    localStorage.removeItem("threestrands.settings.availabilityProfiles");
+    saveAiProvider("none");
+    saveAiFeatures(DEFAULT_AI_FEATURES);
+    await clearAiApiKey();
+  }
+});
+
 it("searches a conversation with the profile chosen in its context panel", async () => {
   clearScheduleCache();
   const churchHours = [{ weekday: 2, start: "18:30", end: "21:00" }];
@@ -196,14 +236,14 @@ it("searches a conversation with the profile chosen in its context panel", async
     const availability = await within(panel).findByRole("region", { name: "Availability" });
     fireEvent.click(within(availability).getByRole("button", { name: "Find Times" }));
 
-    const profile = await within(availability).findByRole("combobox", { name: "Usual Hours" });
+    const profile = await within(availability).findByRole("combobox", { name: "Hours" });
     expect(profile).toHaveValue("default");
     fireEvent.change(profile, { target: { value: "church" } });
 
     await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({
       preferences: expect.objectContaining({ workingWindows: churchHours, defaultDurationMinutes: 60 }),
     })));
-    expect(await within(availability).findByRole("combobox", { name: "Usual Hours" })).toHaveValue("church");
+    expect(await within(availability).findByRole("combobox", { name: "Hours" })).toHaveValue("church");
   } finally {
     localStorage.removeItem("threestrands.demoCorrespondence");
     localStorage.removeItem("threestrands.settings.availabilityProfiles");
@@ -559,7 +599,7 @@ describe("conversation brief", () => {
 
       const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       fireEvent.click(within(schedule).getByRole("button", { name: "Find Other Times" }));
-      expect(await within(schedule).findByText("No open times in your working hours for this range.")).toBeInTheDocument();
+      expect(await within(schedule).findByText("No open times within the selected hours for this range.")).toBeInTheDocument();
       expect(find).toHaveBeenCalledTimes(1);
       expect(within(schedule).queryByRole("button", { name: "More Times" })).not.toBeInTheDocument();
       expect(screen.queryByRole("complementary", { name: "Schedule" })).not.toBeInTheDocument();

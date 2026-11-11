@@ -1,5 +1,5 @@
 import { EMAIL_ZOOM, parseEmailZoom, parseEmailMinimumFontSize, parseEmailTextColors, type EmailTextColors } from "./emailRenderingPolicy";
-import type { AvailabilityProfile, AvailabilityProfiles } from "./domain";
+import { MEETING_TYPES, type MeetingType, type AvailabilityProfile, type AvailabilityProfiles } from "./domain";
 
 const SHOW_STARRED_INBOX_KEY = "threestrands.settings.showStarredInbox";
 export function readShowStarredInbox(): boolean {
@@ -248,6 +248,9 @@ function validAvailabilityProfiles(value: unknown): value is AvailabilityProfile
     defaultDurationMinutes: profile.defaultDurationMinutes,
     driveTimeBufferMinutes: profile.driveTimeBufferMinutes,
   }))) return false;
+  const associations = candidate.meetingTypeProfiles;
+  if (associations !== undefined && (typeof associations !== "object" || associations === null || Array.isArray(associations)
+    || !Object.entries(associations).every(([type, id]) => MEETING_TYPES.includes(type as MeetingType) && named.some((profile) => profile.id === id)))) return false;
   const accountDefaults = candidate.accountDefaults;
   if (typeof accountDefaults !== "object" || accountDefaults === null || Array.isArray(accountDefaults)) return false;
   const entries = Object.entries(accountDefaults);
@@ -259,6 +262,7 @@ function validAvailabilityProfiles(value: unknown): value is AvailabilityProfile
 function normalizeAvailabilityProfiles(value: AvailabilityProfiles): AvailabilityProfiles {
   const ids = new Set(value.otherProfiles.map((profile) => profile.id));
   return {
+    ...(value.meetingTypeProfiles && Object.keys(value.meetingTypeProfiles).length ? { meetingTypeProfiles: { ...value.meetingTypeProfiles } } : {}),
     defaultProfile: { id: value.defaultProfile.id, name: value.defaultProfile.name },
     otherProfiles: value.otherProfiles.map((profile) => ({
       id: profile.id,
@@ -308,6 +312,17 @@ export function saveAvailabilityProfiles(value: AvailabilityProfiles): Availabil
 export function availabilityProfileId(profiles: AvailabilityProfiles, accountId?: string | null): string {
   const id = accountId ? profiles.accountDefaults[availabilityAccountKey(accountId)] : undefined;
   return id && profiles.otherProfiles.some((profile) => profile.id === id) ? id : profiles.defaultProfile.id;
+}
+
+/** A manual choice wins; a recognized type requires an explicit association. */
+export function meetingAvailabilityProfileId(
+  profiles: AvailabilityProfiles, accountId: string | null | undefined, chosenId: string | undefined, meetingType?: MeetingType | null,
+): string | null {
+  const exists = (id: string | undefined): id is string => Boolean(id && [profiles.defaultProfile, ...profiles.otherProfiles].some((profile) => profile.id === id));
+  if (exists(chosenId)) return chosenId;
+  if (!meetingType) return availabilityProfileId(profiles, accountId);
+  const associated = profiles.meetingTypeProfiles?.[meetingType];
+  return exists(associated) ? associated : null;
 }
 
 /**
