@@ -5,6 +5,7 @@ import { ProposedTimesCard } from "./ProposedTimesCard";
 import { AvailabilitySection } from "./RecipientSections";
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { AvailabilityProfileChoiceContext } from "./AvailabilityProfileChoice";
+import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { AvailabilityPreferences, CheckedProposedTime, ProposedTime } from "./domain";
 
@@ -18,7 +19,12 @@ const row = (index: number, status = "free"): CheckedProposedTime => ({
   check:{status:status as "free", conflicts:[], checkedCalendarCount:status === "unverified" ? 0 : 1, totalCalendarCount:2, uncheckedCalendars:status === "partiallyChecked" ? ["Personal"] : [], errors:[]},
 });
 const props = () => ({ times, preferences, calendarConnected:true, onReplyWithTimes:vi.fn(), onFindOtherTimes:vi.fn(), onOpenCalendarSettings:vi.fn() });
-beforeEach(() => { vi.useFakeTimers({toFake:["Date"]}); vi.setSystemTime(new Date("2026-10-28T12:00:00Z")); });
+beforeEach(() => {
+  clearScheduleCache();
+  vi.useFakeTimers({toFake:["Date"]});
+  vi.setSystemTime(new Date("2026-10-28T12:00:00Z"));
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+});
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("proposed times", () => {
@@ -180,6 +186,45 @@ describe("proposed times", () => {
     await screen.findByText("Conflict · Outside your usual hours");
     expect(screen.queryByText("Check the times you want to offer.")).not.toBeInTheDocument();
     expect(screen.getByRole("button",{name:"Draft Reply With Selected Times"})).toBeDisabled();
+    // A single resolvable time opens its day, including when it conflicts.
+    expect(await screen.findByText("This time")).toBeInTheDocument();
+  });
+
+  it("opens the day for one proposed time, keeps several collapsed, and flags a tight break", async () => {
+    const first = row(0);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [{
+        id: "standup", accountId: "you@example.com", title: "Standup", allDay: false,
+        start: new Date(Date.parse(first.start!) - 30 * 60_000).toISOString(),
+        end: first.start!,
+      }],
+      errors: [],
+    });
+    vi.spyOn(mailClient, "checkProposedTimes").mockResolvedValue([first, row(1)]);
+    render(<ProposedTimesCard {...props()} times={times.slice(0, 2)} />);
+    await screen.findAllByText(/Outside your usual hours/);
+    expect(screen.queryByText("This time")).not.toBeInTheDocument();
+    expect(await screen.findByText("Back-to-back")).toBeInTheDocument();
+    const toggles = screen.getAllByRole("button", { name: /^\d+\./ });
+    expect(toggles).toHaveLength(2);
+    expect(toggles[0]).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggles[0]);
+    expect(await screen.findByText("This time")).toBeInTheDocument();
+    expect(screen.getByText("Standup")).toBeInTheDocument();
+    expect(toggles[0]).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggles[1]);
+    expect(toggles[0]).toHaveAttribute("aria-expanded", "false");
+    expect(toggles[1]).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("does not offer a day preview for a time that could not be resolved", async () => {
+    vi.spyOn(mailClient, "checkProposedTimes").mockResolvedValue([{
+      start: null, end: null, issue: "Couldn’t tell the date or time; ask the sender in your reply", check: null, outsideWorkingHours: false,
+    }]);
+    render(<ProposedTimesCard {...props()} times={[{ sourceText: "sometime soon", localStart: null, durationMinutes: 60, timeZone: null }]} />);
+    await screen.findByText("Couldn’t tell the date or time; ask the sender in your reply");
+    expect(screen.queryByRole("button", { name: /sometime soon/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("This time")).not.toBeInTheDocument();
   });
 
   it("rechecks on timezone, calendar preference, and calendar availability changes", async () => {

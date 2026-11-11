@@ -1637,6 +1637,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-slot-day { display: flex; flex: 1; align-items: center; gap: var(--space-1-5); min-width: 0; padding: var(--space-1-5) var(--space-2); border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .meeting-slot-day:hover { background: var(--hover); }
 .meeting-slot-day > span:first-child { flex: 1; min-width: 0; }
+.meeting-slot-day-static { cursor: default; }
+.meeting-slot-day-static:hover { background: transparent; }
 .meeting-slot-warning { flex: none; padding: 0 var(--space-1-5); border-radius: var(--radius-pill); color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); font-size: var(--text-meta); white-space: nowrap; }
 .meeting-slot-chevron { flex: none; color: var(--muted); transition: transform var(--duration-fast) ease; }
 .meeting-slot-day[aria-expanded="true"] .meeting-slot-chevron { transform: rotate(180deg); }
@@ -3995,14 +3997,10 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .proposed-times-zone select,
 .proposed-times .availability-profile-select select { box-sizing: border-box; min-width: 0; max-width: 100%; height: var(--control-h-sm); padding-inline: var(--space-2); font: inherit; font-size: var(--text-control); }
 .proposed-times-list { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
-.proposed-time { display: grid; gap: var(--space-0-5); padding: var(--space-1-5) var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); }
-.proposed-time-checked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
-.proposed-time-option { display: flex; align-items: center; gap: var(--space-1-5); color: var(--text); cursor: pointer; }
-.proposed-time-option:has(input:disabled) { cursor: default; }
-.proposed-time-option input[type="checkbox"] { flex: none; width: var(--check-size); height: var(--check-size); margin: 0; accent-color: var(--accent); cursor: inherit; }
+.proposed-time { display: grid; gap: var(--space-0-5); min-width: 0; }
 .proposed-time-title { min-width: 0; overflow-wrap: anywhere; }
 .proposed-time-detail,
-.proposed-times-list details { padding-inline-start: calc(var(--check-size) + var(--space-1-5)); color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.proposed-times-list details { color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
 .proposed-times-list details p { margin-block: var(--space-1); }
 /* The one action that sends something gets its own row; the rest follow it. */
 .proposed-times-actions > .btn-primary { flex: 1 1 100%; }

@@ -1,12 +1,13 @@
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
-import { CalendarCheck, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
+import { CalendarCheck, CalendarPlus, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
 import { type ReactNode, useContext, useCallback, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { useStableValue } from "./useStableValue";
 import { availabilityKey, readAvailability, rememberAvailabilityView, sameAvailability, storeAvailability, type AvailabilityView } from "./availabilityCache";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, CoworkerCalendars, ProposedTimeCheck, ScheduleEvent } from "./domain";
 import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, type CalendarMatch, type EventIdentity } from "./eventMatching";
 import { mailClient } from "./data/client";
-import { breakWarning, cachedEventsInRange, eventsInRange, eventsOnDay, SlotDayPreview } from "./SlotDayPreview";
+import { breakWarning, cachedEventsInRange, eventsInRange, eventsOnDay } from "./SlotDayPreview";
+import { SlotDayToggle } from "./SlotDayToggle";
 import { AvailabilityProfileChoiceContext, AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
 import { errorMessage } from "./errors";
 import {
@@ -23,7 +24,7 @@ export type CalendarAddition = ScheduleSlot & { allDay?: boolean; timeUnspecifie
 type CheckState =
   | { phase: "idle" | "loading" }
   | { phase: "error"; message: string }
-  | { phase: "specific"; check: ProposedTimeCheck; conflictTitles: string[]; match: CalendarMatch | null }
+  | { phase: "specific"; check: ProposedTimeCheck; conflictTitles: string[]; match: CalendarMatch | null; dayEvents: ScheduleEvent[] }
   | { phase: "range"; candidates: AvailabilityCandidate[]; verified: boolean; unchecked: string[]; errors: string[] };
 
 /** Names the calendars a check could not read, once for the whole card, such as "Couldn't check Team, so these times may conflict with it." */
@@ -138,7 +139,8 @@ const sameMatchedEvent = (left: ScheduleEvent | null, right: ScheduleEvent | nul
  * exact time is checked for conflicts, a range yields open slots spread
  * across its days. A range can be adjusted in place — mornings, afternoons,
  * or earlier and later days — and shows more slots on request. Each offered
- * slot has a checkbox for whether to offer it, and opens its day below it. Every outcome goes
+ * slot has a checkbox for whether to offer it, and opens its day below it;
+ * a specific time opens its day by default. Every outcome goes
  * through a review step: the event dialog or a reply in the composer.
  * Given what the event is called, a time or day already on the calendar
  * under that name reads as added rather than as a conflict. Once added,
@@ -215,6 +217,9 @@ export function MeetingScheduler({
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   // The one offered time whose day is open below it.
   const [previewing, setPreviewing] = useState<string | null>(null);
+  // A specific time opens its day once; collapsing stays until the time changes.
+  const [specificOpen, setSpecificOpen] = useState(true);
+  const specificSlotSeen = useRef<string | null>(null);
   const previewId = useId();
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -261,14 +266,12 @@ export function MeetingScheduler({
       if (target.kind === "specific") {
         setState({ phase: "loading" });
         const check = await mailClient.checkProposedTime({ start: target.start, end: target.end, timeZone, driveTimeBufferMinutes: preferences.driveTimeBufferMinutes });
-        // An event added from this email may sit at another time that day, so
-        // its day is read even when the time itself is free.
-        const readDay = check.status === "conflicting" || Boolean(identity?.sourceMessageId);
-        const dayEvents = readDay ? await eventsOnDay(new Date(target.start)).catch(() => []) : [];
+        // The day feeds conflict names, match detection, break warnings, and the day preview.
+        const dayEvents = await eventsOnDay(new Date(target.start)).catch(() => []);
         const overlapping = check.status === "conflicting" ? dayEvents.filter((event) => overlaps(event, target)) : [];
         const match = identity ? findCalendarMatch(identity, target, dayEvents) : null;
         const conflictTitles = [...new Set(overlapping.filter((event) => !match || !sameEvent(event, match.event)).map((event) => event.title))];
-        if (isCurrent()) setState({ phase: "specific", check, conflictTitles, match });
+        if (isCurrent()) setState({ phase: "specific", check, conflictTitles, match, dayEvents });
       } else {
         const request = {
           rangeStart: target.start,
@@ -304,6 +307,14 @@ export function MeetingScheduler({
       rememberAvailabilityView(rangeKey.current, { selected: [...selected], previewing, visibleCount });
     }
   }, [state, selected, previewing, visibleCount]);
+
+  // A newly checked exact time opens its day; collapsing is kept for that same time.
+  const specificSlotKey = query?.kind === "specific" ? `${query.start}|${query.end}` : null;
+  useEffect(() => {
+    if (!specificSlotKey || specificSlotKey === specificSlotSeen.current) return;
+    specificSlotSeen.current = specificSlotKey;
+    setSpecificOpen(true);
+  }, [specificSlotKey]);
 
   // The range's meetings, read once, flag a time with little break beside it before its day is opened.
   const [rangeEvents, setRangeEvents] = useState<ScheduleEvent[] | null>(null);
@@ -443,21 +454,30 @@ export function MeetingScheduler({
       <button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button>
     </div> : null}
     {state.phase === "specific" && query.kind === "specific" ? <>
-      <p className="meeting-slot">{formatSlot(query, timeZone)}</p>
-      {state.match?.kind === "same" ? <>
-        <p className="meeting-slot-status meeting-slot-added"><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> {addedText(state.match, query, timeZone)}</p>
-        {state.conflictTitles.length ? <p className="meeting-slot-status meeting-slot-conflicting"><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> Also overlaps {state.conflictTitles.join(", ")}</p> : null}
-      </> : state.match?.kind === "maybe" ? <>
-        <p className="meeting-slot-status"><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> May already be on your calendar as {state.match.event.title}</p>
-        {state.conflictTitles.length ? <p className="meeting-slot-status meeting-slot-conflicting"><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> Also overlaps {state.conflictTitles.join(", ")}</p> : null}
-      </> : <p className={`meeting-slot-status meeting-slot-${state.check.status}`}>
-        {state.check.status === "free" ? <><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> You&rsquo;re free</> : null}
-        {state.check.status === "conflicting" ? <><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> {state.conflictTitles.length ? `Conflicts with ${state.conflictTitles.join(", ")}` : "Conflicts with another event"}</> : null}
-        {state.check.status === "partiallyChecked" ? <>Free on the calendars that could be checked</> : null}
-        {state.check.status === "unverified" ? <>No calendar could be checked</> : null}
-      </p>}
-      {state.check.status === "partiallyChecked" ? coverageNote(uncheckedNote(state.check.uncheckedCalendars, "this time")) : null}
-      {state.check.errors.length > 0 ? <details className="meeting-scheduler-note"><summary>Calendar check details</summary><ul>{state.check.errors.map((error, index) => <li key={index}>{error}</li>)}</ul></details> : null}
+      <SlotDayToggle
+        id={`${previewId}-specific`}
+        label={formatSlot(query, timeZone)}
+        slot={query}
+        timeZone={timeZone}
+        warning={breakWarning(state.dayEvents, query)}
+        open={specificOpen}
+        onToggle={() => setSpecificOpen((current) => !current)}
+      >
+        {state.match?.kind === "same" ? <>
+          <p className="meeting-slot-status meeting-slot-added"><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> {addedText(state.match, query, timeZone)}</p>
+          {state.conflictTitles.length ? <p className="meeting-slot-status meeting-slot-conflicting"><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> Also overlaps {state.conflictTitles.join(", ")}</p> : null}
+        </> : state.match?.kind === "maybe" ? <>
+          <p className="meeting-slot-status"><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> May already be on your calendar as {state.match.event.title}</p>
+          {state.conflictTitles.length ? <p className="meeting-slot-status meeting-slot-conflicting"><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> Also overlaps {state.conflictTitles.join(", ")}</p> : null}
+        </> : <p className={`meeting-slot-status meeting-slot-${state.check.status}`}>
+          {state.check.status === "free" ? <><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> You&rsquo;re free</> : null}
+          {state.check.status === "conflicting" ? <><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> {state.conflictTitles.length ? `Conflicts with ${state.conflictTitles.join(", ")}` : "Conflicts with another event"}</> : null}
+          {state.check.status === "partiallyChecked" ? <>Free on the calendars that could be checked</> : null}
+          {state.check.status === "unverified" ? <>No calendar could be checked</> : null}
+        </p>}
+        {state.check.status === "partiallyChecked" ? coverageNote(uncheckedNote(state.check.uncheckedCalendars, "this time")) : null}
+        {state.check.errors.length > 0 ? <details className="meeting-scheduler-note"><summary>Calendar check details</summary><ul>{state.check.errors.map((error, index) => <li key={index}>{error}</li>)}</ul></details> : null}
+      </SlotDayToggle>
       <div className="meeting-scheduler-actions">
         {state.match && onOpenCalendarEvent ? <button type="button" className={`btn btn-sm${matched ? " btn-primary" : ""}`} onClick={() => onOpenCalendarEvent(state.match!.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
         {/* Adding a second copy of an event already there takes a deliberate choice, so it waits in the ⋯ menu. */}
@@ -497,29 +517,25 @@ export function MeetingScheduler({
               const id = `${previewId}-${index}`;
               const warning = rangeEvents ? breakWarning(rangeEvents, candidate) : null;
               // Including a time and looking at its day are separate choices.
-              return <div key={key} className="meeting-slot-item">
-                <div className={`meeting-slot-row${checked ? " meeting-slot-row-checked" : ""}`}>
-                  <label className="meeting-slot-check">
-                    <input type="checkbox" aria-label={`Include ${label}`} checked={checked} onChange={() => setSelected((current) => {
-                      const next = new Set(current);
-                      if (checked) next.delete(key);
-                      else next.add(key);
-                      return next;
-                    })} />
-                  </label>
-                  <button
-                    type="button"
-                    className="meeting-slot-day"
-                    aria-expanded={open}
-                    aria-controls={open ? id : undefined}
-                    title="Show this day on your calendar"
-                    onClick={() => setPreviewing(open ? null : key)}
-                  ><span>{label}</span>
-                    {warning ? <span className="meeting-slot-warning">{warning}</span> : null}
-                    <ChevronDown className="meeting-slot-chevron" size={ICON_SIZE.sm} aria-hidden="true" /></button>
-                </div>
-                {open ? <SlotDayPreview id={id} slot={candidate} timeZone={timeZone} /> : null}
-              </div>;
+              return <SlotDayToggle
+                key={key}
+                id={id}
+                label={label}
+                slot={candidate}
+                timeZone={timeZone}
+                warning={warning}
+                open={open}
+                onToggle={() => setPreviewing(open ? null : key)}
+                checked={checked}
+                leading={<label className="meeting-slot-check">
+                  <input type="checkbox" aria-label={`Include ${label}`} checked={checked} onChange={() => setSelected((current) => {
+                    const next = new Set(current);
+                    if (checked) next.delete(key);
+                    else next.add(key);
+                    return next;
+                  })} />
+                </label>}
+              />;
             })}
         </div>
         {(() => {

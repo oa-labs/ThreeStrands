@@ -53,11 +53,14 @@ describe("MeetingScheduler", () => {
 
   it("confirms a free exact time and offers to add it, reply that it works, or find other times in place", async () => {
     const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [candidate(50)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     const handlers = renderScheduler(specific);
 
     expect(await screen.findByText("You’re free")).toBeInTheDocument();
     expect(check).toHaveBeenCalledWith({ start: specific.query!.start, end: specific.query!.end, timeZone: "America/New_York", driveTimeBufferMinutes: 0 });
+    // A single exact time opens its day so neighbors are visible without an extra click.
+    expect(await screen.findByText("This time")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add to Calendar" }));
     expect(handlers.onAddToCalendar).toHaveBeenCalledWith(specific.query);
     fireEvent.click(screen.getByRole("button", { name: "Reply “That Works”" }));
@@ -66,6 +69,28 @@ describe("MeetingScheduler", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find Other Times" }));
     expect(await screen.findByRole("group", { name: "Open times" })).toBeInTheDocument();
     expect(find).toHaveBeenCalledTimes(1);
+  });
+
+  it("flags a tight break on an exact time and keeps the day open when it conflicts", async () => {
+    pinClock();
+    const start = at(NOW, 26);
+    const end = at(start, 0.5);
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({
+      status: "conflicting", conflicts: [{ start, end }], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
+    });
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [
+        { id: "overlap", accountId: "you@example.com", title: "Design crit", allDay: false, start, end },
+        // Ten minutes after the slot ends — short enough to flag beside the conflict.
+        { id: "after", accountId: "you@example.com", title: "Interview", allDay: false, start: at(end, 10 / 60), end: at(end, 1) },
+      ],
+      errors: [],
+    });
+    renderScheduler({ query: { kind: "specific", start, end }, durationMinutes: 30, timeZoneAssumed: false });
+    expect(await screen.findByText("Conflicts with Design crit")).toBeInTheDocument();
+    expect(screen.getByText("Short break")).toBeInTheDocument();
+    expect(screen.getByText("This time")).toBeInTheDocument();
+    expect(screen.getByText("Interview")).toBeInTheDocument();
   });
 
   it.each([
@@ -212,6 +237,7 @@ describe("MeetingScheduler", () => {
     vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({
       status: "partiallyChecked", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 3, uncheckedCalendars: ["Team Shared", "work@example.com"], errors: [],
     });
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     renderScheduler(specific);
     expect(await screen.findByText("Free on the calendars that could be checked")).toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent("Couldn’t check Team Shared and work@example.com, so this time may conflict with them.");
@@ -231,6 +257,7 @@ describe("MeetingScheduler", () => {
     const check = vi.spyOn(mailClient, "checkProposedTime")
       .mockRejectedValueOnce(new Error("Google Calendar request failed (503)."))
       .mockResolvedValueOnce({ status: "partiallyChecked", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 2, uncheckedCalendars: [], errors: [] });
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     renderScheduler(specific);
     expect(await screen.findByRole("alert")).toHaveTextContent("Google Calendar request failed (503).");
     fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
@@ -509,6 +536,7 @@ describe("MeetingScheduler", () => {
 
     it("keeps the caller's actions out of its row while the event is not on the calendar", async () => {
       vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
       const onMatchChange = vi.fn();
       renderScheduler(announcedPlan, { identity, onMatchChange, matchedActions: <button type="button" className="btn btn-sm">Dismiss</button> });
       expect(await screen.findByText("You’re free")).toBeInTheDocument();
@@ -518,12 +546,13 @@ describe("MeetingScheduler", () => {
       expect(onMatchChange).not.toHaveBeenCalledWith(expect.objectContaining({ id: "added" }));
     });
 
-    it("does not read the day for a free time with no email to look for", async () => {
+    it("reads the day for a free time so the day preview and break warnings can show", async () => {
       vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
-      const list = vi.spyOn(mailClient, "listScheduleEvents");
+      const list = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
       renderScheduler(announcedPlan, { identity });
       expect(await screen.findByText("You’re free")).toBeInTheDocument();
-      expect(list).not.toHaveBeenCalled();
+      expect(list).toHaveBeenCalled();
+      expect(screen.getByText("This time")).toBeInTheDocument();
     });
 
     it("checks once when re-rendered with an equal identity", async () => {

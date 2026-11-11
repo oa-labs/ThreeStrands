@@ -1,10 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { AvailabilityCandidate, AvailabilityPreferences, CheckedProposedTime, ProposedTime } from "./domain";
+import type { AvailabilityCandidate, AvailabilityPreferences, CheckedProposedTime, ProposedTime, ScheduleEvent } from "./domain";
 import { mailClient } from "./data/client";
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { friendlyZoneName, timeZoneChoices } from "./calendarTime";
 import { formatLength, MEETING_LENGTHS } from "./MeetingScheduler";
 import { AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
+import { breakWarning, cachedEventsInRange, eventsInRange } from "./SlotDayPreview";
+import { SlotDayToggle } from "./SlotDayToggle";
 import { errorMessage } from "./errors";
 
 export function ProposedTimesCard({ times: offered, preferences, intoDraft, onReplyWithTimes, onAcceptTime, onFindOtherTimes, calendarConnected, onOpenCalendarSettings }: {
@@ -37,9 +39,12 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
   );
   const [rows, setRows] = useState<CheckedProposedTime[] | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [previewing, setPreviewing] = useState<number | null>(null);
+  const previewInitialized = useRef(false);
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
+  const [spanEvents, setSpanEvents] = useState<ScheduleEvent[] | null>(null);
   useEffect(() => {
     const refresh = () => { setRows(null); setSelected(new Set()); setAttempt((value) => value + 1); };
     window.addEventListener(CALENDAR_AVAILABILITY_CHANGED, refresh);
@@ -58,6 +63,45 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
     }
     return () => { generation.current = version + 1; };
   }, [times, zone, preferences, attempt, calendarConnected]);
+
+  // One resolvable time opens its day; several stay collapsed until chosen.
+  useEffect(() => {
+    if (!rows) {
+      previewInitialized.current = false;
+      setPreviewing(null);
+      return;
+    }
+    const resolvable = rows.flatMap((row, index) => row.start && row.end ? [index] : []);
+    if (!previewInitialized.current) {
+      previewInitialized.current = true;
+      setPreviewing(resolvable.length === 1 ? resolvable[0] : null);
+      return;
+    }
+    setPreviewing((current) => current !== null && resolvable.includes(current) ? current : null);
+  }, [rows]);
+
+  // Meetings across every resolvable time, so each row can flag a tight break while collapsed.
+  const spanKey = rows
+    ?.flatMap((row) => row.start && row.end ? [`${row.start}|${row.end}`] : [])
+    .join(",") ?? "";
+  useEffect(() => {
+    if (!spanKey || !calendarConnected) {
+      setSpanEvents(null);
+      return;
+    }
+    const bounds = spanKey.split(",").map((part) => {
+      const [start, end] = part.split("|");
+      return { start, end };
+    });
+    const start = bounds.map((bound) => bound.start).sort()[0];
+    const end = bounds.map((bound) => bound.end).sort().at(-1)!;
+    setSpanEvents(cachedEventsInRange(start, end));
+    let current = true;
+    eventsInRange(start, end)
+      .then((events) => { if (current) setSpanEvents(events); })
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, [spanKey, calendarConnected]);
 
   const selectable = (row: CheckedProposedTime) => row.start && row.end && !row.issue && row.check?.status === "free" && Date.parse(row.start) > Date.now();
   // Recheck immediately before claiming any time works; keep other rows visible.
@@ -123,16 +167,29 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
         const checked = selected.has(index);
         const detailId = `${ids}-${index}`;
         const detail = `${status}${row?.outsideWorkingHours ? " · Outside your usual hours" : ""}${row?.start && !time.durationMinutes ? ` · Assumes ${formatLength(length)}` : ""}`;
-        return <li key={index} className={`proposed-time${checked ? " proposed-time-checked" : ""}`}>
-          <label className="proposed-time-option">
-            <input type="checkbox" checked={checked} disabled={checking || !row || !selectable(row)} aria-describedby={detailId}
-              onChange={() => setSelected((previous) => {
-                const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next;
-              })} />
-            <span className="proposed-time-title">{title}</span>
-          </label>
-          <span className="proposed-time-detail" id={detailId}>{detail}</span>
-          {row?.start ? <details><summary>From the email</summary><p>{time.sourceText}</p></details> : null}
+        const slot = row?.start && row?.end ? { start: row.start, end: row.end } : null;
+        const open = previewing === index;
+        const warning = slot && spanEvents ? breakWarning(spanEvents, slot) : null;
+        return <li key={index} className="proposed-time">
+          <SlotDayToggle
+            id={`${ids}-day-${index}`}
+            label={<span className="proposed-time-title">{title}</span>}
+            slot={slot}
+            timeZone={preferences.timeZone}
+            warning={warning}
+            open={open}
+            onToggle={() => setPreviewing(open ? null : index)}
+            checked={checked}
+            leading={<label className="meeting-slot-check">
+              <input type="checkbox" checked={checked} disabled={checking || !row || !selectable(row)} aria-label={title} aria-describedby={detailId}
+                onChange={() => setSelected((previous) => {
+                  const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next;
+                })} />
+            </label>}
+          >
+            <span className="proposed-time-detail" id={detailId}>{detail}</span>
+            {slot ? <details><summary>From the email</summary><p>{time.sourceText}</p></details> : null}
+          </SlotDayToggle>
         </li>;
       })}
     </ol>
