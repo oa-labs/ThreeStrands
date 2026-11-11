@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
-import { AvailabilitySection, RecipientSummary } from "./RecipientSections";
+import { AvailabilitySection, PersonSummary } from "./RecipientSections";
 import { mailClient } from "./data/client";
 import { ICON_SIZE } from "./iconSizes";
 import { offersFindTimes, SLOTS_PER_DAY } from "./scheduling";
@@ -94,7 +94,7 @@ describe("ComposeContext", () => {
   it("shows what the user saved about the recipient, and recent emails with them", async () => {
     const { props } = renderPanel({ draft: { ...draft, to: "Ann Lee <ann@partner.com>" } });
     const about = await screen.findByRole("region", { name: "About Ann Lee" });
-    expect(within(about).getByRole("heading", { name: "About" })).toBeInTheDocument();
+    expect(within(about).getByRole("heading", { name: "Ann Lee" })).toBeInTheDocument();
     expect(about).toHaveTextContent("CTO · Partner Co");
     expect(about).toHaveTextContent("Prefers short emails");
     // Volume and dates belong to Recent emails, not a second summary above it.
@@ -105,25 +105,31 @@ describe("ComposeContext", () => {
     expect(props.onOpenThread).toHaveBeenCalledWith("t-1");
   });
 
-  it.each([null, "A recipient with a very long display name"])("leaves the section out when nothing is saved about the recipient (name: %s)", (name) => {
+  it.each([
+    [null, "someone.with.a.long.address@a.very.long.organization.example.com", null],
+    ["A recipient with a very long display name", "A recipient with a very long display name", "someone.with.a.long.address@a.very.long.organization.example.com"],
+  ])("names the recipient, with their address when nothing else is saved (name: %s)", (name, heading, detail) => {
     const email = "someone.with.a.long.address@a.very.long.organization.example.com";
-    const { container } = render(<RecipientSummary email={email} name={name} profile={null} />);
-    expect(container).toBeEmptyDOMElement();
+    render(<PersonSummary email={email} name={name} profile={null} />);
+    const about = screen.getByRole("region", { name: `About ${heading}` });
+    expect(within(about).getByRole("heading", { name: heading })).toBeInTheDocument();
+    expect(about.querySelector(".context-person-email")?.textContent ?? null).toBe(detail);
+    expect(about.querySelector(".context-person-role")).toBeNull();
   });
 
   it.each([
     [{ role: "CTO", company: null, notes: null }, "CTO", null],
+    [{ role: "CTO", company: "Partner Co", notes: null }, "CTO · Partner Co", null],
     [{ role: null, company: null, notes: "  Prefers mornings  " }, null, "Prefers mornings"],
     [{ role: null, company: null, notes: "   " }, null, null],
   ])("shows only the saved details that exist (%o)", (fields, role, notes) => {
-    const { container } = render(<RecipientSummary email={ann.addresses[0]} name={null} profile={{ ...ann, ...fields }} />);
-    if (!role && !notes) {
-      expect(container).toBeEmptyDOMElement();
-      return;
-    }
+    render(<PersonSummary email={ann.addresses[0]} name={null} profile={{ ...ann, ...fields }} />);
     const about = screen.getByRole("region", { name: "About Ann Lee" });
-    expect(about.querySelector(".compose-recipient-role")?.textContent ?? null).toBe(role);
-    expect(about.querySelector(".compose-recipient-notes")?.textContent ?? null).toBe(notes);
+    expect(within(about).getByRole("heading", { name: "Ann Lee" })).toBeInTheDocument();
+    expect(about.querySelector(".context-person-role")?.textContent ?? null).toBe(role);
+    expect(about.querySelector(".context-person-notes")?.textContent ?? null).toBe(notes);
+    // Without a role, the address stands in, so the second line always says who this is.
+    if (!role) expect(about.querySelector(".context-person-email")).toHaveTextContent(ann.addresses[0]);
   });
 
   it("keys the recipient's tasks and files sections distinctly", async () => {

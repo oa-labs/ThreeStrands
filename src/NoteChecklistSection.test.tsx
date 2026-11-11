@@ -9,11 +9,11 @@ describe("note checklist preview", () => {
   afterEach(() => { cleanup(); localStorage.clear(); });
 
   it("previews unfinished items in note order and puts completed items behind their count", () => {
-    const items = [item("Done first", true), item("First pending"), item("Done second", true, true), item("Second pending", false, true), item("Third pending"), item("Fourth pending")];
+    const items = [item("Done first", true), item("First pending"), item("Done second", true, true), item("Second pending", false, true), item("Third pending"), item("Fourth pending"), item("Fifth pending"), item("Sixth pending"), item("Seventh pending")];
     const { rerender } = render(<NoteChecklistSection items={items} disabled={false} onChange={vi.fn()} />);
-    expect(screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"))).toEqual(["Checklist: First pending", "Task: Second pending", "Checklist: Third pending"]);
-    fireEvent.click(screen.getByRole("button", { name: "Show 1 more" }));
-    expect(screen.getAllByRole("checkbox")).toHaveLength(4);
+    expect(screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"))).toEqual(["Checklist: First pending", "Task: Second pending", "Checklist: Third pending", "Checklist: Fourth pending", "Checklist: Fifth pending"]);
+    fireEvent.click(screen.getByRole("button", { name: "Show 2 more" }));
+    expect(screen.getAllByRole("checkbox")).toHaveLength(7);
     const completed = screen.getByRole("button", { name: "Completed · 2" });
     expect(completed).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(completed);
@@ -21,7 +21,7 @@ describe("note checklist preview", () => {
     expect(screen.getByRole("checkbox", { name: "Checklist: Done first" })).toBeChecked();
     rerender(<NoteChecklistSection items={[...items, item("Done third", true)]} disabled={false} onChange={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Completed · 3" })).toHaveAttribute("aria-expanded", "true");
-    expect(items.map((row) => row.title)).toEqual(["Done first", "First pending", "Done second", "Second pending", "Third pending", "Fourth pending"]);
+    expect(items.map((row) => row.title)).toEqual(["Done first", "First pending", "Done second", "Second pending", "Third pending", "Fourth pending", "Fifth pending", "Sixth pending", "Seventh pending"]);
   });
 
   it("shows a completed-only note as a collapsed count and lets an item be reopened", () => {

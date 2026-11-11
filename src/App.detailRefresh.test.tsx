@@ -57,8 +57,8 @@ it("follows a new message's recipients in the context panel instead of the conve
   const to = within(composer).getByRole("textbox", { name: "To" });
   fireEvent.change(to, { target: { value: "hello@threestrands.local," } });
   await waitFor(() => expect(panel).not.toHaveTextContent("Add a recipient to see your history with them."));
-  // Nothing is saved about the demo sender, so no About section stands in for Recent emails.
-  expect(within(panel).queryByRole("region", { name: /^About / })).not.toBeInTheDocument();
+  // The panel names the recipient, even with nothing saved about them.
+  expect(within(panel).getAllByRole("region", { name: /^About / }).map((region) => region.getAttribute("aria-label"))).toEqual(["About hello@threestrands.local"]);
 
   fireEvent.click(within(composer).getByRole("button", { name: "Save and Close Draft" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New Message" })).not.toBeInTheDocument());
@@ -72,7 +72,7 @@ it("follows a reply's recipients in the conversation panel", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     const panel = screen.getByRole("complementary", { name: "Conversation context" });
-    expect(within(panel).queryByRole("region", { name: /^About / })).not.toBeInTheDocument();
+    expect(within(panel).getAllByRole("region", { name: /^About / })).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
     const composer = await screen.findByRole("dialog", { name: "Reply Message" });
@@ -80,7 +80,7 @@ it("follows a reply's recipients in the conversation panel", async () => {
     expect(screen.getByRole("complementary", { name: "Conversation context" })).toBe(panel);
     expect(screen.queryByRole("complementary", { name: "Compose context" })).not.toBeInTheDocument();
     await waitFor(() => expect(panel).not.toHaveTextContent("Add a recipient to see your history with them."));
-    expect(within(panel).queryByRole("region", { name: /^About / })).not.toBeInTheDocument();
+    expect(within(panel).getAllByRole("region", { name: /^About / })).toHaveLength(1);
 
     const to = within(composer).getByRole("textbox", { name: "To" });
     fireEvent.change(to, { target: { value: `${(to as HTMLInputElement).value}, carol@example.com,` } });
@@ -90,7 +90,7 @@ it("follows a reply's recipients in the conversation panel", async () => {
 
     fireEvent.click(within(composer).getByRole("button", { name: "Save and Close Draft" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());
-    expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByRole("region", { name: /^About / })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("complementary", { name: "Conversation context" })).getAllByRole("region", { name: /^About / })).toHaveLength(1);
   } finally {
     localStorage.removeItem("threestrands.demoCorrespondence");
   }

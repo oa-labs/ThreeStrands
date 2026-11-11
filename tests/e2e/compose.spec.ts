@@ -93,7 +93,11 @@ for (const name of [null, "A recipient with a very long display name that exceed
     await to.press(",");
     await composer.getByRole("textbox", { name: "Subject" }).focus();
     const panel = page.getByRole("complementary", { name: "Compose context" });
-    await expect(panel.getByRole("region", { name: /^About / })).toHaveCount(0);
+    // The panel names the first recipient once, and a long name or address stays inside it.
+    const about = panel.getByRole("region", { name: /^About / });
+    await expect(about).toHaveCount(1);
+    await expect(about.getByRole("heading")).toHaveText(name || email);
+    expect(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     await expect(panel.getByRole("group", { name: "Showing history with" })).toHaveCount(0);
     await expect(panel.getByRole("button", { name: /^Show history with / })).toHaveCount(0);
     await expect(panel.getByRole("list", { name: "Other people" })).toHaveCount(0);

@@ -184,11 +184,11 @@ describe("ThreadAssist", () => {
     expect(screen.getByText("The client needs the website.")).toBeVisible();
   });
 
-  it("folds only the brief from its heading, leaving Suggested to its own toggle", () => {
+  it("folds only the brief from its heading, leaving Suggestions to their own section", () => {
     render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal] } })} />);
     fireEvent.click(within(screen.getByRole("heading", { name: "Brief" })).getByRole("button", { name: "Brief" }));
     expect(screen.getByText("The client needs the website.")).not.toBeVisible();
-    const suggested = within(screen.getByRole("heading", { name: "Suggested" })).getByRole("button", { name: "Suggested" });
+    const suggested = within(screen.getByRole("heading", { name: "Suggestions" })).getByRole("button", { name: "Suggestions" });
     expect(suggested).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Set up the website")).toBeVisible();
     fireEvent.click(suggested);
@@ -197,7 +197,8 @@ describe("ThreadAssist", () => {
 
   it("folds the cards from the heading when there is no brief, only suggestions", () => {
     render(<ThreadAssist {...props({ summary: { available: false }, suggestions: { requested: true, proposals: [taskProposal] } })} />);
-    expect(screen.queryByRole("heading", { name: "Suggested" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Brief" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("heading")).toHaveLength(1);
     fireEvent.click(within(screen.getByRole("heading", { name: "Suggestions" })).getByRole("button", { name: "Suggestions" }));
     expect(screen.getByText("Set up the website")).not.toBeVisible();
   });
@@ -294,13 +295,17 @@ describe("ThreadAssist", () => {
     expect(container.querySelector(".context-section-header")).toBeNull();
     expect(container.querySelectorAll(".thread-assist-run")).toHaveLength(1);
 
-    // A brief without suggestions yet offers them where they will appear, not from the Brief's header.
+    // A brief without suggestions yet offers them on the Suggestions heading, not the Brief's,
+    // so nothing is left under a folded Brief.
     rerender(<ThreadAssist {...props({ detail: summarized })} />);
-    const header = container.querySelector(".context-section-header")!;
-    expect(within(header as HTMLElement).queryByRole("button", { name: "Get Suggestions" })).not.toBeInTheDocument();
-    const suggestionsArea = container.querySelector(".thread-assist-suggestions") as HTMLElement;
-    expect(within(suggestionsArea).getByRole("button", { name: "Get Suggestions" })).toBeInTheDocument();
+    const briefHeader = screen.getByRole("region", { name: "Brief" }).querySelector(".context-section-header") as HTMLElement;
+    expect(within(briefHeader).queryByRole("button", { name: "Get Suggestions" })).not.toBeInTheDocument();
+    const suggestionsArea = screen.getByRole("region", { name: "Suggestions" });
+    const suggestionsHeader = suggestionsArea.querySelector(".context-section-header") as HTMLElement;
+    expect(within(suggestionsHeader).getByRole("button", { name: "Get Suggestions" })).toBeInTheDocument();
     expect(screen.getByText("The client needs the website.").compareDocumentPosition(suggestionsArea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(within(briefHeader).getByRole("button", { name: "Brief" }));
+    expect(within(suggestionsHeader).getByRole("button", { name: "Get Suggestions" })).toBeVisible();
 
     rerender(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true } })} />);
     expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
@@ -327,14 +332,14 @@ describe("ThreadAssist", () => {
     // Only suggestions are missing: the brief stays readable and the wait shows where they will appear.
     expect(screen.getByText("The client needs the website.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Get Suggestions" })).not.toBeInTheDocument();
-    const suggestionsArea = container.querySelector(".thread-assist-suggestions") as HTMLElement;
+    const suggestionsArea = screen.getByRole("region", { name: "Suggestions" });
     expect(within(suggestionsArea).getByRole("status")).toHaveTextContent("Looking for suggestions…");
     expect(within(container.querySelector(".context-section-header") as HTMLElement).queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Refresh brief" })).not.toBeInTheDocument();
 
     // The request itself reads the same way.
     rerender(<ThreadAssist {...props({ onRun, detail: summarized, loading: true, suggestions: { requested: true } })} />);
-    expect(within(container.querySelector(".thread-assist-suggestions") as HTMLElement).getByRole("status")).toHaveTextContent("Looking for suggestions…");
+    expect(within(screen.getByRole("region", { name: "Suggestions" })).getByRole("status")).toHaveTextContent("Looking for suggestions…");
 
     // With no brief yet, the whole section is on its way rather than a Get Brief button.
     rerender(<ThreadAssist {...props({ onRun, upcoming: true })} />);
@@ -343,10 +348,10 @@ describe("ThreadAssist", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("collapses Suggested on its own and remembers it, leaving the brief open", () => {
+  it("collapses Suggestions on their own and remembers it, leaving the brief open", () => {
     localStorage.clear();
     const { unmount } = render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal] } })} />);
-    const toggle = within(screen.getByRole("heading", { name: "Suggested" })).getByRole("button", { name: "Suggested" });
+    const toggle = within(screen.getByRole("heading", { name: "Suggestions" })).getByRole("button", { name: "Suggestions" });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Set up the website")).toBeVisible();
     fireEvent.click(toggle);
@@ -355,7 +360,7 @@ describe("ThreadAssist", () => {
     expect(screen.getByText("The client needs the website.")).toBeVisible();
     unmount();
     render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal] } })} />);
-    expect(within(screen.getByRole("heading", { name: "Suggested" })).getByRole("button")).toHaveAttribute("aria-expanded", "false");
+    expect(within(screen.getByRole("heading", { name: "Suggestions" })).getByRole("button")).toHaveAttribute("aria-expanded", "false");
     localStorage.clear();
   });
 
@@ -423,7 +428,7 @@ describe("ThreadAssist", () => {
     const onDiscard = vi.fn();
     render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal], onReview, onDiscard } })} />);
 
-    expect(screen.getByRole("heading", { name: "Suggested" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Suggestions" })).toBeInTheDocument();
     expect(screen.getByText("Set up the website")).toBeInTheDocument();
     fireEvent.click(screen.getByText("From the email"));
     expect(screen.getByText("Please set up the website by Friday.")).toBeInTheDocument();
@@ -468,7 +473,7 @@ describe("ThreadAssist", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Dismiss" }));
     expect(onDiscard).toHaveBeenCalledWith(1);
     rerender(<ThreadAssist {...props({ detail: invitationDetail, suggestions: { requested: true, proposals: [meeting] } })} />);
-    expect(screen.queryByRole("heading", { name: "Suggested" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Suggestions" })).not.toBeInTheDocument();
     expect(screen.queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
   });
 
@@ -580,7 +585,7 @@ describe("ThreadAssist", () => {
   it("lets a brief stand alone when nothing was suggested", () => {
     render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true } })} />);
     expect(screen.getByText("The client needs the website.")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Suggested" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Suggestions" })).not.toBeInTheDocument();
     expect(screen.queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
   });
 

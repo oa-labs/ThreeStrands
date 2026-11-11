@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { draftRecipients } from "./composeChecks";
 import { isPersonalMailDomain } from "./contactContext";
-import { CalendarDays, Sparkles, UserRound } from "lucide-react";
+import { CalendarDays, Sparkles } from "lucide-react";
 import type { Draft } from "./correspondence";
 import type { AvailabilityCandidate, AvailabilityPreferences, ContactProfile, OfferedTimes } from "./domain";
 import { ContextSectionHeader } from "./ContextSections";
@@ -225,11 +225,11 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
 }
 
 /**
- * What the user has saved about the selected recipient: role, company, and
- * notes. Left out when nothing is saved; volume and dates are the Recent
- * emails section's job.
+ * Who the panel's person group is about: their name, then their role and
+ * company (or their address when nothing is saved), and any saved notes. It
+ * heads the panel, so the actions beside it read as being about them.
  */
-export function RecipientSummary({ email, name, profile }: {
+export function PersonSummary({ email, name, profile }: {
   email: string;
   name: string | null;
   profile: ContactProfile | null;
@@ -237,12 +237,12 @@ export function RecipientSummary({ email, name, profile }: {
   const displayName = profile?.displayName || name || email;
   const role = [profile?.role, profile?.company].filter(Boolean).join(" · ");
   const notes = profile?.notes?.trim() ?? "";
-  if (!role && !notes) return null;
+  const detail = role || (displayName !== email ? email : "");
   return (
-    <section className="context-section compose-recipient" aria-label={`About ${displayName}`}>
-      <ContextSectionHeader title="About" icon={<UserRound size={ICON_SIZE.xs} />} />
-      {role ? <p className="compose-recipient-role">{role}</p> : null}
-      {notes ? <p className="compose-recipient-notes">{notes}</p> : null}
+    <section className="context-person" aria-label={`About ${displayName}`}>
+      <h2 className="context-person-name" title={displayName !== email ? email : undefined}>{displayName}</h2>
+      {detail ? <p className={role ? "context-person-role" : "context-person-email"}>{detail}</p> : null}
+      {notes ? <p className="context-person-notes">{notes}</p> : null}
     </section>
   );
 }

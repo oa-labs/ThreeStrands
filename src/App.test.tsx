@@ -388,7 +388,7 @@ describe("message cards", () => {
       const { container } = render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       const outline = await screen.findByRole("region", { name: "This thread" });
-      fireEvent.click(within(outline).getByRole("button", { name: "Show 3 more" }));
+      // Six messages fit the outline without "Show more", so the oldest is listed.
       const target = container.querySelector<HTMLElement>('[data-message-id="outline-0"]')!;
       expect(target).toHaveClass("message-card-collapsed");
       scrollIntoView.mockClear();
