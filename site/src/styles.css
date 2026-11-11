@@ -25,10 +25,10 @@
 
   --strand-mail: var(--lavender);
   --strand-schedule: var(--peach);
-  --strand-tasks: var(--shell);
+  --strand-notes: var(--shell);
   --strand-mail-ink: #5a4799;
   --strand-schedule-ink: #9c4a1b;
-  --strand-tasks-ink: #333183;
+  --strand-notes-ink: #333183;
 
   --on-dusk: #f3eae9;
   --on-dusk-soft: #c8c1df;
@@ -57,7 +57,7 @@
     --focus: #c3bbff;
     --strand-mail-ink: #bcaaee;
     --strand-schedule-ink: #fdb48b;
-    --strand-tasks-ink: #cbc4f5;
+    --strand-notes-ink: #cbc4f5;
     color-scheme: dark;
   }
 }
@@ -522,8 +522,8 @@ kbd {
   filter: drop-shadow(0 0 6px rgb(159 139 203 / 0.9));
 }
 
-.strand-tasks {
-  stroke: var(--strand-tasks);
+.strand-notes {
+  stroke: var(--strand-notes);
   filter: drop-shadow(0 0 6px rgb(243 234 233 / 0.7));
 }
 
@@ -836,7 +836,7 @@ button.keycap:active {
   filter: none;
 }
 
-.bridge .strand-tasks {
+.bridge .strand-notes {
   stroke: url(#ink-strand);
 }
 
@@ -910,6 +910,22 @@ button.keycap:active {
 .strand-card p:last-child {
   margin-top: 12px;
   color: var(--ink-soft);
+}
+
+/* Tasks run across the three strands, so their card spans every column and
+   its accent blends the strands' colors. */
+.strand-tie {
+  grid-column: 1 / -1;
+  --strand: linear-gradient(90deg, var(--strand-mail), var(--strand-schedule), var(--strand-notes-ink));
+  --strand-ink: var(--strand-notes-ink);
+}
+
+.strand-tie .strand-glyph {
+  stroke: var(--strand-mail-ink);
+}
+
+.strand-tie p:last-child {
+  max-width: 72ch;
 }
 
 @media (max-width: 820px) {

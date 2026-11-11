@@ -1,6 +1,9 @@
-import type { DemoDataset, DemoMessageSeed } from "./demoDataset";
+import type { DemoDataset, DemoMessageSeed, DemoNoteSeed } from "./demoDataset";
 import type { Goal, ScheduleEvent, Thread, ThreadTask } from "../domain";
 import { periodFor } from "../goals";
+import { meetingDate, meetingEntry } from "../meetingNoteEntry";
+import { meetingLine, meetingNoteTitle } from "../noteMeetings";
+import { markdownEntityLink, type NoteReference } from "../noteEntities";
 import onboardingFlows from "./showcaseImages/onboarding-v3-flows.png?inline";
 import regionalRollout from "./showcaseImages/regional-rollout.png?inline";
 import ridgeLine from "./showcaseImages/ridge-line.jpg?inline";
@@ -437,7 +440,7 @@ function localDate(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-/** Events across the local Monday–Friday week containing `now`, plus next week's offsite. */
+/** Events across the local Monday–Friday week containing `now`, last week's 1:1, and next week's offsite. Each is on its account's primary calendar. */
 function buildSchedule(now: Date): ScheduleEvent[] {
   const monday = new Date(now);
   monday.setHours(0, 0, 0, 0);
@@ -457,7 +460,7 @@ function buildSchedule(now: Date): ScheduleEvent[] {
   const work = SHOWCASE_WORK_ACCOUNT;
   const events: ScheduleEvent[] = [];
   for (let weekday = 0; weekday < 5; weekday += 1) {
-    events.push({ id: `standup-${weekday}`, accountId: work, title: "Team standup", allDay: false, conferenceUrl: "https://meet.harborlight.example/standup", ...slot(weekday, "09:30", 15) });
+    events.push({ id: `standup-${weekday}`, seriesId: "series-standup", accountId: work, title: "Team standup", allDay: false, conferenceUrl: "https://meet.harborlight.example/standup", ...slot(weekday, "09:30", 15) });
   }
   events.push(
     { id: "roadmap", accountId: work, title: "Roadmap sync", allDay: false, location: "Room 4B", attendees: ["priya@harborlight.example", "theo@harborlight.example"], attendeeResponses: { "priya@harborlight.example": "accepted", "theo@harborlight.example": "declined" }, responseStatus: "accepted", canRespond: true, ...slot(0, "11:00", 60) },
@@ -469,13 +472,15 @@ function buildSchedule(now: Date): ScheduleEvent[] {
     { id: "focus-2", accountId: work, title: "Focus time", allDay: false, canEdit: true, ...slot(2, "15:00", 90) },
     { id: "launch-review", accountId: work, title: "Q4 launch plan sign-off", allDay: false, location: "Room 2A", ...slot(3, "10:00", 30) },
     { id: "portfolio", accountId: work, title: "Portfolio review: Senior Designer", allDay: false, ...slot(3, "14:00", 60) },
-    { id: "one-on-one", accountId: work, title: "1:1 Daniel / Maya", allDay: false, attendees: ["daniel@harborlight.example"], ...slot(4, "10:30", 30) },
+    { id: "one-on-one-prev", seriesId: "series-one-on-one", accountId: work, title: "1:1 Daniel / Maya", allDay: false, attendees: ["daniel@harborlight.example"], ...slot(-3, "10:30", 30) },
+    { id: "one-on-one", seriesId: "series-one-on-one", accountId: work, title: "1:1 Daniel / Maya", allDay: false, attendees: ["daniel@harborlight.example"], ...slot(4, "10:30", 30) },
     { id: "product-review", accountId: work, title: "Product review", allDay: false, ...slot(4, "13:00", 60) },
     { id: "yoga", accountId: SHOWCASE_PERSONAL_ACCOUNT, title: "Yoga", allDay: false, location: "Riverside Studio", canEdit: true, ...slot(4, "18:00", 60) },
     { id: "ship-week", accountId: work, title: "Launch week 🚀", allDay: true, start: day(3), end: day(5) },
     { id: "offsite", accountId: work, title: "Lisbon offsite", allDay: true, location: "Lisbon", start: day(8), end: day(11) },
   );
-  return events;
+  // A primary calendar's id is its account's address, as Google Calendar names it.
+  return events.map((event) => ({ calendarId: event.accountId, ...event }));
 }
 
 function buildTasks(now: Date): ThreadTask[] {
@@ -505,6 +510,99 @@ function buildTasks(now: Date): ThreadTask[] {
   ];
 }
 
+/**
+ * A week of notes as Add Note, `[[`, and `@` write them: yesterday's and
+ * today's daily notes, last week's 1:1, and the meeting and project notes
+ * they link. Links name real showcase events, contacts, tasks, and threads.
+ */
+function buildNotes(events: ScheduleEvent[], threads: Thread[]): DemoNoteSeed[] {
+  const event = (id: string) => events.find((candidate) => candidate.id === id)!;
+  const names = new Map([
+    ["priya@harborlight.example", "Priya Natarajan"], ["theo@harborlight.example", "Theo Alvarez"],
+    ["daniel@harborlight.example", "Daniel Kim"], ["marcus@brightwater.example", "Marcus Webb"],
+  ]);
+  const contactIds = { "priya@harborlight.example": "contact:priya@harborlight.example", "marcus@brightwater.example": "contact:marcus@brightwater.example" };
+  const meeting = (id: string, linkNote: boolean) => {
+    const source = event(id);
+    const attendees = (source.attendees ?? []).filter((address) => source.attendeeResponses?.[address] !== "declined");
+    const entry = meetingEntry(source, { name: source.title, attendees, names, contactIds, linkNote });
+    return meetingLine(entry, linkNote ? meetingNoteTitle(source.title) : null);
+  };
+  const contact = (address: string): NoteReference => ({ version: 1, kind: "contact", id: address, ...(address in contactIds ? { contact: contactIds[address as keyof typeof contactIds] } : {}) });
+  const person = (address: string) => markdownEntityLink(names.get(address)!, contact(address));
+  const thread = (id: string) => {
+    const source = threads.find((candidate) => candidate.id === id)!;
+    return markdownEntityLink(source.subject, { version: 1, kind: "conversation", id: source.providerThreadId, account: source.accountId });
+  };
+  const task = (id: string, title: string) => markdownEntityLink(title, { version: 1, kind: "task", id });
+  const lines = (...text: string[]) => `${text.join("\n")}\n`;
+  return [
+    { title: "1:1 Daniel / Maya", body: lines(
+      "Running agenda, newest first.",
+      "",
+      "## Next time",
+      "- Career goals for the first half",
+      `- ( ) Share the EU rollout plan with ${person("daniel@harborlight.example")}`,
+      "",
+      "## Last week",
+      "- Daniel takes the EU rollout; Aisha backs him up on translations.",
+      `- Wants more customer time. Invite him to the ${markdownEntityLink("Brightwater renewal call", { version: 1, kind: "event", id: "brightwater", account: SHOWCASE_WORK_ACCOUNT, calendar: SHOWCASE_WORK_ACCOUNT })}.`,
+    ) },
+    { dailyDate: meetingDate(event("one-on-one-prev")), body: lines(
+      "## Meetings",
+      meeting("one-on-one-prev", true),
+      "",
+      "Quiet Friday. Wrote up the onboarding v3 test plan.",
+    ) },
+    { title: "Roadmap sync", body: lines(
+      "## Decisions",
+      "- The analytics add-on moves to the first sprint after the [[Q4 launch]].",
+      `- ${person("theo@harborlight.example")} leads discovery for onboarding v4.`,
+      "",
+      "## Parking lot",
+      "- Shared inbox permissions for teams over 50 seats",
+    ) },
+    { dailyDate: meetingDate(event("roadmap")), body: lines(
+      "## Meetings",
+      meeting("standup-0", false),
+      meeting("roadmap", true),
+      "",
+      `Analytics add-on waits until after the [[Q4 launch]]. Tell ${person("marcus@brightwater.example")} on Tuesday's call.`,
+      "",
+      "- [x] Send the updated roadmap to Priya",
+      "- [x] Move the analytics add-on in the plan",
+    ) },
+    { title: "Q4 launch", body: lines(
+      `North America first, then EU and APAC 48 hours later. Plan: ${thread("launch-plan")}`,
+      "",
+      "## Checklist",
+      "- [x] Sign-off deck to Priya",
+      "- [x] Pricing page copy",
+      "- [ ] Release notes for onboarding v3",
+      "- [ ] Support macros for the new import step",
+      "",
+      "## Risks",
+      "- EU translations are late. Fallback: English only for the first 48 hours.",
+      "- Press embargo lifts the morning of launch; no early posts.",
+    ) },
+    { dailyDate: meetingDate(event("crit")), body: lines(
+      "Launch week starts Thursday. Keep the afternoon clear for the [[Q4 launch]] checklist.",
+      "",
+      "## Meetings",
+      meeting("standup-1", false),
+      "  - EU translations land Wednesday; Aisha is chasing the vendor.",
+      "",
+      "## To do",
+      "- ( ) Draft the onboarding v3 release notes",
+      `- [ ] ${task("task-flights", "Book flights for the Lisbon offsite")}`,
+      "- [x] Skim the customer interview notes",
+      "",
+      "## Reading",
+      `- ${thread("interview-notes")}`,
+    ) },
+  ];
+}
+
 /** Work goals for the current year, half, and quarter, so the Tasks workspace shows goal filters and progress. */
 function buildGoals(now: Date): Goal[] {
   const createdAt = new Date(now.getTime() - 30 * 86_400_000).toISOString();
@@ -529,6 +627,7 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
   };
   const keepInTouch = (intervalDays: number, startedDaysAgo: number) => ({ intervalDays, startedAt: daysAgo(startedDaysAgo), snoozedUntil: null, snoozedAt: null, lastTouchAt: null });
   const { threads, messages } = buildThreads(time);
+  const schedule = buildSchedule(now);
   const connectedAt = daysAgo(120);
   return {
     accounts: [
@@ -640,7 +739,8 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
       { id: "launch@harborlight.example", accountId: SHOWCASE_WORK_ACCOUNT, name: "Launch", primary: false, selected: true, writable: true },
       { id: SHOWCASE_PERSONAL_ACCOUNT, accountId: SHOWCASE_PERSONAL_ACCOUNT, name: "Personal", primary: true, selected: true, writable: true },
     ],
-    scheduleEvents: buildSchedule(now),
+    scheduleEvents: schedule,
+    notes: buildNotes(schedule, threads),
     openPromises: [{ threadId: "interview-notes", excerpt: "I'll send over the interview notes by Thursday so you can pull quotes for the review." }],
   };
 }

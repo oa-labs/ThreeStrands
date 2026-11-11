@@ -61,7 +61,12 @@ export type DemoDataset = {
   attachmentImages?: Record<string, string>;
   /** Optional fictional promises for Today, each made in its thread's latest message; absent from the default test dataset. */
   openPromises?: { threadId: string; excerpt: string }[];
+  /** Optional fictional notes, oldest change first; absent from the default test dataset. */
+  notes?: DemoNoteSeed[];
 };
+
+/** A daily note names its day; any other note names its title. */
+export type DemoNoteSeed = { dailyDate: string; body: string } | { title: string; body: string };
 
 /**
  * The dataset the unit and e2e suites are written against. Its threads,

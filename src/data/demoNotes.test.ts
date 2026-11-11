@@ -32,6 +32,19 @@ describe("demo notes", () => {
     await expect(notes.createNote("a|b", "")).rejects.toThrow("can't contain");
   });
 
+  it("loads seeded notes by the native rules, the last seed most recently changed", async () => {
+    const notes = createDemoNotes(undefined, [
+      { title: "Project plan", body: "- ( ) Ship it\n" },
+      { dailyDate: "2026-11-09", body: "Linked to [[Project plan]]\n" },
+    ]);
+    expect((await notes.listRecentNotes(10)).map((note) => note.title)).toEqual(["2026-11-09", "Project plan"]);
+    expect((await notes.getDailyNote("2026-11-09"))?.body).toContain("[[Project plan]]");
+    expect(await notes.listNoteTasks()).toEqual([expect.objectContaining({ title: "Ship it", checked: false })]);
+    expect(() => createDemoNotes(undefined, [{ title: "a|b", body: "" }])).toThrow("can't contain");
+    expect(() => createDemoNotes(undefined, [{ title: "Plan", body: "" }, { title: "plan", body: "" }])).toThrow("already exists");
+    expect(() => createDemoNotes(undefined, [{ dailyDate: "Nov 9", body: "" }])).toThrow("valid date");
+  });
+
   it("saves only from the current version and never creates an empty day", async () => {
     const notes = createDemoNotes();
     const note = await notes.createNote("Plan", "v1");

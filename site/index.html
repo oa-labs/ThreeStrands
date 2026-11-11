@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ThreeStrands — Keyboard-First, Local-First Email for Gmail and IMAP</title>
-    <meta name="description" content="ThreeStrands is a source-available, keyboard-first desktop email client for Gmail and IMAP. Mail, conversation-linked tasks, and Google Calendar in one local-first workflow for macOS and Linux." />
+    <meta name="description" content="ThreeStrands is a source-available, keyboard-first desktop email client for Gmail and IMAP. Mail, Google Calendar, and linked notes, tied together by tasks, in one local-first workflow for macOS, with experimental Windows and Linux builds." />
     <meta name="theme-color" content="#1f1b5c" />
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="ThreeStrands — Email at the Speed of Your Keyboard" />
-    <meta property="og:description" content="A source-available desktop email client for Gmail and IMAP. Mail, follow-ups, and your calendar in one app, with your mail kept on your own computer and no ThreeStrands account." />
+    <meta property="og:description" content="A source-available desktop email client for Gmail and IMAP. Mail, your calendar, and your notes in one app, tied together by tasks, with everything kept on your own computer and no ThreeStrands account." />
     <meta property="og:url" content="%SITE_URL%" />
     <meta property="og:image" content="%OG_IMAGE%" />
     <meta property="og:image:width" content="1200" />
@@ -60,8 +60,8 @@
           </svg>
           <svg class="hero-strands" viewBox="0 0 2400 300" preserveAspectRatio="none" focusable="false">
             <path class="strand strand-mail" d="M0 90 q60 -46 120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0" />
-            <path class="strand strand-tasks" d="M0 150 q60 -46 120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0" />
-            <path class="strand strand-schedule" d="M0 210 q60 -46 120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0" />
+            <path class="strand strand-schedule" d="M0 150 q60 -46 120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0" />
+            <path class="strand strand-notes" d="M0 210 q60 -46 120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0" />
           </svg>
         </div>
 
@@ -69,9 +69,10 @@
           <p class="badge"><span class="badge-dot" aria-hidden="true"></span>v%APP_VERSION% · Early Release</p>
           <h1 id="hero-title" class="display">Email at the Speed of <em>Your Keyboard</em></h1>
           <p class="lead">
-            Mail, follow-ups, and your calendar in one desktop app. Turn a conversation into a task that
-            closes itself when the reply arrives, and keep your mail on your own computer, connected
-            straight to Gmail or IMAP with no ThreeStrands account.
+            Mail, your calendar, and your notes in one desktop app, tied together by tasks. Turn a conversation
+            into a task that closes itself when the reply arrives, write meeting notes that link the event and
+            the people in it, and keep it all on your own computer, connected straight to Gmail or IMAP with
+            no ThreeStrands account.
           </p>
           <div class="cta-row">
             <a class="button button-primary" href="https://github.com/oa-labs/ThreeStrands/releases/latest" rel="noopener" data-download>
@@ -114,21 +115,21 @@
             <defs>
               <linearGradient id="ink-strand" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0" stop-color="#f3eae9" />
-                <stop offset="1" stop-color="var(--strand-tasks-ink)" />
+                <stop offset="1" stop-color="var(--strand-notes-ink)" />
               </linearGradient>
             </defs>
             <path class="draw strand-mail" pathLength="1" d="M570 0 C570 140 200 150 200 360" />
-            <path class="draw strand-tasks" pathLength="1" stroke="url(#ink-strand)" d="M600 0 C640 90 560 180 600 270 S600 330 600 360" />
-            <path class="draw strand-schedule" pathLength="1" d="M630 0 C630 140 1000 150 1000 360" />
+            <path class="draw strand-schedule" pathLength="1" d="M600 0 C640 90 560 180 600 270 S600 330 600 360" />
+            <path class="draw strand-notes" pathLength="1" stroke="url(#ink-strand)" d="M630 0 C630 140 1000 150 1000 360" />
           </svg>
         </div>
         <div class="container">
           <header class="section-head centered">
             <p class="eyebrow">Three Strands, One Workflow</p>
-            <h2 id="strands-title" class="display-2">Mail, Tasks, and Your Calendar — Woven Together</h2>
+            <h2 id="strands-title" class="display-2">Mail, Schedule, and Notes — Tied Together by Tasks</h2>
             <p class="section-lead">
-              Most email clients stop at the message. ThreeStrands keeps the follow-up and the schedule
-              right beside the conversation, so nothing slips between apps.
+              Most email clients stop at the message. ThreeStrands keeps your calendar and your notes right
+              beside the conversation, and every follow-up runs through all three, so nothing slips between apps.
             </p>
           </header>
           <div class="strand-columns">
@@ -138,17 +139,23 @@
               <h3>A Calm, Fast Inbox</h3>
               <p>Bring Gmail and IMAP accounts into one view, split high-volume mail into its own tabs, and triage in batches with undo.</p>
             </article>
-            <article class="strand-card" style="--strand: var(--strand-tasks-ink); --strand-ink: var(--strand-tasks-ink)">
-              <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
-              <p class="strand-label">Tasks</p>
-              <h3>Follow-Ups That Close Themselves</h3>
-              <p>Create standalone tasks or turn a conversation into an action, follow-up, or waiting-for. Link each one to a quarterly or yearly goal, and linked follow-ups can complete when a reply arrives.</p>
-            </article>
             <article class="strand-card" style="--strand: var(--strand-schedule); --strand-ink: var(--strand-schedule-ink)">
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
               <p class="strand-label">Schedule</p>
               <h3>Your Day, Beside Your Mail</h3>
               <p>Press <kbd>0</kbd> for Today: your agenda, unread mail, tasks due, and the things you said you would do, on one screen. See your day or week from Google Calendar, find free time against your working hours, and create or edit events, answer invitations, or put available times in a reply.</p>
+            </article>
+            <article class="strand-card" style="--strand: var(--strand-notes-ink); --strand-ink: var(--strand-notes-ink)">
+              <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
+              <p class="strand-label">Notes</p>
+              <h3>Notes That Know the Meeting</h3>
+              <p>Press <kbd>4</kbd> for Notes: a note for each day and notes of your own, written in Markdown. Add a meeting to that day's note with links to the event and everyone invited, link notes with <code>[[</code> and people or emails with <code>@</code>, and find every link again from the other side.</p>
+            </article>
+            <article class="strand-card strand-tie">
+              <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
+              <p class="strand-label">Tasks · What Ties Them Together</p>
+              <h3>One Task List Running Through All Three</h3>
+              <p>Turn a conversation into an action, follow-up, or waiting-for that closes itself when the reply arrives. Write a task in a meeting note and check it off in <strong>Tasks</strong>. Drag a task onto your week to book the time for it, and roll each one up to a quarterly or yearly goal.</p>
             </article>
           </div>
         </div>
@@ -227,9 +234,10 @@
               </li>
               <li class="tour-step" data-step="split-inbox">
                 <p class="step-count">02</p>
-                <h3>Split Inboxes</h3>
-                <p>Route high-volume senders into their own tabs by domain, label, or address pattern. The main inbox stays focused on people.</p>
-                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="split-inbox" sizes="92vw" alt="A Notifications split inbox tab holding automated build and pull request mail."></ts-shot></div></div>
+                <h3>Split Inboxes and Saved Searches</h3>
+                <p>Route high-volume senders into their own tabs by domain, label, or address pattern. The main inbox stays focused on people. Starred conversations gather in their own <strong>Starred</strong> tab, read and archived mail included.</p>
+                <p>Save a search with a name, one account or all of them, and quick filters, then open it as a tab beside your Split Inboxes. Saved searches stay on this computer.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="saved-search" sizes="92vw" alt="A saved Launch search open as a tab beside the Notifications and Newsletters split inboxes, listing launch conversations."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="newsletter">
                 <p class="step-count">03</p>
@@ -266,7 +274,7 @@
               <li class="tour-step" data-step="find-times">
                 <p class="step-count">08</p>
                 <h3>Find a Time, Right in the Conversation</h3>
-                <p>Find Times offers free times beside the conversation. With optional AI, a request to meet next week finds times next week, and when someone offers a few times, each one is checked against your calendars. Select the ones you want and draft a reply, or insert them into the message you are writing. Writing to coworkers? Include them, and their calendars are checked too. Working hours can leave a lunch gap, a Drive Time Buffer reserves travel time around events with a location, and separate profiles keep different hours for work and personal accounts.</p>
+                <p>Find Times offers free times beside the conversation. With optional AI, a request to meet next week finds times next week, and when someone offers a few times, each one is checked against your calendars. Select the ones you want and draft a reply, or insert them into the message you are writing. Writing to coworkers? Include them, and their calendars are checked too. Working hours can leave a lunch gap, a Drive Time Buffer reserves travel time around events with a location, and separate profiles keep different hours for work and personal accounts. Match a profile to lunch, breakfast, dinner, or coffee invitations, and Find Times uses those hours instead. Each offered time is marked when it falls back-to-back with another meeting or leaves only a short break.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="find-times" sizes="92vw" alt="Available meeting times beside a conversation, with selected times ready to put in a reply."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="calendar-week">
@@ -278,22 +286,43 @@
               <li class="tour-step" data-step="calendar-create">
                 <p class="step-count">10</p>
                 <h3>From Conversation to Calendar</h3>
-                <p>Create events with invitees from the week view or a reviewed meeting suggestion. Check the title, time, location, and calendar before creating, or mark the event All day. When a newsletter announces several events, Get Brief and conversation chat can offer each one at its stated date and time. Edit or delete events you manage, or Reschedule a meeting you organize with guests’ busy times beside yours and suggested times within your working hours. Invite People suggests your contacts and contact groups as you type.</p>
+                <p>Create events with invitees from the week view or a reviewed meeting suggestion. Check the title, time, location, and calendar before creating, or mark the event All day. When a newsletter announces several events, Get Brief and conversation chat can offer each one at its stated date and time. Edit or delete events you manage, or Reschedule a meeting you organize with guests’ busy times beside yours and suggested times within your working hours. Invite People suggests your contacts and contact groups as you type, ranked by how often you email them, and Location suggests places from your other events.</p>
                 <p>Invitations arrive as a card beside the email: Accept, Maybe, or Decline with your current answer clearly marked, or suggest a different time and review the reply before it goes. Event details show who is going, not going, or hasn’t answered yet.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="calendar-create" sizes="92vw" alt="A new calendar event with an All day option, location, calendar, and invitee, awaiting Create event."></ts-shot></div></div>
               </li>
-              <li class="tour-step" data-step="contacts">
+              <li class="tour-step" data-step="notes">
                 <p class="step-count">11</p>
+                <h3>A Note for Every Day</h3>
+                <p>Press <kbd>4</kbd> for Notes. Each day has its own note, beside a calendar that marks the days you wrote in and lists that day's events. Write in Markdown and it formats as you type, using the same formatting shortcuts as email. Step through days with <kbd>-</kbd> and <kbd>=</kbd>, or press <kbd>t</kbd> for today.</p>
+                <p>Notes save as you type and hold pictures and files you paste or drag in, which <strong>Files</strong> lists too. Import a Reflect folder or a single Markdown file, export everything to a folder of Markdown files, and with encrypted sync on, notes reach your other devices.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="notes" sizes="92vw" alt="Today's daily note with meetings, a checklist, and a linked conversation, beside a calendar of days with notes and the day's events."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="notes-meeting">
+                <p class="step-count">12</p>
+                <h3>Meeting Notes, Linked Both Ways</h3>
+                <p><strong>Add Note</strong> on a calendar event, in Calendar or Today, writes a line about the meeting under <strong>Meetings</strong> in that day's note, linking the event and each person invited. Choose <strong>Create backlinked note</strong> to keep one running note that every meeting with that name shares.</p>
+                <p>Open the event later and its notes are right there. A recurring meeting lists the notes from every other meeting in its series, newest first, and a contact's details list the notes that mention them.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="notes-meeting" sizes="92vw" alt="A weekly one-on-one selected in the calendar, with Add Note and the note from last week's meeting listed under Series notes."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="notes-linked">
+                <p class="step-count">13</p>
+                <h3>Link Anything to Anything</h3>
+                <p>Type <code>[[</code> to link another note, or <code>@</code> to link a contact or an email conversation by name, address, or subject. Every note lists the notes that link to it, showing each linking line as you would read it. Round tasks you write in a note appear in <strong>Tasks</strong> and can be checked off in either place.</p>
+                <p>Notes search leaves Trash out unless you ask, and <kbd data-mod-key>⌘K</kbd> finds notes alongside commands.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="notes-linked" sizes="92vw" alt="A Q4 launch project note with a checklist and a linked conversation, beside Backlinks from two daily notes and a meeting note."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="contacts">
+                <p class="step-count">14</p>
                 <h3>People, in Context</h3>
                 <p>Browse, add, and edit contacts with multiple addresses, notes, correspondence history, and shared files. Organize people into groups and start a message to everyone with Email Group. Remember birthdays and recurring Keep in Touch reminders, and bring your address book with CSV or vCard import and export. On macOS, connect selected address books already configured in Apple Contacts, including iCloud. Access stays read-only, and you choose which books contribute contacts and recipient suggestions.</p>
                 <p>Groups show recent conversations with their current members, including sent mail, so you can find other people to add. Add Members prioritizes people you often email together using local history. Merge selected profiles to bring someone's addresses and history together, and control which addresses appear in recipient suggestions. The conversation context panel names the person whose history you are viewing and follows the message you are reading. Switch to another participant to see their files and recent emails alongside related tasks and meetings. Optional AI enrichment suggests profile details for you to apply.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="contacts" sizes="92vw" alt="An editable contact profile with role, company, multiple addresses, notes, and recent emails."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="files">
-                <p class="step-count">12</p>
+                <p class="step-count">15</p>
                 <h3>Find the File Without Hunting Down the Email</h3>
-                <p>Bring attachments from your synced mail together in one Files view, including archived conversations. Search by filename or sender, or filter by sender, file type, direction, account, and date. Star the files you return to, and jump straight to the source conversation when you need the context.</p>
-                <p>On macOS and Windows, preview a selected document or picture before opening it. Risky attachments show a warning and are never previewed. Mark Spam removes a message’s files from Files, with Undo if needed. Press <kbd>5</kbd> to open Files. Stars stay on this computer and do not keep an offline copy.</p>
+                <p>Bring attachments from your synced mail together in one Files view, including archived conversations, alongside the pictures and files in your notes. Search by filename or sender, or filter by sender, file type, direction, account, and date. Star the files you return to, and jump straight to the source conversation when you need the context.</p>
+                <p>On macOS and Windows, preview a selected document or picture before opening it. Risky attachments show a warning and are never previewed. Mark Spam removes a message’s files from Files, with Undo if needed. Press <kbd>6</kbd> to open Files. Stars stay on this computer and do not keep an offline copy.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="files" sizes="92vw" alt="The Files view with searchable mail attachments, a starred rollout image and its preview, and its source conversation in the context panel."></ts-shot></div></div>
               </li>
             </ol>
@@ -302,7 +331,7 @@
                 <div class="window-bar"><span class="light red"></span><span class="light amber"></span><span class="light green"></span><span class="window-title">ThreeStrands</span></div>
                 <div class="window-body tour-frames" data-tour-frames>
                   <ts-shot scene="inbox" data-scene="inbox" data-active="" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
-                  <ts-shot scene="split-inbox" data-scene="split-inbox" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="saved-search" data-scene="split-inbox" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="newsletter" data-scene="newsletter" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="reply" data-scene="reply" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="tasks" data-scene="tasks" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
@@ -311,6 +340,9 @@
                   <ts-shot scene="find-times" data-scene="find-times" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="calendar-week" data-scene="calendar-week" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="calendar-create" data-scene="calendar-create" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="notes" data-scene="notes" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="notes-meeting" data-scene="notes-meeting" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="notes-linked" data-scene="notes-linked" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="contacts" data-scene="contacts" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="files" data-scene="files" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                 </div>
@@ -388,18 +420,18 @@
                   <p>Google sign-in tokens and IMAP/SMTP passwords live in your operating system's credential store. Mail credentials never enter settings exports or encrypted sync.</p>
                 </div>
               </li>
-              <li class="stamp" style="--stamp: var(--strand-tasks-ink)">
+              <li class="stamp" style="--stamp: var(--strand-notes-ink)">
                 <div class="stamp-inner">
                   <ts-icon name="file-lock"></ts-icon>
                   <h3>Encrypted Settings Export</h3>
-                  <p>Move preferences, account display details, saved contacts and groups, snippets, signatures and their defaults, muted senders, and Split Inboxes with a password-encrypted file. Mail, drafts, queued sends, and credentials stay behind.</p>
+                  <p>Move preferences, account display details, saved contacts and groups, snippets, signatures and their defaults, muted senders, and Split Inboxes with a password-encrypted file. Mail, drafts, queued sends, and credentials stay behind. Notes stay behind too; export them as Markdown from Settings → Notes.</p>
                 </div>
               </li>
               <li class="stamp" style="--stamp: var(--strand-mail-ink)">
                 <div class="stamp-inner">
                   <ts-icon name="folder-sync"></ts-icon>
                   <h3>Encrypted Sync</h3>
-                  <p>Sync tasks, goals, saved contacts and groups, snippets, signatures and their defaults, muted senders, snooze schedules, Split Inboxes, portable preferences, and account display details with end-to-end encryption through a shared folder, S3-compatible storage, or IPFS. Drafts travel through your Gmail or IMAP Drafts folder, attachments included. Scheduled-send summaries share the account, subject, timing, sending computer, and last reported status. Mail, attachment files, queued send payloads, and provider credentials stay on each device. Scheduled bodies, recipients, and attachments never sync.</p>
+                  <p>Sync tasks, goals, saved contacts and groups, snippets, signatures and their defaults, muted senders, snooze schedules, Split Inboxes, portable preferences, and account display details with end-to-end encryption through a shared folder, S3-compatible storage, or IPFS. Drafts travel through your Gmail or IMAP Drafts folder, attachments included. Scheduled-send summaries share the account, subject, timing, sending computer, and last reported status. Mail, attachment files, queued send payloads, and provider credentials stay on each device. Scheduled bodies, recipients, and attachments never sync. Notes sync to your other devices too. Remove a mail account and everything ThreeStrands kept for it on your computer goes too, including drafts, Outbox messages, opened attachments, and older backups; <strong>Remove on all devices</strong> clears the same everywhere.</p>
                 </div>
               </li>
             </ul>
@@ -425,6 +457,7 @@
             </ul>
             <p class="ai-note">Proactive briefs are a separate opt-in: when enabled, qualifying conversations are sent to your provider after you stay on them. Each brief covers only what’s new since your last reply or brief, and says how many messages it shared and with which provider. Contact enrichment reviews correspondence with that person when you request it.</p>
             <p class="ai-note">Draft review sends your subject, written text, and any goal you add when you click Review, along with the writing profile you set for that account: a few paragraphs about you and how you want drafts reviewed. Recipient fields, separately stored quoted history, and attachments are excluded, and What was sent shows exactly what went to your provider. Review suggested wording before applying it; revisions can be undone.</p>
+            <p class="ai-note">Delegate read-only web research in <strong>Agents</strong>, with its own Anthropic and Exa keys set up in Settings → Web Research. Review the public search subjects before research starts, ask follow-up questions, and save report revisions with their sources. <strong>Pause All</strong> stops delegated work until you resume it.</p>
             <p class="ai-note">Track requests, tokens, and estimated costs in settings. An Activity log lists which feature sent each request, for which conversation, and how many messages; email text is never kept there. An optional fast model handles summaries, reply drafts, and contact enrichment while your main model handles draft review, briefs, suggestions, and chat.</p>
           </div>
           <div class="ai-screenshots">
@@ -463,6 +496,8 @@
             <li><ts-icon name="at-sign"></ts-icon><h3>Sent to You, or Cc'd?</h3><p>Message headers read “to David Martinez, cc me,” so you can tell at a glance.</p></li>
             <li><ts-icon name="rotate-ccw"></ts-icon><h3>Right Where You Left Off</h3><p>The app reopens to the view you quit in, each account remembers the conversation you had open, and a long email you were partway through picks up where you left off.</p></li>
             <li><ts-icon name="a-large-small"></ts-icon><h3>Readable Mail</h3><p>Zoom email on its own, set a minimum font size for tiny sender text, and let hard-to-read sender colors adjust just enough to read. Switch light and dark mode anytime with <kbd data-mod-key>⌘D</kbd>.</p></li>
+            <li><ts-icon name="eye"></ts-icon><h3>Read on Your Terms</h3><p>Mark conversations read immediately, after a delay, or never when you open them, and choose what archiving opens next. Settings → Reading &amp; Triage.</p></li>
+            <li><ts-icon name="panel-right-close"></ts-icon><h3>Panels Your Size</h3><p>Drag list and side panels wider or narrower. Hide the side panel with <kbd>\</kbd>; each view remembers.</p></li>
             <li><ts-icon name="database-backup"></ts-icon><h3>Self-Healing Cache</h3><p>Automatic backups and startup recovery keep your local data safe.</p></li>
           </ul>
         </div>

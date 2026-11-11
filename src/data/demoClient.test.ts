@@ -318,6 +318,32 @@ describe("showcase dataset", () => {
     expect(timed.some((event) => new Date(event.start).toDateString() === now.toDateString())).toBe(true);
   });
 
+  it("seeds a week of notes whose every link resolves to showcase data", async () => {
+    const dataset = buildShowcaseDataset(now);
+    const client = createDemoClient(dataset);
+    const notes = await client.listRecentNotes(50);
+    expect(notes.map((note) => note.title)).toEqual(["2026-09-22", "Q4 launch", "2026-09-21", "Roadmap sync", "2026-09-18", "1:1 Daniel / Maya"]);
+    const kinds = new Set<string>();
+    for (const summary of notes) {
+      expect((await client.noteLinks(summary.id)).unlinked).toEqual([]);
+      for (const { reference } of (await client.noteDocument(summary.id)).links) {
+        kinds.add(reference.kind);
+        if (reference.kind === "event") expect(await client.resolveNoteEvent(reference)).not.toBeNull();
+        if (reference.kind === "contact") expect(await client.resolveNoteContact(reference)).not.toBeNull();
+        if (reference.kind === "conversation") expect(await client.resolveNoteConversation(reference)).not.toBeNull();
+        if (reference.kind === "task") expect(dataset.tasks.map((task) => task.id)).toContain(reference.id);
+      }
+    }
+    expect([...kinds].sort()).toEqual(["contact", "conversation", "event", "task"]);
+    expect(await client.listDailyNoteDates("2026-09-14", "2026-09-27")).toEqual(["2026-09-18", "2026-09-21", "2026-09-22"]);
+    // This week's 1:1 lists last week's under Series notes; Marcus's contact lists the note that mentions him.
+    const series = await client.noteBacklinks({ version: 1, kind: "event", id: "series-one-on-one", account: SHOWCASE_WORK_ACCOUNT, calendar: SHOWCASE_WORK_ACCOUNT });
+    expect(series.map((row) => row.title)).toEqual(["2026-09-18"]);
+    const marcus = await client.noteBacklinks({ version: 1, kind: "contact", id: "marcus@brightwater.example" });
+    expect(marcus.map((row) => row.title)).toEqual(["2026-09-21"]);
+    expect((await client.listNoteTasks()).map((task) => task.title).sort()).toEqual(["Draft the onboarding v3 release notes", expect.stringMatching(/^Share the EU rollout plan with Daniel Kim/)]);
+  });
+
   it("serves multi-message threads whose later messages resolve for replies", async () => {
     const client = createDemoClient(buildShowcaseDataset(now));
     const detail = await client.getThread("launch-plan");

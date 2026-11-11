@@ -4,6 +4,7 @@ import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks } 
 import { notePlainText, notePreview, noteInlineText } from "../notePreview";
 import { insertMeetingLine, meetingLine, meetingNoteTitle } from "../noteMeetings";
 import type { MailClient } from "./client";
+import type { DemoNoteSeed } from "./demoDataset";
 
 type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
@@ -31,7 +32,7 @@ const linkContext = (line: string) => {
 };
 
 /** In-memory notes for the browser demo and tests, following the native store's rules. */
-export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadTask[]; events(): ScheduleEvent[]; contacts?(): ContactProfile[] | Promise<ContactProfile[]> } = { threads: () => [], tasks: () => [], events: () => [] }): DemoNotes {
+export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadTask[]; events(): ScheduleEvent[]; contacts?(): ContactProfile[] | Promise<ContactProfile[]> } = { threads: () => [], tasks: () => [], events: () => [] }, seeds: readonly DemoNoteSeed[] = []): DemoNotes {
   const notes = new Map<string, Note>();
   const provisional = new Map<string, string>();
   const itemId = (noteId: string, body: string, item: ReturnType<typeof noteItemRanges>[number], occurrence: number) => {
@@ -84,6 +85,17 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
     const { links } = extractNoteEntityLinks(note.body);
     return { items, links, warning: null };
   };
+  // Seeds load in order, so the last one is the most recently changed note.
+  for (const [index, seed] of seeds.entries()) {
+    const time = now();
+    const daily = "dailyDate" in seed;
+    if (daily && !DATE.test(seed.dailyDate)) throw new Error("That isn't a valid date");
+    const title = daily ? seed.dailyDate : noteTitle(seed.title);
+    if (!daily && titleTaken(title, "")) throw new Error(`A note named “${title}” already exists`);
+    const id = daily ? `daily:${seed.dailyDate}` : `demo-note-seed-${index}`;
+    if (notes.has(id)) throw new Error(`${title} is seeded twice`);
+    notes.set(id, { id, title, body: normalize(id, seed.body), dailyDate: daily ? seed.dailyDate : null, createdAt: time, updatedAt: time, trashed: false, trashedAt: null });
+  }
   return {
     async noteLinkChoices(kind, query) {
       const conversation = sources.threads().slice().sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)).map((thread) => ({ label: thread.subject || "(No subject)", detail: `${thread.participants.join(", ")} · ${thread.accountId}`, sentAt: thread.lastMessageAt, reference: { version: 1 as const, kind: "conversation" as const, id: thread.providerThreadId, account: thread.accountId } }));

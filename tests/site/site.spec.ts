@@ -11,7 +11,7 @@ import { shortcutGroups } from "../../src/shortcutCatalog";
 
 const RELEASES = "https://github.com/oa-labs/ThreeStrands/releases/latest";
 const LICENSE_URL = "https://github.com/oa-labs/ThreeStrands/blob/master/LICENSE";
-const TOUR_SCENES = ["inbox", "split-inbox", "newsletter", "reply", "tasks", "goals", "today", "find-times", "calendar-week", "calendar-create", "contacts", "files"];
+const TOUR_SCENES = ["inbox", "split-inbox", "newsletter", "reply", "tasks", "goals", "today", "find-times", "calendar-week", "calendar-create", "notes", "notes-meeting", "notes-linked", "contacts", "files"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
 /** Walks the whole page so every lazy image and scroll-driven effect gets a chance to run. */
@@ -142,6 +142,24 @@ test.describe("feature claims", () => {
     await expect(page.locator('[data-key="mod+k"]')).toHaveAttribute("aria-label", "Ctrl K: Command palette");
   });
 
+  test("presents Mail, Schedule, and Notes as the strands, with Tasks tying them together", async ({ page }) => {
+    await page.goto("./");
+    const strands = page.locator(".strands-section");
+    await expect(strands.locator(".strand-label")).toHaveText(["Mail", "Schedule", "Notes", "Tasks · What Ties Them Together"]);
+    await expect(strands.locator(".strand-tie")).toContainText("Write a task in a meeting note and check it off in Tasks");
+    await expect(page.locator(".hero .lead")).toContainText("your notes");
+    const tour = page.locator("[data-tour-steps]");
+    await expect(tour.locator('[data-step="notes"] kbd').first()).toHaveText("4");
+    for (const [step, claim] of [
+      ["notes", "Each day has its own note"], ["notes", "export everything to a folder of Markdown files"],
+      ["notes-meeting", "Create backlinked note"], ["notes-meeting", "notes from every other meeting in its series"],
+      ["notes-linked", "link a contact or an email conversation"], ["notes-linked", "appear in Tasks"],
+    ]) await expect(tour.locator(`[data-step="${step}"]`)).toContainText(claim);
+    // Notes sync but never travel in the settings export.
+    await expect(page.locator("#privacy")).toContainText("Notes sync to your other devices too");
+    await expect(page.locator("#privacy")).toContainText("Notes stay behind too; export them as Markdown");
+  });
+
   test("promotes finding mail attachments with their source context and local stars", async ({ page }) => {
     await page.goto("./");
     const files = page.locator('[data-tour-steps] [data-step="files"]');
@@ -151,7 +169,7 @@ test.describe("feature claims", () => {
       "sender, file type, direction, account, and date", "Star the files you return to",
       "jump straight to the source conversation", "Stars stay on this computer", "do not keep an offline copy",
     ]) await expect(files).toContainText(claim);
-    await expect(files.locator("kbd")).toHaveText("5");
+    await expect(files.locator("kbd")).toHaveText("6");
     await expect(files.locator(".tour-inline img")).toHaveAttribute("alt", /Files view.*starred rollout image.*preview.*source conversation/);
   });
 
@@ -332,6 +350,8 @@ test.describe("images", () => {
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto("./");
     await image.scrollIntoViewIfNeeded();
+    // A lazy image has no currentSrc until it starts loading.
+    await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).currentSrc)).not.toBe("");
     await expect.poll(pickedDarkSource).toBe(true);
     await page.emulateMedia({ colorScheme: "light" });
     await page.reload();

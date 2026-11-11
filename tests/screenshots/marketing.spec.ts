@@ -113,7 +113,7 @@ const scenes: Scene[] = [
       await page.getByRole("button", { name: "Find Times", exact: true }).click();
       const availability = page.getByRole("region", { name: "Availability", exact: true });
       await expect(availability.getByText("The conversation asks to meet next week.", { exact: true })).toBeVisible();
-      await expect(availability.getByRole("button", { name: "Draft Reply With These Times", exact: true })).toBeEnabled();
+      await expect(availability.getByRole("button", { name: /^Draft Reply With \d+ Times?$/ })).toBeEnabled();
       await expect(availability.getByRole("group", { name: "Open times", exact: true }).getByRole("checkbox", { checked: true }).first()).toBeVisible();
     },
   },
@@ -224,13 +224,14 @@ const scenes: Scene[] = [
       await configureDemoAi(page, ["Reading"]);
       await openThread(page, /Contract renewal — Brightwater Co-op/);
       const brief = page.getByRole("region", { name: "Brief", exact: true });
+      const suggestions = page.getByRole("region", { name: "Suggestions", exact: true });
       await page.getByRole("button", { name: "Get Brief", exact: true }).click();
-      await expect(brief.getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
-      await brief.getByText("From the email", { exact: true }).click();
-      await expect(brief.locator("blockquote")).toBeVisible();
-      await brief.getByRole("button", { name: "Review & Add Task", exact: true }).scrollIntoViewIfNeeded();
-      await expect(brief.locator("blockquote")).toBeInViewport();
-      await expect(brief.locator("blockquote")).toContainText("Could you send over updated pricing for 35 seats");
+      await expect(suggestions.getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
+      await suggestions.getByText("From the email", { exact: true }).click();
+      await expect(suggestions.locator("blockquote")).toBeVisible();
+      await suggestions.getByRole("button", { name: "Add Task…", exact: true }).scrollIntoViewIfNeeded();
+      await expect(suggestions.locator("blockquote")).toBeInViewport();
+      await expect(suggestions.locator("blockquote")).toContainText("Could you send over updated pricing for 35 seats");
       await expect(brief.getByText("Brightwater is renewing its annual plan and needs pricing for 35 seats.", { exact: true })).toBeVisible();
     },
   },
@@ -283,7 +284,7 @@ const scenes: Scene[] = [
   {
     name: "contacts",
     capture: async (page) => {
-      await page.keyboard.press("4");
+      await page.keyboard.press("5");
       await expect(page.getByRole("textbox", { name: "Name" })).toHaveValue("Priya Natarajan");
       await expect(page.getByRole("heading", { name: "Recent emails" })).toBeVisible();
       await expect(page.getByText("priya.natarajan@harborlight.example", { exact: true })).toBeVisible();
@@ -302,7 +303,7 @@ const scenes: Scene[] = [
           return mailClient.fetchAttachmentImage(messageId, attachmentId);
         };
       });
-      await page.keyboard.press("5");
+      await page.keyboard.press("6");
       const files = page.getByRole("region", { name: "Files", exact: true });
       await expect(files).toBeVisible();
       const attachments = files.getByRole("list", { name: "File list" });
@@ -316,6 +317,61 @@ const scenes: Scene[] = [
       await expect(context.getByRole("heading", { name: "regional-rollout.png", exact: true })).toBeVisible();
       await expect(context.locator(".file-detail-preview img")).toBeVisible();
       await expect(context.getByRole("button", { name: /Q4 launch plan — final review/ })).toBeVisible();
+    },
+  },
+  {
+    name: "notes",
+    capture: async (page) => {
+      await page.keyboard.press("4");
+      const notes = page.getByRole("region", { name: "Notes", exact: true });
+      await expect(notes.getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true");
+      await expect(notes.getByRole("textbox", { name: "Note text", exact: true })).toContainText("Launch week starts Thursday");
+      await expect(notes.getByRole("textbox", { name: "Note text", exact: true })).toContainText("Team standup");
+      const context = page.getByRole("complementary", { name: "Note context", exact: true });
+      await expect(context.getByRole("button", { name: "Jump to Today", exact: true })).toBeVisible();
+      await expect(context.getByText("Brightwater renewal call").first()).toBeVisible();
+    },
+  },
+  {
+    name: "notes-linked",
+    capture: async (page) => {
+      await page.keyboard.press("4");
+      const notes = page.getByRole("region", { name: "Notes", exact: true });
+      await notes.getByRole("list", { name: "Notes", exact: true }).getByRole("button", { name: /^Q4 launch/ }).click();
+      await expect(notes.getByRole("textbox", { name: "Title", exact: true })).toHaveValue("Q4 launch");
+      const backlinks = page.getByRole("complementary", { name: "Note context", exact: true }).getByRole("region", { name: /Backlinks/ });
+      await expect(backlinks.getByRole("button", { name: /^(Monday|Tuesday), September 2[12], 2026 |^Roadmap sync / })).toHaveCount(3);
+      await expect(backlinks).toContainText("Keep the afternoon clear for the Q4 launch checklist.");
+    },
+  },
+  {
+    name: "notes-meeting",
+    capture: async (page) => {
+      await page.keyboard.press("2");
+      const week = page.getByRole("region", { name: "Calendar week", exact: true });
+      await week.getByRole("button", { name: /^1:1 Daniel \/ Maya/ }).click();
+      const context = page.getByRole("complementary", { name: "Meeting context", exact: true });
+      await expect(context.getByRole("button", { name: "Add Note", exact: true })).toBeVisible();
+      const series = context.getByRole("region", { name: /Series notes/ });
+      await expect(series.getByRole("button", { name: /2026-09-18/ })).toBeVisible();
+      await expect(series).toContainText("met with Daniel Kim for 1:1 Daniel / Maya");
+    },
+  },
+  {
+    name: "saved-search",
+    capture: async (page) => {
+      // Saved searches are device-local; seed one as Save Search would store it.
+      await page.evaluate(() => {
+        localStorage.setItem("threestrands.savedSearches", JSON.stringify({ version: 1, searches: [
+          { id: "showcase-launch", name: "Launch", query: "launch", accountId: "maya@harborlight.example", inboxOnly: false, messageFilters: [] },
+        ] }));
+      });
+      await page.reload();
+      await page.getByRole("radio", { name: /^Maya Chen/ }).first().click();
+      await page.getByRole("tab", { name: "Launch", exact: true }).click();
+      const results = page.getByRole("listbox", { name: "Launch", exact: true });
+      await expect(results.getByRole("option", { name: /Q4 launch plan — final review/ })).toBeVisible();
+      await expect(page.getByRole("textbox", { name: "Search Mail", exact: true })).toHaveValue("launch");
     },
   },
 ];
