@@ -221,7 +221,7 @@ function TodayLayout({
         {schedule ? <>
           {/* The page heading already names today, so its agenda leaves the date out. */}
           <CalendarAgenda today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
-          <CalendarAgenda today={addDays(startOfLocalDay(now), 1)} tomorrow calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
+          <CalendarAgenda today={addDays(startOfLocalDay(now), 1)} day="tomorrow" calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}

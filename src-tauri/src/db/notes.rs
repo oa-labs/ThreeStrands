@@ -838,6 +838,31 @@ impl Database {
         })
     }
 
+    /// Days from `from` through `to` (`YYYY-MM-DD`, inclusive) whose daily
+    /// note has text and is outside Trash, oldest first. For the Notes
+    /// calendar's marks, so a day emptied again shows no mark.
+    pub fn list_daily_note_dates(&self, from: &str, to: &str) -> DbResult<Vec<String>> {
+        if !is_daily_date(from) || !is_daily_date(to) {
+            return Err(DatabaseError::invalid("That isn't a valid date"));
+        }
+        self.with_connection(|connection| {
+            // A daily note's id is its date after a fixed prefix, so the
+            // primary key orders days by date.
+            let mut statement = connection.prepare(
+                "SELECT daily_date FROM notes
+                 WHERE id BETWEEN ?1 AND ?2 AND daily_date IS NOT NULL AND trashed=0
+                   AND trim(body, ' ' || char(9, 10, 13)) <> ''
+                 ORDER BY id
+                 LIMIT ?3",
+            )?;
+            let rows = statement.query_map(
+                params![daily_note_id(from), daily_note_id(to), MAX_LIST_ROWS as i64],
+                |row| row.get::<_, String>(0),
+            )?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
     /// Remembers that the user opened a note on this device.
     pub fn record_note_visit(&self, id: &str) -> DbResult<()> {
         self.with_connection(|connection| {

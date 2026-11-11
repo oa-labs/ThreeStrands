@@ -356,6 +356,29 @@ show three rows before **Show more**, and headings collapse. Step 2 shows
 **Note details** (when the note was created, and last changed on this
 device), and the sections below follow it.
 
+Two sections come before Note details, borrowed from Reflect's sidebar:
+
+- **Calendar**: the month, headed by its name, with Previous Month, **Go to
+  Today**, and Next Month. Choosing a day opens that day's note, which, like
+  Today, writes nothing until the user types. The month follows the open
+  daily note; paging it opens nothing. The week starts on the locale's first
+  day. A dot marks each day whose note has text outside Trash
+  (`list_daily_note_dates`, read for the six weeks shown and again after a
+  save, a Trash change, or a sync), so a day emptied again loses its mark.
+  The grid is `MonthGrid`, shared with the date field's picker. On the page
+  it takes focus only from its own arrow keys, never when it appears.
+- **Agenda**, on a daily note only, when the user has calendars: that day's
+  events from `CalendarAgenda`, each with **Add Note**, which opens the
+  meeting dialog for the event as the other agendas do. The added line
+  appears in the open note, which saves any typing first. Selecting an event
+  opens it in Calendar. A regular note has no day, so it shows no agenda.
+
+A daily note's title has **Previous Day** and **Next Day** arrows beside it.
+In Notes, `-` and `=` step a daily note back and forward a day, as they step
+Calendar's days, and do nothing on a regular note; `t` opens today's note, as
+it goes to today in Calendar. A continuous scrolling journal of days, as in
+Reflect, is left for later (see [Later](#later)).
+
 - **Backlinks**: notes that link here, each with the line around the link as
   its detail.
 - **Unlinked**: `[[links]]` in this note whose target doesn't exist yet.
@@ -1452,6 +1475,11 @@ Nothing below is planned for the next release.
   loading its dates in Calendar.
 - Splitting snapshots by entity type, which would lift the 3.5 MiB notes
   limit (see [Size limits](#size-limits)).
+- A continuous journal: the daily notes as one scrolling page, as in
+  Reflect, skipping days without text other than today. The editor, save
+  state, and conflict banners are built for one open note, so days other
+  than the open one would show as read-only text that becomes the editor
+  when chosen.
 
 ### Sketch: summarizing a meeting series
 

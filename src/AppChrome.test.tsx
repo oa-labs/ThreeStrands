@@ -192,7 +192,7 @@ describe("App chrome", () => {
   it("includes the t shortcut in keyboard help", () => {
     render(<ShortcutHelp onClose={vi.fn()} />);
     const dialog = screen.getByRole("dialog", { name: "Keyboard Shortcuts" });
-    const title = within(dialog).getByText("Today in Calendar / Toggle Schedule", { selector: "dt" });
+    const title = within(dialog).getByText("Today in Calendar or Notes / Toggle Schedule", { selector: "dt" });
     expect(title.nextElementSibling?.querySelector("kbd")?.textContent).toBe("t");
   });
 

@@ -15,11 +15,11 @@ function event(id: string, startHour: number, endHour: number, overrides: Partia
   };
 }
 
-function renderAgenda(events: ScheduleEvent[], props: { now?: Date; tomorrow?: boolean; today?: Date } = {}) {
+function renderAgenda(events: ScheduleEvent[], props: { now?: Date; day?: "today" | "tomorrow" | "chosen"; today?: Date } = {}) {
   render(<CalendarAgenda
     today={props.today ?? day}
     now={props.now}
-    tomorrow={props.tomorrow}
+    day={props.day}
     calendars={calendars}
     onOpenEvent={vi.fn()}
     schedule={{ events, loading: false, error: null, reload: vi.fn() }}
@@ -82,7 +82,7 @@ describe("CalendarAgenda for tomorrow", () => {
     const next = (id: string, hour: number) => ({
       ...event(id, 0, 0), start: new Date(2026, 9, 24, hour).toISOString(), end: new Date(2026, 9, 24, hour + 1).toISOString(),
     });
-    renderAgenda([next("Dentist", 9), next("Gym", 7), next("Call", 11), next("Lunch", 12), next("Dinner", 19), event("Today only", 9, 10)], { today: tomorrow, tomorrow: true });
+    renderAgenda([next("Dentist", 9), next("Gym", 7), next("Call", 11), next("Lunch", 12), next("Dinner", 19), event("Today only", 9, 10)], { today: tomorrow, day: "tomorrow" });
 
     const section = screen.getByRole("region", { name: "Tomorrow" });
     expect(agendaOrder(section)).toEqual(["Gym", "Dentist", "Call"]);
@@ -91,8 +91,22 @@ describe("CalendarAgenda for tomorrow", () => {
   });
 
   it("says when tomorrow is free", () => {
-    renderAgenda([], { today: new Date(2026, 9, 24), tomorrow: true });
+    renderAgenda([], { today: new Date(2026, 9, 24), day: "tomorrow" });
     expect(within(screen.getByRole("region", { name: "Tomorrow" })).getByText("No events tomorrow.")).toBeInTheDocument();
+  });
+});
+
+describe("CalendarAgenda for a chosen day", () => {
+  afterEach(cleanup);
+
+  it("lists all of that day's events under Agenda and says when it is free", () => {
+    const later = new Date(2026, 10, 9);
+    const on = (id: string, hour: number) => ({ ...event(id, 0, 0), start: new Date(2026, 10, 9, hour).toISOString(), end: new Date(2026, 10, 9, hour + 1).toISOString() });
+    renderAgenda([on("Lead gen", 9), on("Budget", 11), on("Review", 12), on("Planning", 13), on("Deep dive", 16), event("Another day", 9, 10)], { today: later, day: "chosen" });
+    expect(agendaOrder(screen.getByRole("region", { name: "Agenda" }))).toEqual(["Lead gen", "Budget", "Review", "Planning", "Deep dive"]);
+    cleanup();
+    renderAgenda([], { today: later, day: "chosen" });
+    expect(within(screen.getByRole("region", { name: "Agenda" })).getByText("No events on this day.")).toBeInTheDocument();
   });
 });
 

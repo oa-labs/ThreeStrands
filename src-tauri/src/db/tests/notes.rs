@@ -145,6 +145,48 @@ fn a_day_deleted_from_trash_can_be_written_again_on_every_device() {
 }
 
 #[test]
+fn daily_note_dates_list_written_days_in_range_outside_trash() {
+    let db = synced();
+    for (day, body) in [
+        ("2026-10-31", "before the range"),
+        ("2026-11-01", "first day"),
+        ("2026-11-05", " \n\t "),
+        ("2026-11-09", "Standup"),
+        ("2026-11-20", "trashed"),
+        ("2026-11-30", "last day"),
+        ("2026-12-01", "after the range"),
+    ] {
+        db.save_daily_note(day, body).unwrap();
+    }
+    db.trash_note("daily:2026-11-20").unwrap();
+    db.create_note("Planning", "a regular note").unwrap();
+
+    assert_eq!(
+        db.list_daily_note_dates("2026-11-01", "2026-11-30")
+            .unwrap(),
+        ["2026-11-01", "2026-11-09", "2026-11-30"]
+    );
+    assert_eq!(
+        db.list_daily_note_dates("2026-11-09", "2026-11-09")
+            .unwrap(),
+        ["2026-11-09"]
+    );
+    assert!(db
+        .list_daily_note_dates("2026-11-30", "2026-11-01")
+        .unwrap()
+        .is_empty());
+    db.restore_note("daily:2026-11-20").unwrap();
+    assert!(db
+        .list_daily_note_dates("2026-11-01", "2026-11-30")
+        .unwrap()
+        .contains(&"2026-11-20".to_string()));
+    assert!(db
+        .list_daily_note_dates("2026-11-31", "2026-12-01")
+        .is_err());
+    assert!(db.list_daily_note_dates("2026-11-01", "daily").is_err());
+}
+
+#[test]
 fn a_daily_note_exists_only_once_written_and_keeps_its_date_as_title() {
     let db = synced();
     assert!(db.save_daily_note(DAY, "").unwrap().is_none());

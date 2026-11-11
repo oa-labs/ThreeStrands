@@ -5,7 +5,7 @@ import { notePreview, noteInlineText } from "../notePreview";
 import { insertMeetingLine, meetingLine, meetingNoteTitle } from "../noteMeetings";
 import type { MailClient } from "./client";
 
-type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
+type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = collapseWhitespace;
@@ -161,6 +161,13 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
         .sort((a, b) => (b.trashedAt ?? "").localeCompare(a.trashedAt ?? "") || a.id.localeCompare(b.id))
         .slice(0, limit)
         .map(summary);
+    },
+    async listDailyNoteDates(from, to) {
+      if (!DATE.test(from) || !DATE.test(to)) throw new Error("That isn't a valid date");
+      return [...notes.values()]
+        .filter((note) => note.dailyDate && note.dailyDate >= from && note.dailyDate <= to && !note.trashed && note.body.trim())
+        .map((note) => note.dailyDate!)
+        .sort();
     },
     async trashNote(id) {
       return setTrashed(id, true);

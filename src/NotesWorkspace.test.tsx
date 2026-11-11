@@ -9,7 +9,8 @@ import { NotesWorkspace, relinkMessage } from "./NotesWorkspace";
 import { lastEditorProps } from "./test/NoteEditorStub";
 import { formatNoteDate } from "./noteDates";
 import { noteTitleKey as noteTitleKeyOf } from "./noteWikiLinks";
-import type { ContactProfile, Note } from "./domain";
+import type { CalendarOption, ContactProfile, Note, ScheduleEvent } from "./domain";
+import { clearScheduleCache } from "./calendarScheduleCache";
 import { todayTarget, writeLastNoteTarget } from "./noteDrafts";
 import { markdownEntityLink } from "./noteEntities";
 import { replicatedSyncConflicts, replicatedSyncDeviceRoster, replicatedSyncResolveConflict, type FrontierConflict } from "./replicatedSync";
@@ -835,6 +836,143 @@ describe("Notes workspace", () => {
       expect(relinkMessage({ updated: 2, keptOldLink: ["Full", "2026-11-09"] })).toBe(
         `Updated links in 2 notes. “Full”, ${formatNoteDate("2026-11-09")} keep the old link, because changing them would make them too long to sync or would settle a conflict.`,
       );
+    });
+  });
+
+  describe("Daily notes by date", () => {
+    const longDate = (date: string) => new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00`));
+    const calendar = () => within(screen.getByRole("region", { name: "Calendar" }));
+    const dayHeading = (date: string) => screen.findByRole("heading", { level: 2, name: formatNoteDate(date) });
+    const calendars: CalendarOption[] = [{ id: "primary", accountId: "cal@example.com", name: "Work", primary: true, selected: true, writable: true }];
+    const meeting = (date: string, title: string, hour: number): ScheduleEvent => ({
+      id: `${date}-${title}`, accountId: "cal@example.com", calendarId: "primary", title, allDay: false,
+      start: new Date(`${date}T${String(hour).padStart(2, "0")}:00:00`).toISOString(), end: new Date(`${date}T${String(hour + 1).padStart(2, "0")}:00:00`).toISOString(),
+    });
+    afterEach(() => clearScheduleCache());
+
+    it("opens any day's note from the rail's month and marks the days whose note has text", async () => {
+      await mailClient.saveDailyNote("2031-03-04", "Standup", null);
+      await mailClient.saveDailyNote("2031-03-10", "Moved to Trash", null);
+      await mailClient.trashNote("daily:2031-03-10");
+      writeLastNoteTarget({ kind: "daily", date: "2031-03-12" });
+      const update = vi.spyOn(mailClient, "saveDailyNote");
+      render(<NotesWorkspace />);
+      await dayHeading("2031-03-12");
+      expect(calendar().getByRole("grid", { name: "March 2031" })).toBeInTheDocument();
+      expect(calendar().getByRole("gridcell", { selected: true })).toHaveTextContent(/^12$/);
+      const marked = await calendar().findByRole("button", { name: `${longDate("2031-03-04")}, has a note` });
+      expect(calendar().getByRole("button", { name: longDate("2031-03-10") })).toBeInTheDocument();
+      expect(calendar().getByRole("button", { name: longDate("2031-03-12") })).toBeInTheDocument();
+      // The month on the page never takes focus on its own.
+      expect(document.body).toHaveFocus();
+
+      fireEvent.click(marked);
+      await dayHeading("2031-03-04");
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue("Standup"));
+      expect(calendar().getByRole("gridcell", { selected: true })).toHaveTextContent(/^4$/);
+      expect(update).not.toHaveBeenCalled();
+
+      // Paging the month opens nothing.
+      fireEvent.click(calendar().getByRole("button", { name: "Next Month" }));
+      expect(calendar().getByRole("grid", { name: "April 2031" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 2, name: formatNoteDate("2031-03-04") })).toBeInTheDocument();
+      fireEvent.click(calendar().getByRole("button", { name: "Previous Month" }));
+
+      // Writing in a day marks it.
+      fireEvent.click(calendar().getByRole("button", { name: longDate("2031-03-12") }));
+      await dayHeading("2031-03-12");
+      const body = screen.getByRole("textbox", { name: "Note text" });
+      fireEvent.change(body, { target: { value: "Written today" } });
+      fireEvent.blur(body);
+      expect(await calendar().findByRole("button", { name: `${longDate("2031-03-12")}, has a note` })).toBeInTheDocument();
+    });
+
+    it("moves the month with the keyboard and opens the day chosen with Enter", async () => {
+      writeLastNoteTarget({ kind: "daily", date: "2031-05-30" });
+      shortcuts();
+      render(<NotesWorkspace />);
+      await dayHeading("2031-05-30");
+      const grid = calendar().getByRole("grid", { name: "May 2031" });
+      calendar().getByRole("button", { name: longDate("2031-05-30") }).focus();
+      fireEvent.keyDown(grid, { key: "ArrowRight" });
+      fireEvent.keyDown(grid, { key: "ArrowRight" });
+      const june = calendar().getByRole("button", { name: longDate("2031-06-01") });
+      expect(june).toHaveFocus();
+      expect(calendar().getByRole("grid", { name: "June 2031" })).toBeInTheDocument();
+      // Arrows in the month move its days, not the note list.
+      expect(screen.getByRole("heading", { level: 2, name: formatNoteDate("2031-05-30") })).toBeInTheDocument();
+      fireEvent.click(june);
+      await dayHeading("2031-06-01");
+    });
+
+    it("steps to the previous and next day from the title and with - and =, and goes to today with t", async () => {
+      const toggleSchedule = vi.fn();
+      shortcuts({ toggleSchedule });
+      writeLastNoteTarget({ kind: "daily", date: "2031-01-01" });
+      render(<NotesWorkspace />);
+      await dayHeading("2031-01-01");
+      fireEvent.click(screen.getByRole("button", { name: "Previous Day" }));
+      await dayHeading("2030-12-31");
+      fireEvent.click(screen.getByRole("button", { name: "Next Day" }));
+      await dayHeading("2031-01-01");
+      fireEvent.keyDown(window, { key: "=" });
+      await dayHeading("2031-01-02");
+      fireEvent.keyDown(window, { key: "-" });
+      fireEvent.keyDown(window, { key: "-" });
+      await dayHeading("2030-12-31");
+      expect(calendar().getByRole("grid", { name: "December 2030" })).toBeInTheDocument();
+      fireEvent.keyDown(window, { key: "t" });
+      await dayHeading(todayTarget().date);
+      expect(screen.getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true");
+      expect(toggleSchedule).not.toHaveBeenCalled();
+      fireEvent.click(calendar().getByRole("button", { name: "Next Month" }));
+      fireEvent.click(calendar().getByRole("button", { name: "Go to Today" }));
+      await waitFor(() => expect(calendar().getByRole("gridcell", { selected: true })).toHaveTextContent(new RegExp(`^${Number(todayTarget().date.slice(8))}$`)));
+      fireEvent.click(calendar().getByRole("button", { name: "Previous Month" }));
+      fireEvent.keyDown(window, { key: "t" });
+      await waitFor(() => expect(calendar().getByRole("gridcell", { selected: true })).toHaveTextContent(new RegExp(`^${Number(todayTarget().date.slice(8))}$`)));
+    });
+
+    it("keeps the day arrows and keys to daily notes", async () => {
+      const note = await mailClient.createNote(uniqueTitle("Not a day"), "");
+      shortcuts();
+      render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+      expect(screen.queryByRole("button", { name: "Previous Day" })).not.toBeInTheDocument();
+      fireEvent.keyDown(window, { key: "-" });
+      expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title);
+      expect(calendar().queryByRole("gridcell", { selected: true })).not.toBeInTheDocument();
+    });
+
+    it("lists a daily note's agenda and adds a meeting to it from Add Note", async () => {
+      const events = [meeting("2031-07-08", "Budget review", 11), meeting("2031-07-08", "Lead gen", 9), meeting("2031-07-09", "Next day", 9)];
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events, errors: [] });
+      const onAddNote = vi.fn();
+      const onOpenEvent = vi.fn();
+      writeLastNoteTarget({ kind: "daily", date: "2031-07-08" });
+      render(<NotesWorkspace calendars={calendars} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />);
+      const agenda = within(await screen.findByRole("region", { name: "Agenda" }));
+      await waitFor(() => expect(agenda.getAllByRole("button", { name: /^Add Note for/ })).toHaveLength(2));
+      expect(agenda.queryByText("Next day")).not.toBeInTheDocument();
+      fireEvent.click(agenda.getByRole("button", { name: "Add Note for Budget review" }));
+      expect(onAddNote).toHaveBeenCalledExactlyOnceWith(events[0]);
+      fireEvent.click(agenda.getByRole("button", { name: /^Lead gen/ }));
+      expect(onOpenEvent).toHaveBeenCalledExactlyOnceWith(events[1]);
+
+      fireEvent.click(screen.getByRole("button", { name: "Next Day" }));
+      await dayHeading("2031-07-09");
+      expect(await within(screen.getByRole("region", { name: "Agenda" })).findByRole("button", { name: "Add Note for Next day" })).toBeInTheDocument();
+    });
+
+    it("leaves the agenda out of regular notes and when there are no calendars", async () => {
+      const note = await mailClient.createNote(uniqueTitle("No agenda"), "");
+      const { rerender } = render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} calendars={calendars} onOpenEvent={vi.fn()} />);
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+      expect(screen.getByRole("region", { name: "Calendar" })).toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Agenda" })).not.toBeInTheDocument();
+      rerender(<NotesWorkspace request={{ kind: "today", id: 2 }} calendars={[]} onOpenEvent={vi.fn()} />);
+      await dayHeading(todayTarget().date);
+      expect(screen.queryByRole("region", { name: "Agenda" })).not.toBeInTheDocument();
     });
   });
 });

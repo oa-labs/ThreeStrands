@@ -453,6 +453,8 @@ export interface MailClient extends CorrespondenceClient {
   importNotes(): Promise<NotesImportOutcome>;
   /** Notes in Trash, most recently trashed first. */
   listTrashedNotes(limit: number): Promise<NoteSummary[]>;
+  /** Days from `from` through `to` (YYYY-MM-DD, inclusive) whose daily note has text and is outside Trash. */
+  listDailyNoteDates(from: string, to: string): Promise<string[]>;
   /** Stores a file pasted or dropped into the note `noteId`. */
   addNoteAttachment(noteId: string, file: File): Promise<NoteAttachment>;
   noteAttachment(id: string): Promise<NoteAttachment | null>;
@@ -702,6 +704,7 @@ const tauriClient: MailClient = {
   findNoteByTitle: (title) => read("find_note_by_title", { title }),
   noteLinks: (id) => read("note_links", { id }),
   listTrashedNotes: (limit) => read("list_trashed_notes", { limit }),
+  listDailyNoteDates: (from, to) => read("list_daily_note_dates", { from, to }),
   notesStorage: () => read("notes_storage"),
   chooseNotesExportFolder: () => complete("notes_export_choose_folder"),
   exportNotes: (replace) => complete("notes_export_write", { replace }),

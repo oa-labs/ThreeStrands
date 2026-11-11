@@ -3809,6 +3809,13 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .note-editor-surface .ProseMirror .prosemirror-flat-list[data-list-kind="task"][data-list-checked] { opacity: 1; }
 .notes-relink-notice { margin: 0; padding-inline: var(--note-gutter); color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); }
 .notes-editor-heading .notes-editor-title { flex: 1; min-width: 0; }
+/* A daily note's date, with the day arrows right after it rather than at the far edge. */
+.notes-day-title { display: flex; flex: 1; align-items: center; gap: var(--space-1); min-width: 0; }
+.notes-day-title .notes-editor-title { flex: 0 1 auto; margin-right: var(--space-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes-day-title .btn-icon { flex: none; color: var(--muted); }
+/* The rail's month sits on the rows' inset, with days sized like small controls. */
+.notes-calendar .month-grid { width: calc(100% - 2 * var(--context-row-inset)); margin: var(--space-1) var(--context-row-inset) 0; }
+.notes-calendar .month-grid-day { height: var(--control-h-sm); font-size: var(--text-secondary); }
 .notes-list-heading { margin: 0 0 var(--space-2); padding-inline: var(--list-row-inset); }
 .notes-list-conflict { flex: none; display: inline-flex; color: var(--warning); }
 .notes-list-footer { margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--border); }
@@ -4050,14 +4057,16 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .date-picker-panel { position: absolute; left: 0; top: calc(100% + var(--space-1)); z-index: var(--z-local-popover); width: 280px; max-width: calc(100vw - var(--dialog-edge) - 2 * var(--dialog-inset)); box-sizing: border-box; padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover); }
 .event-date-time-field:last-child .date-picker-panel { left: auto; right: 0; }
 .date-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); font-size: var(--text-body); font-weight: var(--weight-semibold); }
-.date-picker-panel table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-.date-picker-panel th { padding-bottom: var(--space-1); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-medium); text-align: center; }
-.date-picker-panel td { padding: var(--space-0-5); text-align: center; }
-.date-picker-day { display: grid; place-items: center; width: 100%; height: var(--control-h); padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: var(--text-body); cursor: pointer; }
-.date-picker-day:hover { background: var(--hover); }
-.date-picker-day.date-picker-outside-month { color: var(--muted); }
-.date-picker-day[aria-current="date"] { box-shadow: inset 0 0 0 1px var(--accent); }
-.date-picker-day.date-picker-day-selected { background: var(--primary); color: var(--primary-text); }
+.month-grid { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.month-grid th { padding-bottom: var(--space-1); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-medium); text-align: center; }
+.month-grid td { padding: var(--space-0-5); text-align: center; }
+.month-grid-day { position: relative; display: grid; place-items: center; width: 100%; height: var(--control-h); padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: var(--text-body); font-variant-numeric: tabular-nums; cursor: pointer; }
+.month-grid-day:hover { background: var(--hover); }
+.month-grid-day.month-grid-outside-month { color: var(--muted); }
+.month-grid-day[aria-current="date"] { box-shadow: inset 0 0 0 1px var(--accent); }
+.month-grid-day.month-grid-day-selected { background: var(--primary); color: var(--primary-text); }
+/* A marked day, such as one with a written daily note, gets a dot under its number. */
+.month-grid-day.month-grid-day-marked::after { content: ""; position: absolute; bottom: 3px; left: 0; right: 0; width: 4px; height: 4px; margin-inline: auto; border-radius: var(--radius-pill); background: currentColor; opacity: var(--opacity-dimmed); }
 .date-picker-today { width: 100%; margin-top: var(--space-2); }
 
 .notes-import-problems { margin-top: var(--space-2); font-size: var(--text-meta); color: var(--muted); }
