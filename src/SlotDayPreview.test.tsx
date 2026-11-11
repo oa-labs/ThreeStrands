@@ -70,6 +70,49 @@ describe("SlotDayPreview", () => {
     expect(shown[1]).toContain("Overlaps, but doesn’t block this time");
   });
 
+  it("calls an overlap inside a checked time's busy interval a conflict, and leaves others overlapping", async () => {
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [event("crit", "Design crit", at(12, 45), at(13, 15)), event("hold", "Focus time", at(13, 20), at(14))],
+      errors: [],
+    });
+    render(<SlotDayPreview id="day" slot={slot} timeZone={timeZone} context={{ conflicts: [{ start: at(13), end: at(13, 15) }] }} />);
+    const shown = await rows();
+    expect(shown).toEqual([expect.stringContaining("Design crit"), expect.stringContaining("This time"), expect.stringContaining("Focus time")]);
+    expect(shown[0]).toContain("Conflicts with this time");
+    expect(shown[0]).not.toContain("doesn’t block");
+    expect(screen.getByText("Conflicts with this time")).toHaveClass("slot-day-detail-conflict");
+    expect(shown[2]).toContain("Overlaps, but doesn’t block this time");
+  });
+
+  it("shows a meeting already added at this time as the time itself, with the breaks around it", async () => {
+    const added = event("added", "Entrepreneur Day", at(13), at(13, 30));
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [event("before", "Planning", at(12, 30), at(12, 50)), added], errors: [] });
+    const context = { conflicts: [slot], matched: { kind: "same" as const, event: added } };
+    render(<SlotDayPreview id="day" slot={slot} timeZone={timeZone} context={context} />);
+    const shown = await rows();
+    expect(shown).toEqual([expect.stringContaining("Planning"), "10 min after Planning", expect.stringContaining("This time")]);
+    expect(screen.queryByText("Entrepreneur Day")).not.toBeInTheDocument();
+    expect(breakWarning([added], slot, context)).toBeNull();
+  });
+
+  it("names a possible match as possibly this meeting rather than a conflict", async () => {
+    const venue = event("venue", "Pitch practice", at(13), at(13, 30));
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [venue], errors: [] });
+    render(<SlotDayPreview id="day" slot={slot} timeZone={timeZone} context={{ conflicts: [slot], matched: { kind: "maybe", event: venue } }} />);
+    const shown = await rows();
+    expect(shown[0]).toContain("Pitch practice");
+    expect(shown[0]).toContain("May already be this meeting");
+    expect(screen.queryByText("Conflicts with this time")).not.toBeInTheDocument();
+  });
+
+  it("shows a day its caller has just read without reading it again", async () => {
+    const list = vi.spyOn(mailClient, "listScheduleEvents");
+    render(<SlotDayPreview id="day" slot={slot} timeZone={timeZone} events={[event("before", "Planning", at(11), at(12))]} />);
+    expect(await rows()).toEqual([expect.stringContaining("Planning"), "1 hr after Planning", expect.stringContaining("This time")]);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(list).not.toHaveBeenCalled();
+  });
+
   it("leaves out declined meetings and copies of one meeting on two calendars", async () => {
     renderDay([
       event("declined", "Skipped sync", at(12), at(12, 45), { responseStatus: "declined" }),

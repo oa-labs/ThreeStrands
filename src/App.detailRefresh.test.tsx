@@ -489,7 +489,7 @@ describe("conversation brief", () => {
       fireEvent.click(await within(panel).findByRole("button", { name: "Get Brief" }));
 
       const offered = await within(panel).findByRole("region", { name: "Proposed times" });
-      const option = await within(offered).findByRole("checkbox", { name: /^1\./ });
+      const option = await within(offered).findByRole("checkbox", { name: /^Include 1\./ });
       await waitFor(() => expect(option).toBeEnabled());
       // The suggestion defers to the offered times instead of adding an event with no time.
       const schedule = within(panel).getByRole("group", { name: "Schedule" });
@@ -962,8 +962,8 @@ describe("conversation brief", () => {
       }
       const offered = await within(panel).findByRole("region", {name:"Proposed times"});
       // Slots stay disabled until the calendar check returns.
-      await waitFor(() => expect(within(offered).getByRole("checkbox",{name:/^1\./})).toBeEnabled());
-      fireEvent.click(within(offered).getByRole("checkbox",{name:/^1\./}));
+      await waitFor(() => expect(within(offered).getByRole("checkbox",{name:/^Include 1\./})).toBeEnabled());
+      fireEvent.click(within(offered).getByRole("checkbox",{name:/^Include 1\./}));
       await waitFor(() => expect(within(offered).getByRole("button", {name:"Draft Reply With Selected Times"})).toBeEnabled());
       fireEvent.click(within(offered).getByRole("button", {name:"Draft Reply With Selected Times"}));
       const composer = await screen.findByRole("dialog", {name:"Reply Message"});

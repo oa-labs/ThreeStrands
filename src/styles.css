@@ -1634,6 +1634,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-slot-check { display: flex; flex: none; align-items: center; padding-inline: var(--space-2); border-inline-end: 1px solid var(--border); cursor: pointer; }
 .meeting-slot-row-checked .meeting-slot-check { border-inline-end-color: color-mix(in srgb, var(--accent) 35%, transparent); }
 .meeting-slot-check input[type="checkbox"] { width: var(--check-size); height: var(--check-size); margin: 0; accent-color: var(--accent); cursor: pointer; }
+.meeting-slot-check:has(input:disabled),
+.meeting-slot-check input[type="checkbox"]:disabled { cursor: default; }
 .meeting-slot-day { display: flex; flex: 1; align-items: center; gap: var(--space-1-5); min-width: 0; padding: var(--space-1-5) var(--space-2); border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .meeting-slot-day:hover { background: var(--hover); }
 .meeting-slot-day > span:first-child { flex: 1; min-width: 0; }
@@ -1653,6 +1655,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .slot-day-title { font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
 .slot-day-meta { overflow: hidden; color: var(--secondary); text-overflow: ellipsis; white-space: nowrap; }
 .slot-day-detail { color: var(--secondary); overflow-wrap: anywhere; }
+.slot-day-detail-conflict { color: var(--error); }
 .slot-day-proposed { border: 1px dashed var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .slot-day-proposed .slot-day-title { color: var(--accent); }
 .slot-day-break { margin-inline-start: var(--space-2); padding: var(--space-0-5) var(--space-2); border-inline-start: 1px dashed var(--border-strong); color: var(--muted); font-size: var(--text-meta); font-style: italic; }

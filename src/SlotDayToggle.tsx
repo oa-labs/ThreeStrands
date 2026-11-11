@@ -3,7 +3,8 @@
 
 import { ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
-import { SlotDayPreview } from "./SlotDayPreview";
+import type { ScheduleEvent } from "./domain";
+import { SlotDayPreview, type SlotContext } from "./SlotDayPreview";
 import { ICON_SIZE } from "./iconSizes";
 
 export type DaySlot = { start: string; end: string };
@@ -24,6 +25,8 @@ export function SlotDayToggle({
   onToggle,
   leading,
   checked = false,
+  events,
+  context,
   children,
 }: {
   id: string;
@@ -35,6 +38,10 @@ export function SlotDayToggle({
   onToggle(): void;
   leading?: ReactNode;
   checked?: boolean;
+  /** The day, when the caller has just read it. */
+  events?: readonly ScheduleEvent[] | null;
+  /** What a calendar check found, so a blocking overlap reads as a conflict. */
+  context?: SlotContext;
   /** Status or notes between the day button and the preview. */
   children?: ReactNode;
 }) {
@@ -55,6 +62,6 @@ export function SlotDayToggle({
       </button> : <span className="meeting-slot-day meeting-slot-day-static"><span>{label}</span></span>}
     </div>
     {children}
-    {slot && open ? <SlotDayPreview id={id} slot={slot} timeZone={timeZone} /> : null}
+    {slot && open ? <SlotDayPreview id={id} slot={slot} timeZone={timeZone} events={events} context={context} /> : null}
   </div>;
 }

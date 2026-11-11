@@ -169,7 +169,8 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
         const detail = `${status}${row?.outsideWorkingHours ? " · Outside your usual hours" : ""}${row?.start && !time.durationMinutes ? ` · Assumes ${formatLength(length)}` : ""}`;
         const slot = row?.start && row?.end ? { start: row.start, end: row.end } : null;
         const open = previewing === index;
-        const warning = slot && spanEvents ? breakWarning(spanEvents, slot) : null;
+        const context = { conflicts: row?.check?.conflicts ?? [] };
+        const warning = slot && spanEvents ? breakWarning(spanEvents, slot, context) : null;
         return <li key={index} className="proposed-time">
           <SlotDayToggle
             id={`${ids}-day-${index}`}
@@ -180,8 +181,9 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
             open={open}
             onToggle={() => setPreviewing(open ? null : index)}
             checked={checked}
+            context={context}
             leading={<label className="meeting-slot-check">
-              <input type="checkbox" checked={checked} disabled={checking || !row || !selectable(row)} aria-label={title} aria-describedby={detailId}
+              <input type="checkbox" checked={checked} disabled={checking || !row || !selectable(row)} aria-label={`Include ${title}`} aria-describedby={detailId}
                 onChange={() => setSelected((previous) => {
                   const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next;
                 })} />

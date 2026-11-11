@@ -24,7 +24,7 @@ export type CalendarAddition = ScheduleSlot & { allDay?: boolean; timeUnspecifie
 type CheckState =
   | { phase: "idle" | "loading" }
   | { phase: "error"; message: string }
-  | { phase: "specific"; check: ProposedTimeCheck; conflictTitles: string[]; match: CalendarMatch | null; dayEvents: ScheduleEvent[] }
+  | { phase: "specific"; check: ProposedTimeCheck; conflictTitles: string[]; match: CalendarMatch | null; dayEvents: ScheduleEvent[] | null }
   | { phase: "range"; candidates: AvailabilityCandidate[]; verified: boolean; unchecked: string[]; errors: string[] };
 
 /** Names the calendars a check could not read, once for the whole card, such as "Couldn't check Team, so these times may conflict with it." */
@@ -267,9 +267,10 @@ export function MeetingScheduler({
         setState({ phase: "loading" });
         const check = await mailClient.checkProposedTime({ start: target.start, end: target.end, timeZone, driveTimeBufferMinutes: preferences.driveTimeBufferMinutes });
         // The day feeds conflict names, match detection, break warnings, and the day preview.
-        const dayEvents = await eventsOnDay(new Date(target.start)).catch(() => []);
-        const overlapping = check.status === "conflicting" ? dayEvents.filter((event) => overlaps(event, target)) : [];
-        const match = identity ? findCalendarMatch(identity, target, dayEvents) : null;
+        // A failed read stays null so the day preview reads it again and can offer Try Again.
+        const dayEvents = await eventsOnDay(new Date(target.start)).catch(() => null);
+        const overlapping = check.status === "conflicting" ? (dayEvents ?? []).filter((event) => overlaps(event, target)) : [];
+        const match = identity ? findCalendarMatch(identity, target, dayEvents ?? []) : null;
         const conflictTitles = [...new Set(overlapping.filter((event) => !match || !sameEvent(event, match.event)).map((event) => event.title))];
         if (isCurrent()) setState({ phase: "specific", check, conflictTitles, match, dayEvents });
       } else {
@@ -459,7 +460,9 @@ export function MeetingScheduler({
         label={formatSlot(query, timeZone)}
         slot={query}
         timeZone={timeZone}
-        warning={breakWarning(state.dayEvents, query)}
+        warning={state.dayEvents ? breakWarning(state.dayEvents, query, { conflicts: state.check.conflicts, matched: state.match }) : null}
+        events={state.dayEvents}
+        context={{ conflicts: state.check.conflicts, matched: state.match }}
         open={specificOpen}
         onToggle={() => setSpecificOpen((current) => !current)}
       >

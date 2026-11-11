@@ -35,7 +35,7 @@ describe("proposed times", () => {
     const titles = [...container.querySelectorAll(".proposed-time-title")].map((title) => title.textContent);
     expect(titles).toEqual(["1. Saturday, Oct. 31st. - 2 PM", "2. Saturday, Oct. 31st. - 7 PM", "3. Sunday, Nov. 1st - 4 PM", "4. Sunday, Nov. 1st - 7 PM", "5. 10.31 at 7 PM"]);
     expect(screen.getByRole("status")).toHaveClass("context-status");
-    const candidates = screen.getAllByRole("checkbox",{name:/^\d+\./});
+    const candidates = screen.getAllByRole("checkbox", {name:/^Include \d+\./});
     expect(candidates).toHaveLength(5);
     for (const candidate of candidates) {
       expect(candidate).toBeDisabled();
@@ -112,12 +112,12 @@ describe("proposed times", () => {
     render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
     expect(check).toHaveBeenCalledWith({times, assumedTimeZone:"America/New_York", preferences});
-    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})).toHaveLength(7);
+    expect(screen.getAllByRole("checkbox", {name:/^Include \d+\./})).toHaveLength(7);
     expect(screen.getByText("Conflict · Outside your usual hours")).toBeInTheDocument();
-    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})[0]).toBeDisabled();
-    for (const input of screen.getAllByRole("checkbox", {name:/^\d+\./})) expect(input).not.toBeChecked();
-    fireEvent.click(screen.getAllByRole("checkbox", {name:/^\d+\./})[2]);
-    fireEvent.click(screen.getAllByRole("checkbox", {name:/^\d+\./})[6]);
+    expect(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[0]).toBeDisabled();
+    for (const input of screen.getAllByRole("checkbox", {name:/^Include \d+\./})) expect(input).not.toBeChecked();
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[2]);
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[6]);
     fireEvent.click(screen.getByRole("button",{name:"Draft Reply With Selected Times"}));
     await waitFor(() => expect(current.onReplyWithTimes).toHaveBeenCalledWith([2,6].map((index) => ({start:rows[index].start,end:rows[index].end,status:"verified"}))));
     expect(check).toHaveBeenCalledTimes(2);
@@ -133,7 +133,7 @@ describe("proposed times", () => {
     expect(screen.getByText(/Unable to check/)).toBeInTheDocument();
     expect(screen.getByText("This proposed time has passed")).toBeInTheDocument();
     expect(screen.getByText(/Couldn’t check: Personal/)).toBeInTheDocument();
-    for (const input of screen.getAllByRole("checkbox", {name:/^\d+\./})) expect(input).toBeDisabled();
+    for (const input of screen.getAllByRole("checkbox", {name:/^Include \d+\./})) expect(input).toBeDisabled();
   });
 
   it("assumes the usual meeting length when the email doesn't say, and rechecks when it changes", async () => {
@@ -147,12 +147,12 @@ describe("proposed times", () => {
     expect(length).toHaveAccessibleDescription();
     expect(await screen.findAllByText("Free · Outside your usual hours · Assumes 30 min")).toHaveLength(2);
     // The assumption makes the times selectable instead of blocking them.
-    for (const option of screen.getAllByRole("checkbox",{name:/^\d+\./})) expect(option).toBeEnabled();
-    fireEvent.click(screen.getAllByRole("checkbox",{name:/^\d+\./})[0]);
+    for (const option of screen.getAllByRole("checkbox", {name:/^Include \d+\./})) expect(option).toBeEnabled();
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[0]);
     fireEvent.change(length,{target:{value:"60"}});
     await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
     expect(check.mock.lastCall?.[0].times.map((time) => time.durationMinutes)).toEqual([60,60]);
-    expect(screen.getAllByRole("checkbox",{name:/^\d+\./})[0]).not.toBeChecked();
+    expect(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[0]).not.toBeChecked();
   });
 
   it("keeps a stated meeting length and offers no length choice", async () => {
@@ -217,6 +217,19 @@ describe("proposed times", () => {
     expect(toggles[1]).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("calls the meeting a proposed time runs into a conflict in its day", async () => {
+    const first = { ...row(0, "conflicting") };
+    first.check = { ...first.check!, conflicts: [{ start: first.start!, end: first.end! }] };
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [{ id: "crit", accountId: "you@example.com", title: "Design crit", allDay: false, start: first.start!, end: first.end! }],
+      errors: [],
+    });
+    vi.spyOn(mailClient, "checkProposedTimes").mockResolvedValue([first]);
+    render(<ProposedTimesCard {...props()} times={times.slice(0, 1)} />);
+    expect(await screen.findByText("Conflicts with this time")).toBeInTheDocument();
+    expect(screen.queryByText("Overlaps, but doesn’t block this time")).not.toBeInTheDocument();
+  });
+
   it("does not offer a day preview for a time that could not be resolved", async () => {
     vi.spyOn(mailClient, "checkProposedTimes").mockResolvedValue([{
       start: null, end: null, issue: "Couldn’t tell the date or time; ask the sender in your reply", check: null, outsideWorkingHours: false,
@@ -231,11 +244,11 @@ describe("proposed times", () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
     const current = props(); const view = render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
-    fireEvent.click(screen.getAllByRole("checkbox", {name:/^\d+\./})[1]);
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[1]);
     fireEvent.change(screen.getByRole("combobox",{name:"Sender’s timezone"}),{target:{value:"Europe/London"}});
     await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
     expect(check.mock.lastCall?.[0].assumedTimeZone).toBe("Europe/London");
-    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})[1]).not.toBeChecked();
+    expect(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[1]).not.toBeChecked();
     view.rerender(<ProposedTimesCard {...current} preferences={{...preferences, driveTimeBufferMinutes:30}} />);
     await waitFor(() => expect(check).toHaveBeenCalledTimes(3));
     act(() => window.dispatchEvent(new Event(CALENDAR_AVAILABILITY_CHANGED)));
@@ -249,7 +262,7 @@ describe("proposed times", () => {
     render(<ProposedTimesCard {...current} onAcceptTime={onAcceptTime} />);
     await screen.findAllByText("Free · Outside your usual hours");
     expect(screen.queryByRole("button",{name:"Accept & Add to Calendar"})).not.toBeInTheDocument();
-    const options = screen.getAllByRole("checkbox",{name:/^\d+\./});
+    const options = screen.getAllByRole("checkbox", {name:/^Include \d+\./});
     fireEvent.click(options[2]);
     const accept = screen.getByRole("button",{name:"Accept & Add to Calendar"});
     expect(accept).toHaveClass("btn-primary");
@@ -269,13 +282,13 @@ describe("proposed times", () => {
     const onAcceptTime = vi.fn();
     const view = render(<ProposedTimesCard {...props()} onAcceptTime={onAcceptTime} />);
     await screen.findAllByText("Free · Outside your usual hours");
-    fireEvent.click(screen.getAllByRole("checkbox",{name:/^\d+\./})[1]);
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[1]);
     check.mockResolvedValue(times.map((_,index) => row(index,index === 1 ? "conflicting" : "free")));
     fireEvent.click(screen.getByRole("button",{name:"Accept & Add to Calendar"}));
     await screen.findByRole("alert");
     expect(onAcceptTime).not.toHaveBeenCalled();
     view.rerender(<ProposedTimesCard {...props()} intoDraft onAcceptTime={onAcceptTime} />);
-    fireEvent.click(screen.getAllByRole("checkbox",{name:/^\d+\./})[2]);
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[2]);
     expect(screen.queryByRole("button",{name:"Accept & Add to Calendar"})).not.toBeInTheDocument();
     expect(screen.getByRole("button",{name:"Insert Selected Times"})).toHaveClass("btn-primary");
   });
@@ -284,19 +297,19 @@ describe("proposed times", () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
     const current = props(); render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
-    fireEvent.click(screen.getAllByRole("checkbox", {name:/^\d+\./})[1]);
+    fireEvent.click(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[1]);
     check.mockResolvedValue(times.map((_,index) => row(index,index === 1 ? "partiallyChecked" : "free")));
     fireEvent.click(screen.getByRole("button",{name:"Draft Reply With Selected Times"}));
     await screen.findByRole("alert");
     expect(current.onReplyWithTimes).not.toHaveBeenCalled();
-    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})[1]).not.toBeChecked();
+    expect(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[1]).not.toBeChecked();
   });
 
   it("shows retryable calendar failures without discarding the sender's list", async () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockRejectedValueOnce(new Error("Calendar offline")).mockResolvedValue(times.map((_,index) => row(index)));
     render(<ProposedTimesCard {...props()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Calendar offline");
-    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})).toHaveLength(7);
+    expect(screen.getAllByRole("checkbox", {name:/^Include \d+\./})).toHaveLength(7);
     fireEvent.click(screen.getByRole("button",{name:"Check Again"}));
     await screen.findAllByText("Free · Outside your usual hours");
     expect(check).toHaveBeenCalledTimes(2);
@@ -321,7 +334,7 @@ describe("proposed times", () => {
     render(<AvailabilitySection compact offered={false} preferences={preferences} ai draft={{sourceId:"m1",subject:"CRT",body:""}} offeredTimes={{sourceMessageId:"m1",times}} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
     expect(await screen.findByRole("region",{name:"Proposed times"})).toBeInTheDocument();
     expect(find).not.toHaveBeenCalled();
-    expect(within(screen.getByRole("region",{name:"Proposed times"})).getAllByRole("checkbox", {name:/^\d+\./})).toHaveLength(7);
+    expect(within(screen.getByRole("region",{name:"Proposed times"})).getAllByRole("checkbox", {name:/^Include \d+\./})).toHaveLength(7);
     fireEvent.click(screen.getByRole("button",{name:"Find Other Times"}));
     await waitFor(() => expect(other).toHaveBeenCalledWith(expect.objectContaining({preferences:expect.objectContaining({defaultDurationMinutes:60})})));
   });
@@ -334,7 +347,7 @@ describe("proposed times", () => {
     render(<AvailabilitySection compact preferences={preferences} ai draft={{sourceId:"m1",subject:"CRT",body:""}} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
     fireEvent.click(screen.getByRole("button",{name:"Find Times"}));
     await screen.findByRole("region",{name:"Proposed times"});
-    expect(screen.getAllByRole("checkbox", {name:/^\d+\./})).toHaveLength(7);
+    expect(screen.getAllByRole("checkbox", {name:/^Include \d+\./})).toHaveLength(7);
     saveAiProvider("none");
   });
 });

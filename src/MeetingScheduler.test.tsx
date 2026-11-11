@@ -78,7 +78,7 @@ describe("MeetingScheduler", () => {
     vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({
       status: "conflicting", conflicts: [{ start, end }], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
     });
-    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+    const list = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
       events: [
         { id: "overlap", accountId: "you@example.com", title: "Design crit", allDay: false, start, end },
         // Ten minutes after the slot ends — short enough to flag beside the conflict.
@@ -91,6 +91,10 @@ describe("MeetingScheduler", () => {
     expect(screen.getByText("Short break")).toBeInTheDocument();
     expect(screen.getByText("This time")).toBeInTheDocument();
     expect(screen.getByText("Interview")).toBeInTheDocument();
+    // The day agrees with the status line, and the check's read of it is reused.
+    expect(screen.getByText("Conflicts with this time")).toBeInTheDocument();
+    expect(screen.queryByText("Overlaps, but doesn’t block this time")).not.toBeInTheDocument();
+    expect(list).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -422,7 +426,13 @@ describe("MeetingScheduler", () => {
 
       expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
       expect(screen.getByText("Also overlaps Premier Labs Bi-Weekly Member Meeting")).toBeInTheDocument();
-      expect(screen.queryByText(/Conflicts with/)).not.toBeInTheDocument();
+      // No status line calls it a conflict; the day still marks the other meeting as one.
+      expect(screen.queryByText(/^Conflicts with (?!this time)/)).not.toBeInTheDocument();
+      // In the day, the added event is this time; only the other meeting overlaps it.
+      const day = screen.getByRole("region", { name: /November 17/ });
+      expect(within(day).queryByText("Entrepreneur Day 2026")).not.toBeInTheDocument();
+      expect(within(day).getByText("Premier Labs Bi-Weekly Member Meeting")).toBeInTheDocument();
+      expect(within(day).getByText("Conflicts with this time")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Add Again" })).not.toBeInTheDocument();
       const open = screen.getByRole("button", { name: "Open in Calendar" });
