@@ -41,6 +41,20 @@ function spacePx(name: string): number {
 }
 
 describe("spacing", () => {
+  it("aligns the mail search actions with the card gutter and gives the recovered width to the input", () => {
+    const value = (selector: string, prop: string) => {
+      let result: string | undefined;
+      css.walkRules(selector, (r) => r.walkDecls(prop, (d) => { result = d.value; }));
+      return result;
+    };
+    const [, right, , left] = value(".list-toolbar", "margin")!.split(" ");
+    expect(right).toBe(value(".thread-list", "padding")!.split(" ")[1]);
+    expect(left).toBe("var(--pane-inset)");
+    expect(spacePx("--list-gutter")).toBeLessThan(spacePx("--pane-inset"));
+    expect(value(".list-toolbar .search-field", "flex")).toBe("1");
+    expect(value(".search-input-area", "flex")).toBe("1");
+  });
+
   it("reserves the note heading's action height even when the note has no Trash button", () => {
     const value = (selector: string, prop: string) => {
       let result: string | undefined;
