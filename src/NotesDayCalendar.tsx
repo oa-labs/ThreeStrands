@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { CalendarCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar1, ChevronLeft, ChevronRight } from "lucide-react";
 import { ContextSection } from "./ContextSections";
 import { parseCalendarDate } from "./DatePickerField";
 import { firstDayOfWeek, MonthGrid, monthGridRange, shiftMonth } from "./MonthGrid";
@@ -42,9 +42,9 @@ export function NotesDayCalendar({ selected, today, onSelect, revision, reveal =
     title={<span id={monthId}>{month}</span>}
     actions={<>
       <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Month" title="Previous Month" onClick={() => setCursor(shiftMonth(cursor, -1))}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" /></button>
-      <button type="button" className="btn-icon btn-icon-sm" aria-label="Go to Today" title={`Go to Today (${formatShortcut("t")})`} aria-keyshortcuts="t" onClick={() => onSelect(today)}><CalendarCheck size={ICON_SIZE.sm} aria-hidden="true" /></button>
+      <button type="button" className="btn-icon btn-icon-sm" aria-label="Jump to Today" title={`Jump to Today (${formatShortcut("t")})`} aria-keyshortcuts="t" onClick={() => onSelect(today)}><Calendar1 size={ICON_SIZE.sm} aria-hidden="true" /></button>
       <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Month" title="Next Month" onClick={() => setCursor(shiftMonth(cursor, 1))}><ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button>
     </>}
     closing={<MonthGrid labelledBy={monthId} cursor={cursor} onCursorChange={setCursor} selected={selected} onSelect={onSelect} weekStart={weekStart}
-      marked={marked?.from === from ? marked.days : undefined} markLabel="has a note" />} />;
+      marked={marked?.from === from ? marked.days : undefined} markLabel="has a note" weekdays="narrow" />} />;
 }

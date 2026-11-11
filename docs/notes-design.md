@@ -358,15 +358,20 @@ device), and the sections below follow it.
 
 Two sections come before Note details, borrowed from Reflect's sidebar:
 
-- **Calendar**: the month, headed by its name, with Previous Month, **Go to
-  Today**, and Next Month. Choosing a day opens that day's note, which, like
-  Today, writes nothing until the user types. The month follows the open
-  daily note; paging it opens nothing. The week starts on the locale's first
-  day. A dot marks each day whose note has text outside Trash
-  (`list_daily_note_dates`, read for the six weeks shown and again after a
-  save, a Trash change, or a sync), so a day emptied again loses its mark.
-  The grid is `MonthGrid`, shared with the date field's picker. On the page
-  it takes focus only from its own arrow keys, never when it appears.
+- **Calendar**: the month, headed by its name, with Previous Month, **Jump
+  to Today** (`t`), and Next Month. Choosing a day opens that day's note,
+  which, like Today, writes nothing until the user types. The month follows
+  the open daily note; paging it opens nothing. The week starts on the
+  locale's first day, and the grid shows only the weeks that hold the
+  month's days, so no row belongs wholly to another month. Neighbouring
+  months' days recede and carry no marks. Today is shown by an accent,
+  semibold number; only the open daily note's day is filled, so today never
+  looks chosen. A dot marks each day of the month whose note has text
+  outside Trash (`list_daily_note_dates`, read for the weeks shown and again
+  after a save, a Trash change, or a sync), so a day emptied again loses its
+  mark. The grid is `MonthGrid`, shared with the date field's picker. In the
+  rail it uses narrow weekday names and small rows. On the page it takes
+  focus only from its own arrow keys, never when it appears.
 - **Agenda**, on a daily note only, when the user has calendars: that day's
   events from `CalendarAgenda`, each with **Add Note**, which opens the
   meeting dialog for the event as the other agendas do. The added line
@@ -380,7 +385,9 @@ it goes to today in Calendar. A continuous scrolling journal of days, as in
 Reflect, is left for later (see [Later](#later)).
 
 - **Backlinks**: notes that link here, each with the line around the link as
-  its detail.
+  its detail. The line is shown as text, as note previews are: a meeting
+  line reads "3:00 pm met with Dana for OA Monthly", not its Markdown. Lines
+  indexed before this rule are rebuilt on upgrade (schema v107).
 - **Unlinked**: `[[links]]` in this note whose target doesn't exist yet.
   Selecting one creates that note.
 - **People**: `[[Name]]` links whose title matches a saved contact's name.

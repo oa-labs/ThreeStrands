@@ -3815,7 +3815,9 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .notes-day-title .btn-icon { flex: none; color: var(--muted); }
 /* The rail's month sits on the rows' inset, with days sized like small controls. */
 .notes-calendar .month-grid { width: calc(100% - 2 * var(--context-row-inset)); margin: var(--space-1) var(--context-row-inset) 0; }
-.notes-calendar .month-grid-day { height: var(--control-h-sm); font-size: var(--text-secondary); }
+.notes-calendar .month-grid th { padding-bottom: var(--space-0-5); }
+.notes-calendar .month-grid td { padding: 0; }
+.notes-calendar .month-grid-day { height: var(--control-h-xs); font-size: var(--text-meta); }
 .notes-list-heading { margin: 0 0 var(--space-2); padding-inline: var(--list-row-inset); }
 .notes-list-conflict { flex: none; display: inline-flex; color: var(--warning); }
 .notes-list-footer { margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--border); }
@@ -4062,8 +4064,10 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .month-grid td { padding: var(--space-0-5); text-align: center; }
 .month-grid-day { position: relative; display: grid; place-items: center; width: 100%; height: var(--control-h); padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: var(--text-body); font-variant-numeric: tabular-nums; cursor: pointer; }
 .month-grid-day:hover { background: var(--hover); }
-.month-grid-day.month-grid-outside-month { color: var(--muted); }
-.month-grid-day[aria-current="date"] { box-shadow: inset 0 0 0 1px var(--accent); }
+/* Days of the neighbouring months recede well behind the month's own. */
+.month-grid-day.month-grid-outside-month { color: var(--muted); opacity: var(--opacity-dimmed); }
+/* Today is told by its number alone, so it never looks chosen or focused; only the chosen day is filled. */
+.month-grid-day[aria-current="date"] { color: var(--accent); font-weight: var(--weight-semibold); }
 .month-grid-day.month-grid-day-selected { background: var(--primary); color: var(--primary-text); }
 /* A marked day, such as one with a written daily note, gets a dot under its number. */
 .month-grid-day.month-grid-day-marked::after { content: ""; position: absolute; bottom: 3px; left: 0; right: 0; width: 4px; height: 4px; margin-inline: auto; border-radius: var(--radius-pill); background: currentColor; opacity: var(--opacity-dimmed); }

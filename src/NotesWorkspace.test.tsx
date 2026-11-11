@@ -688,13 +688,15 @@ describe("Notes workspace", () => {
       await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note!.title));
     };
 
-    it("lists backlinks with their line and opens the linking note", async () => {
+    it("lists backlinks with their line as text and opens the linking note", async () => {
       const target = await mailClient.createNote(uniqueTitle("Hub"), "");
       const linking = await mailClient.createNote(uniqueTitle("Spoke"), `Intro\nTalked about [[${target.title.toUpperCase()}]] today`);
+      const meeting = await mailClient.createNote(uniqueTitle("Meeting line"), `- [3:00 pm](threestrands:event/%7B%22id%22%3A%22e%22%7D) met with [Dana](threestrands:contact/%7B%7D) for [[${target.title}|the hub]]`);
       await openNote(target.id);
       const section = within(await rail().findByRole("region", { name: /Backlinks/ }));
+      expect(await section.findByRole("button", { name: new RegExp(meeting.title) })).toHaveTextContent(/3:00 pm met with Dana for the hub$/);
       const row = section.getByRole("button", { name: new RegExp(linking.title) });
-      expect(row).toHaveTextContent(`Talked about [[${target.title.toUpperCase()}]] today`);
+      expect(row).toHaveTextContent(`Talked about ${target.title.toUpperCase()} today`);
       fireEvent.click(row);
       await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(linking.title));
     });
@@ -926,7 +928,7 @@ describe("Notes workspace", () => {
       expect(screen.getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true");
       expect(toggleSchedule).not.toHaveBeenCalled();
       fireEvent.click(calendar().getByRole("button", { name: "Next Month" }));
-      fireEvent.click(calendar().getByRole("button", { name: "Go to Today" }));
+      fireEvent.click(calendar().getByRole("button", { name: "Jump to Today" }));
       await waitFor(() => expect(calendar().getByRole("gridcell", { selected: true })).toHaveTextContent(new RegExp(`^${Number(todayTarget().date.slice(8))}$`)));
       fireEvent.click(calendar().getByRole("button", { name: "Previous Month" }));
       fireEvent.keyDown(window, { key: "t" });

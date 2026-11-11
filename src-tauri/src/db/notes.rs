@@ -305,18 +305,24 @@ fn store(
 
 fn index(tx: &Transaction<'_>, note: &Note) -> DbResult<()> {
     super::note_entities::index(tx, note)?;
-    tx.execute("DELETE FROM note_links WHERE note_id=?1", [&note.id])?;
+    index_links(tx, note)?;
     tx.execute("DELETE FROM note_search WHERE note_id=?1", [&note.id])?;
+    tx.execute(
+        "INSERT INTO note_search(note_id, title, body) VALUES (?1,?2,?3)",
+        params![note.id, note.title, note.body],
+    )?;
+    Ok(())
+}
+
+/// Rebuilds a note's `[[link]]` rows from its text.
+pub(crate) fn index_links(tx: &Transaction<'_>, note: &Note) -> DbResult<()> {
+    tx.execute("DELETE FROM note_links WHERE note_id=?1", [&note.id])?;
     for (position, link) in extract_links(&note.body).iter().enumerate() {
         tx.execute(
             "INSERT INTO note_links(note_id, position, target_key, target_title, context) VALUES (?1,?2,?3,?4,?5)",
             params![note.id, position as i64, link.key, link.title, link.context],
         )?;
     }
-    tx.execute(
-        "INSERT INTO note_search(note_id, title, body) VALUES (?1,?2,?3)",
-        params![note.id, note.title, note.body],
-    )?;
     Ok(())
 }
 

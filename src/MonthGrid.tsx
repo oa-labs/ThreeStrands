@@ -31,13 +31,20 @@ export function shiftMonth(date: Date, months: number): Date {
 
 const daysIntoWeek = (date: Date, weekStart: number) => (date.getDay() - weekStart + 7) % 7;
 
-/** The six weeks a month grid shows for `cursor`'s month, as `YYYY-MM-DD` days. */
-export function monthGridRange(cursor: Date, weekStart: number): { start: Date; from: string; to: string } {
+/**
+ * The weeks a month grid shows for `cursor`'s month: from the week holding
+ * the 1st through the week holding the last day, so no row is entirely
+ * another month. `from` and `to` are its first and last days, `YYYY-MM-DD`.
+ */
+export function monthGridRange(cursor: Date, weekStart: number): { start: Date; weeks: number; from: string; to: string } {
   const first = new Date(cursor);
   first.setDate(1);
   first.setHours(12, 0, 0, 0);
-  const start = addDays(first, -daysIntoWeek(first, weekStart));
-  return { start, from: dateInputValue(start), to: dateInputValue(addDays(start, 41)) };
+  const lead = daysIntoWeek(first, weekStart);
+  const start = addDays(first, -lead);
+  const monthDays = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const weeks = Math.ceil((lead + monthDays) / 7);
+  return { start, weeks, from: dateInputValue(start), to: dateInputValue(addDays(start, weeks * 7 - 1)) };
 }
 
 /**
@@ -46,14 +53,14 @@ export function monthGridRange(cursor: Date, weekStart: number): { start: Date; 
  * The grid moves `cursor`; choosing a day is a click or Enter on it. The
  * caller draws the month's heading and labels the grid with `labelledBy`.
  */
-export function MonthGrid({ labelledBy, cursor, onCursorChange, selected, onSelect, marked, markLabel, focusCursor = "keyboard", weekStart = firstDayOfWeek() }: {
+export function MonthGrid({ labelledBy, cursor, onCursorChange, selected, onSelect, marked, markLabel, focusCursor = "keyboard", weekStart = firstDayOfWeek(), weekdays = "short" }: {
   labelledBy: string;
   cursor: Date;
   onCursorChange(date: Date): void;
   /** The chosen day, `YYYY-MM-DD`. */
   selected: string | null;
   onSelect(date: string): void;
-  /** Days that carry a mark, such as a written daily note. */
+  /** Days that carry a mark, such as a written daily note. Days outside the month show none. */
   marked?: ReadonlySet<string>;
   /** What a mark means, added to a marked day's name for screen readers. */
   markLabel?: string;
@@ -64,6 +71,8 @@ export function MonthGrid({ labelledBy, cursor, onCursorChange, selected, onSele
    */
   focusCursor?: "always" | "keyboard";
   weekStart?: number;
+  /** How column headings name weekdays; "narrow" fits a side panel. Each keeps its full name for screen readers. */
+  weekdays?: "short" | "narrow";
 }) {
   const activeDay = useRef<HTMLButtonElement>(null);
   const moved = useRef(false);
@@ -71,7 +80,7 @@ export function MonthGrid({ labelledBy, cursor, onCursorChange, selected, onSele
     if (focusCursor === "always" || moved.current) activeDay.current?.focus();
     moved.current = false;
   }, [cursor, focusCursor]);
-  const { start } = monthGridRange(cursor, weekStart);
+  const { start, weeks } = monthGridRange(cursor, weekStart);
   const today = dateInputValue(new Date());
   const cursorDate = dateInputValue(cursor);
   const fullDate = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
@@ -97,16 +106,17 @@ export function MonthGrid({ labelledBy, cursor, onCursorChange, selected, onSele
   };
   return <table role="grid" className="month-grid" aria-labelledby={labelledBy} onKeyDown={keyDown}>
     <thead><tr>{Array.from({ length: 7 }, (_, day) => <th key={day} scope="col" abbr={new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(addDays(start, day))}>
-      {new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(addDays(start, day))}
+      {new Intl.DateTimeFormat(undefined, { weekday: weekdays }).format(addDays(start, day))}
     </th>)}</tr></thead>
-    <tbody>{Array.from({ length: 6 }, (_, week) => <tr key={week}>{Array.from({ length: 7 }, (_, weekday) => {
+    <tbody>{Array.from({ length: weeks }, (_, week) => <tr key={week}>{Array.from({ length: 7 }, (_, weekday) => {
       const day = addDays(start, week * 7 + weekday);
       const date = dateInputValue(day);
       const active = date === cursorDate;
-      const mark = marked?.has(date) ?? false;
+      const outside = day.getMonth() !== cursor.getMonth();
+      const mark = !outside && (marked?.has(date) ?? false);
       return <td key={date} role="gridcell" aria-selected={date === selected}>
         <button type="button" ref={active ? activeDay : undefined} tabIndex={active ? 0 : -1}
-          className={["btn-icon", "month-grid-day", day.getMonth() !== cursor.getMonth() ? "month-grid-outside-month" : "", date === selected ? "month-grid-day-selected" : "", mark ? "month-grid-day-marked" : ""].filter(Boolean).join(" ")}
+          className={["btn-icon", "month-grid-day", outside ? "month-grid-outside-month" : "", date === selected ? "month-grid-day-selected" : "", mark ? "month-grid-day-marked" : ""].filter(Boolean).join(" ")}
           aria-label={mark && markLabel ? `${fullDate.format(day)}, ${markLabel}` : fullDate.format(day)} aria-current={date === today ? "date" : undefined}
           onClick={() => onSelect(date)}>{day.getDate()}</button>
       </td>;

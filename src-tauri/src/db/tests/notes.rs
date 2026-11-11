@@ -231,7 +231,7 @@ fn notes_reach_a_peer_with_links_search_and_deletion() {
     assert_eq!(links.backlinks[0].note_id, daily.id);
     assert_eq!(
         links.backlinks[0].context,
-        "Talked about [[Plan|the plan]] and [[Missing]]"
+        "Talked about the plan and Missing"
     );
     assert_eq!(b.note_links(&daily.id).unwrap().unlinked, ["Missing"]);
 
@@ -1771,6 +1771,34 @@ fn upgrading_indexes_contact_references_received_before_they_were_understood() {
     assert_eq!(
         db.get_note(&note.id).unwrap().unwrap().updated_at,
         note.updated_at
+    );
+}
+
+#[test]
+fn upgrading_rewrites_backlink_lines_as_text_without_changing_notes() {
+    let db = database();
+    let target = db.create_note("OA Monthly", "").unwrap();
+    let line = "- [3:00 pm](threestrands:event/%7B%22id%22%3A%22e%22%7D) for [[OA Monthly]]";
+    let daily = db.save_daily_note(DAY, line).unwrap().unwrap();
+    {
+        // A version before v107 kept each link's line as Markdown.
+        let mut connection = db.test_connection().unwrap();
+        connection
+            .execute(
+                "UPDATE note_links SET context=?1 WHERE note_id=?2",
+                rusqlite::params![line, daily.id],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA user_version=106;")
+            .unwrap();
+        crate::schema::migrate(&mut connection).unwrap();
+    }
+    let links = db.note_links(&target.id).unwrap();
+    assert_eq!(links.backlinks[0].context, "3:00 pm for OA Monthly");
+    assert_eq!(
+        db.get_note(&daily.id).unwrap().unwrap().updated_at,
+        daily.updated_at
     );
 }
 

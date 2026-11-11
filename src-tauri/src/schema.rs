@@ -51,6 +51,7 @@ const MIGRATIONS: &[Migration] = &[
     (104, to_v104),
     (105, to_v105),
     (106, to_v106),
+    (107, to_v107),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1430,6 +1431,25 @@ fn to_v106(tx: &rusqlite::Transaction) -> Result<(), String> {
         .map_err(error)?;
     }
     reindex_notes(tx)
+}
+
+/// A `[[link]]`'s backlink context is the line as text rather than its
+/// Markdown, so rows written before then are rebuilt.
+fn to_v107(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let ids = {
+        let mut q = tx.prepare("SELECT id FROM notes").map_err(error)?;
+        let rows = q
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(error)?;
+        rows
+    };
+    for id in ids {
+        let note = crate::db::notes::get(tx, &id).map_err(error)?.unwrap();
+        crate::db::notes::index_links(tx, &note).map_err(error)?;
+    }
+    Ok(())
 }
 
 /// Rebuilds every note's derived task and link rows from its stored text,

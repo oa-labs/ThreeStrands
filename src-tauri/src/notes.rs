@@ -76,7 +76,8 @@ pub(crate) fn extract_links(body: &str) -> Vec<NoteLink> {
             links.push(NoteLink {
                 key: title_key(&span.title),
                 title: span.title,
-                context: line_context(line),
+                // As text, so a backlink never shows link targets or syntax.
+                context: line_context(&plain_text(line)),
             });
         }
     }
@@ -461,10 +462,11 @@ mod tests {
         );
         assert_eq!(links[1].key, "project plan");
         assert_eq!(title_key("  PROJECT \t plan "), "project plan");
-        assert_eq!(
-            links[0].context,
-            "Met [[Ada  Lovelace]] about [[Project Plan|the plan]]."
+        assert_eq!(links[0].context, "Met Ada Lovelace about the plan.");
+        let meeting = extract_links(
+            "- [3:00 pm](threestrands:event/%7B%22id%22%3A%22e%22%7D) met with [Dana](threestrands:contact/%7B%7D) for [[OA Monthly]]",
         );
+        assert_eq!(meeting[0].context, "3:00 pm met with Dana for OA Monthly");
     }
 
     #[test]
@@ -484,8 +486,12 @@ mod tests {
     fn link_count_and_context_are_bounded_at_their_limits() {
         let body = "[[a]] ".repeat(MAX_LINKS_PER_NOTE + 1);
         assert_eq!(extract_links(&body).len(), MAX_LINKS_PER_NOTE);
-        let exact = "x".repeat(MAX_LINK_CONTEXT_CHARS - 5) + "[[a]]";
-        assert_eq!(extract_links(&exact)[0].context, exact);
+        // The limit counts the text shown, not the Markdown behind it.
+        let exact = "x".repeat(MAX_LINK_CONTEXT_CHARS - 2) + " [[a]]";
+        assert_eq!(
+            extract_links(&exact)[0].context,
+            "x".repeat(MAX_LINK_CONTEXT_CHARS - 2) + " a"
+        );
         let long = "x".repeat(MAX_LINK_CONTEXT_CHARS) + "[[a]]";
         let context = &extract_links(&long)[0].context;
         assert_eq!(context.chars().count(), MAX_LINK_CONTEXT_CHARS);

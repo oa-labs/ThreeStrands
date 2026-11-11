@@ -24,12 +24,19 @@ describe("MonthGrid", () => {
     expect(firstDayOfWeek("not a locale!")).toBe(0);
   });
 
-  it("lays out six weeks from the chosen first weekday", () => {
-    expect(monthGridRange(new Date("2026-11-11T12:00:00"), 1)).toMatchObject({ from: "2026-10-26", to: "2026-12-06" });
-    expect(monthGridRange(new Date("2026-11-11T12:00:00"), 0)).toMatchObject({ from: "2026-11-01", to: "2026-12-12" });
+  it("lays out only the weeks that hold the month, from the chosen first weekday", () => {
+    expect(monthGridRange(new Date("2026-11-11T12:00:00"), 1)).toMatchObject({ weeks: 6, from: "2026-10-26", to: "2026-12-06" });
+    expect(monthGridRange(new Date("2026-11-11T12:00:00"), 0)).toMatchObject({ weeks: 5, from: "2026-11-01", to: "2026-12-05" });
+    // February 2026 starts on a Sunday and fills four weeks exactly.
+    expect(monthGridRange(new Date("2026-02-11T12:00:00"), 0)).toMatchObject({ weeks: 4, from: "2026-02-01", to: "2026-02-28" });
     render(<Grid weekStart={1} />);
     expect(screen.getAllByRole("columnheader")[0]).toHaveAttribute("abbr", "Monday");
     expect(screen.getAllByRole("gridcell")[0]).toHaveTextContent(/^26$/);
+    expect(screen.getAllByRole("row")).toHaveLength(7);
+    cleanup();
+    render(<Grid weekStart={0} />);
+    expect(screen.getAllByRole("row")).toHaveLength(6);
+    expect(screen.queryByRole("button", { name: name("2026-12-06") })).not.toBeInTheDocument();
   });
 
   it("moves Home and End to the ends of a Monday week", () => {
@@ -44,7 +51,11 @@ describe("MonthGrid", () => {
 
   it("names marked days for screen readers and chooses a day on click", () => {
     const onSelect = vi.fn();
-    render(<Grid marked={new Set(["2026-11-09"])} onSelect={onSelect} />);
+    render(<Grid weekStart={1} marked={new Set(["2026-11-09", "2026-10-27"])} onSelect={onSelect} />);
+    // A neighbouring month's day carries no mark.
+    const outside = screen.getByRole("button", { name: name("2026-10-27") });
+    expect(outside).toHaveClass("month-grid-outside-month");
+    expect(outside).not.toHaveClass("month-grid-day-marked");
     const marked = screen.getByRole("button", { name: `${name("2026-11-09")}, has a note` });
     expect(marked).toHaveClass("month-grid-day-marked");
     expect(screen.getByRole("button", { name: name("2026-11-10") })).not.toHaveClass("month-grid-day-marked");

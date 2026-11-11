@@ -1,7 +1,7 @@
 import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKey, noteReferenceSeriesKey, contactNoteReferences, markdownEntityLink, type NoteDocument } from "../noteEntities";
 import type { ContactProfile, Thread, ThreadTask, ScheduleEvent, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
 import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
-import { notePreview, noteInlineText } from "../notePreview";
+import { notePlainText, notePreview, noteInlineText } from "../notePreview";
 import { insertMeetingLine, meetingLine, meetingNoteTitle } from "../noteMeetings";
 import type { MailClient } from "./client";
 
@@ -22,6 +22,13 @@ function noteTitle(title: string): string {
 }
 
 const preview = notePreview;
+/** Most characters of a backlink's line, as natively (MAX_LINK_CONTEXT_CHARS). */
+const LINK_CONTEXT_CHARS = 160;
+/** A backlink's line as text, cut with an ellipsis, as natively. */
+const linkContext = (line: string) => {
+  const text = [...notePlainText(line)];
+  return text.length <= LINK_CONTEXT_CHARS ? text.join("") : `${text.slice(0, LINK_CONTEXT_CHARS - 1).join("")}…`;
+};
 
 /** In-memory notes for the browser demo and tests, following the native store's rules. */
 export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadTask[]; events(): ScheduleEvent[]; contacts?(): ContactProfile[] | Promise<ContactProfile[]> } = { threads: () => [], tasks: () => [], events: () => [] }): DemoNotes {
@@ -274,7 +281,7 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .flatMap((other) => extractWikiLinks(other.body)
           .filter((link) => noteTitleKey(link.title) === key(note.title))
-          .map((link) => ({ noteId: other.id, title: other.title, dailyDate: other.dailyDate, context: link.context })));
+          .map((link) => ({ noteId: other.id, title: other.title, dailyDate: other.dailyDate, context: linkContext(link.context) })));
       const links: string[] = [];
       for (const link of extractWikiLinks(note.body)) {
         if (!links.some((title) => noteTitleKey(title) === noteTitleKey(link.title))) links.push(link.title);
