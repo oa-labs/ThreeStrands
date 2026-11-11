@@ -1538,6 +1538,56 @@ it("keeps a background shorthand's size, position and repeat while parking its i
   }
 });
 
+describe("legacy background attribute", () => {
+  it("parks a table or cell background attribute behind the proxy and fills it once resolved", () => {
+    // Two structurally different templates: a proxied cell image whose URL
+    // carries a fragment and query-like suffix, and a table-level tile.
+    const cellUrl = "https://images.example.com/meips/ABC_def=s0-d-e1-ft#https://media.example.org/hero.jpg";
+    const sanitized = sanitizeMessageHtml(`
+      <table width="600"><tr><td background="${cellUrl}" bgcolor="#123456" height="200" valign="top">Help center</td></tr></table>
+      <table background="cid:tile@example.com"><tbody><tr><th>Header</th></tr></tbody></table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const cell = container.querySelector("td")!;
+    const table = container.querySelectorAll("table")[1];
+    expect(container.querySelector("[background]")).toBeNull();
+    expect(cell.getAttribute("data-blocked-src")).toBe(cellUrl);
+    expect(cell.getAttribute("bgcolor")).toBe("#123456");
+    expect(table.getAttribute("data-blocked-src")).toBe("cid:tile@example.com");
+    expect(extractBlockedImageUrls(sanitized).sort()).toEqual(["cid:tile@example.com", cellUrl]);
+
+    fillResolvedImages(container, new Map([[cellUrl, "data:image/jpeg;base64,AAA="]]));
+    expect(cell.style.backgroundImage).toBe('url("data:image/jpeg;base64,AAA=")');
+    expect(cell.hasAttribute("data-blocked-src")).toBe(false);
+    expect(table.getAttribute("data-blocked-src")).toBe("cid:tile@example.com");
+  });
+
+  it("lets an inline background image or shorthand outrank the attribute", () => {
+    const withImage = sanitizeMessageHtml(`<table><tr><td background="https://example.com/attr.png" style="background-image:url(https://example.com/css.png)">A</td></tr></table>`);
+    expect(withImage).toContain('data-blocked-src="https://example.com/css.png"');
+    expect(withImage).not.toContain("attr.png");
+    const withShorthand = sanitizeMessageHtml(`<table><tr><td background="https://example.com/attr.png" style="background:#ffffff">A</td></tr></table>`);
+    expect(withShorthand).not.toContain("data-blocked-src");
+    expect(withShorthand).not.toContain("attr.png");
+  });
+
+  it("never fetches or keeps an unsafe or misplaced background attribute", () => {
+    for (const html of [
+      `<table><tr><td background="javascript:alert(1)">A</td></tr></table>`,
+      `<table><tr><td background="file:///etc/passwd">A</td></tr></table>`,
+      `<table><tr><td background='https://tracker.invalid/a.png") ; x:url("https://tracker.invalid/b'>A</td></tr></table>`,
+      `<table><tr><td background="https://tracker.invalid/a.png\\&quot;">A</td></tr></table>`,
+      `<div background="https://tracker.invalid/div.png">A</div>`,
+      `<p><span background="https://tracker.invalid/span.png">A</span></p>`,
+    ]) {
+      const sanitized = sanitizeMessageHtml(html);
+      expect([html, sanitized]).toEqual([html, expect.not.stringMatching(/background=|data-blocked-src|javascript:|url\(/)]);
+      expect(sanitized).toContain("A");
+    }
+  });
+});
+
 it("drops a shorthand background image whose URL fails scheme validation", () => {
   const sanitized = sanitizeMessageHtml(`<div style="background:url(javascript:alert(1)) center/48px no-repeat">Hi</div>`);
   expect(sanitized).not.toContain("data-blocked-src");

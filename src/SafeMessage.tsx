@@ -250,6 +250,10 @@ const allowedTags = [
 ];
 
 const dimensionAttributeTags = new Set(["img", "table", "td", "th"]);
+// The legacy HTML `background` attribute paints a tiled image behind a
+// table, row, or cell. It is the same network request as a CSS
+// background-image, so it is admitted only through the same blocked-src path.
+const backgroundAttributeTags = new Set(["table", "tr", "td", "th"]);
 // Column widths are table-structure sizing, bounded by the same parser as
 // cell widths. A fixed-layout table often declares width:0 and takes its real
 // width from these alone; dropping them collapses every column and the cells'
@@ -353,7 +357,7 @@ export function sanitizeMessageHtml(html: string): string {
     // else in this file: DOMPurify already keeps them from carrying
     // markup, and the iframe never loads the app's own stylesheet, so a
     // sender's class name can't collide with anything of ours.
-    ALLOWED_ATTR: ["align", "alt", "bgcolor", "cellpadding", "cellspacing", "class", "color", "colspan", "dir", "face", "height", "hidden", "href", "id", "rowspan", "size", "src", "start", "style", "title", "valign", "width"],
+    ALLOWED_ATTR: ["align", "alt", "background", "bgcolor", "cellpadding", "cellspacing", "class", "color", "colspan", "dir", "face", "height", "hidden", "href", "id", "rowspan", "size", "src", "start", "style", "title", "valign", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     FORBID_TAGS: ["form", "script", "style", "svg"],
@@ -394,6 +398,18 @@ export function sanitizeMessageHtml(html: string): string {
       }
     }
     const tag = element.tagName.toLowerCase();
+    // The attribute never survives as-is (the iframe would fetch it
+    // directly). Author CSS outranks a presentational attribute, so any
+    // inline background-image, including a background shorthand that
+    // resets it, wins over the attribute just as it does in a browser.
+    const backgroundAttribute = element.getAttribute("background")?.trim() ?? "";
+    element.removeAttribute("background");
+    if (backgroundAttributeTags.has(tag)
+      && !original.getPropertyValue("background-image").trim()
+      && safeImageSrc.test(backgroundAttribute)
+      && !/["'()\\\s]/.test(backgroundAttribute)) {
+      element.setAttribute(blockedSrcAttr, backgroundAttribute);
+    }
     if (!dimensionAttributeTags.has(tag) && !widthOnlyAttributeTags.has(tag)) element.removeAttribute("width");
     if (!dimensionAttributeTags.has(tag) && !heightOnlyAttributeTags.has(tag)) element.removeAttribute("height");
 
