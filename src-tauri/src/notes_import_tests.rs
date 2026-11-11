@@ -37,6 +37,153 @@ fn nothing() -> Existing {
     }
 }
 
+#[test]
+fn a_single_file_uses_shared_title_rules_and_does_not_scan_its_neighbors() {
+    let folder = TestFolder::new();
+    folder.write(
+        "chosen.MARKDOWN",
+        "\u{feff}---\ntitle: \"Exact: title\"\n---\n\n# Kept heading\n\n**Body**\n",
+    );
+    folder.write("unrelated.md", [0xff]);
+    let planned = plan_file(&folder.0.join("chosen.MARKDOWN"), &nothing()).unwrap();
+    assert_eq!(planned.notes.len(), 1);
+    assert_eq!(planned.notes[0].note.title, "Exact: title");
+    assert_eq!(planned.notes[0].note.body, "# Kept heading\n\n**Body**\n");
+    assert!(planned.problems.is_empty());
+    for (name, contents, title, body) in [
+        (
+            "heading.md",
+            "# Heading title\n\nBody\n",
+            "Heading title",
+            "Body\n",
+        ),
+        ("filename.md", "Body\n", "filename", "Body\n"),
+        ("empty.md", "", "empty", ""),
+    ] {
+        folder.write(name, contents);
+        let planned = plan_file(&folder.0.join(name), &nothing()).unwrap();
+        assert_eq!(planned.notes[0].note.title, title);
+        assert_eq!(planned.notes[0].note.body, body);
+    }
+}
+
+#[test]
+fn importing_one_file_always_adds_a_new_note_without_replacing_ids_or_daily_notes() {
+    let folder = TestFolder::new();
+    let db = database();
+    let original = db.create_note("Existing", "Original body").unwrap();
+    db.save_daily_note("2026-11-11", "Original daily body")
+        .unwrap();
+    folder.write(
+        "daily/2026-11-11.md",
+        format!(
+            "---\nid: {}\ntitle: Existing\n---\n\nImported body\n",
+            original.id
+        ),
+    );
+    let path = folder.0.join("daily/2026-11-11.md");
+    for expected_title in ["Existing 2", "Existing 3"] {
+        let (ids, titles) = db.note_identities().unwrap();
+        let planned = plan_file(&path, &Existing { ids, titles }).unwrap();
+        let imported = &planned.notes[0].note;
+        assert_ne!(imported.id, original.id);
+        assert_eq!(imported.daily_date, None);
+        assert_eq!(imported.title, expected_title);
+        let id = imported.id.clone();
+        let outcome = run(planned, |note, files| {
+            db.import_note(note, files)
+                .map_err(|error| error.to_string())
+        });
+        assert_eq!(outcome.notes, 1);
+        assert!(outcome.problems.is_empty());
+        let saved = db.get_note(&id).unwrap().unwrap();
+        assert_eq!(saved.title, expected_title);
+        assert_eq!(saved.body, "Imported body\n");
+    }
+    assert_eq!(
+        db.get_note(&original.id).unwrap().unwrap().body,
+        "Original body"
+    );
+    assert_eq!(
+        db.get_daily_note("2026-11-11").unwrap().unwrap().body,
+        "Original daily body"
+    );
+}
+
+#[test]
+fn single_file_import_rejects_invalid_text_types_and_oversized_notes_without_truncation() {
+    let folder = TestFolder::new();
+    for length in [
+        MAX_NOTE_BODY_BYTES - 3,
+        MAX_NOTE_BODY_BYTES - 2,
+        MAX_NOTE_BODY_BYTES - 1,
+    ] {
+        let body = "a".repeat(length);
+        folder.write("size.md", &body);
+        let result = plan_file(&folder.0.join("size.md"), &nothing());
+        if length <= MAX_NOTE_BODY_BYTES - 2 {
+            assert_eq!(result.unwrap().notes[0].note.body, body);
+        } else {
+            assert!(result.unwrap_err().contains("Too long to sync"));
+        }
+    }
+    folder.write("binary.md", [0xff]);
+    assert!(plan_file(&folder.0.join("binary.md"), &nothing())
+        .unwrap_err()
+        .contains("Not readable as text"));
+    folder.write("wrong.txt", "Body");
+    assert!(plan_file(&folder.0.join("wrong.txt"), &nothing()).is_err());
+    assert!(plan_file(&folder.0, &nothing()).is_err());
+    assert!(plan_file(&folder.0.join("missing.md"), &nothing()).is_err());
+    folder.write("with-large-file.md", "[packet](large.pdf)\n");
+    fs::File::create(folder.0.join("large.pdf"))
+        .unwrap()
+        .set_len(MAX_NOTE_ATTACHMENT_BYTES + 1)
+        .unwrap();
+    assert!(plan_file(&folder.0.join("with-large-file.md"), &nothing())
+        .unwrap_err()
+        .contains("Larger than 20 MB"));
+}
+
+#[test]
+fn a_single_file_attaches_local_files_but_keeps_remote_and_outside_links_unread() {
+    let folder = TestFolder::new();
+    let db = database();
+    folder.write("notes/chosen.md", "# Chosen\n\n![](picture.png) [pdf](packet.pdf) ![](https://example.com/picture.png) [outside](../secret.pdf)\n");
+    folder.write("notes/picture.png", PNG);
+    folder.write("notes/packet.pdf", b"%PDF-1.4");
+    folder.write("secret.pdf", b"private");
+    let planned = plan_file(&folder.0.join("notes/chosen.md"), &nothing()).unwrap();
+    let id = planned.notes[0].note.id.clone();
+    assert_eq!(planned.notes[0].files.len(), 2);
+    let outcome = run(planned, |note, files| {
+        db.import_note(note, files)
+            .map_err(|error| error.to_string())
+    });
+    assert_eq!((outcome.notes, outcome.files), (1, 2));
+    let saved = db.get_note(&id).unwrap().unwrap();
+    assert!(saved.body.contains("attachment:"));
+    assert!(saved.body.contains("https://example.com/picture.png"));
+    assert!(saved.body.contains("../secret.pdf"));
+}
+
+#[cfg(unix)]
+#[test]
+fn single_file_import_never_follows_symbolic_links() {
+    let folder = TestFolder::new();
+    folder.write("source.md", "# Source\n");
+    std::os::unix::fs::symlink(folder.0.join("source.md"), folder.0.join("link.md")).unwrap();
+    assert!(plan_file(&folder.0.join("link.md"), &nothing()).is_err());
+    folder.write("chosen.md", "[linked](link.md) [secret](secret.pdf)\n");
+    std::os::unix::fs::symlink("/etc/hosts", folder.0.join("secret.pdf")).unwrap();
+    let planned = plan_file(&folder.0.join("chosen.md"), &nothing()).unwrap();
+    assert!(planned.notes[0].files.is_empty());
+    assert_eq!(
+        planned.notes[0].note.body,
+        "[linked](link.md) [secret](secret.pdf)\n"
+    );
+}
+
 fn note<'a>(plan: &'a ImportPlan, title: &str) -> &'a PlannedNote {
     plan.notes
         .iter()

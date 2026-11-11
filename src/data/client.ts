@@ -451,6 +451,8 @@ export interface MailClient extends CorrespondenceClient {
   chooseNotesImportFolder(): Promise<NotesImportSummary | null>;
   /** Imports the folder last read by `chooseNotesImportFolder`. */
   importNotes(): Promise<NotesImportOutcome>;
+  /** Chooses a Markdown file and adds it as a new regular note. Null on cancel. */
+  importNoteFile(): Promise<Note | null>;
   /** Notes in Trash, most recently trashed first. */
   listTrashedNotes(limit: number): Promise<NoteSummary[]>;
   /** Days from `from` through `to` (YYYY-MM-DD, inclusive) whose daily note has text and is outside Trash. */
@@ -710,6 +712,7 @@ const tauriClient: MailClient = {
   exportNotes: (replace) => complete("notes_export_write", { replace }),
   chooseNotesImportFolder: () => complete("notes_import_choose_folder"),
   importNotes: () => complete("notes_import_run"),
+  importNoteFile: () => complete("import_note_file"),
   // The file travels as the request body; its name and type are percent-encoded so any script survives the header.
   addNoteAttachment: async (noteId, file) => invokeWithPolicy("note_attachment_add", new Uint8Array(await file.arrayBuffer()), WAIT_FOR_NATIVE_COMPLETION, {
     headers: { "x-note-id": encodeURIComponent(noteId), "x-file-name": encodeURIComponent(file.name), "x-file-type": encodeURIComponent(file.type) },

@@ -1803,6 +1803,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::notes::notes_storage,
         commands::notes::notes_import_choose_folder,
         commands::notes::notes_import_run,
+        commands::notes::import_note_file,
         commands::notes::note_attachment_add,
         commands::notes::note_attachment,
         commands::notes::note_attachment_image,

@@ -21,6 +21,12 @@ describe("native AI request payloads", () => {
 
   const sent = (command: string) => vi.mocked(invoke).mock.calls.find(([name]) => name === command)?.[1];
 
+  it("opens native single-note import without accepting a filesystem path", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(null);
+    expect(await client.importNoteFile()).toBeNull();
+    expect(invoke).toHaveBeenCalledWith("import_note_file", undefined);
+  });
+
   it("routes diagnostic reads and local diagnostic controls to the native commands", async () => {
     await client.aiDiagnostics();
     await client.setAiDiagnosticCapture(true);

@@ -80,6 +80,77 @@ describe("Notes workspace", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("imports a Markdown file beside New Note, saves current edits, and opens the new note", async () => {
+    const current = await mailClient.createNote(uniqueTitle("Before import"), "Original");
+    const imported = await mailClient.createNote(uniqueTitle("Imported file"), "**Imported Markdown**\n");
+    const choose = vi.spyOn(mailClient, "importNoteFile").mockImplementation(async () => {
+      expect((await mailClient.getNote(current.id))?.body).toBe("Keep these edits");
+      return imported;
+    });
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: current.id }} />);
+    const text = await screen.findByRole("textbox", { name: "Note text" });
+    await waitFor(() => expect(text).toHaveValue("Original"));
+    fireEvent.change(text, { target: { value: "Keep these edits" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "No matching imported title" } });
+    const button = screen.getByRole("button", { name: "Import Note" });
+    expect(screen.getByRole("button", { name: "New Note" }).nextElementSibling).toBe(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(imported.title));
+    expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(imported.body);
+    expect(screen.getByRole("searchbox", { name: "Search Notes" })).toHaveValue("");
+    expect(noteList().getByRole("button", { name: new RegExp(imported.title) })).toHaveAttribute("aria-current", "true");
+    expect(choose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveFocus());
+  });
+
+  it.each(["cancel", "error"])("keeps the open note when file import ends with %s", async (result) => {
+    const current = await mailClient.createNote(uniqueTitle("Import stays here"), "Current body");
+    const choose = vi.spyOn(mailClient, "importNoteFile");
+    if (result === "cancel") choose.mockResolvedValue(null);
+    else choose.mockRejectedValue(new Error("Not readable as text."));
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: current.id }} />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(current.body));
+    fireEvent.click(screen.getByRole("button", { name: "Import Note" }));
+    await waitFor(() => expect(choose).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import Note" })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(current.title);
+    expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(current.body);
+    if (result === "error") expect(screen.getByRole("alert")).toHaveTextContent("Not readable as text.");
+    else expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("refuses to start import when the current note cannot save", async () => {
+    const current = await mailClient.createNote(uniqueTitle("Unsaved before import"), "Original");
+    const choose = vi.spyOn(mailClient, "importNoteFile").mockResolvedValue(null);
+    vi.spyOn(mailClient, "updateNote").mockRejectedValue(new Error("Save unavailable"));
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: current.id }} />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue("Original"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: "Unsaved draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Import Note" }));
+    await screen.findByText("This note has changes that weren't saved. Resolve them before importing a note.");
+    expect(choose).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue("Unsaved draft");
+  });
+
+  it("prevents duplicate imports and saves typing made while the picker was open", async () => {
+    const current = await mailClient.createNote(uniqueTitle("Typing during import"), "Original");
+    const imported = await mailClient.createNote(uniqueTitle("Chosen file"), "Imported");
+    let finish!: (note: Note) => void;
+    const choose = vi.spyOn(mailClient, "importNoteFile").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: current.id }} />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue("Original"));
+    const button = screen.getByRole("button", { name: "Import Note" });
+    fireEvent.click(button);
+    await waitFor(() => expect(choose).toHaveBeenCalledTimes(1));
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: "Typed during import" } });
+    await act(async () => finish(imported));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(imported.title));
+    expect((await mailClient.getNote(current.id))?.body).toBe("Typed during import");
+    expect(choose).toHaveBeenCalledTimes(1);
+  });
+
   it("uses an icon in Note Details and a single action to link an empty note", async () => {
     render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });
