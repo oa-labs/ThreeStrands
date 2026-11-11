@@ -1,7 +1,7 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NoteEditor, linkMenuItems, type NoteEditorHandle } from "./NoteEditor";
 import { noteLinkTarget, openNoteLink } from "./noteLinks";
 import type { NoteSyntaxMode } from "./noteSyntaxMode";
@@ -117,6 +117,85 @@ describe("NoteEditor", () => {
     await typeOver(box, "Hello there world");
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenLastCalledWith("Hello there world\n");
+  });
+
+  describe("Mail formatting shortcuts", () => {
+    beforeEach(() => {
+      // jsdom has no text-range geometry; editor commands scroll the selection.
+      Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => [] });
+      Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect() });
+    });
+    it.each([
+      ["bold", "b", false, "**Hello**\n"],
+      ["italic", "i", false, "*Hello*\n"],
+      ["strikethrough", "x", true, "~~Hello~~\n"],
+      ["fixed-width", "m", true, "`Hello`\n"],
+      ["numbered list", "7", true, "1. Hello\n"],
+      ["bulleted list", "8", true, "- Hello\n"],
+      ["quote", "9", true, "> Hello\n"],
+      ["code block", "0", true, "```\nHello\n```\n"],
+    ])("applies %s to selected text and supports undo", async (_name, key, shiftKey, expected) => {
+      const { box, ref, onChange } = await editorFor("Hello\n");
+      act(() => ref.current!.focus());
+      fireEvent.keyDown(box, { key: "a", ctrlKey: true });
+      fireEvent.keyDown(box, { key, shiftKey, ctrlKey: true });
+      expect(ref.current!.markdown()).toBe(expected);
+      expect(onChange).toHaveBeenLastCalledWith(expected);
+      fireEvent.keyDown(box, { key: "z", ctrlKey: true });
+      expect(ref.current!.markdown()).toBe("Hello\n");
+    });
+
+    it.each(["m", "9", "0"])("does not apply %s while composing or reading a note", async (key) => {
+      const { box, ref, onChange } = await editorFor("Hello\n");
+      fireEvent.keyDown(box, { key, ctrlKey: true, shiftKey: true, isComposing: true });
+      expect(ref.current!.markdown()).toBe("Hello\n");
+      expect(onChange).not.toHaveBeenCalled();
+      cleanup();
+      const readOnly = await editorFor("Hello\n", { readOnly: true });
+      fireEvent.keyDown(readOnly.box, { key, ctrlKey: true, shiftKey: true });
+      expect(readOnly.ref.current!.markdown()).toBe("Hello\n");
+      expect(readOnly.onChange).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["m", "KeyM", "`Hello`\n"],
+      ["(", "Digit9", "> Hello\n"],
+      [")", "Digit0", "```\nHello\n```\n"],
+    ])("supports the Mac %s binding and toggles it off again", async (key, code, expected) => {
+      const { box, ref } = await editorFor("Hello\n");
+      act(() => ref.current!.focus());
+      fireEvent.keyDown(box, { key: "a", ctrlKey: true });
+      fireEvent.keyDown(box, { key, code, shiftKey: true, metaKey: true });
+      expect(ref.current!.markdown()).toBe(expected);
+      fireEvent.keyDown(box, { key, code, shiftKey: true, metaKey: true });
+      expect(ref.current!.markdown()).toBe("Hello\n");
+    });
+
+    it("inserts a hyperlink around selected text with Mod+k", async () => {
+      const { box, ref, onChange } = await editorFor("Hello\n");
+      act(() => ref.current!.focus());
+      fireEvent.keyDown(box, { key: "a", ctrlKey: true });
+      fireEvent.keyDown(box, { key: "k", ctrlKey: true });
+      const url = await screen.findByRole("textbox", { name: "Link" });
+      expect(screen.getByRole("textbox", { name: "Text" })).toHaveValue("Hello");
+      fireEvent.change(url, { target: { value: "https://example.com" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(ref.current!.markdown()).toBe("[Hello](https://example.com)\n");
+      expect(onChange).toHaveBeenLastCalledWith("[Hello](https://example.com)\n");
+    });
+
+    it.each([
+      ["Tab", {}, "Tab", { shiftKey: true }],
+      ["]", { ctrlKey: true }, "[", { ctrlKey: true }],
+    ])("indents and outdents list items with %s", async (indent, indentModifiers, outdent, outdentModifiers) => {
+      const { box, ref } = await editorFor("- One\n- Two\n");
+      act(() => ref.current!.focus());
+      fireEvent.keyDown(box, { key: "ArrowDown", ctrlKey: true });
+      fireEvent.keyDown(box, { key: indent, ...indentModifiers });
+      expect(ref.current!.markdown()).toBe("- One\n  - Two\n");
+      fireEvent.keyDown(box, { key: outdent, ...outdentModifiers });
+      expect(ref.current!.markdown()).toBe("- One\n- Two\n");
+    });
   });
 
   it("shows text from outside without reporting it as an edit", async () => {

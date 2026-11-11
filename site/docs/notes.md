@@ -15,6 +15,21 @@ Select a note and press <kbd>Enter</kbd>, or click in it, to write. Press <kbd>E
 
 Notes are written in Markdown and formatted as you type: `**bold**` turns bold, `# ` starts a heading, and `- ` starts a list. Links open in your browser. Notes never load pictures or previews from the internet.
 
+The Markdown formats use the same keyboard shortcuts as email:
+
+| Format | Shortcut |
+| --- | --- |
+| Bold or italics | <kbd>⌘/Ctrl + b</kbd>, <kbd>⌘/Ctrl + i</kbd> |
+| Link | <kbd>⌘/Ctrl + k</kbd> |
+| Strikethrough | <kbd>⌘/Ctrl + Shift + x</kbd> |
+| Fixed-width | <kbd>⌘/Ctrl + Shift + m</kbd> |
+| Numbered or bulleted list | <kbd>⌘/Ctrl + Shift + 7</kbd>, <kbd>⌘/Ctrl + Shift + 8</kbd> |
+| Quote | <kbd>⌘/Ctrl + Shift + 9</kbd> |
+| Code block | <kbd>⌘/Ctrl + Shift + 0</kbd> |
+| Indent or outdent a list item | <kbd>Tab</kbd>, <kbd>Shift + Tab</kbd>, or <kbd>⌘/Ctrl + ]</kbd>, <kbd>⌘/Ctrl + [</kbd> |
+
+Select text to format it. Press the same formatting shortcut again to remove the format. Notes stores plain Markdown, so email's underline and text color formats are unavailable. Use `/Checklist` for a square checklist or `/Task` for a round task.
+
 Paste or drag a picture or file into a note to add it. Pictures show in the note, and other files show as a small label with their size; click either to open it in its usual app. **Files** lists them too, beside your mail attachments. A note can hold files up to 20 MB each. A file stays with its note until you delete the note from Trash, even if you remove it from the text.
 
 Today's note is created when you first write in it, so looking at a day leaves nothing behind. To make a note of your own, press <kbd>Shift</kbd>+<kbd>N</kbd> or click **New Note** and give it a title. Each title can be used once.

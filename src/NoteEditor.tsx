@@ -11,6 +11,7 @@ import { collapseWhitespace, noteTitleKey, splitWikiLink } from "./noteWikiLinks
 import type { NoteSyntaxMode } from "./noteSyntaxMode";
 import { NoteLinkAutocomplete } from "./NoteLinkAutocomplete";
 import type { NoteLinkChoice } from "./noteLinkChoices";
+import { formattingShortcutFor } from "./richText";
 
 export type NoteEditorHandle = {
   focus(): void;
@@ -211,6 +212,25 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   const reducedMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   return <div ref={surface} className="note-editor-body" onKeyDownCapture={(event) => {
+    // Use Mail's bindings where Meowdown differs. Keep edits in the editor's
+    // commands so Markdown serialization, selection and undo stay together.
+    const view = editor.current?.getEditor();
+    if (!readOnly && view?.view.dom.contains(event.target as Node)
+      && event.target instanceof Element && !event.target.closest("input, button, textarea, select")) {
+      const shortcut = formattingShortcutFor(event.nativeEvent);
+      const apply = shortcut?.id === "format.fixedWidth" ? () => view.commands.toggleCode()
+        : shortcut?.id === "format.quote" ? () => view.commands.toggleBlockquote()
+        : shortcut?.id === "format.codeBlock" ? () => view.commands.toggleCodeBlock()
+        : undefined;
+      if (apply) {
+        event.stopPropagation();
+        // Don't fall through to the library's checklist binding during IME.
+        if (event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        apply();
+        return;
+      }
+    }
     if (readOnly || !(event.target instanceof HTMLInputElement) || event.target.type !== "checkbox" || ![" ", "Enter"].includes(event.key)) return;
     event.preventDefault(); event.stopPropagation();
     event.target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
