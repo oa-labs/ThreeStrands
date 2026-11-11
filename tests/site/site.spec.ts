@@ -561,7 +561,16 @@ test.describe("legal pages", () => {
     await expect(body).toContainText("Google API Services User Data Policy, including the Limited Use requirements");
     await expect(body).toContainText("AI is off until you choose a provider");
     await expect(body).toContainText("Remote images in email are blocked by default");
-    await expect(body).toContainText("Removing an account in the app does not revoke the grant with Google");
+    const deletion = body.locator("#deletion");
+    await expect(deletion).toContainText("Removing it also revokes the app's access with Google, unless you keep the account on your other computers");
+    await expect(deletion).toContainText("Uninstalling alone leaves your data in place");
+    const removeEverything = deletion.getByRole("link", { name: "Remove Everything From This Computer" });
+    await expect(removeEverything).toHaveAttribute("href", "docs/privacy.html#remove-everything");
+    await removeEverything.click();
+    for (const system of ["macOS", "Windows", "Linux"]) {
+      await expect(page.getByRole("heading", { level: 3, name: system })).toBeVisible();
+    }
+    await page.goBack();
     await expect(body.locator("#device")).toContainText("IMAP/SMTP passwords or app passwords");
     await expect(body.locator("#connections")).toContainText("IMAP reads and synchronizes your mail and folders; SMTP submits outgoing messages");
     await expect(body.locator("#connections")).toContainText("Bridge running on your computer");

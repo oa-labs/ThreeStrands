@@ -23,6 +23,43 @@ Mail cache and search data live on this computer. Sign-in tokens, mail passwords
 
 Mail and calendar connections contact their providers. Optional [AI](ai.html#what-is-shared) sends selected context to your chosen AI provider. [Encrypted sync](sync.html) uses storage you choose, and [settings export](settings-and-sync.html) creates a password-encrypted file. Contact CSV and vCard exports are unencrypted.
 
+## Remove Everything From This Computer {#remove-everything}
+
+Uninstalling ThreeStrands removes the app, but not your mail, settings, or saved sign-ins. To remove all of it:
+
+1. **Remove your accounts.** In **Settings → Mail Accounts** and **Settings → Calendar Accounts**, remove each account. This deletes the account's mail, drafts, and Outbox from this computer and ends ThreeStrands' access to your Google account. With [Replicated Sync](sync.html), **Disconnect this device** leaves your other computers connected, and Google access stays on for them. **Remove on all devices** removes the account everywhere.
+2. **Quit ThreeStrands and uninstall it.**
+3. **Delete its folders** and **its saved sign-ins**, listed below for your system.
+4. **Check Google access.** If you no longer use ThreeStrands on any computer, open your [Google Account permissions](https://myaccount.google.com/permissions) and remove ThreeStrands if it is still listed.
+5. **Delete synced data.** If you used Replicated Sync and no computer uses it any more, delete the ThreeStrands files in the storage location you chose.
+
+Exported files, such as settings exports and contact CSV or vCard files, stay wherever you saved them.
+
+### macOS {#remove-everything-macos}
+
+In Finder, choose **Go → Go to Folder**, and delete each of these folders that exists:
+
+- `~/Library/Application Support/app.threestrands.mail`: mail, contacts, notes, backups, and attachments
+- `~/Library/Logs/app.threestrands.mail`: logs
+- `~/Library/WebKit/app.threestrands.mail`, `~/Library/Caches/app.threestrands.mail`, and `~/Library/HTTPStorages/app.threestrands.mail`: window settings and crash reports
+
+Then open **Keychain Access**, search for `threestrands`, and delete every item it finds.
+
+### Windows {#remove-everything-windows}
+
+When you uninstall, check **Delete the application data**. Then paste each of these into File Explorer's address bar, and delete the folder if it is still there:
+
+- `%APPDATA%\app.threestrands.mail`: mail, contacts, notes, backups, and attachments
+- `%LOCALAPPDATA%\app.threestrands.mail`: logs, window settings, and crash reports
+
+Then open **Credential Manager**, choose **Windows Credentials**, and remove every generic credential whose name contains `app.threestrands`, such as `you@gmail.com.app.threestrands.mail`.
+
+### Linux {#remove-everything-linux}
+
+Delete `~/.local/share/app.threestrands.mail`, which holds mail, contacts, notes, backups, attachments, logs, and window settings. If you set `XDG_DATA_HOME`, the folder is under that directory instead. If you made the AppImage your default mail app, also delete `~/.local/share/applications/app.threestrands.mail.desktop`.
+
+Then open your keyring app, such as **Passwords and Keys**, search for `threestrands`, and delete every item it finds. Sign-ins are stored with Secret Service, labeled like `keyring:you@gmail.com@app.threestrands.mail`.
+
 ## Sender and Attachment Checks {#sender-and-attachment-checks}
 
 Checks run locally and explain suspicious addresses, links, and attachments. A known sender is not a promise that every message is safe. Read [Trust and Attachment Warnings](triage.html#trust-and-attachment-warnings) before confirming a new sending address.
