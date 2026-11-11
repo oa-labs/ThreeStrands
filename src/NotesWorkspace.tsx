@@ -2,7 +2,7 @@ import { formatDateTime } from "./dateFormatting";
 import { NoteLinkPicker } from "./NoteLinkPicker";
 import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./noteEntities";
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, CircleCheck, FilePlus, FileUp, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
 import type { CalendarOption, ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSearchScope, NoteSummary, ScheduleEvent } from "./domain";
@@ -13,6 +13,7 @@ import { isEditableTarget } from "./commands";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 import { useWorkspaceCommands } from "./workspaceCommands";
+import { PanelResizeHandle, useNoteListWidth } from "./PanelResizeHandle";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
 import { ContextRow, ContextSection, ContextSectionHeader } from "./ContextSections";
 import { NoteChecklistSection } from "./NoteChecklistSection";
@@ -145,6 +146,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const titleInput = useRef<HTMLInputElement>(null);
   const body = useRef<NoteEditorHandle>(null);
   const syntaxMode = useNoteSyntaxMode();
+  const listSize = useNoteListWidth();
   const today = todayTarget();
   const todayKey = noteTargetKey(today);
   const selectedKey = noteTargetKey(target);
@@ -451,8 +453,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
         <button type="button" className="btn" disabled={busy || editor.loading} title="Import a Markdown file" onClick={() => void importNote()}><FileUp size={ICON_SIZE.md} aria-hidden="true" />Import Note</button>
       </div>
     </header>
-    <div className="notes-workspace-body">
-      <div className="notes-list-pane">
+    <div className="notes-workspace-body" style={{ "--notes-list-width": `${listSize.width}px` } as CSSProperties}>
+      <PanelResizeHandle {...listSize} label="Resize note list" controlsId="notes-list-pane" title="Drag to resize the note list. Use arrow keys to adjust; double-click to reset." />
+      <div id="notes-list-pane" className="notes-list-pane">
         <div className="notes-search">
           <label className={`search-box${!searchFocused && !query.trim() ? " idle" : ""}`}>
             <Search size={ICON_SIZE.md} aria-hidden="true" />

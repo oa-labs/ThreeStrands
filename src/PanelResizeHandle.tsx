@@ -81,6 +81,19 @@ export function useContactListWidth() {
   return useResizableWidth(contactListWidthConfig);
 }
 
+// Icon rail, the note context rail, and room for the note itself.
+const noteListWidthConfig: ResizableWidthConfig = {
+  storageKey: "threestrands.noteListWidth",
+  minimumWidth: 200,
+  defaultWidth: 280,
+  maximumWidth: 480,
+  reservedWidth: 58 + 340 + 420,
+};
+
+export function useNoteListWidth() {
+  return useResizableWidth(noteListWidthConfig);
+}
+
 export function PanelResizeHandle({
   width,
   minWidth,
