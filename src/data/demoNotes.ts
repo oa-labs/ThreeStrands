@@ -290,13 +290,13 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
     async recordNoteVisit(id) {
       if (notes.has(id)) visits.set(id, now());
     },
-    async searchNotes(query, limit) {
+    async searchNotes(query, limit, scope = "active") {
       const words = collapseWhitespace(query.toLowerCase()).split(" ").filter(Boolean);
       if (!words.length) return [];
       return [...notes.values()]
-        .filter((note) => !note.trashed && words.every((word) => `${note.title} ${note.body}`.toLowerCase().includes(word)))
+        .filter((note) => (scope === "all" || note.trashed === (scope === "trash")) && words.every((word) => `${note.title} ${note.body}`.toLowerCase().includes(word)))
         .slice(0, limit)
-        .map((note): NoteSearchHit => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, matchSnippet: preview(note.body) }));
+        .map((note): NoteSearchHit => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, matchSnippet: preview(note.body), trashed: note.trashed }));
     },
   };
 }

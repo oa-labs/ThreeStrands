@@ -4,8 +4,8 @@ import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./not
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowLeft, CalendarDays, CircleCheck, FilePlus, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Trash2, UserRound } from "lucide-react";
-import type { ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSummary } from "./domain";
+import { ArrowLeft, CalendarDays, CircleCheck, FilePlus, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
+import type { ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSearchScope, NoteSummary } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { formatHistoryDate } from "./contactContext";
@@ -25,6 +25,7 @@ import { NewNoteDialog } from "./NewNoteDialog";
 import { NoteConflictBanner } from "./NoteConflictBanner";
 import { noteConflictsById } from "./noteConflicts";
 import { noteTargetKey, parseNoteTargetKey, readLastNoteTarget, todayTarget, writeLastNoteTarget, type NoteTarget } from "./noteDrafts";
+import { readNotesSearchState, writeNotesSearchState, type NotesListView } from "./noteSearchState";
 import { formatNoteDate } from "./noteDates";
 import { NoteMatchSnippet, noteLabel } from "./NoteMatchSnippet";
 import { useNoteSyntaxMode } from "./noteSyntaxMode";
@@ -53,7 +54,7 @@ const formatTime = (value: string) => formatDateTime(new Date(value));
 /** Each linked kind's glyph in the Links section. */
 const LINK_ICON = { conversation: <Mail size={ICON_SIZE.sm} />, task: <CircleCheck size={ICON_SIZE.sm} />, event: <CalendarDays size={ICON_SIZE.sm} /> } as const;
 
-type Row = { key: string; target: NoteTarget; title: string; detail: ReactNode; date?: string };
+type Row = { key: string; target: NoteTarget; title: string; detail: ReactNode; date?: string; trashed?: boolean };
 
 /** A `[[link]]` that names a day opens that day's note. */
 const linkedDay = (title: string) => {
@@ -74,7 +75,6 @@ export function relinkMessage({ updated, keptOldLink }: NoteRelink): string | nu
   }
   return parts.length ? parts.join(" ") : null;
 }
-type ListView = "notes" | "trash";
 
 /**
  * Notes: the note list on the left, the open note in the middle, and its
@@ -94,12 +94,20 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   onOpenContact?(id: string): void;
 }) {
   const [target, setTarget] = useState<NoteTarget>(() => readLastNoteTarget() ?? todayTarget());
-  const [listView, setListView] = useState<ListView>("notes");
+  const [initialSearch] = useState(readNotesSearchState);
+  const [listView, setListView] = useState<NotesListView>(initialSearch.listView);
+  const [includeTrash, setIncludeTrash] = useState(initialSearch.includeTrash);
+  const [searchFocused, setSearchFocused] = useState(false);
   const [recent, setRecent] = useState<NoteSummary[]>([]);
   const [trashed, setTrashed] = useState<NoteSummary[]>([]);
   const [listError, setListError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<NoteSearchHit[] | null>(null);
+  const [query, setQuery] = useState(initialSearch.query);
+  const scope: NoteSearchScope = listView === "trash" ? "trash" : includeTrash ? "all" : "active";
+  const [result, setResult] = useState<{ query: string; scope: NoteSearchScope; hits: NoteSearchHit[] } | null>(null);
+  const searchCurrent = result?.query === query && result.scope === scope;
+  const hits = query.trim() ? searchCurrent ? result.hits : [] : null;
+  const [searchRevision, setSearchRevision] = useState(0);
+  useEffect(() => { writeNotesSearchState({ query, listView, includeTrash }); }, [query, listView, includeTrash]);
   const [creating, setCreating] = useState(false);
   const [focusEditor, setFocusEditor] = useState(false);
   const [conflicts, setConflicts] = useState<Map<string, FrontierConflict[]>>(() => new Map());
@@ -166,6 +174,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const openNoteId = useRef<string | null>(null);
   const onSaved = useCallback((note: Note, relink?: NoteRelink) => {
     showSaved(note);
+    setSearchRevision((value) => value + 1);
     setLastSave({ noteId: note.id });
     loadLinks(openNoteId.current);
     if (!relink) return;
@@ -177,6 +186,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   useEffect(() => { openNoteId.current = editor.note?.id ?? null; });
   const { refresh } = editor;
   const reloadAll = useCallback(() => {
+    setSearchRevision((value) => value + 1);
     loadRecent();
     loadTrash();
     loadConflicts();
@@ -250,13 +260,13 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   }, [request, selectedKey, editor.loading, editor.note]);
 
   useEffect(() => {
-    if (!query.trim()) { setHits(null); return; }
+    if (!query.trim()) return;
     let active = true;
     const timer = window.setTimeout(() => {
-      void mailClient.searchNotes(query, SEARCH_LIMIT).then((found) => { if (active) setHits(found); }, (reason) => { if (active) setListError(errorMessage(reason)); });
+      void mailClient.searchNotes(query, SEARCH_LIMIT, scope).then((found) => { if (active) { setResult({ query, scope, hits: found }); setListError(null); } }, (reason) => { if (active) setListError(errorMessage(reason)); });
     }, SEARCH_DELAY_MS);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [query]);
+  }, [query, scope, searchRevision]);
 
   const editorReady = !editor.loading && !editor.missing && !editor.loadError;
   useEffect(() => {
@@ -269,7 +279,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const noteConflicts = editor.note ? conflicts.get(editor.note.id) ?? [] : [];
 
   const list: Row[] = hits
-    ? hits.map((hit) => ({ key: hit.id, target: summaryTarget(hit), title: noteLabel(hit), detail: <NoteMatchSnippet text={hit.matchSnippet} /> }))
+    ? hits.map((hit) => ({ key: hit.id, target: summaryTarget(hit), title: noteLabel(hit), detail: <NoteMatchSnippet text={hit.matchSnippet} />, trashed: hit.trashed }))
     : listView === "trash"
       ? trashed.map((note): Row => ({ key: note.id, target: summaryTarget(note), title: noteLabel(note), detail: note.preview || "No text", date: note.trashedAt ?? note.updatedAt }))
       : [
@@ -335,6 +345,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     await editor.flush();
     if (editor.unsaved()) throw new Error("This note has changes that weren't saved. Resolve them before moving it to Trash.");
     await mailClient.trashNote(note.id);
+    setSearchRevision((value) => value + 1);
     setRecent((current) => current.filter((item) => item.id !== note.id));
     loadTrash();
     // Today stays at the top of the list, so its note stays open, now in Trash.
@@ -345,6 +356,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     const note = editor.note;
     if (!note) return;
     const restored = await mailClient.restoreNote(note.id);
+    setSearchRevision((value) => value + 1);
     setTrashed((current) => current.filter((item) => item.id !== note.id));
     showSaved(restored);
     await refresh();
@@ -353,6 +365,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     const note = editor.note;
     if (!note) return;
     await mailClient.deleteNote(note.id);
+    setSearchRevision((value) => value + 1);
     setConfirmingDelete(false);
     setTrashed((current) => current.filter((item) => item.id !== note.id));
     // Today stays at the top of the list, so its day stays open, now without a note.
@@ -403,15 +416,28 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     <div className="notes-workspace-body">
       <div className="notes-list-pane">
         <div className="notes-search">
-          <label className="search-box"><span className="sr-only">Search Notes</span><input ref={search} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={query} placeholder="Search notes"
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
-              event.preventDefault(); event.stopPropagation();
-              if (query) setQuery(""); else rows.current.get(selectedKey)?.focus();
-            }} /></label>
-          <kbd aria-hidden="true">/</kbd>
+          <label className={`search-box${!searchFocused && !query.trim() ? " idle" : ""}`}>
+            <Search size={ICON_SIZE.md} aria-hidden="true" />
+            <input ref={search} type="search" {...SEARCH_INPUT_ATTRIBUTES} aria-label="Search Notes" value={query} placeholder={listView === "trash" ? "Search Trash" : "Search notes"}
+              data-shortcut-scope="search"
+              onFocus={() => setSearchFocused(true)} onBlur={() => setSearchFocused(false)}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") { event.preventDefault(); search.current?.blur(); focusSelectedRow(); return; }
+                if (event.key !== "Escape") return;
+                event.preventDefault(); event.stopPropagation();
+                if (query) setQuery("");
+                requestAnimationFrame(() => { focusSelectedRow(); search.current?.blur(); });
+              }} />
+            <span className="search-input-actions">
+              <button type="button" className="btn-icon btn-icon-sm search-close" aria-label="Close Search" title="Close Search (Esc)"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => { setQuery(""); requestAnimationFrame(focusSelectedRow); }}><X size={ICON_SIZE.sm} /></button>
+              {!searchFocused && !query.trim() ? <kbd>/</kbd> : null}
+            </span>
+          </label>
         </div>
+        {listView === "notes" ? <label className="notes-search-scope"><input type="checkbox" checked={includeTrash} onChange={(event) => setIncludeTrash(event.target.checked)} />Include Trash</label> : <p className="notes-search-scope">Searching Trash only</p>}
         {listError ? <p className="form-error" role="alert">{listError}</p> : null}
         {listView === "trash" && !hits ? <h2 className="eyebrow notes-list-heading">Trash</h2> : null}
         <div className="notes-list" role="list" aria-label={hits ? "Matching notes" : listView === "trash" ? "Trash" : "Notes"}>
@@ -428,6 +454,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
               }}>
               <span className="notes-list-title-line">
                 <strong className="notes-list-title">{row.title}</strong>
+                {row.trashed ? <span className="eyebrow">Trash</span> : null}
                 {conflicts.has(row.key) ? <span className="notes-list-conflict" title="Changed on two devices"><GitCompareArrows size={ICON_SIZE.sm} aria-hidden="true" /><span className="sr-only">Changed on two devices</span></span> : null}
                 {row.date ? <time className="notes-list-date" dateTime={row.date}>{formatHistoryDate(row.date)}</time> : null}
               </span>
@@ -435,14 +462,14 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             </button>
           </div>)}
         </div>
-        {hits && !hits.length ? <p className="context-status">No notes match “{query.trim()}”.</p> : null}
+        {hits && searchCurrent && !hits.length ? <p className="context-status">No notes match “{query.trim()}”.</p> : null}
         {!hits && listView === "trash" && !trashed.length ? <p className="context-status">Trash is empty.</p> : null}
         <div className="notes-list-footer">
           {listView === "notes"
-            ? <button type="button" className="btn btn-sm" onClick={() => { setQuery(""); setListView("trash"); loadTrash(); }}>
+            ? <button type="button" className="btn btn-sm" onClick={() => { setListView("trash"); loadTrash(); }}>
               <Trash2 size={ICON_SIZE.sm} aria-hidden="true" />Trash{trashed.length ? <span className="notes-trash-count">{trashed.length}</span> : null}
             </button>
-            : <button type="button" className="btn btn-sm" onClick={() => { setQuery(""); setListView("notes"); }}>
+            : <button type="button" className="btn btn-sm" onClick={() => { setListView("notes"); }}>
               <ArrowLeft size={ICON_SIZE.sm} aria-hidden="true" />Back to Notes
             </button>}
         </div>

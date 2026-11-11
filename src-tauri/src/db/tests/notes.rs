@@ -471,6 +471,38 @@ fn recent_notes_follow_visits_and_edits_and_search_skips_trash() {
     assert!(hit.match_snippet.contains("\u{1}words\u{2}"));
     db.trash_note(&first.id).unwrap();
     assert_eq!(db.search_notes("alpha", 10).unwrap().len(), 1);
+    use crate::models::NoteSearchScope;
+    let all = db
+        .search_notes_in_scope("alpha", 10, NoteSearchScope::All)
+        .unwrap();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all.iter().filter(|hit| hit.trashed).count(), 1);
+    let trash = db
+        .search_notes_in_scope("alpha", 10, NoteSearchScope::Trash)
+        .unwrap();
+    assert_eq!(trash.len(), 1);
+    assert_eq!(trash[0].id, first.id);
+    assert!(trash[0].trashed);
+    assert!(db
+        .search_notes_in_scope("edited", 10, NoteSearchScope::Trash)
+        .unwrap()
+        .is_empty());
+    assert!(db
+        .search_notes_in_scope(" ", 10, NoteSearchScope::All)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        db.search_notes_in_scope("alpha", 1, NoteSearchScope::All)
+            .unwrap()
+            .len(),
+        1
+    );
+    db.restore_note(&first.id).unwrap();
+    assert!(db
+        .search_notes_in_scope("alpha", 10, NoteSearchScope::Trash)
+        .unwrap()
+        .is_empty());
+    assert_eq!(db.search_notes("alpha", 10).unwrap().len(), 2);
     db.record_note_visit("missing").unwrap();
     assert_eq!(
         sql_count(

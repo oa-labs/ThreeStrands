@@ -61,6 +61,7 @@ import type {
   Note,
   NoteSave,
   NoteSearchHit,
+  NoteSearchScope,
   NoteLinks,
   NoteTitle,
   NoteAttachment,
@@ -435,7 +436,7 @@ export interface MailClient extends CorrespondenceClient {
   /** Saves only if the day is still as the edit found it: its note's `updatedAt`, or null for no note. */
   saveDailyNote(date: string, body: string, expectedUpdatedAt: string | null): Promise<NoteSave>;
   recordNoteVisit(id: string): Promise<void>;
-  searchNotes(query: string, limit: number): Promise<NoteSearchHit[]>;
+  searchNotes(query: string, limit: number, scope?: NoteSearchScope): Promise<NoteSearchHit[]>;
   /** Regular notes whose titles contain `query`, for the `[[` picker. */
   suggestNoteTitles(query: string, limit: number): Promise<NoteTitle[]>;
   /** The note a `[[link]]` to `title` opens, matched ignoring case and spacing. */
@@ -696,7 +697,7 @@ const tauriClient: MailClient = {
   updateNote: (id, title, body, expectedUpdatedAt) => complete("update_note", { request: { id, title, body, expectedUpdatedAt } }),
   saveDailyNote: (date, body, expectedUpdatedAt) => complete("save_daily_note", { date, body, expectedUpdatedAt }),
   recordNoteVisit: (id) => complete("record_note_visit", { id }),
-  searchNotes: (query, limit) => read("search_notes", { query, limit }),
+  searchNotes: (query, limit, scope = "active") => read("search_notes", { query, limit, scope }),
   suggestNoteTitles: (query, limit) => read("suggest_note_titles", { query, limit }),
   findNoteByTitle: (title) => read("find_note_by_title", { title }),
   noteLinks: (id) => read("note_links", { id }),

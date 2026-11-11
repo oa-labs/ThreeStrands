@@ -3747,7 +3747,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .notes-list-pane { min-width: 0; min-height: 0; overflow: auto; padding: var(--space-3) var(--list-gutter) var(--pane-end-padding); border-right: 1px solid var(--border); }
 .notes-search { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
 .notes-search label { flex: 1; min-width: 0; }
-.notes-search input { box-sizing: border-box; width: 100%; height: auto; font-size: var(--text-body); }
+.notes-search-scope { display: flex; align-items: center; gap: var(--space-1); margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--text-secondary); }
 .notes-list { display: grid; gap: var(--space-0-5); }
 .notes-list-select { box-sizing: border-box; display: grid; gap: var(--space-0-5); width: 100%; padding: var(--space-2) var(--list-row-inset); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: left; font: inherit; font-size: var(--text-body); line-height: var(--leading-normal); cursor: pointer; }
 .notes-list-select:hover { background: var(--hover); }

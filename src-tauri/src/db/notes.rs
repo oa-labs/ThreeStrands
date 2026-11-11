@@ -20,8 +20,8 @@ use super::sync_state::{
 };
 use super::{serialization_error, Database, DatabaseError, DbResult};
 use crate::models::{
-    Note, NoteBacklink, NoteLinks, NoteRelink, NoteSave, NoteSearchHit, NoteSummary, NoteTitle,
-    NotesStorage,
+    Note, NoteBacklink, NoteLinks, NoteRelink, NoteSave, NoteSearchHit, NoteSearchScope,
+    NoteSummary, NoteTitle, NotesStorage,
 };
 use crate::notes::{
     clean_note_title, daily_note_id, extract_links, is_daily_date, plain_text, rewrite_links,
@@ -885,6 +885,15 @@ impl Database {
     }
 
     pub fn search_notes(&self, query: &str, limit: usize) -> DbResult<Vec<NoteSearchHit>> {
+        self.search_notes_in_scope(query, limit, NoteSearchScope::Active)
+    }
+
+    pub fn search_notes_in_scope(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: NoteSearchScope,
+    ) -> DbResult<Vec<NoteSearchHit>> {
         let query = fts_query(query);
         if query.trim().is_empty() {
             return Ok(Vec::new());
@@ -892,21 +901,32 @@ impl Database {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT n.id, n.title, n.daily_date,
-                        snippet(note_search, -1, '\u{1}', '\u{2}', '…', 12)
+                        snippet(note_search, -1, '\u{1}', '\u{2}', '…', 12), n.trashed
                  FROM note_search s JOIN notes n ON n.id=s.note_id
-                 WHERE note_search MATCH ?1 AND n.trashed=0
+                 WHERE note_search MATCH ?1 AND (?3 IS NULL OR n.trashed=?3)
                  ORDER BY rank
                  LIMIT ?2",
             )?;
-            let rows =
-                statement.query_map(params![query, limit.min(MAX_LIST_ROWS) as i64], |row| {
+            let rows = statement.query_map(
+                params![
+                    query,
+                    limit.min(MAX_LIST_ROWS) as i64,
+                    match scope {
+                        NoteSearchScope::Active => Some(false),
+                        NoteSearchScope::Trash => Some(true),
+                        NoteSearchScope::All => None,
+                    }
+                ],
+                |row| {
                     Ok(NoteSearchHit {
                         id: row.get(0)?,
                         title: row.get(1)?,
                         daily_date: row.get(2)?,
                         match_snippet: row.get(3)?,
+                        trashed: row.get(4)?,
                     })
-                })?;
+                },
+            )?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
     }

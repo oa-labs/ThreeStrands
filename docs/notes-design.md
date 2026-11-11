@@ -311,7 +311,17 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
   natively, `notePlainText` in the page, kept to the same cases).
 - A search box above the list searches titles and note text as the user
   types, through the local search index, and lists the matches in place of
-  the list. Escape clears it, then returns to the list.
+  the list. The field uses the shared search styling and magnifying glass.
+  `/` focuses it without taking focus when Notes opens or returns. Enter
+  returns focus to the results while retaining the query; Escape clears the
+  query and returns focus to the list. Query, Notes/Trash view, and Include
+  Trash are kept for the window session across workspace switches, alongside
+  the existing last-selected-note restoration. Explicit Open Note/Today
+  requests still clear search and return to Notes to reveal their target.
+- Search excludes Trash by default. **Include Trash** adds clearly marked,
+  read-only trashed results. Within **Trash**, search matches only trashed
+  notes. Moving between Notes and Trash retains the query and the Include
+  Trash preference.
 - `j`/`k` and Up/Down move through the list, as in Mail. Space and
   Shift+Space page through the open note, as they page a message. Enter
   starts writing in the open note from anywhere in Notes outside a text

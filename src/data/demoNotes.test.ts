@@ -55,6 +55,12 @@ describe("demo notes", () => {
     expect((await notes.listRecentNotes(10)).map((note) => note.title)).toEqual(["First", "Second"]);
     expect((await notes.searchNotes("beta", 10)).map((hit) => hit.title)).toEqual(["Second"]);
     expect(await notes.searchNotes("  ", 10)).toEqual([]);
+    await notes.trashNote(first.id);
+    expect((await notes.searchNotes("alpha", 10)).map((hit) => hit.title)).toEqual(["Second"]);
+    expect(await notes.searchNotes("alpha", 10, "trash")).toEqual([expect.objectContaining({ id: first.id, trashed: true })]);
+    expect(await notes.searchNotes("alpha", 10, "all")).toHaveLength(2);
+    expect(await notes.searchNotes("alpha", 1, "all")).toHaveLength(1);
+    expect(await notes.searchNotes("  ", 10, "trash")).toEqual([]);
   });
   it("moves notes through Trash by the native rules", async () => {
     const notes = createDemoNotes();

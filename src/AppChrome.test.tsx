@@ -85,8 +85,8 @@ describe("App chrome", () => {
     vi.useFakeTimers();
     try {
       const searchNotes = vi.fn(async (_query: string, limit: number) => [
-        { id: "n1", title: "Budget review", dailyDate: null, matchSnippet: "the \u0001budget\u0002 for Q3" },
-        { id: "daily:2026-11-09", title: "2026-11-09", dailyDate: "2026-11-09", matchSnippet: "\u0001budget\u0002 call" },
+        { trashed: false, id: "n1", title: "Budget review", dailyDate: null, matchSnippet: "the \u0001budget\u0002 for Q3" },
+        { trashed: false, id: "daily:2026-11-09", title: "2026-11-09", dailyDate: "2026-11-09", matchSnippet: "\u0001budget\u0002 call" },
       ].slice(0, limit));
       const onOpenNote = vi.fn();
       const onClose = vi.fn();

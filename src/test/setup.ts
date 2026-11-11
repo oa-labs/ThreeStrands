@@ -17,6 +17,7 @@ afterEach(() => {
   cleanup();
   // Found times are kept between cards; each test finds its own.
   clearAvailabilityCache();
+  sessionStorage.removeItem("threestrands.notes.search");
   localStorage.removeItem("threestrands.workspace.last");
   localStorage.removeItem("threestrands.workspace.sideColumn");
   localStorage.removeItem("threestrands.readingPositions");

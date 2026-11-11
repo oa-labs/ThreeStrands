@@ -4,8 +4,8 @@
 use tauri::State;
 
 use crate::models::{
-    CreateNoteRequest, Note, NoteAttachment, NoteLinks, NoteSave, NoteSearchHit, NoteSummary,
-    NoteTitle, NotesStorage, UpdateNoteRequest,
+    CreateNoteRequest, Note, NoteAttachment, NoteLinks, NoteSave, NoteSearchHit, NoteSearchScope,
+    NoteSummary, NoteTitle, NotesStorage, UpdateNoteRequest,
 };
 use crate::{
     attachment_security, file_preview, image_format, kick_replicated_sync, notes_export,
@@ -118,10 +118,15 @@ pub(crate) async fn record_note_visit(id: String, state: State<'_, AppState>) ->
 pub(crate) async fn search_notes(
     query: String,
     limit: usize,
+    scope: Option<NoteSearchScope>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<NoteSearchHit>> {
     let database = state.database.clone();
-    run_database_task(move || database.search_notes(&query, limit)).await
+    run_database_task(move || match scope.unwrap_or_default() {
+        NoteSearchScope::Active => database.search_notes(&query, limit),
+        scope => database.search_notes_in_scope(&query, limit, scope),
+    })
+    .await
 }
 
 #[tauri::command]

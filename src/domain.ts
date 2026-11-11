@@ -1083,8 +1083,10 @@ export type NotesImportOutcome = { notes: number; files: number; problems: Notes
 /** What an export wrote. Files this device hasn't downloaded yet are left out. */
 export type NotesExportOutcome = { path: string; notes: number; attachments: number; missingAttachments: number };
 
+/** The lifecycle states included in a note search; omitted scopes mean active notes. */
+export type NoteSearchScope = "active" | "all" | "trash";
 /** A note matching a search; U+0001 and U+0002 mark the matching text. */
-export type NoteSearchHit = { id: string; title: string; dailyDate: string | null; matchSnippet: string };
+export type NoteSearchHit = { id: string; title: string; dailyDate: string | null; matchSnippet: string; trashed: boolean };
 
 export type SyncStatus = {
   state: "idle" | "syncing" | "offline" | "error";

@@ -1384,11 +1384,22 @@ pub struct NoteSummary {
     pub trashed_at: Option<String>,
 }
 
+/// Which note lifecycle states a search includes. Omitted scopes keep active-only search.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NoteSearchScope {
+    #[default]
+    Active,
+    All,
+    Trash,
+}
+
 /// A note matching a search, with the matching text marked by U+0001 and
 /// U+0002 as in mail search.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteSearchHit {
+    pub trashed: bool,
     pub id: String,
     pub title: String,
     pub daily_date: Option<String>,
