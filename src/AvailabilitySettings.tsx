@@ -6,6 +6,7 @@ import { InlineConfirm } from "./InlineConfirm";
 import {
   DEFAULT_AVAILABILITY_PROFILES,
   DRIVE_TIME_BUFFER_OPTIONS,
+  DEFAULT_MEETING_DURATION_OPTIONS,
   MAX_AVAILABILITY_PROFILE_NAME_CHARS,
   MAX_AVAILABILITY_PROFILES,
   MAX_WORKING_WINDOWS_PER_DAY,
@@ -384,7 +385,7 @@ export function AvailabilitySettings({
         })}
       </div>
       <h3>Meeting Defaults</h3>
-      <label className="settings-field settings-field-inline settings-field-fixed"><span>Default Duration</span><select value={editing.defaultDurationMinutes} onChange={(event) => updateHours({ defaultDurationMinutes: Number(event.target.value) })}>{[15, 30, 45, 60, 90, 120].map((value) => <option key={value} value={value}>{value} Minutes</option>)}</select></label>
+      <label className="settings-field settings-field-inline settings-field-fixed"><span>Default Duration</span><select value={editing.defaultDurationMinutes} onChange={(event) => updateHours({ defaultDurationMinutes: Number(event.target.value) })}>{DEFAULT_MEETING_DURATION_OPTIONS.map((value) => <option key={value} value={value}>{value} Minutes</option>)}</select></label>
       <label className="settings-field settings-field-inline settings-field-fixed"><span>Slot Increment</span><select value={preferences.slotIncrementMinutes} aria-describedby={sharedHint} onChange={(event) => onChange({ ...preferences, slotIncrementMinutes: Number(event.target.value) })}>{[5, 10, 15, 30, 60].map((value) => <option key={value} value={value}>{value} Minutes</option>)}</select></label>
       <h3>Drive Time</h3>
       <label className="settings-field settings-field-inline settings-field-fixed">

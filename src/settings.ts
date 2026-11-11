@@ -135,6 +135,7 @@ export type AvailabilityPreferencesSetting = {
 export const MAX_WORKING_WINDOWS_PER_DAY = 4;
 /** Matches MAX_DRIVE_TIME_BUFFER_MINUTES in the native availability policy. */
 export const MAX_DRIVE_TIME_BUFFER_MINUTES = 120;
+export const DEFAULT_MEETING_DURATION_OPTIONS = [15, 30, 45, 60, 75, 90, 120];
 export const DRIVE_TIME_BUFFER_OPTIONS = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120];
 /** Matches `MAX_WORKING_WINDOWS` in src-tauri/src/availability.rs. */
 export const MAX_WORKING_WINDOWS = 7 * MAX_WORKING_WINDOWS_PER_DAY;
@@ -156,7 +157,7 @@ function validAvailabilityPreferences(value: unknown): value is AvailabilityPref
   const candidate = value as Record<string, unknown>;
   if (typeof candidate.timeZone !== "string" || candidate.timeZone.length === 0 || candidate.timeZone.length > 100) return false;
   if (!Array.isArray(candidate.workingWindows) || candidate.workingWindows.length > MAX_WORKING_WINDOWS) return false;
-  if (!Number.isInteger(candidate.defaultDurationMinutes) || ![15, 30, 45, 60, 90, 120].includes(candidate.defaultDurationMinutes as number)) return false;
+  if (!Number.isInteger(candidate.defaultDurationMinutes) || !DEFAULT_MEETING_DURATION_OPTIONS.includes(candidate.defaultDurationMinutes as number)) return false;
   if (!Number.isInteger(candidate.slotIncrementMinutes) || ![5, 10, 15, 30, 60].includes(candidate.slotIncrementMinutes as number)) return false;
   if (!Number.isInteger(candidate.driveTimeBufferMinutes) || (candidate.driveTimeBufferMinutes as number) < 0 || (candidate.driveTimeBufferMinutes as number) > MAX_DRIVE_TIME_BUFFER_MINUTES) return false;
   return candidate.workingWindows.every((window) => {

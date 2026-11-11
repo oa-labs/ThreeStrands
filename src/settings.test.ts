@@ -48,7 +48,7 @@ describe("availability preferences", () => {
 
   it("defaults to weekday working hours and persists valid changes", () => {
     expect(readAvailabilityPreferences().workingWindows).toHaveLength(5);
-    const next = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/New_York", defaultDurationMinutes: 45 };
+    const next = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/New_York", defaultDurationMinutes: 75 };
     saveAvailabilityPreferences(next);
     expect(readAvailabilityPreferences()).toEqual(next);
   });
@@ -123,6 +123,13 @@ describe("availability profiles", () => {
     expect(readAvailabilityProfiles().defaultProfile.name).toBe("Default");
     expect(readAvailabilityPreferencesFor("home@example.com")).toEqual(work);
     expect(localStorage.getItem("threestrands.settings.availabilityProfiles")).toBeNull();
+  });
+
+  it("persists a 75-minute default duration for an additional profile", () => {
+    const profiles = { ...withChurch, otherProfiles: [{ ...church, defaultDurationMinutes: 75 }] };
+    expect(saveAvailabilityProfiles(profiles)).toEqual(profiles);
+    expect(readAvailabilityProfiles()).toEqual(profiles);
+    expect(readAvailabilityPreferencesFor("home@example.com").defaultDurationMinutes).toBe(75);
   });
 
   it("gives an account its profile's hours with the shared timezone and slot increment", () => {

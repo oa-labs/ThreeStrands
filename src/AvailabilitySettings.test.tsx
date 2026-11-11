@@ -73,6 +73,15 @@ function renderWithProfiles(initialProfiles: AvailabilityProfiles = withChurch, 
 }
 
 describe("AvailabilitySettings working hours", () => {
+  it("selects a 75-minute default duration", () => {
+    const latest = renderSettings();
+    const duration = screen.getByRole("combobox", { name: "Default Duration" });
+    expect(within(duration).getByRole("option", { name: "75 Minutes" })).toHaveValue("75");
+    fireEvent.change(duration, { target: { value: "75" } });
+    expect(latest.current.defaultDurationMinutes).toBe(75);
+    expect(duration).toHaveValue("75");
+  });
+
   it("sets and disables the drive time buffer at the bottom of the panel", () => {
     const latest = renderSettings();
     const buffer = screen.getByRole("combobox", { name: "Drive Time Buffer" });
@@ -160,8 +169,8 @@ describe("AvailabilitySettings profiles", () => {
     expect(within(screen.getByRole("group", { name: "Profiles" })).getByRole("button", { name: "New Profile" })).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.change(screen.getByLabelText("Monday End"), { target: { value: "12:00" } });
-    fireEvent.change(screen.getByRole("combobox", { name: "Default Duration" }), { target: { value: "60" } });
-    expect(latest.profiles.otherProfiles[0]).toMatchObject({ workingWindows: [window(1, "09:00", "12:00")], defaultDurationMinutes: 60 });
+    fireEvent.change(screen.getByRole("combobox", { name: "Default Duration" }), { target: { value: "75" } });
+    expect(latest.profiles.otherProfiles[0]).toMatchObject({ workingWindows: [window(1, "09:00", "12:00")], defaultDurationMinutes: 75 });
     expect(latest.preferences).toEqual(basePreferences);
   });
 
