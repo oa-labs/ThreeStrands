@@ -37,6 +37,6 @@ Accounts imported or learned through encrypted sync do not transfer credentials.
 
 ## Remove an Account {#remove-an-account}
 
-Review unsent mail in **Outbox** and unsynced work before removing an account. Local removal disconnects this installation; it does not delete the mailbox at your provider. **Remove on all devices** also removes it from your other synced devices and cancels waiting sends there. Those cancelled sends are marked failed rather than sending unexpectedly if the account returns.
+Send or copy anything you still need from **Drafts** and **Outbox** before removing an account. Removing it deletes the account's mail, drafts, and waiting sends from this computer; it does not delete the mailbox at your provider. With [Replicated Sync](sync.html), **Disconnect this device** keeps your drafts and Outbox here for when you set the account up again, and **Remove on all devices** deletes the account, its drafts, and its waiting sends on every synced computer. To remove all ThreeStrands data from a computer, see [Remove Everything From This Computer](privacy.html#remove-everything).
 
 Removal is not a substitute for deleting mail at the provider or erasing exported files. For problems receiving mail, [start with Diagnostics](troubleshooting.html#mail-stopped-arriving) instead of removing the account first.
