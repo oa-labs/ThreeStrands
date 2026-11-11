@@ -15,6 +15,8 @@ Click **New Contact** to add someone. A profile can hold several email addresses
 
 The conversation side panel's recent emails and shared files follow the message you are reading or the recipients you are writing to.
 
+A contact's details list, under **Notes**, the notes that mention them, such as a [meeting line](notes.html#meeting-notes) or an `@` link. Choose one to open it in **Notes**.
+
 ## Mac Contacts {#mac-contacts}
 
 On macOS, open **Contacts → Manage Contacts… → Mac Contacts…**, choose **Allow Mac Contacts…**, grant access, then choose which address books to use. None are selected automatically. Sources may include iCloud, Google, and other accounts already configured in Apple Contacts; ThreeStrands does not ask for additional Google authorization.

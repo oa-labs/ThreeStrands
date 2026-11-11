@@ -50,9 +50,9 @@ In **Settings → Mail Accounts**, each account has:
 ## Settings Worth a Look {#settings-worth-a-look}
 
 - **Appearance** — theme, accent color, and font size. **Email Zoom** enlarges email text, images, and spacing together, and **Email Text Colors** lightens or darkens hard-to-read sender text just enough to read, or replaces it with your theme's colors. Press <kbd>⌘/Ctrl + d</kbd> to switch between light and dark mode from anywhere. Appearance settings stay on each computer.
-- **Availability** — your timezone, working-hour blocks with gaps for breaks, and **Drive Time Buffer** around events with a location. Add profiles to keep different hours for each mail account.
+- **Availability** — under **Profiles**, your available hours with gaps for breaks, default meeting length, and **Drive Time Buffer** around events with a location, plus your timezone under **Shared Settings**. Add profiles to keep different hours for each part of your life, then choose one for each mail account in **Account Defaults** and for lunch, breakfast, dinner, or coffee invitations in **Meeting Types**. See [Use Different Hours for Each Account](calendar.html#availability-profiles).
 - **Signatures** — formatted sign-offs with logos, Gmail import, and separate defaults for new messages and replies.
-- **Reading & Triage** — choose the mark-read delay and whether archiving also marks conversations read.
+- **Reading & Triage** — choose whether opening a conversation marks it read **Immediately**, **After a Delay**, or **Never**, whether archiving, moving to Trash, or snoozing also marks it read, and what opens after you archive. See [Mark as Read](triage.html#mark-as-read).
 - **Muted Senders** — review senders whose new mail is marked read and archived automatically.
 - **Privacy** — remote images are blocked by default; turn on **Load Remote Images Automatically** here, or click **Load images** on a single message. You can also choose how long to keep mail on this device.
 - **Default Apps** — open email links and `.ics` invitations in ThreeStrands.

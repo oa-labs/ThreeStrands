@@ -27,7 +27,7 @@ Mail and calendar connections contact their providers. Optional [AI](ai.html#wha
 
 Uninstalling ThreeStrands removes the app, but not your mail, settings, or saved sign-ins. To remove all of it:
 
-1. **Remove your accounts.** In **Settings → Mail Accounts** and **Settings → Calendar Accounts**, remove each account. This deletes the account's mail, drafts, and Outbox from this computer and ends ThreeStrands' access to your Google account. With [Replicated Sync](sync.html), **Disconnect this device** leaves your other computers connected, and Google access stays on for them. **Remove on all devices** removes the account everywhere.
+1. **Remove your accounts.** In **Settings → Mail Accounts** and **Settings → Calendar Accounts**, remove each account. Removing a mail account deletes everything ThreeStrands kept for it on this computer, including its mail, drafts, Outbox, attachments you opened, and older backup copies of your mail. Removing a Gmail or Google Calendar account also ends ThreeStrands' access to it. With [Replicated Sync](sync.html), **Disconnect this device** leaves your other computers connected, and Google access stays on for them. **Remove on all devices** removes the account everywhere.
 2. **Quit ThreeStrands and uninstall it.**
 3. **Delete its folders** and **its saved sign-ins**, listed below for your system.
 4. **Check Google access.** If you no longer use ThreeStrands on any computer, open your [Google Account permissions](https://myaccount.google.com/permissions) and remove ThreeStrands if it is still listed.
