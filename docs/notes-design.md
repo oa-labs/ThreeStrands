@@ -304,6 +304,10 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 
 ### Note list (left)
 
+- The list's right edge drags to resize it, as Mail's and Contacts' lists
+  do (200 to 480px, with arrow keys on the focused divider and double-click
+  to reset). The width is kept on this device. Narrow windows keep the list
+  at its fixed narrow width.
 - **Today** is pinned at the top. Selecting it creates the daily note only
   once the user types, so browsing never writes an empty note.
 - **Recent** comes next: notes opened on this device, newest first. Each

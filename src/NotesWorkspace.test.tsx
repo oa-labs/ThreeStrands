@@ -64,6 +64,43 @@ describe("Notes workspace", () => {
     await waitFor(async () => expect((await mailClient.listNoteTasks()).find((task) => task.noteId === note.id && task.title === "Local only")?.markerId).toBe(promoted.markerId));
   });
 
+  it("resizes the note list from its divider, keeps the width, and leaves the list's arrows alone", async () => {
+    const innerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    Object.defineProperty(window, "innerWidth", { value: 1600, configurable: true });
+    try {
+      shortcuts();
+      const { container } = render(<NotesWorkspace />);
+      const today = await screen.findByRole("button", { name: /^Today/ });
+      const handle = screen.getByRole("separator", { name: "Resize note list" });
+      expect(handle).toHaveAttribute("aria-controls", "notes-list-pane");
+      expect(handle).toHaveAttribute("aria-valuemin", "200");
+      expect(handle).toHaveAttribute("aria-valuemax", "480");
+      const body = container.querySelector<HTMLElement>(".notes-workspace-body")!;
+      const width = () => body.style.getPropertyValue("--notes-list-width");
+      expect(width()).toBe("280px");
+      fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+      expect(width()).toBe("320px");
+      expect(today).toHaveAttribute("aria-current", "true");
+      fireEvent.keyDown(handle, { key: "End" });
+      expect(width()).toBe("480px");
+      handle.setPointerCapture = vi.fn();
+      handle.releasePointerCapture = vi.fn();
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 480 });
+      fireEvent.pointerMove(handle, { pointerId: 1, clientX: 380 });
+      fireEvent.pointerUp(handle, { pointerId: 1, clientX: 380 });
+      expect(width()).toBe("380px");
+      await waitFor(() => expect(localStorage.getItem("threestrands.noteListWidth")).toBe("380"));
+      cleanup();
+      const again = render(<NotesWorkspace />);
+      await screen.findByRole("button", { name: /^Today/ });
+      expect(again.container.querySelector<HTMLElement>(".notes-workspace-body")!.style.getPropertyValue("--notes-list-width")).toBe("380px");
+      fireEvent.dblClick(screen.getByRole("separator", { name: "Resize note list" }));
+      expect(again.container.querySelector<HTMLElement>(".notes-workspace-body")!.style.getPropertyValue("--notes-list-width")).toBe("280px");
+    } finally {
+      if (innerWidth) Object.defineProperty(window, "innerWidth", innerWidth);
+    }
+  });
+
   it("opens on today's note without taking focus or writing anything", async () => {
     const update = vi.spyOn(mailClient, "updateNote");
     const daily = vi.spyOn(mailClient, "saveDailyNote");
