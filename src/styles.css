@@ -3025,7 +3025,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .settings-page-title { flex: 1; min-width: 0; }
 .settings-page-header h2 { margin: 0; color: var(--text); }
 .settings-page-header p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-secondary); line-height: var(--leading-normal); }
-.settings-save-note { display: inline-flex; flex-shrink: 0; align-items: center; gap: var(--space-1); padding-top: var(--space-1); color: var(--muted); font-size: var(--text-meta); white-space: nowrap; }
+.settings-page-actions { display: flex; flex-shrink: 0; align-items: center; gap: var(--space-5); padding-top: var(--space-1); }
+.settings-save-note { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); white-space: nowrap; }
 .settings-search-empty { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-8) 0; }
 .settings-search-empty p { margin: 0; color: var(--muted); font-size: var(--text-body); }
 .settings-section { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
@@ -3308,7 +3309,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   .settings-panel { padding-right: var(--side-pane-inset); padding-left: var(--side-pane-inset); }
   .settings-page-header { flex-direction: column; gap: var(--space-1); }
   .settings-page-icon { display: none; }
-  .settings-save-note { padding-top: 0; }
+  .settings-page-actions { padding-top: 0; }
   .settings-inline-confirm { align-items: flex-start; flex-direction: column; }
   .settings-inline-confirm-actions { flex-wrap: wrap; }
 }

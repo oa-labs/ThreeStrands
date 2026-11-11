@@ -244,10 +244,14 @@ export function Settings({
               <h2>{visibleSections.length === 0 ? "Search settings" : selectedSection.label}</h2>
               <p>{visibleSections.length === 0 ? "No matching controls or sections are currently visible." : selectedSection.description}</p>
             </div>
-            {visibleSections.length > 0 && selectedSection.autosaves ? (
-              <span className="settings-save-note"><Check size={ICON_SIZE.xs} aria-hidden="true" /> Changes save automatically</span>
+            {visibleSections.length > 0 ? (
+              <div className="settings-page-actions">
+                {selectedSection.autosaves ? (
+                  <span className="settings-save-note"><Check size={ICON_SIZE.xs} aria-hidden="true" /> Changes save automatically</span>
+                ) : null}
+                <button type="button" className="btn-link" onClick={() => { const help = SETTINGS_HELP[section]; void openDocs(help.slug, help.section); }} aria-label={`Help with ${selectedSection.label}`}>Help</button>
+              </div>
             ) : null}
-            {visibleSections.length > 0 ? <button type="button" className="btn-link" onClick={() => { const help = SETTINGS_HELP[section]; void openDocs(help.slug, help.section); }} aria-label={`Help with ${selectedSection.label}`}>Help</button> : null}
           </header>
           {visibleSections.length === 0 ? (
             <div className="settings-search-empty">
