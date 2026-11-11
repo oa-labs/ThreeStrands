@@ -3,6 +3,7 @@ import { vi } from "vitest";
 import type { Account } from "../domain";
 import { Settings } from "../SettingsPanel";
 import type { SettingsSection } from "../settingsPanelTypes";
+import { EMPTY_SIGNATURE_LIBRARY } from "../signatures";
 import { useAppPreferences } from "../useAppPreferences";
 
 export const settingsAccount: Account = {
@@ -46,6 +47,10 @@ export function SettingsHarness({ initialSection = "appearance" }: { initialSect
     mutedSenders={{ senderRules: [], unmute: vi.fn() }}
     labelsByAccount={{}}
     snippets={{ snippets: [], create: vi.fn(), update: vi.fn(), remove: vi.fn() }}
+    signatures={{
+      ...EMPTY_SIGNATURE_LIBRARY,
+      refresh: vi.fn(), save: vi.fn(), remove: vi.fn(), saveDefaults: vi.fn(), inheritDefaults: vi.fn(),
+    }}
     syncStatus={null}
     recoveryStatus={null}
     onAiConfigChange={vi.fn()}

@@ -115,8 +115,8 @@ export function SplitInboxesSettings({
     <section className="settings-section accounts-manager" aria-label="Split Inboxes">
       <div className="accounts-manager-header">
         <div>
-          <h3>Split Inboxes</h3>
-          <p>
+          <h3>Splits and Saved Searches</h3>
+          <p className="settings-hint">
             Routing splits move matching inbox mail out of Main. Saved searches show matching mail without routing it out of Main.
             Saved searches and their tab order stay on this computer.
           </p>

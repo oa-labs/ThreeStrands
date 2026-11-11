@@ -2839,7 +2839,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
    Doubled class outranks the later .settings-section gap and alignment. */
 .signatures-settings.settings-section { align-items: stretch; gap: var(--space-6); container-type: inline-size; }
 .signatures-settings-group { display: flex; flex-direction: column; gap: var(--space-2-5); min-width: 0; }
-.signatures-settings-group .accounts-manager-header p { margin: var(--space-1) 0 0; }
 /* One grid shared through subgrid, so the column headings line up with every row. */
 .signature-defaults { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) max-content; column-gap: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .signature-defaults-columns, .signature-defaults-list, .signature-default-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
@@ -2883,6 +2882,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .accounts-manager-header > div { min-width: 0; flex: 1 1 420px; }
 .accounts-manager-header > .btn { flex-shrink: 0; }
 .accounts-manager-header h3 { margin-top: 0; }
+.accounts-manager-header p { margin: var(--space-1) 0 0; }
+/* A page that opens with a header block starts as far below the page header as one that opens with a plain heading. */
+.settings-panel > .settings-section > .accounts-manager-header:first-child,
+.settings-panel > .signatures-settings > .signatures-settings-group:first-child { margin-top: var(--space-4); }
 .split-inbox-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-2-5); align-items: center; width: 100%; margin: var(--space-0-5) 0; }
 /* Name + account, then rule kind + value, then the submit on its own row: five
    controls in a two-column grid never leave a ragged last row. */

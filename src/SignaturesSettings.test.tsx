@@ -265,7 +265,7 @@ describe("signature settings", () => {
     const alias = { ...base, id: signatureDefaultsKey(account.email, "alias@example.com"), address: "alias@example.com", newSignatureId: short.id, replySignatureId: short.id };
     const personal = { email: "home@example.com" } as Account;
     const { container } = render(<SignaturesSettings library={library({ signatures: [signature, short], defaults: [base, alias] })} accounts={[account, personal]} />);
-    expect(Array.from(container.querySelectorAll("h3"), (h) => h.textContent)).toEqual(["Default Signatures", "Signatures"]);
+    expect(Array.from(container.querySelectorAll("h3"), (h) => h.textContent)).toEqual(["Default Signatures", "Saved Signatures"]);
     expect(container.querySelector(".signature-defaults-columns")).toHaveAttribute("aria-hidden", "true");
     const rows = Array.from(container.querySelectorAll(".signature-default-row")) as HTMLElement[];
     expect(rows.map((row) => row.querySelector(".signature-default-identity")!.textContent)).toEqual(["Workme@example.com", "alias@example.comOverrides Work", "home@example.com"]);

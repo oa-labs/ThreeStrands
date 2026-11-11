@@ -81,8 +81,8 @@ export function AccountsSettings({
     <section className="settings-section accounts-manager" aria-label="Mail Accounts">
       <div className="accounts-manager-header">
         <div>
-          <h3>Connected Mail Accounts</h3>
-          <p>
+          <h3>Connected Accounts</h3>
+          <p className="settings-hint">
             ThreeStrands keeps accounts separate and merges their inboxes by default.
             Use the sidebar or command palette to filter to one account.
           </p>

@@ -285,12 +285,12 @@ export function AvailabilityProfilesSettings({
   return (
     <section className="settings-section availability-settings" aria-label="Profiles">
       <div className="settings-section-heading-row">
-        <h3>Profiles</h3>
+        <h3>Your Profiles</h3>
         {onProfilesChange ? <span className="settings-section-heading-actions">
           <button className="btn btn-sm" type="button" disabled={!canAddProfile} onClick={addProfile}><Plus size={ICON_SIZE.sm} />Add Profile</button>
         </span> : null}
       </div>
-      <p className="settings-hint" id={profilesHintId}>Each profile sets when you’re willing to meet, with its own meeting length and drive time. Accounts and meeting types choose which profile they use. Every calendar used for availability still counts as busy, whichever profile is in use.</p>
+      <p className="settings-hint" id={profilesHintId}>Each profile has its own hours, meeting length, and drive time. Accounts and meeting types choose which profile they use. Every calendar used for availability still counts as busy, whichever profile is in use.</p>
       <div className="availability-profile-list" role="group" aria-label="Profiles" aria-describedby={profilesHintId}>
         {allProfiles.map((profile) => {
           const isDefault = profile.id === profiles.defaultProfile.id;

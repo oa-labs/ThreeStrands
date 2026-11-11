@@ -63,7 +63,7 @@ export function SignaturesSettings({ library, accounts }: { library: SignatureSt
       })}</ul></div> : <p className="settings-hint">Connect a mail account to choose default signatures.</p>}
     </div>
     <div className="signatures-settings-group">
-      <div className="accounts-manager-header"><div><h3>Signatures</h3></div><span className="accounts-list-actions"><button className="btn" type="button" disabled={!gmailAccounts.length} title={gmailAccounts.length ? undefined : "Connect a Gmail account on this device to import its signatures."} onClick={() => setGmailImport(true)}>Import from Gmail…</button><button className="btn btn-primary" type="button" onClick={() => setEditor("new")}>Add Signature</button></span></div>
+      <div className="accounts-manager-header"><div><h3>Saved Signatures</h3></div><span className="accounts-list-actions"><button className="btn" type="button" disabled={!gmailAccounts.length} title={gmailAccounts.length ? undefined : "Connect a Gmail account on this device to import its signatures."} onClick={() => setGmailImport(true)}>Import from Gmail…</button><button className="btn btn-primary" type="button" onClick={() => setEditor("new")}>Add Signature</button></span></div>
       {ordered.length ? <ul className="signature-cards">{ordered.map((signature) => {
         const usage = signatureUsage(signature.id, library.defaults, accounts);
         return <li className="signature-card" key={signature.id}>

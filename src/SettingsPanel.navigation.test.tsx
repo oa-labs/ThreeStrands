@@ -1,5 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsHarness } from "./test/settingsHarness";
 import { mailClient } from "./data/client";
@@ -40,6 +40,23 @@ describe("settings section navigation", () => {
       fireEvent.click(within(dialog).getByRole("button", { name: section }));
       fireEvent.click(within(dialog).getByRole("button", { name: `Help with ${section}` }));
       expect(openUrl).toHaveBeenLastCalledWith(`https://www.threestrands.app/docs/${slug.replace("#", ".html#")}${slug.includes("#") ? "" : ".html"}`);
+    }
+  });
+
+  it("opens every page with a section heading that does not repeat the page title", async () => {
+    const dialog = await openSettings();
+    const nav = within(dialog).getByRole("navigation");
+    const panel = dialog.querySelector(".settings-panel") as HTMLElement;
+    const sections = within(nav).getAllByRole("button").map((button) => button.textContent ?? "");
+    expect(sections.length).toBeGreaterThan(15);
+    for (const section of sections) {
+      fireEvent.click(within(nav).getByRole("button", { name: section }));
+      await waitFor(() => {
+        // The page header is the only page-level intro; content opens with a heading, never a paragraph.
+        const first = [...panel.querySelectorAll("h3, p")].find((element) => !element.closest(".settings-page-header"));
+        expect(first?.tagName, section).toBe("H3");
+        expect(first?.textContent, section).not.toBe(section);
+      });
     }
   });
 

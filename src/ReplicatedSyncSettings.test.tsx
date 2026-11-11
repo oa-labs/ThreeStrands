@@ -314,7 +314,7 @@ describe("replicated sync setup steps", () => {
     render(<ReplicatedSyncSettings />);
 
     expect(await screen.findByRole("checkbox", { name: "Enable replicated sync" })).not.toBeChecked();
-    expect(screen.getByRole("heading", { name: "Replicated Sync" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Replicated sync setup" })).not.toBeInTheDocument();
   });
 });

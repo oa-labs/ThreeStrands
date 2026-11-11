@@ -139,13 +139,12 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
 
   return (
     <section className="settings-section ai-settings" aria-label="AI provider">
+      <h3>Connection</h3>
       <p className="settings-hint">
         Off until you choose a provider. After that, ThreeStrands sends a conversation
         to your provider, with your own API key, only when you click a button marked
         with sparkles, unless you turn on automatic briefs.
       </p>
-
-      <h3>Connection</h3>
       <label className="settings-field settings-field-row">
         <span>Provider</span>
         <select

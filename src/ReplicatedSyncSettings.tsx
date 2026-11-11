@@ -247,6 +247,7 @@ export function ReplicatedSyncSettings({ onOpenNote }: { onOpenNote?(noteId: str
   if (available === null) {
     return (
       <section className="settings-section" aria-label="Replicated Sync">
+        <h3>Setup</h3>
         <p className="settings-hint">Loading replicated sync status…</p>
         {sectionStatus}
       </section>
@@ -256,7 +257,7 @@ export function ReplicatedSyncSettings({ onOpenNote }: { onOpenNote?(noteId: str
   if (!available) {
     return (
       <section className="settings-section" aria-label="Replicated Sync">
-        <h3>Replicated Sync</h3>
+        <h3>Setup</h3>
         <p className="settings-hint">
           An end-to-end encrypted alternative to Three Strands Account sync, with no Three
           Strands-operated server: it replicates directly through a shared folder, S3-compatible storage, or an IPFS
@@ -273,7 +274,7 @@ export function ReplicatedSyncSettings({ onOpenNote }: { onOpenNote?(noteId: str
 
   return (
     <section className="settings-section" aria-label="Replicated Sync">
-      <h3>Replicated Sync</h3>
+      <h3>Setup</h3>
       <Disclosure summary="How replicated sync works">
         <p className="settings-hint">
           Replicates tasks, snippets, signatures and their defaults, Split Inboxes, and account metadata as end-to-end encrypted files through

@@ -71,6 +71,7 @@ export function AvailabilityAccountDefaultsSettings({ profiles, onProfilesChange
 }) {
   return (
     <section className="settings-section availability-settings" aria-label="Account Defaults">
+      <h3>Profile by Account</h3>
       <p className="settings-hint">These hours apply unless a matching meeting type or your choice in the conversation takes precedence.</p>
       {accounts.length === 0 ? <p className="settings-hint">Connect a mail account to choose its profile.</p> : (
         <ChoiceList subject="Email account" choice="Usual profile">
@@ -96,6 +97,7 @@ export function MeetingTypeProfilesSettings({ profiles, onProfilesChange, onEdit
   const allProfiles = [profiles.defaultProfile, ...profiles.otherProfiles];
   return (
     <section className="settings-section availability-settings" aria-label="Meeting Types">
+      <h3>Profile by Meeting Type</h3>
       <p className="settings-hint">Find Availability uses the associated profile when it recognizes one of these meeting types. Other meetings use the account’s usual profile. Calendar conflicts and buffers still apply.</p>
       <ChoiceList subject="Meeting type" choice="Profile" hasActions={Boolean(onEditProfile)}>
         {MEETING_TYPES.map((type) => {

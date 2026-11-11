@@ -48,7 +48,8 @@ export function WritingProfileSettings({ accounts, draftReviewOn, onOpenAiSettin
   }, [profiles, selected]);
 
   if (!selected) return <section className="settings-section writing-profile-settings" aria-label="Writing Profile">
-    <p>Connect a mail account to write a profile for it.</p>
+    <h3>Draft Review</h3>
+    <p className="settings-hint">Connect a mail account to write a profile for it.</p>
   </section>;
 
   function edit(field: keyof WritingProfile, value: string) {
@@ -63,7 +64,8 @@ export function WritingProfileSettings({ accounts, draftReviewOn, onOpenAiSettin
   }
 
   return <section className="settings-section writing-profile-settings" aria-label="Writing Profile">
-    <p>
+    <h3>Draft Review</h3>
+    <p className="settings-hint">
       Draft Review sends this to your AI provider with every review of email you write from this account, along with
       any goal you add for that email. It treats what you write in About You as true and may suggest using it.
     </p>

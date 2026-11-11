@@ -57,6 +57,7 @@ export function WebResearchSettings({ onChange }: { onChange?(): void }) {
   if (!settings) {
     return (
       <section className="settings-section research-settings" aria-label="Web Research">
+        <h3>Status</h3>
         {error ? <p key="error" className="form-error" role="alert">{error}</p> : <p key="loading" role="status">Loading web research settings…</p>}
       </section>
     );
@@ -122,6 +123,7 @@ export function WebResearchSettings({ onChange }: { onChange?(): void }) {
 
   return (
     <section className="settings-section research-settings" aria-label="Web Research">
+      <h3>Status</h3>
       <p className="settings-hint">
         Delegated tasks in Agents can research the web with Claude Sonnet 4.6 and Exa search,
         using their own keys, separate from AI Provider. Jobs run only while this app is open and awake.

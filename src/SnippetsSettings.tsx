@@ -29,8 +29,8 @@ export function SnippetsSettings({
     <section className="settings-section accounts-manager" aria-label="Snippets">
       <div className="accounts-manager-header">
         <div>
-          <h3>Snippets</h3>
-          <p>
+          <h3>Saved Snippets</h3>
+          <p className="settings-hint">
             Canned text you can insert into a reply with <kbd>{formatShortcut("Mod+;")}</kbd>. Use{" "}
             <code>{"{first_name}"}</code> to insert the recipient's first name.
           </p>

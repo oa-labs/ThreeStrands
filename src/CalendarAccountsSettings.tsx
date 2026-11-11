@@ -48,7 +48,7 @@ export function CalendarAccountsSettings({
       <div className="accounts-manager-header">
         <div>
           <h3>Google Calendar</h3>
-          <p>
+          <p className="settings-hint">
             Calendar access is connected separately from mail and can create events.
             Each account gets its own Calendar consent and keychain credential.
           </p>

@@ -22,8 +22,8 @@ export function MutedSendersSettings({ rules, onUnmute }: {
     <section className="settings-section accounts-manager" aria-label="Muted Senders">
       <div className="accounts-manager-header">
         <div>
-          <h3>Muted Senders</h3>
-          <p>
+          <h3>Mute List</h3>
+          <p className="settings-hint">
             New mail from these senders is marked read and archived as it arrives, so it stays
             in All Mail and search but out of your Inbox.
           </p>
