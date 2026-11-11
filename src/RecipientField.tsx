@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Pin, PinOff, UserPlus, Users, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
@@ -92,6 +92,10 @@ export function RecipientField({ id, label, value, account, disabled, context, l
   const [activeIndex, setActiveIndex] = useState(-1);
   const [dragOver, setDragOver] = useState(false);
   const [groups, setGroups] = useState<ContactGroupRecipients[]>([]);
+  // Selected chips for cut/copy/delete; emails lowercased. Cleared when the
+  // draft text changes or the field's committed value is replaced from outside.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const selectionAnchor = useRef<string | null>(null);
   // What choosing a group just added, until the next edit.
   const [groupNote, setGroupNote] = useState<string | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -129,6 +133,8 @@ export function RecipientField({ id, label, value, account, disabled, context, l
     setChips(parsed.chips);
     setDraftText(parsed.draftText);
     setRejected(Boolean(parsed.draftText.trim()));
+    setSelected(new Set());
+    selectionAnchor.current = null;
   }, [value]);
 
   function emit(nextChips: Chip[], nextDraftText: string) {
@@ -139,8 +145,77 @@ export function RecipientField({ id, label, value, account, disabled, context, l
     onChange(serialized);
   }
 
+  function clearSelection() {
+    if (selected.size) setSelected(new Set());
+    selectionAnchor.current = null;
+  }
+
   function removeChip(target: Chip) {
-    emit(chips.filter((chip) => chip.email.toLowerCase() !== target.email.toLowerCase()), draftText);
+    const key = target.email.toLowerCase();
+    emit(chips.filter((chip) => chip.email.toLowerCase() !== key), draftText);
+    if (selected.has(key)) {
+      const next = new Set(selected);
+      next.delete(key);
+      setSelected(next);
+      if (selectionAnchor.current === key) selectionAnchor.current = null;
+    }
+  }
+
+  function removeSelectedChips() {
+    if (!selected.size) return;
+    emit(chips.filter((chip) => !selected.has(chip.email.toLowerCase())), draftText);
+    clearSelection();
+  }
+
+  function selectedChips(): Chip[] {
+    return chips.filter((chip) => selected.has(chip.email.toLowerCase()));
+  }
+
+  function clipboardTextForSelection(): string | null {
+    const targets = selectedChips();
+    if (!targets.length) return null;
+    return targets.map(formatChip).join(", ");
+  }
+
+  function selectChip(chip: Chip, mode: "replace" | "toggle" | "range") {
+    const key = chip.email.toLowerCase();
+    if (mode === "toggle") {
+      const next = new Set(selected);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      setSelected(next);
+      selectionAnchor.current = key;
+      return;
+    }
+    if (mode === "range" && selectionAnchor.current) {
+      const start = chips.findIndex((item) => item.email.toLowerCase() === selectionAnchor.current);
+      const end = chips.findIndex((item) => item.email.toLowerCase() === key);
+      if (start >= 0 && end >= 0) {
+        const [from, to] = start < end ? [start, end] : [end, start];
+        setSelected(new Set(chips.slice(from, to + 1).map((item) => item.email.toLowerCase())));
+        return;
+      }
+    }
+    setSelected(new Set([key]));
+    selectionAnchor.current = key;
+  }
+
+  function writeClipboard(event: ReactClipboardEvent, text: string) {
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", text);
+  }
+
+  function onChipClick(chip: Chip, event: ReactMouseEvent) {
+    if (disabled) return;
+    event.preventDefault();
+    const mode = event.shiftKey ? "range" : (event.metaKey || event.ctrlKey) ? "toggle" : "replace";
+    selectChip(chip, mode);
+    inputRef.current?.focus();
+  }
+
+  function inputHasTextSelection(): boolean {
+    const input = inputRef.current;
+    return Boolean(input && input.selectionStart !== input.selectionEnd);
   }
 
   // Only addresses become chips; anything else stays typed, with a hint.
@@ -300,14 +375,21 @@ export function RecipientField({ id, label, value, account, disabled, context, l
         <label htmlFor={inputId}>{label}</label>
       )}
       <div className="recipient-chip-row">
-        {chips.map((chip) => (
+        {chips.map((chip) => {
+          const key = chip.email.toLowerCase();
+          const isSelected = selected.has(key);
+          const invalid = invalidChips.includes(chip);
+          return (
           <span
             key={chip.email}
-            className={invalidChips.includes(chip) ? "recipient-chip invalid" : "recipient-chip"}
+            className={`recipient-chip${invalid ? " invalid" : ""}${isSelected ? " selected" : ""}`}
+            aria-selected={isSelected}
             draggable={!disabled}
+            onClick={(event) => onChipClick(chip, event)}
             onDragStart={(event) => {
               dragOrigin = { field: id, remove: () => removeChip(chip) };
               event.dataTransfer.setData("application/x-threestrands-recipient", JSON.stringify(chip));
+              event.dataTransfer.setData("text/plain", formatChip(chip));
               event.dataTransfer.effectAllowed = "move";
             }}
             onDragEnd={() => {
@@ -320,13 +402,17 @@ export function RecipientField({ id, label, value, account, disabled, context, l
                 type="button"
                 className="recipient-chip-remove"
                 aria-label={`Remove ${chip.displayName ?? chip.email}`}
-                onClick={() => removeChip(chip)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  removeChip(chip);
+                }}
               >
                 <X size={ICON_SIZE.xs} />
               </button>
             )}
           </span>
-        ))}
+          );
+        })}
         <input
           {...SEARCH_INPUT_ATTRIBUTES}
           id={inputId}
@@ -351,6 +437,7 @@ export function RecipientField({ id, label, value, account, disabled, context, l
           disabled={disabled}
           placeholder={id === "to" && chips.length === 0 ? "Name <email@example.com>" : undefined}
           onChange={(event) => {
+            clearSelection();
             emit(chips, event.target.value);
             setRejected(false);
             setDismissed(false);
@@ -366,12 +453,33 @@ export function RecipientField({ id, label, value, account, disabled, context, l
             setDismissed(true);
             commitDraftText();
           }}
+          onCopy={(event) => {
+            if (inputHasTextSelection()) return;
+            const text = clipboardTextForSelection();
+            if (!text) return;
+            writeClipboard(event, text);
+          }}
+          onCut={(event) => {
+            if (inputHasTextSelection()) return;
+            const text = clipboardTextForSelection();
+            if (!text) return;
+            writeClipboard(event, text);
+            removeSelectedChips();
+          }}
           onPaste={(event) => {
             const raw = event.clipboardData.getData("text");
             const pasted = normalizePastedEmailAddresses(raw);
-            if (pasted === raw && !/[,;\n]/.test(pasted)) return;
+            const combined = `${draftText}${pasted}`;
+            // Lists always go through the custom path. A lone complete address
+            // does too, so cutting one badge and pasting it into another field
+            // commits immediately instead of waiting for Enter or blur.
+            if (pasted === raw && !/[,;\n]/.test(pasted)) {
+              const token = combined.trim();
+              if (!token || !looksLikeCompleteAddress(parseAddress(token).email)) return;
+            }
             event.preventDefault();
-            const { addresses, rest } = splitTypedAddresses(`${draftText}${pasted}`);
+            clearSelection();
+            const { addresses, rest } = splitTypedAddresses(combined);
             emit(mergeTyped(chips, addresses), rest);
             setRejected(Boolean(rest));
           }}
@@ -381,14 +489,30 @@ export function RecipientField({ id, label, value, account, disabled, context, l
               commitDraftText();
               return;
             }
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a" && draftText === "" && chips.length > 0) {
+              event.preventDefault();
+              setSelected(new Set(chips.map((chip) => chip.email.toLowerCase())));
+              selectionAnchor.current = chips[0]?.email.toLowerCase() ?? null;
+              return;
+            }
             if (event.key === ",") {
               event.preventDefault();
               commitDraftText();
               return;
             }
+            if ((event.key === "Backspace" || event.key === "Delete") && selected.size > 0 && !inputHasTextSelection()) {
+              event.preventDefault();
+              removeSelectedChips();
+              return;
+            }
             if (event.key === "Backspace" && draftText === "" && chips.length > 0) {
               event.preventDefault();
               removeChip(chips[chips.length - 1]);
+              return;
+            }
+            if (event.key === "Escape" && selected.size > 0) {
+              event.preventDefault();
+              clearSelection();
               return;
             }
             if (!visible) {

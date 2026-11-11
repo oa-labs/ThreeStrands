@@ -2031,6 +2031,59 @@ describe("Composer recipient autocomplete", () => {
     }
   });
 
+  it("cuts selected recipient badges and pastes them into another field", () => {
+    render(<Composer draft={{ ...draft, to: "Ann <ann@example.com>, bob@example.com, keep@example.com", cc: "", bcc: "" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "To" }));
+    const to = screen.getByRole("textbox", { name: "To" });
+    const bcc = screen.getByRole("textbox", { name: "Bcc" });
+    fireEvent.click(screen.getByText("Ann").closest(".recipient-chip")!);
+    fireEvent.click(screen.getByText("bob@example.com").closest(".recipient-chip")!, { metaKey: true });
+    expect(screen.getByText("Ann").closest(".recipient-chip")).toHaveClass("selected");
+    expect(screen.getByText("bob@example.com").closest(".recipient-chip")).toHaveClass("selected");
+
+    const store = new Map<string, string>();
+    const clipboardData = {
+      setData: (type: string, value: string) => store.set(type, value),
+      // jsdom does not alias "text" to "text/plain" the way browsers do.
+      getData: (type: string) => store.get(type) ?? store.get(type === "text" ? "text/plain" : type) ?? "",
+    };
+    fireEvent.cut(to, { clipboardData });
+    expect(store.get("text/plain")).toBe("Ann <ann@example.com>, bob@example.com");
+    expect(screen.queryByRole("button", { name: "Remove Ann" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove bob@example.com" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove keep@example.com" })).toBeInTheDocument();
+
+    fireEvent.paste(bcc, { clipboardData });
+    expect(within(bcc.closest(".compose-field")!).getByRole("button", { name: "Remove Ann" })).toBeInTheDocument();
+    expect(within(bcc.closest(".compose-field")!).getByRole("button", { name: "Remove bob@example.com" })).toBeInTheDocument();
+  });
+
+  it("selects every badge with Mod+A, copies without removing, and pastes a single cut badge immediately", () => {
+    render(<Composer draft={{ ...draft, to: "a@example.com, b@example.com", cc: "", bcc: "" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "To" }));
+    const to = screen.getByRole("textbox", { name: "To" });
+    const bcc = screen.getByRole("textbox", { name: "Bcc" });
+    fireEvent.keyDown(to, { key: "a", metaKey: true });
+    expect(screen.getByText("a@example.com").closest(".recipient-chip")).toHaveClass("selected");
+    expect(screen.getByText("b@example.com").closest(".recipient-chip")).toHaveClass("selected");
+
+    const store = new Map<string, string>();
+    const clipboardData = {
+      setData: (type: string, value: string) => store.set(type, value),
+      getData: (type: string) => store.get(type) ?? store.get(type === "text" ? "text/plain" : type) ?? "",
+    };
+    fireEvent.copy(to, { clipboardData });
+    expect(store.get("text/plain")).toBe("a@example.com, b@example.com");
+    expect(screen.getByRole("button", { name: "Remove a@example.com" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("a@example.com").closest(".recipient-chip")!);
+    fireEvent.cut(to, { clipboardData });
+    expect(store.get("text/plain")).toBe("a@example.com");
+    fireEvent.paste(bcc, { clipboardData });
+    expect(within(bcc.closest(".compose-field")!).getByRole("button", { name: "Remove a@example.com" })).toBeInTheDocument();
+    expect(bcc).toHaveValue("");
+  });
+
   it("leaves a cancelled or same-field drag in place and deduplicates a destination address", () => {
     render(<Composer draft={{ ...draft, to: "Jane <jane@example.com>", cc: "JANE@example.com" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const source = screen.getByRole("textbox", { name: "To" }).closest(".compose-field") as HTMLElement;
