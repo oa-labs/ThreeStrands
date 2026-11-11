@@ -143,6 +143,75 @@ describe("Notes workspace", () => {
     await waitFor(() => expect(screen.getByText("Saved")).toHaveAttribute("role", "status"));
   });
 
+  it("navigates from outside the list, stops at its ends, and repeats held arrows", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Arrow navigation"), "body");
+    vi.spyOn(mailClient, "listRecentNotes").mockResolvedValue([{ ...note, preview: "body", visitedAt: null }]);
+    shortcuts();
+    render(<NotesWorkspace />);
+    const row = await noteList().findByRole("button", { name: new RegExp(note.title) });
+    const today = screen.getByRole("button", { name: /^Today/ });
+    expect(document.body).toHaveFocus();
+    fireEvent.keyDown(window, { key: "ArrowUp" });
+    expect(today).toHaveAttribute("aria-current", "true");
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(row).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue("body"));
+    fireEvent.keyDown(row, { key: "ArrowDown" });
+    expect(row).toHaveAttribute("aria-current", "true");
+    fireEvent.keyDown(window, { key: "ArrowUp", repeat: true });
+    expect(today).toHaveFocus();
+    fireEvent.keyDown(window, { key: "j" });
+    expect(row).toHaveFocus();
+    fireEvent.keyDown(window, { key: "k" });
+    expect(today).toHaveFocus();
+  });
+
+  it("leaves arrows to the note editor, title, search, and dialogs", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Keep editing"), "body");
+    shortcuts();
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    const row = await noteList().findByRole("button", { name: new RegExp(note.title) });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+    for (const control of [screen.getByRole("textbox", { name: "Note text" }), screen.getByRole("textbox", { name: "Title" }), screen.getByRole("searchbox", { name: "Search Notes" })]) {
+      control.focus();
+      for (const key of ["ArrowUp", "ArrowDown"]) {
+        expect(fireEvent.keyDown(control, { key })).toBe(true);
+        expect(row).toHaveAttribute("aria-current", "true");
+        expect(control).toHaveFocus();
+      }
+    }
+    fireEvent.click(screen.getByRole("button", { name: "New Note" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "ArrowUp" });
+    expect(row).toHaveAttribute("aria-current", "true");
+    fireEvent.keyDown(window, { key: "ArrowUp", ctrlKey: true });
+    expect(row).toHaveAttribute("aria-current", "true");
+  });
+
+  it.each(["search", "trash"])("navigates only the visible %s list from outside it", async (view) => {
+    const first = await mailClient.createNote(uniqueTitle("Visible first"), "first body");
+    const second = await mailClient.createNote(uniqueTitle("Visible second"), "second body");
+    const visible = [first, second].map((note) => ({ ...note, preview: note.body, visitedAt: null, matchSnippet: note.body }));
+    if (view === "search") vi.spyOn(mailClient, "searchNotes").mockResolvedValue(visible);
+    else vi.spyOn(mailClient, "listTrashedNotes").mockResolvedValue(visible);
+    shortcuts();
+    render(<NotesWorkspace />);
+    await screen.findByRole("button", { name: /^Today/ });
+    if (view === "search") fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "Visible" } });
+    else fireEvent.click(screen.getByRole("button", { name: /^Trash/ }));
+    const list = within(await screen.findByRole("list", { name: view === "search" ? "Matching notes" : "Trash" }));
+    const firstRow = await list.findByRole("button", { name: new RegExp(first.title) });
+    const secondRow = list.getByRole("button", { name: new RegExp(second.title) });
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(firstRow).toHaveFocus();
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(secondRow).toHaveFocus();
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(secondRow).toHaveAttribute("aria-current", "true");
+    fireEvent.keyDown(window, { key: "ArrowUp" });
+    expect(firstRow).toHaveFocus();
+  });
+
   it("says Saved after a save, then clears it", async () => {
     const note = await mailClient.createNote(uniqueTitle("Quiet"), "");
     render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);

@@ -238,10 +238,10 @@ describe("command registry", () => {
       }
     }
     expect(Object.fromEntries([...owners].filter(([, ids]) => ids.length > 1))).toEqual({
-      j: ["thread.next", "tasks.next"],
-      arrowdown: ["thread.next", "tasks.next"],
-      k: ["thread.previous", "tasks.previous"],
-      arrowup: ["thread.previous", "tasks.previous"],
+      j: ["notes.next", "thread.next", "tasks.next"],
+      arrowdown: ["notes.next", "thread.next", "tasks.next"],
+      k: ["notes.previous", "thread.previous", "tasks.previous"],
+      arrowup: ["notes.previous", "thread.previous", "tasks.previous"],
       e: ["tasks.completeSelected", "thread.archive"],
       "shift+e": ["tasks.reopenSelected", "thread.unarchive"],
       o: ["files.open", "tasks.openSelected", "thread.toggleOlderMessages"],
@@ -384,7 +384,7 @@ describe("command registry", () => {
     expect(today.enabled({ ...context, composerActive: true })).toBe(false);
   });
 
-  it.each([["notes.new", ["Shift+n"]], ["notes.trash", ["#"]], ["notes.link", []], ["notes.pageDown", ["Space"]], ["notes.pageUp", ["Shift+Space"]], ["notes.write", ["Enter"]]])("offers %s only in Notes, outside text fields", (id, keys) => {
+  it.each([["notes.next", ["j", "ArrowDown"]], ["notes.previous", ["k", "ArrowUp"]], ["notes.new", ["Shift+n"]], ["notes.trash", ["#"]], ["notes.link", []], ["notes.pageDown", ["Space"]], ["notes.pageUp", ["Shift+Space"]], ["notes.write", ["Enter"]]])("offers %s only in Notes, outside text fields", (id, keys) => {
     const command = commands.find((item) => item.id === id)!;
     expect(command.keys).toEqual(keys);
     expect(command.allowInEditable).toBe(false);

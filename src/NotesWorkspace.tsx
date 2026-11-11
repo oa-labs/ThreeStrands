@@ -282,6 +282,11 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
           date: note.updatedAt,
         })),
       ];
+  const moveSelection = (direction: 1 | -1) => {
+    const index = list.findIndex((row) => row.key === selectedKey);
+    const next = list[Math.max(0, Math.min(list.length - 1, index + direction))];
+    if (next) { select(next.target); rows.current.get(next.key)?.focus(); }
+  };
   /** Pages the open note by most of a screen, as Space pages a message. */
   const pageNote = (direction: 1 | -1) => {
     const pane = editorPane.current;
@@ -360,6 +365,8 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const daily = target.kind === "daily";
   const readOnly = Boolean(stale) || editor.loading || inTrash || noteConflicts.length > 0;
   useWorkspaceCommands({
+    "notes.next": () => moveSelection(1),
+    "notes.previous": () => moveSelection(-1),
     "notes.new": () => setCreating(true),
     "notes.search": () => requestAnimationFrame(() => search.current?.focus()),
     "notes.trash": () => void moveToTrash(),
@@ -384,9 +391,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     if (event.code === "Space") { event.preventDefault(); event.stopPropagation(); pageNote(event.shiftKey ? -1 : 1); return; }
     if (!["j", "k", "ArrowDown", "ArrowUp"].includes(event.key)) return;
     event.preventDefault(); event.stopPropagation();
-    const index = list.findIndex((row) => row.key === selectedKey);
-    const next = list[Math.max(0, Math.min(list.length - 1, index + (["j", "ArrowDown"].includes(event.key) ? 1 : -1)))];
-    if (next) { select(next.target); rows.current.get(next.key)?.focus(); }
+    moveSelection(["j", "ArrowDown"].includes(event.key) ? 1 : -1);
   }}>
     <header className="notes-header">
       <h1>Notes</h1>

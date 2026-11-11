@@ -217,6 +217,8 @@ export const commands: Command[] = [
   workspaceCommand("contacts.newGroup", "New Group", ["Shift+g"], "contacts"),
   workspaceCommand("contacts.save", "Save Contact", ["Mod+Enter"], "contacts", true),
   workspaceCommand("agents.new", "New Delegated Task", ["Shift+n"], "agents"),
+  { ...workspaceCommand("notes.next", "Next Note", ["j", "ArrowDown"], "notes"), group: "Navigation", repeatable: true },
+  { ...workspaceCommand("notes.previous", "Previous Note", ["k", "ArrowUp"], "notes"), group: "Navigation", repeatable: true },
   workspaceCommand("notes.new", "New Note", ["Shift+n"], "notes"),
   workspaceCommand("notes.trash", "Move Note to Trash", ["#"], "notes"),
   workspaceCommand("notes.link", "Link to Conversation, Task, or Event…", [], "notes"),
