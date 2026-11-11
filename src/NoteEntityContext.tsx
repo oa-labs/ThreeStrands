@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { NotebookText } from "lucide-react";
+import { NotebookPen, NotebookText } from "lucide-react";
 import { mailClient } from "./data/client";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { useNoteChanges } from "./noteMutations";
 import { noteReferenceKey, noteReferenceHref, type NoteBacklink, type NoteReference } from "./noteEntities";
+import { primaryMeetingNote } from "./meetingNoteEntry";
 
 type OpenNote = (id: string, markerId?: string, referenceHref?: string) => void;
 
@@ -54,4 +55,11 @@ export function EventNoteBacklinks({ occurrence, onOpenNote }: { occurrence: Not
     <NoteBacklinkSection rows={own.rows} error={own.error} onOpenNote={onOpenNote} />
     <NoteBacklinkSection id="entity-series-note-backlinks" title="Series notes" rows={rest} error={all.error} onOpenNote={onOpenNote} />
   </>;
+}
+
+/** The event action uses occurrence links only, never another meeting in the series. */
+export function EventNoteAction({ occurrence, onActivate }: { occurrence: NoteReference; onActivate(): void }) {
+  const { rows } = useNoteBacklinks([occurrence]);
+  const label = primaryMeetingNote(rows) ? "Open Note" : "Add Note";
+  return <button type="button" className="btn-icon btn-icon-sm" aria-label={label} title={label} onClick={onActivate}><NotebookPen size={ICON_SIZE.sm} aria-hidden="true" /></button>;
 }

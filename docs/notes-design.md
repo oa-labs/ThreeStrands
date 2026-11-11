@@ -1418,6 +1418,16 @@ name its series:
   but can't be followed, as with contact references. Occurrence links
   written before this change keep working everywhere.
 
+### Opening an event's existing note
+
+The Event details action says **Open Note** when the selected occurrence has
+an active linked note, otherwise **Add Note**. All calendar Add Note entry
+points recheck occurrence backlinks before showing the dialog and open an
+existing note instead. A dedicated meeting note takes precedence over a daily
+note; existing additional links stay available in **Notes**. Notes about other
+occurrences stay in **Series notes** and do not prevent adding this occurrence.
+Neither section searches for notes merely mentioning an attendee.
+
 ### Open questions
 
 - Should the agenda's button read **Open Note** when that day's note already

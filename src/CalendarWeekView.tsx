@@ -1,4 +1,4 @@
-import { EventNoteBacklinks } from "./NoteEntityContext";
+import { EventNoteAction, EventNoteBacklinks } from "./NoteEntityContext";
 import { readLocalStorage, writeLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { calendarAccountVisibility, showHiddenCalendarAccounts } from "./calendarVisibility";
 import { useWorkspaceCommands } from "./workspaceCommands";
@@ -8,7 +8,7 @@ import { ContextSectionHeader } from "./ContextSections";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { BookedTask, CalendarTasks, useAccountTasks } from "./CalendarTasks";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
-import { CalendarDays, ChevronLeft, ChevronRight, NotebookPen, Plus } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { EventViewer, eventCalendarLabel } from "./CalendarSidebar";
@@ -750,7 +750,7 @@ export function CalendarWeekView({
       <WorkspaceContextRail label="Meeting context" onReturn={() => (eventTrigger.current?.isConnected ? eventTrigger.current : gridRef.current)?.focus()}>
         {selectedEvent ? <>
           <ContextSectionHeader title="Event details" icon={<CalendarDays size={ICON_SIZE.xs} />}
-            actions={onAddNote && meetingEventReference(selectedEvent) ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Add Note" title="Add Note" onClick={() => onAddNote(selectedEvent)}><NotebookPen size={ICON_SIZE.sm} aria-hidden="true" /></button> : undefined} />
+            actions={onAddNote && meetingEventReference(selectedEvent) ? <EventNoteAction key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} occurrence={meetingEventReference(selectedEvent)!} onActivate={() => onAddNote(selectedEvent)} /> : undefined} />
           <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} calendarLabel={eventCalendarLabel(selectedEvent, calendars)} onDismiss={() => {
             setSelectedEvent(null);
             if (!eventTrigger.current) document.getElementById("workspace-Meeting-context")?.focus();
