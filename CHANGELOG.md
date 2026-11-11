@@ -4,6 +4,33 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.209.0 — 2026-11-10
+
+### New
+- **Add Note** on a calendar event, in **Calendar** and **Today**, writes a line about the meeting under **Meetings** in that day's note, linking the event and each attendee's contact. Check **Create backlinked note** to also link a note named after the meeting, which every later meeting with that name shares. A contact's details now list the notes that mention them.
+- In Notes, type `@` to find and link a contact or email conversation by name, address, subject, or participant. Contact links open the contact record, conversation links open the email, and `[[` remains the shortcut for linking notes.
+
+### Improved
+- A **Brief** no longer suggests adding an event that's already on your calendar under another name. When someone from the conversation is on a calendar event at the same time, the suggestion shrinks to one line with **Open in Calendar**, and it stops warning that your own meeting conflicts. Briefs also stop suggesting tasks to accept or decline an invitation, since you answer those from your calendar.
+- Notes keeps your search, search scope, and selected note when you switch workspaces. Its search field now matches Mail, with a magnifying glass and the <kbd>/</kbd> shortcut; <kbd>Enter</kbd> returns to the results while keeping your search, and <kbd>Escape</kbd> clears it and returns to navigation.
+- Notes search excludes Trash by default, offers **Include Trash**, and searches only trashed notes while you are in **Trash**.
+- Note Details gives checklist text more room, shows unfinished items first, and groups completed items behind a count. Use an item’s menu to read its full text or convert between a checklist and a Task.
+- The Notes details panel has a matching header icon, a compact action for adding links, and quieter timestamps below related content. Link and completion labels line up with checklist text.
+- An event's details in **Calendar** now list, under **Series notes**, the notes from every other meeting in its recurring series, newest first, alongside the notes for that day's meeting.
+- **Link to…** now offers contacts alongside conversations, tasks, and events.
+- The command palette (<kbd>⌘K</kbd>) now finds your notes too: matching notes are listed below the commands, and choosing one opens it in **Notes**.
+- In **Notes**, <kbd>Space</kbd> and <kbd>Shift</kbd>+<kbd>Space</kbd> page through the open note, as they do for a message, and <kbd>Enter</kbd> starts writing in it.
+- Use <kbd>↑</kbd> and <kbd>↓</kbd> to switch between notes even when the note list is not focused. Arrow keys still move the cursor while editing.
+- The side panel now opens with the name of the person you're reading or writing to, with their role and company (or their email address) and any notes you saved. **Find Times** and **Delegate Work…** sit right below.
+- **Recent emails** now comes before **Files**, subjects drop their "Re:" and "Fwd:" markers, and lists show up to five items before **Show more**. Item counts in section headings no longer look like keyboard shortcuts.
+- A file's **Show email** and star buttons now appear when you point at the file. A starred file keeps its star.
+
+### Fixed
+- Due dates on suggested tasks now read like the rest of your tasks, such as "Tomorrow, 11:00 AM", instead of showing raw dates and times.
+- **Suggestions** now have their own section below **Brief** in the side panel, with **Get Suggestions** on its heading. Collapsing **Brief** folds just the brief, and each section remembers whether it is collapsed.
+- Wide emails now fit the reader automatically without horizontal scrolling or clipped content, including when Email Zoom is enlarged.
+- Note titles and text stay in place when switching between empty and saved daily notes.
+
 ## 0.208.0 — 2026-11-09
 
 ### New
