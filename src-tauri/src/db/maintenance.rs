@@ -55,6 +55,28 @@ impl Database {
         periodic_backup(&maintenance_connection(path)?, path)
     }
 
+    /// Clears what a removed account leaves behind in the database files
+    /// once its rows are deleted. `secure_delete` has already zeroed the
+    /// deleted content in the main file's pages; this returns freed pages to
+    /// the OS, truncates the WAL that still holds earlier copies of them,
+    /// and replaces every full-file copy (periodic and pre-migration
+    /// backups, and a quarantined corrupt file) with one fresh backup.
+    ///
+    /// Each step runs even if an earlier one fails; the first error is
+    /// returned so the caller can report it.
+    pub fn scrub_deleted_data(&self) -> DbResult<()> {
+        let reclaimed = self.reclaim_space();
+        let checkpointed = self.checkpoint_wal();
+        let backed_up = match self.path.as_deref() {
+            Some(path) => {
+                remove_database_copies(path);
+                self.create_periodic_backup()
+            }
+            None => Ok(()),
+        };
+        reclaimed.and(checkpointed).and(backed_up)
+    }
+
     /// Returns freed pages to the OS. Cheap as long as `auto_vacuum` is
     /// already `INCREMENTAL` (see `vacuum_to_incremental`); otherwise a
     /// harmless no-op.
@@ -228,6 +250,32 @@ pub(super) fn pre_migration_backup(
     vacuum_into(connection, &dest)?;
     prune_backups(dir, &prefix, PRE_MIGRATION_BACKUPS_KEPT);
     Ok(())
+}
+
+/// Deletes every full-file copy of the database kept beside it: periodic
+/// and pre-migration backups, and a corrupt file recovery set aside, with
+/// their WAL and shared-memory sidecars. The live database and its own
+/// sidecars do not share these prefixes.
+fn remove_database_copies(db_path: &Path) {
+    let dir = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = db_path.file_name().unwrap_or_default().to_string_lossy();
+    let prefixes = [
+        backup_prefix(db_path),
+        format!("{stem}.pre-migration-v"),
+        format!("{stem}.corrupt-"),
+    ];
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if prefixes
+            .iter()
+            .any(|prefix| name.starts_with(prefix.as_str()))
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn backup_prefix(db_path: &Path) -> String {

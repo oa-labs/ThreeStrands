@@ -1193,6 +1193,12 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         },
         draft_pull_requested: Arc::default(),
     };
+    // Outgoing attachment files outlive their drafts when an account is
+    // removed by another device, or the app quits mid-cleanup. Nothing is
+    // attaching files yet, so clearing unreferenced ones here is safe.
+    if let Err(error) = correspondence.cleanup() {
+        log::warn!(target: "correspondence", "could not remove unused attachment files: {error}");
+    }
     tauri::async_runtime::spawn(correspondence.clone().run_draft_pushes());
     let worker = correspondence.clone();
     tauri::async_runtime::spawn(async move {

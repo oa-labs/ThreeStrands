@@ -384,6 +384,21 @@ impl Database {
         })
     }
 
+    /// Ids of the stored scheduled-send summaries for messages sent from
+    /// `account`, matched without regard to case.
+    pub(crate) fn scheduled_summary_ids_for_account(&self, account: &str) -> DbResult<Vec<String>> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id FROM scheduled_send_summaries WHERE json_valid(report)
+                   AND lower(json_extract(report, '$.account')) = lower(?1)",
+            )?;
+            let ids = statement
+                .query_map([account], |row| row.get(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+            Ok(ids)
+        })
+    }
+
     /// Removes a scheduled-send summary another device deleted.
     pub(crate) fn delete_scheduled_summary(&self, id: &str) -> DbResult<()> {
         self.with_connection(|connection| {

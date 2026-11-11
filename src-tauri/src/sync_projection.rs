@@ -308,6 +308,11 @@ impl Database {
                 clear_credential(&email)?;
             }
             self.remove_account(&email)?;
+            // As on the removing device: the rows are gone, so a failure to
+            // scrub earlier copies of them is logged, not retried.
+            if let Err(error) = self.scrub_deleted_data() {
+                log::warn!(target: "replicated_sync", "could not scrub a removed account's mail from database files: {error}");
+            }
         }
         Ok(())
     }

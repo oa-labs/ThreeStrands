@@ -71,6 +71,21 @@ impl ReaderCache {
         }
         Ok(path)
     }
+
+    /// Removes every reader copy now rather than when it expires, so a
+    /// removed account's attachments do not outlive it on disk. Best effort:
+    /// Windows can refuse to remove a file another application still has
+    /// open, and that entry then expires as usual.
+    pub(crate) fn clear(&self) -> io::Result<()> {
+        let _guard = self
+            .maintenance
+            .lock()
+            .map_err(|_| io::Error::other("attachment reader lock is poisoned"))?;
+        for entry in reader_entries(&self.root)? {
+            let _ = fs::remove_dir_all(&entry.path);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -187,6 +202,22 @@ mod tests {
         let normalized =
             crate::attachment_security::normalize_filename("../invoice\u{202e}cod.ｅｘｅ");
         assert!(cache.write(&normalized, b"x").is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn clear_removes_every_reader_copy_but_leaves_unrelated_files() {
+        let root = test_root("clear");
+        let cache = ReaderCache::new(root.clone()).unwrap();
+        let first = cache.write("statement.pdf", b"first").unwrap();
+        let second = cache.write("photo.jpg", b"second").unwrap();
+        fs::write(root.join("not-a-reader-entry"), b"kept").unwrap();
+
+        cache.clear().unwrap();
+
+        assert!(!first.exists());
+        assert!(!second.exists());
+        assert!(root.join("not-a-reader-entry").exists());
         fs::remove_dir_all(root).unwrap();
     }
 

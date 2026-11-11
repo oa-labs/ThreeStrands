@@ -996,6 +996,7 @@ async fn remove_account_internal(
         }
         None => fallback.disconnect(),
     };
+    scrub_removed_account_files(&state).await;
     // Removing the last account returns the app to its pre-connect state, so
     // restore the placeholder entry `connect_google` authorizes against —
     // otherwise disconnecting would leave no way back in.
@@ -1003,6 +1004,26 @@ async fn remove_account_internal(
         ensure_placeholder_account(&state, app).await;
     }
     result.map_err(AppError::from)
+}
+
+/// Removes the copies of a removed account's mail that live outside its
+/// database rows: outgoing attachment files no draft or outbox item still
+/// uses, attachment copies opened for other apps, and earlier versions of
+/// the database file (WAL frames, free pages, backups).
+///
+/// Runs after the rows are gone, so a failure here cannot leave a listed
+/// account without credentials. Each step is best effort and logged.
+async fn scrub_removed_account_files(state: &AppState) {
+    if let Err(error) = state.correspondence.cleanup() {
+        log::warn!(target: "accounts", "could not remove unused attachment files: {error}");
+    }
+    if let Err(error) = state.attachment_reader.clear() {
+        log::warn!(target: "accounts", "could not clear opened attachment copies: {error}");
+    }
+    let database = state.database.clone();
+    if let Err(error) = run_database_task(move || database.scrub_deleted_data()).await {
+        log::warn!(target: "accounts", "could not scrub removed mail from database files: {error}");
+    }
 }
 
 /// Why "remove everywhere" is refused on a device that does not replicate.
@@ -1062,6 +1083,44 @@ pub(crate) async fn remove_synced_mail_account(
         // Remove the readable row too, so the backfill in sync_once cannot
         // publish it again while removing the account everywhere.
         state.database.forget_sender_delivery(&record.id)?;
+    }
+    // The account's conversation return schedules, signature choices, and
+    // scheduled-send summaries replicate too. Each readable row goes with
+    // its recorded deletion, for the same reason as above.
+    for snooze in state.database.list_snooze_records(Some(&email))? {
+        state.database.record_local_entity_deletion(
+            threestrands_sync_protocol::EntityType::ConversationSnooze,
+            &snooze.id,
+        )?;
+        state.database.delete_synced_snooze(&snooze.id)?;
+    }
+    for defaults in state
+        .database
+        .signature_library()?
+        .defaults
+        .into_iter()
+        .filter(|defaults| defaults.account.eq_ignore_ascii_case(&email))
+    {
+        // Records the replicated deletion itself while sync is active.
+        state.database.delete_signature_defaults(&defaults.id)?;
+    }
+    // Pausing publishes each changed schedule's report, so it runs before
+    // the deletions are recorded rather than (in remove_account_internal)
+    // after them, where it would publish the summaries again.
+    state.correspondence.pause_account_schedules(&email)?;
+    let own_schedules = state
+        .database
+        .outbox()?
+        .into_iter()
+        .filter(|item| item.draft.account.eq_ignore_ascii_case(&email))
+        .filter_map(|item| item.schedule.map(|schedule| schedule.report.entity_id()));
+    let summaries = state.database.scheduled_summary_ids_for_account(&email)?;
+    for id in own_schedules.chain(summaries) {
+        state.database.record_local_entity_deletion(
+            threestrands_sync_protocol::EntityType::ScheduledSendSummary,
+            &id,
+        )?;
+        state.database.delete_scheduled_summary(&id)?;
     }
     state.replicated_sync.sync_once().await?;
     remove_account_internal(email, state, app, true).await

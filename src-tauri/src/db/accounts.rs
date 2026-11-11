@@ -304,6 +304,8 @@ impl Database {
                     (SELECT id FROM threads WHERE account_id = ?1)",
                 [email],
             )?;
+            purge_mail_traces(transaction, email)?;
+            purge_outgoing_mail(transaction, email)?;
             transaction.execute("DELETE FROM threads WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM mutations WHERE account_id = ?1", [email])?;
             transaction.execute(
@@ -360,6 +362,7 @@ impl Database {
                 "DELETE FROM thread_search WHERE thread_id IN (SELECT id FROM threads WHERE account_id=?1)",
                 [email],
             )?;
+            purge_mail_traces(transaction, email)?;
             for table in ["threads", "mutations", "sync_state", "pinned_contacts", "sync_recovery_threads", "sync_recovery", "quarantined_messages", "triage_events"] {
                 transaction.execute(&format!("DELETE FROM {table} WHERE account_id=?1"), [email])?;
             }
@@ -449,6 +452,64 @@ impl Database {
 }
 
 // These provider caches have no foreign keys to the account catalog.
+/// Mail-derived rows keyed by a message or thread id rather than the
+/// account, with no foreign key for the thread delete to cascade through.
+/// Runs before the account's threads are deleted, while they still say
+/// which ids belong to it.
+fn purge_mail_traces(transaction: &rusqlite::Transaction<'_>, account: &str) -> DbResult<()> {
+    transaction.execute(
+        "DELETE FROM message_metadata WHERE id IN
+            (SELECT m.id FROM messages m JOIN threads t ON t.id = m.thread_id
+              WHERE t.account_id = ?1)",
+        [account],
+    )?;
+    transaction.execute(
+        "DELETE FROM unsubscribe_requests WHERE thread_id IN
+            (SELECT id FROM threads WHERE account_id = ?1)",
+        [account],
+    )?;
+    // The AI activity log has no account column; it keeps the token counts
+    // but forgets which of this account's conversations a request was about.
+    transaction.execute(
+        "UPDATE ai_activity SET subject = NULL WHERE subject IN
+            (SELECT subject FROM threads WHERE account_id = ?1)",
+        [account],
+    )?;
+    Ok(())
+}
+
+/// Mail the user was writing or sending from the account: drafts, the
+/// outbox (which holds each message's full encoded copy), and the
+/// account's signature choices. Attachment files are removed by the
+/// caller's attachment cleanup once these rows no longer retain them.
+fn purge_outgoing_mail(transaction: &rusqlite::Transaction<'_>, account: &str) -> DbResult<()> {
+    for (table, column) in [
+        ("outbox_messages", "account"),
+        ("draft_server_links", "account"),
+        ("draft_server_deletions", "account"),
+    ] {
+        transaction.execute(
+            &format!("DELETE FROM {table} WHERE lower({column}) = lower(?1)"),
+            [account],
+        )?;
+    }
+    for (table, column, path) in [
+        ("drafts", "payload", "$.account"),
+        ("discarded_drafts", "payload", "$.account"),
+        ("signature_defaults", "payload", "$.account"),
+        ("scheduled_send_summaries", "report", "$.account"),
+    ] {
+        transaction.execute(
+            &format!(
+                "DELETE FROM {table} WHERE json_valid({column})
+                   AND lower(json_extract({column}, '{path}')) = lower(?1)"
+            ),
+            [account],
+        )?;
+    }
+    Ok(())
+}
+
 fn purge_imap_cache(transaction: &rusqlite::Transaction<'_>, account: &str) -> DbResult<()> {
     for table in [
         "imap_bodies",

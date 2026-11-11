@@ -74,6 +74,9 @@ PRAGMA foreign_keys = ON;
 -- or power loss. Acceptable here since Gmail remains the source of truth
 -- and the local cache is resyncable.
 PRAGMA synchronous = NORMAL;
+-- Overwrite deleted content with zeros instead of leaving it in free pages,
+-- so removing an account or deleting mail removes it from the file too.
+PRAGMA secure_delete = ON;
 -- Unset defaults to 0 (immediate SQLITE_BUSY). Matters once more than one
 -- connection can touch this file at a time (e.g. a backup connection).
 PRAGMA busy_timeout = 5000;

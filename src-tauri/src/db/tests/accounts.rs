@@ -408,6 +408,351 @@ fn removing_an_account_purges_all_its_local_data_but_not_another_accounts() {
     assert!(database.get_account("other@gmail.com").unwrap().is_some());
 }
 
+/// One received conversation and one outgoing message for `account`, each
+/// with the rows that refer to it by message, thread, or JSON payload
+/// rather than an account column. Every value carries `key`, so a test can
+/// count what is left of each account. `payload_account` is how drafts and
+/// other JSON records spell the address.
+fn seed_account_mail(
+    connection: &rusqlite::Connection,
+    account: &str,
+    payload_account: &str,
+    key: &str,
+) {
+    let thread = format!("{key}-thread");
+    let message = format!("{key}-message");
+    let subject = format!("{key} subject");
+    connection
+        .execute(
+            "INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json,
+                 last_message_at, unread, starred, archived, labels_json, trashed, account_id,
+                 has_attachments, last_received_at)
+             VALUES (?1, ?1, ?2, 'snippet', '[]', '2026-03-05T14:15:00Z', 0, 0, 0, '[]', 0, ?3,
+                 0, '2026-03-05T14:15:00Z')",
+            rusqlite::params![thread, subject, account],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO messages(id, thread_id, sender, recipients_json, sent_at, body_html, body_text)
+             VALUES (?1, ?2, 'a@example.com', '[]', '2026-03-05T14:15:00Z', '', 'body')",
+            [&message, &thread],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)",
+            [&message, &format!("{{\"raw\":\"{key}\"}}")],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO unsubscribe_requests(id, message_id, thread_id, method, state, created_at)
+             VALUES (?1, ?2, ?3, 'http', 'pending', '2026-03-05T14:15:00Z')",
+            [&format!("{key}-unsubscribe"), &message, &thread],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO ai_activity(at, feature, provider, model, subject, message_count,
+                 input_tokens, output_tokens)
+             VALUES ('2026-03-05T14:15:00Z', 'summary', 'test', 'model', ?1, 1, 10, 5)",
+            [&subject],
+        )
+        .unwrap();
+
+    let draft = format!("{key}-draft");
+    let draft_payload = serde_json::json!({"id": draft, "account": payload_account}).to_string();
+    connection
+        .execute(
+            "INSERT INTO drafts(id, revision, payload) VALUES (?1, 1, ?2)",
+            [&draft, &draft_payload],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO discarded_drafts(id, revision, payload, discarded_at) VALUES (?1, 1, ?2, 0)",
+            [&format!("{key}-discarded"), &draft_payload],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO draft_server_links(draft_id, account, state) VALUES (?1, ?2, 'saved')",
+            [&draft, payload_account],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO draft_server_deletions(account, message_id, due_at) VALUES (?1, ?2, 0)",
+            [payload_account, &format!("{key}-server-draft")],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO outbox_messages(id, draft_id, revision, account, state, deadline, payload, raw)
+             VALUES (?1, ?2, 1, ?3, 'scheduled', 0, ?4, ?5)",
+            rusqlite::params![
+                format!("{key}-outbox"),
+                draft,
+                payload_account,
+                draft_payload,
+                format!("Subject: {key}").into_bytes()
+            ],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO signature_defaults(id, payload) VALUES (?1, ?2)",
+            [
+                &format!("{key}-signature-defaults"),
+                &serde_json::json!({"account": payload_account, "address": ""}).to_string(),
+            ],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO scheduled_send_summaries(id, report) VALUES (?1, ?2)",
+            [
+                &format!("{key}-summary"),
+                &serde_json::json!({"account": payload_account, "subject": subject}).to_string(),
+            ],
+        )
+        .unwrap();
+}
+
+/// Rows left in each table that mention `key`, in a fixed table order.
+fn rows_mentioning(connection: &rusqlite::Connection, key: &str) -> Vec<(&'static str, i64)> {
+    let like = format!("%{key}%");
+    [
+        ("threads", "SELECT COUNT(*) FROM threads WHERE id LIKE ?1"),
+        ("messages", "SELECT COUNT(*) FROM messages WHERE id LIKE ?1"),
+        (
+            "message_metadata",
+            "SELECT COUNT(*) FROM message_metadata WHERE id LIKE ?1",
+        ),
+        (
+            "unsubscribe_requests",
+            "SELECT COUNT(*) FROM unsubscribe_requests WHERE id LIKE ?1",
+        ),
+        (
+            "ai_activity",
+            "SELECT COUNT(*) FROM ai_activity WHERE subject LIKE ?1",
+        ),
+        ("drafts", "SELECT COUNT(*) FROM drafts WHERE id LIKE ?1"),
+        (
+            "discarded_drafts",
+            "SELECT COUNT(*) FROM discarded_drafts WHERE id LIKE ?1",
+        ),
+        (
+            "draft_server_links",
+            "SELECT COUNT(*) FROM draft_server_links WHERE draft_id LIKE ?1",
+        ),
+        (
+            "draft_server_deletions",
+            "SELECT COUNT(*) FROM draft_server_deletions WHERE message_id LIKE ?1",
+        ),
+        (
+            "outbox_messages",
+            "SELECT COUNT(*) FROM outbox_messages WHERE id LIKE ?1",
+        ),
+        (
+            "signature_defaults",
+            "SELECT COUNT(*) FROM signature_defaults WHERE id LIKE ?1",
+        ),
+        (
+            "scheduled_send_summaries",
+            "SELECT COUNT(*) FROM scheduled_send_summaries WHERE id LIKE ?1",
+        ),
+    ]
+    .into_iter()
+    .map(|(table, sql)| {
+        (
+            table,
+            connection
+                .query_row(sql, [&like], |row| row.get(0))
+                .unwrap(),
+        )
+    })
+    .collect()
+}
+
+#[test]
+fn removing_an_account_purges_its_outgoing_mail_and_rows_linked_by_message_or_payload() {
+    let database = database();
+    database.adopt_account("you@gmail.com").unwrap();
+    database.adopt_account("other@gmail.com").unwrap();
+    let connection = database.connection().unwrap();
+    // Payloads spell the removed address in another case: an address
+    // matches without regard to case, as the account catalog does.
+    seed_account_mail(&connection, "you@gmail.com", "You@Gmail.com", "removed");
+    seed_account_mail(&connection, "other@gmail.com", "other@gmail.com", "kept");
+    drop(connection);
+
+    database.remove_account("you@gmail.com").unwrap();
+
+    let connection = database.connection().unwrap();
+    let removed = rows_mentioning(&connection, "removed");
+    assert!(
+        removed.iter().all(|(_, count)| *count == 0),
+        "left behind: {removed:?}"
+    );
+    let kept = rows_mentioning(&connection, "kept");
+    assert!(
+        kept.iter().all(|(_, count)| *count == 1),
+        "another account lost: {kept:?}"
+    );
+    // The usage record stays, without saying what the request was about.
+    let activity: i64 = connection
+        .query_row("SELECT COUNT(*) FROM ai_activity", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(activity, 2);
+}
+
+#[test]
+fn disconnecting_an_account_locally_drops_mail_derived_rows_but_keeps_its_drafts() {
+    let database = database();
+    database.adopt_account("you@gmail.com").unwrap();
+    let connection = database.connection().unwrap();
+    seed_account_mail(&connection, "you@gmail.com", "you@gmail.com", "local");
+    drop(connection);
+
+    database
+        .disconnect_account_locally("you@gmail.com")
+        .unwrap();
+
+    let connection = database.connection().unwrap();
+    let left: std::collections::HashMap<_, _> =
+        rows_mentioning(&connection, "local").into_iter().collect();
+    for table in [
+        "threads",
+        "messages",
+        "message_metadata",
+        "unsubscribe_requests",
+        "ai_activity",
+    ] {
+        assert_eq!(
+            left[table], 0,
+            "{table} kept mail from a disconnected account"
+        );
+    }
+    // Drafts and scheduled sends are the user's own work, kept for when the
+    // account is set up on this device again.
+    for table in ["drafts", "outbox_messages", "signature_defaults"] {
+        assert_eq!(left[table], 1, "{table} lost the user's work");
+    }
+}
+
+/// Every table with an account column must be named here, so a table added
+/// later is checked against account removal rather than silently keeping a
+/// removed account's data.
+#[test]
+fn every_table_keyed_by_account_is_purged_on_removal_or_deliberately_kept() {
+    // Deleted by `remove_account`, directly or by a cascading foreign key.
+    const PURGED: &[&str] = &[
+        "account_labels",
+        "agent_tasks",
+        "co_recipient_addresses",
+        "contact_interactions",
+        "conversation_snoozes",
+        "draft_server_deletions",
+        "draft_server_links",
+        "gmail_sending_identities",
+        "goals",
+        "imap_account_settings",
+        "imap_bodies",
+        "imap_change_journal",
+        "imap_copy_intents",
+        "imap_hot_threads",
+        "imap_label_snapshots",
+        "imap_locations",
+        "imap_mailbox_sync_state",
+        "imap_mailboxes",
+        "imap_message_identities",
+        "imap_message_tokens",
+        "imap_search_pins",
+        "imap_sent_copy_detection",
+        "imap_server_capabilities",
+        "imap_sync_state",
+        "imap_thread_aliases",
+        "imap_threads",
+        "mutations",
+        "outbox_messages",
+        "pinned_contacts",
+        "quarantined_messages",
+        "sender_delivery_patterns",
+        "sender_rule_actions",
+        "sender_rules",
+        "split_inboxes",
+        "sync_recovery",
+        "sync_recovery_threads",
+        "sync_state",
+        "tasks",
+        "threads",
+        "triage_events",
+    ];
+    // Not removed with a mail account, and why.
+    const KEPT: &[(&str, &str)] = &[
+        (
+            "calendar_selections",
+            "a calendar connection, removed when that calendar is disconnected",
+        ),
+        (
+            "note_event_cache",
+            "a calendar connection's events, removed with that connection",
+        ),
+        (
+            "sync_transports",
+            "the cross-device sync storage account, not a mail account",
+        ),
+    ];
+    let removal_source = include_str!("../accounts.rs");
+
+    let database = database();
+    let connection = database.connection().unwrap();
+    let mut statement = connection
+        .prepare(
+            "SELECT DISTINCT m.name FROM sqlite_master m, pragma_table_info(m.name) c
+              WHERE m.type = 'table' AND c.name IN ('account_id', 'account', 'account_email')
+              ORDER BY m.name",
+        )
+        .unwrap();
+    let keyed: Vec<String> = statement
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let unclassified: Vec<&String> = keyed
+        .iter()
+        .filter(|table| {
+            !PURGED.contains(&table.as_str()) && !KEPT.iter().any(|(kept, _)| kept == table)
+        })
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "decide whether removing an account deletes these tables' rows: {unclassified:?}"
+    );
+    // A table listed as purged must actually be: either its rows cascade
+    // from a deleted thread, message, or account, or the removal code
+    // names it.
+    for table in PURGED {
+        let cascades: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_foreign_key_list(?1)
+                  WHERE \"table\" IN ('threads', 'messages', 'accounts')
+                    AND on_delete = 'CASCADE')",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let named = removal_source.contains(&format!("\"{table}\""))
+            || removal_source.contains(&format!("DELETE FROM {table} "));
+        assert!(
+            cascades || named,
+            "{table} is listed as purged but nothing deletes it"
+        );
+    }
+}
+
 #[test]
 fn set_account_color_updates_an_existing_account_and_rejects_an_unknown_one() {
     let database = database();

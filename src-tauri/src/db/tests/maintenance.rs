@@ -229,3 +229,87 @@ fn periodic_backup_round_trips_data_and_prunes_old_snapshots() {
 }
 
 use crate::db::recovery::wal_sidecar_nonempty;
+
+/// Whether any file directly in `dir` contains `needle`.
+fn files_containing(dir: &std::path::Path, needle: &[u8]) -> Vec<String> {
+    let mut found: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            std::fs::read(entry.path())
+                .is_ok_and(|bytes| bytes.windows(needle.len()).any(|window| window == needle))
+        })
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn scrubbing_after_account_removal_leaves_its_mail_in_no_database_file_or_copy() {
+    let temp = TempDbPath::new();
+    let marker = format!("removed-mail-{}", Uuid::new_v4());
+    let database = Database::open(&temp.path).unwrap();
+    database.vacuum_to_incremental().unwrap();
+    database.adopt_account("gone@example.com").unwrap();
+    database.adopt_account("kept@example.com").unwrap();
+    let mut removed = message("m1", "removed-thread", "2026-01-01T00:00:00Z", &marker);
+    removed.subject = marker.clone();
+    database
+        .upsert_thread("gone@example.com", &[removed])
+        .unwrap();
+    database
+        .upsert_thread(
+            "kept@example.com",
+            &[message(
+                "m2",
+                "kept-thread",
+                "2026-01-01T00:00:00Z",
+                "kept body",
+            )],
+        )
+        .unwrap();
+    // Every kind of whole-file copy kept beside the database holds the mail.
+    database.create_periodic_backup().unwrap();
+    let stem = temp
+        .path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    std::fs::copy(
+        &temp.path,
+        temp.dir.join(format!("{stem}.pre-migration-v0100.bak")),
+    )
+    .unwrap();
+    std::fs::copy(
+        &temp.path,
+        temp.dir.join(format!("{stem}.corrupt-20260101T000000Z")),
+    )
+    .unwrap();
+    std::fs::write(temp.dir.join("unrelated.txt"), b"not a database copy").unwrap();
+    assert!(!files_containing(&temp.dir, marker.as_bytes()).is_empty());
+
+    database.remove_account("gone@example.com").unwrap();
+    database.scrub_deleted_data().unwrap();
+
+    assert_eq!(
+        files_containing(&temp.dir, marker.as_bytes()),
+        Vec::<String>::new()
+    );
+    assert!(temp.dir.join("unrelated.txt").exists());
+    assert!(list_matching(&temp.dir, ".pre-migration-v").is_empty());
+    assert!(list_matching(&temp.dir, ".corrupt-").is_empty());
+    // One fresh backup replaces the old ones, and still holds the other account.
+    assert_eq!(list_matching(&temp.dir, ".backup-").len(), 1);
+    let restored_path = temp.dir.join("restored.sqlite");
+    std::fs::copy(latest_periodic_backup(&temp.path).unwrap(), &restored_path).unwrap();
+    let restored = Database::open(&restored_path).unwrap();
+    assert_eq!(
+        restored
+            .list_threads(Some("kept@example.com"))
+            .unwrap()
+            .len(),
+        1
+    );
+}
