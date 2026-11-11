@@ -4,7 +4,7 @@ import type { Draft } from "./correspondence";
 import type { Account, AvailabilityCandidate, ContactGroupRecipients, AvailabilityPreferences, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
 import { composeChecks, draftRecipients, knownAddressMap, type ComposeCheck, type KnownCorrespondents } from "./composeChecks";
 import { ContactFilesSection, ContextSection, RecentEmailsSection } from "./ContextSections";
-import { AvailabilitySection, RecipientSummary } from "./RecipientSections";
+import { AvailabilitySection, PersonSummary } from "./RecipientSections";
 import { isColleagueAddress, KNOWN_ADDRESS_LIMIT } from "./contactContext";
 import { ThreadTasks } from "./ThreadTasks";
 import { ContactMeetings } from "./ContactMeetings";
@@ -216,7 +216,7 @@ export function ComposeContext({
         onSwitchAccount={onSwitchAccount}
         onMoveToBcc={onMoveToBcc}
       />
-      {selected ? <RecipientSummary email={selected.email} name={selected.name} profile={person?.profile ?? null} /> : (
+      {selected ? <PersonSummary key={selected.email} email={selected.email} name={selected.name} profile={person?.profile ?? null} /> : (
         <p className="context-status compose-context-empty">Add a recipient to see your history with them.</p>
       )}
       {calendarConnected ? (

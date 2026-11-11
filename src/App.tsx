@@ -108,7 +108,7 @@ import type { SettingsSection } from "./settingsPanelTypes";
 import { readSettingsSection, saveSettingsSection } from "./settingsNavigation";
 import { TaskEditorDialog } from "./TaskEditorDialog";
 import { TaskSidebar, type TaskWorkspaceSnapshot } from "./TaskSidebar";
-import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
+import { THREAD_ASSIST_ID, THREAD_SUGGESTIONS_ID, ThreadAssist } from "./ThreadAssist";
 import { latestInvitationMessage } from "./calendarInvitations";
 import { sharedChatAttachments, ThreadChat } from "./ThreadChat";
 import { ThreadList, ThreadRow } from "./ThreadList";
@@ -551,7 +551,7 @@ export function App() {
   /** Shows the context panel's AI section and fetches suggestions if missing. */
   const getSuggestions = useCallback(() => {
     showMailContext();
-    window.requestAnimationFrame(() => document.getElementById(THREAD_ASSIST_ID)?.scrollIntoView?.({ block: "nearest" }));
+    window.requestAnimationFrame(() => (document.getElementById(THREAD_SUGGESTIONS_ID) ?? document.getElementById(THREAD_ASSIST_ID))?.scrollIntoView?.({ block: "nearest" }));
     void runBrief({ only: "suggestions" });
   }, [runBrief, showMailContext]);
 
@@ -1673,8 +1673,10 @@ export function App() {
               onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
             />
           ) : null}
-          assist={visibleDetail ? (<>
+          actions={visibleDetail ? (
             <div className="context-ai-launcher agent-context-links"><button type="button" className="btn btn-sm" onClick={delegateSelected}><Bot size={ICON_SIZE.sm} />Delegate Work…</button>{agents.items.filter(d => d.task.sourceThreadId === visibleDetail.thread.id && !d.task.archived).map(d => <button className="btn-link" key={d.task.id} onClick={() => openAgent(d.task.id)}>{d.task.objective}{d.task.unread ? " · New activity" : ""}</button>)}</div>
+          ) : null}
+          assist={visibleDetail ? (
             <ThreadAssist
               detail={visibleDetail}
               providerChosen={aiProviderChosen}
@@ -1713,7 +1715,7 @@ export function App() {
               onRun={(force) => void runBrief({ force })}
               onOpenSettings={() => openSettingsAt("ai")}
             />
-          </>) : null}
+          ) : null}
           chat={(person) => visibleDetail ? (
             <ThreadChat
               key={visibleDetail.thread.id}
@@ -1732,7 +1734,7 @@ export function App() {
               }}
               onUseReply={(text) => correspondence.replyWithText(text, visibleDetail.messages.at(-1)?.id)}
               onOpenThread={jumpToThread}
-              onShowSuggestions={() => document.getElementById(THREAD_ASSIST_ID)?.scrollIntoView?.({ block: "nearest" })}
+              onShowSuggestions={() => (document.getElementById(THREAD_SUGGESTIONS_ID) ?? document.getElementById(THREAD_ASSIST_ID))?.scrollIntoView?.({ block: "nearest" })}
               onOpenCalendarEvent={(event) => openCalendarView(eventDate(event), event)}
               onOpenSettings={() => openSettingsAt("ai")}
               renderAvailability={(availability) => (

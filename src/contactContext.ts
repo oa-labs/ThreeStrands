@@ -2,7 +2,7 @@ import { formatCompactDate, formatFullDate, formatMonthYear } from "./dateFormat
 import type { ContactActivity } from "./domain";
 
 /** Rows a context panel section shows before "Show more". */
-export const CONTEXT_SECTION_ROWS = 3;
+export const CONTEXT_SECTION_ROWS = 5;
 /** A conversation needs at least this many messages for the thread outline. */
 export const THREAD_OUTLINE_MIN_MESSAGES = 6;
 /** Files fetched for a person; the section reports the full total. */

@@ -1,2 +1,2 @@
 ### Fixed
-- Collapsing **Brief** in the side panel now folds just the brief, leaving **Suggested** open until you collapse it with its own arrow.
+- **Suggestions** now have their own section below **Brief** in the side panel, with **Get Suggestions** on its heading. Collapsing **Brief** folds just the brief, and each section remembers whether it is collapsed.

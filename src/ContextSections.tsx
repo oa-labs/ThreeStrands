@@ -164,7 +164,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
 
 /**
  * A context panel section whose heading collapses it (remembered per device)
- * and whose rows stop at a few with "Show more", so stacked sections stay
+ * and whose rows stop at a few with "Show more" (only when two or more would be hidden), so stacked sections stay
  * scannable instead of pushing everything else down.
  */
 export function ContextSection({ id, title, label, count, actions, note, rows, limit = CONTEXT_SECTION_ROWS, footer, closing, className }: {
@@ -191,7 +191,8 @@ export function ContextSection({ id, title, label, count, actions, note, rows, l
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
   const headingId = useId();
-  const hidden = rows.length - limit;
+  // A single extra row shows rather than hiding behind a link the same height as it.
+  const hidden = rows.length - limit > 1 ? rows.length - limit : 0;
   return (
     <section className={`context-section context-collapsible${className ? ` ${className}` : ""}`} aria-label={label} aria-labelledby={label ? undefined : headingId}>
       <ContextSectionHeader title={title} titleId={headingId} count={count} actions={actions} toggle={{ collapsed, controls: bodyId, onToggle: toggle }} />
@@ -319,6 +320,19 @@ export type RecentEmailItem = Pick<ContactTimelineItem, "threadId" | "subject" |
 const INVITATION_RESPONSE_SUBJECT = /^(accepted|declined|tentative|tentatively accepted)(\s*\([^)]*\))?\s*:/i;
 const AUTOMATIC_REPLY_SUBJECT = /^(automatic reply|auto-?reply|autoreply|out of office( reply)?)\s*:/i;
 
+// Reply and forward markers a mail client puts before a subject, repeated or numbered ("Re[2]:").
+const REPLY_PREFIX = /^(?:(?:re|fw|fwd)(?:\s*\[\d+\])?\s*:\s*)+/i;
+
+/**
+ * A subject without its leading reply and forward markers, which take the
+ * first characters of a narrow row and say nothing about the conversation.
+ * A subject that is only markers stays as it is.
+ */
+export function withoutReplyPrefix(subject: string): string {
+  const stripped = subject.trim().replace(REPLY_PREFIX, "");
+  return stripped || subject.trim();
+}
+
 /** What kind of email a Recent emails row is, read from its subject. */
 export function recentEmailKind(subject: string): "email" | "response" | "automatic" {
   const text = subject.trim();
@@ -336,14 +350,13 @@ const recentEmailIcons = {
 /**
  * Other conversations with the selected person, newest first, except that
  * automatic replies follow what the person wrote and read muted. Invitation
- * answers and automatic replies get their own glyphs. `person` names whom the
- * emails are with in the heading. For a bulk sender, the panel adds the
- * sender's mail and their decisions as `closing`.
+ * answers and automatic replies get their own glyphs. Subjects drop their
+ * reply and forward markers. The panel's person header says whom the emails
+ * are with. For a bulk sender, the panel adds the sender's mail and their
+ * decisions as `closing`.
  */
-export function RecentEmailsSection({ items, person, onOpenThread, limit, onLoadOlder, closing }: {
+export function RecentEmailsSection({ items, onOpenThread, limit, onLoadOlder, closing }: {
   items: RecentEmailItem[];
-  /** A short name for whom the emails are with, such as a first name. */
-  person?: string;
   onOpenThread(id: string): void;
   limit?: number;
   /** Fetches the next page; offered once every loaded row is showing. */
@@ -357,8 +370,7 @@ export function RecentEmailsSection({ items, person, onOpenThread, limit, onLoad
     <ContextSection
       id="recent"
       className="context-history"
-      title={person ? `Recent emails with ${person}` : "Recent emails"}
-      label="Recent emails"
+      title="Recent emails"
       count={items.length}
       limit={limit}
       footer={onLoadOlder ? <button type="button" className="btn-link context-link-button" onClick={onLoadOlder}>Load older emails</button> : undefined}
@@ -371,7 +383,7 @@ export function RecentEmailsSection({ items, person, onOpenThread, limit, onLoad
             key={item.threadId}
             icon={recentEmailIcons[kind]}
             className={kind === "automatic" ? "context-row-automatic" : undefined}
-            title={item.subject || "(no subject)"}
+            title={withoutReplyPrefix(item.subject) || "(no subject)"}
             date={formatHistoryDate(item.sentAt)}
             detail={snippet || undefined}
             onActivate={() => onOpenThread(item.threadId)}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { ContactFilesSection, RecentEmailsSection, ThreadOutlineSection, type RecentEmailItem } from "./ContextSections";
-import { RecipientSummary } from "./RecipientSections";
+import { PersonSummary } from "./RecipientSections";
 import { isColleagueAddress } from "./contactContext";
 import { messagePerson } from "./readingMessage";
 import { parseAddress, splitAddressList } from "./emailAddress";
@@ -10,7 +10,6 @@ import { logBackgroundFailure } from "./errors";
 import { SenderDecisions, TrustSection, useSenderHistory, type SenderActions, type SenderTarget } from "./SenderSections";
 import { bulkMessage, latestInbound, type TrustLink } from "./senderSignals";
 import { threadTextIndex } from "./threadTextIndex";
-import { participantName } from "./ThreadAssist";
 
 /** A reply in the open conversation, as the context panel shows it. */
 export type ReplyContext = {
@@ -29,34 +28,32 @@ export type ContextPerson = {
 };
 
 /**
- * The single right-side panel for a conversation, in two groups. First what
- * is about the conversation: the AI brief and suggestions, related tasks and
- * meetings, and an outline of a long conversation. Then what is about the
- * selected participant: files they sent, other
- * emails with them. Their contact
- * card lives in the reader, on hover over their name. Sections without
- * content are left out.
+ * The single right-side panel for a conversation. It opens with who the
+ * selected participant is: their name, role and company, and saved notes.
+ * Then what is about the conversation: the AI brief and suggestions, related
+ * tasks and meetings, and an outline of a long conversation. Then what is
+ * about the selected participant: other emails with them, then files they
+ * sent. Sections without content are left out.
  *
  * The selected participant is the person of the message being read: its
  * sender, or whom the user wrote to. Picking someone, by their name in a
  * message header, holds until the reader moves to another message.
  *
- * The AI actions, Find Times and the brief, share one row at the top: each is
- * a button until it has something to show, then opens to full width below
- * the buttons. Find Times is left out while reading bulk mail, but offered
+ * The actions, Find Times, Delegate Work, and the brief, share one row under
+ * the person: each is a button until it has something to show, then opens
+ * to full width below the buttons. Find Times is left out while reading bulk mail, but offered
  * when replying to it; the caller decides whether it is offered otherwise.
  *
  * While the user replies in this conversation, the checks before sending
  * come first, and the person group is about who the reply
- * goes to: only its recipients can be selected, and a card shows what is
- * saved about the selected one.
+ * goes to: only its recipients can be selected.
  *
  * Bulk mail (a List-Unsubscribe option, or the Updates or Promotions
  * category) adds a Trust section to the conversation group and puts the
  * sender's history and one-click decisions first in the person group. Other
  * conversations show Trust only when something needs a look.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, reply = null, onOpenThread, onShowMessage, onShowLink, availability, hasProposedTimes = false, assist, related, chat, sender, idle = null, onKeyDown }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, reply = null, onOpenThread, onShowMessage, onShowLink, availability, hasProposedTimes = false, actions, assist, related, chat, sender, idle = null, onKeyDown }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
@@ -77,6 +74,9 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
   availability?: ReactNode;
   /** An explicit offer remains actionable even when the message has bulk-mail signals. */
   hasProposedTimes?: boolean;
+  /** Buttons for the conversation beside Find Times, such as Delegate Work. */
+  actions?: ReactNode;
+  /** The brief and suggestions. */
   assist?: ReactNode;
   /** Sections about the conversation and the selected person. */
   related?(person: ContextPerson | null, meetingPeople: { email: string; name: string }[]): ReactNode;
@@ -243,26 +243,20 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
     }
     return [...merged.values()].sort((left, right) => right.sentAt.localeCompare(left.sentAt));
   }, [timeline, senderHistory.history, detail?.thread.id]);
-  // Recent emails names the person by first name, when they have one.
-  const personName = displayName && !displayName.includes("@") ? participantName(displayName).split(/\s+/)[0] : undefined;
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   return (
     <aside className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
       {detail && reply ? reply.checks : null}
       {detail ? null : idle}
-      {detail ? <div className="context-ai-row">{bulk && !reply && !hasProposedTimes ? null : availability}{assist}</div> : null}
+      {detail ? <div className="context-ai-row">
+        {email ? <PersonSummary key={email} email={email} name={selected?.name ?? recipient?.name ?? null} profile={loadedEmail === email ? profile : null} /> : null}
+        {bulk && !reply && !hasProposedTimes ? null : availability}{actions}{assist}
+      </div> : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
       {inbound ? <TrustSection key={inbound.id} message={inbound} subject={detail?.thread.subject ?? ""} bulk={Boolean(bulk)} prior={inboundPrior}
         onShowLink={onShowLink && detail ? (link) => onShowLink(detail.thread.id, inbound.id, link) : undefined} /> : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
-      {detail && reply ? (recipient ? (
-        <RecipientSummary
-          email={recipient.email}
-          name={recipient.name}
-          profile={loadedEmail === email ? profile : null}
-        />
-      ) : <p className="context-status compose-context-empty">Add a recipient to see your history with them.</p>) : null}
-      {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} onShowMessage={showMessage} /> : null}
+      {detail && reply && !recipient ? <p className="context-status compose-context-empty">Add a recipient to see your history with them.</p> : null}
       {senderTarget && sender ? (
         // Waits for the sender's mail so the rows arrive together.
         senderHistory.settled ? (
@@ -272,7 +266,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
             closing={<SenderDecisions key={detail?.thread.id} target={senderTarget} history={senderHistory.history} actions={sender} />}
           />
         ) : null
-      ) : person && recentEmails.length > 0 ? <RecentEmailsSection items={recentEmails} person={personName} onOpenThread={onOpenThread} /> : null}
+      ) : person && recentEmails.length > 0 ? <RecentEmailsSection items={recentEmails} onOpenThread={onOpenThread} /> : null}
+      {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} onShowMessage={showMessage} /> : null}
       {error ? <p className="contacts-error" role="alert">{error}</p> : null}
       {detail && chat ? <div className="context-chat-dock">{chat(person)}</div> : null}
     </aside>

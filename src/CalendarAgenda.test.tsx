@@ -82,12 +82,12 @@ describe("CalendarAgenda for tomorrow", () => {
     const next = (id: string, hour: number) => ({
       ...event(id, 0, 0), start: new Date(2026, 9, 24, hour).toISOString(), end: new Date(2026, 9, 24, hour + 1).toISOString(),
     });
-    renderAgenda([next("Dentist", 9), next("Gym", 7), next("Call", 11), next("Dinner", 19), event("Today only", 9, 10)], { today: tomorrow, tomorrow: true });
+    renderAgenda([next("Dentist", 9), next("Gym", 7), next("Call", 11), next("Lunch", 12), next("Dinner", 19), event("Today only", 9, 10)], { today: tomorrow, tomorrow: true });
 
     const section = screen.getByRole("region", { name: "Tomorrow" });
     expect(agendaOrder(section)).toEqual(["Gym", "Dentist", "Call"]);
-    fireEvent.click(within(section).getByRole("button", { name: "Show 1 more" }));
-    expect(agendaOrder(section)).toEqual(["Gym", "Dentist", "Call", "Dinner"]);
+    fireEvent.click(within(section).getByRole("button", { name: "Show 2 more" }));
+    expect(agendaOrder(section)).toEqual(["Gym", "Dentist", "Call", "Lunch", "Dinner"]);
   });
 
   it("says when tomorrow is free", () => {

@@ -6,7 +6,7 @@ import { formatHistoryDate } from "./contactContext";
 import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, MessageTrust, SenderDeliveryPattern, SenderFamiliarity, SenderHistory, ThreadDetail } from "./domain";
 import type { SenderActions } from "./SenderSections";
 import { expectContextRows } from "./test/contextRows";
-import { recentEmailKind } from "./ContextSections";
+import { recentEmailKind, withoutReplyPrefix } from "./ContextSections";
 
 vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),senderHistory:vi.fn(),messageTrust:vi.fn(),senderFamiliarity:vi.fn(),confirmSenderDelivery:vi.fn(),forgetSenderDelivery:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
@@ -55,15 +55,17 @@ describe("ContextPanel",()=>{
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     const {rerender}=renderPanel();
     await personLoaded(bob.id);
-    // The reader picks people and shows their contact card, so the panel has neither.
+    // The panel opens by naming whom it is about; the reader picks people and keeps the full contact card.
     expect(screen.queryByRole("region",{name:"Contact"})).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading",{name:"Bob Lee"})).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region",{name:"About Bob Lee"})).getByRole("heading",{name:"Bob Lee"})).toBeInTheDocument();
     expect(screen.queryByRole("group",{name:"Conversation participants"})).not.toBeInTheDocument();
     expect(screen.queryByRole("heading",{name:"Participants"})).not.toBeInTheDocument();
 
     rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="Jane@Example.com" onOpenThread={vi.fn()}/>);
     await personLoaded(jane.id);
     expect(mailClient.resolveContactIds).toHaveBeenCalledWith(["jane@example.com"]);
+    expect(await screen.findByRole("heading",{name:"Jane Doe"})).toBeInTheDocument();
+    expect(screen.queryByRole("heading",{name:"Bob Lee"})).not.toBeInTheDocument();
 
     // Someone who is not on this conversation falls back to the latest sender.
     rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="stranger@example.com" onOpenThread={vi.fn()}/>);
@@ -219,13 +221,13 @@ describe("ContextPanel",()=>{
     expect(onOpenThread).toHaveBeenCalledWith("thread-2");
   });
 
-  it("puts Find Times and the brief in one row at the top while reading",async()=>{
+  it("puts the person, then Find Times, Delegate Work, and the brief in one block at the top while reading",async()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
-    renderPanel({availability:<section aria-label="Availability">times</section>,assist:<section aria-label="Brief">brief</section>});
+    renderPanel({availability:<section aria-label="Availability">times</section>,actions:<section aria-label="Delegate">delegate</section>,assist:<section aria-label="Brief">brief</section>});
     const row=screen.getByRole("region",{name:"Availability"}).parentElement!;
     expect(row).toHaveClass("context-ai-row");
-    expect(within(row).getAllByRole("region").map((region)=>region.getAttribute("aria-label"))).toEqual(["Availability","Brief"]);
+    expect(within(row).getAllByRole("region").map((region)=>region.getAttribute("aria-label"))).toEqual(["About Bob Lee","Availability","Delegate","Brief"]);
     await personLoaded(bob.id);
   });
 
@@ -236,7 +238,7 @@ describe("ContextPanel",()=>{
     const panel=screen.getByRole("complementary",{name:"Conversation context"});
     await within(panel).findByRole("region",{name:"Recent emails"});
     const regions=within(panel).getAllByRole("region").map((region)=>region.getAttribute("aria-label")??region.textContent?.split(/\d/)[0].trim());
-    expect(regions).toEqual(["Brief","Conversation tasks","Recent emails"]);
+    expect(regions).toEqual(["About Bob Lee","Brief","Conversation tasks","Recent emails"]);
   });
 
   it("uses one heading layout: plain label, then a count badge and actions at the end",async()=>{
@@ -245,8 +247,8 @@ describe("ContextPanel",()=>{
     renderPanel();
     const history=await screen.findByRole("region",{name:"Recent emails"});
     const header=history.querySelector<HTMLElement>(".context-section-header")!;
-    // The heading names whom the emails are with; the region keeps its plain name.
-    expect(within(header).getByRole("button",{name:"Recent emails with Bob"})).toHaveAttribute("aria-expanded","true");
+    // The person header already says whom the emails are with.
+    expect(within(header).getByRole("button",{name:"Recent emails"})).toHaveAttribute("aria-expanded","true");
     expect(header.querySelector("h3 .context-count")).toBeNull();
     expect(header.querySelector("h3 svg:not(.lucide-chevron-down):not(.lucide-chevron-right)")).toBeNull();
     expect(header.querySelector(".context-section-header-actions .context-count")).toHaveTextContent("2");
@@ -263,7 +265,7 @@ describe("ContextPanel",()=>{
     const history=await screen.findByRole("region",{name:"Recent emails"});
     expectContextRows(history);
     const rows=[...history.querySelectorAll(".context-row")];
-    expect(rows.map((row)=>row.querySelector(".context-row-title")?.textContent)).toEqual(["Accepted: Offsite planning","Re: Budget review","Automatic reply: Budget review"]);
+    expect(rows.map((row)=>row.querySelector(".context-row-title")?.textContent)).toEqual(["Accepted: Offsite planning","Budget review","Automatic reply: Budget review"]);
     expect(rows[0].querySelector(".lucide-calendar-check")).not.toBeNull();
     expect(rows[1].querySelector(".lucide-mail")).not.toBeNull();
     expect(rows[2]).toHaveClass("context-row-automatic");
@@ -280,6 +282,27 @@ describe("ContextPanel",()=>{
     expect(recentEmailKind("Accepted offer details")).toBe("email");
     expect(recentEmailKind("Re: Accepted: Standup")).toBe("email");
     expect(recentEmailKind("Automatic replies are annoying")).toBe("email");
+  });
+
+  it("drops only leading reply and forward markers from a Recent emails subject",()=>{
+    expect(withoutReplyPrefix("Re: Budget review")).toBe("Budget review");
+    expect(withoutReplyPrefix("RE: FW: Fwd:  Budget review")).toBe("Budget review");
+    expect(withoutReplyPrefix("Re[2]: Budget review")).toBe("Budget review");
+    // Markers inside the subject, words that only start like one, and a subject that is only a marker stay.
+    expect(withoutReplyPrefix("Budget review (Re: Q3)")).toBe("Budget review (Re: Q3)");
+    expect(withoutReplyPrefix("Remote work policy")).toBe("Remote work policy");
+    expect(withoutReplyPrefix("Re:")).toBe("Re:");
+  });
+
+  it("shows a single extra row instead of a Show 1 more link",async()=>{
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    const file=(index:number)=>({messageId:`m${index}`,threadId:"thread-9",subject:"Report",sentAt:`2026-0${index}-02T15:00:00Z`,attachment:{id:`a${index}`,filename:`Report ${index}.pdf`,mimeType:"application/pdf",size:2048}});
+    vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[6,5,4,3,2,1].map(file),total:6});
+    renderPanel();
+    const files=await screen.findByRole("region",{name:"Files"});
+    expect(files.querySelectorAll(".context-row")).toHaveLength(6);
+    expect(within(files).queryByRole("button",{name:/^Show \d+ more$/})).not.toBeInTheDocument();
   });
 
   it("decodes HTML entities in recent email snippets",async()=>{
@@ -341,7 +364,7 @@ describe("ContextPanel",()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     const file=(index:number)=>({messageId:`m${index}`,threadId:index===1?"thread-1":"thread-9",subject:"Report",sentAt:`2026-0${index}-02T15:00:00Z`,attachment:{id:`a${index}`,filename:`Report ${index}.pdf`,mimeType:"application/pdf",size:2048}});
-    vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[file(4),file(3),file(2),file(1)],total:30});
+    vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[file(7),file(6),file(5),file(4),file(3),file(2),file(1)],total:30});
     vi.mocked(mailClient.openAttachment).mockResolvedValue();
     const onShowMessage=vi.fn();
     renderPanel({onShowMessage});
@@ -359,9 +382,9 @@ describe("ContextPanel",()=>{
     expect(files.querySelector(".context-row-icon [data-attachment-kind]")).toHaveAttribute("data-attachment-kind","document");
     expect(mailClient.contactFiles).toHaveBeenCalledWith(bob.id,50);
     expect(files).toHaveTextContent("30");
-    expect(files).toHaveTextContent("Newest 4 of 30");
+    expect(files).toHaveTextContent("Newest 7 of 30");
     expect(within(files).queryByRole("button",{name:/^Report 1\.pdf/})).not.toBeInTheDocument();
-    fireEvent.click(within(files).getByRole("button",{name:"Show 1 more"}));
+    fireEvent.click(within(files).getByRole("button",{name:"Show 2 more"}));
     fireEvent.click(within(files).getByRole("button",{name:/^Report 1\.pdf/}));
     expect(mailClient.openAttachment).toHaveBeenCalledWith("m1","a1");
     fireEvent.click(within(files).getByRole("button",{name:"Show the email with Report 4.pdf"}));
@@ -386,7 +409,7 @@ describe("ContextPanel",()=>{
   it("outlines all replies newest first without a filter or date range",async()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
-    const longDetail={thread:detail.thread,messages:Array.from({length:6},(_,index)=>({
+    const longDetail={thread:detail.thread,messages:Array.from({length:8},(_,index)=>({
       id:`m${index}`,
       sender:index%3===2?"You <you@example.com>":"Bob Lee <bob@example.com>",
       recipients:[index%3===2?"Bob Lee <bob@example.com>":"You <you@example.com>"],
@@ -399,24 +422,24 @@ describe("ContextPanel",()=>{
 
     const outline=await screen.findByRole("region",{name:"This thread"});
     expectContextRows(outline);
-    expect(outline.querySelector(".context-section-header .context-count")).toHaveTextContent("6");
+    expect(outline.querySelector(".context-section-header .context-count")).toHaveTextContent("8");
     expect(outline.querySelector(".context-section-note")).not.toBeInTheDocument();
     expect(within(outline).queryByRole("group",{name:"Thread outline filter"})).not.toBeInTheDocument();
     expect(within(outline).queryByRole("button",{name:"All"})).not.toBeInTheDocument();
     expect(within(outline).queryByRole("button",{name:/Your replies/})).not.toBeInTheDocument();
     for (const row of outline.querySelectorAll(".context-row")) expect(row.querySelector(".context-row-icon svg.lucide-mail")).not.toBeNull();
     const rows=()=>within(outline).getAllByRole("button",{name:/Message number/});
-    expect(rows().map((row)=>row.textContent)).toEqual([expect.stringContaining("Message number 5"),expect.stringContaining("Message number 4"),expect.stringContaining("Message number 3")]);
+    expect(rows().map((row)=>row.textContent)).toEqual([7,6,5,4,3].map(index=>expect.stringContaining(`Message number ${index}`)));
     fireEvent.click(within(outline).getByRole("button",{name:"Show 3 more"}));
-    expect(rows().map((row)=>row.textContent)).toEqual([5,4,3,2,1,0].map(index=>expect.stringContaining(`Message number ${index}`)));
-    expect(rows()[0]).toHaveTextContent(/^You/);
-    expect(rows()[1]).toHaveTextContent(/^Bob Lee/);
-    expect(rows()[3]).toHaveTextContent(/^You/);
-    expect(rows()[3]).toHaveTextContent(formatHistoryDate(longDetail.messages[2].sentAt));
-    fireEvent.click(rows()[3]);
+    expect(rows().map((row)=>row.textContent)).toEqual([7,6,5,4,3,2,1,0].map(index=>expect.stringContaining(`Message number ${index}`)));
+    expect(rows()[2]).toHaveTextContent(/^You/);
+    expect(rows()[3]).toHaveTextContent(/^Bob Lee/);
+    expect(rows()[5]).toHaveTextContent(/^You/);
+    expect(rows()[5]).toHaveTextContent(formatHistoryDate(longDetail.messages[2].sentAt));
+    fireEvent.click(rows()[5]);
     expect(onShowMessage).toHaveBeenCalledWith("thread-1","m2");
     fireEvent.click(within(outline).getByRole("button",{name:"Show fewer"}));
-    expect(rows()).toHaveLength(3);
+    expect(rows()).toHaveLength(5);
     cleanup();
 
     renderPanel();
@@ -494,7 +517,7 @@ describe("ContextPanel",()=>{
       await personLoaded(carol.id);
     });
 
-    it("puts the checks and availability first, and the recipient card with the person sections below the conversation's",async()=>{
+    it("puts the checks first, then the recipient with availability, and the person sections below the conversation's",async()=>{
       vi.mocked(mailClient.contactTimeline).mockResolvedValue([timelineItem("thread-2","Budget review")]);
       renderPanel({
         reply:reply([toBob],{
@@ -508,8 +531,8 @@ describe("ContextPanel",()=>{
       await within(panel).findByRole("region",{name:"Recent emails"});
       await within(panel).findByRole("region",{name:"About Bob Lee"});
       const regions=within(panel).getAllByRole("region").map((region)=>region.getAttribute("aria-label")??region.textContent?.split(/\d/)[0].trim());
-      expect(regions).toEqual(["Before you send","Availability","Brief","Conversation tasks","About Bob Lee","Recent emails"]);
-      // The brief stays open below the card rather than collapsing while replying.
+      expect(regions).toEqual(["Before you send","About Bob Lee","Availability","Brief","Conversation tasks","Recent emails"]);
+      // The brief stays open below the recipient rather than collapsing while replying.
       expect(within(panel).getByRole("region",{name:"Brief"})).toBeVisible();
     });
 
@@ -522,10 +545,10 @@ describe("ContextPanel",()=>{
       ])));
     });
 
-    it("leaves the recipient sections and the activity lookup out while reading",async()=>{
+    it("names the person read, and leaves the recipient prompt and the activity lookup out while reading",async()=>{
       renderPanel();
       await personLoaded(bob.id);
-      expect(screen.queryByRole("region",{name:/^About /})).not.toBeInTheDocument();
+      expect(screen.getAllByRole("region",{name:/^About /}).map((region)=>region.getAttribute("aria-label"))).toEqual(["About Bob Lee"]);
       expect(screen.queryByText("Add a recipient to see your history with them.")).not.toBeInTheDocument();
       expect(mailClient.contactActivity).not.toHaveBeenCalled();
     });
@@ -570,7 +593,7 @@ describe("ContextPanel",()=>{
       const from=await within(panel).findByRole("region",{name:"Recent emails"});
       await within(panel).findByRole("region",{name:"Sender checks"});
       const regions=within(panel).getAllByRole("region").map((region)=>region.getAttribute("aria-label")??region.textContent?.split(/\d/)[0].trim());
-      expect(regions).toEqual(["Brief","Conversation tasks","Sender checks","Recent emails"]);
+      expect(regions).toEqual(["About Launch News","Brief","Conversation tasks","Sender checks","Recent emails"]);
       expect(mailClient.senderHistory).toHaveBeenCalledWith("you@example.com",news,20);
       // One simple card: no separate sender card or statistics line.
       expect(within(panel).queryByRole("region",{name:/^From /})).not.toBeInTheDocument();
