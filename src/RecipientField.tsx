@@ -3,7 +3,7 @@ import { Pin, PinOff, UserPlus, Users, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
 import { matchingGroups, memberCountLabel } from "./contactGroups";
-import { formatAddress, isEmailAddress, looksLikeCompleteAddress, normalizePastedEmailAddresses, parseAddress, splitAddressList, splitTypedAddresses } from "./emailAddress";
+import { formatAddress, isEmailAddress, isValidRecipient, looksLikeCompleteAddress, normalizePastedEmailAddresses, parseAddress, splitAddressList, splitTypedAddresses } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -37,6 +37,27 @@ function toChip(segment: string): Chip {
 
 function formatChip(chip: Chip): string {
   return formatAddress(chip.displayName, chip.email);
+}
+
+function chipKey(chip: Chip): string {
+  return chip.email.toLowerCase();
+}
+
+function isChip(value: unknown): value is Chip {
+  if (typeof value !== "object" || value === null) return false;
+  const { email, displayName } = value as Record<string, unknown>;
+  return typeof email === "string" && (displayName === null || typeof displayName === "string");
+}
+
+// A drag carries one chip, or every selected chip as an array.
+function parseDroppedChips(raw: string): Chip[] | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const list: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    return list.length > 0 && list.every(isChip) ? list : null;
+  } catch {
+    return null;
+  }
 }
 
 function mergeTyped(chips: Chip[], addresses: { email: string; name: string | null }[]): Chip[] {
@@ -92,10 +113,17 @@ export function RecipientField({ id, label, value, account, disabled, context, l
   const [activeIndex, setActiveIndex] = useState(-1);
   const [dragOver, setDragOver] = useState(false);
   const [groups, setGroups] = useState<ContactGroupRecipients[]>([]);
-  // Selected chips for cut/copy/delete; emails lowercased. Cleared when the
-  // draft text changes or the field's committed value is replaced from outside.
+  // Selected chips for cut/copy/delete/drag; emails lowercased. Cleared when
+  // the draft text changes, the input loses focus, or the field's committed
+  // value is replaced from outside.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  // The fixed end of a Shift-extended selection, and the end arrow keys move.
   const selectionAnchor = useRef<string | null>(null);
+  const selectionCursor = useRef<string | null>(null);
+  // A press on a chip that will select it on click. The press blurs the input
+  // and the click refocuses it; neither should clear the selection or open
+  // suggestions.
+  const chipPointer = useRef(false);
   // What choosing a group just added, until the next edit.
   const [groupNote, setGroupNote] = useState<string | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -135,6 +163,7 @@ export function RecipientField({ id, label, value, account, disabled, context, l
     setRejected(Boolean(parsed.draftText.trim()));
     setSelected(new Set());
     selectionAnchor.current = null;
+    selectionCursor.current = null;
   }, [value]);
 
   function emit(nextChips: Chip[], nextDraftText: string) {
@@ -148,27 +177,30 @@ export function RecipientField({ id, label, value, account, disabled, context, l
   function clearSelection() {
     if (selected.size) setSelected(new Set());
     selectionAnchor.current = null;
+    selectionCursor.current = null;
+  }
+
+  function removeChips(keys: Set<string>) {
+    emit(chips.filter((chip) => !keys.has(chipKey(chip))), draftText);
+    if ([...keys].some((key) => selected.has(key))) {
+      setSelected(new Set([...selected].filter((key) => !keys.has(key))));
+    }
+    if (selectionAnchor.current && keys.has(selectionAnchor.current)) selectionAnchor.current = null;
+    if (selectionCursor.current && keys.has(selectionCursor.current)) selectionCursor.current = null;
   }
 
   function removeChip(target: Chip) {
-    const key = target.email.toLowerCase();
-    emit(chips.filter((chip) => chip.email.toLowerCase() !== key), draftText);
-    if (selected.has(key)) {
-      const next = new Set(selected);
-      next.delete(key);
-      setSelected(next);
-      if (selectionAnchor.current === key) selectionAnchor.current = null;
-    }
+    removeChips(new Set([chipKey(target)]));
   }
 
   function removeSelectedChips() {
     if (!selected.size) return;
-    emit(chips.filter((chip) => !selected.has(chip.email.toLowerCase())), draftText);
+    emit(chips.filter((chip) => !selected.has(chipKey(chip))), draftText);
     clearSelection();
   }
 
   function selectedChips(): Chip[] {
-    return chips.filter((chip) => selected.has(chip.email.toLowerCase()));
+    return chips.filter((chip) => selected.has(chipKey(chip)));
   }
 
   function clipboardTextForSelection(): string | null {
@@ -177,27 +209,31 @@ export function RecipientField({ id, label, value, account, disabled, context, l
     return targets.map(formatChip).join(", ");
   }
 
-  function selectChip(chip: Chip, mode: "replace" | "toggle" | "range") {
-    const key = chip.email.toLowerCase();
-    if (mode === "toggle") {
-      const next = new Set(selected);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      setSelected(next);
-      selectionAnchor.current = key;
+  // Selects chips[index], or, when extending, every chip between the anchor
+  // and it. The chip at `index` becomes the end arrow keys move from.
+  function selectAt(index: number, extend: boolean) {
+    const key = chipKey(chips[index]);
+    selectionCursor.current = key;
+    const anchorIndex = extend && selectionAnchor.current
+      ? chips.findIndex((chip) => chipKey(chip) === selectionAnchor.current)
+      : -1;
+    if (anchorIndex >= 0) {
+      const [from, to] = anchorIndex < index ? [anchorIndex, index] : [index, anchorIndex];
+      setSelected(new Set(chips.slice(from, to + 1).map(chipKey)));
       return;
-    }
-    if (mode === "range" && selectionAnchor.current) {
-      const start = chips.findIndex((item) => item.email.toLowerCase() === selectionAnchor.current);
-      const end = chips.findIndex((item) => item.email.toLowerCase() === key);
-      if (start >= 0 && end >= 0) {
-        const [from, to] = start < end ? [start, end] : [end, start];
-        setSelected(new Set(chips.slice(from, to + 1).map((item) => item.email.toLowerCase())));
-        return;
-      }
     }
     setSelected(new Set([key]));
     selectionAnchor.current = key;
+  }
+
+  function toggleChip(chip: Chip) {
+    const key = chipKey(chip);
+    const next = new Set(selected);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setSelected(next);
+    selectionAnchor.current = key;
+    selectionCursor.current = key;
   }
 
   function writeClipboard(event: ReactClipboardEvent, text: string) {
@@ -205,12 +241,44 @@ export function RecipientField({ id, label, value, account, disabled, context, l
     event.clipboardData.setData("text/plain", text);
   }
 
+  // WebKit disables Cut and Copy, and sends no clipboard event, while the
+  // input has no text selected, so the shortcuts write the clipboard here.
+  // A cut removes the chips only once the write succeeds, and only if the
+  // field hasn't changed in the meantime.
+  function copySelectionWithShortcut(cut: boolean): boolean {
+    const text = clipboardTextForSelection();
+    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+    if (!text || !clipboard?.writeText) return false;
+    const before = lastEmitted.current;
+    const remaining = chips.filter((chip) => !selected.has(chipKey(chip)));
+    const keptDraftText = draftText;
+    void clipboard.writeText(text).then(() => {
+      if (!cut || lastEmitted.current !== before) return;
+      emit(remaining, keptDraftText);
+      setSelected(new Set());
+      selectionAnchor.current = null;
+      selectionCursor.current = null;
+    }, logBackgroundFailure(cut ? "Cut recipients" : "Copy recipients"));
+    return true;
+  }
+
+  function onChipMouseDown(event: ReactMouseEvent) {
+    if (disabled || (event.target as Element).closest(".recipient-chip-remove")) return;
+    chipPointer.current = true;
+    // A press that never becomes a click (released elsewhere) must not keep
+    // suppressing the next blur or focus. Click runs before this timeout.
+    window.addEventListener("mouseup", () => setTimeout(() => { chipPointer.current = false; }, 0), { once: true });
+  }
+
   function onChipClick(chip: Chip, event: ReactMouseEvent) {
     if (disabled) return;
     event.preventDefault();
-    const mode = event.shiftKey ? "range" : (event.metaKey || event.ctrlKey) ? "toggle" : "replace";
-    selectChip(chip, mode);
+    if (event.shiftKey) selectAt(chips.indexOf(chip), true);
+    else if (event.metaKey || event.ctrlKey) toggleChip(chip);
+    else selectAt(chips.indexOf(chip), false);
+    chipPointer.current = true;
     inputRef.current?.focus();
+    chipPointer.current = false;
   }
 
   function inputHasTextSelection(): boolean {
@@ -228,6 +296,12 @@ export function RecipientField({ id, label, value, account, disabled, context, l
   }
 
   const invalidChips = chips.filter((chip) => !isEmailAddress(chip.email));
+  const selectedList = selectedChips();
+  const selectionAnnouncement = selectedList.length === 1
+    ? `${selectedList[0].displayName ?? selectedList[0].email} selected in ${label}`
+    : selectedList.length > 1
+      ? `${selectedList.length} recipients selected in ${label}`
+      : "";
   const hint = rejected && draftText.trim()
     ? `“${draftText.trim()}” isn't an email address. Choose a contact or type a full address.`
     : invalidChips.length
@@ -355,17 +429,10 @@ export function RecipientField({ id, label, value, account, disabled, context, l
         const origin = dragOrigin;
         dragOrigin = null;
         if (!raw || origin?.field === id) return;
-        let dropped: Chip;
-        try {
-          dropped = JSON.parse(raw);
-          if (typeof dropped?.email !== "string" ||
-              (dropped.displayName !== null && typeof dropped.displayName !== "string")) return;
-        } catch {
-          return;
-        }
-        if (!chips.some((chip) => chip.email.toLowerCase() === dropped.email.toLowerCase())) {
-          emit([...chips, dropped], draftText);
-        }
+        const dropped = parseDroppedChips(raw);
+        if (!dropped) return;
+        const next = dropped.reduce(mergeChip, chips);
+        if (next !== chips) emit(next, draftText);
         origin?.remove();
       }}
     >
@@ -376,20 +443,23 @@ export function RecipientField({ id, label, value, account, disabled, context, l
       )}
       <div className="recipient-chip-row">
         {chips.map((chip) => {
-          const key = chip.email.toLowerCase();
-          const isSelected = selected.has(key);
+          const isSelected = selected.has(chipKey(chip));
           const invalid = invalidChips.includes(chip);
           return (
           <span
             key={chip.email}
             className={`recipient-chip${invalid ? " invalid" : ""}${isSelected ? " selected" : ""}`}
-            aria-selected={isSelected}
             draggable={!disabled}
+            onMouseDown={onChipMouseDown}
             onClick={(event) => onChipClick(chip, event)}
             onDragStart={(event) => {
-              dragOrigin = { field: id, remove: () => removeChip(chip) };
-              event.dataTransfer.setData("application/x-threestrands-recipient", JSON.stringify(chip));
-              event.dataTransfer.setData("text/plain", formatChip(chip));
+              chipPointer.current = false;
+              // Dragging a selected chip carries the whole selection.
+              const moving = isSelected ? selectedChips() : [chip];
+              const keys = new Set(moving.map(chipKey));
+              dragOrigin = { field: id, remove: () => removeChips(keys) };
+              event.dataTransfer.setData("application/x-threestrands-recipient", JSON.stringify(moving));
+              event.dataTransfer.setData("text/plain", moving.map(formatChip).join(", "));
               event.dataTransfer.effectAllowed = "move";
             }}
             onDragEnd={() => {
@@ -445,13 +515,16 @@ export function RecipientField({ id, label, value, account, disabled, context, l
             query(event.target.value);
           }}
           onFocus={() => {
-            setDismissed(false);
             loadGroups();
+            // Clicking a chip selects it; that shouldn't open suggestions.
+            if (chipPointer.current) return;
+            setDismissed(false);
             query(draftText);
           }}
           onBlur={() => {
             setDismissed(true);
             commitDraftText();
+            if (!chipPointer.current) clearSelection();
           }}
           onCopy={(event) => {
             if (inputHasTextSelection()) return;
@@ -469,13 +542,19 @@ export function RecipientField({ id, label, value, account, disabled, context, l
           onPaste={(event) => {
             const raw = event.clipboardData.getData("text");
             const pasted = normalizePastedEmailAddresses(raw);
-            const combined = `${draftText}${pasted}`;
-            // Lists always go through the custom path. A lone complete address
-            // does too, so cutting one badge and pasting it into another field
-            // commits immediately instead of waiting for Enter or blur.
+            // What the input would hold after a native paste: the pasted text
+            // replaces any selected text at the caret.
+            const input = event.currentTarget;
+            const start = input.selectionStart ?? draftText.length;
+            const before = draftText.slice(0, start);
+            const after = draftText.slice(input.selectionEnd ?? start);
+            const combined = `${before}${pasted}${after}`;
+            // Lists always go through the custom path. So does a lone address
+            // pasted as a word of its own, so a badge cut from one field pastes
+            // into another as a badge right away. Anything else pastes natively.
             if (pasted === raw && !/[,;\n]/.test(pasted)) {
-              const token = combined.trim();
-              if (!token || !looksLikeCompleteAddress(parseAddress(token).email)) return;
+              const standalone = (!before || /\s$/.test(before)) && (!after || /^\s/.test(after));
+              if (!standalone || !isValidRecipient(pasted)) return;
             }
             event.preventDefault();
             clearSelection();
@@ -489,11 +568,37 @@ export function RecipientField({ id, label, value, account, disabled, context, l
               commitDraftText();
               return;
             }
-            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a" && draftText === "" && chips.length > 0) {
+            const mod = (event.metaKey || event.ctrlKey) && !event.altKey;
+            const letter = event.key.toLowerCase();
+            if (mod && letter === "a" && draftText === "" && chips.length > 0) {
               event.preventDefault();
-              setSelected(new Set(chips.map((chip) => chip.email.toLowerCase())));
-              selectionAnchor.current = chips[0]?.email.toLowerCase() ?? null;
+              setSelected(new Set(chips.map(chipKey)));
+              selectionAnchor.current = chipKey(chips[0]);
+              selectionCursor.current = chipKey(chips[chips.length - 1]);
               return;
+            }
+            if (mod && !event.shiftKey && (letter === "c" || letter === "x") && selected.size > 0 && !inputHasTextSelection()) {
+              if (copySelectionWithShortcut(letter === "x")) {
+                event.preventDefault();
+                return;
+              }
+            }
+            // Arrow keys move from the caret onto the chips and between them;
+            // Shift extends the selection.
+            if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !event.metaKey && !event.ctrlKey && !event.altKey
+                && chips.length > 0 && !inputHasTextSelection()) {
+              const cursorIndex = selected.size ? chips.findIndex((chip) => chipKey(chip) === selectionCursor.current) : -1;
+              if (event.key === "ArrowLeft" && (selected.size > 0 || inputRef.current?.selectionStart === 0)) {
+                event.preventDefault();
+                selectAt(cursorIndex < 0 ? chips.length - 1 : Math.max(cursorIndex - 1, 0), event.shiftKey);
+                return;
+              }
+              if (event.key === "ArrowRight" && selected.size > 0) {
+                event.preventDefault();
+                if (cursorIndex >= 0 && cursorIndex + 1 < chips.length) selectAt(cursorIndex + 1, event.shiftKey);
+                else if (!event.shiftKey) clearSelection();
+                return;
+              }
             }
             if (event.key === ",") {
               event.preventDefault();
@@ -627,6 +732,8 @@ export function RecipientField({ id, label, value, account, disabled, context, l
     {/* Below the field's row, so the chips stay aligned with the label. */}
     {hint && <p id={hintId} className="recipient-field-hint" role="alert">{hint}</p>}
     {groupNote && <p className="recipient-group-note" role="status">{groupNote}</p>}
+    {/* Chips aren't focusable, so selecting them is announced from here. */}
+    <span className="sr-only" aria-live="polite">{selectionAnnouncement}</span>
     </>
   );
 }

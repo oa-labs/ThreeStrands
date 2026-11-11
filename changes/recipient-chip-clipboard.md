@@ -1,2 +1,2 @@
 ### Improved
-- Select recipient badges in **To**, **Cc**, or **Bcc**, then cut, copy, or paste them between fields — or press <kbd>⌘/Ctrl + a</kbd> to select every badge in the focused field.
+- Select recipient badges in **To**, **Cc**, or **Bcc** by clicking them, with the arrow keys, or with <kbd>⌘/Ctrl + a</kbd>, then cut, copy, paste, delete, or drag them between fields together.

@@ -2031,57 +2031,210 @@ describe("Composer recipient autocomplete", () => {
     }
   });
 
-  it("cuts selected recipient badges and pastes them into another field", () => {
-    render(<Composer draft={{ ...draft, to: "Ann <ann@example.com>, bob@example.com, keep@example.com", cc: "", bcc: "" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(screen.getByRole("button", { name: "To" }));
-    const to = screen.getByRole("textbox", { name: "To" });
-    const bcc = screen.getByRole("textbox", { name: "Bcc" });
-    fireEvent.click(screen.getByText("Ann").closest(".recipient-chip")!);
-    fireEvent.click(screen.getByText("bob@example.com").closest(".recipient-chip")!, { metaKey: true });
-    expect(screen.getByText("Ann").closest(".recipient-chip")).toHaveClass("selected");
-    expect(screen.getByText("bob@example.com").closest(".recipient-chip")).toHaveClass("selected");
+  describe("recipient badge selection and clipboard", () => {
+    function renderRecipients(to: string) {
+      render(<Composer draft={{ ...draft, to, cc: "", bcc: "" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+      fireEvent.click(screen.getByRole("button", { name: "To" }));
+      return { to: screen.getByRole("textbox", { name: "To" }), bcc: screen.getByRole("textbox", { name: "Bcc" }) };
+    }
+    const fieldOf = (input: HTMLElement) => input.closest(".compose-field") as HTMLElement;
+    const badge = (input: HTMLElement, name: string) => within(fieldOf(input)).getByRole("button", { name: `Remove ${name}` }).closest(".recipient-chip")!;
+    const hasBadge = (input: HTMLElement, name: string) => within(fieldOf(input)).queryByRole("button", { name: `Remove ${name}` }) !== null;
+    function clipboardEventData() {
+      const store = new Map<string, string>();
+      return {
+        store,
+        clipboardData: {
+          setData: (type: string, value: string) => store.set(type, value),
+          // jsdom does not alias "text" to "text/plain" the way browsers do.
+          getData: (type: string) => store.get(type) ?? store.get(type === "text" ? "text/plain" : type) ?? "",
+        },
+      };
+    }
+    function mockSystemClipboard() {
+      const writeText = vi.fn(async (_text: string) => {});
+      Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+      return writeText;
+    }
+    afterEach(() => {
+      Reflect.deleteProperty(navigator, "clipboard");
+    });
 
-    const store = new Map<string, string>();
-    const clipboardData = {
-      setData: (type: string, value: string) => store.set(type, value),
-      // jsdom does not alias "text" to "text/plain" the way browsers do.
-      getData: (type: string) => store.get(type) ?? store.get(type === "text" ? "text/plain" : type) ?? "",
-    };
-    fireEvent.cut(to, { clipboardData });
-    expect(store.get("text/plain")).toBe("Ann <ann@example.com>, bob@example.com");
-    expect(screen.queryByRole("button", { name: "Remove Ann" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Remove bob@example.com" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove keep@example.com" })).toBeInTheDocument();
+    it("cuts selected badges from the Edit menu and pastes them into another field", () => {
+      const { to, bcc } = renderRecipients("Ann <ann@example.com>, bob@example.com, keep@example.com");
+      fireEvent.click(badge(to, "Ann"));
+      fireEvent.click(badge(to, "bob@example.com"), { metaKey: true });
+      expect(screen.getByText("2 recipients selected in To")).toBeInTheDocument();
 
-    fireEvent.paste(bcc, { clipboardData });
-    expect(within(bcc.closest(".compose-field")!).getByRole("button", { name: "Remove Ann" })).toBeInTheDocument();
-    expect(within(bcc.closest(".compose-field")!).getByRole("button", { name: "Remove bob@example.com" })).toBeInTheDocument();
-  });
+      const { store, clipboardData } = clipboardEventData();
+      fireEvent.cut(to, { clipboardData });
+      expect(store.get("text/plain")).toBe("Ann <ann@example.com>, bob@example.com");
+      expect(hasBadge(to, "Ann")).toBe(false);
+      expect(hasBadge(to, "bob@example.com")).toBe(false);
+      expect(hasBadge(to, "keep@example.com")).toBe(true);
 
-  it("selects every badge with Mod+A, copies without removing, and pastes a single cut badge immediately", () => {
-    render(<Composer draft={{ ...draft, to: "a@example.com, b@example.com", cc: "", bcc: "" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(screen.getByRole("button", { name: "To" }));
-    const to = screen.getByRole("textbox", { name: "To" });
-    const bcc = screen.getByRole("textbox", { name: "Bcc" });
-    fireEvent.keyDown(to, { key: "a", metaKey: true });
-    expect(screen.getByText("a@example.com").closest(".recipient-chip")).toHaveClass("selected");
-    expect(screen.getByText("b@example.com").closest(".recipient-chip")).toHaveClass("selected");
+      fireEvent.paste(bcc, { clipboardData });
+      expect(hasBadge(bcc, "Ann")).toBe(true);
+      expect(hasBadge(bcc, "bob@example.com")).toBe(true);
+    });
 
-    const store = new Map<string, string>();
-    const clipboardData = {
-      setData: (type: string, value: string) => store.set(type, value),
-      getData: (type: string) => store.get(type) ?? store.get(type === "text" ? "text/plain" : type) ?? "",
-    };
-    fireEvent.copy(to, { clipboardData });
-    expect(store.get("text/plain")).toBe("a@example.com, b@example.com");
-    expect(screen.getByRole("button", { name: "Remove a@example.com" })).toBeInTheDocument();
+    it("copies and cuts with the keyboard shortcuts, removing cut badges only after the clipboard write", async () => {
+      const writeText = mockSystemClipboard();
+      const { to, bcc } = renderRecipients("a@example.com, b@example.com");
+      expect(fireEvent.keyDown(to, { key: "a", metaKey: true })).toBe(false);
+      expect(screen.getByText("2 recipients selected in To")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("a@example.com").closest(".recipient-chip")!);
-    fireEvent.cut(to, { clipboardData });
-    expect(store.get("text/plain")).toBe("a@example.com");
-    fireEvent.paste(bcc, { clipboardData });
-    expect(within(bcc.closest(".compose-field")!).getByRole("button", { name: "Remove a@example.com" })).toBeInTheDocument();
-    expect(bcc).toHaveValue("");
+      expect(fireEvent.keyDown(to, { key: "c", metaKey: true })).toBe(false);
+      expect(writeText).toHaveBeenLastCalledWith("a@example.com, b@example.com");
+      await act(async () => {});
+      expect(hasBadge(to, "a@example.com")).toBe(true);
+
+      fireEvent.click(badge(to, "a@example.com"));
+      expect(fireEvent.keyDown(to, { key: "x", ctrlKey: true })).toBe(false);
+      expect(writeText).toHaveBeenLastCalledWith("a@example.com");
+      await act(async () => {});
+      expect(hasBadge(to, "a@example.com")).toBe(false);
+      expect(hasBadge(to, "b@example.com")).toBe(true);
+
+      const { clipboardData } = clipboardEventData();
+      clipboardData.setData("text/plain", "a@example.com");
+      fireEvent.paste(bcc, { clipboardData });
+      expect(hasBadge(bcc, "a@example.com")).toBe(true);
+      expect(bcc).toHaveValue("");
+    });
+
+    it("keeps the badges when the clipboard write fails", async () => {
+      const writeText = mockSystemClipboard();
+      writeText.mockRejectedValueOnce(new Error("denied"));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { to } = renderRecipients("a@example.com, b@example.com");
+      fireEvent.click(badge(to, "a@example.com"));
+      fireEvent.keyDown(to, { key: "x", metaKey: true });
+      await act(async () => {});
+      expect(hasBadge(to, "a@example.com")).toBe(true);
+    });
+
+    it("leaves copy and cut to the input when it has text selected", () => {
+      const writeText = mockSystemClipboard();
+      const { to } = renderRecipients("a@example.com, ");
+      fireEvent.click(badge(to, "a@example.com"));
+      fireEvent.change(to, { target: { value: "typed" } });
+      fireEvent.click(badge(to, "a@example.com"));
+      (to as HTMLInputElement).setSelectionRange(0, 5);
+      const { store, clipboardData } = clipboardEventData();
+      expect(fireEvent.keyDown(to, { key: "c", metaKey: true })).toBe(true);
+      expect(fireEvent.copy(to, { clipboardData })).toBe(true);
+      expect(fireEvent.cut(to, { clipboardData })).toBe(true);
+      expect(writeText).not.toHaveBeenCalled();
+      expect(store.size).toBe(0);
+      expect(hasBadge(to, "a@example.com")).toBe(true);
+    });
+
+    it("selects badges with the arrow keys and Shift-click, deletes the selection, and clears it with Escape", () => {
+      const { to } = renderRecipients("a@example.com, b@example.com, c@example.com");
+      fireEvent.keyDown(to, { key: "ArrowLeft" });
+      expect(screen.getByText("c@example.com selected in To")).toBeInTheDocument();
+      fireEvent.keyDown(to, { key: "ArrowLeft" });
+      expect(screen.getByText("b@example.com selected in To")).toBeInTheDocument();
+      fireEvent.keyDown(to, { key: "ArrowLeft", shiftKey: true });
+      expect(screen.getByText("2 recipients selected in To")).toBeInTheDocument();
+      fireEvent.keyDown(to, { key: "Escape" });
+      expect(screen.queryByText(/selected in To/)).not.toBeInTheDocument();
+
+      fireEvent.click(badge(to, "a@example.com"));
+      fireEvent.click(badge(to, "c@example.com"), { shiftKey: true });
+      expect(screen.getByText("3 recipients selected in To")).toBeInTheDocument();
+      fireEvent.click(badge(to, "c@example.com"));
+      fireEvent.keyDown(to, { key: "ArrowRight" });
+      expect(screen.queryByText(/selected in To/)).not.toBeInTheDocument();
+
+      fireEvent.click(badge(to, "a@example.com"));
+      fireEvent.click(badge(to, "b@example.com"), { metaKey: true });
+      fireEvent.keyDown(to, { key: "Delete" });
+      expect(hasBadge(to, "a@example.com")).toBe(false);
+      expect(hasBadge(to, "b@example.com")).toBe(false);
+      expect(hasBadge(to, "c@example.com")).toBe(true);
+      fireEvent.click(badge(to, "c@example.com"));
+      fireEvent.keyDown(to, { key: "Backspace" });
+      expect(hasBadge(to, "c@example.com")).toBe(false);
+    });
+
+    it("clears the selection on blur, except while a badge is being clicked, without opening suggestions", async () => {
+      const lookup = vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([]);
+      const { to } = renderRecipients("a@example.com, b@example.com");
+      act(() => to.blur());
+      // Let any lookup from the composer's initial focus settle first.
+      await act(async () => { vi.advanceTimersByTime(300); });
+      lookup.mockClear();
+      fireEvent.click(badge(to, "a@example.com"));
+      expect(to).toHaveFocus();
+      // A real press blurs the input before the click lands.
+      fireEvent.mouseDown(badge(to, "b@example.com"));
+      act(() => to.blur());
+      fireEvent.click(badge(to, "b@example.com"), { metaKey: true });
+      fireEvent.mouseUp(window);
+      expect(screen.getByText("2 recipients selected in To")).toBeInTheDocument();
+      await act(async () => { vi.advanceTimersByTime(300); });
+      expect(lookup).not.toHaveBeenCalled();
+
+      act(() => to.blur());
+      expect(screen.queryByText(/selected in To/)).not.toBeInTheDocument();
+      // Ordinary focus still looks up suggestions.
+      act(() => to.focus());
+      await act(async () => { vi.advanceTimersByTime(300); });
+      expect(lookup).toHaveBeenCalled();
+    });
+
+    it("drags every selected badge together", () => {
+      const { to, bcc } = renderRecipients("a@example.com, b@example.com, c@example.com");
+      fireEvent.click(badge(to, "a@example.com"));
+      fireEvent.click(badge(to, "c@example.com"), { metaKey: true });
+      const store = new Map<string, string>();
+      const dataTransfer = {
+        setData: (type: string, val: string) => store.set(type, val),
+        getData: (type: string) => store.get(type) ?? "",
+        dropEffect: "move", effectAllowed: "move",
+      };
+      const dragged = badge(to, "c@example.com");
+      fireEvent.dragStart(dragged, { dataTransfer });
+      expect(store.get("text/plain")).toBe("a@example.com, c@example.com");
+      fireEvent.drop(fieldOf(bcc), { dataTransfer });
+      fireEvent.dragEnd(dragged, { dataTransfer });
+      expect(hasBadge(bcc, "a@example.com")).toBe(true);
+      expect(hasBadge(bcc, "c@example.com")).toBe(true);
+      expect(hasBadge(to, "a@example.com")).toBe(false);
+      expect(hasBadge(to, "b@example.com")).toBe(true);
+      expect(hasBadge(to, "c@example.com")).toBe(false);
+    });
+
+    it("pastes at the caret, replacing selected text, and leaves a paste inside a word to the input", () => {
+      const { to } = renderRecipients("");
+      fireEvent.change(to, { target: { value: "old@example.com" } });
+      (to as HTMLInputElement).setSelectionRange(0, "old@example.com".length);
+      const replace = clipboardEventData();
+      replace.clipboardData.setData("text/plain", "new@example.com");
+      expect(fireEvent.paste(to, { clipboardData: replace.clipboardData })).toBe(false);
+      expect(hasBadge(to, "new@example.com")).toBe(true);
+      expect(hasBadge(to, "old@example.com")).toBe(false);
+      expect(to).toHaveValue("");
+
+      fireEvent.change(to, { target: { value: "foo" } });
+      const inside = clipboardEventData();
+      inside.clipboardData.setData("text/plain", "bob@example.com");
+      expect(fireEvent.paste(to, { clipboardData: inside.clipboardData })).toBe(true);
+      expect(hasBadge(to, "foobob@example.com")).toBe(false);
+      expect(to).toHaveValue("foo");
+
+      fireEvent.change(to, { target: { value: "Jane  tail" } });
+      (to as HTMLInputElement).setSelectionRange(5, 5);
+      const between = clipboardEventData();
+      between.clipboardData.setData("text/plain", "<jane@example.com>, x@example.com");
+      fireEvent.paste(to, { clipboardData: between.clipboardData });
+      expect(hasBadge(to, "Jane")).toBe(true);
+      expect(hasBadge(to, "x@example.com")).toBe(true);
+      expect(to).toHaveValue("tail");
+    });
   });
 
   it("leaves a cancelled or same-field drag in place and deduplicates a destination address", () => {
