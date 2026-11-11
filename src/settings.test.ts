@@ -7,6 +7,7 @@ import {
   MAX_AVAILABILITY_PROFILES,
   MAX_WORKING_WINDOWS,
   availabilityProfileId,
+  meetingAvailabilityProfileId,
   readAvailabilityPreferencesFor,
   readAvailabilityProfiles,
   saveAvailabilityProfiles,
@@ -92,6 +93,20 @@ describe("availability preferences", () => {
 });
 
 describe("availability profiles", () => {
+  it("uses type associations, explicit overrides, and account defaults without guessing hours", () => {
+    const profiles = { ...DEFAULT_AVAILABILITY_PROFILES, meetingTypeProfiles: { lunch: "default" } };
+    expect(meetingAvailabilityProfileId(profiles, null, undefined, "lunch")).toBe("default");
+    expect(meetingAvailabilityProfileId(profiles, null, undefined, "dinner")).toBeNull();
+    expect(meetingAvailabilityProfileId(profiles, null, "default", "dinner")).toBe("default");
+    expect(meetingAvailabilityProfileId(profiles, null, "deleted", "lunch")).toBe("default");
+    expect(meetingAvailabilityProfileId(profiles, null, undefined)).toBe("default");
+    saveAvailabilityProfiles(profiles);
+    expect(readAvailabilityProfiles()).toEqual(profiles);
+    expect(saveAvailabilityProfiles({ ...profiles, meetingTypeProfiles: { lunch: "missing" } })).toEqual(profiles);
+    localStorage.setItem("threestrands.settings.availabilityProfiles", JSON.stringify({ ...profiles, meetingTypeProfiles: { unknown: "default" } }));
+    expect(readAvailabilityProfiles()).toEqual(DEFAULT_AVAILABILITY_PROFILES);
+  });
+
   afterEach(() => localStorage.clear());
 
   const work = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/Chicago", slotIncrementMinutes: 30 };

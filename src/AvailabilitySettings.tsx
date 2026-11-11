@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Plus, X } from "lucide-react";
-import type { Account, AvailabilityPreferences, AvailabilityProfile, AvailabilityProfiles, AvailabilityWindow } from "./domain";
+import { MEETING_TYPES, type Account, type AvailabilityPreferences, type AvailabilityProfile, type AvailabilityProfiles, type AvailabilityWindow } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { InlineConfirm } from "./InlineConfirm";
 import {
@@ -63,6 +63,7 @@ export function deleteAvailabilityProfile(profiles: AvailabilityProfiles, id: st
   return {
     ...profiles,
     otherProfiles: profiles.otherProfiles.filter((profile) => profile.id !== id),
+    ...(profiles.meetingTypeProfiles ? { meetingTypeProfiles: Object.fromEntries(Object.entries(profiles.meetingTypeProfiles).filter(([, profileId]) => profileId !== id)) } : {}),
     accountDefaults: Object.fromEntries(Object.entries(profiles.accountDefaults).filter(([, profileId]) => profileId !== id)),
   };
 }
@@ -93,6 +94,7 @@ export function makeDefaultAvailabilityProfile(
       driveTimeBufferMinutes: chosen.driveTimeBufferMinutes,
     },
     profiles: {
+      ...profiles,
       defaultProfile: { id: chosen.id, name: chosen.name },
       otherProfiles: profiles.otherProfiles.map((profile) => profile.id === id ? previous : profile),
       accountDefaults: Object.fromEntries(Object.entries(profiles.accountDefaults).filter(([, profileId]) => profileId !== id)),
@@ -273,6 +275,22 @@ export function AvailabilitySettings({
           </InlineConfirm>
         ) : null}
       </> : null}
+      {onProfilesChange ? <fieldset className="availability-meeting-types">
+        <legend>Meeting Types</legend>
+        <p className="settings-hint">Find Availability uses the associated profile when it recognizes one of these meeting types. Other meetings use the account’s usual profile. Calendar conflicts and buffers still apply.</p>
+        {MEETING_TYPES.map((type) => <label className="settings-field" key={type}>
+          <span>{type[0].toUpperCase() + type.slice(1)} Hours</span>
+          <select value={profiles.meetingTypeProfiles?.[type] ?? ""} onChange={(event) => {
+            const next = { ...profiles.meetingTypeProfiles };
+            if (event.target.value) next[type] = event.target.value;
+            else delete next[type];
+            onProfilesChange({ ...profiles, meetingTypeProfiles: next });
+          }}>
+            <option value="">Choose hours when needed</option>
+            {allProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+          </select>
+        </label>)}
+      </fieldset> : null}
       {hasProfiles ? <p className="settings-hint" id={sharedHintId}>Shared by every profile.</p> : null}
       <h3>Timezone</h3>
       <label className="settings-field">

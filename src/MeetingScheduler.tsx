@@ -1,13 +1,13 @@
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { CalendarCheck, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { type ReactNode, useContext, useCallback, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { useStableValue } from "./useStableValue";
 import { availabilityKey, readAvailability, rememberAvailabilityView, sameAvailability, storeAvailability, type AvailabilityView } from "./availabilityCache";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, CoworkerCalendars, ProposedTimeCheck, ScheduleEvent } from "./domain";
 import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, type CalendarMatch, type EventIdentity } from "./eventMatching";
 import { mailClient } from "./data/client";
 import { breakWarning, cachedEventsInRange, eventsInRange, eventsOnDay, SlotDayPreview } from "./SlotDayPreview";
-import { AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
+import { AvailabilityProfileChoiceContext, AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
 import { errorMessage } from "./errors";
 import {
   AFTERNOONS, ANY_TIME, lookaheadRange, MORNINGS, shiftedRange, slotKey, SLOTS_PER_DAY, spreadAcrossDays, SUGGESTED_SLOT_COUNT,
@@ -195,7 +195,10 @@ export function MeetingScheduler({
   const [plan] = useState(initialPlan);
   // Re-check only when preference values change, not when an equal object
   // arrives: replacing the result with "Checking…" reads as a flash.
-  const preferences = useStableValue(latestPreferences);
+  const profileChoice = useContext(AvailabilityProfileChoiceContext);
+  const meetingHours = profileChoice?.forMeetingType?.(plan.meetingType);
+  const needsHours = Boolean(plan.meetingType && meetingHours?.selectedId === null);
+  const preferences = useStableValue(meetingHours?.preferences ?? latestPreferences);
   // A length nothing stated follows the availability profile in use, until the user picks one.
   const [chosenLength, setChosenLength] = useState<number | null>(null);
   const durationMinutes = chosenLength ?? (plan.durationIsDefault ? preferences.defaultDurationMinutes : plan.durationMinutes);
@@ -318,12 +321,12 @@ export function MeetingScheduler({
   }, [rangeStart, rangeEnd, attempt]);
 
   useEffect(() => {
-    if (!calendarConnected || !query) return;
+    if (!calendarConnected || !query || (needsHours && query.kind === "range")) return;
     let current = true;
     void run(query, () => current);
     return () => { current = false; };
     // `attempt` re-runs after a failure or a calendar change.
-  }, [calendarConnected, query, attempt, run]);
+  }, [calendarConnected, query, attempt, run, needsHours]);
   // A bare day is not checked for conflicts, only for the event already being on it.
   const [dayMatch, setDayMatch] = useState<CalendarMatch | null>(null);
   useEffect(() => {
@@ -363,6 +366,7 @@ export function MeetingScheduler({
   // Part of the day narrows the times shown; the arrows beside the range move to other days.
   // The length sits with the part of the day: both change which times fit, while the range row only pages.
   const adjust = <div className="meeting-scheduler-adjust">
+    <AvailabilityProfileSelect meetingType={plan.meetingType} />
     <div className="meeting-scheduler-when">
       <div className="segmented meeting-scheduler-hours" role="group" aria-label="Part of the day">
         <button type="button" className="segment" aria-pressed={!bounds.dayStart && !bounds.dayEnd} onClick={() => setBounds((current) => ({ ...current, dayStart: null, dayEnd: null }))}>Any Time</button>
@@ -382,13 +386,18 @@ export function MeetingScheduler({
       Only {formatWeekdays(bounds.weekdays)}{" "}
       <button type="button" className="btn-link" onClick={() => setBounds((current) => ({ ...current, weekdays: [] }))}>Show All Days</button>
     </p> : null}
-    <AvailabilityProfileSelect />
     {adjustInput}
   </div>;
   const coverageNote = (text: string) => <p className="meeting-scheduler-note" role="note">
     {text} <button type="button" className="btn-link" onClick={onOpenCalendarSettings}>Calendar Settings</button>
   </p>;
   const assumedZone = plan.timeZoneAssumed ? <small className="meeting-scheduler-note">Times in {zoneName(timeZone)} (the email didn&rsquo;t say)</small> : null;
+
+  if (calendarConnected && needsHours && query?.kind === "range") return <div className="meeting-scheduler" role="group" aria-label="Schedule">
+    {adjust}
+    <p className="context-status" role="status">Choose hours for this {plan.meetingType} invitation, or associate a profile in Settings → Availability.</p>
+    {profileChoice?.onOpenAvailabilitySettings ? <button type="button" className="btn btn-sm" onClick={profileChoice.onOpenAvailabilitySettings}>Availability Settings</button> : null}
+  </div>;
 
   if (!calendarConnected) {
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
@@ -474,7 +483,7 @@ export function MeetingScheduler({
       {assumedZone}
       {adjust}
       {state.candidates.length === 0 ? <>
-        <p className="context-status">No open times in your working hours for this range.</p>
+        <p className="context-status">No open times within the selected hours for this range.</p>
         {extraActions ? <div className="meeting-scheduler-actions">{extraActions}</div> : null}
       </> : <>
         <div className="meeting-slots" role="group" aria-label="Open times">

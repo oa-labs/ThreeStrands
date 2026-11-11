@@ -1,4 +1,4 @@
-import type { ActionProposal, AvailabilityCandidate, AvailabilityWindow, ChatAvailability, MeetingProposal, ProposedTime, TimeSearch } from "./domain";
+import type { MeetingType, ActionProposal, AvailabilityCandidate, AvailabilityWindow, ChatAvailability, MeetingProposal, ProposedTime, TimeSearch } from "./domain";
 import { dateInputValue } from "./calendarTime";
 
 /** Days searched when a meeting names no usable time or range. */
@@ -30,6 +30,7 @@ export type ScheduleQuery =
   | { kind: "range"; start: string; end: string };
 
 export type SchedulePlan = {
+  meetingType?: MeetingType | null;
   query: ScheduleQuery | null;
   proposedTimes?: ProposedTime[];
   durationMinutes: number;
@@ -213,6 +214,7 @@ export function windowsWithin(windows: AvailabilityWindow[], bounds: DayBounds):
 /** Plans the calendar search Find Times read from a conversation. */
 export function planTimeSearch(search: TimeSearch, now: Date, defaultDurationMinutes: number): SchedulePlan {
   return {
+    ...(search.meetingType ? { meetingType: search.meetingType } : {}),
     ...(search.proposedTimes?.length ? { proposedTimes: search.proposedTimes } : {}),
     // The provider only returns ranges that end in the future; one that has
     // since passed falls back to the coming week.

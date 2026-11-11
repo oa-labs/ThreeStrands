@@ -510,7 +510,7 @@ describe("ThreadAssist", () => {
     const schedule = screen.getByRole("group", { name: "Schedule" });
     expect(within(schedule).getByText("Times in Eastern Time (the email didn’t say)")).toBeInTheDocument();
     await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ maxPerDay: SLOTS_PER_DAY })));
-    expect(await within(schedule).findByText("No open times in your working hours for this range.")).toBeInTheDocument();
+    expect(await within(schedule).findByText("No open times within the selected hours for this range.")).toBeInTheDocument();
     // The quote is the way into the evidence, so the card has no second "From the email".
     expect(screen.queryByText("From the email")).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("sometime next week"));
@@ -788,7 +788,7 @@ describe("ThreadAssist", () => {
     render(<ThreadAssist {...props({ ownEmails: ["you@example.com"], suggestions: { requested: true, proposals: [meeting], onReview }, scheduling: { calendarConnected: true } })} />);
     expect(screen.getByText("Marek Hajn and you")).toBeInTheDocument();
     // A less common choice than offering times, so it waits in ⋯ beside Edit and Dismiss.
-    await screen.findByText("No open times in your working hours for this range.");
+    await screen.findByText("No open times within the selected hours for this range.");
     expect(screen.queryByRole("button", { name: "Remind Me" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Remind Me" }));

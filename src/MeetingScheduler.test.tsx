@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AvailabilityProfileChoiceContext } from "./AvailabilityProfileChoice";
+import { availabilityWithProfile, meetingAvailabilityProfileId } from "./settings";
 import { MeetingScheduler, uncheckedNote, zoneName } from "./MeetingScheduler";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
@@ -151,7 +152,7 @@ describe("MeetingScheduler", () => {
     renderScheduler({ query: null, durationMinutes: 30, timeZoneAssumed: false });
     expect(screen.getByText("That time has already passed.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Find New Times" }));
-    expect(await screen.findByText("No open times in your working hours for this range.")).toBeInTheDocument();
+    expect(await screen.findByText("No open times within the selected hours for this range.")).toBeInTheDocument();
     expect(find).toHaveBeenCalledTimes(1);
     expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart: NOW, rangeEnd: "2026-10-06T14:00:00.000Z" }));
   });
@@ -195,7 +196,7 @@ describe("MeetingScheduler", () => {
       candidates: [], checkedCalendarCount: 1, totalCalendarCount: 2, uncheckedCalendars: ["alex@example.com"], errors: [],
     });
     renderScheduler(range, { coworkers: { accountId: "me@example.com", emails: ["alex@example.com"] } });
-    expect(await screen.findByText("No open times in your working hours for this range.")).toBeInTheDocument();
+    expect(await screen.findByText("No open times within the selected hours for this range.")).toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent("Couldn’t check alex@example.com");
   });
 
@@ -274,6 +275,49 @@ describe("MeetingScheduler", () => {
   });
 
   describe("choosing another availability profile", () => {
+    function MealHarness({ associated = true }: { associated?: boolean }) {
+      const [chosenId, setChosenId] = useState<string>();
+      const profiles = {
+        defaultProfile: { id: "work", name: "Meetings" },
+        otherProfiles: [{ id: "lunch", name: "Lunch", workingWindows: [{ weekday: 2, start: "12:00", end: "13:30" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+        accountDefaults: {}, meetingTypeProfiles: associated ? { lunch: "lunch" } : {},
+      };
+      return <AvailabilityProfileChoiceContext.Provider value={{ profiles: [profiles.defaultProfile, ...profiles.otherProfiles],
+        selectedId: chosenId ?? "work", scope: "message", onSelect: setChosenId, manual: Boolean(chosenId), onReset: () => setChosenId(undefined),
+        forMeetingType: (type) => {
+          const id = meetingAvailabilityProfileId(profiles, null, chosenId, type);
+          return { selectedId: id, preferences: availabilityWithProfile(preferences, profiles, id ?? "work") };
+        },
+      }}>
+        <MeetingScheduler plan={{ ...range, meetingType: "lunch", durationIsDefault: true }} preferences={preferences} calendarConnected
+          onAddToCalendar={vi.fn()} onReplyWithTimes={vi.fn()} onConfirmTime={vi.fn()} onOpenCalendarSettings={vi.fn()} />
+      </AvailabilityProfileChoiceContext.Provider>;
+    }
+
+    it("replaces meeting hours with lunch hours and retains buffers, with an explicit override and reset", async () => {
+      const find = findOpenTimes();
+      render(<MealHarness />);
+      await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ preferences: expect.objectContaining({
+        workingWindows: [{ weekday: 2, start: "12:00", end: "13:30" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15,
+      }) })));
+      expect(screen.getByRole("combobox", { name: "Hours" })).toHaveValue("lunch");
+      fireEvent.change(screen.getByRole("combobox", { name: "Hours" }), { target: { value: "work" } });
+      await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ preferences: expect.objectContaining({ workingWindows: preferences.workingWindows }) })));
+      fireEvent.click(screen.getByRole("button", { name: "Use Automatic Hours" }));
+      await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ preferences: expect.objectContaining({ defaultDurationMinutes: 60 }) })));
+      expect(screen.getByRole("combobox", { name: "Hours" })).toHaveValue("lunch");
+    });
+
+    it("requires a profile for an unconfigured meal rather than searching general hours", async () => {
+      const find = findOpenTimes();
+      render(<MealHarness associated={false} />);
+      expect(screen.getByRole("status")).toHaveTextContent("Choose hours for this lunch invitation");
+      expect(find).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: /Insert|Reply with/ })).not.toBeInTheDocument();
+      fireEvent.change(screen.getByRole("combobox", { name: "Hours" }), { target: { value: "lunch" } });
+      await waitFor(() => expect(find).toHaveBeenCalledTimes(1));
+    });
+
     const church: AvailabilityPreferences = {
       ...preferences,
       workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }, { weekday: 6, start: "08:00", end: "12:00" }],
@@ -292,7 +336,7 @@ describe("MeetingScheduler", () => {
       const find = findOpenTimes();
       render(<ProfileHarness plan={{ ...range, durationMinutes: 30, durationIsDefault: true }} />);
       fireEvent.click(await screen.findByRole("button", { name: "Afternoons" }));
-      const profile = await screen.findByRole("combobox", { name: "Usual Hours" });
+      const profile = await screen.findByRole("combobox", { name: "Hours" });
       expect(profile).toHaveAccessibleDescription();
 
       fireEvent.change(profile, { target: { value: "church" } });
@@ -307,17 +351,17 @@ describe("MeetingScheduler", () => {
     it("keeps a length the email stated", async () => {
       const find = findOpenTimes();
       render(<ProfileHarness plan={range} />);
-      fireEvent.change(await screen.findByRole("combobox", { name: "Usual Hours" }), { target: { value: "church" } });
+      fireEvent.change(await screen.findByRole("combobox", { name: "Hours" }), { target: { value: "church" } });
       await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({
         preferences: expect.objectContaining({ workingWindows: church.workingWindows, defaultDurationMinutes: 45 }),
       })));
     });
 
-    it("offers no choice with only one profile", async () => {
+    it("shows the selected hours even with only one profile", async () => {
       findOpenTimes();
       render(<ProfileHarness plan={range} profiles={[{ id: "work", name: "Work" }]} />);
       expect(await screen.findByRole("button", { name: "Afternoons" })).toBeInTheDocument();
-      expect(screen.queryByRole("combobox", { name: "Usual Hours" })).not.toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Hours" })).toHaveValue("work");
     });
   });
 
@@ -788,7 +832,7 @@ describe("MeetingScheduler", () => {
     it("shows what it is given beside the adjustment chips", async () => {
       vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       renderScheduler(range, { adjustInput: <input aria-label="Adjust times" /> });
-      await screen.findByText("No open times in your working hours for this range.");
+      await screen.findByText("No open times within the selected hours for this range.");
       expect(screen.getByRole("textbox", { name: "Adjust times" })).toBeInTheDocument();
     });
 

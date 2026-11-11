@@ -95,6 +95,7 @@ export function FindTimesCard({
           rangeStart: current.query.start,
           rangeEnd: current.query.end,
           durationMinutes: current.durationMinutes,
+          meetingType: (adjusted?.plan ?? plan).meetingType ?? null,
           ...current.bounds,
           reason: shownReason ?? "The days shown.",
         },

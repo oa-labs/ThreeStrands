@@ -72,6 +72,7 @@ import { FILES_CHANGED } from "./FileStarButton";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { ContactCardContext } from "./ContactCard";
+import { meetingAvailabilityProfileId } from "./settings";
 import { AvailabilityProfileChoiceContext, type AvailabilityProfileChoice } from "./AvailabilityProfileChoice";
 import { SnoozeDialog } from "./SnoozeDialog";
 import { useConversationSnooze } from "./useConversationSnooze";
@@ -480,11 +481,17 @@ export function App() {
     profiles: profileOptions,
     selectedId: availabilityProfileFor(accountId, chosenProfiles[key]),
     scope,
-    onSelect: (id) => setChosenProfiles((current) => {
+    onOpenAvailabilitySettings: () => openSettingsAt("availability"),
+    forMeetingType: (type) => {
+      const selectedId = meetingAvailabilityProfileId(availabilityProfiles, accountId, chosenProfiles[key], type);
+      return { selectedId, preferences: availabilityFor(accountId, selectedId) };
+    },
+    manual: Boolean(chosenProfiles[key] && profileOptions.some((profile) => profile.id === chosenProfiles[key])),
+    onReset: () => setChosenProfiles((current) => {
       const { [key]: _previous, ...others } = current;
-      // Choosing the account's own profile again lets the choice follow the account.
-      return id === availabilityProfileFor(accountId) ? others : { ...others, [key]: id };
+      return others;
     }),
+    onSelect: (id) => setChosenProfiles((current) => ({ ...current, [key]: id })),
   });
   // The open conversation's account chooses which availability profile its cards use, unless one was chosen for it.
   const threadProfileKey = `thread:${visibleDetail?.thread.id ?? ""}`;

@@ -2,6 +2,7 @@
 
 Status: phase 1 (profiles and account defaults) built in 0.182.0. Phase 2
 (using a different profile for one conversation) built in 0.183.0.
+Meeting-type associations extend those profiles for Find Availability.
 
 Today ThreeStrands has one set of availability preferences: a timezone,
 working windows, a default meeting length, a slot increment, and a drive-time
@@ -102,8 +103,8 @@ name is never sent to an AI provider.
 
 ## Using a different profile for one conversation
 
-When there are two or more profiles, Find Times shows a **Usual Hours**
-select beside the Any Time / Mornings / Afternoons chips, and the Proposed
+Find Times shows an **Hours** select above the Any Time / Mornings /
+Afternoons chips, including when only one profile exists, and the Proposed
 Times card shows it beside the assumed timezone. Its description says the
 choice lasts until ThreeStrands quits. Choosing another profile:
 
@@ -121,14 +122,14 @@ choice lasts until ThreeStrands quits. Choosing another profile:
 
 In compose, the same control sits on the compose sidebar's Find Times card and
 applies to that draft. Changing From switches profile unless one was chosen
-for the draft. Choosing the account's own profile again clears the choice, so
-it follows the account from then on.
+for the draft. Every manual selection, including the account’s own profile,
+overrides automatic selection. **Use Automatic Hours** clears that choice.
 
 App keeps the choices in session state keyed by `thread:<id>` or
 `draft:<id>`, and provides them through `AvailabilityProfileChoiceContext`
 (`src/AvailabilityProfileChoice.tsx`): one provider for the open conversation
 and a nested one around the compose sidebar. A choice that names a deleted
-profile falls back to the account's profile.
+profile falls back to automatic selection.
 
 The control is a plain select. It isn't an AI affordance and sends nothing
 anywhere.
@@ -136,6 +137,29 @@ anywhere.
 The override is deliberately short-lived. If users keep overriding the same
 correspondents, that's evidence for a contact- or group-level default (see
 Later), not a reason to persist overrides now.
+
+## Meeting-type associations
+
+Settings → Availability associates Breakfast, Lunch, Dinner, and Coffee with
+existing profiles. The profile name is independent of its association. Find
+Availability extracts a bounded `meetingType` along with the search range;
+profile names and hours are never sent to the provider. A meal mentioned as a
+landmark ("after lunch") does not make the meeting a lunch invitation. Clock
+bounds come from explicit timing language, not invented conventional meal hours.
+
+Selection precedence is a manual conversation/draft override, the recognized
+type’s associated profile, then the account default for an untyped meeting.
+A recognized type without an association requires the user to choose hours.
+The associated hours replace the normal meeting windows; intersecting them
+would exclude the lunch time the user deliberately reserved. Calendar conflicts,
+buffers, stated durations, weekdays, and explicit time bounds still apply.
+No openings produces an empty result rather than a search in other profiles.
+Explicit sender-offered alternatives continue to be checked at their stated times.
+
+Associations travel with profile ids through renames and Make Default. Deleting
+a profile removes its associations; the next typed search requires a new choice.
+The optional `meetingTypeProfiles` map defaults to empty for preceding settings
+exports, and is included in normal settings sync and encrypted transfer.
 
 ## Data model
 
@@ -156,6 +180,7 @@ type AvailabilityProfiles = {
   defaultProfile: { id: string; name: string };
   otherProfiles: AvailabilityProfile[];      // up to MAX_AVAILABILITY_PROFILES - 1
   accountDefaults: Record<string, string>;   // lowercased account email → profile id
+  meetingTypeProfiles?: Partial<Record<"breakfast" | "lunch" | "dinner" | "coffee", string>>;
 };
 ```
 

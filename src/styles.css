@@ -3987,7 +3987,10 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 /* The one action that sends something gets its own row; the rest follow it. */
 .proposed-times-actions > .btn-primary { flex: 1 1 100%; }
 
-.availability-profile-select { display: grid; gap: var(--space-1); }
+.availability-meeting-types { display: grid; gap: var(--space-3); border: 0; padding: 0; margin: 0; min-width: 0; }
+.availability-hours { display: grid; gap: var(--space-1); min-width: 0; }
+.availability-hours > .btn-link { justify-self: start; }
+.availability-profile-select { display: grid; gap: var(--space-1); font-weight: var(--weight-medium); }
 .availability-profile-select select { min-width: 0; max-width: 100%; }
 
 /* Delegated work keeps its conversation and immutable result beside each other. */
