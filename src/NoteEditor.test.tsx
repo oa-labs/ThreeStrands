@@ -198,6 +198,24 @@ describe("NoteEditor", () => {
     });
   });
 
+  describe("pasting", () => {
+    beforeEach(() => {
+      // jsdom has no text-range geometry; a paste scrolls the selection into view.
+      Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => [] });
+      Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect() });
+    });
+    it("pastes mail HTML without writing spacing as character references", async () => {
+      const { box, ref } = await editorFor("");
+      act(() => ref.current!.focus());
+      const html = '<p><b>Complimentary Parking: </b><a href="https://maps.example/x"><i>1250 Bedford Ave.</i></a></p><p><b> </b></p><p><i>Parking Instructions</i></p>';
+      fireEvent.paste(box, { clipboardData: { files: [], types: ["text/html", "text/plain"], getData: (type: string) => type === "text/html" ? html : "Complimentary Parking: 1250 Bedford Ave.\n\nParking Instructions" } });
+      await waitFor(() => expect(ref.current!.markdown()).toContain("Parking Instructions"));
+      const markdown = ref.current!.markdown()!;
+      expect(markdown).not.toMatch(/&#x?[0-9a-f]+;/i);
+      expect(markdown).toContain("**Complimentary Parking:** [*1250 Bedford Ave.*](https://maps.example/x)");
+    });
+  });
+
   it("shows text from outside without reporting it as an edit", async () => {
     const { rerender, ref, onChange } = await editorFor("first\n");
     rerender(<NoteEditor ref={ref} noteKey="note-1" value={"from another device\n"} label="Note text" mode="hide" onChange={onChange} onLeave={vi.fn()} />);

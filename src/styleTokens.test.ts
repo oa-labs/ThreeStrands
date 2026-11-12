@@ -69,6 +69,17 @@ describe("spacing", () => {
     expect(value(".notes-editor-heading", "height")).toBeUndefined();
   });
 
+  it("keeps a note's text close under its title", () => {
+    const value = (selector: string, prop: string) => {
+      let result: string | undefined;
+      css.walkRules(selector, (r) => r.walkDecls(prop, (d) => { result = d.value; }));
+      return result;
+    };
+    // The editor library pads its content's top; the pane's gap is the only space below the title.
+    expect(value(".note-editor-surface .meowdown-content", "padding-top")).toBe("0");
+    expect(value(".notes-editor-pane", "gap")).toBe("var(--space-3)");
+  });
+
   it("aligns member-list selection marks with the dialog's search and header inset", () => {
     let gutter = "", inset = "";
     css.walkRules(".contact-member-picker .label-list", (r) => r.walkDecls("padding", (d) => { gutter = d.value.split(" ")[1]; }));

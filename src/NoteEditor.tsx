@@ -1,4 +1,5 @@
 import { notePreview } from "./notePreview";
+import { cleanPastedHtml } from "./notePasteHtml";
 import { fromEditorMarkdown, toEditorMarkdown } from "./noteEntities";
 import "@meowdown/core/style.css";
 import "@meowdown/react/style.css";
@@ -120,6 +121,8 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   // a fresh editor, so undo can't step back past it and save the old text;
   // the editor's own reports coming back as `value` don't.
   const shown = useRef(value);
+  // Shift held for the paste: plain-text paste, which the editor handles.
+  const plainPaste = useRef(false);
   const [generation, setGeneration] = useState(0);
   const refocus = useRef(false);
   const latestChange = useRef(onChange);
@@ -211,7 +214,20 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   const openImage = useCallback(({ src }: { src: string }) => { if (attachmentIdOf(src)) latestFiles.current?.open(src); }, []);
   const reducedMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  return <div ref={surface} className="note-editor-body" onKeyDownCapture={(event) => {
+  return <div ref={surface} className="note-editor-body" onPasteCapture={(event) => {
+    // Clean pasted mail and web HTML before the editor turns it into Markdown,
+    // so spacing doesn't arrive as `&#x20;` or `&#xA0;` text. Shift-paste
+    // (plain text), file pastes, and code blocks keep the editor's own path.
+    const view = editor.current?.getEditor()?.view;
+    if (readOnly || plainPaste.current || !view || !view.dom.contains(event.target as Node)) return;
+    if (event.clipboardData.files.length || view.state.selection.$from.parent.type.spec.code) return;
+    const cleaned = cleanPastedHtml(event.clipboardData.getData("text/html"));
+    if (cleaned === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    view.pasteHTML(cleaned, event.nativeEvent);
+  }} onKeyUpCapture={(event) => { plainPaste.current = event.shiftKey; }} onKeyDownCapture={(event) => {
+    plainPaste.current = event.shiftKey;
     // Use Mail's bindings where Meowdown differs. Keep edits in the editor's
     // commands so Markdown serialization, selection and undo stay together.
     const view = editor.current?.getEditor();

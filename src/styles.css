@@ -3840,6 +3840,8 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 /* Reserve the Trash button's height even for an empty daily note, so saving or switching notes cannot shift the title and body. */
 .notes-editor-heading { display: flex; flex-shrink: 0; align-items: center; min-height: var(--control-h); gap: var(--space-2); padding-inline: var(--note-gutter); }
 .note-editor-surface { --meowdown-gutter: var(--note-gutter); }
+/* The pane's gap alone separates the title from the text; the editor's own top padding made them read as unrelated. */
+.note-editor-surface .meowdown-content { padding-top: 0; }
 /* A checked item stays readable; only its checkbox shows it's done. */
 .note-editor-surface .ProseMirror .prosemirror-flat-list[data-list-kind="task"][data-list-checked] { opacity: 1; }
 .notes-relink-notice { margin: 0; padding-inline: var(--note-gutter); color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); }
