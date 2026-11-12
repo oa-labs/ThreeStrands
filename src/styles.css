@@ -3455,7 +3455,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-authored { position: relative; min-height: max(200px, min(32vh, 360px)); }
 .composer-new .compose-authored { min-height: max(200px, min(45vh + 90px, 600px, 100vh - 400px)); }
 /* An empty editor has no line box, so WebKit draws no caret. The anchor break
-   supplies one; the placeholder stays on that same line until there is text. */
+   supplies one and is removed as soon as the body has any other content, so
+   the placeholder shows only while the body is otherwise empty. */
 .compose-body:empty::before,
 .compose-body:has(> br[data-caret-anchor]:only-child)::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body:has(> br[data-caret-anchor]:only-child)::before { position: absolute; inset-block-start: var(--space-3); inset-inline-start: 0; }

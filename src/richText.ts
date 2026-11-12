@@ -662,11 +662,7 @@ export function serializeComposeBody(editor: HTMLElement, quoted?: HTMLElement |
     stripComposeImageControls(clone);
     onAuthoredBoundary({ html: sanitizeComposeHtml(clone.innerHTML), text: composeHtmlToText(clone) });
   }
-  if (hasQuote && quoted) {
-    const quotedClone = quoted.cloneNode(true) as HTMLElement;
-    stripCaretAnchors(quotedClone);
-    clone.append(document.createElement("br"), document.createElement("br"), ...Array.from(quotedClone.childNodes));
-  }
+  if (hasQuote) clone.append(document.createElement("br"), document.createElement("br"), ...Array.from(quoted.cloneNode(true).childNodes));
   stripComposeImageControls(clone);
   return { html: sanitizeComposeHtml(clone.innerHTML), text: composeHtmlToText(clone) };
 }
