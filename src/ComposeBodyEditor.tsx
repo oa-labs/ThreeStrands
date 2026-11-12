@@ -1,6 +1,6 @@
 import { loadSignatureEditorImages } from "./signatureEditorImages";
 import { readSignatureHtml, readSignatureEditor, signatureEditorHtml, type DraftSignature } from "./signatures";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type ClipboardEvent as ReactClipboardEvent, type FocusEvent as ReactFocusEvent, type FormEvent as ReactFormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Attachment, Draft } from "./correspondence";
 import type { Snippet } from "./domain";
 import {
@@ -315,7 +315,19 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   const editingProps = {
     contentEditable: !busy,
     suppressContentEditableWarning: true,
-    onInput: editBody,
+    onFocus: (event: ReactFocusEvent<HTMLDivElement>) => {
+      const editor = event.currentTarget;
+      ensureCaretAnchor(editor);
+      // A click in existing text has already placed the caret. This covers
+      // Tab and other focus that arrives with no selection in the editor.
+      const selection = window.getSelection();
+      if (selection?.rangeCount && editor.contains(selection.anchorNode)) return;
+      placeCaret(editor, true);
+    },
+    onInput: (event: ReactFormEvent<HTMLDivElement>) => {
+      editBody();
+      if (document.activeElement === event.currentTarget) ensureCaretAnchor(event.currentTarget);
+    },
     onPaste: (event: ReactClipboardEvent<HTMLDivElement>) => {
       const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
       if (images.length) {
@@ -357,25 +369,28 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
       const handle = closestFrom<HTMLElement>(event.target, "[data-compose-image-resize]");
       const wrapper = handle?.closest<HTMLElement>("[data-compose-image]");
       const image = wrapper?.querySelector("img");
-      if (!handle || !wrapper || !image) return;
-      event.preventDefault();
-      const editor = event.currentTarget;
-      const startX = event.clientX;
-      const startWidth = wrapper.getBoundingClientRect().width || image.width || IMAGE_FALLBACK_WIDTH;
-      const maximum = Math.max(IMAGE_MIN_WIDTH, editor.clientWidth);
-      const move = (moveEvent: PointerEvent) => {
-        const width = Math.round(Math.min(Math.max(startWidth + moveEvent.clientX - startX, IMAGE_MIN_WIDTH), maximum));
-        wrapper.style.width = `${width}px`;
-        image.setAttribute("width", String(width));
-        handle.setAttribute("aria-valuenow", String(width));
-      };
-      const finish = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", finish);
-        editBody();
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", finish, { once: true });
+      if (handle && wrapper && image) {
+        event.preventDefault();
+        const editor = event.currentTarget;
+        const startX = event.clientX;
+        const startWidth = wrapper.getBoundingClientRect().width || image.width || IMAGE_FALLBACK_WIDTH;
+        const maximum = Math.max(IMAGE_MIN_WIDTH, editor.clientWidth);
+        const move = (moveEvent: PointerEvent) => {
+          const width = Math.round(Math.min(Math.max(startWidth + moveEvent.clientX - startX, IMAGE_MIN_WIDTH), maximum));
+          wrapper.style.width = `${width}px`;
+          image.setAttribute("width", String(width));
+          handle.setAttribute("aria-valuenow", String(width));
+        };
+        const finish = () => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", finish);
+          editBody();
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", finish, { once: true });
+        return;
+      }
+      placeCaretOnBlankClick(event);
     },
     onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if ((event.metaKey || event.ctrlKey) && event.key === ";") {
@@ -449,9 +464,10 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     />
     {signatureState?.html ? <div key={`${signatureState.id}:${signatureState.html}`} ref={signatureEditor} className="compose-body compose-signature" role="textbox" aria-label="Message Signature" aria-multiline="true" tabIndex={0}
       dangerouslySetInnerHTML={{ __html: signatureMarkup }} {...editingProps}
-      onInput={() => {
+      onInput={(event) => {
         if (signatureSnapshot.current) signatureSnapshot.current = { ...signatureSnapshot.current, automatic: false };
         editBody();
+        if (document.activeElement === event.currentTarget) ensureCaretAnchor(event.currentTarget);
       }} onClick={(event) => { if ((event.target as Element).closest("a")) event.preventDefault(); editingProps.onClick(event); }} /> : null}
     {initialBody.quotedHtml !== null || writingTools ? <div className="compose-body-actions">
       {initialBody.quotedHtml !== null ? (
@@ -564,6 +580,60 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     ) : null}
   </>;
 });
+
+/** A line WebKit can draw the caret on. Not message content; serialization removes it. */
+function ensureCaretAnchor(editor: HTMLElement) {
+  if (editor.textContent || editor.querySelector("img, br")) return;
+  const anchor = document.createElement("br");
+  anchor.dataset.caretAnchor = "true";
+  editor.append(anchor);
+  const selection = window.getSelection();
+  if (selection?.rangeCount && editor.contains(selection.anchorNode)) return;
+  placeCaret(editor, true);
+}
+
+function placeCaret(editor: HTMLElement, atStart: boolean) {
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(atStart);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+/** Line boxes of real content. An empty editor, and its placeholder, have none. */
+function contentLineBounds(editor: HTMLElement): { top: number; bottom: number } | null {
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  if (typeof range.getClientRects !== "function") return null;
+  const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 || rect.height > 0);
+  if (!rects.length) return null;
+  return {
+    top: Math.min(...rects.map((rect) => rect.top)),
+    bottom: Math.max(...rects.map((rect) => rect.bottom)),
+  };
+}
+
+/**
+ * WebKit focuses a tall contenteditable without placing a caret when the click
+ * misses every line box, which is the whole writing area while the body is empty.
+ */
+function placeCaretOnBlankClick(event: ReactPointerEvent<HTMLDivElement>) {
+  if (event.button !== 0) return;
+  const editor = event.currentTarget;
+  if (editor.getAttribute("contenteditable") === "false") return;
+  if (closestFrom(event.target, "button, a, input, textarea, select, [data-compose-image-resize]")) return;
+  const bounds = contentLineBounds(editor);
+  // Without measurable line boxes, a click in real text cannot be told from a
+  // click in the blank area, so leave that click to the browser.
+  if (!bounds && (editor.textContent || editor.querySelector("img, br"))) return;
+  if (bounds && event.clientY >= bounds.top && event.clientY <= bounds.bottom) return;
+  event.preventDefault();
+  const atStart = !bounds || event.clientY < bounds.top;
+  ensureCaretAnchor(editor);
+  editor.focus();
+  placeCaret(editor, atStart);
+}
 
 function decorateImage(image: HTMLImageElement, attachmentId?: string) {
   if (image.closest("[data-compose-image]")) return;

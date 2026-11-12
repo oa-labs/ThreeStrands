@@ -866,6 +866,82 @@ describe("Composer body input responsiveness", () => {
   });
 });
 
+describe("Composer body caret", () => {
+  beforeEach(() => {
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: draft.account }]);
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    delete Range.prototype.getClientRects;
+    window.getSelection()?.removeAllRanges();
+  });
+
+  function mockLineBounds(top: number, bottom: number) {
+    Range.prototype.getClientRects = () => [{ top, bottom, left: 0, right: 40, width: 40, height: bottom - top, x: 0, y: top, toJSON() { return {}; } }] as unknown as DOMRectList;
+  }
+
+  it("puts a caret in an empty message body when its blank area is clicked", () => {
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const body = screen.getByRole("textbox", { name: "Message Body" });
+
+    expect(fireEvent.pointerDown(body, { button: 0, clientY: 240 })).toBe(false);
+
+    expect(body).toHaveFocus();
+    expect(body.querySelector("br[data-caret-anchor]")).toBeInTheDocument();
+    const selection = window.getSelection();
+    expect(selection?.isCollapsed).toBe(true);
+    expect(selection?.anchorNode && body.contains(selection.anchorNode)).toBe(true);
+  });
+
+  it("moves the caret to the end when the click falls below the text", () => {
+    render(<Composer draft={{ ...draft, body: "Hello" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const body = screen.getByRole("textbox", { name: "Message Body" });
+    mockLineBounds(10, 30);
+
+    expect(fireEvent.pointerDown(body, { button: 0, clientY: 200 })).toBe(false);
+
+    const selection = window.getSelection();
+    const end = document.createRange();
+    end.selectNodeContents(body);
+    end.collapse(false);
+    expect(selection?.isCollapsed).toBe(true);
+    expect(selection?.rangeCount).toBe(1);
+    expect(selection!.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, end)).toBe(0);
+  });
+
+  it("leaves a click on existing text alone", () => {
+    render(<Composer draft={{ ...draft, body: "Hello" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const body = screen.getByRole("textbox", { name: "Message Body" });
+    const text = body.firstChild!;
+    const caret = document.createRange();
+    caret.setStart(text, 1);
+    caret.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(caret);
+    mockLineBounds(10, 30);
+
+    expect(fireEvent.pointerDown(body, { button: 0, clientY: 20 })).toBe(true);
+
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+  });
+
+  it("brings the caret line back after the body is cleared and does not save it", async () => {
+    const ref = createRef<ComposerHandle>();
+    const saveDraft = vi.mocked(mailClient.saveDraft);
+    render(<Composer ref={ref} draft={{ ...draft, body: "Hello" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const body = screen.getByRole("textbox", { name: "Message Body" });
+    body.focus();
+    body.innerHTML = "";
+    fireEvent.input(body);
+
+    expect(body.querySelector("br[data-caret-anchor]")).toBeInTheDocument();
+    await ref.current?.flush();
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ body: "", bodyHtml: "" }));
+  });
+});
+
 describe("Composer pasted images", () => {
   afterEach(() => {
     cleanup();
@@ -1602,8 +1678,9 @@ describe("Composer quoted history", () => {
     const quoted = screen.getByLabelText("Quoted Text");
     const toggle = screen.getByRole("button", { name: "Show Quoted Text" });
 
-    expect(body).toBeEmptyDOMElement();
     expect(body).toHaveFocus();
+    expect(body).toHaveTextContent("");
+    expect(body.querySelector("br[data-caret-anchor]")).toBeInTheDocument();
     expect(quoted).not.toBeVisible();
     expect(quoted.querySelector('blockquote[type="cite"]')).toHaveTextContent("Can we meet Friday?");
     expect(toggle).toHaveAttribute("aria-expanded", "false");

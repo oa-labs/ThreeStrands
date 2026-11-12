@@ -3452,9 +3452,13 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* Keep room to write, but let text grow in the shared composer-content scroller.
    A fixed editor height creates nested scrolling and separates the final line
    from the signature. Only the authored body needs a minimum writing area. */
-.compose-authored { min-height: max(200px, min(32vh, 360px)); }
+.compose-authored { position: relative; min-height: max(200px, min(32vh, 360px)); }
 .composer-new .compose-authored { min-height: max(200px, min(45vh + 90px, 600px, 100vh - 400px)); }
-.compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
+/* An empty editor has no line box, so WebKit draws no caret. The anchor break
+   supplies one; the placeholder stays on that same line until there is text. */
+.compose-body:empty::before,
+.compose-body:has(> br[data-caret-anchor]:only-child)::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
+.compose-body:has(> br[data-caret-anchor]:only-child)::before { position: absolute; inset-block-start: var(--space-3); inset-inline-start: 0; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
 .compose-body pre { margin: .5em 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--font-mono); white-space: pre-wrap; }
 .compose-body ol, .compose-body ul { margin: .5em 0; padding-left: 2em; }
