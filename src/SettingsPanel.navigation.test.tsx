@@ -19,8 +19,24 @@ describe("settings section navigation", () => {
       value: {
         transformCallback: vi.fn(() => 1),
         unregisterCallback: vi.fn(),
-        // Font lookup is cached per module, so answer it with a real list.
-        invoke: vi.fn(async (command: string) => (command === "list_system_font_families" ? [] : 1)),
+        // Match native response shapes when the navigation test visits sync.
+        // Font lookup is cached per module, so it also needs a real list.
+        invoke: vi.fn(async (command: string) => {
+          switch (command) {
+            case "list_system_font_families":
+            case "replicated_sync_status":
+            case "replicated_sync_conflicts":
+            case "replicated_sync_pending_requests":
+            case "replicated_sync_device_roster":
+            case "replicated_sync_list_join_codes":
+            case "replicated_sync_join_code_notices": return [];
+            case "replicated_sync_enabled": return true;
+            case "replicated_sync_beta_enabled":
+            case "replicated_sync_protocol_reset_notice": return false;
+            case "replicated_sync_enrollment_status": return { state: "notStarted" };
+            default: return 1;
+          }
+        }),
       },
     });
     Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
