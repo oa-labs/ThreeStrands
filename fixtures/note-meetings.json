@@ -174,7 +174,7 @@
         "linkNote": false
       },
       "title": null,
-      "expected": "- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22evt%2D1%2F2026%2D11%2D10%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%7D) met with [Pete B](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22pete%40example%2Ecom%22%2C%22contact%22%3A%22c1%22%7D), [Mike Carpenter](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22mike%40example%2Ecom%22%7D) for CS Leadership Meeting \\(and Sales Mtg\\)"
+      "expected": "- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22evt%2D1%2F2026%2D11%2D10%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%7D) met with [Pete B](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22pete%40example%2Ecom%22%2C%22contact%22%3A%22c1%22%7D), [Mike Carpenter](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22mike%40example%2Ecom%22%7D) for CS Leadership Meeting (and Sales Mtg)"
     },
     {
       "name": "a linked meeting note",
@@ -255,7 +255,7 @@
         "linkNote": false
       },
       "title": null,
-      "expected": "- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22evt%2D1%2F2026%2D11%2D10%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%7D) met with [Ann \\[ops\\] Lee](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22ann%40example%2Ecom%22%7D), [mike@example\\.com](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22mike%40example%2Ecom%22%7D) for Q3 \\*plan\\*"
+      "expected": "- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22evt%2D1%2F2026%2D11%2D10%22%2C%22account%22%3A%22you%40example%2Ecom%22%2C%22calendar%22%3A%22work%22%7D) met with [Ann \\[ops\\] Lee](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22ann%40example%2Ecom%22%7D), [mike@example.com](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22mike%40example%2Ecom%22%7D) for Q3 \\*plan\\*"
     },
     {
       "name": "an empty name",
@@ -338,5 +338,43 @@
       "title": null,
       "expected": null
     }
+  ],
+  "escapes": [
+    [
+      "kim.peters@wolfe.com",
+      "kim.peters@wolfe.com"
+    ],
+    [
+      "first_last@example.com",
+      "first_last@example.com"
+    ],
+    [
+      "Entrepreneur Day 2026 - Q&A (draft) + notes!",
+      "Entrepreneur Day 2026 - Q&A (draft) + notes!"
+    ],
+    [
+      "Re: 1. Plan | next > now",
+      "Re: 1. Plan | next > now"
+    ],
+    [
+      "Ann [ops] Lee",
+      "Ann \\[ops\\] Lee"
+    ],
+    [
+      "a\\b `code` *bold* ~~gone~~ ==mark== $x$ #tag <b>",
+      "a\\\\b \\`code\\` \\*bold\\* \\~\\~gone\\~\\~ \\=\\=mark\\=\\= \\$x\\$ \\#tag \\<b>"
+    ],
+    [
+      "_lead and trail_ snake_case _",
+      "\\_lead and trail\\_ snake_case \\_"
+    ],
+    [
+      "AT&amp; &#38; &#x26; &X; & ;",
+      "AT\\&amp; \\&\\#38; \\&\\#x26; \\&X; & ;"
+    ],
+    [
+      "café_ñ two\nlines\r",
+      "café_ñ two lines "
+    ]
   ]
 }

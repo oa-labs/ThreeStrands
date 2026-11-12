@@ -35,23 +35,52 @@ pub struct MeetingEntry {
     pub link_note: bool,
 }
 
-/// Escapes Markdown punctuation in link labels and plain text, with the same
-/// characters as the page's `markdownEntityLink`, and turns line breaks into
-/// spaces.
+/// Escapes only the characters that would change how the note editor reads
+/// a link label or plain text, and turns line breaks into spaces. The editor
+/// shows Markdown source, so every backslash is visible; `.`, `-`, `(`, and
+/// other punctuation that is inert mid-line stays as written. `_` is escaped
+/// only at a word edge, where it could start or end emphasis, and `&` only
+/// where it would begin an entity. `src/noteEntities.ts` mirrors this as
+/// `escapeMarkdownText`.
 pub fn escape_inline(text: &str) -> String {
+    let chars: Vec<char> = text
+        .chars()
+        .map(|ch| if ch == '\r' || ch == '\n' { ' ' } else { ch })
+        .collect();
     let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '\r' | '\n' => out.push(' '),
-            '\\' | '`' | '*' | '_' | '[' | ']' | '{' | '}' | '(' | ')' | '#' | '+' | '.' | '!'
-            | '|' | '<' | '>' | '~' | '-' => {
-                out.push('\\');
-                out.push(ch);
+    for (index, &ch) in chars.iter().enumerate() {
+        let escape = match ch {
+            '\\' | '`' | '*' | '[' | ']' | '<' | '~' | '=' | '$' | '#' => true,
+            '_' => {
+                let before = index.checked_sub(1).map(|at| chars[at]);
+                let after = chars.get(index + 1);
+                !(before.is_some_and(char::is_alphanumeric)
+                    && after.is_some_and(|c| c.is_alphanumeric()))
             }
-            _ => out.push(ch),
+            '&' => starts_entity(&chars[index + 1..]),
+            _ => false,
+        };
+        if escape {
+            out.push('\\');
         }
+        out.push(ch);
     }
     out
+}
+
+/// Whether text after `&` reads as a character reference, such as `amp;`,
+/// `#38;`, or `#x26;`.
+fn starts_entity(rest: &[char]) -> bool {
+    let end = rest.iter().position(|c| *c == ';');
+    let Some(end) = end.filter(|end| *end > 0 && *end <= 32) else {
+        return false;
+    };
+    let name = &rest[..end];
+    match name {
+        ['#', 'x' | 'X', hex @ ..] => !hex.is_empty() && hex.iter().all(char::is_ascii_hexdigit),
+        ['#', digits @ ..] => !digits.is_empty() && digits.iter().all(char::is_ascii_digit),
+        _ => name.iter().all(char::is_ascii_alphanumeric),
+    }
 }
 
 fn link(label: &str, reference: &NoteReference) -> Result<String, String> {
@@ -268,6 +297,7 @@ mod tests {
         insert: Vec<InsertFixture>,
         titles: Vec<(String, String)>,
         lines: Vec<LineFixture>,
+        escapes: Vec<(String, String)>,
     }
     #[derive(Deserialize)]
     struct InsertFixture {
@@ -306,6 +336,12 @@ mod tests {
         for fixture in fixtures().lines {
             let line = meeting_line(&fixture.entry, fixture.title.as_deref()).ok();
             assert_eq!(line, fixture.expected, "{}", fixture.name);
+        }
+    }
+    #[test]
+    fn shared_escape_fixtures() {
+        for (text, escaped) in fixtures().escapes {
+            assert_eq!(escape_inline(&text), escaped, "{text:?}");
         }
     }
     #[test]

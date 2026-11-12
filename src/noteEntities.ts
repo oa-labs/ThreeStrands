@@ -66,8 +66,24 @@ export function contactNoteReferences(addresses: string[]): NoteReference[] {
     try { noteReferenceHref(reference); return [reference]; } catch { return []; }
   });
 }
+const isWordChar = (ch: string | undefined) => ch !== undefined && /[\p{Alphabetic}\p{N}]/u.test(ch);
+/** Escapes only what would change how the note editor reads a link label or
+ * plain text, and turns line breaks into spaces. The editor shows Markdown
+ * source, so every backslash is visible; inert punctuation such as `.`, `-`,
+ * and `(` stays as written. `_` is escaped only at a word edge and `&` only
+ * where it would begin an entity. Mirrors `escape_inline` in
+ * `src-tauri/src/note_meetings.rs`. */
+export function escapeMarkdownText(text: string): string {
+  const chars = [...text.replace(/[\r\n]/g, " ")];
+  return chars.map((ch, index) => {
+    const escape = /[\\`*[\]<~=$#]/.test(ch)
+      || (ch === "_" && !(isWordChar(chars[index - 1]) && isWordChar(chars[index + 1])))
+      || (ch === "&" && /^(?:[A-Za-z0-9]{1,32}|#[0-9]{1,31}|#[xX][0-9A-Fa-f]{1,30});/.test(chars.slice(index + 1, index + 34).join("")));
+    return escape ? `\\${ch}` : ch;
+  }).join("");
+}
 export function markdownEntityLink(label: string, reference: NoteReference): string {
-  return `[${label.replace(/[\r\n]/g, " ").replace(/[\\`*_[\]{}()#+.!|<>~-]/g, "\\$&")}](${noteReferenceHref(reference)})`;
+  return `[${escapeMarkdownText(label)}](${noteReferenceHref(reference)})`;
 }
 export function noteTaskAsTask(task: NoteTaskRecord): ThreadTask {
   return { id: task.id, accountId: "", threadId: null, subjectSnapshot: null, title: task.title, kind: "action", dueKind: "none", status: task.checked ? "completed" : "open", createdAt: "", updatedAt: task.updatedAt, completedAt: task.completedAt, source: "note", noteSource: task };

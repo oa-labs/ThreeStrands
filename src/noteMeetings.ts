@@ -1,5 +1,5 @@
 import type { Note } from "./domain";
-import { noteReferenceHref, type NoteReference } from "./noteEntities";
+import { escapeMarkdownText, markdownEntityLink, type NoteReference } from "./noteEntities";
 
 /** Mirrors `src-tauri/src/note_meetings.rs` for the demo client; both are held
  * to `fixtures/note-meetings.json`. */
@@ -23,8 +23,7 @@ export type MeetingEntry = {
 export type MeetingCapture = { note: Note; added: boolean; previousBody: string; meetingNote: Note | null; createdMeetingNote: boolean };
 
 const collapse = (text: string) => text.split(/\s+/u).filter(Boolean).join(" ");
-const escapeInline = (text: string) => text.replace(/[\r\n]/g, " ").replace(/[\\`*_[\]{}()#+.!|<>~-]/g, "\\$&");
-const link = (label: string, reference: NoteReference) => `[${escapeInline(label)}](${noteReferenceHref(reference)})`;
+const link = markdownEntityLink;
 const isDateShape = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
 
 /** The title of the note a meeting links: the name made valid as a title. */
@@ -47,7 +46,7 @@ export function meetingLine(entry: MeetingEntry, title: string | null): string {
     return link(collapse(attendee.label) || attendee.reference.id, attendee.reference);
   });
   if (people.length) line += ` met with ${people.join(", ")}`;
-  return `${line} for ${title !== null ? `[[${title}]]` : escapeInline(collapse(entry.name) || "Meeting")}`;
+  return `${line} for ${title !== null ? `[[${title}]]` : escapeMarkdownText(collapse(entry.name) || "Meeting")}`;
 }
 
 function fenceRun(line: string) {

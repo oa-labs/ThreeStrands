@@ -85,7 +85,7 @@ it("adds a meeting from Today's next-meeting card to today's note, and Undo take
   const body = (await mailClient.getDailyNote(day))?.body ?? "";
   expect(body.startsWith("## Meetings\n\n- [")).toBe(true);
   expect(body).toContain("](threestrands:event/");
-  expect(body).toContain(" met with [dana\\.wiring@example\\.com](threestrands:contact/");
+  expect(body).toContain(" met with [dana.wiring@example.com](threestrands:contact/");
   expect(body.endsWith(" for Wiring review\n")).toBe(true);
   await act(async () => { screen.getByRole("button", { name: "Undo" }).click(); });
   await waitFor(async () => expect((await mailClient.getDailyNote(day))?.body ?? "").toBe(""));

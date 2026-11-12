@@ -1240,6 +1240,26 @@ fn captured_conversation_references_are_atomic_idempotent_and_preserve_authored_
 }
 
 #[test]
+fn captured_conversation_label_escapes_only_markdown_that_would_change_it() {
+    let db = database();
+    db.connection()
+        .unwrap()
+        .execute(
+            "UPDATE threads SET subject = 'Re: Q3 plan (v2.1) - ann_lee@example.com [draft] #ops' WHERE id = 'welcome'",
+            [],
+        )
+        .unwrap();
+    let captured = db.capture_note_conversation(DAY, "welcome", None).unwrap();
+    assert!(
+        captured.note.body.starts_with(
+            "- [Re: Q3 plan (v2.1) - ann_lee@example.com \\[draft\\] \\#ops](threestrands:conversation/"
+        ),
+        "{}",
+        captured.note.body
+    );
+}
+
+#[test]
 fn note_task_projection_converges_and_conflicts_cannot_be_toggled() {
     let a = synced();
     let b = synced();

@@ -374,13 +374,7 @@ impl Database {
             } else {
                 title.trim()
             };
-            let mut label = String::new();
-            for ch in title.chars() {
-                if ch.is_ascii_punctuation() {
-                    label.push('\\');
-                }
-                label.push(if ch == '\n' || ch == '\r' { ' ' } else { ch });
-            }
+            let label = note_meetings::escape_inline(title);
             let previous_body = start.previous_body;
             let separator = if previous_body.is_empty() || previous_body.ends_with('\n') {
                 ""
