@@ -4150,3 +4150,23 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .note-round-checkbox:checked { background: var(--accent); box-shadow: inset 0 0 0 var(--space-1) var(--surface); }
 .task-search { display: block; margin-bottom: var(--space-2); }
 .task-search input { box-sizing: border-box; width: 100%; }
+
+/* Event editing keeps scheduling actions and their context together. */
+.calendar-event-schedule-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.calendar-event-zone-row { display: flex; align-items: end; gap: var(--space-3); flex-wrap: wrap; }
+.calendar-event-zone-row > label { flex: 1; min-width: 0; }
+.calendar-event-zone-row select { max-width: 100%; }
+.calendar-event-zone-row > span { padding-bottom: var(--space-2); }
+.calendar-event-scope { margin: 0; color: var(--secondary); font-size: var(--text-meta); line-height: var(--leading-normal); }
+.calendar-event-guests { display: grid; gap: var(--space-2); min-width: 0; }
+.calendar-event-guests-toggle { justify-self: start; }
+.calendar-event-guest-preview { margin: 0; color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.calendar-event-guests .contact-multi-value-box { max-height: 14rem; overflow-y: auto; }
+.calendar-event-save-actions { flex-wrap: wrap; align-items: center; }
+.calendar-event-save-actions > p { flex: 1; margin: 0; }
+.time-picker-field { position: relative; min-width: 0; }
+.time-picker-field input { font-variant-numeric: tabular-nums; }
+.time-picker-options { position: absolute; top: calc(100% + var(--space-1)); left: 0; right: 0; z-index: var(--z-local-popover); max-height: 14rem; overflow-y: auto; padding: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover); }
+.time-picker-options [role="option"] { padding: var(--space-2); border-radius: var(--radius-sm); font-size: var(--text-body); cursor: pointer; white-space: nowrap; }
+.time-picker-options [data-active="true"], .time-picker-options [role="option"]:hover { background: var(--hover); }
+.time-picker-options [aria-selected="true"] { color: var(--accent); font-weight: var(--weight-semibold); }

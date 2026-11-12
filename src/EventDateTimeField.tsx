@@ -1,3 +1,4 @@
+import { TimePickerField } from "./TimePickerField";
 import { DatePickerField } from "./DatePickerField";
 
 /** Keep the date's calendar popup separate from the directly editable time. */
@@ -13,8 +14,7 @@ export function EventDateTimeField({ label, allDay, value, onChange }: {
     <legend>{label}</legend>
     <div className="event-date-time-inputs">
       <DatePickerField label={`${prefix} date`} value={date} onChange={(next) => onChange(allDay ? next : `${next}T${time}`)} />
-      {!allDay ? <label><span className="sr-only">{prefix} time</span><input type="time" value={time}
-        onChange={(event) => onChange(`${date}T${event.target.value}`)} required /></label> : null}
+      {!allDay ? <TimePickerField label={`${prefix} time`} value={time} onChange={(next) => onChange(`${date}T${next}`)} /> : null}
     </div>
   </fieldset>;
 }

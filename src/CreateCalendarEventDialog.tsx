@@ -3,10 +3,11 @@ import { EventDateTimeField } from "./EventDateTimeField";
 import { MeetingAvailabilityPicker } from "./MeetingAvailabilityPicker";
 import { readAvailabilityPreferencesFor } from "./settings";
 import { schedulingConflicts, schedulingCoverage } from "./meetingAvailability";
-import { useMemo, useState, type FormEvent } from "react";
+import { useId, useMemo, useState, type FormEvent } from "react";
 import { Modal } from "./AppChrome";
 import { calendarDescriptionText } from "./calendarDescription";
-import { addDays, dateInputValue } from "./calendarTime";
+import { eventDateTimeInZone, eventTimeInZone } from "./eventEditorTime";
+import { addDays, dateInputValue, timeZoneChoices } from "./calendarTime";
 import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption, CreateCalendarEventRequest, ScheduleEvent, UpdateCalendarEventRequest } from "./domain";
 import { errorMessage } from "./errors";
@@ -250,11 +251,16 @@ export function EditCalendarEventDialog({
   onSaved(event: ScheduleEvent): void;
 }) {
   const initialDescription = useMemo(() => event.description ? calendarDescriptionText(event.description) : "", [event.description]);
+  const [timeZone, setTimeZone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const zoneHintId = useId();
+  const guestsId = useId();
+  const zones = useMemo(() => timeZoneChoices(timeZone), [timeZone]);
+  const [guestsExpanded, setGuestsExpanded] = useState(() => (event.attendees?.length ?? 0) <= 3);
   const [title, setTitle] = useState(event.title);
   const [allDay, setAllDay] = useState(event.allDay);
   const [range, setRange] = useState(() => {
-    const startValue = event.allDay ? event.start.slice(0, 10) : localDateTimeValue(new Date(event.start));
-    const endValue = event.allDay ? dateInputValue(addDays(localDate(event.end), -1)) : localDateTimeValue(new Date(event.end));
+    const startValue = event.allDay ? event.start.slice(0, 10) : eventDateTimeInZone(new Date(event.start).getTime(), timeZone);
+    const endValue = event.allDay ? dateInputValue(addDays(localDate(event.end), -1)) : eventDateTimeInZone(new Date(event.end).getTime(), timeZone);
     // Keep instants as well as field text: the same local time occurs twice
     // when DST ends, and parsing the text again would lose that distinction.
     const startTime = event.allDay ? eventFieldTime(startValue, true) : new Date(event.start).getTime();
@@ -273,26 +279,26 @@ export function EditCalendarEventDialog({
   const [availabilityReviewed, setAvailabilityReviewed] = useState<string | null>(null);
 
   function selectTime(startTime: number, endTime: number) {
-    setRange({ startTime, endTime, startValue: localDateTimeValue(new Date(startTime)), endValue: localDateTimeValue(new Date(endTime)), duration: endTime - startTime });
+    setRange({ startTime, endTime, startValue: eventDateTimeInZone(startTime, timeZone), endValue: eventDateTimeInZone(endTime, timeZone), duration: endTime - startTime });
     setAvailabilityReviewed(null);
   }
 
   function changeStart(next: string) {
     setRange((previous) => {
-      const startTime = eventFieldTime(next, allDay);
+      const startTime = allDay ? eventFieldTime(next, true) : eventTimeInZone(next, timeZone, previous.startTime);
       const changed = { ...previous, startValue: next, startTime };
       // Clearing or partially typing the start must not discard the duration.
       if (previous.duration === null || !Number.isFinite(startTime)) return changed;
       const endTime = startTime + previous.duration;
       const end = new Date(endTime);
       if (!Number.isFinite(end.getTime())) return changed;
-      return { ...changed, endTime, endValue: allDay ? end.toISOString().slice(0, 10) : localDateTimeValue(end) };
+      return { ...changed, endTime, endValue: allDay ? end.toISOString().slice(0, 10) : eventDateTimeInZone(endTime, timeZone) };
     });
   }
 
   function changeEnd(next: string) {
     setRange((previous) => {
-      const endTime = eventFieldTime(next, allDay);
+      const endTime = allDay ? eventFieldTime(next, true) : eventTimeInZone(next, timeZone, previous.endTime);
       const duration = eventDuration(previous.startTime, endTime, allDay) ?? previous.duration;
       return { ...previous, endValue: next, endTime, duration };
     });
@@ -305,14 +311,15 @@ export function EditCalendarEventDialog({
     const nextEnd = next
       ? endValue.slice(0, 10) < startValue.slice(0, 10) ? startValue.slice(0, 10) : endValue.slice(0, 10)
       : `${startValue.slice(0, 10)}T10:00`;
-    const startTime = eventFieldTime(nextStart, next);
-    const endTime = eventFieldTime(nextEnd, next);
+    const startTime = next ? eventFieldTime(nextStart, true) : eventTimeInZone(nextStart, timeZone);
+    const endTime = next ? eventFieldTime(nextEnd, true) : eventTimeInZone(nextEnd, timeZone);
     setRange({ startValue: nextStart, endValue: nextEnd, startTime, endTime, duration: eventDuration(startTime, endTime, next) });
   }
 
   async function submit(formEvent: FormEvent<HTMLFormElement>) {
     formEvent.preventDefault();
     setError(null);
+    if (pendingInvitee.trim()) setGuestsExpanded(true);
     if (blockedByPendingInvitee(formEvent.currentTarget, pendingInvitee)) return;
     const attendees = invitees;
     if (!event.calendarId) { setError("This event's calendar is unknown. Refresh the calendar and try again."); return; }
@@ -330,9 +337,10 @@ export function EditCalendarEventDialog({
     } else {
       const startsAt = new Date(range.startTime);
       const endsAt = new Date(range.endTime);
-      if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || endsAt <= startsAt) {
-        setError("The end time must be after the start time."); return;
+      if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime())) {
+        setError("Enter valid times. Times skipped when the clocks change cannot be used."); return;
       }
+      if (endsAt <= startsAt) { setError("The end time must be after the start time."); return; }
       start = startsAt.toISOString();
       end = endsAt.toISOString();
     }
@@ -387,25 +395,49 @@ export function EditCalendarEventDialog({
       }}>
         <fieldset disabled={saving} className="calendar-event-fields">
           <label>Title<input value={title} onChange={(change) => setTitle(change.target.value)} maxLength={1024} required placeholder="Add title" /></label>
+          {event.seriesId ? <p className="calendar-event-scope" role="note"><strong>Repeating event · This occurrence only</strong><br />Changes apply only to this event. Other occurrences stay unchanged.</p> : null}
+          <div className="calendar-event-schedule-toolbar">
+            <label className="calendar-event-all-day-field"><input type="checkbox" checked={allDay} onChange={(change) => changeAllDay(change.target.checked)} />All day</label>
+            {!allDay ? <button type="button" className="btn btn-sm" aria-expanded={findingTime} disabled={saving || !event.calendarId} onClick={() => { setAvailabilityUsed(true); setFindingTime((value) => !value); }}>{findingTime ? "Hide availability" : "Find a time"}</button> : null}
+          </div>
           <div className="calendar-event-date-row">
             <div className="calendar-event-time-fields">
               <EventDateTimeField label="Starts" allDay={allDay} value={startValue} onChange={changeStart} />
               <EventDateTimeField label="Ends" allDay={allDay} value={endValue} onChange={changeEnd} />
             </div>
-            <label className="calendar-event-all-day-field"><input type="checkbox" checked={allDay} onChange={(change) => changeAllDay(change.target.checked)} />All day</label>
           </div>
-          {!allDay ? <button type="button" className="btn btn-sm" aria-expanded={findingTime} disabled={saving || !event.calendarId} onClick={() => { setAvailabilityUsed(true); setFindingTime((value) => !value); }}>{findingTime ? "Hide availability" : "Find a time"}</button> : null}
+          {!allDay ? <div className="calendar-event-zone-row">
+            <label>Time zone<select aria-describedby={zoneHintId} value={timeZone} onChange={(change) => {
+              const zone = change.target.value;
+              setTimeZone(zone);
+              setRange((previous) => ({ ...previous,
+                startValue: Number.isFinite(previous.startTime) ? eventDateTimeInZone(previous.startTime, zone) : previous.startValue,
+                endValue: Number.isFinite(previous.endTime) ? eventDateTimeInZone(previous.endTime, zone) : previous.endValue,
+              }));
+            }}>
+              <optgroup label="Common time zones">{zones.common.map((zone) => <option key={zone.value} value={zone.value}>{zone.label}</option>)}</optgroup>
+              <optgroup label="All time zones">{zones.all.map((zone) => <option key={zone.value} value={zone.value}>{zone.label}</option>)}</optgroup>
+            </select></label>
+            {Number.isFinite(range.endTime - range.startTime) && range.endTime > range.startTime ? <span className="modal-form-context">{(range.endTime - range.startTime) / 60_000} minutes</span> : null}
+          </div> : null}
+          {!allDay ? <p id={zoneHintId} className="modal-form-context">Changing the time zone converts these times without moving the event.</p> : null}
           {findingTime && !allDay && event.calendarId ? <MeetingAvailabilityPicker
             eventId={event.id} accountId={event.accountId} calendarId={event.calendarId} attendees={invitees}
             originalStart={event.start} originalEnd={event.end} start={range.startTime} end={range.endTime}
             disabled={saving} onSelect={selectTime}
           /> : null}
           <EventLocationField value={location} disabled={saving} onChange={setLocation} />
-          <EmailBadgeField label="Invite People" values={invitees} calendarAccount={event.accountId} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
+          <div className="calendar-event-guests">
+            <button type="button" className="btn btn-sm calendar-event-guests-toggle" aria-expanded={guestsExpanded} aria-controls={guestsId} disabled={guestsExpanded && !!pendingInvitee.trim()} onClick={() => setGuestsExpanded((previous) => !previous)}>Guests · {invitees.length} · {guestsExpanded ? "Hide" : "Edit"}</button>
+            {!guestsExpanded ? <p className="calendar-event-guest-preview">{invitees.slice(0, 2).join(", ")}{invitees.length > 2 ? ` and ${invitees.length - 2} more` : ""}</p> : null}
+            <div id={guestsId} hidden={!guestsExpanded}>
+              <EmailBadgeField label="Invite People" values={invitees} calendarAccount={event.accountId} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
+            </div>
+          </div>
           <label>Description<textarea value={description} onChange={(change) => setDescription(change.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>
-          <p className="modal-form-context">Guests are notified of changes.</p>
           {error ? <p className="form-error" role="alert">{error}</p> : null}
-          <div className="modal-form-actions">
+          <div className="modal-form-actions calendar-event-save-actions">
+            <p className="modal-form-context">Guests are notified of changes.</p>
             <button type="button" className="btn" onClick={onClose} disabled={saving}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save changes"}</button>
           </div>

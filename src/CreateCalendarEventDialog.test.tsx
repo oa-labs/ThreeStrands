@@ -18,6 +18,97 @@ describe("EditCalendarEventDialog", () => {
     start: "2026-10-01T09:00:00", end: "2026-10-01T10:30:00", allDay: false,
   };
 
+  it("states the scope of recurring edits and saves the occurrence identity", async () => {
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    render(<EditCalendarEventDialog event={{ ...event, seriesId: "series" }} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByRole("note")).toHaveTextContent("This occurrence only");
+    expect(screen.getByRole("note")).toHaveTextContent("Other occurrences stay unchanged.");
+    fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Updated occurrence" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ eventId: event.id, title: "Updated occurrence" })));
+  });
+
+  it("converts displayed times when changing zones and edits in the chosen zone", async () => {
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    render(<EditCalendarEventDialog event={{ ...event, start: "2026-11-12T01:00:00Z", end: "2026-11-12T02:30:00Z" }} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const zone = screen.getByRole("combobox", { name: "Time zone" });
+    expect(zone).toHaveAccessibleDescription();
+    fireEvent.change(zone, { target: { value: "America/Los_Angeles" } });
+    expectEventDateTime(screen, "Starts", "2026-11-11T17:00");
+    expectEventDateTime(screen, "Ends", "2026-11-11T18:30");
+    fireEvent.change(zone, { target: { value: "Asia/Calcutta" } });
+    expectEventDateTime(screen, "Starts", "2026-11-12T06:30");
+    fireEvent.change(screen.getByLabelText("Start time"), { target: { value: "8:50am" } });
+    expectEventDateTime(screen, "Ends", "2026-11-12T10:20");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ start: "2026-11-12T03:20:00.000Z", end: "2026-11-12T04:50:00.000Z" })));
+  });
+
+  it("keeps instants through zone changes during the repeated hour", async () => {
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    const start = "2026-11-01T06:15:00.000Z";
+    const end = "2026-11-01T06:45:00.000Z";
+    render(<EditCalendarEventDialog event={{ ...event, start, end }} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const zone = screen.getByRole("combobox", { name: "Time zone" });
+    fireEvent.change(zone, { target: { value: "America/New_York" } });
+    expectEventDateTime(screen, "Starts", "2026-11-01T01:15");
+    fireEvent.change(zone, { target: { value: "Europe/London" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ start, end })));
+  });
+
+  it("blocks times skipped by DST in the selected zone", async () => {
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    render(<EditCalendarEventDialog event={event} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Time zone" }), { target: { value: "America/New_York" } });
+    changeEventDateTime(screen, "Starts", "2026-03-08T02:30");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Times skipped when the clocks change cannot be used.");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("keeps all guests while collapsed and preserves edits when hiding and reopening", async () => {
+    const attendees = ["one@example.com", "two@example.com", "three@example.com", "four@example.com"];
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    render(<EditCalendarEventDialog event={{ ...event, attendees }} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.queryByRole("textbox", { name: "Invite People" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Guests · 4 · Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove four@example.com" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guests · 3 · Hide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guests · 3 · Edit" }));
+    expect(screen.queryByRole("button", { name: "Remove four@example.com" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Guests · 3 · Hide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ attendees: attendees.slice(0, 3) })));
+  });
+
+  it("saves every guest when the list stays collapsed", async () => {
+    const attendees = ["one@example.com", "two@example.com", "three@example.com", "four@example.com"];
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    render(<EditCalendarEventDialog event={{ ...event, attendees }} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ attendees })));
+  });
+
+  it("dismisses time suggestions before dismissing the editor", () => {
+    const onClose = vi.fn();
+    render(<EditCalendarEventDialog event={event} onClose={onClose} onSaved={vi.fn()} />);
+    fireEvent.focus(screen.getByLabelText("Start time"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("shows no time zone for all-day events and preserves inclusive dates", () => {
+    render(<EditCalendarEventDialog event={{ ...event, allDay: true, start: "2026-11-12", end: "2026-11-14" }} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.queryByRole("combobox", { name: "Time zone" })).not.toBeInTheDocument();
+    expectEventDateTime(screen, "Starts", "2026-11-12");
+    expectEventDateTime(screen, "Ends", "2026-11-13");
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
   it("saves a location chosen from the calendar's places", async () => {
     vi.spyOn(mailClient, "searchEventLocations").mockResolvedValue(["Alloy 26, 100 S Commons, Pittsburgh, PA"]);
     const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
