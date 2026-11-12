@@ -68,6 +68,109 @@ fn score_requires_two_messages_and_prefers_shared_seeds_then_recent_small_groups
 }
 
 #[test]
+fn score_prefers_candidates_from_messages_covering_more_seeds() {
+    // Bob has more separate pairwise history with alice and with dave. Carol
+    // appears only twice, but always with both seeds on the same message.
+    let messages = vec![
+        evidence("a1", 1, &["alice", "bob"]),
+        evidence("a2", 2, &["alice", "bob"]),
+        evidence("a3", 3, &["alice", "bob"]),
+        evidence("a4", 4, &["alice", "bob"]),
+        evidence("d1", 1, &["dave", "bob"]),
+        evidence("d2", 2, &["dave", "bob"]),
+        evidence("d3", 3, &["dave", "bob"]),
+        evidence("d4", 4, &["dave", "bob"]),
+        evidence("j1", 1, &["alice", "dave", "carol"]),
+        evidence("j2", 2, &["alice", "dave", "carol"]),
+    ];
+    let r = score(&messages, &seeds(&["alice", "dave"]), now());
+    assert_eq!(r["carol"].seeds, vec!["alice", "dave"]);
+    assert_eq!(r["bob"].seeds, vec!["alice", "dave"]);
+    assert_eq!(r["carol"].coverage, 2);
+    assert_eq!(r["bob"].coverage, 0);
+    assert!(compare(r.get("carol"), r.get("bob")).is_lt());
+}
+
+/// Bob has frequent recent pairwise history with each seed; Carol has the
+/// minimum pairwise support plus joint messages varied by each case.
+fn joint_case(joint: Vec<Evidence>) -> HashMap<String, Relationship> {
+    let mut messages = Vec::new();
+    for n in 1..=10 {
+        messages.push(evidence(&format!("a{n}"), n, &["alice", "bob"]));
+        messages.push(evidence(&format!("d{n}"), n, &["dave", "bob"]));
+    }
+    messages.extend([
+        evidence("ca1", 200, &["alice", "carol"]),
+        evidence("ca2", 201, &["alice", "carol"]),
+        evidence("cd1", 200, &["dave", "carol"]),
+        evidence("cd2", 201, &["dave", "carol"]),
+    ]);
+    messages.extend(joint);
+    score(&messages, &seeds(&["alice", "dave"]), now())
+}
+
+#[test]
+fn coverage_needs_repeated_joint_messages() {
+    let r = joint_case(vec![evidence("j1", 1, &["alice", "dave", "carol"])]);
+    assert_eq!(r["carol"].coverage, 0);
+    assert!(compare(r.get("bob"), r.get("carol")).is_lt());
+
+    let r = joint_case(vec![
+        evidence("j1", 1, &["alice", "dave", "carol"]),
+        evidence("j2", 2, &["alice", "dave", "carol"]),
+    ]);
+    assert_eq!(r["carol"].coverage, 2);
+    assert!(compare(r.get("carol"), r.get("bob")).is_lt());
+}
+
+#[test]
+fn coverage_is_the_overlap_reached_by_min_support_messages() {
+    // One message covers all three seeds; only two cover at least two.
+    let mut messages = vec![
+        evidence("j1", 1, &["alice", "dave", "erin", "carol"]),
+        evidence("j2", 2, &["alice", "dave", "carol"]),
+    ];
+    messages.push(evidence("j3", 3, &["alice", "carol"]));
+    let r = score(&messages, &seeds(&["alice", "dave", "erin"]), now());
+    assert_eq!(r["carol"].coverage, 2);
+}
+
+#[test]
+fn coverage_window_boundaries() {
+    for (age, expected) in [
+        (COVERAGE_WINDOW_DAYS - 1, 2),
+        (COVERAGE_WINDOW_DAYS, 2),
+        (COVERAGE_WINDOW_DAYS + 1, 0),
+    ] {
+        let r = joint_case(vec![
+            evidence("j1", 1, &["alice", "dave", "carol"]),
+            evidence("j2", age, &["alice", "dave", "carol"]),
+        ]);
+        assert_eq!(r["carol"].coverage, expected, "age {age}");
+    }
+    // Old joint messages still count as pairwise support within WINDOW_DAYS.
+    let r = joint_case(vec![
+        evidence("j1", 300, &["alice", "dave", "carol"]),
+        evidence("j2", 301, &["alice", "dave", "carol"]),
+    ]);
+    assert_eq!(r["carol"].seeds, vec!["alice", "dave"]);
+    assert_eq!(r["carol"].coverage, 0);
+    assert!(compare(r.get("bob"), r.get("carol")).is_lt());
+}
+
+#[test]
+fn oversized_joint_messages_do_not_establish_coverage() {
+    let mut big = vec!["alice", "dave", "carol"];
+    let filler: Vec<String> = (0..MAX_RECIPIENTS).map(|n| format!("x{n}")).collect();
+    big.extend(filler.iter().map(String::as_str));
+    let r = joint_case(vec![evidence("j1", 1, &big), evidence("j2", 2, &big)]);
+    assert_eq!(r["carol"].coverage, 0);
+    let fits = &big[..MAX_RECIPIENTS];
+    let r = joint_case(vec![evidence("j1", 1, fits), evidence("j2", 2, fits)]);
+    assert_eq!(r["carol"].coverage, 2);
+}
+
+#[test]
 fn score_window_size_support_and_future_boundaries() {
     for age in [WINDOW_DAYS - 1, WINDOW_DAYS, WINDOW_DAYS + 1] {
         let r = score(

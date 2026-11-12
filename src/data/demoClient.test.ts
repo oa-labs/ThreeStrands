@@ -770,6 +770,69 @@ describe("demo co-recipient suggestions", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("prefers contacts seen with more of the current recipients on the same message", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-01T12:00:00Z"));
+    try {
+      const seed = defaultDemoDataset();
+      const account = seed.accounts[0].email;
+      const template = seed.threads[0];
+      const day = (n: number) => `2026-10-${String(n).padStart(2, "0")}T12:00:00Z`;
+      seed.threads = [
+        { ...template, id: "with-alice", accountId: account, labels: ["SENT"] },
+        { ...template, id: "with-dave", accountId: account, labels: ["SENT"] },
+        { ...template, id: "joint", accountId: account, labels: ["SENT"] },
+      ];
+      seed.messages = {
+        "with-alice": [1, 2, 3, 4].map((n) => ({ sender: account, recipients: ["Alice <alice@example.com>", "Bob <bob@example.com>"], sentAt: day(n), bodyHtml: "", bodyText: "" })),
+        "with-dave": [1, 2, 3, 4].map((n) => ({ sender: account, recipients: ["Dave <dave@example.com>", "Bob <bob@example.com>"], sentAt: day(n), bodyHtml: "", bodyText: "" })),
+        joint: [1, 2].map((n) => ({ sender: account, recipients: ["Alice <alice@example.com>", "Dave <dave@example.com>", "Carol <carol@example.com>"], sentAt: day(n), bodyHtml: "", bodyText: "" })),
+      };
+      seed.contacts = [];
+      const client = createDemoClient(seed);
+      const suggestions = await client.listContactSuggestions(account, "", 8, {
+        seeds: ["alice@example.com", "dave@example.com"],
+        excluded: ["alice@example.com", "dave@example.com"],
+      });
+      expect(suggestions.map((item) => item.email)).toEqual(["carol@example.com", "bob@example.com"]);
+      expect(suggestions[0].relatedTo).toEqual(["alice@example.com", "dave@example.com"]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("needs two recent joint messages before ranking a contact above stronger pairwise history", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-01T12:00:00Z"));
+    try {
+      const seed = defaultDemoDataset();
+      const account = seed.accounts[0].email;
+      const template = seed.threads[0];
+      const at = (daysAgo: number) => new Date(Date.parse("2026-11-01T12:00:00Z") - daysAgo * 86_400_000).toISOString();
+      const send = (recipients: string[], daysAgo: number) => ({ sender: account, recipients, sentAt: at(daysAgo), bodyHtml: "", bodyText: "" });
+      const rank = async (joint: number[]) => {
+        seed.threads = ["with-alice", "with-dave", "joint"].map((id) => ({ ...template, id, accountId: account, labels: ["SENT"] }));
+        seed.messages = {
+          "with-alice": [
+            ...[1, 2, 3, 4, 5, 6].map((n) => send(["alice@example.com", "bob@example.com"], n)),
+            ...[200, 201].map((n) => send(["alice@example.com", "carol@example.com"], n)),
+          ],
+          "with-dave": [
+            ...[1, 2, 3, 4, 5, 6].map((n) => send(["dave@example.com", "bob@example.com"], n)),
+            ...[200, 201].map((n) => send(["dave@example.com", "carol@example.com"], n)),
+          ],
+          joint: joint.map((n) => send(["alice@example.com", "dave@example.com", "carol@example.com"], n)),
+        };
+        seed.contacts = [];
+        const suggestions = await createDemoClient(seed).listContactSuggestions(account, "", 8, {
+          seeds: ["alice@example.com", "dave@example.com"],
+          excluded: ["alice@example.com", "dave@example.com"],
+        });
+        return suggestions.map((item) => item.email);
+      };
+      expect(await rank([1])).toEqual(["bob@example.com", "carol@example.com"]);
+      expect(await rank([300, 301])).toEqual(["bob@example.com", "carol@example.com"]);
+      expect(await rank([1, 90])).toEqual(["carol@example.com", "bob@example.com"]);
+      expect(await rank([1, 91])).toEqual(["bob@example.com", "carol@example.com"]);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("puts saved contacts first while typing and suggests invitees from the calendar's account", async () => {
     const seed = defaultDemoDataset();
     const account = seed.accounts[0].email;

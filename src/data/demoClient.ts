@@ -399,45 +399,67 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   // Browser fixtures model local header evidence; native ranking lives in Rust.
   function relatedContacts(accountId: string | undefined, rawSeeds: string[]) {
     const seeds = [...new Set(rawSeeds.map((email) => email.toLowerCase()))];
-    const result = new Map<string, { relatedTo: string[]; strength: number; displayName: string | null }>();
+    const result = new Map<string, { relatedTo: string[]; coverage: number; strength: number; displayName: string | null }>();
     if (seeds.length > 100) return result;
+    // Eligible sent messages, with seed overlap computed once per message.
+    const eligible: { key: string; age: number; recency: number; overlap: number; recipients: Map<string, string | null> }[] = [];
+    for (const thread of threads) {
+      if (accountId && thread.accountId !== accountId || thread.labels.includes("DRAFT") || !thread.labels.includes("SENT")) continue;
+      for (const message of messagesFor(thread)) {
+        if (parseAddress(message.sender).email.toLowerCase() !== thread.accountId.toLowerCase() || message.unsubscribe) continue;
+        const recipients = new Map([...message.recipients, ...(message.cc ?? [])].map((raw) => {
+          const address = parseAddress(raw);
+          return [address.email.toLowerCase(), address.name === address.email ? null : address.name];
+        }).filter(([email]) => email && email !== thread.accountId.toLowerCase()) as [string, string | null][]);
+        const age = Math.max(0, (Date.now() - Date.parse(message.sentAt)) / 86_400_000);
+        if (!Number.isFinite(age) || age > 365 || recipients.size < 2 || recipients.size > 20) continue;
+        eligible.push({
+          key: `${thread.accountId}/${thread.id}/${message.sentAt.slice(0, 10)}`,
+          age,
+          recency: 2 ** (-age / 90),
+          overlap: seeds.filter((item) => recipients.has(item)).length,
+          recipients,
+        });
+      }
+    }
     for (const seed of seeds) {
       const pairs = new Map<string, { count: number; weights: Map<string, number>; name: string | null }>();
       let denominator = 0;
-      for (const thread of threads) {
-        if (accountId && thread.accountId !== accountId || thread.labels.includes("DRAFT") || !thread.labels.includes("SENT")) continue;
-        for (const message of messagesFor(thread)) {
-          if (parseAddress(message.sender).email.toLowerCase() !== thread.accountId.toLowerCase() || message.unsubscribe) continue;
-          const recipients = new Map([...message.recipients, ...(message.cc ?? [])].map((raw) => {
-            const address = parseAddress(raw);
-            return [address.email.toLowerCase(), address.name === address.email ? null : address.name];
-          }).filter(([email]) => email && email !== thread.accountId.toLowerCase()) as [string, string | null][]);
-          const age = Math.max(0, (Date.now() - Date.parse(message.sentAt)) / 86_400_000);
-          if (!Number.isFinite(age) || age > 365 || recipients.size < 2 || recipients.size > 20 || !recipients.has(seed)) continue;
-          const weight = 2 ** (-age / 90);
-          denominator += weight;
-          for (const [email, name] of recipients) {
-            if (seeds.includes(email)) continue;
-            const pair = pairs.get(email) ?? { count: 0, weights: new Map<string, number>(), name };
-            pair.count++;
-            const key = `${thread.accountId}/${thread.id}/${message.sentAt.slice(0, 10)}`;
-            pair.weights.set(key, Math.max(pair.weights.get(key) ?? 0, weight / (recipients.size - 1)));
-            pairs.set(email, pair);
-          }
+      for (const { key, recency, recipients } of eligible) {
+        if (!recipients.has(seed)) continue;
+        denominator += recency;
+        for (const [email, name] of recipients) {
+          if (seeds.includes(email)) continue;
+          const pair = pairs.get(email) ?? { count: 0, weights: new Map<string, number>(), name };
+          pair.count++;
+          pair.weights.set(key, Math.max(pair.weights.get(key) ?? 0, recency / (recipients.size - 1)));
+          pairs.set(email, pair);
         }
       }
       for (const [email, pair] of pairs) {
         if (pair.count < 2) continue;
-        const item = result.get(email) ?? { relatedTo: [], strength: 0, displayName: pair.name };
+        const item = result.get(email) ?? { relatedTo: [], coverage: 0, strength: 0, displayName: pair.name };
         item.relatedTo.push(seed);
         item.strength += [...pair.weights.values()].reduce((sum, n) => sum + n, 0) / denominator / seeds.length;
         result.set(email, item);
       }
     }
+    // Coverage: the seed overlap (2+) that two recent joint messages reach.
+    const joint = new Map<string, number[]>();
+    for (const { age, overlap, recipients } of eligible) {
+      if (overlap < 2 || age > 90) continue;
+      for (const email of recipients.keys()) {
+        if (!seeds.includes(email) && result.has(email)) joint.set(email, [...(joint.get(email) ?? []), overlap]);
+      }
+    }
+    for (const [email, overlaps] of joint) {
+      const coverage = overlaps.sort((a, b) => b - a)[1];
+      if (coverage !== undefined) result.get(email)!.coverage = coverage;
+    }
     return result;
   }
-  function compareRelations(a: { relatedTo: string[]; strength: number } | undefined, b: { relatedTo: string[]; strength: number } | undefined) {
-    return (b?.relatedTo.length ?? 0) - (a?.relatedTo.length ?? 0) || (b?.strength ?? 0) - (a?.strength ?? 0);
+  function compareRelations(a: { relatedTo: string[]; coverage: number; strength: number } | undefined, b: { relatedTo: string[]; coverage: number; strength: number } | undefined) {
+    return (b?.relatedTo.length ?? 0) - (a?.relatedTo.length ?? 0) || (b?.coverage ?? 0) - (a?.coverage ?? 0) || (b?.strength ?? 0) - (a?.strength ?? 0);
   }
   async function timelineForAddresses(addresses: string[], offset: number, limit: number, accountId?: string): Promise<ContactTimelineItem[]> {
     const target = new Set(addresses.map((address) => address.toLocaleLowerCase()));

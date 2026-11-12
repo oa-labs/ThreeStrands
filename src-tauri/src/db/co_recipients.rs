@@ -9,6 +9,8 @@ pub(super) const WINDOW_DAYS: i64 = 365;
 pub(super) const HALF_LIFE_DAYS: f64 = 90.0;
 pub(super) const MAX_RECIPIENTS: usize = 20;
 pub(super) const MIN_SUPPORT: usize = 2;
+/// Joint (multi-seed) messages older than this do not establish coverage.
+pub(super) const COVERAGE_WINDOW_DAYS: i64 = 90;
 const MAX_CONTEXT: usize = 100;
 const MAX_EVIDENCE_ROWS: usize = 20_000;
 const BACKFILL_CURSOR: &str = "local_co_recipient_cursor";
@@ -135,6 +137,9 @@ fn index_headers(
 #[derive(Default, Debug)]
 pub(super) struct Relationship {
     pub seeds: Vec<String>,
+    /// Most context seeds (at least two) seen together with this contact on
+    /// MIN_SUPPORT recent messages; 0 without such repeated joint evidence.
+    pub coverage: usize,
     pub strength: f64,
     pub display_name: Option<String>,
 }
@@ -143,12 +148,15 @@ pub(super) fn compare(a: Option<&Relationship>, b: Option<&Relationship>) -> std
     let key = |r: Option<&Relationship>| {
         (
             r.map_or(0, |r| r.seeds.len()),
+            r.map_or(0, |r| r.coverage),
             r.map_or(0.0, |r| r.strength),
         )
     };
-    let (an, aw) = key(a);
-    let (bn, bw) = key(b);
-    bn.cmp(&an).then_with(|| bw.total_cmp(&aw))
+    let (an, ac, aw) = key(a);
+    let (bn, bc, bw) = key(b);
+    bn.cmp(&an)
+        .then_with(|| bc.cmp(&ac))
+        .then_with(|| bw.total_cmp(&aw))
 }
 
 struct Evidence {
@@ -269,11 +277,37 @@ pub(super) fn relationships(
 }
 
 /// Pure ranking with an explicit clock; only distinct messages establish support.
+/// Strength uses each seed's pairwise evidence. Coverage ranks a contact seen
+/// with several seeds on the same message ahead of one only paired with each,
+/// but only when MIN_SUPPORT recent messages show that joint overlap.
 fn score(
     evidence: &[Evidence],
     seeds: &BTreeSet<String>,
     now: DateTime<Utc>,
 ) -> HashMap<String, Relationship> {
+    struct Eligible<'a> {
+        message: &'a Evidence,
+        overlap: usize,
+        recency: f64,
+    }
+    let eligible: Vec<_> = evidence
+        .iter()
+        .filter(|m| {
+            (2..=MAX_RECIPIENTS).contains(&m.recipients.len())
+                && m.date >= now - Duration::days(WINDOW_DAYS)
+        })
+        .map(|message| {
+            let age = (now - message.date).num_seconds().max(0) as f64 / 86_400.0;
+            Eligible {
+                message,
+                overlap: seeds
+                    .iter()
+                    .filter(|s| message.recipients.contains_key(*s))
+                    .count(),
+                recency: 2_f64.powf(-age / HALF_LIFE_DAYS),
+            }
+        })
+        .collect();
     let mut result: HashMap<String, Relationship> = HashMap::new();
     for seed in seeds {
         let mut denominator = 0.0;
@@ -285,17 +319,14 @@ fn score(
                 Option<String>,
             ),
         > = BTreeMap::new();
-        for message in evidence {
-            let size = message.recipients.len();
-            if size < 2
-                || size > MAX_RECIPIENTS
-                || !message.recipients.contains_key(seed)
-                || message.date < now - Duration::days(WINDOW_DAYS)
-            {
+        for Eligible {
+            message, recency, ..
+        } in &eligible
+        {
+            if !message.recipients.contains_key(seed) {
                 continue;
             }
-            let age = (now - message.date).num_seconds().max(0) as f64 / 86_400.0;
-            let recency = 2_f64.powf(-age / HALF_LIFE_DAYS);
+            let size = message.recipients.len();
             denominator += recency;
             for (email, name) in &message.recipients {
                 if seeds.contains(email) {
@@ -330,6 +361,27 @@ fn score(
             if entry.display_name.is_none() {
                 entry.display_name = name;
             }
+        }
+    }
+    // Recent joint messages per contact, as their seed overlaps.
+    let mut joint: HashMap<&str, Vec<usize>> = HashMap::new();
+    for item in &eligible {
+        if item.overlap < 2 || item.message.date < now - Duration::days(COVERAGE_WINDOW_DAYS) {
+            continue;
+        }
+        for email in item.message.recipients.keys() {
+            if !seeds.contains(email) && result.contains_key(email) {
+                joint.entry(email).or_default().push(item.overlap);
+            }
+        }
+    }
+    for (email, mut overlaps) in joint {
+        // The overlap that at least MIN_SUPPORT distinct messages reach.
+        overlaps.sort_unstable_by(|a, b| b.cmp(a));
+        if let (Some(&coverage), Some(entry)) =
+            (overlaps.get(MIN_SUPPORT - 1), result.get_mut(email))
+        {
+            entry.coverage = coverage;
         }
     }
     result
