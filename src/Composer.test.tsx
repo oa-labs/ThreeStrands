@@ -89,6 +89,19 @@ describe("Composer signatures", () => {
     expect(saved.body).toBe("Keep this message");
   });
 
+  it("never adds the caret line to the signature, so a cleared signature saves empty", async () => {
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={{ ...draft, body: "Hello", signature: draftSignatureSnapshot(full, true) }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const signature = screen.getByRole("textbox", { name: "Message Signature" });
+    signature.focus();
+    signature.innerHTML = "";
+    fireEvent.input(signature);
+
+    expect(signature).toBeEmptyDOMElement();
+    const saved = await ref.current!.flush();
+    expect(saved.signature?.html).toBe("");
+  });
+
   it("keeps the signature separate from authored text and quotes, including AI replacement and draft reopening", async () => {
     const ref = createRef<ComposerHandle>();
     const initial = { ...draft, mode: "reply" as const, body: "\n\nOn Monday, Ann wrote:\n> Quoted", signature: draftSignatureSnapshot(full, true) };
@@ -866,6 +879,153 @@ describe("Composer body input responsiveness", () => {
   });
 });
 
+describe("Composer body caret", () => {
+  beforeEach(() => {
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: draft.account }]);
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    delete (Range.prototype as Partial<Range>).getBoundingClientRect;
+    window.getSelection()?.removeAllRanges();
+  });
+
+  function mockContentBounds(top: number, bottom: number) {
+    Range.prototype.getBoundingClientRect = () => ({ top, bottom, left: 0, right: 40, width: 40, height: bottom - top, x: 0, y: top, toJSON() { return {}; } }) as DOMRect;
+  }
+  function select(node: Node, offset: number, focusNode = node, focusOffset = offset) {
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.setBaseAndExtent(node, offset, focusNode, focusOffset);
+  }
+  function caretIsAtEnd(body: HTMLElement) {
+    const end = document.createRange();
+    end.selectNodeContents(body);
+    end.collapse(false);
+    const selection = window.getSelection()!;
+    return selection.isCollapsed && selection.rangeCount === 1 && selection.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, end) === 0;
+  }
+  function renderBody(props: Partial<Draft> = {}) {
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={{ ...draft, ...props }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    return { ref, body: screen.getByRole("textbox", { name: "Message Body" }) };
+  }
+
+  it("puts a caret in an empty message body when its blank area is clicked", () => {
+    const { body } = renderBody();
+
+    fireEvent.click(body, { button: 0, clientY: 240 });
+
+    expect(body).toHaveFocus();
+    expect(body.querySelector("br[data-caret-anchor]")).toBeInTheDocument();
+    const selection = window.getSelection();
+    expect(selection?.isCollapsed).toBe(true);
+    expect(selection?.anchorNode && body.contains(selection.anchorNode)).toBe(true);
+  });
+
+  it("moves the caret to the end when the click falls below the text", () => {
+    const { body } = renderBody({ body: "Hello" });
+    mockContentBounds(10, 30);
+
+    fireEvent.click(body, { button: 0, clientY: 200 });
+
+    expect(caretIsAtEnd(body)).toBe(true);
+  });
+
+  it("leaves a click on existing text alone", () => {
+    const { body } = renderBody({ body: "Hello" });
+    // The press has already focused the body and placed the caret by click time.
+    body.focus();
+    select(body.firstChild!, 1);
+    mockContentBounds(10, 30);
+
+    fireEvent.click(body, { button: 0, clientY: 20 });
+
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+  });
+
+  it("keeps a drag or Shift-click selection that ends in the blank area", () => {
+    const { body } = renderBody({ body: "Hello" });
+    mockContentBounds(10, 30);
+    const text = body.firstChild!;
+    body.focus();
+
+    expect(fireEvent.pointerDown(body, { button: 0, clientY: 200 })).toBe(true);
+    select(text, 0, text, 5);
+    fireEvent.click(body, { button: 0, clientY: 200 });
+    expect(window.getSelection()?.toString()).toBe("Hello");
+
+    select(text, 2);
+    fireEvent.click(body, { button: 0, clientY: 200, shiftKey: true });
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+  });
+
+  it("brings the caret line back after the body is cleared and does not save it", async () => {
+    const { ref, body } = renderBody({ body: "Hello" });
+    body.focus();
+    body.innerHTML = "";
+    fireEvent.input(body);
+
+    expect(body.querySelector("br[data-caret-anchor]")).toBeInTheDocument();
+    await ref.current?.flush();
+    expect(vi.mocked(mailClient.saveDraft)).toHaveBeenCalledWith(expect.objectContaining({ body: "", bodyHtml: "" }));
+  });
+
+  it("drops the caret line once the body has content, so what is shown is what is saved", async () => {
+    const { ref, body } = renderBody();
+    body.focus();
+    expect(body.querySelector("br[data-caret-anchor]")).toBeInTheDocument();
+
+    act(() => ref.current!.insertText("Hello"));
+    expect(body.querySelector("br[data-caret-anchor]")).toBeNull();
+
+    // Typing lands beside the anchor before the input event arrives.
+    body.innerHTML = '<br data-caret-anchor="true">';
+    body.append("World");
+    fireEvent.input(body);
+    expect(body.innerHTML).toBe("World");
+    const saved = await ref.current!.flush();
+    expect(saved.body).toBe("World");
+  });
+
+  it("keeps the caret line as a real break once it holds a line inside a block", () => {
+    const { body } = renderBody();
+    body.focus();
+    body.innerHTML = '<div><br data-caret-anchor="true"></div><div>Next</div>';
+    fireEvent.input(body);
+
+    expect(body.querySelector("br[data-caret-anchor]")).toBeNull();
+    expect(body.querySelectorAll("div > br")).toHaveLength(1);
+  });
+
+  it("returns the caret to where it was when focus comes back to the body", () => {
+    const { body } = renderBody({ body: "Hello there" });
+    body.focus();
+    select(body.firstChild!, 5);
+    screen.getByRole("textbox", { name: "Subject" }).focus();
+
+    body.focus();
+
+    expect(window.getSelection()?.anchorNode).toBe(body.firstChild);
+    expect(window.getSelection()?.anchorOffset).toBe(5);
+  });
+
+  it("does not move the caret when focus lands on a control inside the body", () => {
+    const { body } = renderBody();
+    const slider = document.createElement("span");
+    slider.tabIndex = 0;
+    slider.contentEditable = "false";
+    body.append(slider);
+
+    slider.focus();
+
+    expect(slider).toHaveFocus();
+    expect(body.querySelector("br[data-caret-anchor]")).toBeNull();
+    expect(window.getSelection()?.anchorNode).not.toBe(body);
+  });
+});
+
 describe("Composer pasted images", () => {
   afterEach(() => {
     cleanup();
@@ -1602,8 +1762,9 @@ describe("Composer quoted history", () => {
     const quoted = screen.getByLabelText("Quoted Text");
     const toggle = screen.getByRole("button", { name: "Show Quoted Text" });
 
-    expect(body).toBeEmptyDOMElement();
     expect(body).toHaveFocus();
+    expect(body).toHaveTextContent("");
+    expect(body.querySelector("br[data-caret-anchor]")).toBeInTheDocument();
     expect(quoted).not.toBeVisible();
     expect(quoted.querySelector('blockquote[type="cite"]')).toHaveTextContent("Can we meet Friday?");
     expect(toggle).toHaveAttribute("aria-expanded", "false");

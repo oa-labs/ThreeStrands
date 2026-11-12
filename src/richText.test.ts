@@ -444,6 +444,15 @@ it("keeps safe pasted images and strips compose-only image controls", () => {
   expect(sanitizeComposeHtml('<img src="javascript:alert(1)"><img src="data:text/html;base64,aGk=">')).toBe("");
 });
 
+it("omits the caret anchor break from the saved message", () => {
+  const editor = document.createElement("div");
+  editor.innerHTML = '<br data-caret-anchor="true">';
+  expect(serializeComposeBody(editor)).toEqual({ html: "", text: "" });
+
+  editor.innerHTML = 'Hello<br data-caret-anchor="true">';
+  expect(serializeComposeBody(editor)).toEqual({ html: "Hello", text: "Hello" });
+});
+
 it("derives the draft's HTML and plain text from a single clone without image controls", () => {
   const editor = document.createElement("div");
   editor.innerHTML = 'Before <span data-compose-image="true"><img src="data:image/png;base64,aGk=" data-compose-source="cid:image-1@threestrands.local" alt="Screenshot"><button data-compose-image-remove="true">×</button><span data-compose-image-resize="true"></span></span> after<br>&gt; quoted';

@@ -652,6 +652,10 @@ export function insertHtmlAtRange(editor: HTMLElement, range: Range, html: strin
  */
 export function serializeComposeBody(editor: HTMLElement, quoted?: HTMLElement | null, onAuthoredBoundary?: (body: { html: string; text: string }) => void): { html: string; text: string } {
   const clone = editor.cloneNode(true) as HTMLElement;
+  // The caret anchor is a line box for WebKit, not part of the message. Strip
+  // it before the sanitizer, which would otherwise keep the break and drop
+  // only its attribute.
+  stripCaretAnchors(clone);
   const hasQuote = quoted && (quoted.textContent?.trim() || quoted.querySelector("img"));
   if (hasQuote) while (clone.lastChild && isBlankTrailingNode(clone.lastChild)) clone.lastChild.remove();
   if (onAuthoredBoundary) {
@@ -661,6 +665,10 @@ export function serializeComposeBody(editor: HTMLElement, quoted?: HTMLElement |
   if (hasQuote) clone.append(document.createElement("br"), document.createElement("br"), ...Array.from(quoted.cloneNode(true).childNodes));
   stripComposeImageControls(clone);
   return { html: sanitizeComposeHtml(clone.innerHTML), text: composeHtmlToText(clone) };
+}
+
+function stripCaretAnchors(root: ParentNode) {
+  root.querySelectorAll("br[data-caret-anchor]").forEach((anchor) => anchor.remove());
 }
 
 function stripComposeImageControls(root: HTMLElement): void {

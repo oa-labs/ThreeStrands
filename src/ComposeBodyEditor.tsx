@@ -1,6 +1,6 @@
 import { loadSignatureEditorImages } from "./signatureEditorImages";
 import { readSignatureHtml, readSignatureEditor, signatureEditorHtml, type DraftSignature } from "./signatures";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type ClipboardEvent as ReactClipboardEvent, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Attachment, Draft } from "./correspondence";
 import type { Snippet } from "./domain";
 import {
@@ -132,6 +132,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   const editBody = useCallback(() => {
     // Keep cloning and sanitization off the keystroke path, including long quotes.
     bodyDirty.current = true;
+    if (bodyEditor.current) syncCaretAnchor(bodyEditor.current);
     if (signatureEditor.current?.contains(document.activeElement) && signatureSnapshot.current) signatureSnapshot.current = { ...signatureSnapshot.current, automatic: false };
     onChange();
   }, [onChange]);
@@ -441,6 +442,29 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
       data-placeholder="Write your message…"
       dangerouslySetInnerHTML={{ __html: initialBody.authoredHtml }}
       {...editingProps}
+      // Only the authored body has a tall, empty writing area for WebKit to
+      // focus without a caret, so the caret anchor never enters other editors.
+      onFocus={(event: ReactFocusEvent<HTMLDivElement>) => {
+        const editor = event.currentTarget;
+        // Focus bubbles from image controls inside the body; leave those alone.
+        if (event.target !== editor) return;
+        syncCaretAnchor(editor);
+        // Return to where the caret was when the body lost focus. Browsers may
+        // already have put it at the start; a click still moves it afterwards.
+        const selection = window.getSelection();
+        const saved = lastBodyRange.current;
+        if (saved && editor.contains(saved.startContainer)) {
+          selection?.removeAllRanges();
+          selection?.addRange(saved);
+          return;
+        }
+        if (selection?.rangeCount && editor.contains(selection.anchorNode)) return;
+        placeCaret(editor, true);
+      }}
+      onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
+        editingProps.onClick(event);
+        placeCaretOnBlankClick(event);
+      }}
       onBlur={() => {
         const selection = window.getSelection();
         const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
@@ -564,6 +588,76 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     ) : null}
   </>;
 });
+
+const CARET_ANCHOR = "br[data-caret-anchor]";
+
+/**
+ * Keeps a line WebKit can draw the caret on while the focused body is empty.
+ * The anchor exists only while it is the body's sole content: once anything
+ * else arrives it is removed, or kept as an ordinary break inside a block,
+ * so the editor always shows what serialization saves.
+ */
+function syncCaretAnchor(editor: HTMLElement) {
+  const anchors = Array.from(editor.querySelectorAll<HTMLElement>(CARET_ANCHOR));
+  const onlyAnchor = editor.childNodes.length === 1 && anchors[0] === editor.firstChild;
+  if (onlyAnchor) return;
+  anchors.forEach((anchor) => {
+    // Moved into a block (Return pressed in an empty body), the anchor now
+    // holds one of the user's lines open; at the top level it is a phantom line.
+    if (anchor.parentNode === editor) anchor.remove();
+    else delete anchor.dataset.caretAnchor;
+  });
+  if (editor.childNodes.length || document.activeElement !== editor) return;
+  const anchor = document.createElement("br");
+  anchor.dataset.caretAnchor = "true";
+  editor.append(anchor);
+  const selection = window.getSelection();
+  if (selection?.rangeCount && editor.contains(selection.anchorNode)) return;
+  placeCaret(editor, true);
+}
+
+function placeCaret(editor: HTMLElement, atStart: boolean) {
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(atStart);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+/** The vertical extent of the body's content, or null when it cannot be measured. */
+function contentBounds(editor: HTMLElement): { top: number; bottom: number } | null {
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  if (typeof range.getBoundingClientRect !== "function") return null;
+  const rect = range.getBoundingClientRect();
+  return rect.width > 0 || rect.height > 0 ? { top: rect.top, bottom: rect.bottom } : null;
+}
+
+/**
+ * WebKit focuses a tall contenteditable without placing a caret when the click
+ * misses every line box, which is the whole writing area while the body is empty.
+ * Runs on click, after the browser has handled the press, so drags and
+ * Shift-click selection keep their native behavior.
+ */
+function placeCaretOnBlankClick(event: ReactMouseEvent<HTMLDivElement>) {
+  const editor = event.currentTarget;
+  // A click on content targets that content; only the editor's own blank box matters.
+  if (event.button !== 0 || event.target !== editor || event.defaultPrevented) return;
+  if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (editor.getAttribute("contenteditable") === "false") return;
+  const selection = window.getSelection();
+  if (selection?.rangeCount && !selection.isCollapsed && editor.contains(selection.anchorNode)) return;
+  if (document.activeElement !== editor) editor.focus();
+  syncCaretAnchor(editor);
+  const empty = editor.childNodes.length === 1 && editor.firstChild instanceof HTMLElement && editor.firstChild.matches(CARET_ANCHOR);
+  const bounds = empty ? null : contentBounds(editor);
+  // Without measurable content, a click in real text cannot be told from a
+  // click in the blank area, so leave that click to the browser.
+  if (!empty && !bounds) return;
+  if (bounds && event.clientY >= bounds.top && event.clientY <= bounds.bottom) return;
+  placeCaret(editor, !bounds || event.clientY < bounds.top);
+}
 
 function decorateImage(image: HTMLImageElement, attachmentId?: string) {
   if (image.closest("[data-compose-image]")) return;
