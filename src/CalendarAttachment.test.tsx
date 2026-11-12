@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CalendarAttachment, CalendarAttachmentGroup, CalendarEvent, calendarEventRange, isCalendarAttachment } from "./CalendarAttachment";
+import { invitationDay } from "./calendarInvitations";
 import { mailClient } from "./data/client";
 
 const attachment = {
@@ -289,5 +290,27 @@ describe("calendarEventRange", () => {
   it("has no range without a usable start", () => {
     expect(calendarEventRange({ ...event, start: null })).toBeNull();
     expect(calendarEventRange({ ...event, start: "soon" })).toBeNull();
+  });
+});
+
+describe("invitationDay", () => {
+  const event = {
+    uid: null, title: "Launch review", start: new Date(2026, 9, 12, 15).toISOString(), end: new Date(2026, 9, 12, 16).toISOString(), allDay: false,
+    timeZone: null, location: null, description: null, organizer: null, attendeeCount: 0, recurring: false, status: null,
+  };
+
+  it("is the local day a timed invitation starts on", () => {
+    expect(invitationDay(event)).toEqual(new Date(2026, 9, 12));
+  });
+
+  it("reads all-day dates, and wall-clock times in an unresolved zone, by their written date", () => {
+    expect(invitationDay({ ...event, allDay: true, start: "2027-01-05", end: "2027-01-06" })).toEqual(new Date(2027, 0, 5));
+    expect(invitationDay({ ...event, start: "2026-10-12T23:30:00", timeZone: "Olympus Mons Time" })).toEqual(new Date(2026, 9, 12));
+  });
+
+  it("has no day for a cancelled invitation or one without a usable start", () => {
+    expect(invitationDay({ ...event, status: "CANCELLED" })).toBeNull();
+    expect(invitationDay({ ...event, start: null })).toBeNull();
+    expect(invitationDay({ ...event, start: "soon" })).toBeNull();
   });
 });

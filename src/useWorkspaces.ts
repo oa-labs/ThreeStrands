@@ -34,10 +34,12 @@ type Options = {
   readingMessageIdRef: RefObject<string | null>;
   openSettingsAt: (section: SettingsSection) => void;
   setNotice: (notice: Notice | null) => void;
+  /** The day of the open conversation's invitation, where t opens the schedule instead of today. */
+  scheduleDay?: Date | null;
 };
 
 /** Owns the selected workspace and calendar/contact entry points. */
-export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice }: Options) {
+export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice, scheduleDay = null }: Options) {
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(readLaunchWorkspace);
   useEffect(() => { writeLastWorkspace(rightWorkspace); }, [rightWorkspace]);
   const [sideColumn, setSideColumn] = useState<SideColumn>(readSideColumn);
@@ -104,10 +106,13 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
   const calendarConnected = calendar.accounts.some((account) => account.status === "connected");
   // A remembered schedule needs a connected calendar; without one the column shows the context.
   const scheduleShown = sideColumn === "schedule" && calendarConnected;
+  const [calendarSidebarStart, setCalendarSidebarStart] = useState<{ key: number; date: Date } | null>(null);
+  const scheduleDayTime = scheduleDay?.getTime() ?? null;
   /**
    * Swaps Mail's right column between the context and the schedule. From
    * another view it returns to Mail with the schedule showing, and with no
-   * calendar connected it opens Calendar Accounts instead.
+   * calendar connected it opens Calendar Accounts instead. While a
+   * conversation with an invitation is open, the schedule opens on that day.
    */
   const toggleSchedule = useCallback(() => {
     const inMail = rightWorkspace === null;
@@ -126,13 +131,19 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
           openSettingsAt("calendarAccounts");
           return;
         }
+        // A schedule that was already open, only hidden, keeps the day it was on.
+        // Otherwise it opens on the invitation's day, so the reader sees what
+        // else they have then, or on today.
+        if (!(inMail && scheduleShown)) {
+          setCalendarSidebarStart((current) => scheduleDayTime === null ? null : { key: (current?.key ?? 0) + 1, date: new Date(scheduleDayTime) });
+        }
         setSideColumn("schedule");
         setDrawerRequested(true);
       })
       .catch((reason: unknown) => {
         setNotice({ message: errorMessage(reason) });
       });
-  }, [drawerRequested, narrowLayout, openSettingsAt, refreshCalendarAccounts, rightWorkspace, scheduleShown, setNotice, mailPanel.collapsed, setMailPanelCollapsed]);
+  }, [drawerRequested, narrowLayout, openSettingsAt, refreshCalendarAccounts, rightWorkspace, scheduleShown, scheduleDayTime, setNotice, mailPanel.collapsed, setMailPanelCollapsed]);
   /** Brings Mail back with the context column, for actions that show something in it. */
   const showMailContext = useCallback(() => {
     setRightWorkspace(null);
@@ -140,7 +151,6 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     setDrawerRequested(true);
     setMailPanelCollapsed(false);
   }, [setMailPanelCollapsed]);
-  const [calendarSidebarStart, setCalendarSidebarStart] = useState<{ key: number; date: Date } | null>(null);
   const openCalendarAt = useCallback((date: Date) => {
     setCalendarSidebarStart((current) => ({ key: (current?.key ?? 0) + 1, date }));
     setRightWorkspace(null);

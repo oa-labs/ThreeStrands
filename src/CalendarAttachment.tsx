@@ -10,10 +10,8 @@ import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from ".
 import { errorMessage } from "./errors";
 import { HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
-import { parsedInvitationDate } from "./calendarInvitations";
+import { MAX_PREVIEWABLE_CALENDAR_SIZE, parsedInvitationDate } from "./calendarInvitations";
 export { calendarEventRange, isCalendarAttachment } from "./calendarInvitations";
-
-const MAX_PREVIEWABLE_SIZE = 2 * 1024 * 1024;
 
 /** Identifies the set of events described by a calendar preview, so two attachments that
  * describe the same event(s) (e.g. Google sends both a text/calendar part and an .ics
@@ -48,7 +46,7 @@ export function CalendarAttachmentGroup({ messageId, threadId, attachments, onEr
     const attachments = attachmentsRef.current;
     setVisibleIds(null);
     setLoadedPreviews(null);
-    const previewable = attachments.filter((attachment) => attachment.size <= MAX_PREVIEWABLE_SIZE);
+    const previewable = attachments.filter((attachment) => attachment.size <= MAX_PREVIEWABLE_CALENDAR_SIZE);
     if (previewable.length <= 1) {
       setVisibleIds(new Set(attachments.map((attachment) => attachment.id)));
       return () => { active = false; };
@@ -132,7 +130,7 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
       setFailed(loadedPreview === null);
       return () => { active = false; };
     }
-    if (attachment.size > MAX_PREVIEWABLE_SIZE) {
+    if (attachment.size > MAX_PREVIEWABLE_CALENDAR_SIZE) {
       setFailed(true);
       return () => { active = false; };
     }
@@ -157,7 +155,7 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
 
   if (failed) return <div className="calendar-card calendar-card-failed">
     <AttachmentChip messageId={messageId} attachment={attachment} icon={<CalendarDays size={ICON_SIZE.sm} aria-hidden="true" />} starrable={Boolean(threadId)} onOpen={open} onSave={save} />
-    {invitationActions && attachment.size <= MAX_PREVIEWABLE_SIZE ? <>
+    {invitationActions && attachment.size <= MAX_PREVIEWABLE_CALENDAR_SIZE ? <>
       <p role="alert">Could not read invitation{previewError ? `: ${previewError}` : "."}</p>
       <button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}>Try Again</button>
     </> : null}
