@@ -3,7 +3,7 @@
 use super::{Database, DbResult};
 use crate::models::ContactSuggestion;
 use rusqlite::params;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 // A superset of matching addresses: historical names can nominate a candidate,
 // but the final filter below still uses its current effective display name.
@@ -113,7 +113,7 @@ impl Database {
                 /// differs from the one their mail uses.
                 saved: Option<Option<String>>,
             }
-            let relationships = super::co_recipients::relationships(connection, Some(account_id), seeds, chrono::Utc::now())?;
+            let relationships = super::co_recipients::relationships(connection, Some(account_id), seeds, &BTreeMap::new(), chrono::Utc::now())?;
             let excluded = super::co_recipients::normalize_addresses(excluded);
             let mine = super::sending_addresses_for_account(connection, account_id);
             let contextual = !seeds.is_empty() || !excluded.is_empty();

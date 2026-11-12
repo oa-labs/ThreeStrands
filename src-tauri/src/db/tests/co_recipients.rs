@@ -39,6 +39,7 @@ fn relations(db: &Database, account: Option<&str>, raw: &[&str]) -> HashMap<Stri
             c,
             account,
             &raw.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            &BTreeMap::new(),
             Utc::now(),
         )
     })
@@ -51,18 +52,23 @@ fn score_requires_two_messages_and_prefers_shared_seeds_then_recent_small_groups
         evidence("a", 1, &["alice", "bob"]),
         evidence("b", 2, &["alice", "bob"]),
     ];
-    assert!(score(&messages[..1], &seeds(&["alice"]), now()).is_empty());
+    assert!(score(&messages[..1], &seeds(&["alice"]), &BTreeMap::new(), now()).is_empty());
     assert_eq!(
-        score(&messages, &seeds(&["alice"]), now())["bob"].seeds,
+        score(&messages, &seeds(&["alice"]), &BTreeMap::new(), now())["bob"].seeds,
         vec!["alice"]
     );
     messages.extend([
         evidence("c", 30, &["alice", "carol", "dave"]),
         evidence("d", 31, &["alice", "carol", "dave"]),
     ]);
-    let r = score(&messages, &seeds(&["alice"]), now());
+    let r = score(&messages, &seeds(&["alice"]), &BTreeMap::new(), now());
     assert!(r["bob"].strength > r["carol"].strength);
-    let r = score(&messages, &seeds(&["alice", "dave"]), now());
+    let r = score(
+        &messages,
+        &seeds(&["alice", "dave"]),
+        &BTreeMap::new(),
+        now(),
+    );
     assert_eq!(r["carol"].seeds, vec!["alice", "dave"]);
     assert!(compare(r.get("carol"), r.get("bob")).is_lt());
 }
@@ -83,7 +89,12 @@ fn score_prefers_candidates_from_messages_covering_more_seeds() {
         evidence("j1", 1, &["alice", "dave", "carol"]),
         evidence("j2", 2, &["alice", "dave", "carol"]),
     ];
-    let r = score(&messages, &seeds(&["alice", "dave"]), now());
+    let r = score(
+        &messages,
+        &seeds(&["alice", "dave"]),
+        &BTreeMap::new(),
+        now(),
+    );
     assert_eq!(r["carol"].seeds, vec!["alice", "dave"]);
     assert_eq!(r["bob"].seeds, vec!["alice", "dave"]);
     assert_eq!(r["carol"].coverage, 2);
@@ -106,7 +117,12 @@ fn joint_case(joint: Vec<Evidence>) -> HashMap<String, Relationship> {
         evidence("cd2", 201, &["dave", "carol"]),
     ]);
     messages.extend(joint);
-    score(&messages, &seeds(&["alice", "dave"]), now())
+    score(
+        &messages,
+        &seeds(&["alice", "dave"]),
+        &BTreeMap::new(),
+        now(),
+    )
 }
 
 #[test]
@@ -131,7 +147,12 @@ fn coverage_is_the_overlap_reached_by_min_support_messages() {
         evidence("j2", 2, &["alice", "dave", "carol"]),
     ];
     messages.push(evidence("j3", 3, &["alice", "carol"]));
-    let r = score(&messages, &seeds(&["alice", "dave", "erin"]), now());
+    let r = score(
+        &messages,
+        &seeds(&["alice", "dave", "erin"]),
+        &BTreeMap::new(),
+        now(),
+    );
     assert_eq!(r["carol"].coverage, 2);
 }
 
@@ -179,6 +200,7 @@ fn score_window_size_support_and_future_boundaries() {
                 evidence("b", age, &["alice", "bob"]),
             ],
             &seeds(&["alice"]),
+            &BTreeMap::new(),
             now(),
         );
         assert_eq!(r.contains_key("bob"), age <= WINDOW_DAYS);
@@ -189,6 +211,7 @@ fn score_window_size_support_and_future_boundaries() {
         let r = score(
             &[evidence("a", 0, &names), evidence("b", 0, &names)],
             &seeds(&["person0"]),
+            &BTreeMap::new(),
             now(),
         );
         assert_eq!(r.contains_key("person1"), size <= MAX_RECIPIENTS);
@@ -199,6 +222,7 @@ fn score_window_size_support_and_future_boundaries() {
             evidence("b", -10, &["alice", "bob"]),
         ],
         &seeds(&["alice"]),
+        &BTreeMap::new(),
         now(),
     );
     assert_eq!(future["bob"].strength, 1.0);
@@ -208,6 +232,7 @@ fn score_window_size_support_and_future_boundaries() {
             evidence("b", 0, &["alice", "bob"]),
         ],
         &seeds(&["alice"]),
+        &BTreeMap::new(),
         now(),
     );
     assert_eq!(r["bob"].strength, 1.0);
@@ -221,6 +246,7 @@ fn repeated_thread_day_is_capped_but_separate_days_and_accounts_count() {
             evidence("same", 0, &["alice", "bob"]),
         ],
         &seeds(&["alice"]),
+        &BTreeMap::new(),
         now(),
     );
     assert_eq!(r["bob"].strength, 0.5);
@@ -229,6 +255,7 @@ fn repeated_thread_day_is_capped_but_separate_days_and_accounts_count() {
     let r = score(
         &[evidence("same", 0, &["alice", "bob"]), other],
         &seeds(&["alice"]),
+        &BTreeMap::new(),
         now(),
     );
     assert_eq!(r["bob"].strength, 1.0);
@@ -464,6 +491,114 @@ fn sending_identity_changes_apply_without_reindex_and_self_never_becomes_a_sugge
     db.store_gmail_sending_identities("you@example.com", &identities[..1], 2)
         .unwrap();
     assert!(relations(&db, Some("you@example.com"), &["alice@example.com"]).is_empty());
+}
+
+#[test]
+fn one_persons_addresses_count_as_one_seed_person() {
+    let people: BTreeMap<String, String> = [("alice-work", "alice"), ("alice-home", "alice")]
+        .iter()
+        .map(|(a, p)| (a.to_string(), p.to_string()))
+        .collect();
+    let all = seeds(&["alice-work", "alice-home", "dave"]);
+    // Zed is always with both of Alice's addresses; Yan with Alice and Dave.
+    let messages = vec![
+        evidence("z1", 1, &["alice-work", "alice-home", "zed"]),
+        evidence("z2", 2, &["alice-work", "alice-home", "zed"]),
+        evidence("z3", 3, &["alice-work", "alice-home", "zed"]),
+        evidence("y1", 1, &["alice-work", "dave", "yan"]),
+        evidence("y2", 2, &["alice-work", "dave", "yan"]),
+    ];
+    let r = score(&messages, &all, &people, now());
+    assert_eq!(r["zed"].seeds, vec!["alice-home", "alice-work"]);
+    assert_eq!((r["zed"].people, r["zed"].coverage), (1, 0));
+    assert_eq!((r["yan"].people, r["yan"].coverage), (2, 2));
+    assert!(compare(r.get("yan"), r.get("zed")).is_lt());
+    // Without the grouping, each address is its own seed person.
+    let r = score(&messages, &all, &BTreeMap::new(), now());
+    assert_eq!((r["zed"].people, r["zed"].coverage), (2, 2));
+
+    // A person's several addresses share one person's strength.
+    let messages = vec![
+        evidence("w1", 1, &["alice-work", "zed"]),
+        evidence("w2", 2, &["alice-work", "zed"]),
+        evidence("h1", 1, &["alice-home", "zed"]),
+        evidence("h2", 2, &["alice-home", "zed"]),
+        evidence("d1", 1, &["dave", "yan"]),
+        evidence("d2", 2, &["dave", "yan"]),
+    ];
+    let r = score(&messages, &all, &people, now());
+    assert_eq!((r["zed"].people, r["yan"].people), (1, 1));
+    assert!((r["zed"].strength - r["yan"].strength).abs() < 1e-9);
+}
+
+#[test]
+fn group_ranking_counts_a_members_addresses_as_one_person() {
+    let db = database();
+    db.adopt_account("you@example.com").unwrap();
+    let team = db
+        .create_contact_group(
+            "Team",
+            &[],
+            &["alice@example.com".into(), "dave@example.com".into()],
+        )
+        .unwrap()
+        .group;
+    let alice = db
+        .list_contact_profiles("", 5000)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.addresses[0] == "alice@example.com")
+        .unwrap();
+    db.with_connection(|c| {
+        c.execute(
+            "INSERT INTO contact_addresses(contact_id,email,position) VALUES(?1,'alice-home@example.com',1)",
+            [&alice.id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let others = db
+        .create_contact_group(
+            "Others",
+            &[],
+            &["zed@example.com".into(), "yan@example.com".into()],
+        )
+        .unwrap()
+        .group;
+    let id_of = |email: &str| {
+        db.list_contact_profiles("", 5000)
+            .unwrap()
+            .into_iter()
+            .find(|p| p.addresses[0] == email)
+            .unwrap()
+            .id
+    };
+    let (zed, yan) = (id_of("zed@example.com"), id_of("yan@example.com"));
+    assert!(others.member_ids.contains(&zed) && others.member_ids.contains(&yan));
+    // Zed has more mail, but only ever with one member (at two addresses).
+    for id in ["z1", "z2", "z3"] {
+        sent(
+            &db,
+            id,
+            &[
+                "alice@example.com",
+                "alice-home@example.com",
+                "zed@example.com",
+            ],
+        );
+    }
+    for id in ["y1", "y2"] {
+        sent(
+            &db,
+            id,
+            &["alice@example.com", "dave@example.com", "yan@example.com"],
+        );
+    }
+    let ranked = db
+        .rank_contact_group_candidates(&team.id, &[], &[])
+        .unwrap();
+    let order: Vec<_> = ranked.iter().map(|item| item.id.clone()).collect();
+    assert_eq!(order, vec![yan, zed]);
 }
 
 #[test]

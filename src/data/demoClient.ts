@@ -397,10 +397,15 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   };
 
   // Browser fixtures model local header evidence; native ranking lives in Rust.
-  function relatedContacts(accountId: string | undefined, rawSeeds: string[]) {
+  // `people` maps lowercase seed addresses to a person key, so one contact's
+  // several addresses count as one seed person; unmapped seeds stand alone.
+  function relatedContacts(accountId: string | undefined, rawSeeds: string[], people = new Map<string, string>()) {
     const seeds = [...new Set(rawSeeds.map((email) => email.toLowerCase()))];
-    const result = new Map<string, { relatedTo: string[]; coverage: number; strength: number; displayName: string | null }>();
+    const result = new Map<string, { relatedTo: string[]; people: number; coverage: number; strength: number; displayName: string | null }>();
     if (seeds.length > 100) return result;
+    const person = (seed: string) => people.get(seed) ?? seed;
+    const addressesPerPerson = new Map<string, number>();
+    for (const seed of seeds) addressesPerPerson.set(person(seed), (addressesPerPerson.get(person(seed)) ?? 0) + 1);
     // Eligible sent messages, with seed overlap computed once per message.
     const eligible: { key: string; age: number; recency: number; overlap: number; recipients: Map<string, string | null> }[] = [];
     for (const thread of threads) {
@@ -417,7 +422,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           key: `${thread.accountId}/${thread.id}/${message.sentAt.slice(0, 10)}`,
           age,
           recency: 2 ** (-age / 90),
-          overlap: seeds.filter((item) => recipients.has(item)).length,
+          overlap: new Set(seeds.filter((item) => recipients.has(item)).map(person)).size,
           recipients,
         });
       }
@@ -438,9 +443,11 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       }
       for (const [email, pair] of pairs) {
         if (pair.count < 2) continue;
-        const item = result.get(email) ?? { relatedTo: [], coverage: 0, strength: 0, displayName: pair.name };
+        const item = result.get(email) ?? { relatedTo: [], people: 0, coverage: 0, strength: 0, displayName: pair.name };
         item.relatedTo.push(seed);
-        item.strength += [...pair.weights.values()].reduce((sum, n) => sum + n, 0) / denominator / seeds.length;
+        item.people = new Set(item.relatedTo.map(person)).size;
+        // Each person gets an equal share, split across their addresses.
+        item.strength += [...pair.weights.values()].reduce((sum, n) => sum + n, 0) / denominator / addressesPerPerson.size / addressesPerPerson.get(person(seed))!;
         result.set(email, item);
       }
     }
@@ -458,8 +465,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     }
     return result;
   }
-  function compareRelations(a: { relatedTo: string[]; coverage: number; strength: number } | undefined, b: { relatedTo: string[]; coverage: number; strength: number } | undefined) {
-    return (b?.relatedTo.length ?? 0) - (a?.relatedTo.length ?? 0) || (b?.coverage ?? 0) - (a?.coverage ?? 0) || (b?.strength ?? 0) - (a?.strength ?? 0);
+  function compareRelations(a: { people: number; coverage: number; strength: number } | undefined, b: { people: number; coverage: number; strength: number } | undefined) {
+    return (b?.people ?? 0) - (a?.people ?? 0) || (b?.coverage ?? 0) - (a?.coverage ?? 0) || (b?.strength ?? 0) - (a?.strength ?? 0);
   }
   async function timelineForAddresses(addresses: string[], offset: number, limit: number, accountId?: string): Promise<ContactTimelineItem[]> {
     const target = new Set(addresses.map((address) => address.toLocaleLowerCase()));
@@ -822,8 +829,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const group = contactGroups.find((item) => item.id === groupId);
       if (!group) return [];
       const profiles = await this.listContactProfiles("", 5000);
-      const seeds = [...emails, ...profiles.filter((p) => group.memberIds.includes(p.id) || selectedIds.includes(p.id)).flatMap((p) => p.addresses)];
-      const relations = relatedContacts(undefined, seeds);
+      const members = profiles.filter((p) => group.memberIds.includes(p.id) || selectedIds.includes(p.id));
+      const people = new Map(members.flatMap((p) => p.addresses.map((address) => [address.toLowerCase(), p.id] as const)));
+      const relations = relatedContacts(undefined, [...emails, ...members.flatMap((p) => p.addresses)], people);
       const ranked = profiles.filter((p) => !group.memberIds.includes(p.id) && !suppressedContacts.has(p.addresses[0])).flatMap((p) => {
         const best = p.addresses.filter((email) => !suppressedContacts.has(email)).map((email) => relations.get(email)).filter((item) => item != null).sort(compareRelations)[0];
         return best ? [{ id: p.id, favorite: p.favorite, ...best }] : [];

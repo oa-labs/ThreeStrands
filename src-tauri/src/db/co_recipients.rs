@@ -137,6 +137,8 @@ fn index_headers(
 #[derive(Default, Debug)]
 pub(super) struct Relationship {
     pub seeds: Vec<String>,
+    /// Distinct people among `seeds`; a contact's several addresses count once.
+    pub people: usize,
     /// Most context seeds (at least two) seen together with this contact on
     /// MIN_SUPPORT recent messages; 0 without such repeated joint evidence.
     pub coverage: usize,
@@ -147,7 +149,7 @@ pub(super) struct Relationship {
 pub(super) fn compare(a: Option<&Relationship>, b: Option<&Relationship>) -> std::cmp::Ordering {
     let key = |r: Option<&Relationship>| {
         (
-            r.map_or(0, |r| r.seeds.len()),
+            r.map_or(0, |r| r.people),
             r.map_or(0, |r| r.coverage),
             r.map_or(0.0, |r| r.strength),
         )
@@ -168,10 +170,13 @@ struct Evidence {
 
 /// Indexed seed lookups, bounded before scoring. Hitting the work budget returns
 /// no relationship boost, rather than a biased truncated relationship graph.
+/// `people` maps lowercase seed addresses to a person key, so one contact's
+/// several addresses count as one seed person; unmapped seeds stand alone.
 pub(super) fn relationships(
     connection: &Connection,
     account: Option<&str>,
     seeds: &[String],
+    people: &BTreeMap<String, String>,
     now: DateTime<Utc>,
 ) -> DbResult<HashMap<String, Relationship>> {
     if seeds.len() > MAX_CONTEXT {
@@ -272,19 +277,34 @@ pub(super) fn relationships(
     Ok(score(
         &evidence.into_values().collect::<Vec<_>>(),
         &seeds,
+        people,
         now,
     ))
 }
 
+/// The person a seed address belongs to; unmapped addresses stand alone.
+fn person<'a>(people: &'a BTreeMap<String, String>, seed: &'a str) -> &'a str {
+    people.get(seed).map_or(seed, String::as_str)
+}
+
 /// Pure ranking with an explicit clock; only distinct messages establish support.
 /// Strength uses each seed's pairwise evidence. Coverage ranks a contact seen
-/// with several seeds on the same message ahead of one only paired with each,
-/// but only when MIN_SUPPORT recent messages show that joint overlap.
+/// with several seed people on the same message ahead of one only paired with
+/// each, but only when MIN_SUPPORT recent messages show that joint overlap.
+/// Seed counts, overlap, and strength shares are per person, not per address.
 fn score(
     evidence: &[Evidence],
     seeds: &BTreeSet<String>,
+    people: &BTreeMap<String, String>,
     now: DateTime<Utc>,
 ) -> HashMap<String, Relationship> {
+    let mut addresses_per_person: HashMap<&str, usize> = HashMap::new();
+    for seed in seeds {
+        *addresses_per_person
+            .entry(person(people, seed))
+            .or_default() += 1;
+    }
+    let person_count = addresses_per_person.len() as f64;
     struct Eligible<'a> {
         message: &'a Evidence,
         overlap: usize,
@@ -303,7 +323,9 @@ fn score(
                 overlap: seeds
                     .iter()
                     .filter(|s| message.recipients.contains_key(*s))
-                    .count(),
+                    .map(|s| person(people, s))
+                    .collect::<BTreeSet<_>>()
+                    .len(),
                 recency: 2_f64.powf(-age / HALF_LIFE_DAYS),
             }
         })
@@ -357,13 +379,25 @@ fn score(
             }
             let entry = result.entry(email).or_default();
             entry.seeds.push(seed.clone());
-            entry.strength += groups.values().sum::<f64>() / denominator / seeds.len() as f64;
+            // Each person gets an equal share, split across their addresses.
+            entry.strength += groups.values().sum::<f64>()
+                / denominator
+                / person_count
+                / addresses_per_person[person(people, seed)] as f64;
             if entry.display_name.is_none() {
                 entry.display_name = name;
             }
         }
     }
-    // Recent joint messages per contact, as their seed overlaps.
+    for entry in result.values_mut() {
+        entry.people = entry
+            .seeds
+            .iter()
+            .map(|s| person(people, s))
+            .collect::<BTreeSet<_>>()
+            .len();
+    }
+    // Recent joint messages per contact, as their seed-person overlaps.
     let mut joint: HashMap<&str, Vec<usize>> = HashMap::new();
     for item in &eligible {
         if item.overlap < 2 || item.message.date < now - Duration::days(COVERAGE_WINDOW_DAYS) {
@@ -436,13 +470,17 @@ impl Database {
             .ok_or(DatabaseError::NotFound("Contact group"))?;
         let profiles = self.list_contact_profiles("", 5_000)?;
         let mut seeds = emails.to_vec();
+        let mut people = BTreeMap::new();
         for profile in &profiles {
             if group.member_ids.contains(&profile.id) || selected_ids.contains(&profile.id) {
                 seeds.extend(profile.addresses.clone());
+                for address in &profile.addresses {
+                    people.insert(address.to_ascii_lowercase(), profile.id.clone());
+                }
             }
         }
         self.with_connection(|connection| {
-            let relationships = relationships(connection, None, &seeds, Utc::now())?;
+            let relationships = relationships(connection, None, &seeds, &people, Utc::now())?;
             let mut statement =
                 connection.prepare("SELECT email FROM contact_suggestion_suppressions")?;
             let hidden = statement

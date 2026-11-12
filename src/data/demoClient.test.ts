@@ -798,6 +798,32 @@ describe("demo co-recipient suggestions", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("counts a group member's several addresses as one person when suggesting members", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-01T12:00:00Z"));
+    try {
+      const seed = defaultDemoDataset();
+      const account = seed.accounts[0].email;
+      const template = seed.threads[0];
+      const send = (recipients: string[], day: number) => ({ sender: account, recipients, sentAt: `2026-10-${String(day).padStart(2, "0")}T12:00:00Z`, bodyHtml: "", bodyText: "" });
+      seed.threads = ["with-alice", "with-team"].map((id) => ({ ...template, id, accountId: account, labels: ["SENT"] }));
+      // Zed has more mail, but only ever with one member (at two addresses).
+      seed.messages = {
+        "with-alice": [1, 2, 3].map((n) => send(["alice@work.example", "alice@home.example", "zed@example.com"], n)),
+        "with-team": [1, 2].map((n) => send(["alice@work.example", "dave@example.com", "yan@example.com"], n)),
+      };
+      seed.contacts = [];
+      const client = createDemoClient(seed);
+      const profile = (name: string, addresses: string[]) => client.saveContactProfile({ id: null, displayName: name, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses, birthday: null });
+      const alice = await profile("Alice", ["alice@work.example", "alice@home.example"]);
+      const dave = await profile("Dave", ["dave@example.com"]);
+      const zed = await profile("Zed", ["zed@example.com"]);
+      const yan = await profile("Yan", ["yan@example.com"]);
+      const group = await client.createContactGroup("Team", [alice.id, dave.id]);
+      const ranked = await client.rankContactGroupCandidates(group.id, [], []);
+      expect(ranked.map((item) => item.id)).toEqual([yan.id, zed.id]);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("needs two recent joint messages before ranking a contact above stronger pairwise history", async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-01T12:00:00Z"));
     try {
