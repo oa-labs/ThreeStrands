@@ -2,7 +2,7 @@
 title: Write Notes
 nav: Notes
 summary: Keep a note for each day and notes of your own, written in Markdown, linked to your mail, meetings, and contacts, and synced between your devices.
-reviewed: next
+reviewed: 0.210.0
 ---
 
 ## Open Notes {#open-notes}

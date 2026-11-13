@@ -4,6 +4,46 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.210.0 — 2026-11-12
+
+### New
+- **Notes** now has a calendar at the top of its side panel. Choose any day to open its daily note; a dot marks each day you've written in. On a daily note, the panel also lists that day's events, and **Add Note** on one adds the meeting to the note you're reading.
+- Step through daily notes with the arrows beside the date, or with <kbd>-</kbd> and <kbd>=</kbd>, as in **Calendar**. <kbd>t</kbd> opens today's note.
+- When you open an invitation, the panel beside the conversation shows **That day**: everything else on your calendar that day, whether the invitation's time is free, and which events it overlaps. Your Google Calendar working location, such as *Office*, appears once beside the date rather than as an event. Pressing **t** now opens the schedule on the invitation's day instead of today.
+
+### Improved
+- **Availability** is now its own group in Settings, with separate pages for **Profiles**, **Account Defaults**, and **Meeting Types**. Profiles lists each profile's hours at a glance and marks the default, keeps timezone and slot increment under **Shared Settings**, and calls working hours **Available Hours**. Meeting Types has an **Edit Profile** link to change a profile's hours.
+- Choose 75 minutes as the default meeting duration in **Settings → Availability**.
+- **Edit Event** now makes recurring-event edits explicit as applying to one occurrence, shows times in a selectable time zone, and groups scheduling controls with the meeting duration. Larger guest lists collapse into a compact summary, and event time fields offer quarter-hour suggestions while accepting exact typed times.
+- Click **Import Note** beside **New Note** to add a Markdown file and open it for writing. Notes with the same title get a numbered name, so your existing notes are kept.
+- **Calendar** and the schedule beside your mail show your Google Calendar working location, such as *Office* or *Home*, as a place marker above the day's all-day events instead of as an event, once even when several calendars share it. A location set for part of a day appears there with its hours rather than as a block of time.
+- Recipient suggestions prefer people you have recently emailed more than once
+  together with several of the addresses already on the message, not only
+  people you email often with each of them separately. When you add members to
+  a group, a member's several addresses count as one person, so someone you
+  email only with that member is no longer ranked as if they knew two.
+- The mail search box has more room, with saved-search buttons aligned closer to the right edge of the email cards.
+- Associate availability profiles with lunch, breakfast, dinner, or coffee invitations in **Settings → Availability → Meeting Types**. Find Availability uses those hours and shows the selected profile above the time controls, with a choice to change it for the conversation or draft.
+- A note's text now starts closer under its title, so the two read as one page.
+- Notes now uses the same shortcuts as email for fixed-width text, quotes, and code blocks, alongside its existing bold, italic, link, and list shortcuts.
+- Select recipient badges in **To**, **Cc**, or **Bcc** by clicking them, with the arrow keys, or with <kbd>⌘/Ctrl + a</kbd>, then cut, copy, paste, delete, or drag them between fields together.
+- Drag the right edge of the note list in **Notes** to make it wider or narrower, as you can with the lists in **Mail** and **Contacts**.
+- Every **Settings** page now has the same layout: it opens with a section heading at the same spacing, and its explanations use the same text size.
+- The side panel in **Mail**, **Contacts**, **Notes**, **Files**, **Tasks**, and **Calendar** now resizes from its left edge. Drag it past that edge to hide it, or press <kbd>\</kbd>; the button on its edge, or <kbd>\</kbd> again, brings it back. Each view remembers whether you hid it, and the width you choose applies everywhere.
+- Suggested and proposed meeting times now show the day around them on your
+  calendar, including short-break warnings, so you can see what you have before
+  and after without opening Calendar.
+
+### Fixed
+- Removing a mail account now deletes everything ThreeStrands kept for it on your computer, including its drafts, messages waiting in the **Outbox**, attachments you opened, and older backup copies of your mail. **Remove on all devices** clears the same from your other devices.
+- Clicking the message body shows the text cursor, including right after attaching a file.
+- Event details now offers **Open Note** when the meeting already has a linked note. Calendar note actions open that note instead of offering to add the meeting again.
+- Names, email addresses, and subjects that **Add Note**, **Add to Note**, and contact links write into a note no longer show stray backslashes, such as `kim\.peters@wolfe\.com`.
+- Pasting formatted text from an email or web page into a note no longer leaves codes such as `&#x20;` and `&#xA0;` where spaces were.
+- **Backlinks** in Notes now show the linking line as you'd read it, such as "3:00 pm met with Dana for OA Monthly", instead of its raw link text.
+- In **Settings**, the "Changes save automatically" note and the **Help** link now line up at the top of each page.
+- Emails that set a background image on a table or table cell, such as a photo behind a "Help center" panel, now show that image when you load images, as other mail apps do.
+
 ## 0.209.0 — 2026-11-10
 
 ### New

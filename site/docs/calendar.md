@@ -2,7 +2,7 @@
 title: Calendar
 nav: Calendar
 summary: Connect Google Calendar to see your day beside your mail, plan the week, create events, take meeting notes, answer invitations, and share free times.
-reviewed: next
+reviewed: 0.210.0
 ---
 
 ## Connect Google Calendar {#connect-google-calendar}
