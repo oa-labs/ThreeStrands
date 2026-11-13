@@ -110,6 +110,10 @@ pub struct ScheduleEvent {
     /// events from before this field read as ordinary ones.
     #[serde(default)]
     pub event_type: Option<String>,
+    /// For a working location, the kind of place: `home`, `office`, or
+    /// `custom`. None for other events or when the provider does not say.
+    #[serde(default)]
+    pub working_location_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

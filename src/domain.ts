@@ -174,6 +174,8 @@ export type ScheduleEvent = {
    * Google's `workingLocation`, `outOfOffice`, or `focusTime`.
    */
   eventType?: string | null;
+  /** For a working location, the kind of place, when the provider says. */
+  workingLocationType?: "home" | "office" | "custom" | null;
 };
 
 export type ScheduleResult = {

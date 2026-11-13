@@ -470,6 +470,25 @@ struct GoogleEvent {
     /// `default` for an ordinary event; otherwise a status such as a working location.
     #[serde(default)]
     event_type: Option<String>,
+    #[serde(default)]
+    working_location_properties: Option<GoogleWorkingLocation>,
+}
+
+#[derive(Deserialize)]
+struct GoogleWorkingLocation {
+    /// `homeOffice`, `officeLocation`, or `customLocation`.
+    #[serde(rename = "type")]
+    kind: Option<String>,
+}
+
+/// The kind of place a working location is, in the app's own terms.
+fn working_location_type(location: Option<GoogleWorkingLocation>) -> Option<String> {
+    match location?.kind.as_deref()? {
+        "homeOffice" => Some("home".into()),
+        "officeLocation" => Some("office".into()),
+        "customLocation" => Some("custom".into()),
+        _ => None,
+    }
 }
 
 #[derive(Deserialize)]
@@ -1532,6 +1551,7 @@ fn normalize_events(
                 event_type: event
                     .event_type
                     .filter(|kind| !kind.is_empty() && kind != "default"),
+                working_location_type: working_location_type(event.working_location_properties),
                 conference_url: event.hangout_link.or_else(|| {
                     event.conference_data.and_then(|conference| {
                         conference.entry_points.into_iter().find_map(|entry| {
@@ -2090,6 +2110,7 @@ mod tests {
                     }),
                     extended_properties: None,
                     event_type: None,
+                    working_location_properties: None,
                 },
                 GoogleEvent {
                     recurring_event_id: None,
@@ -2113,6 +2134,7 @@ mod tests {
                     organizer: None,
                     extended_properties: None,
                     event_type: None,
+                    working_location_properties: None,
                 },
             ],
             "work@example.com",
@@ -2168,6 +2190,9 @@ mod tests {
             if let Some(event_type) = event_type {
                 value["eventType"] = serde_json::json!(event_type);
             }
+            if event_type == Some("workingLocation") {
+                value["workingLocationProperties"] = serde_json::json!({"type": "officeLocation", "officeLocation": {"label": "HQ"}});
+            }
             serde_json::from_value(value).unwrap()
         };
         let events = normalize_events(
@@ -2192,6 +2217,53 @@ mod tests {
     }
 
     #[test]
+    fn normalize_events_names_the_kind_of_place_a_working_location_is() {
+        let location = |id: &str, properties: serde_json::Value| -> GoogleEvent {
+            serde_json::from_value(serde_json::json!({
+                "id": id,
+                "summary": id,
+                "eventType": "workingLocation",
+                "workingLocationProperties": properties,
+                "start": {"date": "2027-01-05"},
+                "end": {"date": "2027-01-06"},
+            }))
+            .unwrap()
+        };
+        let events = normalize_events(
+            vec![
+                location(
+                    "home",
+                    serde_json::json!({"type": "homeOffice", "homeOffice": {}}),
+                ),
+                location(
+                    "office",
+                    serde_json::json!({"type": "officeLocation", "officeLocation": {"label": "HQ"}}),
+                ),
+                location(
+                    "custom",
+                    serde_json::json!({"type": "customLocation", "customLocation": {"label": "Cafe"}}),
+                ),
+                location("unknown", serde_json::json!({"type": "spaceStation"})),
+                location("unspecified", serde_json::json!({})),
+            ],
+            "work@example.com",
+            "primary",
+            true,
+        );
+        let kinds: Vec<_> = events
+            .iter()
+            .map(|event| event.working_location_type.as_deref())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![Some("home"), Some("office"), Some("custom"), None, None]
+        );
+        assert!(events
+            .iter()
+            .all(|event| event.event_type.as_deref() == Some("workingLocation")));
+    }
+
+    #[test]
     fn a_schedule_event_saved_before_event_types_reads_as_ordinary() {
         let event: ScheduleEvent = serde_json::from_value(serde_json::json!({
             "id": "standup", "accountId": "you@example.com", "calendarId": "work",
@@ -2200,6 +2272,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(event.event_type, None);
+        assert_eq!(event.working_location_type, None);
     }
 
     fn organized_event(organizer_self: bool) -> GoogleEvent {

@@ -29,6 +29,7 @@ import { ICON_SIZE } from "./iconSizes";
 import { InlineConfirm } from "./InlineConfirm";
 import { EditCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { CalendarResponseControls } from "./CalendarResponseControls";
+import { distinctWorkingLocations, isWorkingLocation, WorkingLocationChip } from "./WorkingLocation";
 
 export const CALENDAR_SCROLL_TOP_KEY = "threestrands.calendar.scrollTop";
 const DEFAULT_CALENDAR_SCROLL_TOP = 7 * HOUR_HEIGHT;
@@ -288,8 +289,11 @@ export function CalendarSidebar({
     if (gridRef.current) gridRef.current.scrollTop = readCalendarScrollTop();
   }, []);
 
-  const timedEvents = useMemo(() => events.filter((event) => !event.allDay), [events]);
-  const allDayEvents = useMemo(() => events.filter((event) => event.allDay), [events]);
+  // Working locations, even one set for part of the day, head the all-day
+  // row rather than taking a block of time in the day.
+  const locations = useMemo(() => distinctWorkingLocations(events), [events]);
+  const timedEvents = useMemo(() => events.filter((event) => !event.allDay && !isWorkingLocation(event)), [events]);
+  const allDayEvents = useMemo(() => events.filter((event) => event.allDay && !isWorkingLocation(event)), [events]);
   const moveDay = useCallback((offset: number) => {
     setDate((current) => {
       const next = new Date(current);
@@ -347,10 +351,21 @@ export function CalendarSidebar({
           ) : null}
         </div>
       </header>
-      {allDayEvents.length > 0 ? (
+      {allDayEvents.length > 0 || locations.length > 0 ? (
         <div className="calendar-all-day" aria-label="All-day events">
           <span>All day</span>
           <div>
+            {locations.map((event) => (
+              <WorkingLocationChip
+                key={`${event.accountId}:${event.id}`}
+                event={event}
+                data-calendar-event-trigger
+                aria-expanded={selectedEvent === event}
+                aria-controls={selectedEvent === event ? "calendar-event-viewer" : undefined}
+                onClick={() => setSelectedEvent((current) => current === event ? null : event)}
+                style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
+              />
+            ))}
             {allDayEvents.map((event) => {
               const eventKey = `${event.accountId}:${event.id}`;
               return (

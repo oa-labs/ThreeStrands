@@ -8,14 +8,13 @@ import { ContextRow, ContextSection } from "./ContextSections";
 import type { CalendarEventPreview, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { useCalendarSchedule } from "./useCalendarSchedule";
+import { isWorkingLocation } from "./WorkingLocation";
 
 const sameUid = (left: string | null | undefined, right: string | null | undefined) =>
   Boolean(left?.trim()) && left?.trim().toLocaleLowerCase() === right?.trim().toLocaleLowerCase();
 
 const overlaps = (event: ScheduleEvent, range: { start: Date; end: Date }) =>
   !event.allDay && new Date(event.start) < range.end && new Date(event.end) > range.start;
-
-const isWorkingLocation = (event: ScheduleEvent) => event.eventType === "workingLocation";
 
 const timeFormat = () => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 

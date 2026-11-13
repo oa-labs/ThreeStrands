@@ -405,6 +405,27 @@ describe("calendar sidebar", () => {
     expect(within(header).queryByRole("button", { name: "Show All" })).not.toBeInTheDocument();
   });
 
+  it("sets working locations apart from all-day events, once per place, and keeps them out of the day's hours", async () => {
+    const day = new Date(2027, 0, 5);
+    const at = (hour: number) => new Date(2027, 0, 5, hour).toISOString();
+    const base = { accountId: "you@example.com", calendarId: "primary", eventType: "workingLocation" };
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [
+      { ...base, id: "office", title: "Office", start: "2027-01-05", end: "2027-01-06", allDay: true, workingLocationType: "office" },
+      { ...base, id: "office-shared", calendarId: "shared", title: "Office", start: "2027-01-05", end: "2027-01-06", allDay: true, workingLocationType: "office" },
+      { ...base, id: "cafe", title: "Cafe", start: at(13), end: at(17), allDay: false, workingLocationType: "custom" },
+      { id: "offsite", accountId: "you@example.com", title: "Offsite", start: "2027-01-05", end: "2027-01-06", allDay: true },
+    ], errors: [] });
+    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} initialDate={day} />);
+
+    const allDay = await screen.findByLabelText("All-day events");
+    const office = await within(allDay).findByRole("button", { name: "Office, working location" });
+    expect(within(allDay).getAllByRole("button", { name: /^Office/ })).toHaveLength(1);
+    expect(office).toHaveClass("calendar-working-location");
+    expect(within(allDay).getByRole("button", { name: /^Cafe, working location, 1:00/ })).toHaveAttribute("data-working-location", "custom");
+    expect(within(allDay).getByRole("button", { name: "Offsite" })).toHaveClass("calendar-all-day-event");
+    expect(document.querySelectorAll(".calendar-schedule-event")).toHaveLength(0);
+  });
+
   it("moves one day per horizontal trackpad swipe", async () => {
     const { listEvents, sidebar, dayOf } = renderSwipeSidebar();
     await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(1));

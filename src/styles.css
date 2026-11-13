@@ -1856,6 +1856,37 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   cursor: pointer;
 }
 .calendar-week-all-day .calendar-all-day-event:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A working location is where the user is, not an event: the place on a thin
+   rule in its calendar's color, unfilled, above the day's all-day events. */
+.calendar-working-location {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-xs);
+  padding: var(--space-0-5) 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  cursor: pointer;
+}
+.calendar-working-location svg { flex: none; color: var(--calendar-color, var(--accent)); }
+.calendar-working-location-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-working-location-hours { flex: none; color: var(--muted); font-weight: var(--weight-regular); }
+.calendar-working-location::after {
+  content: "";
+  flex: 1 1 var(--space-3);
+  min-width: var(--space-3);
+  height: 2px;
+  background: color-mix(in srgb, var(--calendar-color, var(--accent)) 35%, transparent);
+}
+.calendar-working-location:hover::after,
+.calendar-working-location[aria-expanded="true"]::after { background: var(--calendar-color, var(--accent)); }
+.calendar-working-location:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .calendar-week-timezone { display: grid; grid-template-columns: 72px minmax(0, 1fr); padding-bottom: var(--space-1-5); }
 .calendar-week-scroll { position: relative; min-height: 0; flex: 1; overflow-y: auto; border-top: 1px solid var(--border); }
 .calendar-week-grid { position: relative; min-height: 1536px; }

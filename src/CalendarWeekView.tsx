@@ -40,6 +40,7 @@ import { ICON_SIZE } from "./iconSizes";
 import { defaultEventCalendar, openTasksFor, showCalendar, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
 import type { Notice } from "./useNotice";
 import { formatShortcut } from "./shortcutLabels";
+import { distinctWorkingLocations, isWorkingLocation, WorkingLocationChip } from "./WorkingLocation";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
 /** Calendar accounts collapsed in the week view's calendar list, remembered on this device. */
@@ -549,13 +550,19 @@ export function CalendarWeekView({
   const snapshot=useRef<CalendarWorkspaceSnapshot | null>(null);
   snapshot.current={selected:selectedEvent,initialEvent,mode,navigationOpen};
   useLayoutEffect(() => () => { if (session) session.current=snapshot.current; }, [session]);
-  const allDayByDay = useMemo(
-    () => days.map((day) => events.filter((event) => event.allDay && occursOnDay(event, day))),
+  // Working locations, even one set for part of a day, head the all-day row
+  // rather than taking a block of time in the grid.
+  const locationsByDay = useMemo(
+    () => days.map((day) => distinctWorkingLocations(events.filter((event) => occursOnDay(event, day)))),
     [days, events],
   );
-  const hasAllDay = allDayByDay.some((dayEvents) => dayEvents.length > 0);
+  const allDayByDay = useMemo(
+    () => days.map((day) => events.filter((event) => event.allDay && !isWorkingLocation(event) && occursOnDay(event, day))),
+    [days, events],
+  );
+  const hasAllDay = allDayByDay.some((dayEvents) => dayEvents.length > 0) || locationsByDay.some((locations) => locations.length > 0);
   const timedByDay = useMemo(
-    () => days.map((day) => layOutDayEvents(events.filter((event) => !event.allDay && occursOnDay(event, day)), day)),
+    () => days.map((day) => layOutDayEvents(events.filter((event) => !event.allDay && !isWorkingLocation(event) && occursOnDay(event, day)), day)),
     [days, events],
   );
 
@@ -601,6 +608,16 @@ export function CalendarWeekView({
             <span className="calendar-week-gutter">All day</span>
             {days.map((day, index) => (
               <div key={day.toDateString()}>
+                {locationsByDay[index].map((event) => (
+                  <WorkingLocationChip
+                    key={`${event.accountId}:${event.calendarId}:${event.id}`}
+                    event={event}
+                    data-calendar-event-trigger
+                    aria-expanded={sameEvent(selectedEvent, event)}
+                    onClick={(click) => { eventTrigger.current=click.currentTarget; setSelectedEvent((current) => sameEvent(current,event) ? null : event); }}
+                    style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
+                  />
+                ))}
                 {allDayByDay[index].map((event) => (
                   <button
                     type="button"

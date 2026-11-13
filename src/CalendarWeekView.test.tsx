@@ -761,6 +761,40 @@ describe("CalendarWeekView", () => {
     expect(within(allDay).getByRole("button", { name: "Labor Day" })).toBeInTheDocument();
   });
 
+  it("sets working locations apart from all-day events, once per place, ahead of the day's events", async () => {
+    const location = (id: string, start: string, end: string, title: string, type: ScheduleEvent["workingLocationType"], allDay = true): ScheduleEvent =>
+      ({ ...event(id, start, end, title), allDay, eventType: "workingLocation", workingLocationType: type });
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({
+      events: [
+        { ...event("offsite", "2026-09-22", "2026-09-23", "Offsite"), allDay: true },
+        location("office-work", "2026-09-22", "2026-09-23", "Office", "office"),
+        // The same place shared to a second calendar.
+        { ...location("office-shared", "2026-09-22", "2026-09-23", "Office", "office"), calendarId: "holidays" },
+        // Part of a day takes no block of time in the grid.
+        location("home", "2026-09-23T09:00:00", "2026-09-23T12:00:00", "Home", "home", false),
+      ],
+      errors: [],
+    });
+    renderWeek();
+
+    const allDay = await screen.findByLabelText("All-day events");
+    const office = within(allDay).getByRole("button", { name: "Office, working location" });
+    expect(within(allDay).getAllByRole("button", { name: /^Office/ })).toHaveLength(1);
+    expect(office).toHaveClass("calendar-working-location");
+    expect(office).not.toHaveClass("calendar-all-day-event");
+    expect(office).toHaveAttribute("data-working-location", "office");
+    const tuesday = office.parentElement!;
+    expect([...tuesday.children].map((child) => child.textContent)).toEqual(["Office", "Offsite"]);
+    expect(within(tuesday).getByRole("button", { name: "Offsite" })).toHaveClass("calendar-all-day-event");
+
+    const home = within(allDay).getByRole("button", { name: /^Home, working location, 9:00/ });
+    expect(home).toHaveAttribute("data-working-location", "home");
+    expect(document.querySelector(".calendar-week-scroll")!.textContent).not.toContain("Home");
+
+    fireEvent.click(office);
+    expect(await screen.findByRole("region", { name: "Office details" })).toBeInTheDocument();
+  });
+
   it("marks the current time only on today's column", async () => {
     const { container } = renderWeek();
     await screen.findByText("Sun 20");
