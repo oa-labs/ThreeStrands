@@ -112,6 +112,8 @@ import { TaskEditorDialog } from "./TaskEditorDialog";
 import { TaskSidebar, type TaskWorkspaceSnapshot } from "./TaskSidebar";
 import { THREAD_ASSIST_ID, THREAD_SUGGESTIONS_ID, ThreadAssist } from "./ThreadAssist";
 import { latestInvitationMessage } from "./calendarInvitations";
+import { useInvitationEvent } from "./useInvitationEvent";
+import { InvitationDay } from "./InvitationDay";
 import { sharedChatAttachments, ThreadChat } from "./ThreadChat";
 import { ThreadList, ThreadRow } from "./ThreadList";
 import { ThreadTasks } from "./ThreadTasks";
@@ -328,7 +330,9 @@ export function App() {
   const fileSessions = useRef(new Map<string, FilesWorkspaceSnapshot>());
   const calendarSession = useRef<CalendarWorkspaceSnapshot | null>(null);
   const taskSessions = useRef(new Map<string, TaskWorkspaceSnapshot>());
-  const workspaces = useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice });
+  // The open conversation's invitation: t opens the schedule on its day, and the context shows that day.
+  const invitation = useInvitationEvent(visibleDetail ? latestInvitationMessage(visibleDetail) : null);
+  const workspaces = useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice, scheduleDay: invitation?.day ?? null });
   const {
     rightWorkspace, setRightWorkspace, calendarWeekAnchor, setCalendarWeekAnchor,
     calendarEventToOpen, openCalendarAt, contactAddressBookTarget, contactsView, setContactsView,
@@ -1777,6 +1781,16 @@ export function App() {
             />
           ) : null}
           related={(person, meetingPeople) => visibleDetail ? <>
+            {calendarConnected && invitation ? (
+              <InvitationDay
+                key={`${visibleDetail.thread.id}:${invitation.day.getTime()}`}
+                invitation={invitation.event}
+                day={invitation.day}
+                timeZone={availabilityPreferences.timeZone}
+                onShowDay={openCalendarAt}
+                onOpenEvent={(event) => openCalendarView(eventDate(event), event)}
+              />
+            ) : null}
             <NoteBacklinks reference={{ version: 1, kind: "conversation", id: visibleDetail.thread.providerThreadId, account: visibleDetail.thread.accountId }} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} onOpenNote={openNote} />
             <ThreadTasks
               thread={visibleDetail.thread}

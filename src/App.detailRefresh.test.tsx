@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
+import { clearInvitationEventCache } from "./useInvitationEvent";
 import { clearAiApiKey, DEFAULT_AI_FEATURES, saveAiFeatures, saveAiProvider, setAiApiKey, type AiFeatureFlags } from "./aiSettings";
 import { proactiveDwellMs } from "./proactiveBrief";
 import { SLOTS_PER_DAY } from "./scheduling";
@@ -305,6 +306,39 @@ it("shows a conversation participant on the next meeting and opens its details i
   expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
   expect(await screen.findByRole("region", { name: "Onboarding kickoff details" })).toBeInTheDocument();
   expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
+});
+
+it("shows what else is on an invitation's day in the context, and opens the schedule on that day with t", async () => {
+  clearScheduleCache();
+  clearInvitationEventCache();
+  const originalGetThread = mailClient.getThread.bind(mailClient);
+  vi.spyOn(mailClient, "getThread").mockImplementation(async (id) => {
+    const detail = await originalGetThread(id);
+    return id === "welcome" ? { ...detail, messages: detail.messages.map((message) => ({ ...message,
+      attachments: [{ id: "invite", filename: "invite.ics", mimeType: "text/calendar; method=REQUEST", size: 100 }],
+    })) } : detail;
+  });
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-10-01T00:00:00Z", status: "connected" }]);
+  const day = new Date(2030, 0, 8);
+  const at = (hour: number) => new Date(2030, 0, 8, hour).toISOString();
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [
+    { id: "board", accountId: "calendar@example.com", title: "Board meeting", allDay: false, start: at(14), end: at(15) },
+  ], errors: [] });
+  vi.spyOn(mailClient, "previewCalendarAttachment").mockResolvedValue({ events: [{ uid: "summit@example.com", title: "Summit",
+    start: at(14), end: at(16), allDay: false, timeZone: null,
+    location: null, description: null, organizer: "Taylor", attendeeCount: 3, recurring: false, status: "CONFIRMED" }], truncated: false });
+  vi.spyOn(mailClient, "findCalendarInvitation").mockResolvedValue(null);
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+  const thatDay = await within(panel).findByRole("region", { name: "Your calendar that day" });
+  expect(await within(thatDay).findByRole("button", { name: /Board meeting/ })).toHaveTextContent("Overlaps");
+
+  fireEvent.keyDown(window, { key: "t" });
+  const schedule = await screen.findByRole("complementary", { name: "Schedule" });
+  expect(within(schedule).getByRole("heading", { level: 2 })).toHaveTextContent(
+    new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(day));
 });
 
 describe("conversation brief", () => {

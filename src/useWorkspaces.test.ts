@@ -215,6 +215,43 @@ describe("Mail's right column", () => {
     expect(hook.result.current.sideColumn).toBe("schedule");
     expect(hook.result.current.calendarSidebarStart?.date).toBe(day);
   });
+
+  it("opens the schedule with t on the open invitation's day, and on today otherwise", async () => {
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue(connected);
+    const invitationDay = new Date(2027, 0, 5);
+    const hook = renderHook((props: { scheduleDay: Date | null }) => useWorkspaces({
+      settingsOpen: false,
+      settingsSection: "general" as never,
+      visibleDetail: thread("t1"),
+      readingMessageId: null,
+      readingMessageIdRef: { current: null },
+      openSettingsAt: vi.fn(),
+      setNotice: vi.fn(),
+      scheduleDay: props.scheduleDay,
+    }), { initialProps: { scheduleDay: invitationDay as Date | null } });
+    await waitFor(() => expect(hook.result.current.calendarConnected).toBe(true));
+
+    act(() => hook.result.current.toggleSchedule());
+    await waitFor(() => expect(hook.result.current.scheduleShown).toBe(true));
+    expect(hook.result.current.calendarSidebarStart?.date).toEqual(invitationDay);
+    const opened = hook.result.current.calendarSidebarStart?.key;
+
+    // Bringing back a hidden schedule keeps the day the reader moved it to.
+    act(() => hook.result.current.mailPanel.setCollapsed(true));
+    act(() => hook.result.current.toggleSchedule());
+    await waitFor(() => expect(hook.result.current.mailPanel.collapsed).toBe(false));
+    expect(hook.result.current.calendarSidebarStart?.key).toBe(opened);
+
+    // A conversation without an invitation opens it on today again.
+    act(() => hook.result.current.toggleSchedule());
+    expect(hook.result.current.sideColumn).toBe("context");
+    hook.rerender({ scheduleDay: null });
+    act(() => hook.result.current.toggleSchedule());
+    await waitFor(() => expect(hook.result.current.scheduleShown).toBe(true));
+    expect(hook.result.current.calendarSidebarStart).toBeNull();
+    localStorage.removeItem("threestrands.workspaceContext.collapsed.Mail");
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue([]);
+  });
 });
 
 describe("Mail's right column in a narrow window", () => {

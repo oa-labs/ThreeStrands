@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { CalendarResponseControls } from "./CalendarResponseControls";
-import { calendarEventRange } from "./calendarInvitations";
+import { calendarEventRange, isCancelledInvitation } from "./calendarInvitations";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences, CalendarEventPreview, ScheduleEvent } from "./domain";
 import { errorMessage } from "./errors";
@@ -26,7 +26,7 @@ export function InvitationResponse({ invitation, sourceMessageId, ...props }: In
   const [attempt, setAttempt] = useState(0);
   const [plan, setPlan] = useState<SchedulePlan | null>(null);
   const uid = invitation.uid?.trim();
-  const cancelled = invitation.status?.toLocaleLowerCase() === "cancelled";
+  const cancelled = isCancelledInvitation(invitation);
   useEffect(() => {
     if (!calendarConnected || !uid || cancelled) return;
     let active = true;

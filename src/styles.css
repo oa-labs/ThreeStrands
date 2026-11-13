@@ -2469,6 +2469,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-meeting-details { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .context-meeting-response { flex:0 0 auto; color:var(--accent); font-weight:var(--weight-semibold); white-space:pre; }
 .context-meeting-response[data-response-status="declined"] { color:var(--muted); }
+/* What else is on the calendar the day of an invitation; overlaps take the warning color. */
+.context-invitation-day-conflict { color:var(--warning); font-weight:var(--weight-semibold); }
+.context-meeting-conflict .context-row-icon { color:var(--warning); }
 .context-file .context-row-title { display:flex; }
 /* A file's actions show on hover or focus, so a list of files reads as names, dates, and sizes. A starred file keeps its star. */
 .context-file .context-row-action > * { opacity:0; transition:opacity var(--duration-fast) ease; }

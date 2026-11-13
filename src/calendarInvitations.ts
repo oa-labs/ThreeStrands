@@ -1,5 +1,8 @@
 import type { ActionProposal, CalendarEventPreview, Message, MessageAttachment, ThreadDetail } from "./domain";
 
+/** Calendar attachments larger than this are offered as files, not parsed into a card. */
+export const MAX_PREVIEWABLE_CALENDAR_SIZE = 2 * 1024 * 1024;
+
 export function isCalendarAttachment(attachment: MessageAttachment): boolean {
   return attachment.mimeType.split(";", 1)[0]?.trim().toLocaleLowerCase() === "text/calendar"
     || attachment.filename.toLocaleLowerCase().endsWith(".ics");
@@ -40,4 +43,24 @@ export function calendarEventRange(event: CalendarEventPreview): { start: Date; 
   if (event.allDay) fallback.setDate(fallback.getDate() + 1);
   else fallback.setHours(fallback.getHours() + 1);
   return { start, end: fallback };
+}
+
+export function isCancelledInvitation(event: CalendarEventPreview): boolean {
+  return event.status?.toLocaleLowerCase() === "cancelled";
+}
+
+/**
+ * The local day an invitation starts on, for showing what else is on the
+ * calendar then. Times in a zone the parser could not resolve are wall-clock
+ * times there, so their written date is the best guess at the day.
+ * Null for a cancelled invitation or one without a usable start.
+ */
+export function invitationDay(event: CalendarEventPreview): Date | null {
+  if (isCancelledInvitation(event) || !event.start) return null;
+  const written = /^(\d{4})-(\d{2})-(\d{2})/.exec(event.start);
+  if (event.allDay || event.timeZone) {
+    return written ? new Date(Number(written[1]), Number(written[2]) - 1, Number(written[3])) : null;
+  }
+  const start = parsedInvitationDate(event.start);
+  return start ? new Date(start.getFullYear(), start.getMonth(), start.getDate()) : null;
 }
