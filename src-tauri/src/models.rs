@@ -105,6 +105,11 @@ pub struct ScheduleEvent {
     pub source_message_id: Option<String>,
     /// The task ThreeStrands booked this event for, if it did.
     pub source_task_id: Option<String>,
+    /// The provider's kind of entry when it is not an ordinary event, such as
+    /// Google's `workingLocation`, `outOfOffice`, or `focusTime`. Saved
+    /// events from before this field read as ordinary ones.
+    #[serde(default)]
+    pub event_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

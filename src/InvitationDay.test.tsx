@@ -69,6 +69,30 @@ describe("InvitationDay", () => {
     expect(within(section).getByText(/^Free /)).toBeInTheDocument();
   });
 
+  it("names the day's working locations once on the date line instead of listing them as events", async () => {
+    renderDay([
+      scheduled("office-work", "2027-01-05", "2027-01-06", { allDay: true, title: "Office", eventType: "workingLocation" }),
+      scheduled("office-personal", "2027-01-05", "2027-01-06", { allDay: true, title: "office ", eventType: "workingLocation", accountId: "me@example.com" }),
+      scheduled("home", at(15), at(18), { title: "Home", eventType: "workingLocation" }),
+      scheduled("morning", at(9), at(10)),
+      scheduled("away", at(14), at(15), { eventType: "outOfOffice" }),
+    ]);
+
+    const section = await screen.findByRole("region", { name: "Your calendar that day" });
+    expect(titles(section)).toEqual(["Event morning", "Event away"]);
+    expect(section.querySelector(".context-invitation-day-place")).toHaveTextContent(/^Office, Home$/);
+    // A working location does not take up the invitation's time; being out of office does.
+    expect(within(section).getByText("Overlaps 1 event")).toBeInTheDocument();
+  });
+
+  it("calls a day with only a working location free", async () => {
+    renderDay([scheduled("office", "2027-01-05", "2027-01-06", { allDay: true, title: "Office", eventType: "workingLocation" })],
+      invitation({ allDay: true, start: "2027-01-05", end: "2027-01-06" }));
+    const section = await screen.findByRole("region", { name: "Your calendar that day" });
+    expect(within(section).queryAllByRole("button", { name: /Office/ })).toHaveLength(0);
+    expect(within(section).getByText("Nothing else on your calendar")).toBeInTheDocument();
+  });
+
   it("says when an all-day invitation's day has nothing else, without claiming a free time", async () => {
     renderDay([], invitation({ allDay: true, start: "2027-01-05", end: "2027-01-06" }));
     const section = await screen.findByRole("region", { name: "Your calendar that day" });

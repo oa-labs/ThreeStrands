@@ -15,6 +15,8 @@ const sameUid = (left: string | null | undefined, right: string | null | undefin
 const overlaps = (event: ScheduleEvent, range: { start: Date; end: Date }) =>
   !event.allDay && new Date(event.start) < range.end && new Date(event.end) > range.start;
 
+const isWorkingLocation = (event: ScheduleEvent) => event.eventType === "workingLocation";
+
 const timeFormat = () => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
 /**
@@ -24,6 +26,7 @@ const timeFormat = () => new Intl.DateTimeFormat(undefined, { hour: "numeric", m
  *
  * The invitation's own event is left out, since calendars often add it as
  * tentative before the user answers, and so are events the user declined.
+ * Working locations, such as Office or Home, are named on the date line.
  * Renders nothing until the day's schedule loads, or if it cannot load, as
  * the rest of the panel's calendar context does; when only some calendars
  * load, it lists what did without calling the time free.
@@ -40,8 +43,13 @@ export function InvitationDay({ invitation, day, timeZone, onShowDay, onOpenEven
   const range = useMemo(() => ({ timeMin: day.toISOString(), timeMax: addDays(day, 1).toISOString() }), [day]);
   const { events, loading, error } = useCalendarSchedule({ ...range, timeZone });
   const invited = invitation.allDay ? null : calendarEventRange(invitation);
-  const others = events
-    .filter((event) => occursOnDay(event, day) && event.responseStatus !== "declined" && !sameUid(event.uid, invitation.uid))
+  const onDay = events.filter((event) => occursOnDay(event, day));
+  // A working location says where the user is, not something they are doing,
+  // so it joins the date line, once per place, rather than listing as an event.
+  const places = onDay.filter(isWorkingLocation).map((event) => event.title.trim())
+    .filter((place, index, all) => all.findIndex((other) => other.toLocaleLowerCase() === place.toLocaleLowerCase()) === index);
+  const others = onDay
+    .filter((event) => !isWorkingLocation(event) && event.responseStatus !== "declined" && !sameUid(event.uid, invitation.uid))
     .sort((left, right) => Number(right.allDay) - Number(left.allDay) || eventDate(left).getTime() - eventDate(right).getTime());
   if (others.length === 0 && (loading || error)) return null;
 
@@ -59,7 +67,7 @@ export function InvitationDay({ invitation, day, timeZone, onShowDay, onOpenEven
     title="That day"
     label="Your calendar that day"
     count={others.length}
-    note={<>{date}{summary ? <> · <span className={conflicts > 0 ? "context-invitation-day-conflict" : undefined}>{summary}</span></> : null}</>}
+    note={<>{date}{places.length > 0 ? <> · <span className="context-invitation-day-place">{places.join(", ")}</span></> : null}{summary ? <> · <span className={conflicts > 0 ? "context-invitation-day-conflict" : undefined}>{summary}</span></> : null}</>}
     actions={<HoverTooltip title="Show day in schedule" shortcut="t" placement="bottom">
       <button type="button" className="btn-icon btn-icon-sm" aria-label="Show Day in Schedule" onClick={() => onShowDay(day)}><CalendarSearch size={ICON_SIZE.sm} /></button>
     </HoverTooltip>}

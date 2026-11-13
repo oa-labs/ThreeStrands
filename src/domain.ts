@@ -169,6 +169,11 @@ export type ScheduleEvent = {
   sourceMessageId?: string | null;
   /** The task ThreeStrands booked this event for, when it did. */
   sourceTaskId?: string | null;
+  /**
+   * The provider's kind of entry when it is not an ordinary event, such as
+   * Google's `workingLocation`, `outOfOffice`, or `focusTime`.
+   */
+  eventType?: string | null;
 };
 
 export type ScheduleResult = {

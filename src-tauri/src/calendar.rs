@@ -467,6 +467,9 @@ struct GoogleEvent {
     organizer: Option<GoogleAttendee>,
     #[serde(default)]
     extended_properties: Option<GoogleExtendedProperties>,
+    /// `default` for an ordinary event; otherwise a status such as a working location.
+    #[serde(default)]
+    event_type: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1526,6 +1529,9 @@ fn normalize_events(
                     event.extended_properties.as_ref(),
                     SOURCE_TASK_PROPERTY,
                 ),
+                event_type: event
+                    .event_type
+                    .filter(|kind| !kind.is_empty() && kind != "default"),
                 conference_url: event.hangout_link.or_else(|| {
                     event.conference_data.and_then(|conference| {
                         conference.entry_points.into_iter().find_map(|entry| {
@@ -2083,6 +2089,7 @@ mod tests {
                         resource: false,
                     }),
                     extended_properties: None,
+                    event_type: None,
                 },
                 GoogleEvent {
                     recurring_event_id: None,
@@ -2105,6 +2112,7 @@ mod tests {
                     attendees: Vec::new(),
                     organizer: None,
                     extended_properties: None,
+                    event_type: None,
                 },
             ],
             "work@example.com",
@@ -2146,6 +2154,52 @@ mod tests {
         // An invitation and an event without a known organizer are not editable.
         assert!(!events[0].can_edit);
         assert!(!events[1].can_edit);
+    }
+
+    #[test]
+    fn normalize_events_keeps_the_kind_of_entry_that_is_not_an_ordinary_event() {
+        let entry = |id: &str, event_type: Option<&str>| -> GoogleEvent {
+            let mut value = serde_json::json!({
+                "id": id,
+                "summary": "Office",
+                "start": {"date": "2027-01-05"},
+                "end": {"date": "2027-01-06"},
+            });
+            if let Some(event_type) = event_type {
+                value["eventType"] = serde_json::json!(event_type);
+            }
+            serde_json::from_value(value).unwrap()
+        };
+        let events = normalize_events(
+            vec![
+                entry("location", Some("workingLocation")),
+                entry("away", Some("outOfOffice")),
+                entry("ordinary", Some("default")),
+                entry("unspecified", None),
+            ],
+            "work@example.com",
+            "primary",
+            true,
+        );
+        let kinds: Vec<_> = events
+            .iter()
+            .map(|event| event.event_type.as_deref())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![Some("workingLocation"), Some("outOfOffice"), None, None]
+        );
+    }
+
+    #[test]
+    fn a_schedule_event_saved_before_event_types_reads_as_ordinary() {
+        let event: ScheduleEvent = serde_json::from_value(serde_json::json!({
+            "id": "standup", "accountId": "you@example.com", "calendarId": "work",
+            "title": "Standup", "start": "2026-11-12T15:00:00Z", "end": "2026-11-12T15:15:00Z", "allDay": false,
+            "attendees": [], "attendeeResponses": {}, "canRespond": false, "canEdit": true,
+        }))
+        .unwrap();
+        assert_eq!(event.event_type, None);
     }
 
     fn organized_event(organizer_self: bool) -> GoogleEvent {
