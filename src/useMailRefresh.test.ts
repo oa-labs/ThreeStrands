@@ -4,9 +4,10 @@ import { mailClient } from "./data/client";
 import { FOREGROUND_DEBOUNCE_MS, FOREGROUND_IDLE_MS } from "./foregroundRefresh";
 import { useMailRefresh } from "./useMailRefresh";
 
-function renderRefresh() {
+function renderRefresh(activeAccountId: string | null = null) {
   const loadThreads = vi.fn(async () => {});
   return renderHook(() => useMailRefresh({
+    activeAccountId,
     query: "",
     loadThreadsRef: { current: loadThreads },
     setSyncStatus: vi.fn(),
@@ -48,6 +49,27 @@ describe("foreground mail refresh", () => {
     act(() => result.current.refreshMail());
 
     expect(sync).toHaveBeenCalledWith({ catchUp: false });
+  });
+
+  it.each(["work@example.com", null])("pull refresh checks the selected account scope (%s)", async (accountId) => {
+    const sync = vi.spyOn(mailClient, "sync");
+    const { result } = renderRefresh(accountId);
+    await act(async () => { await result.current.refreshMailbox(); });
+    expect(sync).toHaveBeenCalledWith(accountId ? { catchUp: false, accountId } : { catchUp: false });
+  });
+
+  it("reloads the current search after a slow server refresh finishes", async () => {
+    let finish!: (status: Awaited<ReturnType<typeof mailClient.sync>>) => void;
+    const status = await mailClient.syncStatus();
+    vi.spyOn(mailClient, "sync").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const loadThreads = vi.fn(async () => {});
+    const options = { activeAccountId: "work@example.com", loadThreadsRef: { current: loadThreads }, setSyncStatus: vi.fn(), refreshTaskIndicators: vi.fn(async () => {}) };
+    const { result, rerender } = renderHook(({ query }) => useMailRefresh({ ...options, query }), { initialProps: { query: "old" } });
+    let refresh!: Promise<void>;
+    act(() => { refresh = result.current.refreshMailbox(); });
+    rerender({ query: "current" });
+    await act(async () => { finish(status); await refresh; });
+    expect(loadThreads).toHaveBeenCalledWith("current");
   });
 
   it("does not sync on a brief focus flicker", async () => {

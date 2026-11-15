@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import postcss from "postcss";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "./domain";
 import { HighlightedSnippet, ThreadList, ThreadRow } from "./ThreadList";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 const thread: Thread = {
   id: "thread-1",
@@ -73,6 +73,81 @@ describe("ThreadList", () => {
     fireEvent.keyDown(window, { key: "Shift" });
     fireEvent.keyDown(window, { key: "j", isComposing: true });
     expect(background(hovered)).toBe("var(--hover)");
+  });
+
+  it("refreshes once per deliberate trackpad pull and waits for an in-flight refresh", async () => {
+    vi.useFakeTimers();
+    let finish!: () => void;
+    const refresh = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    render(<ThreadList role="listbox" aria-label="Inbox" onRefresh={refresh} />);
+    const list = screen.getByRole("listbox");
+    fireEvent.wheel(list, { deltaY: -39 });
+    fireEvent.wheel(list, { deltaY: -40 });
+    expect(refresh).not.toHaveBeenCalled();
+    fireEvent.wheel(list, { deltaY: -1 });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    fireEvent.wheel(list, { deltaY: -100 });
+    await act(async () => { vi.advanceTimersByTime(300); });
+    fireEvent.wheel(list, { deltaY: -100 });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(); });
+    fireEvent.wheel(list, { deltaY: -100 });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(300); });
+    fireEvent.wheel(list, { deltaY: -5, deltaMode: 1 });
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await act(async () => { finish(); });
+  });
+
+  it("ignores scrolling to the top, horizontal movement, zoom, and pulls outside the list", async () => {
+    vi.useFakeTimers();
+    const refresh = vi.fn(async () => {});
+    render(<ThreadList role="listbox" aria-label="Inbox" onRefresh={refresh} />);
+    const list = screen.getByRole("listbox");
+    list.scrollTop = 100;
+    fireEvent.wheel(list, { deltaY: -100 });
+    list.scrollTop = 0;
+    fireEvent.wheel(list, { deltaY: -100 });
+    expect(refresh).not.toHaveBeenCalled();
+    for (const event of [{ deltaX: 200, deltaY: -100 }, { deltaY: -100, ctrlKey: true }, { deltaY: 100 }]) {
+      await act(async () => { vi.advanceTimersByTime(300); });
+      fireEvent.wheel(list, event);
+    }
+    fireEvent.wheel(window, { deltaY: -100 });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("refreshes on a completed touch pull, ignoring short, sideways, cancelled and multi-touch gestures", async () => {
+    const refresh = vi.fn(async () => {});
+    render(<ThreadList role="listbox" aria-label="Inbox" onRefresh={refresh} />);
+    const list = screen.getByRole("listbox");
+    const point = (x: number, y: number) => ({ identifier: 1, clientX: x, clientY: y });
+    for (const [x, y, cancel] of [[0, 79, false], [100, 80, false], [0, 100, true]] as const) {
+      fireEvent.touchStart(list, { touches: [point(0, 0)] });
+      fireEvent.touchMove(list, { touches: [point(x, y)] });
+      if (cancel) fireEvent.touchCancel(list);
+      fireEvent.touchEnd(list, { touches: [] });
+    }
+    fireEvent.touchStart(list, { touches: [point(0, 0)] });
+    fireEvent.touchMove(list, { touches: [point(0, 100), { ...point(0, 100), identifier: 2 }] });
+    fireEvent.touchEnd(list, { touches: [] });
+    expect(refresh).not.toHaveBeenCalled();
+    fireEvent.touchStart(list, { touches: [point(0, 0)] });
+    fireEvent.touchMove(list, { touches: [point(0, 80)] });
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.touchEnd(list, { touches: [] }); });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears a partial pull when the account callback changes", () => {
+    const first = vi.fn(async () => {});
+    const second = vi.fn(async () => {});
+    const { rerender } = render(<ThreadList role="listbox" aria-label="Inbox" onRefresh={first} />);
+    fireEvent.wheel(screen.getByRole("listbox"), { deltaY: -60 });
+    rerender(<ThreadList role="listbox" aria-label="Inbox" onRefresh={second} />);
+    fireEvent.wheel(screen.getByRole("listbox"), { deltaY: -30 });
+    expect(first).not.toHaveBeenCalled();
+    expect(second).not.toHaveBeenCalled();
   });
 
   it("renders highlighted search snippets without treating them as markup", () => {

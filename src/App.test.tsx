@@ -621,6 +621,22 @@ describe("read state and auto-read", () => {
 describe("conversation shortcuts", () => {
   useConversationFixture();
 
+  it("pulling the mail list refreshes the selected server account", async () => {
+    const [primary] = await mailClient.listAccounts();
+    vi.spyOn(mailClient, "listAccounts").mockResolvedValue([
+      primary!, { ...primary!, email: "work@example.com", displayName: "Work", sortOrder: 1 },
+    ]);
+    const sync = vi.spyOn(mailClient, "sync");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("radio", { name: "Work" }));
+    await act(async () => { fireEvent.wheel(screen.getByRole("listbox", { name: "Inbox" }), { deltaY: -100 }); });
+    expect(sync).toHaveBeenCalledWith({ catchUp: false, accountId: "work@example.com" });
+    sync.mockClear();
+    fireEvent.click(screen.getByRole("radio", { name: /All accounts/i }));
+    await act(async () => { fireEvent.wheel(screen.getByRole("listbox", { name: "Inbox" }), { deltaY: -100 }); });
+    expect(sync).toHaveBeenCalledWith({ catchUp: false });
+  });
+
   it("switches from pointer hover to keyboard navigation after clicking a conversation", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

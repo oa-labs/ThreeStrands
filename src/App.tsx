@@ -393,7 +393,7 @@ export function App() {
   const inboxChecked = inboxZero
     ? inboxCheckedLabel(syncStatus, activeAccountId ? accounts.filter((account) => account.email === activeAccountId) : accounts)
     : null;
-  const { refreshMail, recoveryStatus, syncDiagnostics } = useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTaskIndicators });
+  const { refreshMail, refreshMailbox, recoveryStatus, syncDiagnostics } = useMailRefresh({ activeAccountId, query, loadThreadsRef, setSyncStatus, refreshTaskIndicators });
   const [createCalendarEventRequested, setCreateCalendarEventRequested] = useState(false);
   const [snoozeTargets, setSnoozeTargets] = useState<Thread[] | null>(null);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
@@ -1218,7 +1218,7 @@ export function App() {
             />
           </div>
         ) : null}
-        <ThreadList role={isThreadMailbox || mailbox === "outbox" || mailbox === "drafts" ? "listbox" : "list"} aria-label={mailboxTitle}>
+        <ThreadList onRefresh={accounts.length ? refreshMailbox : undefined} role={isThreadMailbox || mailbox === "outbox" || mailbox === "drafts" ? "listbox" : "list"} aria-label={mailboxTitle}>
           {mailbox === "drafts" ? (<>
             <DraftsList
               drafts={correspondence.drafts}

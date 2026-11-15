@@ -1,17 +1,20 @@
 import { formatDateTime } from "./dateFormatting";
 import { SquareCheckBig, Paperclip, Square, Star } from "lucide-react";
-import { memo, useEffect, useState, type ComponentProps, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type ComponentProps, type RefObject } from "react";
 import type { Thread } from "./domain";
 import { formatDisplayName, parseAddress } from "./emailAddress";
 import { formatMailTimestamp } from "./threadPresentation";
 import { decodeHtmlEntities } from "./SafeMessage";
 import { selectionGestureFor, type SelectionGesture } from "./threadSelection";
+import { usePullToRefresh } from "./usePullToRefresh";
 import { ICON_SIZE } from "./iconSizes";
 
 const MATCH_START = "\u0001";
 const MATCH_END = "\u0002";
 
-export function ThreadList(props: Pick<ComponentProps<"div">, "children" | "role" | "aria-label">) {
+export function ThreadList({ onRefresh, ...props }: Pick<ComponentProps<"div">, "children" | "role" | "aria-label"> & { onRefresh?: () => Promise<void> }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  usePullToRefresh(listRef, onRefresh);
   const [keyboardNavigation, setKeyboardNavigation] = useState(false);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -26,6 +29,7 @@ export function ThreadList(props: Pick<ComponentProps<"div">, "children" | "role
   return (
     <div
       {...props}
+      ref={listRef}
       className="thread-list"
       data-input-mode={keyboardNavigation ? "keyboard" : "pointer"}
       onPointerMove={() => setKeyboardNavigation(false)}

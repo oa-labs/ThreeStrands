@@ -22,11 +22,12 @@ export function useUnreadCounts(syncStatus: SyncStatus | null, setSyncStatus: Di
 }
 
 type Options = Pick<ReturnType<typeof useMailboxThreads>, "query" | "loadThreadsRef"> & {
+  activeAccountId?: string | null;
   setSyncStatus: Dispatch<SetStateAction<SyncStatus | null>>;
   refreshTaskIndicators: () => Promise<void>;
 };
 
-export function useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTaskIndicators }: Options) {
+export function useMailRefresh({ activeAccountId, query, loadThreadsRef, setSyncStatus, refreshTaskIndicators }: Options) {
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus | null>(null);
   useEffect(() => {
     // One-shot: this only ever reflects what happened during this app
@@ -41,9 +42,11 @@ export function useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTa
     dismissProblems: async () => setSyncStatus(await mailClient.dismissSyncProblems()),
     dismissRecovery: () => setRecoveryStatus(null),
   }), [setSyncStatus]);
-  const runRefresh = useCallback((catchUp: boolean) => {
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const runRefresh = useCallback((catchUp: boolean, accountId?: string) => {
     setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
-    void mailClient.sync({ catchUp })
+    return mailClient.sync(accountId ? { catchUp, accountId } : { catchUp })
       .then((status) => {
         setSyncStatus(status);
       })
@@ -57,13 +60,14 @@ export function useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTa
       // A different account may still have completed when another failed.
       // Always repaint from the local cache after an all-account refresh.
       .finally(() => {
-        void loadThreadsRef.current(query);
+        void loadThreadsRef.current(queryRef.current);
         void mailClient.reconcileTasks().catch(logBackgroundFailure("Task reconciliation"));
         void refreshTaskIndicators();
       });
-  }, [loadThreadsRef, query, refreshTaskIndicators, setSyncStatus]);
+  }, [loadThreadsRef, refreshTaskIndicators, setSyncStatus]);
   // Refresh is the user asking: every account syncs.
-  const refreshMail = useCallback(() => runRefresh(false), [runRefresh]);
+  const refreshMail = useCallback(() => { void runRefresh(false); }, [runRefresh]);
+  const refreshMailbox = useCallback(() => runRefresh(false, activeAccountId ?? undefined), [activeAccountId, runRefresh]);
 
   // Returning to the window only catches up; see `MailClient.sync`.
   const catchUpRef = useRef(runRefresh);
@@ -108,5 +112,5 @@ export function useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTa
     };
   }, [setSyncStatus]);
 
-  return { refreshMail, recoveryStatus, syncDiagnostics };
+  return { refreshMail, refreshMailbox, recoveryStatus, syncDiagnostics };
 }

@@ -50,6 +50,7 @@ pub(crate) fn recovery_status(state: State<'_, AppState>) -> Option<db::Recovery
 pub(crate) async fn sync_account(
     state: State<'_, AppState>,
     catch_up: Option<bool>,
+    account_id: Option<String>,
 ) -> AppResult<SyncStatus> {
     log_failure(
         "refreshing account identity",
@@ -68,10 +69,19 @@ pub(crate) async fn sync_account(
             // which is still the placeholder until the first identity refresh
             // rekeys it.
             .map(|(_, connected)| (connected.sync.account_id(), connected.sync.clone()))
+            .filter(|(email, _)| {
+                account_id
+                    .as_ref()
+                    .is_none_or(|requested| requested == email)
+            })
             .collect::<Vec<_>>()
     };
     if services.is_empty() {
-        return Err("No connected Google accounts are available to sync".into());
+        return Err(match account_id {
+            Some(account) => format!("{account} is not connected. Reconnect it before refreshing."),
+            None => "No connected mail accounts are available to sync".to_string(),
+        }
+        .into());
     }
 
     // Accounts are independent Gmail sessions. Run them concurrently so a

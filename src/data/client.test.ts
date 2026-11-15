@@ -21,6 +21,13 @@ describe("native AI request payloads", () => {
 
   const sent = (command: string) => vi.mocked(invoke).mock.calls.find(([name]) => name === command)?.[1];
 
+  it("scopes a mailbox refresh to its account while keeping global refresh available", async () => {
+    await client.sync({ accountId: "work@example.com" });
+    expect(invoke).toHaveBeenLastCalledWith("sync_account", { accountId: "work@example.com", catchUp: false });
+    await client.sync();
+    expect(invoke).toHaveBeenLastCalledWith("sync_account", { accountId: undefined, catchUp: false });
+  });
+
   it("opens native single-note import without accepting a filesystem path", async () => {
     vi.mocked(invoke).mockResolvedValueOnce(null);
     expect(await client.importNoteFile()).toBeNull();
