@@ -293,6 +293,10 @@ For **Meeting preparation and follow-through**, the next design should settle:
 
 This update records the next feature and its scoping questions; it does not
 freeze the meeting UX or implement the feature. Delivery dates remain unset.
+The proposed [implementation plan](docs/meeting-preparation-design.md) now records
+the initial UX and data contracts, delivery stages, compatibility work, and
+acceptance coverage. Local preparation comes first, then manual follow-through
+and durable drafts, followed by privacy prerequisites and optional AI synthesis.
 
 ### Reliability and expansion alongside this sequence
 
@@ -487,5 +491,6 @@ flowchart LR
 - [IMAP/SMTP provider design](docs/imap-design.md) — provider design and phase progress.
 - [Today view design](docs/today-design.md) — what Today works out without AI, and the phase 2 AI layer (meaning sort, Top of mind strip).
 - [Notes workspace design](docs/notes-design.md) — implemented daily and regular Markdown notes, wiki links, backlinks, attachments, import/export, linked entities, note-derived tasks, and meeting notes; later work remains explicitly separated.
+- [Meeting preparation and follow-through](docs/meeting-preparation-design.md) — proposed implementation plan for local preparation, reviewed decisions and actions, durable follow-up drafts, and optional source-backed AI assistance.
 - [Delegated agents plan](docs/delegated-agents-plan.md) — implemented local demonstration and configured read-only web research; later routing and invitation evaluation remain proposed.
 - [Archived plans](docs/archive/) — completed plans (multi-account, database recovery, modularization, and layer boundary, Phase 2 compose, IMAP spike, Files workspace) kept for design history.

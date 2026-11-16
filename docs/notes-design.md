@@ -1494,6 +1494,11 @@ Nothing below is planned for the next release.
 
 ### Sketch: summarizing a meeting series
 
+The proposed [Meeting preparation and follow-through implementation plan](meeting-preparation-design.md)
+now scopes the next meeting workflow, including local preparation, reviewed
+capture, optional AI, and privacy prerequisites. Use that plan for delivery stages.
+This sketch remains context for later long-series synthesis and incremental batches.
+
 Thirty notes for one weekly meeting are less useful than a view of its
 themes, decisions, and open issues. The data to build one is in place: a
 series lists every note about it ([Recurring series](#recurring-series)),
