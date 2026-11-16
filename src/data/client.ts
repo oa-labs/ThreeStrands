@@ -5,6 +5,7 @@ import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, 
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
+import type { MeetingContext, MeetingReadiness } from "../domain";
 import {
   BOUNDED_LOCAL_READ,
   invokeWithPolicy,
@@ -424,6 +425,10 @@ export interface MailClient extends CorrespondenceClient {
   listNoteTasks(): Promise<NoteTaskRecord[]>;
   patchNoteItem(id: string, marker: string, expected: string, checked?: boolean, task?: boolean): Promise<Note>;
   noteBacklinks(reference: NoteReference): Promise<NoteBacklink[]>;
+  /** Local context for preparing one meeting; `mailScope` overrides the calendar's own mail account. */
+  meetingContext(reference: NoteReference, mailScope?: string[] | null): Promise<MeetingContext>;
+  /** Counts for up to 50 meetings, such as a day's. */
+  meetingReadiness(references: NoteReference[], mailScope?: string[] | null): Promise<MeetingReadiness[]>;
   resolveNoteConversation(reference: NoteReference): Promise<string | null>;
   /** The contact a contact reference opens, or null when this device has none. */
   resolveNoteContact(reference: NoteReference): Promise<string | null>;
@@ -693,6 +698,8 @@ const tauriClient: MailClient = {
   listNoteTasks: () => read("list_note_tasks"),
   patchNoteItem: (id, marker, expected, checked, task) => complete("patch_note_item", { id, marker, expected, checked: checked ?? null, task: task ?? null }),
   noteBacklinks: (reference) => read("note_backlinks", { reference }),
+  meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
+  meetingReadiness: (references, mailScope = null) => read("meeting_readiness", { references, mailScope }),
   resolveNoteConversation: (reference) => read("resolve_note_conversation", { reference }),
   resolveNoteContact: (reference) => read("resolve_note_contact", { reference }),
   captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),

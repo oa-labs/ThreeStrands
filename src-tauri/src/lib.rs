@@ -31,6 +31,8 @@ mod ipfs_transport;
 mod launch_args;
 mod limits;
 mod mail_links;
+mod meeting_excerpt;
+mod meeting_policy;
 mod models;
 mod proposed_times;
 mod scheduled_send;
@@ -1795,6 +1797,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::notes::note_task_warnings,
         commands::notes::patch_note_item,
         commands::notes::note_backlinks,
+        commands::meetings::meeting_context,
+        commands::meetings::meeting_readiness,
         commands::notes::resolve_note_conversation,
         commands::notes::resolve_note_contact,
         commands::notes::add_meeting_to_daily_note,

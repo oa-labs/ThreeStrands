@@ -4,6 +4,7 @@ import { isHolidayCalendar } from "../calendarAvailability";
 import type { FindAvailabilityRequest } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
 import { createDemoNotes } from "./demoNotes";
+import { createDemoMeetings } from "./demoMeetings";
 import type { WorkspaceFile } from "../domain";
 import { attachmentKind } from "../attachmentKind";
 import { demoCorrespondence } from "./demoCorrespondence";
@@ -493,6 +494,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     return structuredClone(unique.slice(offset, offset + limit));
   }
 
+  const connectedEvents = () => scheduleEvents.filter((event) => calendarAccounts.some((account) => account.email === event.accountId && account.status === "connected"));
+  const demoNotes = createDemoNotes({ threads: () => threads, tasks: () => tasks, contacts: () => client.listContactProfiles("", 5000), events: connectedEvents }, seed.notes);
   const client: MailClient = {
     ...demoCorrespondence(threadForMessage, () => accounts[0]?.email ?? DEMO_ACCOUNT_ID, (account) => seed.sendingIdentities?.[account] ?? [{ address: account }]),
     async listThreads(accountId) {
@@ -1984,7 +1987,16 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
     },
     ...demoSignatureClient,
-    ...createDemoNotes({ threads: () => threads, tasks: () => tasks, contacts: () => client.listContactProfiles("", 5000), events: () => scheduleEvents.filter((event) => calendarAccounts.some((account) => account.email === event.accountId && account.status === "connected")) }, seed.notes),
+    ...demoNotes,
+    ...createDemoMeetings({
+      events: connectedEvents,
+      threads: () => threads,
+      tasks: () => tasks,
+      mailAccounts: () => accounts.map((account) => account.email),
+      ownAddresses: () => [...accounts.map((account) => account.email), ...calendarAccounts.map((account) => account.email)],
+      threadForMessage: (id) => findMessage(id)?.threadId ?? null,
+      notes: demoNotes,
+    }),
     async listSnippets() {
       return structuredClone(snippets);
     },

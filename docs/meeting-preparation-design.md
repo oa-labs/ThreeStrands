@@ -1,6 +1,7 @@
 # Meeting preparation and follow-through
 
-**Status:** Proposed implementation plan; no feature code implemented.
+**Status:** Stage 1 (contracts and extraction) implemented; no user-visible feature yet.
+Later stages remain proposed.
 **Baseline:** 0.210.0 repository, reviewed 2026-11-15; daily-loop entry points
 added 2026-11-16.
 **Priority:** Next feature in the [product plan](../PLAN.MD#recommended-sequence-and-next-feature),
@@ -293,9 +294,9 @@ Names below are proposed contracts to add, not existing APIs.
 
 Suggested command boundaries:
 
-- `meeting_context(reference, mailScope, cursor)` returns the event snapshot,
+- `meeting_context(reference, mailScope)` returns the event snapshot,
   categorized source candidates, revision tokens, and per-section availability.
-- `meeting_readiness(references, mailScopes)` returns, per event, note presence,
+- `meeting_readiness(references, mailScope)` returns, per event, note presence,
   commitment and candidate counts, latest correspondence date, follow-through
   state, and per-event availability or errors, without bodies. One failing event
   does not fail the batch.
@@ -379,6 +380,47 @@ local, bounded, and contains no unrelated daily-note text; readiness for a day's
 meetings agrees with full context and loads no bodies. Record concrete policy
 budgets, the per-request event limit, and recovery retention before stages that
 depend on them.
+
+**As built.** `meeting_context(reference, mailScope)` and
+`meeting_readiness(references, mailScope)` (`src-tauri/src/commands/meetings.rs`,
+`src-tauri/src/db/meetings.rs`) read only local data. The event comes from the
+native event cache by its full reference, never from a UI snapshot; without a
+cached copy, notes stay available and the attendee-dependent sections say why
+they are empty. Block extraction is `src-tauri/src/meeting_excerpt.rs`, mirrored by
+`src/meetingExcerpt.ts`, and both pass `fixtures/meeting-excerpts.json`. The demo
+client implements both commands over in-memory data (`src/data/demoMeetings.ts`).
+
+- `mailScope` is one optional list for the whole request. Absent, each event uses
+  its calendar's own mail account when that is also a mail account, else its
+  conversations section reports `scopeRequired`. An empty list also reports
+  `scopeRequired`; an account not on this device is rejected.
+- Results are complete within their limits, so v1 needs no paging cursor. Each
+  section reports `ready`, `limited` (with `omitted`), `scopeRequired`, or
+  `unavailable` (with a message), and fails on its own. Readiness reports a
+  per-event `error` instead of failing the batch.
+- Readiness loads note text only to find meeting blocks and never loads message
+  bodies; its counts are derived from the same context builder. The follow-through
+  state joins readiness in stage 3.
+- Excerpts keep the note's stored Markdown, including inert task markers; the
+  view in stage 2 renders them as the editor does.
+
+Recorded budgets (`src-tauri/src/meeting_policy.rs`, returned with every context
+as `limits`):
+
+| Budget | Value |
+| --- | --- |
+| Events per readiness request | 50 |
+| Note sources per section | 20 |
+| Earlier occurrences listed | 8, newest first |
+| Text per meeting block | 4,096 bytes, cut at a character boundary and flagged |
+| Preview of a linked reusable note | 1,024 bytes |
+| Attendees used to look for mail | 50 |
+| Conversations listed | 10, the originating one first |
+| Attendee mail lookback | 90 days |
+| Commitments listed | 25, definite before candidates |
+
+Stage 3's follow-through recovery records keep at most 50 reviews for at most 14
+days after their last edit, with **Discard**; that stage implements the limit.
 
 ### 2. Ship local preparation
 

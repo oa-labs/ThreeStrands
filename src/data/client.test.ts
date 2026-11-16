@@ -94,6 +94,16 @@ describe("native account requests", () => {
     expect(invoke).toHaveBeenLastCalledWith("rank_contact_group_candidates", { groupId: "team", selectedIds: ["alice"], emails: ["new@example.com"] });
   });
 
+  it("reads meeting preparation context with an optional mail scope", async () => {
+    const reference = { version: 1 as const, kind: "event" as const, id: "evt", account: "me@example.com", calendar: "work" };
+    await client.meetingContext(reference);
+    expect(invoke).toHaveBeenLastCalledWith("meeting_context", { reference, mailScope: null });
+    await client.meetingContext(reference, ["other@example.com"]);
+    expect(invoke).toHaveBeenLastCalledWith("meeting_context", { reference, mailScope: ["other@example.com"] });
+    await client.meetingReadiness([reference]);
+    expect(invoke).toHaveBeenLastCalledWith("meeting_readiness", { references: [reference], mailScope: null });
+  });
+
   it("checks meeting guests through the event's calendar account", async () => {
     const request = { eventId: "meeting", accountId: "work@example.com", calendarId: "team", attendees: ["guest@example.com"],
       rangeStart: "2099-09-21T00:00:00Z", rangeEnd: "2099-09-28T00:00:00Z",

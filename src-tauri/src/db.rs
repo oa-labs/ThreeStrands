@@ -36,6 +36,7 @@ mod join_codes;
 mod labels;
 mod mail_sync;
 mod maintenance;
+pub(crate) mod meetings;
 mod messages;
 mod mutations;
 pub(crate) mod note_attachments;

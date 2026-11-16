@@ -1,0 +1,202 @@
+{
+  "events": {
+    "A": {
+      "version": 1,
+      "kind": "event",
+      "id": "evt-a",
+      "account": "you@example.com",
+      "calendar": "work"
+    },
+    "B": {
+      "version": 1,
+      "kind": "event",
+      "id": "evt-b",
+      "account": "you@example.com",
+      "calendar": "work"
+    },
+    "A_OTHER_CALENDAR": {
+      "version": 1,
+      "kind": "event",
+      "id": "evt-a",
+      "account": "you@example.com",
+      "calendar": "home"
+    }
+  },
+  "target": "A",
+  "cases": [
+    {
+      "name": "a meeting line with nested notes and tasks",
+      "body": "## Meetings\n\n- [9:30am]({A}) met with Pete for Sync\n  - Decided to ship Friday\n  - ( ) Send the deck\n- [11:00am]({B}) for Other\n  - Private detail\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [9:30am]({A}) met with Pete for Sync\n  - Decided to ship Friday\n  - ( ) Send the deck"
+        }
+      ]
+    },
+    {
+      "name": "the second of several meetings in one daily note",
+      "body": "## Meetings\n\n- [9:00am]({B}) for Standup\n  - Unrelated\n- [2:00pm]({A}) for Review\n  - Ours\n\n## Journal\n\nPersonal text\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [2:00pm]({A}) for Review\n  - Ours"
+        }
+      ]
+    },
+    {
+      "name": "a neighboring heading ends the block",
+      "body": "- [9:30am]({A}) for Sync\n## Personal\n  indented under a heading\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [9:30am]({A}) for Sync"
+        }
+      ]
+    },
+    {
+      "name": "a blank line followed by indented content continues the item",
+      "body": "- [9:30am]({A}) for Sync\n\n  A paragraph about the meeting\n\nNot part of it\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [9:30am]({A}) for Sync\n\n  A paragraph about the meeting"
+        }
+      ]
+    },
+    {
+      "name": "a trailing blank line is not part of the block",
+      "body": "- [9:30am]({A}) for Sync\n\n- Next item\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [9:30am]({A}) for Sync"
+        }
+      ]
+    },
+    {
+      "name": "a fenced block nested in the item stays with it",
+      "body": "- [9:30am]({A}) for Sync\n  ```\n  - not a list\n\n  code\n  ```\n  - After code\nOutside\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [9:30am]({A}) for Sync\n  ```\n  - not a list\n\n  code\n  ```\n  - After code"
+        }
+      ]
+    },
+    {
+      "name": "an unclosed nested fence is ambiguous",
+      "body": "- [9:30am]({A}) for Sync\n  ```\n  code without end\nOutside\n",
+      "blocks": [
+        {
+          "kind": "reference",
+          "text": "- [9:30am]({A}) for Sync"
+        }
+      ]
+    },
+    {
+      "name": "a link inside a fenced block is not a link",
+      "body": "```\n- [9:30am]({A}) for Sync\n```\n",
+      "blocks": []
+    },
+    {
+      "name": "an escaped link is not a link",
+      "body": "- \\[9:30am]({A}) for Sync\n",
+      "blocks": []
+    },
+    {
+      "name": "a link in inline code is not a link",
+      "body": "- `[9:30am]({A})` for Sync\n",
+      "blocks": []
+    },
+    {
+      "name": "a reference in prose outside a list is only a reference",
+      "body": "Talked about [the sync]({A}) at lunch and other private things.\n- A list item\n",
+      "blocks": [
+        {
+          "kind": "reference",
+          "text": "Talked about [the sync]({A}) at lunch and other private things."
+        }
+      ]
+    },
+    {
+      "name": "a reference inside a quote is only a reference",
+      "body": "> - [9:30am]({A}) for Sync\n>   - quoted detail\n",
+      "blocks": [
+        {
+          "kind": "reference",
+          "text": "> - [9:30am]({A}) for Sync"
+        }
+      ]
+    },
+    {
+      "name": "a nested item linking the meeting is its own block",
+      "body": "- Monday\n  - [9:30am]({A}) for Sync\n    - Detail\n  - Lunch with Sam\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "  - [9:30am]({A}) for Sync\n    - Detail"
+        }
+      ]
+    },
+    {
+      "name": "duplicate references to the same occurrence give one block each line",
+      "body": "- [9:30am]({A}) for Sync, see also [again]({A})\n  - Detail\n- [Follow-up]({A})\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [9:30am]({A}) for Sync, see also [again]({A})\n  - Detail"
+        },
+        {
+          "kind": "excerpt",
+          "text": "- [Follow-up]({A})"
+        }
+      ]
+    },
+    {
+      "name": "a link nested in an earlier block is not repeated",
+      "body": "- [9:30am]({A}) for Sync\n  - Mentioned [again]({A})\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [9:30am]({A}) for Sync\n  - Mentioned [again]({A})"
+        }
+      ]
+    },
+    {
+      "name": "the same event id on another calendar is another meeting",
+      "body": "- [9:30am]({A_OTHER_CALENDAR}) for Home\n",
+      "blocks": []
+    },
+    {
+      "name": "an ordered list item and tab indentation",
+      "body": "1. [9:30am]({A}) for Sync\n\t- Tabbed detail\n2. Next\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "1. [9:30am]({A}) for Sync\n\t- Tabbed detail"
+        }
+      ]
+    },
+    {
+      "name": "a reusable note with dated sections for several occurrences",
+      "body": "# Weekly sync\n\n- [Nov 9]({B})\n  - Old decision\n- [Nov 16]({A})\n  - New decision\n",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [Nov 16]({A})\n  - New decision"
+        }
+      ]
+    },
+    {
+      "name": "a text without a final newline",
+      "body": "- [9:30am]({A}) for Sync\n  - Last line",
+      "blocks": [
+        {
+          "kind": "excerpt",
+          "text": "- [9:30am]({A}) for Sync\n  - Last line"
+        }
+      ]
+    }
+  ]
+}

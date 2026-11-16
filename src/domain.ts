@@ -1068,6 +1068,48 @@ export type NoteTitle = { id: string; title: string; dailyDate: string | null };
 /** Another note's link to this one, with the line it sits on. */
 export type NoteBacklink = { reference?: import("./noteEntities").NoteReference; noteId: string; title: string; dailyDate: string | null; context: string };
 
+/** How much of a meeting section was read. `limited` lists up to the limit
+ * and says how many were left out; `scopeRequired` waits for the user to
+ * choose mail accounts; `unavailable` explains itself in `message`. */
+export type MeetingSectionStatus = "ready" | "limited" | "scopeRequired" | "unavailable";
+export type MeetingSection<T> = { status: MeetingSectionStatus; items: T[]; omitted: number; message: string | null };
+/** A meeting event as this device last cached it, without the user's own addresses. */
+export type MeetingEventSnapshot = { title: string; start: string; end: string; allDay: boolean; seriesId: string | null; attendees: string[]; attendeesOmitted: number; sourceMessageId: string | null; responseStatus: string | null };
+/** `excerpt` is a meeting block; `reference` only the line linking it; `linkedNote` a preview of a reusable note the block links. */
+export type MeetingSourceKind = "excerpt" | "reference" | "linkedNote";
+export type MeetingNoteSource = { noteId: string; title: string; dailyDate: string | null; revision: string; kind: MeetingSourceKind; text: string; truncated: boolean; start: number; end: number };
+export type MeetingOccurrence = { reference: import("./noteEntities").NoteReference; start: string | null; date: string | null; sources: MeetingNoteSource[] };
+export type MeetingConversation = { threadId: string; accountId: string; subject: string; lastMessageAt: string; reason: "origin" | "attendees"; attendees: string[] };
+export type MeetingCommitment = { id: string; title: string; status: string; noteId: string | null; threadId: string | null; accountId: string | null; origin: "meetingNote" | "originConversation" | "attendeeConversation"; candidate: boolean };
+/** The limits a meeting context was read under (`src-tauri/src/meeting_policy.rs`). */
+export type MeetingLimits = { noteSources: number; priorOccurrences: number; excerptBytes: number; linkedNotePreviewBytes: number; attendees: number; conversations: number; mailLookbackDays: number; commitments: number };
+/** Local, read-only context for preparing one meeting occurrence. */
+export type MeetingContext = {
+  reference: import("./noteEntities").NoteReference;
+  event: MeetingEventSnapshot | null;
+  mailScope: string[];
+  thisMeeting: MeetingSection<MeetingNoteSource>;
+  previousMeetings: MeetingSection<MeetingOccurrence>;
+  seriesNotes: MeetingSection<MeetingNoteSource>;
+  conversations: MeetingSection<MeetingConversation>;
+  commitments: MeetingSection<MeetingCommitment>;
+  limits: MeetingLimits;
+};
+/** Counts for one meeting in a day's list; they agree with its full context. */
+export type MeetingReadiness = {
+  reference: import("./noteEntities").NoteReference;
+  eventAvailable: boolean;
+  hasOccurrenceNote: boolean;
+  priorOccurrencesWithNotes: number;
+  seriesNotes: number;
+  openCommitments: number;
+  candidateCommitments: number;
+  latestCorrespondenceAt: string | null;
+  scopeRequired: boolean;
+  unavailableSections: string[];
+  error: string | null;
+};
+
 /** A note's links: notes that link here, titles it links to that no note
  * has yet, and every title it links to. */
 export type NoteLinks = { backlinks: NoteBacklink[]; unlinked: string[]; links: string[] };
