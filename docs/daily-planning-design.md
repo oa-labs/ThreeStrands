@@ -435,28 +435,54 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
   `PlanCandidate` cards). A candidate names its plan key, so planned cards are
   marked "In plan" (Also Due hides them), and a `resolve()` that returns what to
   add and what to book, creating a promise's task first through **Make a Task**.
-  Starred Mail, Goals, and Notes are added by registering more entries; Suggested
-  belongs to the routine's Choose step.
+  Suggested belongs to the routine's Choose step.
+- **Starred Mail**, **Goals**, and **Notes** are tabs fed by
+  `planSources(date, source, accountId, cursor)` through `usePlanSourcePage`, read
+  only while the tab shows, a page at a time with **Show More** on `next`, and again
+  when the plan, tasks, or mail change. Starred Mail and Goals pass Today's account;
+  Notes passes none. Each candidate's `action` decides adding: `link` saves its
+  addition; `makeTask` uses **Make a Task**; `taskForm` and `newTaskForGoal` call
+  Today's `onCreateTask`, which App answers with the existing task editor
+  (`createTaskInEditor` in `useTaskActions`: prefilled from the conversation and
+  linked to it, or with the goal chosen) and which resolves with the task once it
+  saves, or null on Cancel, so Cancel writes nothing. Dropping such a card waits
+  for the save before booking. A candidate's own `planned` flag also marks it "In
+  plan". Also Due, Tasks, You Said You Would, and Keep in Touch stay on Today's
+  existing reads: moving them to `planSources` would change their tested grouping
+  (Overdue / Due today sections, struck-through completions in place, Dismiss)
+  without simplifying anything.
 - Booking lives in `src/todayBooking.ts`: `bookBlock` uses Calendar's default
   calendar choice and selected-calendar fix-up; `blockRequest` tags the block with
   the item's `taskId` (a note task's `note:<noteId>:<markerId>`) or none for a
   check-in. Drops use `useTaskBlockDrag`; a source drop books first and then adds,
   and a refused plan write keeps the booking and says so with **Open Note**.
 - **Book** books directly, without the event editor: the first quarter-hour start
-  at or after now whose `TASK_BLOCK_MINUTES` overlap no attending timed event
-  (`nextFreeSlot`), with the same notice and Undo, or "No free half hour is left
-  today". It is simpler than opening the editor at the next free stretch: one
-  keystroke has the same effect as a drop, the result is visible in the day view
-  and reversible with Undo, and the editor is one click away on the event. It does
-  not yet bound the search by working hours; that belongs with `planCapacity`.
-  While the schedule is unread or failed, Book says free time is unknown.
+  inside a free stretch of `planCapacity` (today's working windows of the default
+  availability profile, less attending timed events) that still holds
+  `TASK_BLOCK_MINUTES` (`nextFreeSlot`), with the same notice and Undo, or "No free
+  half hour is left in today's working hours". It is simpler than opening the
+  editor at the next free stretch: one keystroke has the same effect as a drop, the
+  result is visible in the day view and reversible with Undo, and the editor is one
+  click away on the event. When the schedule is unread or failed, or Today has no
+  working hours, Book says free time is unknown. App passes its
+  `availabilityPreferences` (the default profile) as `workingHours`.
+- A drop is an explicit time, so it books where it lands even outside working
+  hours, as Calendar does; the notice adds "(outside working hours)"
+  (`withinWorkingHours`).
+- Booked note tasks use `taskBooking.ts`'s `bookedSource` / `sourceTaskId`, so a
+  block's source task is written and matched as Calendar writes and matches it.
+- Plan cards show "Carried N times" from `carryCount` when it is at least one,
+  without reordering; the hint from `PLAN_CARRY_HINT` belongs to Review.
+- A plan card and the block booked for its task highlight each other on hover or
+  focus: the card wrapper sets the linked task, and `DayTimeGrid`'s decoration
+  gained `linked` and `onLinkHover` (still unused by Calendar).
 - Day-view meetings carry their readiness summary and a count of unread mail from
   attendees as the event's accessible description, with a small mark for a note
   or unread mail, through an optional `eventDecoration` on `DayTimeGrid` that
   Calendar doesn't pass.
-- Not yet: Plan Today / Edit Plan / Shut Down in the header, carry counts, Starred
-  Mail, Goals, Notes, free time (`planCapacity`), the card-and-block linked
-  highlight, and Open Task / Mark Done on a selected block.
+- Not yet: Plan Today / Edit Plan / Shut Down in the header, a free-time line
+  from `planCapacity`, and Open Task / Mark Done on a selected block (choosing a
+  block still prepares or opens it like any event).
 
 ## Shut Down
 

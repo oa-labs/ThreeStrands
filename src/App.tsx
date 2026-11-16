@@ -524,7 +524,7 @@ export function App() {
   });
   const {
     draftFollowUp, taskWorkspaceRef, setSelectedTaskStatus, setTaskLayout,
-    setSelectedTaskHasThread, setSelectedTaskIsNote, taskEditor, setTaskEditor, taskEditorAccountId, taskEditorGoals,
+    setSelectedTaskHasThread, setSelectedTaskIsNote, taskEditor, setTaskEditor, taskEditorAccountId, taskEditorGoals, closeTaskEditor, createTaskInEditor,
     submitTaskEditor, newTask, createWorkspaceTask,
   } = tasks;
   const {
@@ -1871,6 +1871,8 @@ export function App() {
         onAddNote={(event) => { void openMeetingNote(event); }}
         onOpenNote={(noteId) => openNote(noteId)}
         onNotice={setNotice}
+        workingHours={availabilityPreferences}
+        onCreateTask={createTaskInEditor}
         onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
         onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         onOpenInbox={() => executeById("view.mail")}
@@ -1957,16 +1959,22 @@ export function App() {
           goals={taskEditorGoals?.accountId === taskEditorAccountId ? taskEditorGoals.goals : null}
           accountId={taskEditorAccountId ?? undefined}
           goalSuggested={taskEditor.kind === "proposal" && Boolean(taskEditor.proposal.goalId)}
-          initial={taskEditor.kind === "proposal" ? taskEditor.proposal : taskEditor.kind === "edit" ? taskEditor.task : {
+          initial={taskEditor.kind === "proposal" ? taskEditor.proposal : taskEditor.kind === "edit" ? taskEditor.task : taskEditor.kind === "goal" ? {
+            title: "",
+            kind: "action",
+            dueKind: "none",
+            timeZone: availabilityPreferences.timeZone,
+            goalId: taskEditor.goalId,
+          } : {
             title: taskEditor.thread.thread.subject,
             kind: "action",
             dueKind: "none",
             timeZone: availabilityPreferences.timeZone,
           }}
-          sourceSubject={taskEditor.kind === "edit" ? taskEditor.task.subjectSnapshot : taskEditor.thread.thread.subject}
-          evidence={taskEditor.kind === "proposal" ? taskEditor.proposal.evidence.excerpt : taskEditor.kind === "edit" ? taskEditor.task.evidenceText : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000)}
+          sourceSubject={taskEditor.kind === "edit" ? taskEditor.task.subjectSnapshot : taskEditor.kind === "goal" ? null : taskEditor.thread.thread.subject}
+          evidence={taskEditor.kind === "proposal" ? taskEditor.proposal.evidence.excerpt : taskEditor.kind === "edit" ? taskEditor.task.evidenceText : taskEditor.kind === "goal" ? null : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000)}
           submitLabel={taskEditor.kind === "proposal" && taskEditor.intent === "edit" ? "Save Proposal" : taskEditor.kind === "edit" ? "Save Task" : "Add Task"}
-          onClose={() => setTaskEditor(null)}
+          onClose={closeTaskEditor}
           onSubmit={submitTaskEditor}
         />
       ) : null}

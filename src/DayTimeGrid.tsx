@@ -30,6 +30,10 @@ export type DayGridEventDecoration = {
   mark?: ReactNode;
   /** Names the event for commands that act on the one in focus (`data-row-key`). */
   rowKey?: string;
+  /** Shown as linked to something outside the grid, such as the card a block was booked for. */
+  linked?: boolean;
+  /** Hovering or focusing the event, and leaving it; lets the caller highlight what it is linked to. */
+  onLinkHover?(active: boolean): void;
 };
 
 /** A highlighted stretch of one day column: a selection or a drop preview. */
@@ -96,7 +100,17 @@ export function DayTimeGrid({
     if (!decoration) return { attributes: {}, mark: null, description: null };
     const descriptionId = decoration.description ? `${gridId}-${id}` : undefined;
     return {
-      attributes: { "aria-describedby": descriptionId, "data-row-key": decoration.rowKey },
+      attributes: {
+        "aria-describedby": descriptionId,
+        "data-row-key": decoration.rowKey,
+        "data-linked": decoration.linked ? "true" : undefined,
+        ...(decoration.onLinkHover ? {
+          onMouseEnter: () => decoration.onLinkHover?.(true),
+          onMouseLeave: () => decoration.onLinkHover?.(false),
+          onFocus: () => decoration.onLinkHover?.(true),
+          onBlur: () => decoration.onLinkHover?.(false),
+        } : {}),
+      },
       mark: decoration.mark ? <span className="calendar-event-mark" aria-hidden="true">{decoration.mark}</span> : null,
       description: descriptionId ? <span id={descriptionId} hidden>{decoration.description}</span> : null,
     };

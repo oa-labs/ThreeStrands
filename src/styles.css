@@ -3730,6 +3730,10 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-mail-signal-body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
 .today-plan-focus { border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .today-in-plan { color: var(--muted); font-size: var(--text-meta); }
+/* A plan card and its booked block highlight each other on hover or focus. */
+.today-plan-card-link { display: contents; }
+.today-plan-linked { border-radius: var(--radius-sm); box-shadow: 0 0 0 2px var(--accent); }
+.calendar-schedule-event[data-linked="true"] { box-shadow: 0 0 0 2px var(--accent); }
 .today-sources { margin-top: var(--space-4); }
 .today-source-tabs { margin: 0 0 var(--space-2) var(--context-row-inset); }
 .today-source-panel > .context-status { padding: var(--space-2) var(--context-row-inset); }

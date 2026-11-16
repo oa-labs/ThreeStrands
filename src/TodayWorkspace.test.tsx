@@ -3,8 +3,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
+import type { PlanCandidate as SourceCandidate } from "./domain";
 import type { CalendarAccount, CalendarOption, ContactProfile, DailyPlan, DailyPlanItem, Note, OpenPromise, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { HOUR_HEIGHT } from "./calendarTime";
+import type { WorkingHours } from "./todayInsights";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postcss from "postcss";
@@ -78,6 +80,9 @@ function note(id: string, updatedAt = "v1"): Note {
 }
 
 const calendarAccounts: CalendarAccount[] = [{ email: "cal@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" }];
+
+/** Weekdays nine to five in this machine's zone, as the default availability profile has them. */
+const workingHours: WorkingHours = { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", workingWindows: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "09:00", end: "17:00" })) };
 
 const chooseSource = (name: string) => fireEvent.click(screen.getByRole("tab", { name }));
 
@@ -429,6 +434,45 @@ describe("TodayWorkspace", () => {
     ];
     const withPlan = (planItems: DailyPlanItem[] = items()) => vi.mocked(mailClient.dailyPlan).mockImplementation(async (date) => ({ ...emptyPlan(date), revision: "r1", items: planItems }));
 
+    it("says how often an item was carried, without reordering it", async () => {
+      withPlan([
+        planItem("a", { title: "First", carryCount: 3 }),
+        planItem("b", { title: "Second", carryCount: 1 }),
+        planItem("c", { title: "Third" }),
+      ]);
+      renderToday();
+      const plan = within(await screen.findByRole("region", { name: "Today's plan" }));
+      const cards = await plan.findAllByRole("article");
+      expect(within(cards[0]).getByText("you@example.com · Carried 3 times")).toBeInTheDocument();
+      expect(within(cards[1]).getByText("you@example.com · Carried 1 time")).toBeInTheDocument();
+      expect(within(cards[2]).getByText("you@example.com")).toBeInTheDocument();
+      expect(cards[0]).toHaveClass("today-plan-focus");
+    });
+
+    it("highlights a card and its booked block together on hover and focus", async () => {
+      withPlan();
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
+        event("block", 0, { title: "Review the contract", start: at(14), end: at(14, 30), sourceTaskId: "focus" }),
+        event("memo-block", 0, { title: "Draft the memo", start: at(15), end: at(15, 30), sourceTaskId: "note:note-7:m1" }),
+      ] });
+      renderToday({ calendarConnected: true });
+      const day = within(screen.getByRole("group", { name: "Day view" }));
+      const block = await day.findByRole("button", { name: /^Review the contract/ });
+      const card = (await within(screen.getByRole("region", { name: "Today's plan" })).findByText("Review the contract")).closest("article")!;
+      fireEvent.mouseEnter(card);
+      expect(block).toHaveAttribute("data-linked", "true");
+      fireEvent.mouseLeave(card);
+      expect(block).not.toHaveAttribute("data-linked");
+      fireEvent.focus(block);
+      expect(card).toHaveClass("today-plan-linked");
+      fireEvent.blur(block);
+      expect(card).not.toHaveClass("today-plan-linked");
+      // A note task's block links to its card too.
+      const memo = within(screen.getByRole("region", { name: "Today's plan" })).getByText("Draft the memo").closest("article")!;
+      fireEvent.focus(within(memo as HTMLElement).getByRole("button", { name: /^Draft the memo/ }));
+      expect(day.getByRole("button", { name: /^Draft the memo/ })).toHaveAttribute("data-linked", "true");
+    });
+
     it("shows the plan's items in order with the focus, source, goal, booked time, and progress", async () => {
       withPlan();
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
@@ -522,7 +566,7 @@ describe("TodayWorkspace", () => {
     it("moves between sources with the arrow keys, Home, and End, and remembers the choice", async () => {
       renderToday();
       const tabs = screen.getAllByRole("tab");
-      expect(tabs.map((tab) => tab.textContent)).toEqual(["Also Due", "Tasks", "You Said You Would", "Keep in Touch"]);
+      expect(tabs.map((tab) => tab.textContent)).toEqual(["Also Due", "Tasks", "You Said You Would", "Keep in Touch", "Starred Mail", "Goals", "Notes"]);
       expect(tabs[0]).toHaveAttribute("aria-selected", "true");
       expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Also Due");
 
@@ -531,11 +575,11 @@ describe("TodayWorkspace", () => {
       expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute("aria-selected", "true");
       expect(screen.getByRole("tab", { name: "Tasks" })).toHaveFocus();
       fireEvent.keyDown(document.activeElement!, { key: "End" });
-      expect(screen.getByRole("tab", { name: "Keep in Touch" })).toHaveFocus();
+      expect(screen.getByRole("tab", { name: "Notes" })).toHaveFocus();
       fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
       expect(screen.getByRole("tab", { name: "Also Due" })).toHaveFocus();
       fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
-      expect(screen.getByRole("tab", { name: "Keep in Touch" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
       fireEvent.keyDown(document.activeElement!, { key: "Home" });
       expect(screen.getByRole("tab", { name: "Also Due" })).toHaveAttribute("aria-selected", "true");
       chooseSource("You Said You Would");
@@ -598,6 +642,152 @@ describe("TodayWorkspace", () => {
       chooseSource("Keep in Touch");
       fireEvent.click(await screen.findByRole("button", { name: "Add to Today's Plan: Ada Lovelace" }));
       await waitFor(() => expect(add).toHaveBeenCalledWith(localDate(0), null, [{ kind: "link", reference: { version: 1, kind: "contact", id: "ada@example.com", contact: "ada" }, label: "Ada Lovelace" }]));
+    });
+  });
+
+  describe("planSources tabs", () => {
+    const candidate = (key: string, overrides: Partial<SourceCandidate> = {}): SourceCandidate => ({
+      key, title: `Candidate ${key}`, reason: "starred", detail: null, accountId: "you@example.com", due: null, taskId: null, threadId: null,
+      contactId: null, goal: null, plannedDays: [], openTasks: null, planned: false,
+      action: { kind: "link", addition: { kind: "link", reference: { version: 1, kind: "task", id: key }, label: `Candidate ${key}` } }, ...overrides,
+    });
+    const saved = () => ({ note: note("daily", "r2"), changed: ["k"], already: [], previousBody: "" });
+    beforeEach(() => { vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null); });
+
+    it("reads Starred Mail for the account in view only once its tab is chosen, and marks planned cards", async () => {
+      const sources = vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+        candidate("with-task", { title: "Contract review", taskId: "t1", threadId: "th1", detail: "Contract thread" }),
+        candidate("planned", { title: "Already planned", planned: true, threadId: "th2" }),
+      ] });
+      const { onEditTask, onOpenThread } = renderToday();
+      expect(sources).not.toHaveBeenCalled();
+      chooseSource("Starred Mail");
+      const region = within(await screen.findByRole("region", { name: "Starred mail" }));
+      expect(sources).toHaveBeenCalledWith(localDate(0), "starredMail", "you@example.com", null);
+      expect(region.getByText("Contract thread")).toBeInTheDocument();
+      expect(within(region.getByText("Already planned").closest("article")!).getByText("In plan")).toBeInTheDocument();
+      expect(region.queryByRole("button", { name: "Add to Today's Plan: Already planned" })).not.toBeInTheDocument();
+      fireEvent.click(region.getByRole("button", { name: /^Already planned/ }));
+      expect(onOpenThread).toHaveBeenCalledWith("th2");
+      vi.mocked(mailClient.listTasks).mockResolvedValue([task("t1", { title: "Contract review" })]);
+      fireEvent.click(region.getByRole("button", { name: /^Contract review/ }));
+      await waitFor(() => expect(onEditTask).toHaveBeenCalledWith(expect.objectContaining({ id: "t1" })));
+    });
+
+    it("adds a starred conversation's task only after the task form saves, and Cancel writes nothing", async () => {
+      vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+        candidate("conv", { title: "Board deck", threadId: "th9", action: { kind: "taskForm", threadId: "th9", accountId: "you@example.com" } }),
+      ] });
+      const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
+      const mutate = vi.spyOn(mailClient, "mutateThread");
+      const mutateMany = vi.spyOn(mailClient, "mutateThreads");
+      const onCreateTask = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(task("made", { title: "Send the board deck" }));
+      const { onTasksChanged } = renderToday({ onCreateTask, onNotice: vi.fn() });
+      chooseSource("Starred Mail");
+
+      const addButton = await screen.findByRole("button", { name: "Add to Today's Plan: Board deck" });
+      fireEvent.click(addButton);
+      await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith({ kind: "conversation", threadId: "th9", accountId: "you@example.com" }));
+      await act(async () => {});
+      expect(add).not.toHaveBeenCalled();
+      expect(onTasksChanged).not.toHaveBeenCalled();
+
+      fireEvent.click(addButton);
+      await waitFor(() => expect(add).toHaveBeenCalledWith(localDate(0), null, [{ kind: "link", reference: { version: 1, kind: "task", id: "made" }, label: "Send the board deck" }]));
+      expect(onTasksChanged).toHaveBeenCalled();
+      // Adding never unstars or archives the conversation.
+      expect(mutate).not.toHaveBeenCalled();
+      expect(mutateMany).not.toHaveBeenCalled();
+    });
+
+    it("books a dropped starred conversation only after its task saves", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(2026, 9, 28, 10, 7));
+      try {
+        vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+          candidate("conv", { title: "Board deck", threadId: "th9", action: { kind: "taskForm", threadId: "th9", accountId: "you@example.com" } }),
+        ] });
+        const create = vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => ({ id: "booked", accountId: request.accountId, calendarId: request.calendarId, title: request.title, allDay: false, start: request.start, end: request.end }));
+        vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
+        const onCreateTask = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(task("made", { title: "Send the board deck" }));
+        renderToday({ calendarConnected: true, calendarAccounts, workingHours, onCreateTask, onNotice: vi.fn() });
+        chooseSource("Starred Mail");
+        const card = (await screen.findByText("Board deck")).closest("article") as HTMLElement;
+        const column = screen.getByRole("group", { name: "Day view" }).querySelector<HTMLElement>(".calendar-week-column")!;
+        const drop = () => {
+          document.elementFromPoint = vi.fn(() => column);
+          fireEvent.pointerDown(card, { button: 0, pointerId: 4, clientX: 900, clientY: 10 });
+          fireEvent.pointerMove(document.body, { pointerId: 4, clientX: 900, clientY: 14 * HOUR_HEIGHT });
+          fireEvent.pointerUp(document.body, { pointerId: 4, clientX: 900, clientY: 14 * HOUR_HEIGHT });
+        };
+        drop();
+        await waitFor(() => expect(onCreateTask).toHaveBeenCalledTimes(1));
+        await act(async () => {});
+        expect(create).not.toHaveBeenCalled();
+        drop();
+        await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: "Send the board deck", sourceTaskId: "made", start: new Date(2026, 9, 28, 14).toISOString() })));
+      } finally {
+        vi.useRealTimers();
+        Reflect.deleteProperty(document, "elementFromPoint");
+      }
+    });
+
+    it("pages with Show More", async () => {
+      const sources = vi.spyOn(mailClient, "planSources")
+        .mockResolvedValueOnce({ next: "50", candidates: [candidate("one", { title: "First page" })] })
+        .mockResolvedValueOnce({ next: null, candidates: [candidate("two", { title: "Second page" })] });
+      renderToday();
+      chooseSource("Starred Mail");
+      fireEvent.click(await screen.findByRole("button", { name: "Show More" }));
+      expect(await screen.findByText("Second page")).toBeInTheDocument();
+      expect(screen.getByText("First page")).toBeInTheDocument();
+      expect(sources).toHaveBeenLastCalledWith(localDate(0), "starredMail", "you@example.com", "50");
+      expect(screen.queryByRole("button", { name: "Show More" })).not.toBeInTheDocument();
+    });
+
+    it("lists goals with their tasks, and makes a task for a goal before adding it", async () => {
+      const sources = vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+        candidate("goal:g1", { title: "Close Q4 deals", reason: "goal", detail: "2026-Q4", openTasks: 2, goal: { id: "g1", title: "Close Q4 deals" }, action: { kind: "newTaskForGoal", goalId: "g1", accountId: "you@example.com" } }),
+        candidate("gt", { title: "Call Acme", reason: "goalTask", taskId: "gt", goal: { id: "g1", title: "Close Q4 deals" }, plannedDays: ["2026-10-26", "2026-10-27"] }),
+      ] });
+      const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
+      const onCreateTask = vi.fn().mockResolvedValue(task("new-goal-task", { title: "Draft the Acme proposal", goalId: "g1" }));
+      renderToday({ onCreateTask, onNotice: vi.fn() });
+      chooseSource("Goals");
+      const region = within(await screen.findByRole("region", { name: "Goals" }));
+      expect(sources).toHaveBeenCalledWith(localDate(0), "goals", "you@example.com", null);
+      expect(region.getByText("2026-Q4 · 2 open tasks")).toBeInTheDocument();
+      expect(region.getByText("Planned Mon, Tue")).toBeInTheDocument();
+      fireEvent.click(region.getByRole("button", { name: "New Task for Goal: Close Q4 deals" }));
+      await waitFor(() => expect(add).toHaveBeenCalledWith(localDate(0), null, [{ kind: "link", reference: { version: 1, kind: "task", id: "new-goal-task" }, label: "Draft the Acme proposal" }]));
+      expect(onCreateTask).toHaveBeenCalledWith({ kind: "goal", goalId: "g1", accountId: "you@example.com" });
+      fireEvent.click(region.getByRole("button", { name: "Add to Today's Plan: Call Acme" }));
+      await waitFor(() => expect(add).toHaveBeenLastCalledWith(localDate(0), null, [{ kind: "link", reference: { version: 1, kind: "task", id: "gt" }, label: "Candidate gt" }]));
+    });
+
+    it("lists open note tasks from other notes for every account and opens their note", async () => {
+      const addition = { kind: "link" as const, reference: { version: 1 as const, kind: "task" as const, id: "m1", note: "note-7" }, label: "Write the agenda" };
+      const sources = vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+        candidate("nt", { title: "Write the agenda", reason: "noteTask", detail: "Team notes", accountId: null, taskId: "note:note-7:m1", action: { kind: "link", addition } }),
+      ] });
+      const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
+      const onOpenNote = vi.fn();
+      renderToday({ onOpenNote, onNotice: vi.fn() });
+      chooseSource("Notes");
+      const region = within(await screen.findByRole("region", { name: "Open note tasks" }));
+      expect(sources).toHaveBeenCalledWith(localDate(0), "notes", null, null);
+      expect(region.getByText("Team notes")).toBeInTheDocument();
+      fireEvent.click(region.getByRole("button", { name: /^Write the agenda/ }));
+      expect(onOpenNote).toHaveBeenCalledWith("note-7");
+      fireEvent.click(region.getByRole("button", { name: "Add to Today's Plan: Write the agenda" }));
+      await waitFor(() => expect(add).toHaveBeenCalledWith(localDate(0), null, [addition]));
+    });
+
+    it("says when a source can't be read", async () => {
+      vi.spyOn(mailClient, "planSources").mockRejectedValue(new Error("Database is locked"));
+      renderToday();
+      chooseSource("Goals");
+      expect(await within(screen.getByRole("tabpanel")).findByRole("alert")).toHaveTextContent("Database is locked");
     });
   });
 
@@ -710,7 +900,7 @@ describe("TodayWorkspace", () => {
       const create = vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => created(request));
       const remove = vi.spyOn(mailClient, "deleteCalendarEvent").mockResolvedValue();
       const onNotice = vi.fn();
-      renderToday({ calendarConnected: true, calendarAccounts, onNotice });
+      renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice });
       await within(screen.getByRole("group", { name: "Day view" })).findByRole("button", { name: /^Standup/ });
 
       fireEvent.click(await screen.findByRole("button", { name: "Book: Draft the memo" }));
@@ -722,6 +912,28 @@ describe("TodayWorkspace", () => {
       await waitFor(() => expect(remove).toHaveBeenCalledWith(expect.objectContaining({ id: "booked" })));
     });
 
+    it("says free time is unknown without working hours rather than guessing", async () => {
+      withPlan();
+      const create = vi.spyOn(mailClient, "createCalendarEvent");
+      const onNotice = vi.fn();
+      renderToday({ calendarConnected: true, calendarAccounts, onNotice });
+      await screen.findByRole("group", { name: "Day view" });
+      await waitFor(() => expect(mailClient.listScheduleEvents).toHaveBeenCalled());
+      fireEvent.click(await screen.findByRole("button", { name: "Book: Review the contract" }));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "Today's calendar or working hours couldn't be read, so free time is unknown" }));
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("books a drop outside working hours where it lands, and says so", async () => {
+      withPlan();
+      vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => created(request));
+      const onNotice = vi.fn();
+      renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice });
+      const card = (await screen.findByText("Review the contract")).closest("article")!;
+      await dragOnto(card as HTMLElement, 19);
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/^Booked 7:00\s?pm \(outside working hours\) for “Review the contract”$/) })));
+    });
+
     it("says so when no free half hour is left today", async () => {
       withPlan();
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
@@ -729,10 +941,10 @@ describe("TodayWorkspace", () => {
       ] });
       const create = vi.spyOn(mailClient, "createCalendarEvent");
       const onNotice = vi.fn();
-      renderToday({ calendarConnected: true, calendarAccounts, onNotice });
+      renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice });
       await within(screen.getByRole("group", { name: "Day view" })).findByRole("button", { name: /^Offsite/ });
       fireEvent.click(await screen.findByRole("button", { name: "Book: Review the contract" }));
-      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "No free half hour is left today" }));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "No free half hour is left in today's working hours" }));
       expect(create).not.toHaveBeenCalled();
     });
 
@@ -741,7 +953,7 @@ describe("TodayWorkspace", () => {
       const create = vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => created(request));
       const add = vi.spyOn(mailClient, "addToDailyPlan");
       const onNotice = vi.fn();
-      renderToday({ calendarConnected: true, calendarAccounts, onNotice });
+      renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice });
       const card = (await screen.findByText("Review the contract")).closest("article")!;
       await dragOnto(card as HTMLElement, 14);
       await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: "Review the contract", start: at(14).toISOString(), sourceTaskId: "focus" })));
@@ -755,7 +967,7 @@ describe("TodayWorkspace", () => {
       vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null);
       const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue({ note: note("daily", "r2"), changed: ["k"], already: [], previousBody: "" });
       const onNotice = vi.fn();
-      renderToday({ calendarConnected: true, calendarAccounts, onNotice });
+      renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice });
       const card = (await screen.findByText("Late task")).closest("article")!;
       await dragOnto(card as HTMLElement, 15);
       await waitFor(() => expect(add).toHaveBeenCalledWith("2026-10-28", null, [{ kind: "link", reference: { version: 1, kind: "task", id: "late" }, label: "Late task" }]));

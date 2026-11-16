@@ -1,5 +1,5 @@
 import { formatCompactDate } from "./dateFormatting";
-import { ClipboardList, ContactRound, ListPlus, NotebookPen, Send, Video, X } from "lucide-react";
+import { ClipboardList, ContactRound, ListPlus, NotebookPen, Send, Star, Target, Video, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isPreparable, meetingsToPrepare, preparationKey, readinessByKey, readinessSummary } from "./meetingPrep";
@@ -10,7 +10,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { ContextSection } from "./ContextSections";
 import { mailClient } from "./data/client";
-import type { CalendarAccount, CalendarOption, ContactProfile, DailyPlanItem, OpenPromise, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
+import type { CalendarAccount, CalendarOption, ContactProfile, DailyPlanItem, OpenPromise, PlanCandidate as SourceCandidate, PlanSourceKind, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { agendaEventsFor, formatClockTime, isDeclined } from "./agendaEvents";
 import { addDays, eventDate, startOfLocalDay } from "./calendarTime";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -28,11 +28,15 @@ import { addToDailyPlan, removeFromDailyPlan } from "./noteCapture";
 import { changeNoteItem } from "./noteMutations";
 import { todayTarget } from "./noteDrafts";
 import { TASK_BLOCK_MINUTES } from "./taskBooking";
-import { bookBlock, nextFreeSlot, type BlockTarget } from "./todayBooking";
+import { bookBlock, nextFreeSlot, withinWorkingHours, type BlockTarget } from "./todayBooking";
+import { bookedSource } from "./taskBooking";
+import type { WorkingHours } from "./todayInsights";
+import { usePlanSourcePage } from "./usePlanSourcePage";
+import type { TaskFormRequest } from "./useTaskActions";
 import { useDailyPlan } from "./useDailyPlan";
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
 import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
-import { isFinished, itemBlock, PlanCards, planProgress, PlanSourceSwitcher, type PlanCandidate, type PlanDragSource, type PlanSource } from "./TodayPlan";
+import { isFinished, itemBlock, linkKey, PlanCards, planProgress, PlanSourceSwitcher, type PlanCandidate, type PlanDragSource, type PlanSource } from "./TodayPlan";
 import { TodayDayView } from "./TodayDayView";
 import { TodayMailSignal } from "./TodayMailSignal";
 
@@ -67,6 +71,10 @@ export type TodayWorkspaceProps = {
   onOpenNote?(noteId: string): void;
   /** Says what a plan change or booking did, with Undo. */
   onNotice?(notice: Notice): void;
+  /** The default availability profile's working hours, which bound Book's free time; unknown without them. */
+  workingHours?: WorkingHours | null;
+  /** Opens the task editor for a new task, resolving with the task once saved, or null when cancelled. */
+  onCreateTask?(request: TaskFormRequest): Promise<ThreadTask | null>;
   /** Meeting preparation on Today: the meeting being prepared, if any, and
    * what the readiness list needs to act. */
   preparation?: TodayPreparation;
@@ -82,17 +90,25 @@ export type TodayPreparation = {
   onNotice(notice: Notice): void;
 };
 
+
 export const PLAN_SOURCE_KEY = "threestrands.today.planSource";
-const SOURCE_IDS = ["also-due", "tasks", "promises", "keep-in-touch"];
+/** Sources read a page at a time from `planSources`, by tab id. */
+const REMOTE_SOURCES: Record<string, PlanSourceKind> = { "starred-mail": "starredMail", goals: "goals", notes: "notes" };
+const SOURCE_IDS = ["also-due", "tasks", "promises", "keep-in-touch", ...Object.keys(REMOTE_SOURCES)];
 
 const taskReference = (id: string): NoteReference => ({ version: 1, kind: "task", id });
 
-/** A note task's `note:<noteId>:<markerId>` id, split; the note id may itself hold colons. */
+/** A note task's owning note and marker, from its Tasks id (`note:<noteId>:<markerId>`), as Calendar reads it. */
 function noteTaskParts(taskId: string | null): { noteId: string; markerId: string } | null {
-  if (!taskId?.startsWith("note:")) return null;
-  const rest = taskId.slice("note:".length);
-  const at = rest.lastIndexOf(":");
-  return at > 0 ? { noteId: rest.slice(0, at), markerId: rest.slice(at + 1) } : null;
+  const source = bookedSource(taskId);
+  return source?.kind === "noteTask" ? { noteId: source.noteId, markerId: source.markerId } : null;
+}
+
+/** "Planned Mon, Tue" for a goal's task, from the days it was planned in the goal's period. */
+function plannedDaysLabel(days: readonly string[]): string | null {
+  if (!days.length) return null;
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" });
+  return `Planned ${days.map((day) => weekday.format(new Date(`${day}T12:00:00`))).join(", ")}`;
 }
 
 /**
@@ -119,7 +135,7 @@ function ScheduledToday(props: TodayWorkspaceProps) {
 function TodayLayout({
   accountId, refreshKey, taskRefreshKey, calendars, calendarAccounts = [], schedule,
   onOpenThread, onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenInbox, onOpenCalendar, onOpenTasks, onOpenContact, onOpenKeepInTouch,
-  onOpenNote, onNotice, preparation,
+  onOpenNote, onNotice, workingHours = null, onCreateTask, preparation,
 }: TodayWorkspaceProps & { schedule: Schedule | null }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -267,8 +283,15 @@ function TodayLayout({
     if (!item.sender) continue;
     for (const event of meetingsWith(parseAddress(item.sender).email, todaysEvents, now)) unreadFromAttendees.set(event, (unreadFromAttendees.get(event) ?? 0) + 1);
   }
+  // A plan card and the block booked for its task highlight each other on hover or focus.
+  const [linked, setLinked] = useState<string | null>(null);
+  const plannedTasks = new Set((plan?.items ?? []).flatMap((item) => { const key = linkKey(item.taskId); return key ? [key] : []; }));
+  const blockLink = (event: ScheduleEvent) => {
+    const key = linkKey(event.sourceTaskId);
+    return key && plannedTasks.has(key) ? { linked: key === linked, onLinkHover: (active: boolean) => setLinked(active ? key : null) } : {};
+  };
   const decorateEvent = (event: ScheduleEvent) => {
-    if (!isPreparable(event)) return null;
+    if (!isPreparable(event)) return event.sourceTaskId ? blockLink(event) : null;
     const found = readinessOf(event);
     const unread = unreadFromAttendees.get(event) ?? 0;
     const hasNote = Boolean(preparation && found?.row?.hasOccurrenceNote);
@@ -276,6 +299,7 @@ function TodayLayout({
       rowKey: `meeting:${preparationKey(event)}`,
       description: [preparation && found?.row ? readinessSummary(found.row) : null, unread ? `${unread} unread from attendees` : null].filter(Boolean).join(" · ") || null,
       mark: hasNote || unread ? <>{hasNote ? <NotebookPen size={ICON_SIZE.xs} /> : null}{unread ? <span className="calendar-event-mark-count">{unread}</span> : null}</> : null,
+      ...blockLink(event),
     };
   };
   const moveMeeting = (step: number) => {
@@ -313,16 +337,19 @@ function TodayLayout({
     () => notice({ message: "Booked time removed" }),
     (reason: unknown) => notice({ message: errorMessage(reason) }),
   );
+  // A drop is an explicit time, so it books wherever it lands, but says when that is outside working hours.
+  const outsideHours = (start: Date) => withinWorkingHours(start, workingHours) === false ? " (outside working hours)" : "";
   const bookAt = async (target: BlockTarget, start: Date) => {
     const booked = await bookBlock(target, start, booking);
-    if (booked) notice({ message: `Booked ${booked.when} for “${target.title}”`, undo: undoBooking(booked.undo) });
+    if (booked) notice({ message: `Booked ${booked.when}${outsideHours(start)} for “${target.title}”`, undo: undoBooking(booked.undo) });
   };
   const bookNext = async (target: BlockTarget) => {
     if (!schedule) { notice({ message: "Connect a calendar in Settings to book time" }); return; }
-    // Unknown is not free: without today's schedule there is no free slot to offer.
-    if (schedule.error || schedule.loading) { notice({ message: "Today's calendar couldn't be read, so free time is unknown" }); return; }
-    const start = nextFreeSlot(todaysEvents, new Date());
-    if (!start) { notice({ message: "No free half hour is left today" }); return; }
+    // Unknown is not free: without today's schedule or working hours there is no free slot to offer.
+    const known = schedule.error || schedule.loading ? null : todaysEvents;
+    const start = nextFreeSlot(known, workingHours, new Date());
+    if (start === "unknown") { notice({ message: "Today's calendar or working hours couldn't be read, so free time is unknown" }); return; }
+    if (!start) { notice({ message: "No free half hour is left in today's working hours" }); return; }
     await bookAt(target, start);
   };
 
@@ -360,7 +387,7 @@ function TodayLayout({
     try {
       const saved = await addToDailyPlan(planDate, [resolved.addition]);
       notice({
-        message: `Booked ${booked.when} for “${resolved.title}” and added it to today's plan`,
+        message: `Booked ${booked.when}${outsideHours(start)} for “${resolved.title}” and added it to today's plan`,
         undo: () => { undoBooking(booked.undo)(); if (saved.changed.length) void saved.undo().catch(planWriteFailed); },
       });
     } catch (reason) {
@@ -484,6 +511,78 @@ function TodayLayout({
       },
     };
   };
+  // Starred Mail, Goals, and Notes come a page at a time from planSources, read only while their tab shows.
+  const remoteKind = REMOTE_SOURCES[sourceId] ?? null;
+  const remote = usePlanSourcePage(planDate, remoteKind, remoteKind === "notes" ? null : accountId, `${refreshKey}:${taskRefreshKey}:${plan?.revision ?? ""}`);
+  const createForPlan = async (request: TaskFormRequest) => {
+    if (!onCreateTask) return null;
+    const created = await onCreateTask(request);
+    if (created) onTasksChanged();
+    return created;
+  };
+  const taskResolution = (task: Pick<ThreadTask, "id" | "title" | "accountId">) => ({ addition: { kind: "link" as const, reference: taskReference(task.id), label: task.title }, block: { title: task.title, sourceTaskId: task.id, accountId: task.accountId }, title: task.title });
+  const openCandidateTask = async (taskId: string) => {
+    const parts = noteTaskParts(taskId);
+    if (parts) { onOpenNote?.(parts.noteId); return; }
+    try {
+      const task = tasks.find((candidate) => candidate.id === taskId) ?? (await mailClient.listTasks()).find((candidate) => candidate.id === taskId);
+      if (task) onEditTask(task);
+    } catch (reason) {
+      setAnnouncement(errorMessage(reason));
+    }
+  };
+  const remoteCandidate = (candidate: SourceCandidate): PlanCandidate => {
+    const action = candidate.action;
+    const resolve = async () => {
+      if (action.kind === "link") {
+        const block = { title: candidate.title, sourceTaskId: candidate.taskId, accountId: candidate.accountId };
+        return { addition: action.addition, block, title: candidate.title };
+      }
+      if (action.kind === "makeTask") {
+        const promise = promises.find((item) => item.messageId === action.messageId);
+        const created = promise ? await trackPromise(promise) : null;
+        return created ? taskResolution(created) : null;
+      }
+      // Cancel in the editor writes nothing: no task, no plan line, no booking.
+      const created = await createForPlan(action.kind === "taskForm"
+        ? { kind: "conversation", threadId: action.threadId, accountId: action.accountId }
+        : { kind: "goal", goalId: action.goalId, accountId: action.accountId });
+      return created ? taskResolution(created) : null;
+    };
+    const isGoal = action.kind === "newTaskForGoal";
+    const account = accountId === null ? candidate.accountId : null;
+    const detail = isGoal
+      ? [candidate.detail, candidate.openTasks !== null ? `${candidate.openTasks} open ${candidate.openTasks === 1 ? "task" : "tasks"}` : null, account]
+      : [candidate.detail, candidate.reason === "goalTask" ? plannedDaysLabel(candidate.plannedDays) : candidate.goal?.title, account];
+    return {
+      id: `${remoteKind}:${candidate.key}`,
+      title: candidate.title,
+      planKey: isGoal ? null : candidate.key,
+      inPlan: candidate.planned,
+      addLabel: isGoal ? "New Task for Goal" : undefined,
+      resolve,
+      row: {
+        as: "article",
+        icon: candidate.reason === "starred" ? <Star size={ICON_SIZE.sm} /> : isGoal ? <Target size={ICON_SIZE.sm} /> : candidate.reason === "noteTask" ? <NotebookPen size={ICON_SIZE.sm} /> : undefined,
+        wrapTitle: true,
+        className: isGoal ? "today-goal-row" : undefined,
+        detail: detail.filter(Boolean).join(" · ") || undefined,
+        // A card opens its task, its note, or the starred conversation; adding never unstars or archives it.
+        onActivate: candidate.taskId ? () => void openCandidateTask(candidate.taskId!) : candidate.threadId ? () => onOpenThread(candidate.threadId!) : undefined,
+      },
+    };
+  };
+  const remoteCandidates = remote.candidates.map(remoteCandidate);
+  const remoteSource = (id: string, label: string, title: string, empty: string): PlanSource => ({
+    id, label, empty,
+    status: id !== sourceId ? undefined
+      : remote.error ? <p className="form-error" role="alert">{remote.error}</p>
+        : remote.loading && remote.candidates.length === 0 ? <p className="context-status">Reading…</p> : undefined,
+    groups: id === sourceId ? [{
+      id: `today-source-${id}`, title, candidates: remoteCandidates, limit: remoteCandidates.length,
+      footer: remote.next ? <button type="button" className="btn-link" disabled={remote.loading} onClick={() => void remote.loadMore()}>Show More</button> : undefined,
+    }] : [],
+  });
   const sources: PlanSource[] = [
     {
       id: "also-due", label: "Also Due", hidePlanned: true, empty: loadedTasks ? "Nothing else is overdue or due today." : "",
@@ -505,6 +604,9 @@ function TodayLayout({
       groups: [{ id: "today-keep-in-touch", title: "Keep in touch", candidates: reconnect.map(contactCandidate),
         closing: reconnect.length ? <button type="button" className="btn-link" onClick={onOpenKeepInTouch}>Open Keep in Touch</button> : undefined }],
     },
+    remoteSource("starred-mail", "Starred Mail", "Starred mail", "No starred conversations."),
+    remoteSource("goals", "Goals", "Goals", "No goals for this period."),
+    remoteSource("notes", "Notes", "Open note tasks", "No open tasks in other notes."),
   ];
   const selectedEvent = todaysEvents.find((event) => selectedKey !== null && preparationKey(event) === selectedKey) ?? null;
 
@@ -527,7 +629,7 @@ function TodayLayout({
       {preparation?.event ? <div className="today-column today-preparation" role="group" aria-label="Preparation">
         {preparation.render(preparation.event, closePreparation)}
       </div> : <div className="today-column today-work" role="group" aria-label="Plan">
-        <PlanCards plan={plan} error={planError} events={todaysEvents} now={now} drag={drag}
+        <PlanCards plan={plan} error={planError} events={todaysEvents} now={now} drag={drag} linked={linked} onLink={setLinked}
           onToggle={(item) => void togglePlanItem(item)} onActivate={(item) => void activatePlanItem(item)}
           onBook={(item) => void bookNext(itemBlock(item))} onRemove={(item) => void removeItem(item)} />
         <PlanSourceSwitcher sources={sources} selected={sourceId} onSelect={setSourceId} planned={planned} drag={drag} onAdd={(candidate) => void addCandidate(candidate)} />

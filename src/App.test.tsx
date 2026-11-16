@@ -1984,6 +1984,38 @@ describe("returning from a jump", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
+  it("opens the task editor from Today's Goals source, adds the task to the plan after it saves, and adds nothing on Cancel", async () => {
+    vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [{
+      key: "goal:g1", title: "Close Q4 deals", reason: "goal", detail: null, accountId: "you@example.com", due: null, taskId: null, threadId: null,
+      contactId: null, goal: { id: "g1", title: "Close Q4 deals" }, plannedDays: [], openTasks: 0, planned: false,
+      action: { kind: "newTaskForGoal", goalId: "g1", accountId: "you@example.com" },
+    }] });
+    const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue({ note: { id: "daily", title: "", body: "", dailyDate: null, createdAt: "r", updatedAt: "r", trashed: false, trashedAt: null }, changed: ["k"], already: [], previousBody: "" });
+    const createTask = vi.spyOn(mailClient, "createTask").mockImplementation(async (request) => ({
+      id: "goal-task", accountId: request.accountId, threadId: null, subjectSnapshot: null, title: request.title, kind: "action", dueKind: "none",
+      status: "open", createdAt: "2026-10-26T09:00:00Z", updatedAt: "2026-10-26T09:00:00Z", goalId: request.goalId ?? null,
+    }));
+    vi.spyOn(mailClient, "listGoals").mockResolvedValue([{ id: "g1", accountId: "you@example.com", title: "Close Q4 deals", notes: null, horizon: "quarter", period: "2026-Q4",
+      status: "active", parentGoalId: null, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", closedAt: null }]);
+    const today = await openTodayWithCalendar();
+    fireEvent.click(within(today).getByRole("tab", { name: "Goals" }));
+    fireEvent.click(await within(today).findByRole("button", { name: "New Task for Goal: Close Q4 deals" }));
+    let dialog = await screen.findByRole("dialog", { name: "Add Task" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument());
+    expect(createTask).not.toHaveBeenCalled();
+    expect(add).not.toHaveBeenCalled();
+
+    fireEvent.click(within(today).getByRole("button", { name: "New Task for Goal: Close Q4 deals" }));
+    dialog = await screen.findByRole("dialog", { name: "Add Task" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Task" }), { target: { value: "Call Acme" } });
+    // The goal is already chosen.
+    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: /^Goal/ })).toHaveValue("g1"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Task" }));
+    await waitFor(() => expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ accountId: "you@example.com", threadId: null, title: "Call Acme", goalId: "g1" })));
+    await waitFor(() => expect(add).toHaveBeenCalledWith("2026-10-26", null, [{ kind: "link", reference: { version: 1, kind: "task", id: "goal-task" }, label: "Call Acme" }]));
+  });
+
   it("dismisses a calendar dialog before Escape returns to Today", async () => {
     const today = await openTodayWithCalendar();
     fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));

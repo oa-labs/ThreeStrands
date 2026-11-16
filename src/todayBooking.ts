@@ -1,12 +1,13 @@
-import { isDeclined, formatClockTime } from "./agendaEvents";
+import { formatClockTime } from "./agendaEvents";
 import { revalidateScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption, CreateCalendarEventRequest, ScheduleEvent } from "./domain";
 import { SLOT_MINUTES } from "./DayTimeGrid";
 import { errorMessage } from "./errors";
-import { defaultEventCalendar, showCalendar, TASK_BLOCK_MINUTES, writableCalendars } from "./taskBooking";
+import { bookedSource, defaultEventCalendar, showCalendar, sourceTaskId, TASK_BLOCK_MINUTES, writableCalendars, type BookedSource } from "./taskBooking";
+import { planCapacity, type WorkingHours } from "./todayInsights";
+import { schedulingDay } from "./meetingAvailability";
 import type { Notice } from "./useNotice";
-import { isWorkingLocation } from "./WorkingLocation";
 
 /**
  * What a block of time is booked for on Today: a task (mail, standalone, or a
@@ -24,6 +25,7 @@ export type BookingContext = {
 
 /** A timed block of `TASK_BLOCK_MINUTES`, tagged with its task when it has one. */
 export function blockRequest(target: BlockTarget, calendar: CalendarOption, start: Date): CreateCalendarEventRequest {
+  const source = bookedSource(target.sourceTaskId);
   return {
     accountId: calendar.accountId,
     calendarId: calendar.id,
@@ -32,31 +34,37 @@ export function blockRequest(target: BlockTarget, calendar: CalendarOption, star
     end: new Date(start.getTime() + TASK_BLOCK_MINUTES * 60_000).toISOString(),
     description: "",
     attendees: [],
-    ...(target.sourceTaskId ? { sourceTaskId: target.sourceTaskId } : {}),
+    // Stored as Calendar stores it, so both name the same booked task.
+    ...(source ? { sourceTaskId: sourceTaskId(source) } : {}),
   };
 }
 
-/** Time the user has committed to: timed events not declined, apart from working locations. */
-function busy(event: ScheduleEvent): boolean {
-  return !event.allDay && !isDeclined(event) && !isWorkingLocation(event);
+/**
+ * Where **Book** puts a block today: the first `SLOT_MINUTES` step, at or
+ * after now, inside a free stretch of today's working hours (`planCapacity`)
+ * that still holds `blockMinutes`. `null` when no such stretch is left, and
+ * "unknown" when the schedule or the working hours are, since unknown time
+ * is never offered as free.
+ */
+export function nextFreeSlot(events: readonly ScheduleEvent[] | null, workingHours: WorkingHours | null, now: Date, blockMinutes = TASK_BLOCK_MINUTES): Date | null | "unknown" {
+  const capacity = planCapacity(events, workingHours, now);
+  if (!capacity) return "unknown";
+  const step = SLOT_MINUTES * 60_000;
+  for (const stretch of capacity.stretches) {
+    const start = Math.ceil(stretch.start.getTime() / step) * step;
+    if (start + blockMinutes * 60_000 <= stretch.end.getTime()) return new Date(start);
+  }
+  return null;
 }
 
-/**
- * Where **Book** puts a block today: the first `SLOT_MINUTES` step at or
- * after now whose `TASK_BLOCK_MINUTES` overlap no busy event and end by
- * midnight, or null when no such stretch is left.
- */
-export function nextFreeSlot(events: readonly ScheduleEvent[], now: Date, blockMinutes = TASK_BLOCK_MINUTES): Date | null {
-  const day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dayEnd = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).getTime();
-  const minutes = now.getHours() * 60 + now.getMinutes() + (now.getSeconds() || now.getMilliseconds() ? 1 : 0);
-  const taken = events.filter(busy).map((event) => [Date.parse(event.start), Date.parse(event.end)] as const);
-  for (let at = Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES; ; at += SLOT_MINUTES) {
-    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, at).getTime();
-    const end = start + blockMinutes * 60_000;
-    if (end > dayEnd) return null;
-    if (!taken.some(([from, to]) => from < end && to > start)) return new Date(start);
-  }
+/** Whether `start`..`start + blockMinutes` lies wholly in today's working hours; null when they're unknown. */
+export function withinWorkingHours(start: Date, workingHours: WorkingHours | null, blockMinutes = TASK_BLOCK_MINUTES): boolean | null {
+  // With no events and a clock before the day, each working window of the day is one free stretch.
+  if (!workingHours) return null;
+  const capacity = planCapacity([], workingHours, new Date(0), schedulingDay(start.getTime(), workingHours.timeZone));
+  if (!capacity) return null;
+  const end = start.getTime() + blockMinutes * 60_000;
+  return capacity.stretches.some((stretch) => stretch.start.getTime() <= start.getTime() && end <= stretch.end.getTime());
 }
 
 /**
@@ -89,9 +97,14 @@ export async function bookBlock(target: BlockTarget, start: Date, context: Booki
   }
 }
 
-/** The block booked for a task among today's events: the next one still to end, else the latest. */
+/** The block booked for a task among today's events, resolving replicated and note-task sources as Calendar does: the next one still to end, else the latest. */
 export function bookedFor(taskId: string | null, events: readonly ScheduleEvent[], now: Date): ScheduleEvent | null {
-  if (!taskId) return null;
-  const blocks = events.filter((event) => event.sourceTaskId === taskId).sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+  const source = bookedSource(taskId);
+  if (!source) return null;
+  const blocks = events.filter((event) => sameSource(bookedSource(event.sourceTaskId), source)).sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   return blocks.find((event) => Date.parse(event.end) > now.getTime()) ?? blocks.at(-1) ?? null;
+}
+
+function sameSource(left: BookedSource | null, right: BookedSource): boolean {
+  return left !== null && sourceTaskId(left) === sourceTaskId(right);
 }

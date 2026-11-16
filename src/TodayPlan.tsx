@@ -7,6 +7,16 @@ import type { PlanAddition } from "./dailyPlan";
 import type { DailyPlan, DailyPlanItem, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { bookedFor, type BlockTarget } from "./todayBooking";
+import { bookedSource, sourceTaskId } from "./taskBooking";
+
+/** One key for a task however its booked block names it, so a card and its block can find each other. */
+export function linkKey(taskId: string | null | undefined): string | null {
+  const source = bookedSource(taskId);
+  return source ? sourceTaskId(source) : null;
+}
+
+/** "New Task for Goal" as a tooltip reads: "New task for goal". */
+const sentence = (label: string) => label.charAt(0) + label.slice(1).toLowerCase();
 
 type RowProps = Parameters<typeof ContextRow>[0];
 
@@ -22,11 +32,17 @@ export type PlanCandidate = {
   /** The target it names, keyed as plan items are (`DailyPlanItem.key`), so a planned one is marked. */
   planKey: string | null;
   resolve(): Promise<{ addition: PlanAddition; block: BlockTarget; title: string } | null>;
+  /** Already in the plan by the source's own reckoning, such as a starred conversation whose task is planned. */
+  inPlan?: boolean;
+  /** The add button's name when adding first creates something, such as "New Task for Goal". */
+  addLabel?: string;
   /** How its row reads; Add to Today's Plan and dragging are added by the switcher. */
   row: Omit<RowProps, "title" | "onPointerDown" | "trailing">;
 };
 
-export type PlanSourceGroup = { id: string; title: string; candidates: PlanCandidate[]; limit?: number; closing?: ReactNode };
+export type PlanSourceGroup = { id: string; title: string; candidates: PlanCandidate[]; limit?: number; closing?: ReactNode;
+  /** Under the rows, such as Show More for the next page. */
+  footer?: ReactNode };
 
 /**
  * A tab of the source switcher. Today registers Also Due, Tasks, You Said You
@@ -41,6 +57,8 @@ export type PlanSource = {
   empty: string;
   /** Hides candidates already in the plan instead of marking them. */
   hidePlanned?: boolean;
+  /** Loading or a read failure, shown above the groups. */
+  status?: ReactNode;
 };
 
 /** What dragging a plan card or a source card carries onto the day view. */
@@ -85,7 +103,12 @@ function itemSource(item: DailyPlanItem): string | null {
  * day's focus. Tasks can be checked off; every tracked card offers Book and
  * Remove from Today's Plan and can be dragged onto the day view.
  */
-export function PlanCards({ plan, error, events, now, onToggle, onActivate, onBook, onRemove, drag }: {
+/** "Carried 3 times", from the plan's history; a fact, never a reason to reorder. */
+export function carriedLabel(count: number): string | null {
+  return count >= 1 ? `Carried ${count} ${count === 1 ? "time" : "times"}` : null;
+}
+
+export function PlanCards({ plan, error, events, now, onToggle, onActivate, onBook, onRemove, drag, linked, onLink }: {
   plan: DailyPlan | null;
   error: string | null;
   /** Today's events, for each task's booked time. */
@@ -96,19 +119,27 @@ export function PlanCards({ plan, error, events, now, onToggle, onActivate, onBo
   onBook(item: DailyPlanItem): void;
   onRemove(item: DailyPlanItem): void;
   drag: DragHooks;
+  /** The task whose card and booked block are highlighted together. */
+  linked?: string | null;
+  /** Hovering or focusing a card with a task, and leaving it. */
+  onLink?(taskId: string | null): void;
 }) {
   const items = plan?.items ?? [];
   const focus = items.find(isOpen);
   const rows = items.map((item) => {
     const booked = bookedFor(item.taskId, [...events], now);
-    const detail = [itemSource(item), item.goal?.title, booked ? formatClockTime(new Date(booked.start)) : null].filter(Boolean).join(" · ");
+    const detail = [itemSource(item), item.goal?.title, booked ? formatClockTime(new Date(booked.start)) : null, carriedLabel(item.carryCount ?? 0)].filter(Boolean).join(" · ");
     const checkable = (item.kind === "task" || item.kind === "noteTask" || item.kind === "newTask") && item.taskId && item.state !== "unavailable" && item.state !== "cancelled";
     const done = isFinished(item);
-    const classes = ["context-task", "today-plan-card", done ? "context-task-done" : "", item === focus ? "today-plan-focus" : ""].filter(Boolean).join(" ");
+    const isLinked = Boolean(linked && item.taskId && linkKey(item.taskId) === linked);
+    const classes = ["context-task", "today-plan-card", done ? "context-task-done" : "", item === focus ? "today-plan-focus" : "", isLinked ? "today-plan-linked" : ""].filter(Boolean).join(" ");
     const usable = item.state !== "unavailable" && item.kind !== "text";
-    return <ContextRow
+    const hover = item.taskId && onLink ? {
+      onMouseEnter: () => onLink(linkKey(item.taskId!)), onMouseLeave: () => onLink(null),
+      onFocus: () => onLink(linkKey(item.taskId!)), onBlur: () => onLink(null),
+    } : {};
+    return <div key={item.key} className="today-plan-card-link" {...hover}><ContextRow
       as="article"
-      key={item.key}
       className={classes}
       rowKey={`plan:${item.key}`}
       control={checkable ? <HoverTooltip label={done ? "Mark not done" : "Mark done"}>
@@ -129,7 +160,7 @@ export function PlanCards({ plan, error, events, now, onToggle, onActivate, onBo
           <CircleMinus size={ICON_SIZE.sm} />
         </button>,
       ]}
-    />;
+    /></div>;
   });
   return <ContextSection
     id="today-plan"
@@ -170,7 +201,7 @@ export function PlanSourceSwitcher({ sources, selected, onSelect, planned, onAdd
     onSelect(target.id);
     tabs.current?.querySelector<HTMLButtonElement>(`[data-source="${target.id}"]`)?.focus();
   };
-  const inPlan = (candidate: PlanCandidate) => candidate.planKey !== null && planned.has(candidate.planKey);
+  const inPlan = (candidate: PlanCandidate) => Boolean(candidate.inPlan) || (candidate.planKey !== null && planned.has(candidate.planKey));
   const groups = current.groups.map((group) => ({ ...group, candidates: current.hidePlanned ? group.candidates.filter((candidate) => !inPlan(candidate)) : group.candidates }))
     .filter((group) => group.candidates.length > 0 || group.closing);
   const row = (candidate: PlanCandidate) => {
@@ -184,7 +215,7 @@ export function PlanSourceSwitcher({ sources, selected, onSelect, planned, onAdd
       onPointerDown={planned ? undefined : (event) => drag.startDrag({ id: candidate.id, title: candidate.title, kind: "candidate", candidate }, event)}
       trailing={planned ? <span className="today-in-plan">In plan</span> : undefined}
       actions={[
-        ...(planned ? [] : [<button key="add" type="button" className="btn-icon btn-icon-sm" aria-label={`Add to Today's Plan: ${candidate.title}`} title="Add to today's plan" onClick={() => onAdd(candidate)}>
+        ...(planned ? [] : [<button key="add" type="button" className="btn-icon btn-icon-sm" aria-label={`${candidate.addLabel ?? "Add to Today's Plan"}: ${candidate.title}`} title={candidate.addLabel ? sentence(candidate.addLabel) : "Add to today's plan"} onClick={() => onAdd(candidate)}>
           <CirclePlus size={ICON_SIZE.sm} />
         </button>]),
         ...(candidate.row.actions ?? []),
@@ -198,9 +229,10 @@ export function PlanSourceSwitcher({ sources, selected, onSelect, planned, onAdd
         onClick={() => onSelect(source.id)}>{source.label}</button>)}
     </div>
     <div id="today-source-panel" role="tabpanel" aria-labelledby={`today-source-${current.id}`} className="today-source-panel">
+      {current.status}
       {groups.length ? groups.map((group) => <ContextSection key={group.id} id={group.id} title={group.title} count={group.candidates.length}
-        limit={group.limit} rows={group.candidates.map(row)} closing={group.closing} />)
-        : <p className="context-status">{current.empty}</p>}
+        limit={group.limit} rows={group.candidates.map(row)} closing={group.closing} footer={group.footer} />)
+        : current.status ? null : <p className="context-status">{current.empty}</p>}
     </div>
   </div>;
 }
