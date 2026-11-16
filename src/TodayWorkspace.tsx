@@ -1,7 +1,10 @@
 import { formatCompactDate } from "./dateFormatting";
-import { ContactRound, ListPlus, Mail, NotebookPen, Send, Video, X } from "lucide-react";
+import { ClipboardList, ContactRound, ListPlus, Mail, NotebookPen, Send, Video, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { MeetingReadinessList } from "./MeetingReadinessList";
+import { meetingsToPrepare } from "./meetingPrep";
+import type { Notice } from "./useNotice";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { ContextRow, ContextSection } from "./ContextSections";
@@ -46,6 +49,19 @@ export type TodayWorkspaceProps = {
   onOpenTasks(): void;
   onOpenContact(contactId: string): void;
   onOpenKeepInTouch(): void;
+  /** Meeting preparation on Today: the meeting being prepared, if any, and
+   * what the readiness list needs to act. */
+  preparation?: TodayPreparation;
+};
+
+export type TodayPreparation = {
+  event: ScheduleEvent | null;
+  onPrepare(event: ScheduleEvent): void;
+  render(event: ScheduleEvent, close: () => void): ReactNode;
+  onClose(): void;
+  ownAddresses: readonly string[];
+  onOpenNote(noteId: string, href?: string): void;
+  onNotice(notice: Notice): void;
 };
 
 const MAIL_GROUPS: { group: TodayMailGroup; title: string; limit: number }[] = [
@@ -77,7 +93,7 @@ function ScheduledToday(props: TodayWorkspaceProps) {
 
 function TodayLayout({
   accountId, refreshKey, taskRefreshKey, calendars, schedule,
-  onOpenThread, onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenInbox, onOpenCalendar, onOpenTasks, onOpenContact, onOpenKeepInTouch,
+  onOpenThread, onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenInbox, onOpenCalendar, onOpenTasks, onOpenContact, onOpenKeepInTouch, preparation,
 }: TodayWorkspaceProps & { schedule: Schedule | null }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -172,6 +188,16 @@ function TodayLayout({
   };
 
   const todaysEvents = agendaEventsFor(schedule?.events ?? [], now, calendars);
+  // Closing preparation returns focus to whatever opened it.
+  const prepareTrigger = useRef<HTMLElement | null>(null);
+  const prepare = preparation ? (event: ScheduleEvent) => {
+    prepareTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    preparation.onPrepare(event);
+  } : undefined;
+  const closePreparation = () => {
+    preparation?.onClose();
+    requestAnimationFrame(() => (prepareTrigger.current?.isConnected ? prepareTrigger.current : pageRef.current)?.focus());
+  };
   const next = nextMeeting(todaysEvents, now);
   const shape = schedule ? dayShape(todaysEvents, now) : "";
   const overdue = tasks.filter((task) => isActiveTaskStatus(task.status) && dueView(task, now) === "Overdue");
@@ -219,14 +245,22 @@ function TodayLayout({
         <h1>{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h1>
         {dayLine ? <p className="today-day-shape">{dayLine}</p> : null}
       </div>
-      {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} onAddNote={onAddNote} /> : null}
+      {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} onAddNote={onAddNote} onPrepare={prepare} /> : null}
     </header>
-    <div className="today-columns">
+    {preparation?.event ? <div className="today-preparation">{preparation.render(preparation.event, closePreparation)}</div> : <div className="today-columns">
       <div className="today-column" role="group" aria-label="Agenda">
+        {schedule && preparation && prepare ? <MeetingReadinessList
+          events={meetingsToPrepare(todaysEvents, now)}
+          ownAddresses={preparation.ownAddresses}
+          refreshKey={`${refreshKey}:${taskRefreshKey}`}
+          onPrepare={prepare}
+          onOpenNote={preparation.onOpenNote}
+          onNotice={preparation.onNotice}
+        /> : null}
         {schedule ? <>
           {/* The page heading already names today, so its agenda leaves the date out. */}
-          <CalendarAgenda pullToRefresh={false} today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
-          <CalendarAgenda pullToRefresh={false} today={addDays(startOfLocalDay(now), 1)} day="tomorrow" calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
+          <CalendarAgenda pullToRefresh={false} today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} onPrepare={prepare} />
+          <CalendarAgenda pullToRefresh={false} today={addDays(startOfLocalDay(now), 1)} day="tomorrow" calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} onPrepare={prepare} />
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}
@@ -303,13 +337,13 @@ function TodayLayout({
         /> : null}
         <p className="today-column-link"><button type="button" className="btn-link" onClick={onOpenTasks}>Open Tasks</button></p>
       </div>
-    </div>
+    </div>}
     </div>
     <p className="sr-only" aria-live="polite">{announcement}</p>
   </section>;
 }
 
-function NextMeeting({ event, now, onOpenEvent, onAddNote }: { event: ScheduleEvent; now: Date; onOpenEvent(event: ScheduleEvent): void; onAddNote?(event: ScheduleEvent): void }) {
+function NextMeeting({ event, now, onOpenEvent, onAddNote, onPrepare }: { event: ScheduleEvent; now: Date; onOpenEvent(event: ScheduleEvent): void; onAddNote?(event: ScheduleEvent): void; onPrepare?(event: ScheduleEvent): void }) {
   const { joinUrl } = meetingPlace(event.location ?? null, event.conferenceUrl);
   const minutes = Math.round((eventDate(event).getTime() - now.getTime()) / 60_000);
   const label = minutes <= 0
@@ -318,6 +352,7 @@ function NextMeeting({ event, now, onOpenEvent, onAddNote }: { event: ScheduleEv
   return <div className="today-next">
     <button type="button" className="btn-link" onClick={() => onOpenEvent(event)}>{label}</button>
     {joinUrl ? <button type="button" className="btn btn-sm" onClick={() => void openUrl(joinUrl)}><Video size={ICON_SIZE.sm} />Join</button> : null}
+    {onPrepare && meetingEventReference(event) ? <button type="button" className="btn btn-sm" onClick={() => onPrepare(event)}><ClipboardList size={ICON_SIZE.sm} />Prepare</button> : null}
     {onAddNote && meetingEventReference(event) ? <button type="button" className="btn btn-sm" onClick={() => onAddNote(event)}><NotebookPen size={ICON_SIZE.sm} />Add Note</button> : null}
   </div>;
 }

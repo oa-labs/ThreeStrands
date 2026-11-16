@@ -8,8 +8,9 @@ import { ContextSectionHeader } from "./ContextSections";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { BookedTask, CalendarTasks, useAccountTasks } from "./CalendarTasks";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
-import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
+import { preparationKey, type MeetingPreparationHost } from "./meetingPrep";
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { EventViewer, eventCalendarLabel } from "./CalendarSidebar";
 import { HoverTooltip } from "./AppChrome";
@@ -264,8 +265,12 @@ export function CalendarWeekView({
   onNotice,
   active = true,
   session,
+  preparation,
 }: {
   session?: RefObject<CalendarWorkspaceSnapshot | null>;
+  /** Meeting preparation in the event details: which meeting is being
+   * prepared, and the view to show for it. */
+  preparation?: MeetingPreparationHost;
   createEventRequested?: boolean;
   onCreateEventRequestHandled?(): void;
   /** Changes whenever tasks change elsewhere, to reload Open tasks. */
@@ -340,6 +345,16 @@ export function CalendarWeekView({
     }
   }, [selectedEvent]);
 
+  const prepareButton = useRef<HTMLButtonElement | null>(null);
+  const preparingSelected = Boolean(preparation && selectedEvent && preparation.key !== null && preparation.key === preparationKey(selectedEvent));
+  const closePreparation = () => {
+    preparation?.onChange(null);
+    requestAnimationFrame(() => prepareButton.current?.focus());
+  };
+  const prepareAgendaEvent = (event: ScheduleEvent) => {
+    openAgendaEvent(event);
+    preparation?.onChange(preparationKey(event));
+  };
   const openAgendaEvent = (event: ScheduleEvent) => {
     focusAgendaDetails.current = true;
     eventTrigger.current = null;
@@ -767,16 +782,22 @@ export function CalendarWeekView({
       <WorkspaceContextRail label="Meeting context" onReturn={() => (eventTrigger.current?.isConnected ? eventTrigger.current : gridRef.current)?.focus()}>
         {selectedEvent ? <>
           <ContextSectionHeader title="Event details" icon={<CalendarDays size={ICON_SIZE.xs} />}
-            actions={onAddNote && meetingEventReference(selectedEvent) ? <EventNoteAction key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} occurrence={meetingEventReference(selectedEvent)!} onActivate={() => onAddNote(selectedEvent)} /> : undefined} />
+            actions={<>
+              {preparation && meetingEventReference(selectedEvent) ? <button ref={prepareButton} type="button" className="btn-icon btn-icon-sm" aria-label="Prepare" title="Prepare" aria-pressed={preparingSelected}
+                onClick={() => preparation.onChange(preparingSelected ? null : preparationKey(selectedEvent))}><ClipboardList size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
+              {onAddNote && meetingEventReference(selectedEvent) ? <EventNoteAction key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} occurrence={meetingEventReference(selectedEvent)!} onActivate={() => onAddNote(selectedEvent)} /> : null}
+            </>} />
           <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} calendarLabel={eventCalendarLabel(selectedEvent, calendars)} onDismiss={() => {
             setSelectedEvent(null);
             if (!eventTrigger.current) document.getElementById("workspace-Meeting-context")?.focus();
           }} onUpdated={setSelectedEvent} />
           {bookedTask ? <BookedTask task={bookedTask} onChanged={tasksChanged} /> : null}
-          {meetingEventReference(selectedEvent) ? <EventNoteBacklinks occurrence={meetingEventReference(selectedEvent)!} onOpenNote={onOpenNote} /> : null}
-          <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
+          {preparingSelected ? preparation!.render(selectedEvent, closePreparation) : <>
+            {meetingEventReference(selectedEvent) ? <EventNoteBacklinks occurrence={meetingEventReference(selectedEvent)!} onOpenNote={onOpenNote} /> : null}
+            <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
+          </>}
         </> : <>
-          <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} onAddNote={onAddNote} schedule={todayVisible ? { events, loading, error, reload, refresh } : undefined} />
+          <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} onAddNote={onAddNote} onPrepare={preparation ? prepareAgendaEvent : undefined} schedule={todayVisible ? { events, loading, error, reload, refresh } : undefined} />
           <CalendarTasks
             tasks={openTasks}
             loading={tasksLoading}

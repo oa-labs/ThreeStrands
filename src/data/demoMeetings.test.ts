@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ScheduleEvent, Thread, ThreadTask } from "../domain";
 import { noteReferenceHref, type NoteReference } from "../noteEntities";
-import { createDemoMeetings, MAX_READINESS_EVENTS } from "./demoMeetings";
+import { createDemoMeetings } from "./demoMeetings";
+import { MAX_READINESS_EVENTS } from "../meetingPrep";
 import { createDemoNotes } from "./demoNotes";
 import type { DemoNoteSeed } from "./demoDataset";
 
@@ -62,6 +63,18 @@ describe("demo meeting preparation", () => {
     expect(missing.event).toBeNull();
     expect(missing.thisMeeting.items).toHaveLength(1);
     expect(missing.conversations.status).toBe("unavailable");
+  });
+
+  it("reserves one prep task under the meeting's line, adding the line when needed", async () => {
+    const meetings = setup([], []);
+    const entry = { event: occurrence("evt"), time: "3:00pm", attendees: [], name: "Sync", linkNote: false };
+    const first = await meetings.reserveMeetingPrep("2026-11-16", null, entry);
+    expect(first).toMatchObject({ added: true, addedMeetingLine: true, previousBody: "" });
+    expect(first.note.body).toMatch(/^## Meetings\n\n- \[3:00pm\]\(.+\) for Sync\n {2}- \( \) Prepare for Sync/);
+    expect(first.taskId).toMatch(/^note:daily:2026-11-16:/);
+    const again = await meetings.reserveMeetingPrep("2026-11-16", first.note.updatedAt, entry);
+    expect(again).toMatchObject({ added: false, addedMeetingLine: false, taskId: first.taskId });
+    await expect(meetings.reserveMeetingPrep("2026-11-16", "stale", entry)).rejects.toThrow();
   });
 
   it("bounds readiness requests", async () => {

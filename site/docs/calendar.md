@@ -99,6 +99,17 @@ Open an event you manage to edit or delete it. Moving the start moves the end wi
 
 Click **Add Note** on an event in the agenda, in **Today**, or in an event's details to write a line about the meeting in that day's note, linking the event and its attendees. When the meeting already has a note, the button in its details says **Open Note** and opens it instead. An event's details list the notes about that meeting and, for a recurring meeting, the notes from the rest of the series under **Series notes**. See [Meeting Notes](notes.html#meeting-notes).
 
+## Prepare for a Meeting {#prepare-for-a-meeting}
+
+Click **Prepare** in an event's details, beside an event in the agenda, or on **Today**, or choose **Prepare for Meeting** in the command palette while an event's details are open. Preparation lists:
+
+- **This meeting**: the part of a note about this meeting, such as its line in a daily note and what you wrote under it, and the meeting note it links. Other entries in the same note are left out.
+- **Previous meetings**: notes from earlier meetings in the same recurring series, newest first. A different event with the same title is never counted.
+- **Conversations**: the message the invitation came from and recent mail with the attendees, from the last 90 days, in the calendar's own mail account. Choose **Mail Accounts…** to look in other accounts; when the calendar has no matching mail account, choose one first.
+- **Open commitments**: open tasks in this meeting's notes and on the invitation's conversation. Tasks on other conversations with attendees are listed separately under **Possibly related**, since they may be about something else.
+
+Click any item to open it, then **Back to Meeting** to return. Preparation reads only what is on your computer: it doesn't search the server, contact an AI provider, or change notes or events. Long lists say how many items they leave out.
+
 ## Book Time for Tasks {#book-time-for-tasks}
 
 Beside the week, under **Today's agenda**, **Open tasks** lists the tasks in your **To Do** and **In Progress** columns, overdue and soonest due first. Drag a task onto the calendar to block 30 minutes to work on it at that time on its account's calendar. Click **Undo** in the message that follows to remove it. Open the event and edit it to change its length. A task with time booked in the week you're viewing says when, such as "Booked Wed 10:00 am". Click a task instead to open **New Event** with its title, ready to pick a time yourself. Check the box beside a task to mark it done; it stays a moment, struck through, so you can uncheck it, or click **Undo** in the message that follows.

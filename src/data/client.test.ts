@@ -102,6 +102,9 @@ describe("native account requests", () => {
     expect(invoke).toHaveBeenLastCalledWith("meeting_context", { reference, mailScope: ["other@example.com"] });
     await client.meetingReadiness([reference]);
     expect(invoke).toHaveBeenLastCalledWith("meeting_readiness", { references: [reference], mailScope: null });
+    const entry = { event: reference, time: "3:00pm", attendees: [], name: "Sync", linkNote: false };
+    await client.reserveMeetingPrep("2026-11-16", "v1", entry);
+    expect(invoke).toHaveBeenLastCalledWith("reserve_meeting_prep", { date: "2026-11-16", expected: "v1", entry });
   });
 
   it("checks meeting guests through the event's calendar account", async () => {

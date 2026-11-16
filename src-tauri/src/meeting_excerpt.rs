@@ -203,6 +203,65 @@ pub fn bounded_text(text: &str, limit: usize) -> (String, bool) {
     (text[..end].to_string(), true)
 }
 
+/// What [`insert_prep_task`] did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PrepInsert {
+    /// The body with the prep task added under the meeting's line.
+    Inserted(String),
+    /// The meeting's block already holds an open or done prep task.
+    Existing,
+    /// No list item in the body is this occurrence's meeting line.
+    NoMeetingLine,
+}
+
+/// The words a prep task starts with. Repeating Reserve Prep Time finds a
+/// task under the meeting's line that starts with them, so a prep task the
+/// user renamed to something else is no longer recognized.
+pub const PREP_TASK_PREFIX: &str = "Prepare for ";
+
+/// `body` with a round task `( ) Prepare for <name>` nested under the first
+/// list item linking `occurrence`, after the item's last nested line. The
+/// task is indented to the item's text, so it nests under any list marker.
+pub fn insert_prep_task(
+    note: &str,
+    body: &str,
+    occurrence: &NoteReference,
+    name: &str,
+) -> Result<PrepInsert, String> {
+    let Some(block) = occurrence_blocks(note, body, occurrence)?
+        .into_iter()
+        .find(|block| block.kind == MeetingBlockKind::Excerpt)
+    else {
+        return Ok(PrepInsert::NoMeetingLine);
+    };
+    let parsed = note_entities::parse(note, body)?;
+    let prefix = PREP_TASK_PREFIX.trim_end().to_lowercase();
+    if parsed.items.iter().any(|item| {
+        item.task
+            && block.start < item.start
+            && item.start < block.end
+            && item.title.to_lowercase().starts_with(&prefix)
+    }) {
+        return Ok(PrepInsert::Existing);
+    }
+    let item_line = body[block.start..].split('\n').next().unwrap_or_default();
+    let leading = &item_line[..item_line.len() - item_line.trim_start_matches([' ', '\t']).len()];
+    let rest = &item_line[leading.len()..];
+    let marker = rest
+        .find([' ', '\t'])
+        .ok_or_else(|| "Invalid meeting line".to_string())?;
+    let gap = rest[marker..].len() - rest[marker..].trim_start_matches([' ', '\t']).len();
+    let indent = format!("{leading}{}", " ".repeat(marker + gap));
+    let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title =
+        crate::note_meetings::escape_inline(if name.is_empty() { "Meeting" } else { &name });
+    Ok(PrepInsert::Inserted(format!(
+        "{}\n{indent}- ( ) {PREP_TASK_PREFIX}{title}{}",
+        &body[..block.end],
+        &body[block.end..]
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +319,42 @@ mod tests {
                 .map(|block| (block.kind.clone(), fill(&block.text, &fixtures.events)))
                 .collect();
             assert_eq!(actual, expected, "{}", case.name);
+        }
+    }
+
+    #[derive(Deserialize)]
+    struct PrepFixtures {
+        events: BTreeMap<String, NoteReference>,
+        target: String,
+        prep: Vec<PrepCase>,
+    }
+    #[derive(Deserialize)]
+    struct PrepCase {
+        name: String,
+        body: String,
+        meeting: String,
+        /// The new body, "EXISTING", or "NO_LINE".
+        expected: String,
+    }
+
+    #[test]
+    fn shared_fixtures_place_one_prep_task_under_the_meeting_line() {
+        let fixtures: PrepFixtures =
+            serde_json::from_str(include_str!("../../fixtures/meeting-excerpts.json")).unwrap();
+        let target = &fixtures.events[&fixtures.target];
+        for case in fixtures.prep {
+            let body = fill(&case.body, &fixtures.events);
+            let actual = match insert_prep_task("note", &body, target, &case.meeting).unwrap() {
+                PrepInsert::Inserted(body) => body,
+                PrepInsert::Existing => "EXISTING".into(),
+                PrepInsert::NoMeetingLine => "NO_LINE".into(),
+            };
+            assert_eq!(
+                actual,
+                fill(&case.expected, &fixtures.events),
+                "{}",
+                case.name
+            );
         }
     }
 

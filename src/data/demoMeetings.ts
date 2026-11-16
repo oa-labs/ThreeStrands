@@ -1,12 +1,13 @@
-import type { MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingReadiness, MeetingSection, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
-import { boundedText, meetingBlocks, occurrenceBlocks, type MeetingBlock } from "../meetingExcerpt";
+import type { MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingReadiness, MeetingSection, PrepReservation, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
+import { boundedText, insertPrepTask, meetingBlocks, occurrenceBlocks, PREP_TASK_PREFIX, type MeetingBlock } from "../meetingExcerpt";
+import { insertMeetingLine, meetingLine } from "../noteMeetings";
+import { MAX_READINESS_EVENTS } from "../meetingPrep";
 import { extractNoteEntityLinks, normalizeContactAddress, noteReferenceKey, type NoteReference } from "../noteEntities";
 import { extractWikiLinks } from "../noteWikiLinks";
 import type { MailClient } from "./client";
 
 /** The native limits (`src-tauri/src/meeting_policy.rs`), so the demo bounds results the same way. */
 export const DEMO_MEETING_LIMITS: MeetingLimits = { noteSources: 20, priorOccurrences: 8, excerptBytes: 4096, linkedNotePreviewBytes: 1024, attendees: 50, conversations: 10, mailLookbackDays: 90, commitments: 25 };
-export const MAX_READINESS_EVENTS = 50;
 
 type Sources = {
   events(): ScheduleEvent[];
@@ -16,7 +17,7 @@ type Sources = {
   ownAddresses(): string[];
   threadForMessage(id: string): string | null;
   now?(): Date;
-  notes: Pick<MailClient, "noteBacklinks" | "getNote" | "noteDocument" | "findNoteByTitle">;
+  notes: Pick<MailClient, "noteBacklinks" | "getNote" | "noteDocument" | "findNoteByTitle" | "getDailyNote" | "saveDailyNote">;
 };
 
 function bounded<T>(items: T[], limit: number): MeetingSection<T> {
@@ -29,7 +30,7 @@ const instant = (start: string) => /^\d{4}-\d{2}-\d{2}$/.test(start) ? new Date(
 const localDate = (time: number) => { const d = new Date(time); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 /** Meeting preparation for the browser demo: the native rules over in-memory data. */
-export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingContext" | "meetingReadiness"> {
+export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingContext" | "meetingReadiness" | "reserveMeetingPrep"> {
   const cached = (reference: NoteReference) => sources.events().find((event) => event.accountId === reference.account && event.calendarId === reference.calendar && event.id === reference.id) ?? null;
   const notesLinking = async (reference: NoteReference) => {
     const notes: Note[] = [];
@@ -165,7 +166,35 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
     };
   }
 
+  const prepTaskId = async (note: Note, occurrence: NoteReference) => {
+    const block = occurrenceBlocks(note.body, occurrence).find((candidate) => candidate.kind === "excerpt");
+    if (!block) return null;
+    const prefix = PREP_TASK_PREFIX.trimEnd().toLowerCase();
+    const item = (await sources.notes.noteDocument(note.id)).items.find((item) => item.task && block.start < item.start && item.start < block.end && item.title.toLowerCase().startsWith(prefix));
+    return item ? `note:${note.id}:${item.id}` : null;
+  };
+
   return {
+    async reserveMeetingPrep(date, expected, entry): Promise<PrepReservation> {
+      const note = await sources.notes.getDailyNote(date);
+      if ((note?.updatedAt ?? null) !== expected || note?.trashed) throw new Error("That day's note changed. Open it before reserving prep time.");
+      const previousBody = note?.body ?? "";
+      let body = previousBody, addedMeetingLine = false;
+      let result = insertPrepTask(body, entry.event, entry.name);
+      if (result === "noMeetingLine") {
+        if (extractNoteEntityLinks(body).links.some((link) => noteReferenceKey(link.reference) === noteReferenceKey(entry.event))) throw new Error("This meeting is mentioned in that day's note, but not as a meeting line. Open the note to add prep time.");
+        const withLine = insertMeetingLine(body, meetingLine({ ...entry, linkNote: false }, null));
+        if (withLine === null) throw new Error("That day's note has a code block that never closes where the meeting would go. Open it before reserving prep time.");
+        body = withLine;
+        addedMeetingLine = true;
+        result = insertPrepTask(body, entry.event, entry.name);
+      }
+      if (result === "existing") return { note: note!, added: false, addedMeetingLine: false, previousBody, taskId: await prepTaskId(note!, entry.event) };
+      if (result === "noMeetingLine") throw new Error("The meeting's line couldn't be found after adding it");
+      const saved = await sources.notes.saveDailyNote(date, result, expected);
+      if (!saved.saved || !saved.note) throw new Error("That day's note changed. Open it before reserving prep time.");
+      return { note: saved.note, added: true, addedMeetingLine, previousBody, taskId: await prepTaskId(saved.note, entry.event) };
+    },
     meetingContext: (reference, mailScope = null) => context(reference, mailScope),
     async meetingReadiness(references, mailScope = null) {
       if (references.length > MAX_READINESS_EVENTS) throw new Error(`At most ${MAX_READINESS_EVENTS} meetings can be checked at once`);

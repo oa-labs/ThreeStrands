@@ -456,6 +456,32 @@ describe("TodayWorkspace", () => {
       fireEvent.click(next);
       expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "next" }));
     });
+
+    it("lists meetings to prepare, opens preparation from them, the agenda, and the next meeting, and shows it in place of the columns", async () => {
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
+        event("past", -60, { title: "Done already" }),
+        event("next", 20, { title: "Design sync" }),
+      ] });
+      vi.spyOn(mailClient, "meetingReadiness").mockImplementation(async (references) => references.map((reference) => ({
+        reference, eventAvailable: true, hasOccurrenceNote: false, priorOccurrencesWithNotes: 0, seriesNotes: 0, openCommitments: 0,
+        candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, unavailableSections: [], error: null })));
+      const preparation = { event: null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => <p>Preparation view</p>), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
+      const { rerenderToday } = renderToday({ calendarConnected: true, preparation });
+
+      const prep = within(await screen.findByRole("region", { name: /Meeting prep/ }));
+      expect(await prep.findByText("No notes yet")).toBeInTheDocument();
+      expect(prep.queryByText("Done already")).not.toBeInTheDocument();
+      fireEvent.click(prep.getByRole("button", { name: /^Design sync/ }));
+      expect(preparation.onPrepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: "next" }));
+      fireEvent.click(within(screen.getByRole("region", { name: "Today's agenda" })).getByRole("button", { name: "Prepare for Design sync" }));
+      fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+      expect(preparation.onPrepare).toHaveBeenCalledTimes(3);
+
+      rerenderToday({ calendarConnected: true, preparation: { ...preparation, event: event("next", 20, { title: "Design sync" }) } });
+      expect(screen.getByText("Preparation view")).toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Today's agenda" })).not.toBeInTheDocument();
+      expect(preparation.render).toHaveBeenLastCalledWith(expect.objectContaining({ id: "next" }), expect.any(Function));
+    });
   });
 });
 

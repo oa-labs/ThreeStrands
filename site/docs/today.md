@@ -21,6 +21,14 @@ A line under the date summarizes your remaining meetings, free time, conflicts, 
 - **Add Note**, beside your next meeting or on any event in the agenda, writes a line about the meeting in that day's note. See [Meeting Notes](notes.html#meeting-notes).
 - Overlapping meetings are marked. **Recorded** means the invitation says a session will be recorded; it does not guarantee a recording will be available.
 
+## Get Ready for Meetings {#get-ready-for-meetings}
+
+**Meeting prep**, above the agenda, lists the meetings still ahead today with what is ready for each: whether the meeting has notes, earlier meetings in its series with notes, open commitments, and when you last had mail with its attendees.
+
+- Click a meeting, or **Prepare** on the agenda or beside your next meeting, to [prepare for it](calendar.html#prepare-for-a-meeting) here on Today. Close preparation to return to the columns.
+- **Reserve Prep Time** adds a task, "Prepare for" and the meeting's name, under the meeting's line in that day's note, adding the line if the note doesn't have one. It appears in **Tasks**. Doing it again finds the task already there.
+- **No Prep Needed** sets a meeting aside on this computer only; click the arrow to bring it back.
+
 ## Work Through Mail and Tasks {#work-through-mail-and-tasks}
 
 Unread mail is grouped into **Invitations**, **Needs a reply**, **From people**, and **Updates**. Needs a reply highlights messages written to you and at most two others by people you write to. Updates includes newsletters, notifications, and no-reply senders. A message can also say that its sender is in one of your meetings today.

@@ -32,3 +32,18 @@ pub(crate) async fn meeting_readiness(
     })
     .await
 }
+
+/// Reserve Prep Time: a round prep task under the meeting's line in its
+/// day's note, writing the line first when needed. Repeating it returns the
+/// task already there.
+#[tauri::command]
+pub(crate) async fn reserve_meeting_prep(
+    date: String,
+    expected: Option<String>,
+    entry: crate::note_meetings::MeetingEntry,
+    state: State<'_, AppState>,
+) -> AppResult<crate::db::note_entities::PrepReservation> {
+    let database = state.database.clone();
+    run_database_task(move || database.reserve_meeting_prep(&date, expected.as_deref(), &entry))
+        .await
+}

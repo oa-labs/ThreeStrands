@@ -1095,6 +1095,8 @@ export type MeetingContext = {
   commitments: MeetingSection<MeetingCommitment>;
   limits: MeetingLimits;
 };
+/** What Reserve Prep Time did: `added` is false when the meeting already had a prep task. */
+export type PrepReservation = { note: Note; added: boolean; addedMeetingLine: boolean; previousBody: string; taskId: string | null };
 /** Counts for one meeting in a day's list; they agree with its full context. */
 export type MeetingReadiness = {
   reference: import("./noteEntities").NoteReference;

@@ -1,6 +1,8 @@
 import { addMeetingToDailyNote, captureConversation } from "./noteCapture";
 import { MeetingNoteDialog } from "./MeetingNoteDialog";
 import { meetingEventReference, primaryMeetingNote } from "./meetingNoteEntry";
+import { preparationKey } from "./meetingPrep";
+import type { MeetingCommitment } from "./domain";
 import type { MeetingEntry } from "./noteMeetings";
 import { dailyNoteName } from "./noteDates";
 import type { ScheduleEvent } from "./domain";
@@ -176,6 +178,7 @@ const AgentsWorkspace = lazy(() => import("./AgentsWorkspace").then(m => ({ defa
 const FilesWorkspace = lazy(() => import("./FilesWorkspace").then((m) => ({ default: m.FilesWorkspace })));
 const NotesWorkspace = lazy(() => import("./NotesWorkspace").then((m) => ({ default: m.NotesWorkspace })));
 const ContactsWorkspace = lazy(() => import("./ContactsWorkspace").then((m) => ({ default: m.ContactsWorkspace })));
+const MeetingPreparation = lazy(() => import("./MeetingPreparation").then((m) => ({ default: m.MeetingPreparation })));
 
 // An Outbox message is shown alone and expanded: it has no conversation to
 // activate, collapse, scroll through, or reply within.
@@ -745,12 +748,42 @@ export function App() {
       openCalendarView(eventDate(event), event);
     }
   };
+  // Meeting preparation: the meeting prepared in Calendar's event details, by
+  // occurrence, and the one prepared on Today. Both survive leaving to open a
+  // source, so Back to Meeting finds them as they were.
+  const [calendarPreparing, setCalendarPreparing] = useState<string | null>(null);
+  const [todayPreparing, setTodayPreparing] = useState<ScheduleEvent | null>(null);
+  const prepMailAccounts = useMemo(() => accounts.map((account) => ({ email: account.email, label: account.nickname?.trim() || account.displayName?.trim() || account.email })), [accounts]);
+  const returnToPreparation = (origin: "calendar" | "today", event: ScheduleEvent) => {
+    if (origin === "calendar") { setCalendarPreparing(preparationKey(event)); openCalendarView(eventDate(event), event); }
+    else { setTodayPreparing(event); setRightWorkspace("today"); }
+  };
+  const openFromPreparation = (origin: "calendar" | "today", event: ScheduleEvent, open: () => unknown) => {
+    void Promise.resolve().then(open).then(
+      () => setNotice({ message: `Preparing for ${event.title}`, action: { label: "Back to Meeting", run: () => returnToPreparation(origin, event) } }),
+      (reason) => setNotice({ message: errorMessage(reason) }),
+    );
+  };
+  const commitmentHref = (commitment: MeetingCommitment) => {
+    const note = /^note:(.+):([^:]+)$/.exec(commitment.id);
+    return noteReferenceHref(note ? { version: 1, kind: "task", id: note[2], note: note[1] } : { version: 1, kind: "task", id: commitment.id });
+  };
+  const renderPreparation = (origin: "calendar" | "today") => (event: ScheduleEvent, close: () => void) => <Suspense fallback={<p className="context-status" role="status">Loading preparation…</p>}><MeetingPreparation
+    event={event}
+    mailAccounts={prepMailAccounts}
+    refreshKey={`${syncStatus?.lastSuccessfulSync ?? ""}:${taskRevision}`}
+    onOpenNote={(noteId, href) => openFromPreparation(origin, event, () => openNote(noteId, undefined, href))}
+    onOpenThread={(threadId) => openFromPreparation(origin, event, () => jumpToThread(threadId))}
+    onOpenTask={(commitment) => openFromPreparation(origin, event, () => openEntityReference(commitmentHref(commitment)))}
+    onClose={close}
+  /></Suspense>;
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
     delegateSelected,
     createCalendarEvent: () => { openCalendarView(); setCreateCalendarEventRequested(true); },
     addToTodaysNote,
     addMeetingNote: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => { void openMeetingNote(calendarSelectedEvent); } : undefined,
+    prepareMeeting: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => setCalendarPreparing(preparationKey(calendarSelectedEvent)) : undefined,
     snoozeSelected: openSnooze, returnSnoozedSelected: conversationSnooze.returnToInbox,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
@@ -1569,6 +1602,7 @@ export function App() {
             onOpenNote={openNote}
             onAddNote={(event) => { void openMeetingNote(event); }}
             onSelectedEventChange={setCalendarSelectedEvent}
+            preparation={{ key: calendarPreparing, onChange: setCalendarPreparing, render: renderPreparation("calendar") }}
             anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
             initialEvent={calendarEventToOpen}
             onAnchorChange={setCalendarWeekAnchor}
@@ -1828,6 +1862,10 @@ export function App() {
         onOpenTasks={openTasksView}
         onOpenContact={contactCardActions.onOpenContact}
         onOpenKeepInTouch={openKeepInTouchView}
+        preparation={{
+          event: todayPreparing, onPrepare: setTodayPreparing, onClose: () => setTodayPreparing(null), render: renderPreparation("today"),
+          ownAddresses: meetingOwnAddresses, onOpenNote: (noteId, href) => openNote(noteId, undefined, href), onNotice: setNotice,
+        }}
       /></Suspense></ErrorBoundary> : null}
       {agents.activity ? <aside className="agent-activity" role="status"><button className="btn-link agent-activity-action" onClick={() => { const id = agents.activity!.id; agents.patchView(id, { version: null, tab: agents.activity!.label.startsWith("Answer needed") ? "conversation" : "result" }); openAgent(id); }}>{agents.activity.label}</button><button className="btn-icon btn-icon-sm" aria-label="Dismiss Agent Notification" onClick={agents.dismissActivity}><X size={ICON_SIZE.sm} /></button></aside> : null}
       {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Agents…</p>}><AgentsWorkspace controller={agents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAgentPersonalTask} onOpenResearchSettings={() => openSettingsAt("research")} settingsOpen={settingsOpen} /></Suspense></ErrorBoundary> : null}

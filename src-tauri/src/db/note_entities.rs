@@ -2,6 +2,7 @@
 //! transaction, conflict guard and sync budget, never a second task entity.
 use super::{Database, DatabaseError, DbResult};
 use crate::{
+    meeting_excerpt::{self, PrepInsert},
     models::{Note, NoteBacklink},
     note_entities::{self, EntityLink, NoteItem, NoteReference},
     note_meetings::{self, MeetingEntry},
@@ -454,6 +455,104 @@ impl Database {
             Ok(MeetingCapture { note: saved, added: true, previous_body: start.previous_body, meeting_note, created_meeting_note })
         })
     }
+}
+
+/// What Reserve Prep Time did to the meeting's day note.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepReservation {
+    pub note: Note,
+    /// False when the meeting already had a prep task; nothing was written.
+    pub added: bool,
+    /// Whether this action also wrote the meeting's line.
+    pub added_meeting_line: bool,
+    pub previous_body: String,
+    /// The prep task's id as Tasks lists it (`note:<note>:<marker>`).
+    pub task_id: Option<String>,
+}
+
+impl Database {
+    /// Adds a round task "Prepare for <name>" under the occurrence's line in
+    /// `date`'s daily note, writing that line first when the note has none.
+    /// When the line already holds a prep task, writes nothing and returns
+    /// it, so repeating the action, or retrying after a lost response, adds
+    /// no second task. One version-checked transaction, as Add Note.
+    pub fn reserve_meeting_prep(
+        &self,
+        date: &str,
+        expected: Option<&str>,
+        entry: &MeetingEntry,
+    ) -> DbResult<PrepReservation> {
+        const MESSAGES: DailyInsertMessages = DailyInsertMessages {
+            changed: "That day's note changed. Open it before reserving prep time.",
+            conflict: "Resolve that day's note conflict before reserving prep time.",
+            fence: "That day's note has a code block that never closes where the meeting would go. Open it before reserving prep time.",
+        };
+        let line = note_meetings::meeting_line(entry, None).map_err(DatabaseError::invalid)?;
+        let event = entry.event.target().map_err(DatabaseError::invalid)?;
+        let note_id = crate::notes::daily_note_id(date);
+        self.with_transaction(|tx| {
+            let start = begin_daily_insert(tx, date, expected, &MESSAGES)?;
+            let linked = start.parsed.links.iter().any(|link| {
+                link.reference.kind == "event" && link.reference.target().ok().as_ref() == Some(&event)
+            });
+            let mut body = start.previous_body.clone();
+            let mut added_meeting_line = false;
+            let insert = |body: &str| {
+                meeting_excerpt::insert_prep_task(&note_id, body, &entry.event, &entry.name)
+                    .map_err(DatabaseError::invalid)
+            };
+            let mut result = insert(&body)?;
+            if result == PrepInsert::NoMeetingLine {
+                if linked {
+                    // Linked only from prose or a block that can't be bounded.
+                    return Err(DatabaseError::invalid(
+                        "This meeting is mentioned in that day's note, but not as a meeting line. Open the note to add prep time.",
+                    ));
+                }
+                body = note_meetings::insert_meeting_line(&body, &line)
+                    .map_err(|_| DatabaseError::invalid(MESSAGES.fence))?;
+                added_meeting_line = true;
+                result = insert(&body)?;
+            }
+            let (saved, added) = match result {
+                PrepInsert::Inserted(next) => (
+                    super::notes::save_daily_in(tx, date, &next)?.ok_or(DatabaseError::NotFound("Note"))?,
+                    true,
+                ),
+                PrepInsert::Existing => (start.note.clone().ok_or(DatabaseError::NotFound("Note"))?, false),
+                PrepInsert::NoMeetingLine => {
+                    return Err(DatabaseError::invalid("The meeting's line couldn't be found after adding it"))
+                }
+            };
+            let task_id = prep_task_id(&saved, &entry.event)?;
+            Ok(PrepReservation { note: saved, added, added_meeting_line, previous_body: start.previous_body, task_id })
+        })
+    }
+}
+
+/// The prep task under the occurrence's line in `note`, by its Tasks id.
+fn prep_task_id(note: &Note, occurrence: &NoteReference) -> DbResult<Option<String>> {
+    let blocks = meeting_excerpt::occurrence_blocks(&note.id, &note.body, occurrence)
+        .map_err(DatabaseError::invalid)?;
+    let Some(block) = blocks
+        .into_iter()
+        .find(|block| block.kind == meeting_excerpt::MeetingBlockKind::Excerpt)
+    else {
+        return Ok(None);
+    };
+    let parsed = note_entities::parse(&note.id, &note.body).map_err(DatabaseError::invalid)?;
+    let prefix = meeting_excerpt::PREP_TASK_PREFIX.trim_end().to_lowercase();
+    Ok(parsed
+        .items
+        .iter()
+        .find(|item| {
+            item.task
+                && block.start < item.start
+                && item.start < block.end
+                && item.title.to_lowercase().starts_with(&prefix)
+        })
+        .map(|item| format!("note:{}:{}", note.id, item.id)))
 }
 
 #[derive(Serialize)]

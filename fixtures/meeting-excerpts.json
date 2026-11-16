@@ -198,5 +198,67 @@
         }
       ]
     }
+  ],
+  "prep": [
+    {
+      "name": "under a meeting line without nested content",
+      "body": "## Meetings\n\n- [9:30am]({A}) for Sync\n- [11am]({B}) for Other\n",
+      "meeting": "Sync",
+      "expected": "## Meetings\n\n- [9:30am]({A}) for Sync\n  - ( ) Prepare for Sync\n- [11am]({B}) for Other\n"
+    },
+    {
+      "name": "after the last nested line",
+      "body": "- [9:30am]({A}) for Sync\n  - Agenda\n    - Detail\n\nAfter\n",
+      "meeting": "Sync",
+      "expected": "- [9:30am]({A}) for Sync\n  - Agenda\n    - Detail\n  - ( ) Prepare for Sync\n\nAfter\n"
+    },
+    {
+      "name": "a nested meeting line and an ordered marker",
+      "body": "- Monday\n  1. [9:30am]({A}) for Sync\n",
+      "meeting": "Sync",
+      "expected": "- Monday\n  1. [9:30am]({A}) for Sync\n     - ( ) Prepare for Sync\n"
+    },
+    {
+      "name": "at the end without a final newline",
+      "body": "- [9:30am]({A}) for Sync",
+      "meeting": "Sync",
+      "expected": "- [9:30am]({A}) for Sync\n  - ( ) Prepare for Sync"
+    },
+    {
+      "name": "markdown in the name is escaped",
+      "body": "- [9:30am]({A}) for Sync\n",
+      "meeting": "Q*3* [plan]",
+      "expected": "- [9:30am]({A}) for Sync\n  - ( ) Prepare for Q\\*3\\* \\[plan\\]\n"
+    },
+    {
+      "name": "an existing prep task is reused",
+      "body": "- [9:30am]({A}) for Sync\n  - ( ) Prepare for Sync\n",
+      "meeting": "Sync",
+      "expected": "EXISTING"
+    },
+    {
+      "name": "a finished prep task is also reused",
+      "body": "- [9:30am]({A}) for Sync\n  - (x) prepare for the sync\n",
+      "meeting": "Sync",
+      "expected": "EXISTING"
+    },
+    {
+      "name": "a prep task under another meeting doesn't count",
+      "body": "- [9:00am]({B}) for Other\n  - ( ) Prepare for Other\n- [9:30am]({A}) for Sync\n",
+      "meeting": "Sync",
+      "expected": "- [9:00am]({B}) for Other\n  - ( ) Prepare for Other\n- [9:30am]({A}) for Sync\n  - ( ) Prepare for Sync\n"
+    },
+    {
+      "name": "a reference outside a list is not a meeting line",
+      "body": "Talked about [it]({A})\n",
+      "meeting": "Sync",
+      "expected": "NO_LINE"
+    },
+    {
+      "name": "no link to the meeting",
+      "body": "- [9:00am]({B}) for Other\n",
+      "meeting": "Sync",
+      "expected": "NO_LINE"
+    }
   ]
 }

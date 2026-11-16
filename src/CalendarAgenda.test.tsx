@@ -179,6 +179,16 @@ describe("Add Note in the agenda", () => {
     expect(screen.queryByRole("button", { name: "Add Note for Unfiled" })).not.toBeInTheDocument();
   });
 
+  it("offers Prepare before Add Note on each event a note can link", () => {
+    const onPrepare = vi.fn();
+    const standup = event("Standup", 9, 10);
+    render(<CalendarAgenda today={day} calendars={calendars} onOpenEvent={vi.fn()} onAddNote={vi.fn()} onPrepare={onPrepare}
+      schedule={{ events: [standup, event("Unfiled", 11, 12, { calendarId: undefined })], loading: false, error: null, reload: vi.fn() }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Prepare for Standup" }));
+    expect(onPrepare).toHaveBeenCalledExactlyOnceWith(standup);
+    expect(screen.queryByRole("button", { name: "Prepare for Unfiled" })).not.toBeInTheDocument();
+  });
+
   it("leaves Add Note out where it isn't offered", () => {
     renderAgenda([event("Standup", 9, 10)]);
     expect(screen.queryByRole("button", { name: /Add Note/ })).not.toBeInTheDocument();

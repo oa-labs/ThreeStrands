@@ -2,8 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { mailClient } from "./data/client";
-import type { WorkspaceFile } from "./domain";
-import { noteReferenceHref } from "./noteEntities";
+import type { MeetingContext, ScheduleEvent, WorkspaceFile } from "./domain";
+import { noteReferenceHref, type NoteReference } from "./noteEntities";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { lastEditorProps } from "./test/NoteEditorStub";
 
@@ -141,4 +141,66 @@ it("hides and shows the Notes side panel with a backslash", async () => {
   expect(screen.getByRole("button", { name: "Show Note context" })).toBeInTheDocument();
   fireEvent.keyDown(window, { key: "\\" });
   expect(await screen.findByRole("complementary", { name: "Note context" })).toBeInTheDocument();
+});
+
+function prepContext(reference: NoteReference, noteId: string): MeetingContext {
+  const section = <T,>(items: T[]) => ({ status: "ready" as const, items, omitted: 0, message: null });
+  return {
+    reference, event: null, mailScope: [],
+    thisMeeting: section([{ noteId, title: "Prep source", dailyDate: null, revision: "r", kind: "excerpt" as const, text: "- Agenda for the review", truncated: false, start: 0, end: 10 }]),
+    previousMeetings: section([]), seriesNotes: section([]), conversations: section([]), commitments: section([]),
+    limits: { noteSources: 20, priorOccurrences: 8, excerptBytes: 4096, linkedNotePreviewBytes: 1024, attendees: 50, conversations: 10, mailLookbackDays: 90, commitments: 25 },
+  };
+}
+
+function mockMeetingCalendar(meeting: ScheduleEvent) {
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" }]);
+  vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([{ id: "primary", accountId: "calendar@example.com", name: "Work", primary: true, selected: true, writable: true }]);
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [meeting], errors: [] });
+}
+
+it("prepares a meeting on Today, opens a source note, and comes back to the same preparation", async () => {
+  localStorage.clear();
+  clearScheduleCache();
+  const start = new Date(Date.now() + 10 * 60_000);
+  const meeting: ScheduleEvent = { id: "prep-meeting", accountId: "calendar@example.com", calendarId: "primary", title: "Prep review", allDay: false,
+    start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString() };
+  const source = await mailClient.createNote("Prep source", "- Agenda for the review");
+  vi.spyOn(mailClient, "meetingContext").mockImplementation(async (reference) => prepContext(reference, source.id));
+  mockMeetingCalendar(meeting);
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
+  await screen.findByRole("button", { name: /^Next: Prep review/ });
+  fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+  const prep = within(await screen.findByRole("region", { name: "Preparation for Prep review" }));
+  fireEvent.click(await prep.findByRole("button", { name: /Agenda for the review/ }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Prep source"));
+  fireEvent.click(await screen.findByRole("button", { name: "Back to Meeting" }));
+  expect(await screen.findByRole("region", { name: "Preparation for Prep review" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Close Preparation" }));
+  expect(await screen.findByRole("region", { name: "Today's agenda" })).toBeInTheDocument();
+});
+
+it("prepares the meeting open in Calendar from its details and from the command palette", async () => {
+  localStorage.clear();
+  clearScheduleCache();
+  const start = new Date(Date.now() + 10 * 60_000);
+  const meeting: ScheduleEvent = { id: "calendar-prep", accountId: "calendar@example.com", calendarId: "primary", title: "Calendar prep", allDay: false,
+    start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString() };
+  const source = await mailClient.createNote("Calendar prep source", "- Agenda for the review");
+  vi.spyOn(mailClient, "meetingContext").mockImplementation(async (reference) => prepContext(reference, source.id));
+  mockMeetingCalendar(meeting);
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
+  fireEvent.click(await screen.findByRole("button", { name: /^Next: Calendar prep/ }));
+  const rail = within(await screen.findByRole("complementary", { name: "Meeting context" }));
+  fireEvent.click(await rail.findByRole("button", { name: "Prepare" }));
+  expect(await rail.findByRole("region", { name: "Preparation for Calendar prep" })).toBeInTheDocument();
+  fireEvent.click(rail.getByRole("button", { name: "Close Preparation" }));
+  await waitFor(() => expect(rail.queryByRole("region", { name: "Preparation for Calendar prep" })).not.toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole("button", { name: /^Command Palette/ }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Filter Commands" }), { target: { value: "Prepare for Meeting" } });
+  fireEvent.click(await screen.findByRole("button", { name: /Prepare for Meeting/ }));
+  expect(await rail.findByRole("region", { name: "Preparation for Calendar prep" })).toBeInTheDocument();
 });

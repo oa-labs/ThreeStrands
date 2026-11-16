@@ -129,6 +129,8 @@ export type CommandContext = {
   addToTodaysNote?(): Promise<CommandResult>;
   /** Opens Add Note for the calendar event whose details are open. */
   addMeetingNote?(): void;
+  /** Opens preparation for the meeting whose details are open in Calendar. */
+  prepareMeeting?(): void;
   openAgentsView?(): void;
   delegateSelected?(): void;
   openTodayView?(): void;
@@ -692,6 +694,10 @@ export const commands: Command[] = [
   {
     id: "notes.meeting", title: "Add Meeting to Daily Note", keywords: ["add note", "meeting notes", "calendar", "event"], keys: [], group: "Application",
     enabled: (c) => !c.composerActive && Boolean(c.addMeetingNote), run: (c) => complete(() => c.addMeetingNote?.()),
+  },
+  {
+    id: "meetings.prepare", title: "Prepare for Meeting", keywords: ["meeting prep", "agenda", "previous notes", "calendar", "event"], keys: [], group: "Application",
+    enabled: (c) => !c.composerActive && Boolean(c.prepareMeeting), run: (c) => complete(() => c.prepareMeeting?.()),
   },
   {
     id: "notes.today", title: "Open Today's Note", keywords: ["daily", "journal", "notes"], keys: [], group: "Navigation",

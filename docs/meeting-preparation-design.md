@@ -1,7 +1,7 @@
 # Meeting preparation and follow-through
 
-**Status:** Stage 1 (contracts and extraction) implemented; no user-visible feature yet.
-Later stages remain proposed.
+**Status:** Stages 1 (contracts and extraction) and 2 (local preparation)
+implemented. Later stages remain proposed.
 **Baseline:** 0.210.0 repository, reviewed 2026-11-15; daily-loop entry points
 added 2026-11-16.
 **Priority:** Next feature in the [product plan](../PLAN.MD#recommended-sequence-and-next-feature),
@@ -432,6 +432,35 @@ Gate: a recurring meeting can be prepared from local sources with AI disabled,
 without duplicate notes or prep tasks, focus theft, or lost draft/editor state.
 Missing mail accounts or one failing section or event do not prevent access to
 available notes.
+
+**As built.** `MeetingPreparation` with `useMeetingPreparation` renders the view;
+`MeetingReadinessList` with `useMeetingReadiness` renders a day's meetings.
+
+- In Calendar, **Prepare** sits beside Open Note / Add Note in the event details
+  and on each agenda row. While preparing, the view takes the place of the
+  details' note backlinks and related mail, which it covers. The palette command
+  **Prepare for Meeting** is enabled while an event's details are open.
+- On Today, **Meeting prep** sits above the agenda and lists the meetings still
+  ahead that a note can link, excluding declined events and working locations.
+  Prepare, from that list, the agenda, or the next-meeting card, shows the view in
+  place of Today's columns; closing it returns focus to the trigger. This is the
+  interim placement until Plan Today ships.
+- Opening a source uses the existing note, conversation, and task navigation and
+  shows a **Back to Meeting** notice. The meeting being prepared in Calendar and on
+  Today is kept in App state, so returning restores the same view.
+- When the calendar has no matching mail account, or the user asks, an explicit
+  modal chooses the mail accounts; the choice belongs to that occurrence only.
+- **Reserve Prep Time** is `reserve_meeting_prep(date, expected, entry)`. It adds
+  `( ) Prepare for <title>` under the occurrence's meeting line, indented to the
+  line's text, writing the line first (attendees named from contacts, as Add Note
+  does by default) when the day's note has none. It refuses when the meeting is
+  linked only outside a list item. Idempotency comes from the note itself: a round
+  task under that line whose title starts with "Prepare for" is returned instead
+  of adding another, so a repeat or a retry after a lost response adds nothing.
+  No separate receipt is kept; stage 3's receipts are for follow-through capture.
+  Undo restores the note's previous text only if nothing changed it since.
+- **No Prep Needed** is stored on this device by day and occurrence, keeps at most
+  200 choices, and has Undo.
 
 The first Plan Today routine and Today's reshaped layout follow this stage under
 their own design, using the readiness list as the meeting step.

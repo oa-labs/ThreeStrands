@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { boundedText, occurrenceBlocks } from "./meetingExcerpt";
+import { boundedText, insertPrepTask, occurrenceBlocks } from "./meetingExcerpt";
 import { noteReferenceHref, type NoteReference } from "./noteEntities";
 
 const fixtures = JSON.parse(readFileSync("fixtures/meeting-excerpts.json", "utf8")) as {
   events: Record<string, NoteReference>;
   target: string;
   cases: { name: string; body: string; blocks: { kind: string; text: string }[] }[];
+  prep: { name: string; body: string; meeting: string; expected: string }[];
 };
 
 // Longest names first, so `{A}` doesn't match inside `{A_OTHER_CALENDAR}`.
@@ -18,6 +19,11 @@ describe("meeting excerpts", () => {
     const filled = fill(body);
     const actual = occurrenceBlocks(filled, fixtures.events[fixtures.target]).map((block) => ({ kind: block.kind, text: filled.slice(block.start, block.end) }));
     expect(actual).toEqual(blocks.map((block) => ({ kind: block.kind, text: fill(block.text) })));
+  });
+
+  it.each(fixtures.prep)("prep task: $name", ({ body, meeting, expected }) => {
+    const result = insertPrepTask(fill(body), fixtures.events[fixtures.target], meeting);
+    expect(result === "existing" ? "EXISTING" : result === "noMeetingLine" ? "NO_LINE" : result).toBe(fill(expected));
   });
 
   it("does not treat a series link as this occurrence", () => {

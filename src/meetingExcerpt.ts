@@ -1,4 +1,5 @@
-import { extractNoteEntityLinks, noteReferenceKey, type NoteReference } from "./noteEntities";
+import { escapeMarkdownText, extractNoteEntityLinks, noteItemRanges, noteReferenceKey, type NoteReference } from "./noteEntities";
+import { noteInlineText } from "./notePreview";
 
 /** `excerpt` is a list item linking the meeting with its nested content;
  * `reference` is only the line of a link whose surrounding text isn't a
@@ -89,4 +90,26 @@ export function boundedText(text: string, limit: number): { text: string; trunca
     used += size;
   }
   return { text: out, truncated: true };
+}
+
+/** The words a prep task starts with; mirrors `PREP_TASK_PREFIX` natively. */
+export const PREP_TASK_PREFIX = "Prepare for ";
+
+/** `body` with a round prep task nested under the first list item linking
+ * `occurrence`, `"existing"` when that item already holds one, or
+ * `"noMeetingLine"`. Mirrors `insert_prep_task` in
+ * `src-tauri/src/meeting_excerpt.rs`. */
+export function insertPrepTask(body: string, occurrence: NoteReference, name: string): string | "existing" | "noMeetingLine" {
+  const block = occurrenceBlocks(body, occurrence).find((candidate) => candidate.kind === "excerpt");
+  if (!block) return "noMeetingLine";
+  const prefix = PREP_TASK_PREFIX.trimEnd().toLowerCase();
+  const items = noteItemRanges(body);
+  const titleOf = (item: (typeof items)[number]) => noteInlineText(body.slice(item.textStart, item.end).replace(/<!--.*?-->/g, "").trim()).toLowerCase();
+  if (items.some((item) => item.task && block.start < item.start && item.start < block.end && titleOf(item).startsWith(prefix))) return "existing";
+  const itemLine = body.slice(block.start).split("\n")[0];
+  const match = /^([ \t]*)(\S+)([ \t]+)/.exec(itemLine);
+  if (!match) throw new Error("Invalid meeting line");
+  const indent = `${match[1]}${" ".repeat(match[2].length + match[3].length)}`;
+  const title = escapeMarkdownText(name.split(/\s+/u).filter(Boolean).join(" ") || "Meeting");
+  return `${body.slice(0, block.end)}\n${indent}- ( ) ${PREP_TASK_PREFIX}${title}${body.slice(block.end)}`;
 }

@@ -1,0 +1,3 @@
+### New
+- **Prepare** for a meeting from its details in **Calendar**, an agenda, **Today**, or the command palette. Preparation shows that meeting's notes, notes from earlier meetings in its series, recent mail with its attendees, and open commitments, each one click from its source, with **Back to Meeting** to return. It reads only what is on your computer and changes nothing.
+- **Today** lists the meetings still ahead with what is ready for each. **Reserve Prep Time** adds a "Prepare for" task under the meeting in that day's note, and **No Prep Needed** sets a meeting aside on this computer.

@@ -662,3 +662,91 @@ fn long_blocks_and_many_earlier_meetings_say_what_was_left_out() {
     assert_eq!(source.text.len(), policy::MAX_MEETING_EXCERPT_BYTES);
     assert_eq!(result.limits, policy::LIMITS);
 }
+
+fn prep_entry(id: &str) -> crate::note_meetings::MeetingEntry {
+    crate::note_meetings::MeetingEntry {
+        event: occurrence(id, None),
+        time: "3:00pm".into(),
+        attendees: Vec::new(),
+        name: "Sync".into(),
+        link_note: false,
+    }
+}
+
+#[test]
+fn reserving_prep_writes_the_meeting_line_and_one_prep_task_and_repeating_reuses_it() {
+    let db = setup(&[]);
+    let first = db
+        .reserve_meeting_prep("2026-11-16", None, &prep_entry("evt-1"))
+        .unwrap();
+    assert!(first.added && first.added_meeting_line);
+    assert_eq!(first.previous_body, "");
+    assert!(first.note.body.contains("  - ( ) Prepare for Sync"));
+    let task_id = first.task_id.clone().unwrap();
+    assert!(db
+        .list_note_tasks()
+        .unwrap()
+        .iter()
+        .any(|task| task.id == task_id && !task.checked));
+
+    let again = db
+        .reserve_meeting_prep(
+            "2026-11-16",
+            Some(&first.note.updated_at),
+            &prep_entry("evt-1"),
+        )
+        .unwrap();
+    assert!(!again.added && !again.added_meeting_line);
+    assert_eq!(again.task_id, Some(task_id));
+    assert_eq!(again.note.body, first.note.body);
+    assert_eq!(again.note.updated_at, first.note.updated_at);
+
+    // The context counts it as this meeting's open commitment.
+    let result = context(&db, &occurrence("evt-1", None));
+    assert!(result
+        .commitments
+        .items
+        .iter()
+        .any(|item| item.title == "Prepare for Sync"));
+}
+
+#[test]
+fn reserving_prep_goes_under_an_existing_meeting_line_and_refuses_stale_or_unbounded_notes() {
+    let db = setup(&[]);
+    let saved = db
+        .save_daily_note(
+            "2026-11-16",
+            &format!(
+                "## Meetings\n\n- [3pm]({}) for Sync\n- Other\n",
+                href("evt-1", None)
+            ),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(db
+        .reserve_meeting_prep("2026-11-16", Some("stale"), &prep_entry("evt-1"))
+        .is_err());
+    assert_eq!(db.get_note(&saved.id).unwrap().unwrap().body, saved.body);
+
+    let reserved = db
+        .reserve_meeting_prep("2026-11-16", Some(&saved.updated_at), &prep_entry("evt-1"))
+        .unwrap();
+    assert!(reserved.added && !reserved.added_meeting_line);
+    assert!(reserved.note.body.starts_with(&format!(
+        "## Meetings\n\n- [3pm]({}) for Sync\n  - ( ) Prepare for Sync",
+        href("evt-1", None)
+    )));
+    assert!(reserved.note.body.contains("\n- Other\n"));
+
+    let prose = db
+        .save_daily_note(
+            "2026-11-17",
+            &format!("Talked about [the sync]({}).\n", href("evt-2", None)),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(db
+        .reserve_meeting_prep("2026-11-17", Some(&prose.updated_at), &prep_entry("evt-2"))
+        .is_err());
+    assert_eq!(db.get_note(&prose.id).unwrap().unwrap().body, prose.body);
+}

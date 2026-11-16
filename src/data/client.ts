@@ -6,7 +6,7 @@ import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, 
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
-import type { MeetingContext, MeetingReadiness } from "../domain";
+import type { MeetingContext, MeetingReadiness, PrepReservation } from "../domain";
 import {
   BOUNDED_LOCAL_READ,
   invokeWithPolicy,
@@ -431,6 +431,8 @@ export interface MailClient extends CorrespondenceClient {
   meetingContext(reference: NoteReference, mailScope?: string[] | null): Promise<MeetingContext>;
   /** Counts for up to 50 meetings, such as a day's. */
   meetingReadiness(references: NoteReference[], mailScope?: string[] | null): Promise<MeetingReadiness[]>;
+  /** Reserve Prep Time: a prep task under the meeting's line in `date`'s note, adding the line when needed. */
+  reserveMeetingPrep(date: string, expected: string | null, entry: MeetingEntry): Promise<PrepReservation>;
   resolveNoteConversation(reference: NoteReference): Promise<string | null>;
   /** The contact a contact reference opens, or null when this device has none. */
   resolveNoteContact(reference: NoteReference): Promise<string | null>;
@@ -702,6 +704,7 @@ const tauriClient: MailClient = {
   noteBacklinks: (reference) => read("note_backlinks", { reference }),
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
   meetingReadiness: (references, mailScope = null) => read("meeting_readiness", { references, mailScope }),
+  reserveMeetingPrep: (date, expected, entry) => complete("reserve_meeting_prep", { date, expected, entry }),
   resolveNoteConversation: (reference) => read("resolve_note_conversation", { reference }),
   resolveNoteContact: (reference) => read("resolve_note_contact", { reference }),
   captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),

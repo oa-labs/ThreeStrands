@@ -1,4 +1,4 @@
-import { CalendarDays, NotebookPen } from "lucide-react";
+import { CalendarDays, ClipboardList, NotebookPen } from "lucide-react";
 import { useCallback, useRef, type ReactNode } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
@@ -39,6 +39,8 @@ type AgendaProps = {
   markConflicts?: boolean;
   /** Offers Add Note on each event that a note can link. */
   onAddNote?(event: ScheduleEvent): void;
+  /** Offers Prepare on each event that a note can link. */
+  onPrepare?(event: ScheduleEvent): void;
 };
 
 type AgendaDay = "today" | "tomorrow" | "chosen";
@@ -68,7 +70,7 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
   const agendaRef = useRef<HTMLElement>(null);
   const refresh = useCallback(async () => { if (refreshSchedule) await refreshSchedule(); else reload(); }, [refreshSchedule, reload]);
   const pull = usePullToRefresh(agendaRef, pullToRefresh ? refresh : undefined);
@@ -99,7 +101,10 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
       title={event.title}
       detail={detail}
       onActivate={() => onOpenEvent(event)}
-      actions={onAddNote && meetingEventReference(event) ? [<AddNoteButton key="note" event={event} onAddNote={onAddNote} />] : undefined}
+      actions={meetingEventReference(event) && (onPrepare || onAddNote) ? [
+        ...(onPrepare ? [<PrepareButton key="prepare" event={event} onPrepare={onPrepare} />] : []),
+        ...(onAddNote ? [<AddNoteButton key="note" event={event} onAddNote={onAddNote} />] : []),
+      ] : undefined}
     />);
   });
   if (now && pastCount > 0 && pastCount === agenda.length) rows.push(<NowDivider key="now" now={now} />);
@@ -120,6 +125,11 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
       {!loading && !error && agenda.length === 0 ? <p className="context-status">{selected.length ? text.empty : `Select a calendar to see ${day === "chosen" ? "this day's" : "today's"} agenda.`}</p> : null}
     </>}
   />;
+}
+
+/** Prepare for one agenda event: its notes, earlier meetings, mail, and commitments. */
+export function PrepareButton({ event, onPrepare }: { event: ScheduleEvent; onPrepare(event: ScheduleEvent): void }) {
+  return <button type="button" className="btn-icon btn-icon-sm" aria-label={`Prepare for ${event.title}`} title="Prepare" onClick={() => onPrepare(event)}><ClipboardList size={ICON_SIZE.sm} aria-hidden="true" /></button>;
 }
 
 /** Add Note for one agenda event. */

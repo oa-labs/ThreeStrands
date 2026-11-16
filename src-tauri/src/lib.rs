@@ -1807,6 +1807,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::notes::note_backlinks,
         commands::meetings::meeting_context,
         commands::meetings::meeting_readiness,
+        commands::meetings::reserve_meeting_prep,
         commands::notes::resolve_note_conversation,
         commands::notes::resolve_note_contact,
         commands::notes::add_meeting_to_daily_note,

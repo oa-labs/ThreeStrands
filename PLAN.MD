@@ -149,8 +149,13 @@ particular platform package, or always-on service behavior.
 - Add a meeting line to a daily note with links to the event and attendees,
   optionally linking a reusable meeting note. An event with an existing note
   offers **Open Note**. Event details distinguish that occurrence's notes from
-  notes for the recurring series. Meeting preparation and reviewed follow-through
-  build on this foundation and remain planned below.
+  notes for the recurring series.
+- **Prepare** for a meeting from Calendar, an agenda, Today, or the command
+  palette: its own notes, earlier meetings in its series, recent mail with its
+  attendees, and open commitments, read from local data only. Today lists the
+  meetings still ahead with what is ready for each, with **Reserve Prep Time** and
+  **No Prep Needed**. Reviewed follow-through and optional AI assistance remain
+  planned below.
 
 ### Stay in control of local data
 

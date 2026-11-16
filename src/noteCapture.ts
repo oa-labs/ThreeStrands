@@ -46,3 +46,21 @@ export async function addMeetingToDailyNote(date: string, entry: MeetingEntry) {
     }
   } };
 }
+
+/** Reserve Prep Time: a prep task under the meeting's line in `date`'s daily
+ * note, adding the line when the note has none, after saving any open typing
+ * there. Undo restores that note if nothing changed it since. */
+export async function reserveMeetingPrep(date: string, entry: MeetingEntry) {
+  const id = noteTargetKey({ kind: "daily", date });
+  await prepareNoteMutation(id);
+  const current = await mailClient.getDailyNote(date);
+  const reserved = await mailClient.reserveMeetingPrep(date, current?.updatedAt ?? null, entry);
+  if (reserved.added) await notesChanged(id);
+  return { ...reserved, async undo() {
+    if (!reserved.added) return;
+    await prepareNoteMutation(id);
+    const result = await mailClient.saveDailyNote(date, reserved.previousBody, reserved.note.updatedAt);
+    if (!result.saved) throw new Error("That day's note changed after prep time was reserved. Open Note to remove it.");
+    await notesChanged(id);
+  } };
+}
