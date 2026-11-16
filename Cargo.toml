@@ -20,3 +20,5 @@ exclude = ["src-tauri"]
 # smaller than full debug info. Test builds inherit this.
 [profile.dev]
 debug = "line-tables-only"
+# Pack debug info into bundles instead of retaining loose objects on macOS.
+split-debuginfo = "packed"
