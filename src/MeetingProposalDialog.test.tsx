@@ -26,4 +26,41 @@ describe("MeetingProposalDialog", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Save Proposal" }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ participants: ["bob@example.com", "ada@example.com"] }));
   });
+
+  it("preserves extracted names and header addresses without treating them as invalid invitees", () => {
+    const onSave = vi.fn();
+    const participants = ["Jennifer Williams", "Alex <alex@example.com>"];
+    render(<MeetingProposalDialog proposal={{ ...proposal, participants }} onClose={vi.fn()} onSave={onSave} />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Participants" })).not.toHaveAttribute("aria-invalid");
+    fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Podcast interview" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Proposal" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: "Podcast interview", participants }));
+  });
+
+  it("adds full names with spaces and removes participants", () => {
+    const onSave = vi.fn();
+    render(<MeetingProposalDialog proposal={{ ...proposal, participants: ["Jennifer Williams"] }} onClose={vi.fn()} onSave={onSave} />);
+    const input = screen.getByRole("textbox", { name: "Participants" });
+    fireEvent.change(input, { target: { value: "Morgan Lee" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("button", { name: "Remove Morgan Lee" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove Jennifer Williams" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Proposal" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ participants: ["Morgan Lee"] }));
+  });
+
+  it.each(["blur", "shortcut"])("keeps a newly typed name when saving via %s", (method) => {
+    const onSave = vi.fn();
+    render(<MeetingProposalDialog proposal={proposal} onClose={vi.fn()} onSave={onSave} />);
+    const input = screen.getByRole("textbox", { name: "Participants" });
+    fireEvent.change(input, { target: { value: "Morgan Lee" } });
+    if (method === "blur") {
+      fireEvent.blur(input);
+      fireEvent.click(screen.getByRole("button", { name: "Save Proposal" }));
+    } else {
+      fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    }
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ participants: ["jane@example.com", "Morgan Lee"] }));
+  });
 });

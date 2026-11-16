@@ -337,7 +337,6 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
     <strong>{proposal.title}</strong>
     {note ? <p className="proposal-uncertain">
       <CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /><span>{note}</span>
-      <button type="button" className="btn-link" aria-label={`Edit to check: ${note}`} onClick={edit}>Edit</button>
     </p> : null}
     {proposal.type === "meeting" ? <>
       {quote ? evidence : matched ? null : <p>Time not specified</p>}

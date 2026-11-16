@@ -499,9 +499,11 @@ describe("ThreadAssist", () => {
     const onReview = vi.fn();
     render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting], onReview }, scheduling: { calendarConnected: true } })} />);
 
-    // The flag names what may be wrong, and its Edit opens the editor to check it.
+    // The flag names what may be wrong; Edit stays in the shared card menu.
     expect(screen.getByText("Unclear which week").closest(".proposal-uncertain")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Edit to check: Unclear which week" }));
+    expect(screen.queryByRole("button", { name: /Edit to check/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
     expect(onReview).toHaveBeenCalledWith(0, meeting, "edit");
     // The email's wording of the time reads as a quote, not a description.
     expect(screen.getByText("sometime next week")).toHaveClass("proposal-time-language");
