@@ -102,7 +102,7 @@ pub struct RequestSnapshot {
     pub max_pending: usize,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct Saved {
     policy: RequestPolicy,
     day: String,
@@ -113,6 +113,9 @@ struct State {
     saved: Saved,
     path: Option<PathBuf>,
     unavailable: bool,
+    sizes: Vec<usize>,
+    encoded: Vec<Arc<Vec<u8>>>,
+    journal_bytes: usize,
     active: HashMap<String, (String, watch::Sender<bool>)>,
     cancelled: HashMap<String, i64>,
 }
@@ -120,6 +123,7 @@ struct State {
 pub struct Runtime {
     state: Arc<Mutex<State>>,
     permits: Arc<Semaphore>,
+    write_gate: Arc<Mutex<()>>,
 }
 pub static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| Runtime::new());
 #[derive(Clone)]
@@ -140,49 +144,53 @@ impl State {
             self.saved.charged_usd = 0.0;
         }
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(RETENTION_DAYS)).to_rfc3339();
-        self.saved.records.retain(|record| record.at >= cutoff);
-        if self.saved.records.len() > MAX_RECORDS {
-            self.saved
-                .records
-                .drain(..self.saved.records.len() - MAX_RECORDS);
+        let mut index = 0;
+        while index < self.saved.records.len() {
+            if self.saved.records[index].at < cutoff {
+                self.remove_record(index);
+            } else {
+                index += 1;
+            }
         }
-        while serde_json::to_vec(&self.saved).map_or(true, |data| data.len() > MAX_JOURNAL_BYTES)
-            && !self.saved.records.is_empty()
+        while self.saved.records.len() > MAX_RECORDS
+            || self.journal_bytes + 1024 > MAX_JOURNAL_BYTES
         {
-            self.saved.records.remove(0);
+            if self.saved.records.is_empty() {
+                break;
+            }
+            self.remove_record(0);
         }
         let cutoff = chrono::Utc::now().timestamp() - CANCEL_RETENTION_SECONDS;
         self.cancelled.retain(|_, at| *at >= cutoff);
     }
-    fn persist(&mut self) -> Result<(), String> {
-        self.prune();
-        if self.unavailable {
-            return Err("AI request controls could not be loaded; no request was sent".into());
+    fn rebuild_sizes(&mut self) {
+        self.encoded = self
+            .saved
+            .records
+            .iter()
+            .map(|record| Arc::new(serde_json::to_vec(record).expect("record JSON")))
+            .collect();
+        self.sizes = self.encoded.iter().map(|bytes| bytes.len() + 1).collect();
+        self.journal_bytes = self.sizes.iter().sum();
+    }
+    fn resize_request(&mut self, id: &str) {
+        for (index, record) in self.saved.records.iter().enumerate() {
+            if record.request_id == id {
+                let bytes = Arc::new(serde_json::to_vec(record).expect("record JSON"));
+                let size = bytes.len() + 1;
+                self.journal_bytes = self.journal_bytes - self.sizes[index] + size;
+                self.sizes[index] = size;
+                self.encoded[index] = bytes;
+            }
         }
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        let temporary = path.with_extension("tmp");
-        let data =
-            serde_json::to_vec(&self.saved).map_err(|_| "Could not save AI request controls")?;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        use std::io::Write;
-        let mut file = options
-            .open(&temporary)
-            .map_err(|_| "Could not save AI request controls")?;
-        file.write_all(&data)
-            .and_then(|_| file.sync_all())
-            .map_err(|_| "Could not save AI request controls")?;
-        std::fs::rename(temporary, path)
-            .map_err(|_| "Could not save AI request controls".to_string())
+    }
+    fn remove_record(&mut self, index: usize) {
+        self.saved.records.remove(index);
+        self.encoded.remove(index);
+        self.journal_bytes -= self.sizes.remove(index);
     }
 }
+
 impl Runtime {
     pub(super) fn new() -> Self {
         Self {
@@ -190,14 +198,81 @@ impl Runtime {
                 saved: Saved::default(),
                 path: None,
                 unavailable: false,
+                sizes: Vec::new(),
+                encoded: Vec::new(),
+                journal_bytes: 0,
                 active: HashMap::new(),
                 cancelled: HashMap::new(),
             })),
             permits: Arc::new(Semaphore::new(MAX_CONCURRENT)),
+            write_gate: Arc::new(Mutex::new(())),
         }
     }
+    // Callers hold write_gate to order durable mutations. Readers/cancellation
+    // use only state, which is released before encoding, writing and fsync.
+    fn persist(&self, mut state: std::sync::MutexGuard<'_, State>) -> Result<(), String> {
+        state.prune();
+        if state.unavailable {
+            return Err("AI request controls are unavailable".into());
+        }
+        let path = state.path.clone();
+        let header = serde_json::json!({"policy":state.saved.policy,"day":state.saved.day,"chargedUsd":state.saved.charged_usd});
+        let encoded = state.encoded.clone();
+        drop(state);
+        let Some(path) = path else {
+            return Ok(());
+        };
+        let result = (|| {
+            let mut header =
+                serde_json::to_vec(&header).map_err(|_| "Could not save AI request controls")?;
+            header.pop();
+            header.extend_from_slice(b",\"records\":[");
+            let temporary = path.with_extension("tmp");
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            use std::io::Write;
+            let mut file = options
+                .open(&temporary)
+                .map_err(|_| "Could not save AI request controls")?;
+            {
+                let mut writer = std::io::BufWriter::new(&mut file);
+                writer
+                    .write_all(&header)
+                    .map_err(|_| "Could not save AI request controls")?;
+                for (index, bytes) in encoded.iter().enumerate() {
+                    if index > 0 {
+                        writer
+                            .write_all(b",")
+                            .map_err(|_| "Could not save AI request controls")?;
+                    }
+                    writer
+                        .write_all(bytes)
+                        .map_err(|_| "Could not save AI request controls")?;
+                }
+                writer
+                    .write_all(b"]}")
+                    .and_then(|_| writer.flush())
+                    .map_err(|_| "Could not save AI request controls")?;
+            }
+            file.sync_all()
+                .map_err(|_| "Could not save AI request controls")?;
+            std::fs::rename(temporary, path).map_err(|_| "Could not save AI request controls")
+        })()
+        .map_err(str::to_string);
+        if result.is_err() {
+            self.state.lock().unwrap().unavailable = true;
+        }
+        result
+    }
     pub fn initialize(&self, path: PathBuf) -> Result<(), String> {
+        let _write = self.write_gate.lock().unwrap();
         let mut state = self.state.lock().unwrap();
+        state.path = Some(path.clone());
         match std::fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<Saved>(&bytes) {
                 Ok(saved)
@@ -229,10 +304,13 @@ impl Runtime {
                 record.request_outcome = "interrupted".into();
             }
         }
-        state.prune();
-        state.persist().inspect_err(|_| state.unavailable = true)
+        state.rebuild_sizes();
+        self.persist(state)
     }
     pub fn snapshot(&self) -> Result<RequestSnapshot, String> {
+        self.snapshot_limit(MAX_RECORDS)
+    }
+    pub fn snapshot_limit(&self, limit: usize) -> Result<RequestSnapshot, String> {
         let mut state = self.state.lock().unwrap();
         state.prune();
         if state.unavailable {
@@ -250,20 +328,49 @@ impl Runtime {
                     feature: feature.clone(),
                 })
                 .collect(),
-            records: state.saved.records.iter().rev().cloned().collect(),
+            records: state
+                .saved
+                .records
+                .iter()
+                .rev()
+                .take(limit)
+                .cloned()
+                .collect(),
             max_concurrent: MAX_CONCURRENT,
             max_pending: MAX_PENDING,
         })
     }
     pub fn configure(&self, policy: RequestPolicy) -> Result<(), String> {
         policy.validate()?;
+        let _write = self.write_gate.lock().unwrap();
         let mut state = self.state.lock().unwrap();
-        let old = std::mem::replace(&mut state.saved.policy, policy);
-        if let Err(error) = state.persist() {
-            state.saved.policy = old;
-            return Err(error);
+        state.saved.policy = policy;
+        self.persist(state)
+    }
+    /// Explicit recovery preserves the corrupt file and requires acknowledgement
+    /// that today's unknown reservations cannot be reconstructed.
+    pub fn recover(&self) -> Result<(), String> {
+        let _write = self.write_gate.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        if !state.active.is_empty() {
+            return Err("Wait for active AI requests before recovery".into());
         }
-        Ok(())
+        if !state.unavailable {
+            return Err("AI controls do not need recovery".into());
+        }
+        if let Some(path) = &state.path {
+            if path.exists() {
+                std::fs::rename(
+                    path,
+                    path.with_extension(format!("unreadable-{}", uuid::Uuid::new_v4())),
+                )
+                .map_err(|_| "Could not preserve unreadable AI controls")?;
+            }
+        }
+        state.saved = Saved::default();
+        state.rebuild_sizes();
+        state.unavailable = false;
+        self.persist(state)
     }
     pub fn cancel(&self, id: &str) -> Result<(), String> {
         uuid::Uuid::parse_str(id).map_err(|_| "Invalid AI request ID")?;
@@ -385,6 +492,7 @@ impl Runtime {
         let running = RUNNING
             .try_with(Clone::clone)
             .map_err(|_| "AI request has no native lifecycle")?;
+        let _write = self.write_gate.lock().unwrap();
         let mut state = self.state.lock().unwrap();
         state.prune();
         // UTF-8 bytes are a conservative estimate for supported text tokenizers;
@@ -412,14 +520,15 @@ impl Runtime {
         record.request_id = running.id;
         record.price = running.price;
         record.charged_usd = reserved;
-        let previous = state.saved.clone();
         state.saved.charged_usd += reserved;
+        let bytes = Arc::new(serde_json::to_vec(&record).expect("record JSON"));
+        let size = bytes.len() + 1;
+        state.encoded.push(bytes);
+        state.journal_bytes += size;
+        state.sizes.push(size);
         state.saved.records.push(record.clone());
-        state.prune();
-        if let Err(error) = state.persist() {
-            state.saved = previous;
-            return Err(error);
-        }
+        let day = state.saved.day.clone();
+        self.persist(state)?;
         *running.latest.lock().unwrap() = Some(record.clone());
         Ok(Reservation {
             runtime: self.clone(),
@@ -427,7 +536,7 @@ impl Runtime {
             request_id: record.request_id,
             attempt_id: record.attempt_id,
             reserved,
-            day: state.saved.day.clone(),
+            day,
             price: record.price,
         })
     }
@@ -439,6 +548,7 @@ struct RequestGuard {
 }
 impl Drop for RequestGuard {
     fn drop(&mut self) {
+        let _write = self.runtime.write_gate.lock().unwrap();
         let mut state = self.runtime.state.lock().unwrap();
         state.active.remove(&self.id);
         for record in &mut state.saved.records {
@@ -446,9 +556,8 @@ impl Drop for RequestGuard {
                 record.request_outcome = self.outcome.into();
             }
         }
-        if state.persist().is_err() {
-            state.unavailable = true;
-        }
+        state.resize_request(&self.id);
+        let _ = self.runtime.persist(state);
     }
 }
 pub struct Reservation {
@@ -462,6 +571,7 @@ pub struct Reservation {
 }
 impl Reservation {
     pub fn failed(self, outcome: &str) -> Result<(), String> {
+        let _write = self.runtime.write_gate.lock().unwrap();
         let mut state = self.runtime.state.lock().unwrap();
         if let Some(record) = state
             .saved
@@ -475,7 +585,8 @@ impl Reservation {
         if let Some(record) = self.latest.lock().unwrap().as_mut() {
             record.outcome = outcome.into();
         }
-        state.persist().inspect_err(|_| state.unavailable = true)
+        state.resize_request(&self.request_id);
+        self.runtime.persist(state)
     }
     pub fn finish(
         self,
@@ -495,6 +606,7 @@ impl Reservation {
                 }
             })
             .unwrap_or(self.reserved);
+        let _write = self.runtime.write_gate.lock().unwrap();
         let mut state = self.runtime.state.lock().unwrap();
         if state.saved.day == self.day {
             state.saved.charged_usd = (state.saved.charged_usd - self.reserved).max(0.0) + actual;
@@ -511,7 +623,8 @@ impl Reservation {
             record.outcome = outcome.into();
             record.charged_usd = actual;
         }
-        state.persist().inspect_err(|_| state.unavailable = true)
+        state.resize_request(&self.request_id);
+        self.runtime.persist(state)
     }
 }
 pub fn running() -> bool {
@@ -750,7 +863,11 @@ mod tests {
         let (_, provenance) = runtime
             .run_recorded("brief", None, async {
                 let reservation = runtime.reserve(record(), 10, 20)?;
-                runtime.state.lock().unwrap().saved.records.clear();
+                {
+                    let mut state = runtime.state.lock().unwrap();
+                    state.saved.records.clear();
+                    state.rebuild_sizes();
+                }
                 reservation.finish("response", 1, 2, None, true, "received")?;
                 Ok(())
             })
@@ -763,12 +880,69 @@ mod tests {
     }
 
     #[test]
+    fn closed_history_does_not_clone_sources_or_encode_records_and_recovery_preserves_original() {
+        let runtime = Runtime::new();
+        {
+            let mut state = runtime.state.lock().unwrap();
+            let mut large = record();
+            large.context.sources = vec![large.context.sources[0].clone(); 1500];
+            for (index, source) in large.context.sources.iter_mut().enumerate() {
+                source.path = format!("/messages/{index}/recipients");
+            }
+            state.saved.records = vec![large; 30];
+            state.rebuild_sizes();
+            state.prune();
+        }
+        let held = runtime.write_gate.lock().unwrap();
+        let reader = runtime.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            reader.snapshot_limit(0).unwrap();
+            reader.cancel(&uuid::Uuid::new_v4().to_string()).unwrap();
+            sender.send(()).unwrap();
+        });
+        let read = receiver.recv_timeout(Duration::from_secs(5));
+        drop(held);
+        thread.join().unwrap();
+        assert!(
+            read.is_ok(),
+            "status/cancellation waited for the disk writer"
+        );
+        let cached = runtime.state.lock().unwrap().encoded[0].clone();
+        for _ in 0..10 {
+            assert!(runtime.snapshot_limit(0).unwrap().records.is_empty());
+        }
+        assert!(Arc::ptr_eq(
+            &cached,
+            &runtime.state.lock().unwrap().encoded[0]
+        ));
+        let directory = TestDirectory::new();
+        let path = directory.path().join("controls.json");
+        std::fs::write(&path, "corrupt original").unwrap();
+        let restored = Runtime::new();
+        assert!(restored.initialize(path.clone()).is_err());
+        restored.recover().unwrap();
+        assert!(restored.snapshot().is_ok());
+        assert!(std::fs::read_dir(directory.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(
+                |entry| std::fs::read_to_string(entry.path()).ok().as_deref()
+                    == Some("corrupt original")
+            ));
+        let mut value = serde_json::to_value(Saved::default()).unwrap();
+        value["futureField"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<Saved>(value).is_ok());
+    }
+
+    #[test]
     fn journal_count_byte_and_age_bounds_do_not_erase_spending_reservations() {
         let runtime = Runtime::new();
         let mut state = runtime.state.lock().unwrap();
         state.saved.day = today();
         state.saved.charged_usd = 0.5;
         state.saved.records = vec![record(); MAX_RECORDS + 1];
+        state.rebuild_sizes();
         state.prune();
         assert_eq!(state.saved.records.len(), MAX_RECORDS);
         let mut large = record();
@@ -777,6 +951,7 @@ mod tests {
             source.path = "x".repeat(900);
         }
         state.saved.records = vec![large; 8];
+        state.rebuild_sizes();
         state.prune();
         assert!(serde_json::to_vec(&state.saved).unwrap().len() <= MAX_JOURNAL_BYTES);
         assert_eq!(state.saved.charged_usd, 0.5);

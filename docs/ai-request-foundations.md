@@ -71,8 +71,7 @@ report an immutable resolved model revision.
 
 The owner-readable, atomically replaced journal and budget file is
 `ai-requests.json` in app data. History is bounded to 30 days, 500 attempts and 8 MB.
-Unreadable budget storage fails closed; it must never silently discard spending
-reservations. Settings shows recent attempts and their context/version metadata.
+Unreadable budget storage fails closed. Settings offers explicit recovery that preserves the unreadable file and resets controls only after the user acknowledges that unknown reservations will be lost. Unknown top-level fields are tolerated on downgrade. Settings shows recent attempts and their context/version metadata.
 Journal expiry does not reset the current day's allowance.
 
 Cached summaries and suggestions keep their own provenance in the same SQLite
@@ -141,3 +140,12 @@ quality on a blinded sample before changing defaults. Add failures as new
 synthetic or explicitly de-identified cases; do not relax checks to accept a
 candidate's incorrect output. A later judge-based grader must itself be calibrated
 against human labels. Live model performance has not been measured by this change.
+
+History polling returns status only while closed and at most 20 records when open.
+Record JSON is encoded and sized at insertion or update, reused during pruning and
+persistence, and written outside the state lock. A separate write gate serializes
+durable financial mutations without blocking status reads or cancellation during fsync.
+Cancel controls match both command and the displayed record owner. Cached generation
+details load on demand beside the conversation brief. Context limits are 16 MB and
+16,384 fields, above the existing bounded feature inputs. Test Connection remains
+metered; Settings explains the price prerequisite when a daily limit is enabled.

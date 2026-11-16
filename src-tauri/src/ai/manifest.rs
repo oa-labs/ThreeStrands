@@ -5,8 +5,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub const CONTEXT_VERSION: u32 = 1;
-pub const MAX_MANIFEST_SOURCES: usize = 2048;
-pub const MAX_CONTEXT_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_MANIFEST_SOURCES: usize = 16384;
+pub const MAX_CONTEXT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

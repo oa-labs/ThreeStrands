@@ -787,7 +787,7 @@ pub(crate) async fn ai_thread_chat(
         .into());
     }
     let thread_id = request.thread_id.clone();
-    let (_revision, analysis_request) = thread_analysis_request(
+    let (revision, analysis_request) = thread_analysis_request(
         &thread_id,
         request.user_time_zone.clone(),
         provider,
@@ -897,7 +897,7 @@ pub(crate) async fn ai_thread_chat(
             .chain(searched.iter().map(|source| source.account_id.clone()))
             .collect(),
         record_id: Some(thread_id.clone()),
-        revision: Some(_revision.clone()),
+        revision: Some(revision.clone()),
     };
     let answer = match ai::diagnostics::with_request(
         "chat",
@@ -1341,8 +1341,16 @@ pub(crate) fn open_logs_folder(app: tauri::AppHandle) -> AppResult<()> {
 }
 
 #[tauri::command(async)]
-pub(crate) fn ai_request_snapshot() -> AppResult<ai::requests::RequestSnapshot> {
-    ai::requests::RUNTIME.snapshot().map_err(AppError::from)
+pub(crate) fn ai_request_snapshot(
+    include_history: Option<bool>,
+) -> AppResult<ai::requests::RequestSnapshot> {
+    ai::requests::RUNTIME
+        .snapshot_limit(if include_history.unwrap_or(false) {
+            20
+        } else {
+            0
+        })
+        .map_err(AppError::from)
 }
 #[tauri::command(async)]
 pub(crate) fn set_ai_request_policy(policy: ai::requests::RequestPolicy) -> AppResult<()> {
@@ -1369,4 +1377,9 @@ pub(crate) fn ai_result_provenance(
         .database
         .ai_result_provenance(&thread_id)
         .map_err(AppError::from)
+}
+
+#[tauri::command(async)]
+pub(crate) fn recover_ai_requests() -> AppResult<()> {
+    ai::requests::RUNTIME.recover().map_err(AppError::from)
 }

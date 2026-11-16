@@ -75,6 +75,7 @@ export const QUICK_QUESTIONS = [
  * chat. Nothing is shared unless the user picks it.
  */
 export function ThreadChat({
+  threadId,
   enabled,
   available,
   entries,
@@ -92,6 +93,7 @@ export function ThreadChat({
   onOpenSettings,
   renderAvailability,
 }: {
+  threadId?: string;
   enabled: boolean;
   available: boolean;
   entries: ChatEntry[];
@@ -304,7 +306,7 @@ export function ThreadChat({
         </div>
       ))}
       {pending ? <p className="context-status" role="status">Thinking…</p> : null}
-      <AiCancelButton command="ai_thread_chat" />
+      <AiCancelButton owner={threadId} command="ai_thread_chat" />
     </div> : pending ? <p className="context-status" role="status">Thinking…</p> : null}
     {error ? <div className="action-analysis-error" role="alert">
       <p>{error}</p>

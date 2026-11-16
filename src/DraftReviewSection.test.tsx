@@ -71,14 +71,14 @@ describe("Draft review", () => {
     openReview();
     expect(screen.getByText("Reviewing…")).toHaveAttribute("role", "status");
     await reviewed();
-    expect(mailClient.reviewDraft).toHaveBeenCalledWith({ subject: "Hello", body: "A fresh edit.", goal: "", aboutYou: "", reviewInstructions: "" }, "openai", expect.any(String), null);
+    expect(mailClient.reviewDraft).toHaveBeenCalledWith({ subject: "Hello", body: "A fresh edit.", goal: "", aboutYou: "", reviewInstructions: "" }, "openai", expect.any(String), null, expect.any(String));
     expect(within(whatWasSent()).getByText("A fresh edit.", { selector: "pre" })).toBeInTheDocument();
     expect(whatWasSent()).not.toHaveAttribute("open");
 
     fireEvent.change(screen.getByRole("textbox", { name: /Add a goal for this email/ }), { target: { value: " Get an introductory call " } });
     fireEvent.click(screen.getByRole("button", { name: "Review Again" }));
     await reviewed();
-    expect(mailClient.reviewDraft).toHaveBeenLastCalledWith(expect.objectContaining({ body: "A fresh edit.", goal: "Get an introductory call" }), "openai", expect.any(String), null);
+    expect(mailClient.reviewDraft).toHaveBeenLastCalledWith(expect.objectContaining({ body: "A fresh edit.", goal: "Get an introductory call" }), "openai", expect.any(String), null, expect.any(String));
     expect(within(whatWasSent()).getByText("Get an introductory call")).toBeInTheDocument();
     expect(body).toHaveTextContent("A fresh edit.");
     expect(mailClient.queueDraft).not.toHaveBeenCalled();
@@ -91,7 +91,7 @@ describe("Draft review", () => {
     fireEvent.change(goal, { target: { value: "Close the deal" } });
     fireEvent.keyDown(goal, { key: "Enter" });
     await waitFor(() => expect(mailClient.reviewDraft).toHaveBeenCalledTimes(2));
-    expect(mailClient.reviewDraft).toHaveBeenLastCalledWith(expect.objectContaining({ goal: "Close the deal" }), "openai", expect.any(String), null);
+    expect(mailClient.reviewDraft).toHaveBeenLastCalledWith(expect.objectContaining({ goal: "Close the deal" }), "openai", expect.any(String), null, expect.any(String));
   });
 
   it("sends the sending account's writing profile and shows it under What Was Sent", async () => {
@@ -102,7 +102,7 @@ describe("Draft review", () => {
     expect(mailClient.reviewDraft).toHaveBeenCalledWith({
       subject: "Hello", body: "Let me know your thoughts.", goal: "",
       aboutYou: "CEO of a consulting firm.", reviewInstructions: "Push for one next step.",
-    }, "openai", expect.any(String), null);
+    }, "openai", expect.any(String), null, expect.any(String));
     const sent = whatWasSent();
     expect(within(sent).getByRole("heading", { name: "Your writing profile" })).toBeInTheDocument();
     expect(within(sent).getByText("CEO of a consulting firm.")).toBeInTheDocument();
@@ -158,7 +158,7 @@ describe("Draft review", () => {
     expect(body).toHaveTextContent("Newer words");
     fireEvent.click(screen.getByRole("button", { name: "Review Again" }));
     await reviewed();
-    expect(mailClient.reviewDraft).toHaveBeenLastCalledWith(expect.objectContaining({ body: "Newer words" }), "openai", expect.any(String), null);
+    expect(mailClient.reviewDraft).toHaveBeenLastCalledWith(expect.objectContaining({ body: "Newer words" }), "openai", expect.any(String), null, expect.any(String));
     fireEvent.click(screen.getByRole("button", { name: "Apply Revision" }));
     expect(body).toHaveTextContent(result.revisedBody);
   });
@@ -190,7 +190,7 @@ describe("Draft review", () => {
     const attachment = { id: "file-1", name: "proposal.pdf", size: 100, ready: true, inline: false, mime: "application/pdf", messageId: null, providerId: null };
     const { ref } = setup({ ...draft, mode: "reply", bodyHtml: `${draft.bodyHtml}${quote}`, attachments: [attachment] });
     await reviewed();
-    expect(mailClient.reviewDraft).toHaveBeenCalledWith(expect.objectContaining({ body: "Let me know your thoughts." }), "openai", expect.any(String), null);
+    expect(mailClient.reviewDraft).toHaveBeenCalledWith(expect.objectContaining({ body: "Let me know your thoughts." }), "openai", expect.any(String), null, expect.any(String));
     fireEvent.click(screen.getByRole("button", { name: "Apply Revision" }));
     const saved = await act(async () => ref.current!.flush());
     expect(saved.bodyHtml).toContain("On Monday, Client wrote:");
@@ -343,7 +343,7 @@ describe("Draft review in the composer", () => {
     fireEvent.click(trigger);
     const reopened = await screen.findByRole("region", { name: "Draft Review" });
     await waitFor(() => expect(mailClient.reviewDraft).toHaveBeenCalledTimes(2));
-    expect(mailClient.reviewDraft).toHaveBeenLastCalledWith(expect.objectContaining({ goal: "Book a call" }), "openai", expect.any(String), null);
+    expect(mailClient.reviewDraft).toHaveBeenLastCalledWith(expect.objectContaining({ goal: "Book a call" }), "openai", expect.any(String), null, expect.any(String));
     expect(await within(reopened).findByRole("textbox", { name: /Add a goal for this email/ })).toHaveValue("Book a call");
 
     fireEvent.click(within(reopened).getByRole("button", { name: "Close Draft Review" }));

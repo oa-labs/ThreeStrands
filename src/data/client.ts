@@ -211,9 +211,9 @@ export interface MailClient extends CorrespondenceClient {
     endpoint: string | null,
   ): Promise<ThreadBriefResult>;
   replyAssistContext(draftId: string): Promise<ReplyAssistContext>;
-  reviewDraft(request: DraftReviewRequest, provider: AiProvider, model: string, endpoint: string | null): Promise<DraftReviewResult>;
+  reviewDraft(request: DraftReviewRequest, provider: AiProvider, model: string, endpoint: string | null, owner?: string): Promise<DraftReviewResult>;
   /** Reads when to meet from a draft's conversation; the calendar is searched separately. */
-  findTimes(request: FindTimesRequest, provider: AiProvider, model: string, endpoint: string | null): Promise<TimeSearch>;
+  findTimes(request: FindTimesRequest, provider: AiProvider, model: string, endpoint: string | null, owner?: string): Promise<TimeSearch>;
   generateReply(
     context: ReplyAssistContext,
     instruction: string,
@@ -222,6 +222,7 @@ export interface MailClient extends CorrespondenceClient {
     endpoint: string | null,
     reasoning?: AiReasoning,
     profile?: WritingProfile,
+    owner?: string,
   ): Promise<ReplyAssistResult>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   /** Fetches Gmail search hits missing from the local cache so a subsequent local search can include historical archived mail. Returns a report of what the server search could do, for the UI to word. */
@@ -542,10 +543,10 @@ const tauriClient: MailClient = {
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
     invokeAi("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
-  reviewDraft: (request, provider, model, endpoint) => invokeAi("ai_review_draft", { request, provider, model, endpoint }),
-  findTimes: (request, provider, model, endpoint) => invokeAi("ai_find_times", { request, provider, model, endpoint }),
-  generateReply: (context, instruction, provider, model, endpoint, reasoning = "default", profile) =>
-    invokeAi("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning, ...(profile ? { profile } : {}) }),
+  reviewDraft: (request, provider, model, endpoint, owner) => invokeAi("ai_review_draft", { request, provider, model, endpoint }, owner),
+  findTimes: (request, provider, model, endpoint, owner) => invokeAi("ai_find_times", { request, provider, model, endpoint }, owner),
+  generateReply: (context, instruction, provider, model, endpoint, reasoning = "default", profile, owner) =>
+    invokeAi("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning, ...(profile ? { profile } : {}) }, owner),
   searchThreads: (request, accountId) => read("search_threads", { request, accountId }),
   backfillSearchThreads: (query, accountId) => complete("backfill_search_threads", { query, accountId }),
   snoozeThreads: (ids, until) => complete("snooze_threads", { ids, until }),

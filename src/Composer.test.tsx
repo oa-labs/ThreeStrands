@@ -1561,6 +1561,7 @@ describe("Composer Reply Assist", () => {
       null,
       "default",
       undefined,
+      replyDraft.id,
     ));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Assist" })).not.toBeInTheDocument());
     const editor = screen.getByRole("textbox", { name: "Message Body" });
@@ -1590,7 +1591,7 @@ describe("Composer Reply Assist", () => {
     // A settings update after preview must not silently send different material.
     act(() => saveWritingProfiles({ [replyDraft.account]: { aboutYou: "Changed profile", reviewInstructions: "" } }));
     fireEvent.click(within(assist).getByRole("button", { name: "Generate Draft" }));
-    await waitFor(() => expect(generate).toHaveBeenCalledWith(context, "", "openai", "gpt-4o", null, "default", profile));
+    await waitFor(() => expect(generate).toHaveBeenCalledWith(context, "", "openai", "gpt-4o", null, "default", profile, replyDraft.id));
   });
 
   it("opens a reply with the quoted source as a citation and saves a quoted text alternative", async () => {

@@ -54,7 +54,7 @@ The usage panel under **Settings → AI Provider → Models and Usage** shows re
 
 You can cancel running AI work from its feature panel or **Request Controls**. Cancellation stops queued work or the app’s in-flight request; material already sent cannot be recalled and may still be billed. Up to two requests execute at once, with a bounded queue. Short rate-limit and temporary server failures retry at most twice; authentication failures and ambiguous network timeouts do not retry automatically.
 
-**Request Provenance** in Request Controls lists recent attempts with source references and generation fingerprints. It keeps up to 30 days, 500 attempts, and 8 MB on this device, without mail text or provider replies. Cached briefs retain their generation details with the cached conversation.
+**Request Provenance** in Request Controls lists recent attempts with source references and generation fingerprints. It keeps up to 30 days, 500 attempts, and 8 MB on this device, without mail text or provider replies. Open **Cached Generation Details** beside a brief to inspect its retained generation details. If the controls file cannot be read, **Recover AI Controls** preserves the unreadable file and lets you explicitly reset the controls and unknown reservations.
 
 ## What Is Shared {#what-is-shared}
 

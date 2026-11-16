@@ -388,6 +388,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             </div>
           </details>
 
+          <p className="settings-hint">Test Connection also uses the daily spending limit. With a limit enabled, enter prices for the selected model first.</p>
           <AiRequestControls />
           <AiActivityList />
         </>

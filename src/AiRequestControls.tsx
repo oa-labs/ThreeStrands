@@ -1,13 +1,14 @@
-import { useEffect, useId, useState } from "react";
-import { aiRequestSnapshot, cancelAiRequest, setAiRequestPolicy, usePendingAiRequests, type AiRequestSnapshot, type AiRequestRecord } from "./aiRequests";
+import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useId, useRef, useState } from "react";
+import { aiRequestSnapshot, recoverAiRequests, cancelAiRequest, setAiRequestPolicy, usePendingAiRequests, type AiRequestSnapshot, type AiRequestRecord } from "./aiRequests";
 import { aiActivityFeatureLabel } from "./AiActivityList";
 import { formatUsd } from "./aiUsage";
 import { errorMessage } from "./errors";
 
-export function AiCancelButton({ command }: { command: string | string[] }) {
+export function AiCancelButton({ command, owner }: { command: string | string[]; owner?: string | null }) {
   const pending = usePendingAiRequests();
   const [error, setError] = useState("");
-  const matching = pending.filter((request) => typeof command === "string" ? request.command === command : command.includes(request.command));
+  const matching = pending.filter((request) => owner != null && request.owner === owner && (typeof command === "string" ? request.command === command : command.includes(request.command)));
   if (!matching.length) return null;
   return <><button type="button" className="btn btn-sm" onClick={() => {
     setError("");
@@ -20,28 +21,29 @@ export function AiRequestControls() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [budget, setBudget] = useState("");
   const [error, setError] = useState("");
+  const first = useRef(true);
   const hint = useId();
   useEffect(() => {
     let active = true;
-    let first = true;
     let loading = false;
     const refresh = async () => {
       if (loading) return;
       loading = true;
       try {
-        const next = await aiRequestSnapshot();
-        if (active) { setSnapshot(next); if (first) { setBudget(next.policy.dailyBudgetUsd?.toString() ?? ""); first = false; } }
+        const next = await aiRequestSnapshot(historyOpen);
+        if (active) { setSnapshot(next); if (first.current) { setBudget(next.policy.dailyBudgetUsd?.toString() ?? ""); first.current = false; } }
       } catch (reason) { if (active) setError(errorMessage(reason)); }
       finally { loading = false; }
     };
     void refresh();
     const timer = setInterval(() => void refresh(), 1000);
     return () => { active = false; clearInterval(timer); };
-  }, []);
+  }, [historyOpen]);
   return <section aria-label="AI request controls">
     <h3>Request Controls</h3>
     <p id={hint} className="settings-hint">A daily estimated spending limit for this device. Enter model prices under Usage first. Each request reserves its full output allowance; failed or cancelled requests keep their reservation when billing is unknown. Your provider’s bill can differ. Web Research has separate limits.</p>
     {error ? <p role="alert" className="form-error">{error}</p> : null}
+    {!snapshot && error ? <details><summary>Recover AI Controls</summary><p>Recovery preserves the unreadable file and resets the budget and history. Today's unknown spending reservations will be lost.</p><button type="button" className="btn" onClick={() => void recoverAiRequests().then(() => aiRequestSnapshot(historyOpen)).then((next) => {setSnapshot(next);setError("");setBudget("");}).catch((reason: unknown) => setError(errorMessage(reason)))}>Reset Controls and Unknown Reservations</button></details> : null}
     <label className="settings-field">Daily AI Budget (USD)
       <input type="number" min="0.01" step="0.01" aria-describedby={hint} value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="No limit" />
     </label>
@@ -49,7 +51,7 @@ export function AiRequestControls() {
       const dailyBudgetUsd = budget.trim() === "" ? null : Number(budget);
       if (dailyBudgetUsd !== null && (!Number.isFinite(dailyBudgetUsd) || dailyBudgetUsd <= 0)) { setError("Enter a positive daily AI budget, or leave it blank."); return; }
       setError("");
-      void setAiRequestPolicy({ dailyBudgetUsd }).then(() => aiRequestSnapshot()).then(setSnapshot).catch((reason: unknown) => setError(errorMessage(reason)));
+      void setAiRequestPolicy({ dailyBudgetUsd }).then(() => aiRequestSnapshot(historyOpen)).then(setSnapshot).catch((reason: unknown) => setError(errorMessage(reason)));
     }}>Save Budget</button>
     {snapshot ? <>
       <p className="settings-hint">{formatUsd(snapshot.chargedUsd)} charged or reserved today; unpriced requests are not included. Up to {snapshot.maxConcurrent} requests run at once; at most {snapshot.maxPending} can be running or waiting.</p>
@@ -78,4 +80,20 @@ function ProvenanceEntry({ record }: { record: AiRequestRecord }) {
       </> : null}
     </details>
   </li>;
+}
+
+export function AiCachedProvenance({ threadId }: { threadId: string }) {
+  const [records, setRecords] = useState<AiRequestRecord[]>([]);
+  const [error, setError] = useState("");
+  return <details onToggle={(event) => {
+    if (!event.currentTarget.open || !("__TAURI_INTERNALS__" in window)) return;
+    void invoke<[AiRequestRecord | null, AiRequestRecord | null]>("ai_result_provenance", {threadId}).then((rows) => {
+      const unique = new Map<string,AiRequestRecord>();
+      for (const record of rows ?? []) if (record) unique.set(record.attemptId,record);
+      setRecords([...unique.values()]);
+    }).catch(() => setError("Generation details could not be loaded."));
+  }}><summary>Cached Generation Details</summary>
+    {error ? <p role="status">{error}</p> : null}
+    {records.length ? <ul>{records.map((record) => <ProvenanceEntry key={record.attemptId} record={record} />)}</ul> : <p>No recorded generation details for this cached result.</p>}
+  </details>;
 }

@@ -269,6 +269,7 @@ pub(super) async fn call_provider_reply(
 ) -> Result<ProviderReply, String> {
     let context = super::manifest::PreparedContext::new(call.prompt, super::usage::scope())?;
     let request = ProviderRequest {
+        context: Some(&context.manifest),
         feature: call.feature,
         provider: call.provider,
         model: call.model,
@@ -368,6 +369,7 @@ fn describe_schema(schema: Option<&OutputSchema>) -> String {
 }
 
 pub(super) struct ProviderRequest<'a> {
+    pub(super) context: Option<&'a super::manifest::ContextManifest>,
     pub(super) feature: crate::ai::manifest::Feature,
     pub(super) provider: AiProvider,
     pub(super) model: &'a str,
@@ -423,7 +425,12 @@ async fn send_provider_request(
     schema: Option<&OutputSchema>,
     api_key: &str,
 ) -> Result<ProviderReply, ProviderError> {
-    let prepared = super::manifest::PreparedContext::new(request.prompt, super::usage::scope())?;
+    let context = match request.context {
+        Some(context) => context.clone(),
+        None => {
+            super::manifest::PreparedContext::new(request.prompt, super::usage::scope())?.manifest
+        }
+    };
     let schema_bytes = schema.map(|schema| serde_json::to_vec(&schema.schema).expect("JSON value"));
     let record = super::requests::RequestRecord {
         attempt_id: uuid::Uuid::new_v4().to_string(),
@@ -439,7 +446,7 @@ async fn send_provider_request(
         schema_revision: schema_bytes
             .as_ref()
             .map(|bytes| super::manifest::fingerprint(bytes)),
-        context: prepared.manifest,
+        context,
         response_revision: None,
         outcome: "dispatched".into(),
         request_outcome: "running".into(),
@@ -469,102 +476,56 @@ async fn send_provider_request(
         )?;
         return parsed.map_err(ProviderError::from);
     }
-    match request.provider.descriptor().protocol {
-        ApiProtocol::Anthropic => {
-            let client = ai_client()?;
-            let response = authorize(
-                client.post(format!("{base_url}/messages")),
-                ApiProtocol::Anthropic,
-                api_key,
-            )
-            .json(&anthropic_body(request, schema))
-            .send()
-            .await
-            .map_err(display)?;
-            let status = response.status().as_u16();
-            let response = match checked(response).await {
-                Ok(response) => response,
-                Err(error) => {
-                    reservation.failed(&format!("http_{status}"))?;
-                    return Err(error);
-                }
-            };
-            let text = response.text().await.map_err(display)?;
-            record_usage(request, &text);
-            let parsed = parse_provider_reply(ApiProtocol::Anthropic, &text);
-            let (input, output, cost) = super::usage::parse_usage(ApiProtocol::Anthropic, &text);
-            let has_usage = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .is_some_and(|value| {
-                    value.get("usage").is_some_and(|usage| {
-                        usage.is_object()
-                            && (usage.get("input_tokens").is_some()
-                                || usage.get("prompt_tokens").is_some())
-                    })
-                });
-            reservation.finish(
-                &text,
-                input,
-                output,
-                cost,
-                has_usage,
-                if parsed.is_ok() {
-                    "received"
-                } else {
-                    "rejected"
-                },
-            )?;
-            parsed.map_err(ProviderError::from)
+    let protocol = request.provider.descriptor().protocol;
+    let (path, body) = match protocol {
+        ApiProtocol::Anthropic => ("messages", anthropic_body(request, schema)),
+        ApiProtocol::OpenAiCompatible => ("chat/completions", openai_body(request, schema)),
+        ApiProtocol::Disabled => {
+            return Err("Select an AI provider in settings".to_string().into())
         }
-        ApiProtocol::OpenAiCompatible => {
-            let client = ai_client()?;
-            let response = authorize(
-                client.post(format!("{base_url}/chat/completions")),
-                ApiProtocol::OpenAiCompatible,
-                api_key,
-            )
-            .json(&openai_body(request, schema))
-            .send()
-            .await
-            .map_err(display)?;
-            let status = response.status().as_u16();
-            let response = match checked(response).await {
-                Ok(response) => response,
-                Err(error) => {
-                    reservation.failed(&format!("http_{status}"))?;
-                    return Err(error);
-                }
-            };
-            let text = response.text().await.map_err(display)?;
-            record_usage(request, &text);
-            let parsed = parse_provider_reply(ApiProtocol::OpenAiCompatible, &text);
-            let (input, output, cost) =
-                super::usage::parse_usage(ApiProtocol::OpenAiCompatible, &text);
-            let has_usage = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .is_some_and(|value| {
-                    value.get("usage").is_some_and(|usage| {
-                        usage.is_object()
-                            && (usage.get("input_tokens").is_some()
-                                || usage.get("prompt_tokens").is_some())
-                    })
-                });
-            reservation.finish(
-                &text,
-                input,
-                output,
-                cost,
-                has_usage,
-                if parsed.is_ok() {
-                    "received"
-                } else {
-                    "rejected"
-                },
-            )?;
-            parsed.map_err(ProviderError::from)
+    };
+    let response = authorize(
+        ai_client()?.post(format!("{base_url}/{path}")),
+        protocol,
+        api_key,
+    )
+    .json(&body)
+    .send()
+    .await
+    .map_err(display)?;
+    let status = response.status().as_u16();
+    let response = match checked(response).await {
+        Ok(response) => response,
+        Err(error) => {
+            reservation.failed(&format!("http_{status}"))?;
+            return Err(error);
         }
-        ApiProtocol::Disabled => Err("Select an AI provider in settings".to_string().into()),
-    }
+    };
+    let text = response.text().await.map_err(display)?;
+    record_usage(request, &text);
+    let parsed = parse_provider_reply(protocol, &text);
+    let (input, output, cost) = super::usage::parse_usage(protocol, &text);
+    let has_usage = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .is_some_and(|value| {
+            value.get("usage").is_some_and(|usage| {
+                usage.is_object()
+                    && (usage.get("input_tokens").is_some() || usage.get("prompt_tokens").is_some())
+            })
+        });
+    reservation.finish(
+        &text,
+        input,
+        output,
+        cost,
+        has_usage,
+        if parsed.is_ok() {
+            "received"
+        } else {
+            "rejected"
+        },
+    )?;
+    parsed.map_err(ProviderError::from)
 }
 
 /// Validate completion before parsing content: a cut-off answer can still be
@@ -1118,6 +1079,7 @@ mod tests {
 
     fn provider_request(provider: AiProvider) -> ProviderRequest<'static> {
         ProviderRequest {
+            context: None,
             feature: crate::ai::manifest::Feature::Connection,
             provider,
             model: "model",
@@ -1242,6 +1204,7 @@ mod tests {
     #[test]
     fn only_fireworks_requests_turn_reasoning_off_and_only_when_asked() {
         let request = |provider, reasoning| ProviderRequest {
+            context: None,
             feature: crate::ai::manifest::Feature::Connection,
             reasoning,
             ..provider_request(provider)
@@ -1340,6 +1303,7 @@ mod tests {
             let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
             let request = ProviderRequest {
+                context: None,
                 feature: crate::ai::manifest::Feature::Connection,
                 reasoning: Reasoning::Off,
                 ..provider_request(AiProvider::Fireworks)
@@ -1388,6 +1352,7 @@ mod tests {
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let request = ProviderRequest {
+            context: None,
             feature: crate::ai::manifest::Feature::Connection,
             reasoning: Reasoning::Off,
             ..provider_request(AiProvider::Fireworks)
@@ -1475,6 +1440,7 @@ mod tests {
     #[test]
     fn only_openrouter_requests_ask_for_reported_cost() {
         let request = |provider| ProviderRequest {
+            context: None,
             feature: crate::ai::manifest::Feature::Connection,
             provider,
             model: "m",

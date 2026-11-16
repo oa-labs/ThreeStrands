@@ -105,7 +105,7 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
       const result = await mailClient.reviewDraft({
         subject: snapshot.subject, body: snapshot.body, goal: request.goal,
         aboutYou: profile.aboutYou, reviewInstructions: profile.reviewInstructions,
-      }, provider, model, endpoint);
+      }, provider, model, endpoint, snapshot.id);
       if (mounted.current) setReview(result);
     } catch (reason) {
       if (mounted.current) setError(errorMessage(reason));
@@ -155,7 +155,7 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
     <div id={contentId} hidden={Boolean(applied) && !expanded}>
     {available ? <div className="draft-review-content">
       {busy ? <p className="context-section-note" role="status">Reviewing…</p> : null}
-      <AiCancelButton command="ai_review_draft" />
+      <AiCancelButton owner={original?.id} command="ai_review_draft" />
       {review && original && !busy ? <>
         <p className="draft-review-assessment" role="status">{review.assessment}</p>
         {review.suggestions.length ? <ol className="draft-review-suggestions">

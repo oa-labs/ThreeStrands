@@ -19,6 +19,7 @@ import { FIND_TIMES_INSTRUCTION_MAX_CHARS, lookaheadRange, planTimeSearch, type 
 export type FindTimesContext = {
   /** A message in the conversation to read, or null for a new message. */
   sourceMessageId: string | null;
+  requestOwner?: string;
   draftSubject: string;
   draftText: string;
 };
@@ -30,12 +31,13 @@ export function askFindTimes(
   adjustment: { instruction: string; current: TimeSearch } | null,
 ): Promise<TimeSearch> {
   const { provider, model, endpoint } = readAiRequestConfig("finding times", "findTimes");
+  const { requestOwner, ...payload } = context;
   return mailClient.findTimes({
-    ...context,
+    ...payload,
     instruction: adjustment?.instruction ?? null,
     current: adjustment?.current ?? null,
     userTimeZone,
-  }, provider, model, endpoint);
+  }, provider, model, endpoint, requestOwner);
 }
 
 /**
@@ -44,10 +46,11 @@ export function askFindTimes(
  * and its reason; the card's caller keeps its own plan unchanged.
  */
 export function FindTimesCard({
-  plan, reason = null, reasonAction = null, preferences, calendarConnected, ai, intoDraft,
+  requestOwner, plan, reason = null, reasonAction = null, preferences, calendarConnected, ai, intoDraft,
   onAddToCalendar, onReplyWithTimes, onAcceptTime, onConfirmTime, onOpenCalendarSettings, identity, onOpenCalendarEvent,
   onMatchChange, matchedActions, moreActions, extraActions, coworkers,
 }: {
+  requestOwner?: string | null;
   plan: SchedulePlan;
   /** Why these days were chosen, shown above the times. */
   reason?: string | null;
@@ -123,7 +126,7 @@ export function FindTimesCard({
       <button type="submit" className="btn btn-sm" disabled={reading || !instruction.trim()}><Sparkles size={ICON_SIZE.sm} />Adjust</button>
     </form>
     {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
-    <AiCancelButton command="ai_find_times" />
+    <AiCancelButton owner={requestOwner} command="ai_find_times" />
     {error ? <p className="context-status" role="alert">{error}</p> : null}
   </> : null;
 
