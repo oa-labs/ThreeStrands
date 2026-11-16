@@ -434,3 +434,135 @@ fn open_promises_skip_old_trashed_and_tracked_conversations() {
     database.create_task(&request).unwrap();
     assert!(promise_threads(&database).is_empty());
 }
+
+#[test]
+fn tracked_promises_stay_hidden_after_reopening_for_every_task_status() {
+    use crate::db::test_support::TempDbPath;
+    use crate::db::Database;
+
+    for status in ["open", "in_progress", "completed", "cancelled"] {
+        let path = TempDbPath::new();
+        {
+            let database = Database::open(&path.path).unwrap();
+            database
+                .upsert_thread(
+                    ME,
+                    &[
+                        sent(
+                            "older",
+                            "tracked",
+                            "2026-10-21T10:00:00Z",
+                            &["c@example.org"],
+                            "I'll send the draft.",
+                        ),
+                        sent(
+                            "newest",
+                            "tracked",
+                            "2026-10-22T10:00:00Z",
+                            &["c@example.org"],
+                            "I'll send the final copy.",
+                        ),
+                    ],
+                )
+                .unwrap();
+            let promise = database
+                .list_open_promises(Some(ME), SINCE)
+                .unwrap()
+                .remove(0);
+            let request = serde_json::from_value(serde_json::json!({
+                "accountId": ME, "threadId": promise.thread.id,
+                "sourceMessageId": promise.message_id, "subjectSnapshot": "Subject",
+                "title": promise.excerpt, "kind": "action",
+                "evidenceText": promise.excerpt,
+            }))
+            .unwrap();
+            let task = database.create_task(&request).unwrap();
+            database.set_task_status(&task.id, status, "user").unwrap();
+        }
+        let database = Database::open(&path.path).unwrap();
+        // Neither the tracked message nor its older promise comes back.
+        assert!(promise_threads(&database).is_empty(), "status: {status}");
+        if matches!(status, "completed" | "cancelled") {
+            // A new promise still appears, even in the same conversation.
+            database
+                .upsert_thread(
+                    ME,
+                    &[sent(
+                        "later",
+                        "tracked",
+                        "2026-10-23T10:00:00Z",
+                        &["c@example.org"],
+                        "I'll send the appendix.",
+                    )],
+                )
+                .unwrap();
+            let promises = database.list_open_promises(Some(ME), SINCE).unwrap();
+            assert_eq!(promises.len(), 1);
+            assert_eq!(promises[0].message_id, "later");
+        }
+    }
+}
+
+#[test]
+fn a_reply_does_not_complete_a_task_created_from_a_promise() {
+    let database = database();
+    clear_seed_threads(&database);
+    database
+        .upsert_thread(
+            ME,
+            &[sent(
+                "promise",
+                "tracked",
+                "2026-10-22T10:00:00Z",
+                &["c@example.org"],
+                "I'll send the draft.",
+            )],
+        )
+        .unwrap();
+    let promise = database
+        .list_open_promises(Some(ME), SINCE)
+        .unwrap()
+        .remove(0);
+    let request = serde_json::from_value(serde_json::json!({
+        "accountId": ME, "threadId": promise.thread.id,
+        "sourceMessageId": promise.message_id, "subjectSnapshot": "Subject",
+        "title": promise.excerpt, "kind": "action",
+    }))
+    .unwrap();
+    database.create_task(&request).unwrap();
+    database
+        .upsert_thread(
+            ME,
+            &[sent(
+                "acknowledgement",
+                "tracked",
+                "2026-10-22T11:00:00Z",
+                &["c@example.org"],
+                "I'm going to work on it.",
+            )],
+        )
+        .unwrap();
+    assert_eq!(database.reconcile_waiting_tasks().unwrap(), 0);
+    assert_eq!(
+        database.list_tasks(Some(ME), Some("open")).unwrap().len(),
+        1
+    );
+    database
+        .upsert_thread(
+            ME,
+            &[unread(
+                "reply",
+                "tracked",
+                "2026-10-23T10:00:00Z",
+                "c@example.org",
+                &[ME],
+            )],
+        )
+        .unwrap();
+    assert_eq!(database.reconcile_waiting_tasks().unwrap(), 0);
+    assert_eq!(
+        database.list_tasks(Some(ME), Some("open")).unwrap().len(),
+        1
+    );
+    assert!(promise_threads(&database).is_empty());
+}

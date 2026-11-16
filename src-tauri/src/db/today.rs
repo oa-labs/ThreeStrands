@@ -94,7 +94,9 @@ impl Database {
     /// it. A promise counts as kept, and is left out, once the user has sent
     /// anything later to someone on its To line, in any conversation. Trashed
     /// conversations and ones with an open task are left out too: the task
-    /// already tracks it. `account_id` scopes to one account.
+    /// already tracks it. A task linked to the exact sent message also leaves
+    /// that promise out after completion or cancellation. `account_id` scopes
+    /// to one account.
     pub fn list_open_promises(
         &self,
         account_id: Option<&str>,
@@ -107,6 +109,9 @@ impl Database {
                  WHERE t.trashed = 0 AND m.sent_at >= ?1 AND (?2 IS NULL OR t.account_id = ?2)
                    AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.thread_id = t.id AND tasks.status IN ('open', 'in_progress'))
                  ORDER BY m.sent_at DESC",
+            )?;
+            let mut tracked_message = connection.prepare(
+                "SELECT EXISTS(SELECT 1 FROM tasks WHERE account_id = ?1 AND source_message_id = ?2)",
             )?;
             let mut body = connection.prepare("SELECT body_text, body_text_z FROM messages WHERE id = ?1")?;
             let mut sent_later = connection.prepare(
@@ -130,6 +135,11 @@ impl Database {
                 // Rows run newest first, so the first one the user sent is the
                 // conversation's newest sent message; older ones are not read.
                 if !mine.contains(&normalize_sender(&sender).0) || !seen_threads.insert(thread_id.clone()) {
+                    continue;
+                }
+                // Check after marking the newest sent message seen: skipping it
+                // must never resurrect an older promise in this conversation.
+                if tracked_message.query_row(params![owner, message_id], |row| row.get::<_, bool>(0))? {
                     continue;
                 }
                 let recipients: Vec<String> = serde_json::from_str::<Vec<String>>(&recipients_json)

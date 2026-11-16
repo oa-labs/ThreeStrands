@@ -162,7 +162,7 @@ function TodayLayout({
         sourceMessageId: promise.messageId,
         subjectSnapshot: promise.thread.subject || "(no subject)",
         title: promise.excerpt,
-        kind: "follow_up",
+        kind: "action",
         evidenceText: promise.excerpt,
       });
       // The task now tracks it, so the native list leaves it out from here on.

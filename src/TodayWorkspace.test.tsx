@@ -325,16 +325,16 @@ describe("TodayWorkspace", () => {
       expect(onOpenThread).toHaveBeenCalledWith("thread-p1");
     });
 
-    it("makes a follow-up task from a promise and opens it for editing", async () => {
+    it("makes an action task from a promise and opens it for editing", async () => {
       vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([promise("p1")]);
-      const created = task("new", { title: "I'll reconnect your server, run the report and send it over", kind: "follow_up" });
+      const created = task("new", { title: "I'll reconnect your server, run the report and send it over", kind: "action" });
       const createTask = vi.spyOn(mailClient, "createTask").mockResolvedValue(created);
       const { onEditTask, onTasksChanged } = renderToday();
 
       fireEvent.click(await screen.findByRole("button", { name: /^Make a task: I'll reconnect/ }));
       await waitFor(() => expect(createTask).toHaveBeenCalledWith({
         accountId: "you@example.com", threadId: "thread-p1", sourceMessageId: "p1", subjectSnapshot: "ArtBrew report",
-        title: "I'll reconnect your server, run the report and send it over", kind: "follow_up",
+        title: "I'll reconnect your server, run the report and send it over", kind: "action",
         evidenceText: "I'll reconnect your server, run the report and send it over",
       }));
       expect(onEditTask).toHaveBeenCalledWith(created);

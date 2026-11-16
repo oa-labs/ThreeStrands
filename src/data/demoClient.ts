@@ -563,6 +563,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         const [thread] = visibleWhere(accountId, (candidate) => candidate.id === threadId && !candidate.trashed);
         const message = thread ? messagesFor(thread).at(-1) : undefined;
         if (!thread || !message) return [];
+        if (tasks.some((task) => task.accountId === thread.accountId && (
+          task.sourceMessageId === message.id || (task.threadId === thread.id && (task.status === "open" || task.status === "in_progress"))
+        ))) return [];
         return [{ thread: { ...thread }, messageId: message.id, sentAt: message.sentAt, recipients: [...message.recipients], excerpt }];
       });
     },

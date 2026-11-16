@@ -165,6 +165,21 @@ describe("showcase dataset", () => {
     expect(await createDemoClient(defaultDemoDataset()).listOpenPromises()).toEqual([]);
   });
 
+  it("keeps a promise tracked after its task is completed or cancelled", async () => {
+    for (const status of ["completed", "cancelled"] as const) {
+      const client = createDemoClient(buildShowcaseDataset(now));
+      const [promise] = await client.listOpenPromises(SHOWCASE_WORK_ACCOUNT);
+      const task = await client.createTask({
+        accountId: promise.thread.accountId, threadId: promise.thread.id,
+        sourceMessageId: promise.messageId, subjectSnapshot: promise.thread.subject,
+        title: promise.excerpt, kind: "action", evidenceText: promise.excerpt,
+      });
+      expect(await client.listOpenPromises(SHOWCASE_WORK_ACCOUNT)).toEqual([]);
+      await client.setTaskStatus(task.id, status);
+      expect(await client.listOpenPromises(SHOWCASE_WORK_ACCOUNT)).toEqual([]);
+    }
+  });
+
   it("returns bundled raster pictures for showcase image attachments and refuses everything else", async () => {
     const dataset = buildShowcaseDataset(now);
     const client = createDemoClient(dataset);
