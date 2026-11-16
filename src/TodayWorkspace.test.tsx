@@ -458,33 +458,40 @@ describe("TodayWorkspace", () => {
       expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "next" }));
     });
 
-    it("lists meetings to prepare, prepares from them, the agenda, the next meeting, and the keyboard, beside the agenda in place of mail", async () => {
+    it("shows readiness on agenda rows, prepares from the agenda, the next meeting, and the keyboard, beside the agenda in place of mail", async () => {
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
         event("past", -60, { title: "Done already" }),
+        event("home", 0, { title: "Home", allDay: true, start: localDate(0), end: localDate(1), eventType: "workingLocation" }),
         event("next", 20, { title: "Design sync" }),
         event("later", 120, { title: "Planning" }),
       ] });
-      vi.spyOn(mailClient, "meetingReadiness").mockImplementation(async (references) => references.map((reference) => ({
-        reference, eventAvailable: true, hasOccurrenceNote: false, priorOccurrencesWithNotes: 0, seriesNotes: 0, openCommitments: 0,
+      const readiness = vi.spyOn(mailClient, "meetingReadiness").mockImplementation(async (references) => references.map((reference) => ({
+        reference, eventAvailable: true, hasOccurrenceNote: false, priorOccurrencesWithNotes: reference.id === "later" ? 1 : 0, seriesNotes: 0, openCommitments: 0,
         candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, unavailableSections: [], error: null })));
       const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => <p>Preparation view</p>), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
       const { rerenderToday, onOpenEvent } = renderToday({ calendarConnected: true, preparation });
 
-      const prep = within(await screen.findByRole("region", { name: /Meeting prep/ }));
-      expect(await prep.findAllByText("No notes yet")).toHaveLength(2);
-      expect(prep.queryByText("Done already")).not.toBeInTheDocument();
-      fireEvent.click(prep.getByRole("button", { name: /^Design sync/ }));
-      expect(preparation.onPrepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: "next" }));
-      const agenda = within(screen.getByRole("region", { name: "Today's agenda" }));
+      expect(screen.queryByRole("region", { name: /Meeting prep/ })).not.toBeInTheDocument();
+      const agenda = within(await screen.findByRole("region", { name: "Today's agenda" }));
+      expect(await agenda.findByText(/No notes yet · 1 earlier meeting with notes/)).toBeInTheDocument();
+      // Only meetings still ahead are checked; a finished one and a working location aren't.
+      await waitFor(() => expect(readiness).toHaveBeenCalled());
+      expect(readiness.mock.calls.at(-1)![0].map((reference) => reference.id)).toEqual(["next", "later"]);
+      expect(agenda.queryByRole("button", { name: "Prepare for Home" })).not.toBeInTheDocument();
+      expect(agenda.queryByRole("button", { name: "Add Note for Home" })).not.toBeInTheDocument();
+      fireEvent.click(agenda.getByRole("button", { name: /^Home/ }));
+      expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "home" }));
+      expect(preparation.onPrepare).not.toHaveBeenCalled();
+
       // On Today, choosing a meeting prepares it rather than leaving for Calendar.
       fireEvent.click(agenda.getByRole("button", { name: /^Planning/ }));
       expect(preparation.onPrepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: "later" }));
-      expect(onOpenEvent).not.toHaveBeenCalled();
       fireEvent.click(agenda.getByRole("button", { name: "Prepare for Design sync" }));
       fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
-      expect(preparation.onPrepare).toHaveBeenCalledTimes(4);
+      expect(preparation.onPrepare).toHaveBeenCalledTimes(3);
       act(() => runWorkspaceCommand("meetings.prepare"));
       expect(preparation.onPrepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: "next" }));
+      expect(onOpenEvent).toHaveBeenCalledTimes(1);
 
       const preparing = { ...preparation, event: event("next", 20, { title: "Design sync" }) };
       rerenderToday({ calendarConnected: true, preparation: preparing });
@@ -492,7 +499,9 @@ describe("TodayWorkspace", () => {
       expect(screen.getByRole("region", { name: "Today's agenda" })).toBeInTheDocument();
       expect(screen.queryByRole("group", { name: "Unread mail" })).not.toBeInTheDocument();
       expect(screen.getByRole("group", { name: "Tasks" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Prepare" })).toHaveAttribute("aria-pressed", "true");
+      // Preparation has the meeting's actions, so the header card is only its link.
+      expect(screen.getByRole("button", { name: /^Next: Design sync/ })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Prepare" })).not.toBeInTheDocument();
       expect(within(screen.getByRole("region", { name: "Today's agenda" })).getByRole("button", { name: /^Design sync/ })).toHaveAttribute("aria-pressed", "true");
 
       act(() => runWorkspaceCommand("meetings.next"));

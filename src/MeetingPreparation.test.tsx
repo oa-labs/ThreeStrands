@@ -31,7 +31,7 @@ function context(overrides: Partial<MeetingContext> = {}, ref: NoteReference = r
     thisMeeting: section([{ noteId: "daily:2026-11-16", title: "2026-11-16", dailyDate: "2026-11-16", revision: "r1", kind: "excerpt", text: "- [3pm](x) for Sync\n  - Decided to ship <!-- threestrands-task:1 -->", truncated: false, start: 0, end: 10 }]),
     previousMeetings: section([{ reference: { ...ref, id: "earlier" }, start: "2026-11-09T15:00:00Z", date: null, sources: [{ noteId: "daily:2026-11-09", title: "2026-11-09", dailyDate: "2026-11-09", revision: "r0", kind: "excerpt", text: "- Last week's notes", truncated: false, start: 0, end: 5 }] }]),
     seriesNotes: section([]),
-    conversations: section([{ threadId: "t1", accountId: ME, subject: "Agenda thread", lastMessageAt: "2026-11-14T09:00:00Z", reason: "attendees", attendees: ["ann@example.org"] }]),
+    conversations: section([{ threadId: "t1", accountId: ME, subject: "Agenda thread", lastMessageAt: "2026-11-14T09:00:00Z", reason: "attendees", attendees: ["ann@example.org"], related: true }]),
     commitments: section([
       { id: "note:daily:2026-11-16:m1", title: "Send the deck", status: "open", noteId: "daily:2026-11-16", threadId: null, accountId: null, origin: "meetingNote", candidate: false },
       { id: "task-2", title: "Send Ann numbers", status: "open", noteId: null, threadId: "t1", accountId: ME, origin: "attendeeConversation", candidate: true },
@@ -133,15 +133,15 @@ describe("MeetingPreparation", () => {
     expect(view.getByText(/Related mail needs this meeting's attendees/)).toBeInTheDocument();
   });
 
-  it("leads with mail naming the meeting or several attendees, keeps one-attendee mail collapsed, and offers Add Note and the actions", async () => {
+  it("leads with mail likely about the meeting, keeps other attendee mail collapsed, and offers Add Note and the actions", async () => {
     const base = context();
     vi.spyOn(mailClient, "meetingContext").mockResolvedValue(context({
       event: { ...base.event!, attendees: ["ann@example.org", "bo@example.org"] },
       thisMeeting: section([]),
       conversations: section([
-        { threadId: "inv", accountId: ME, subject: "Invitation: Meeting evt", lastMessageAt: "2026-11-12T09:00:00Z", reason: "title", attendees: [] },
-        { threadId: "both", accountId: ME, subject: "Budget for the review", lastMessageAt: "2026-11-13T09:00:00Z", reason: "attendees", attendees: ["ann@example.org", "bo@example.org"] },
-        { threadId: "solo", accountId: ME, subject: "Lunch on Friday", lastMessageAt: "2026-11-15T09:00:00Z", reason: "attendees", attendees: ["ann@example.org"] },
+        { threadId: "inv", accountId: ME, subject: "Invitation: Meeting evt", lastMessageAt: "2026-11-12T09:00:00Z", reason: "title", attendees: [], related: true },
+        { threadId: "both", accountId: ME, subject: "Budget for the review", lastMessageAt: "2026-11-13T09:00:00Z", reason: "attendees", attendees: ["ann@example.org", "bo@example.org"], related: true },
+        { threadId: "solo", accountId: ME, subject: "Lunch on Friday", lastMessageAt: "2026-11-15T09:00:00Z", reason: "attendees", attendees: ["ann@example.org"], related: false },
       ]),
     }));
     const onAddNote = vi.fn();

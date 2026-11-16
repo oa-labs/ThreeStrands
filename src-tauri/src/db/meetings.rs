@@ -152,6 +152,11 @@ pub struct MeetingConversation {
     pub reason: ConversationReason,
     /// The attendees this conversation was found through.
     pub attendees: Vec<String>,
+    /// Likely about this meeting: its origin, a subject naming it or sharing a
+    /// distinctive word with its title, or mail with all of its attendees.
+    /// Other attendee mail is listed apart, since with colleagues it is often
+    /// about something else.
+    pub related: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -573,11 +578,49 @@ fn origin_conversation(c: &Connection, message: &str) -> DbResult<Option<Meeting
                 last_message_at: r.get(3)?,
                 reason: ConversationReason::Origin,
                 attendees: Vec::new(),
+                related: true,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     // A message id cached in two accounts can't say which one it was.
     Ok(if found.len() == 1 { found.pop() } else { None })
+}
+
+/// Words too common in meeting titles and subjects to say two are about the
+/// same thing.
+const GENERIC_TITLE_WORDS: &[&str] = &[
+    "about",
+    "accepted",
+    "call",
+    "catch",
+    "chat",
+    "check",
+    "daily",
+    "declined",
+    "from",
+    "invitation",
+    "meeting",
+    "meetings",
+    "monthly",
+    "review",
+    "standup",
+    "sync",
+    "team",
+    "tentative",
+    "update",
+    "updated",
+    "updates",
+    "weekly",
+    "with",
+];
+
+/// The distinctive words of a title or subject: ASCII-lowercased runs of
+/// letters and digits of four or more characters that aren't generic.
+fn title_words(text: &str) -> std::collections::BTreeSet<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .map(str::to_ascii_lowercase)
+        .filter(|word| word.chars().count() >= 4 && !GENERIC_TITLE_WORDS.contains(&word.as_str()))
+        .collect()
 }
 
 /// Shortest meeting title matched against subjects; shorter ones, such as
@@ -622,6 +665,7 @@ fn title_conversations(
                     last_message_at: r.get(3)?,
                     reason: ConversationReason::Title,
                     attendees: Vec::new(),
+                    related: true,
                 })
             },
         )?
@@ -648,14 +692,14 @@ fn mentions_address(headers: &str, address: &str) -> bool {
 
 /// Recent conversations with the attendees in `accounts`, up to one more
 /// than the limit so the section can say it was cut. A conversation lists
-/// every attendee its messages' From, To, and Cc headers name. Those with two
-/// or more attendees come first (with every attendee when the meeting has only
-/// one), since mail with a single colleague is often about something else;
-/// newest first within each. Message bodies are never read.
+/// every attendee its messages' From, To, and Cc headers name. Related ones
+/// (see [`MeetingConversation::related`]) come first, newest first within
+/// each group. Message bodies are never read.
 fn attendee_conversations(
     c: &Connection,
     accounts: &[String],
     attendees: &[String],
+    title: &str,
     since: DateTime<Utc>,
 ) -> DbResult<Vec<MeetingConversation>> {
     if attendees.is_empty() {
@@ -690,7 +734,7 @@ fn attendee_conversations(
     let mut headers = c.prepare(
         "SELECT lower(sender || ' ' || recipients_json || ' ' || coalesce(cc_json,'')) FROM messages WHERE thread_id=?1",
     )?;
-    let several = attendees.len().min(2);
+    let topic = title_words(title);
     let mut found = Vec::new();
     for (thread_id, account_id, subject, last_message_at) in candidates {
         let text = headers
@@ -703,6 +747,10 @@ fn attendee_conversations(
             .cloned()
             .collect();
         matched.sort();
+        let related = matched.len() == attendees.len()
+            || title_words(&subject)
+                .iter()
+                .any(|word| topic.contains(word));
         found.push(MeetingConversation {
             thread_id,
             account_id,
@@ -710,10 +758,11 @@ fn attendee_conversations(
             last_message_at,
             reason: ConversationReason::Attendees,
             attendees: matched,
+            related,
         });
     }
     // Stable: newest first within each group.
-    found.sort_by_key(|item| item.attendees.len() < several);
+    found.sort_by_key(|item| !item.related);
     found.truncate(policy::MAX_MEETING_CONVERSATIONS + 2);
     Ok(found)
 }
@@ -743,7 +792,13 @@ fn conversations(
     let since = now - chrono::Duration::days(policy::MEETING_MAIL_LOOKBACK_DAYS);
     let related = title_conversations(c, accounts, &event.title, since)?
         .into_iter()
-        .chain(attendee_conversations(c, accounts, attendees, since)?);
+        .chain(attendee_conversations(
+            c,
+            accounts,
+            attendees,
+            &event.title,
+            since,
+        )?);
     for conversation in related {
         if !items
             .iter()

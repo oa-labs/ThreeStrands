@@ -752,7 +752,7 @@ fn reserving_prep_goes_under_an_existing_meeting_line_and_refuses_stale_or_unbou
 }
 
 #[test]
-fn conversations_naming_the_meeting_come_first_then_mail_with_several_attendees() {
+fn related_conversations_name_the_meeting_share_a_title_word_or_include_every_attendee() {
     let meeting = event(
         "evt-1",
         None,
@@ -781,6 +781,15 @@ fn conversations_naming_the_meeting_come_first_then_mail_with_several_attendees(
         )],
     )
     .unwrap();
+    let mut topic = mail(
+        "topic",
+        "enrollment",
+        "2026-11-11T09:00:00Z",
+        "Bo <bo@example.org>",
+        &[ME],
+    );
+    topic.subject = "Re: benefits enrollment forms".into();
+    db.upsert_thread(ME, &[topic]).unwrap();
     db.upsert_thread(
         ME,
         &[mail(
@@ -792,6 +801,16 @@ fn conversations_naming_the_meeting_come_first_then_mail_with_several_attendees(
         )],
     )
     .unwrap();
+    // A generic shared word, such as "review", isn't enough.
+    let mut generic = mail(
+        "gen",
+        "generic",
+        "2026-11-14T09:00:00Z",
+        "Bo <bo@example.org>",
+        &[ME],
+    );
+    generic.subject = "Code review for the release".into();
+    db.upsert_thread(ME, &[generic]).unwrap();
 
     let result = context(&db, &occurrence("evt-1", None));
     let threads: Vec<_> = result
@@ -804,15 +823,26 @@ fn conversations_naming_the_meeting_come_first_then_mail_with_several_attendees(
                     .trim_start_matches(&format!("{ME}:"))
                     .to_string(),
                 item.reason,
+                item.related,
             )
         })
         .collect();
     assert_eq!(
         threads,
         [
-            ("invitation".to_string(), ConversationReason::Title),
-            ("ann-and-bo".to_string(), ConversationReason::Attendees),
-            ("ann-only".to_string(), ConversationReason::Attendees),
+            ("invitation".to_string(), ConversationReason::Title, true),
+            (
+                "ann-and-bo".to_string(),
+                ConversationReason::Attendees,
+                true
+            ),
+            (
+                "enrollment".to_string(),
+                ConversationReason::Attendees,
+                true
+            ),
+            ("ann-only".to_string(), ConversationReason::Attendees, false),
+            ("generic".to_string(), ConversationReason::Attendees, false),
         ]
     );
     assert_eq!(

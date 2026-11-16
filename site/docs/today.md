@@ -24,12 +24,12 @@ A line under the date summarizes your remaining meetings, free time, conflicts, 
 
 ## Get Ready for Meetings {#get-ready-for-meetings}
 
-**Meeting prep**, above the agenda, lists the meetings still ahead today with what is ready for each: whether the meeting has notes, earlier meetings in its series with notes, open commitments, and when you last had mail with its attendees.
+Each meeting still ahead in **Today's agenda** says what is ready for it, after its time: whether it has notes, earlier meetings in its series with notes, open commitments, and when you last had mail with its attendees.
 
-- Click a meeting here or in the agenda, click **Prepare** beside your next meeting, or press <kbd>p</kbd> to [prepare for it](calendar.html#prepare-for-a-meeting). Preparation appears beside the agenda, in place of unread mail, and the meeting stays highlighted. Press <kbd>↓</kbd> or <kbd>↑</kbd> for the next or previous meeting. Press <kbd>Escape</kbd> or <kbd>p</kbd>, or click the meeting again, to bring back unread mail.
-- Above preparation, **Add Note** (or **Open Note**), **Reserve Prep Time**, **Join**, and **Open in Calendar** offer the next steps.
+- Click a meeting in the agenda, click **Prepare** beside your next meeting, or press <kbd>p</kbd> to [prepare for it](calendar.html#prepare-for-a-meeting). Preparation appears beside the agenda, in place of unread mail, and the meeting stays highlighted. Press <kbd>↓</kbd> or <kbd>↑</kbd> for the next or previous meeting. Press <kbd>Escape</kbd> or <kbd>p</kbd>, or click the meeting again, to bring back unread mail.
+- Above preparation, **Add Note** (or **Open Note**), **Reserve Prep Time**, **Join**, and **Open in Calendar** offer the next steps. While you prepare, the next-meeting link in the header keeps only its link.
 - **Reserve Prep Time** adds a task, "Prepare for" and the meeting's name, under the meeting's line in that day's note, adding the line if the note doesn't have one. It appears in **Tasks**. Doing it again finds the task already there.
-- **No Prep Needed** sets a meeting aside on this computer only; click the arrow to bring it back.
+- Working locations, such as **Home** or **Office**, aren't meetings, so they offer no **Prepare** or **Add Note**; clicking one opens it in Calendar.
 
 ## Work Through Mail and Tasks {#work-through-mail-and-tasks}
 

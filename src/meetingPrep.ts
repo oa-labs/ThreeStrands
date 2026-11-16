@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { mailClient } from "./data/client";
 import type { MeetingReadiness, ScheduleEvent } from "./domain";
 import { isDeclined } from "./agendaEvents";
+import { isWorkingLocation } from "./WorkingLocation";
 import { meetingAttendees, meetingDate, meetingEntry, meetingEventReference } from "./meetingNoteEntry";
 import { MAX_MEETING_ATTENDEES, type MeetingEntry } from "./noteMeetings";
 import { normalizeContactAddress, noteReferenceKey } from "./noteEntities";
@@ -23,10 +24,16 @@ export async function defaultMeetingEntry(event: ScheduleEvent, ownAddresses: re
   return meetingEntry(event, { name: event.title, attendees, names, contactIds, linkNote: false });
 }
 
-/** The day's meetings a plan or Today lists for preparation: those that link
- * a note, aren't declined, aren't working locations, and haven't ended. */
+/** An event that can be prepared and noted: one a note can link, that isn't
+ * a working location such as "Home" or "Office". */
+export function isPreparable(event: ScheduleEvent): boolean {
+  return Boolean(meetingEventReference(event)) && !isWorkingLocation(event);
+}
+
+/** The day's meetings a plan or Today lists for preparation: preparable ones
+ * that aren't declined and haven't ended. */
 export function meetingsToPrepare(events: readonly ScheduleEvent[], now: Date): ScheduleEvent[] {
-  return events.filter((event) => meetingEventReference(event) && !isDeclined(event) && event.eventType !== "workingLocation"
+  return events.filter((event) => isPreparable(event) && !isDeclined(event)
     && (event.allDay || new Date(event.end).getTime() > now.getTime()));
 }
 

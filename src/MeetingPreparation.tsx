@@ -117,10 +117,9 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
   const definite = context?.commitments.items.filter((item) => !item.candidate) ?? [];
   const candidates = context?.commitments.items.filter((item) => item.candidate) ?? [];
   const conversations = context?.conversations;
-  // Mail naming the meeting, or with several of its attendees, leads; mail
-  // with a single attendee is often about something else, so it waits below.
-  const several = Math.min(2, context?.event?.attendees.length ?? 0);
-  const related = conversations?.items.filter((item) => item.reason !== "attendees" || item.attendees.length >= several) ?? [];
+  // Mail likely about the meeting leads; other mail with its attendees is
+  // often about something else with the same colleagues, so it waits below.
+  const related = conversations?.items.filter((item) => item.related) ?? [];
   const otherMail = conversations?.items.filter((item) => !related.includes(item)) ?? [];
   const scopeAction = mailAccounts.length > 1 || conversations?.status === "scopeRequired"
     ? <button type="button" className="btn-link" onClick={() => setChoosingScope(true)}>{conversations?.status === "scopeRequired" ? "Choose Accounts…" : "Mail Accounts…"}</button>
@@ -159,7 +158,7 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
           {conversations?.status === "scopeRequired" ? <p className="context-status">{conversations.message}</p> : null}
           {conversations?.status === "unavailable" ? <p className="context-status">{conversations.message}</p> : null}
           {conversations && conversations.status !== "unavailable" && conversations.status !== "scopeRequired" && related.length === 0
-            ? <p className="context-status">{otherMail.length ? "No mail about this meeting or with several of its attendees." : "No recent mail about this meeting or with its attendees."}</p> : null}
+            ? <p className="context-status">{otherMail.length ? "No mail about this meeting or with all of its attendees." : "No recent mail about this meeting or with its attendees."}</p> : null}
         </>} />
       {otherMail.length || conversations?.omitted ? <ContextSection id="meeting-prep-other-mail" title="Other mail with attendees" count={otherMail.length} defaultCollapsed
         rows={conversationRows(otherMail)}

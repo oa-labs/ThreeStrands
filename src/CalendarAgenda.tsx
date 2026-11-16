@@ -9,8 +9,7 @@ import { agendaConflicts, mentionsRecording } from "./todayInsights";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import type { CalendarOption, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
-import { meetingEventReference } from "./meetingNoteEntry";
-import { preparationKey } from "./meetingPrep";
+import { isPreparable, preparationKey } from "./meetingPrep";
 
 import { usePullToRefresh } from "./usePullToRefresh";
 import { PullToRefreshStatus } from "./PullToRefreshStatus";
@@ -44,6 +43,8 @@ type AgendaProps = {
   onPrepare?(event: ScheduleEvent): void;
   /** The meeting being prepared (`preparationKey`), shown selected. */
   selectedKey?: string | null;
+  /** A short line about the event after its time, such as its readiness. */
+  describe?(event: ScheduleEvent): string | null | undefined;
 };
 
 type AgendaDay = "today" | "tomorrow" | "chosen";
@@ -73,7 +74,7 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, selectedKey = null, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, selectedKey = null, describe, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
   const agendaRef = useRef<HTMLElement>(null);
   const refresh = useCallback(async () => { if (refreshSchedule) await refreshSchedule(); else reload(); }, [refreshSchedule, reload]);
   const pull = usePullToRefresh(agendaRef, pullToRefresh ? refresh : undefined);
@@ -96,7 +97,7 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
     const conflict = overlapping.length
       ? [`Overlaps ${overlapping.map((other) => other.title).join(", ")}`, mentionsRecording(event) ? "Recorded" : null]
       : [];
-    const detail = [formatEventTime(event), ...conflict, event.location, calendar?.name, account, responseLabel(event)].filter(Boolean).join(" · ");
+    const detail = [formatEventTime(event), describe?.(event), ...conflict, event.location, calendar?.name, account, responseLabel(event)].filter(Boolean).join(" · ");
     const key = preparationKey(event);
     const isSelected = selectedKey !== null && key === selectedKey;
     rows.push(<ContextRow
@@ -108,7 +109,7 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
       title={event.title}
       detail={detail}
       onActivate={() => onOpenEvent(event)}
-      actions={meetingEventReference(event) && (onPrepare || onAddNote) ? [
+      actions={isPreparable(event) && (onPrepare || onAddNote) ? [
         ...(onPrepare ? [<PrepareButton key="prepare" event={event} onPrepare={onPrepare} pressed={selectedKey !== null ? isSelected : undefined} />] : []),
         ...(onAddNote ? [<AddNoteButton key="note" event={event} onAddNote={onAddNote} />] : []),
       ] : undefined}

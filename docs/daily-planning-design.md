@@ -309,7 +309,24 @@ has no text inputs; the routine and every form open as modals. Today stays one
 day: there is no multi-day board, and tomorrow is planned through **Plan
 Tomorrow**.
 
-Two columns, with work on the left and time on the right:
+Two columns, with work on the left and time on the right. The left column takes
+about two-thirds of the content width and the day view about one-third: the plan
+and preparation are text that needs room to read, while the day view only needs
+space for time blocks. The ratio is a layout token with a minimum day-view width,
+not a fixed split, so narrow windows fall back as described below.
+
+**The left column shows the plan or one meeting's preparation.** The day view on
+the right always stays and is how a meeting is chosen. Choosing a meeting there, or
+<kbd>p</kbd> for the meeting in focus or the next one, shows that meeting's
+[preparation](meeting-preparation-design.md#prepare-from-calendar-or-today) in the
+left column in place of the plan, with the meeting highlighted in the day view.
+<kbd>↓</kbd>/<kbd>↑</kbd> move to the next or previous meeting; <kbd>Escape</kbd>,
+<kbd>p</kbd>, or choosing the meeting again returns to the plan. This is the same
+pattern as the interim three-column Today, where preparation replaces the mail
+column beside the agenda, rotated into the two-column layout. Preparation's own
+action row (Add Note / Open Note, Reserve Prep Time, Join, Open in Calendar) is the
+one place for a meeting's actions, so neither the header nor the day view repeats
+them while a meeting is being prepared.
 
 - **Header:** the date, the day summary line, the mail signal, and the plan status:
   **Plan Today**, or "3 of 5 planned done" with **Edit Plan**, and **Shut Down**.
@@ -359,10 +376,10 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
   design: a note mark when the occurrence has a note and a count of open
   commitments. A meeting with unread conversations from its attendees shows that
   count; this replaces the "Also in your meeting" note that the mail rows carried.
-  Selecting a meeting shows its details in Today, using Calendar's event details
-  component, with **Prepare**, **Open Note / Add Note**, **Reserve Prep Time**,
-  **Join**, and the existing event actions. Escape closes the details and returns
-  focus to the meeting.
+  Selecting a meeting shows its preparation in the left column, as above; Escape
+  returns to the plan and focus to the meeting. Event details, such as answering
+  an invitation, stay in Calendar, reached through **Open in Calendar**. Working
+  locations are shown above the grid as in Calendar and are never prepared.
 - **Booked blocks.** A task block names its task and shows the task's state. A
   card and its block are linked: focusing or hovering one highlights the other,
   and selecting the block offers **Open Task** and **Mark Done**, as Calendar's

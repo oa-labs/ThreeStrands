@@ -10,7 +10,7 @@ import { BookedTask, CalendarTasks, useAccountTasks } from "./CalendarTasks";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
 import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { preparationKey, type MeetingPreparationHost } from "./meetingPrep";
+import { isPreparable, preparationKey, type MeetingPreparationHost } from "./meetingPrep";
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { EventViewer, eventCalendarLabel } from "./CalendarSidebar";
 import { HoverTooltip } from "./AppChrome";
@@ -784,9 +784,9 @@ export function CalendarWeekView({
         {selectedEvent ? <>
           <ContextSectionHeader title="Event details" icon={<CalendarDays size={ICON_SIZE.xs} />}
             actions={<>
-              {preparation && meetingEventReference(selectedEvent) ? <button ref={prepareButton} type="button" className="btn-icon btn-icon-sm" aria-label="Prepare" title="Prepare" aria-pressed={preparingSelected}
+              {preparation && isPreparable(selectedEvent) ? <button ref={prepareButton} type="button" className="btn-icon btn-icon-sm" aria-label="Prepare" title="Prepare" aria-pressed={preparingSelected}
                 onClick={() => preparation.onChange(preparingSelected ? null : preparationKey(selectedEvent))}><ClipboardList size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
-              {onAddNote && meetingEventReference(selectedEvent) ? <EventNoteAction key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} occurrence={meetingEventReference(selectedEvent)!} onActivate={() => onAddNote(selectedEvent)} /> : null}
+              {onAddNote && isPreparable(selectedEvent) ? <EventNoteAction key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} occurrence={meetingEventReference(selectedEvent)!} onActivate={() => onAddNote(selectedEvent)} /> : null}
             </>} />
           <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} calendarLabel={eventCalendarLabel(selectedEvent, calendars)} onDismiss={() => {
             setSelectedEvent(null);

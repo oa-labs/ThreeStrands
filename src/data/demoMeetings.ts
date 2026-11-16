@@ -26,6 +26,10 @@ function bounded<T>(items: T[], limit: number): MeetingSection<T> {
 }
 const unavailable = <T>(message: string): MeetingSection<T> => ({ status: "unavailable", items: [], omitted: 0, message });
 
+/** As natively (`GENERIC_TITLE_WORDS`): words too common to say two titles share a topic. */
+const GENERIC_TITLE_WORDS = new Set(["about", "accepted", "call", "catch", "chat", "check", "daily", "declined", "from", "invitation", "meeting", "meetings", "monthly", "review", "standup", "sync", "team", "tentative", "update", "updated", "updates", "weekly", "with"]);
+const titleWords = (text: string) => new Set(text.split(/[^\p{L}\p{N}]+/u).map((word) => word.replace(/[A-Z]/g, (ch) => ch.toLowerCase())).filter((word) => [...word].length >= 4 && !GENERIC_TITLE_WORDS.has(word)));
+
 const instant = (start: string) => /^\d{4}-\d{2}-\d{2}$/.test(start) ? new Date(`${start}T00:00:00`).getTime() : Date.parse(start);
 const localDate = (time: number) => { const d = new Date(time); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
@@ -121,26 +125,29 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       const items: MeetingConversation[] = [];
       const originThread = event.sourceMessageId ? sources.threadForMessage(event.sourceMessageId) : null;
       const origin = originThread ? sources.threads().find((thread) => thread.id === originThread && known.has(thread.accountId) && !thread.trashed) : undefined;
-      if (origin) items.push({ threadId: origin.id, accountId: origin.accountId, subject: origin.subject, lastMessageAt: origin.lastMessageAt, reason: "origin", attendees: [] });
+      if (origin) items.push({ threadId: origin.id, accountId: origin.accountId, subject: origin.subject, lastMessageAt: origin.lastMessageAt, reason: "origin", attendees: [], related: true });
       if (!scope.length) conversations = { ...bounded(items, DEMO_MEETING_LIMITS.conversations), status: "scopeRequired", message: "Choose which mail accounts to look in for related mail." };
       else {
         const since = now.getTime() - DEMO_MEETING_LIMITS.mailLookbackDays * 86_400_000;
         const recent = sources.threads()
           .filter((thread) => scope.includes(thread.accountId) && !thread.trashed && Date.parse(thread.lastMessageAt) >= since)
           .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt) || a.id.localeCompare(b.id));
-        // As natively: conversations naming the meeting first, then mail with
-        // several attendees, then mail with one, newest first within each.
+        // As natively: conversations naming the meeting first, then related
+        // attendee mail, then the rest, newest first within each.
         const title = event.title.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
         if ([...title].length >= 4) for (const thread of recent) {
-          if (thread.subject.toLowerCase().includes(title) && !items.some((item) => item.threadId === thread.id)) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "title", attendees: [] });
+          if (thread.subject.toLowerCase().includes(title) && !items.some((item) => item.threadId === thread.id)) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "title", attendees: [], related: true });
         }
-        const several = Math.min(2, lookup.length);
+        const topic = titleWords(event.title);
         const matches = recent
           .filter((thread) => !items.some((item) => item.threadId === thread.id))
-          .map((thread) => ({ thread, matched: lookup.filter((address) => thread.participants.some((participant) => normalizeContactAddress(participant).includes(address))).sort() }))
+          .map((thread) => {
+            const matched = lookup.filter((address) => thread.participants.some((participant) => normalizeContactAddress(participant).includes(address))).sort();
+            return { thread, matched, related: matched.length === lookup.length || [...titleWords(thread.subject)].some((word) => topic.has(word)) };
+          })
           .filter(({ matched }) => matched.length)
-          .sort((a, b) => Number(a.matched.length < several) - Number(b.matched.length < several));
-        for (const { thread, matched } of matches) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "attendees", attendees: matched });
+          .sort((a, b) => Number(!a.related) - Number(!b.related));
+        for (const { thread, matched, related } of matches) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "attendees", attendees: matched, related });
         conversations = bounded(items, DEMO_MEETING_LIMITS.conversations);
       }
     }

@@ -1079,7 +1079,9 @@ export type MeetingEventSnapshot = { title: string; start: string; end: string; 
 export type MeetingSourceKind = "excerpt" | "reference" | "linkedNote";
 export type MeetingNoteSource = { noteId: string; title: string; dailyDate: string | null; revision: string; kind: MeetingSourceKind; text: string; truncated: boolean; start: number; end: number };
 export type MeetingOccurrence = { reference: import("./noteEntities").NoteReference; start: string | null; date: string | null; sources: MeetingNoteSource[] };
-export type MeetingConversation = { threadId: string; accountId: string; subject: string; lastMessageAt: string; reason: "origin" | "title" | "attendees"; attendees: string[] };
+export type MeetingConversation = { threadId: string; accountId: string; subject: string; lastMessageAt: string; reason: "origin" | "title" | "attendees"; attendees: string[];
+  /** Likely about this meeting: its origin, a subject naming it or sharing a distinctive title word, or mail with all its attendees. */
+  related: boolean };
 export type MeetingCommitment = { id: string; title: string; status: string; noteId: string | null; threadId: string | null; accountId: string | null; origin: "meetingNote" | "originConversation" | "titleConversation" | "attendeeConversation"; candidate: boolean };
 /** The limits a meeting context was read under (`src-tauri/src/meeting_policy.rs`). */
 export type MeetingLimits = { noteSources: number; priorOccurrences: number; excerptBytes: number; linkedNotePreviewBytes: number; attendees: number; conversations: number; mailLookbackDays: number; commitments: number };

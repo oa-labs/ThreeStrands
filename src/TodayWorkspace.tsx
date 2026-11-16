@@ -2,8 +2,8 @@ import { formatCompactDate } from "./dateFormatting";
 import { ClipboardList, ContactRound, ListPlus, Mail, NotebookPen, Send, Video, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { MeetingReadinessList } from "./MeetingReadinessList";
-import { meetingsToPrepare, preparationKey } from "./meetingPrep";
+import { isPreparable, meetingsToPrepare, preparationKey, readinessByKey, readinessSummary } from "./meetingPrep";
+import { useMeetingReadiness } from "./useMeetingPreparation";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import type { Notice } from "./useNotice";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -206,7 +206,20 @@ function TodayLayout({
   } : undefined;
   const next = nextMeeting(todaysEvents, now);
   // The meetings arrow keys move between while preparing, in agenda order.
-  const meetings = todaysEvents.filter((event) => meetingEventReference(event) && !isDeclined(event) && event.eventType !== "workingLocation");
+  const meetings = todaysEvents.filter((event) => isPreparable(event) && !isDeclined(event));
+  // Choosing an agenda event prepares it; one that can't be prepared, such as
+  // a working location, opens in Calendar as before.
+  const chooseEvent = (event: ScheduleEvent) => (prepare && isPreparable(event) ? prepare(event) : onOpenEvent(event));
+  // What is ready for each meeting still ahead, shown on its agenda row.
+  const ahead = meetingsToPrepare(todaysEvents, now);
+  // The hook keys its request by the references' content, so a new array each render doesn't reload.
+  const readiness = useMeetingReadiness(ahead.flatMap((event) => { const reference = meetingEventReference(event); return reference ? [reference] : []; }), `${refreshKey}:${taskRefreshKey}`);
+  const readinessRows = readinessByKey(readiness.rows);
+  const describeReadiness = (event: ScheduleEvent) => {
+    const key = ahead.includes(event) ? preparationKey(event) : null;
+    const row = key ? readinessRows.get(key) : undefined;
+    return row ? readinessSummary(row) : null;
+  };
   const moveMeeting = (step: number) => {
     if (!preparation?.event || meetings.length === 0) return;
     const at = meetings.findIndex((event) => preparationKey(event) === selectedKey);
@@ -272,24 +285,16 @@ function TodayLayout({
         <h1>{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h1>
         {dayLine ? <p className="today-day-shape">{dayLine}</p> : null}
       </div>
-      {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} onAddNote={onAddNote} onPrepare={prepare} preparing={selectedKey !== null && preparationKey(next) === selectedKey} /> : null}
+      {/* While a meeting is being prepared, its actions are in preparation, so the card is only a link. */}
+      {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} {...(selectedKey === null ? { onAddNote, onPrepare: prepare, showJoin: true } : { showJoin: false })} /> : null}
     </header>
     <div className="today-columns">
       <div className="today-column" role="group" aria-label="Agenda">
-        {schedule && preparation && prepare ? <MeetingReadinessList
-          events={meetingsToPrepare(todaysEvents, now)}
-          ownAddresses={preparation.ownAddresses}
-          refreshKey={`${refreshKey}:${taskRefreshKey}`}
-          onPrepare={prepare}
-          onOpenNote={preparation.onOpenNote}
-          onNotice={preparation.onNotice}
-          selectedKey={selectedKey}
-        /> : null}
         {schedule ? <>
           {/* The page heading already names today, so its agenda leaves the date out. */}
           {/* With preparation available, choosing a meeting prepares it here; Open in Calendar is in its actions. */}
-          <CalendarAgenda pullToRefresh={false} today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={prepare ?? onOpenEvent} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} />
-          <CalendarAgenda pullToRefresh={false} today={addDays(startOfLocalDay(now), 1)} day="tomorrow" calendars={calendars} schedule={schedule} onOpenEvent={prepare ?? onOpenEvent} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} />
+          <CalendarAgenda pullToRefresh={false} today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={chooseEvent} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} describe={preparation ? describeReadiness : undefined} />
+          <CalendarAgenda pullToRefresh={false} today={addDays(startOfLocalDay(now), 1)} day="tomorrow" calendars={calendars} schedule={schedule} onOpenEvent={chooseEvent} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} />
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}
@@ -374,7 +379,7 @@ function TodayLayout({
   </section>;
 }
 
-function NextMeeting({ event, now, onOpenEvent, onAddNote, onPrepare, preparing = false }: { event: ScheduleEvent; now: Date; onOpenEvent(event: ScheduleEvent): void; onAddNote?(event: ScheduleEvent): void; onPrepare?(event: ScheduleEvent): void; preparing?: boolean }) {
+function NextMeeting({ event, now, onOpenEvent, onAddNote, onPrepare, showJoin }: { event: ScheduleEvent; now: Date; onOpenEvent(event: ScheduleEvent): void; onAddNote?(event: ScheduleEvent): void; onPrepare?(event: ScheduleEvent): void; showJoin: boolean }) {
   const { joinUrl } = meetingPlace(event.location ?? null, event.conferenceUrl);
   const minutes = Math.round((eventDate(event).getTime() - now.getTime()) / 60_000);
   const label = minutes <= 0
@@ -382,9 +387,9 @@ function NextMeeting({ event, now, onOpenEvent, onAddNote, onPrepare, preparing 
     : `Next: ${event.title} ${minutes < 60 ? `in ${minutes} min` : `at ${formatClockTime(eventDate(event))}`}`;
   return <div className="today-next">
     <button type="button" className="btn-link" onClick={() => onOpenEvent(event)}>{label}</button>
-    {joinUrl ? <button type="button" className="btn btn-sm" onClick={() => void openUrl(joinUrl)}><Video size={ICON_SIZE.sm} />Join</button> : null}
-    {onPrepare && meetingEventReference(event) ? <button type="button" className="btn btn-sm" aria-pressed={preparing} onClick={() => onPrepare(event)}><ClipboardList size={ICON_SIZE.sm} />Prepare</button> : null}
-    {onAddNote && meetingEventReference(event) ? <button type="button" className="btn btn-sm" onClick={() => onAddNote(event)}><NotebookPen size={ICON_SIZE.sm} />Add Note</button> : null}
+    {showJoin && joinUrl ? <button type="button" className="btn btn-sm" onClick={() => void openUrl(joinUrl)}><Video size={ICON_SIZE.sm} />Join</button> : null}
+    {onPrepare && isPreparable(event) ? <button type="button" className="btn btn-sm" onClick={() => onPrepare(event)}><ClipboardList size={ICON_SIZE.sm} />Prepare</button> : null}
+    {onAddNote && isPreparable(event) ? <button type="button" className="btn btn-sm" onClick={() => onAddNote(event)}><NotebookPen size={ICON_SIZE.sm} />Add Note</button> : null}
   </div>;
 }
 
