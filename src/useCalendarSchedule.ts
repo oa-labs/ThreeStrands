@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { addDays } from "./calendarTime";
 import {
   isScheduleRangeFresh, readScheduleCache, refreshScheduleCache, scheduleCacheGeneration,
@@ -15,6 +15,7 @@ const fetchSchedule = (request: ScheduleRequest, cooldownMs = 0) => refreshSched
 
 export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequest, prefetchWeeks: boolean | number = false) {
   const generation = useSyncExternalStore(subscribeScheduleCache, scheduleCacheGeneration);
+  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const [retry, setRetry] = useState(0);
   const [state, setState] = useState<{
     key: string; result?: ScheduleResult; loading: boolean; error: string | null;
@@ -28,15 +29,18 @@ export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequ
     const previous = readScheduleCache(request);
     setState({ key, result: previous, loading: !previous, error: null });
     let retainedResult = previous;
-    let refreshing = false;
+    let pending: Promise<void> | null = null;
+    let failure: unknown = null;
     let lastRefresh = -Infinity;
     const load = (automatic = false) => {
-      if (refreshing || (automatic && Date.now() - lastRefresh < CALENDAR_REFRESH_COOLDOWN_MS)) return;
-      refreshing = true;
+      if (pending) return pending;
+      if (automatic && Date.now() - lastRefresh < CALENDAR_REFRESH_COOLDOWN_MS) return Promise.resolve();
+      failure = null;
       lastRefresh = Date.now();
-      void fetchSchedule(request, automatic ? CALENDAR_REFRESH_COOLDOWN_MS : 0).then((result) => {
+      pending = fetchSchedule(request, automatic ? CALENDAR_REFRESH_COOLDOWN_MS : 0).then((result) => {
         if (!active || generation !== scheduleCacheGeneration()) return;
         const failed = result.errors.length > 0;
+        if (failed) failure = new Error("Calendar schedule could not be fully refreshed.");
         if (failed) console.error("Calendar schedule load failed:", result.errors);
         const retained = readScheduleCache(request) ?? retainedResult;
         retainedResult = failed && retained ? retained : result;
@@ -52,11 +56,14 @@ export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequ
         }
       }).catch((reason: unknown) => {
         if (!active || generation !== scheduleCacheGeneration()) return;
+        failure = reason;
         console.error("Calendar schedule load failed:", reason);
         setState({ key, result: readScheduleCache(request) ?? retainedResult, loading: false, error: "Calendar schedule load failed" });
-      }).finally(() => { refreshing = false; });
+      }).finally(() => { pending = null; });
+      return pending;
     };
-    load();
+    refreshRef.current = async () => { await load(); if (failure) throw failure; };
+    void load();
     // Mounted schedule consumers are the visible calendar, agenda, and meeting views.
     // Treat an unfocused desktop window as background even if it is still visible.
     let foreground = document.visibilityState === "visible" && document.hasFocus();
@@ -96,5 +103,6 @@ export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequ
   // Never render the preceding range while the effect for a new range is pending.
   const current = state.key === key ? state : { result: cached, loading: !cached, error: null };
   const reload = useCallback(() => setRetry((value) => value + 1), []);
-  return { events: current.result?.events ?? [], loading: current.loading, error: current.error, reload };
+  const refresh = useCallback(() => refreshRef.current(), []);
+  return { refresh, events: current.result?.events ?? [], loading: current.loading, error: current.error, reload };
 }

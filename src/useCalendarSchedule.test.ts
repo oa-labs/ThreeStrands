@@ -38,6 +38,21 @@ describe("calendar schedule caching", () => {
     vi.restoreAllMocks();
   });
 
+  it("awaits a manual refresh and preserves cached events when that refresh fails", async () => {
+    const fresh = deferred();
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValueOnce(result()).mockReturnValueOnce(fresh.promise);
+    const hook = renderHook(() => useCalendarSchedule(week));
+    await waitFor(() => expect(hook.result.current.events[0]?.title).toBe("Planning"));
+    let refresh!: Promise<void>;
+    act(() => { refresh = hook.result.current.refresh(); });
+    const caught = refresh.catch((error: Error) => error);
+    expect(hook.result.current.events[0]?.title).toBe("Planning");
+    await act(async () => { fresh.reject(new Error("Offline")); await caught; });
+    expect(await caught).toEqual(new Error("Offline"));
+    expect(hook.result.current.events[0]?.title).toBe("Planning");
+    expect(hook.result.current.error).toBe("Calendar schedule load failed");
+  });
+
   it("shows a revisited week's cache immediately and replaces it with refreshed events", async () => {
     const fresh = deferred();
     vi.mocked(mailClient.listScheduleEvents)

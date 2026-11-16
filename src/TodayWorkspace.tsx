@@ -1,7 +1,7 @@
 import { formatCompactDate } from "./dateFormatting";
 import { ContactRound, ListPlus, Mail, NotebookPen, Send, Video, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { ContextRow, ContextSection } from "./ContextSections";
@@ -10,7 +10,7 @@ import type { CalendarOption, ContactProfile, OpenPromise, ScheduleEvent, Thread
 import { agendaEventsFor, formatClockTime, isDeclined } from "./agendaEvents";
 import { addDays, eventDate, startOfLocalDay } from "./calendarTime";
 import { parseAddress } from "./emailAddress";
-import { errorMessage } from "./errors";
+import { errorMessage, logBackgroundFailure } from "./errors";
 import { HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
 import { describeDue, isKeepInTouchDue } from "./keepInTouch";
@@ -20,6 +20,10 @@ import { compareTasksForDisplay, dueView, formatDue, isActiveTaskStatus, isOverd
 import { dayShape, meetingsWith, sharedMeetingsNote } from "./todayInsights";
 import { groupTodayMail, type TodayMailGroup } from "./todayMail";
 import { useCalendarSchedule } from "./useCalendarSchedule";
+
+import { refreshSyncedData } from "./refreshSyncedData";
+import { usePullToRefresh } from "./usePullToRefresh";
+import { PullToRefreshStatus } from "./PullToRefreshStatus";
 
 type Schedule = ReturnType<typeof useCalendarSchedule>;
 
@@ -81,56 +85,56 @@ function TodayLayout({
     return () => window.clearInterval(timer);
   }, []);
 
+  const pageRef = useRef<HTMLElement>(null);
+  const accountRef = useRef(accountId);
+  accountRef.current = accountId;
+  const loadVersion = useRef(0);
   const [mail, setMail] = useState<{ threads: TodayMail[]; total: number } | null>(null);
   const [mailError, setMailError] = useState<string | null>(null);
-  useEffect(() => {
-    let active = true;
-    mailClient.listTodayMail(accountId ?? undefined).then((page) => {
-      if (!active) return;
-      setMail(page);
-      setMailError(null);
-    }).catch((reason: unknown) => { if (active) setMailError(errorMessage(reason)); });
-    return () => { active = false; };
-  }, [accountId, refreshKey]);
-
-  // Null until read, and after a failed read, so neither shows "No open tasks."
   const [loadedTasks, setTasks] = useState<ThreadTask[] | null>(null);
   const tasks = loadedTasks ?? [];
   const [announcement, setAnnouncement] = useState("");
-  useEffect(() => {
-    let active = true;
-    mailClient.listTasks(accountId ?? undefined).then((loaded) => {
-      if (active) setTasks(loaded.filter((task) => isActiveTaskStatus(task.status)).sort(compareTasksForDisplay));
-    }).catch(() => {
-      // Supplemental to the day's mail; a failed read leaves the column empty.
-      if (active) setTasks(null);
-    });
-    return () => { active = false; };
-  }, [accountId, taskRefreshKey]);
-
   const [reconnect, setReconnect] = useState<ContactProfile[]>([]);
-  useEffect(() => {
-    let active = true;
-    mailClient.listKeepInTouch().then((profiles) => {
-      if (!active) return;
-      setReconnect(profiles.filter((profile) => isKeepInTouchDue(profile))
-        .sort((left, right) => (left.keepInTouchDueAt ?? "").localeCompare(right.keepInTouchDueAt ?? "")));
-    }).catch(() => { if (active) setReconnect([]); });
-    return () => { active = false; };
-  }, []);
-
   const [promises, setPromises] = useState<OpenPromise[]>([]);
   const [dismissed, setDismissed] = useState(readDismissedPromises);
+  const load = useCallback(async () => {
+    const version = ++loadVersion.current;
+    const results = await Promise.allSettled([
+      mailClient.listTodayMail(accountId ?? undefined),
+      mailClient.listTasks(accountId ?? undefined),
+      mailClient.listKeepInTouch(),
+      mailClient.listOpenPromises(accountId ?? undefined),
+    ]);
+    if (version !== loadVersion.current || accountRef.current !== accountId) return;
+    const [mailResult, taskResult, contactResult, promiseResult] = results;
+    if (mailResult.status === "fulfilled") { setMail(mailResult.value); setMailError(null); }
+    else setMailError(errorMessage(mailResult.reason));
+    if (taskResult.status === "fulfilled") setTasks(taskResult.value.filter((task) => isActiveTaskStatus(task.status)).sort(compareTasksForDisplay));
+    if (contactResult.status === "fulfilled") setReconnect(contactResult.value.filter((profile) => isKeepInTouchDue(profile))
+      .sort((left, right) => (left.keepInTouchDueAt ?? "").localeCompare(right.keepInTouchDueAt ?? "")));
+    if (promiseResult.status === "fulfilled") setPromises(promiseResult.value);
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+  }, [accountId]);
+  const cancelLoads = useCallback(() => { loadVersion.current++; }, []);
   useEffect(() => {
-    let active = true;
-    mailClient.listOpenPromises(accountId ?? undefined).then((loaded) => {
-      if (active) setPromises(loaded);
-    }).catch(() => {
-      // Supplemental, like tasks; a failed read leaves the section out.
-      if (active) setPromises([]);
-    });
-    return () => { active = false; };
-  }, [accountId, refreshKey, taskRefreshKey]);
+    void load().catch(logBackgroundFailure("Today refresh"));
+    return cancelLoads;
+  }, [load, refreshKey, taskRefreshKey, cancelLoads]);
+  const reloadSchedule = schedule?.refresh;
+  const refreshToday = useCallback(async () => {
+    const results = await Promise.allSettled([
+      mailClient.listAccounts().then((accounts) => accounts.length ? mailClient.sync(accountId ? { accountId, catchUp: false } : { catchUp: false }) : undefined),
+      refreshSyncedData(),
+      reloadSchedule?.(),
+    ]);
+    if (accountRef.current !== accountId) return;
+    try { await mailClient.reconcileTasks(); } finally { await load(); }
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+    setNow(new Date());
+  }, [accountId, reloadSchedule, load]);
+  const pull = usePullToRefresh(pageRef, refreshToday);
   const openPromises = promises.filter((promise) => !dismissed.includes(promise.messageId));
 
   const trackPromise = async (promise: OpenPromise) => {
@@ -205,8 +209,9 @@ function TodayLayout({
     />;
   };
 
-  return <section className="today-workspace" aria-label="Today">
+  return <section ref={pageRef} className="today-workspace" aria-label="Today" aria-busy={pull.refreshing}>
     <div className="today-page">
+    <PullToRefreshStatus {...pull} />
     <header className="today-header">
       <div>
         {/* Mail and tasks follow the account in view; the agenda shows every selected calendar, as Calendar does. */}
@@ -220,8 +225,8 @@ function TodayLayout({
       <div className="today-column" role="group" aria-label="Agenda">
         {schedule ? <>
           {/* The page heading already names today, so its agenda leaves the date out. */}
-          <CalendarAgenda today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
-          <CalendarAgenda today={addDays(startOfLocalDay(now), 1)} day="tomorrow" calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
+          <CalendarAgenda pullToRefresh={false} today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
+          <CalendarAgenda pullToRefresh={false} today={addDays(startOfLocalDay(now), 1)} day="tomorrow" calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} onAddNote={onAddNote} />
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}

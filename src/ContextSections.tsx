@@ -1,6 +1,6 @@
 import { readLocalStorage, writeLocalStorage } from "./useLocalStorageState";
 import { FileStarButton } from "./FileStarButton";
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { Bot, CalendarCheck, ChevronDown, ChevronRight, Mail, MessageSquareText } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Account, ContactFiles, ContactTimelineItem, Message, ThreadDetail } from "./domain";
@@ -167,7 +167,10 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
  * and whose rows stop at a few with "Show more" (only when two or more would be hidden), so stacked sections stay
  * scannable instead of pushing everything else down.
  */
-export function ContextSection({ id, title, label, count, actions, note, rows, limit = CONTEXT_SECTION_ROWS, footer, closing, className }: {
+export function ContextSection({ sectionRef, busy, status, id, title, label, count, actions, note, rows, limit = CONTEXT_SECTION_ROWS, footer, closing, className }: {
+  sectionRef?: RefObject<HTMLElement | null>;
+  busy?: boolean;
+  status?: ReactNode;
   /** Stable key for the remembered collapse state. */
   id: string;
   title: ReactNode;
@@ -194,8 +197,9 @@ export function ContextSection({ id, title, label, count, actions, note, rows, l
   // A single extra row shows rather than hiding behind a link the same height as it.
   const hidden = rows.length - limit > 1 ? rows.length - limit : 0;
   return (
-    <section className={`context-section context-collapsible${className ? ` ${className}` : ""}`} aria-label={label} aria-labelledby={label ? undefined : headingId}>
+    <section ref={sectionRef} aria-busy={busy} className={`context-section context-collapsible${className ? ` ${className}` : ""}`} aria-label={label} aria-labelledby={label ? undefined : headingId}>
       <ContextSectionHeader title={title} titleId={headingId} count={count} actions={actions} toggle={{ collapsed, controls: bodyId, onToggle: toggle }} />
+      {status}
       <div id={bodyId} hidden={collapsed}>
         {note ? <p className="context-section-note">{note}</p> : null}
         {expanded || hidden <= 0 ? rows : rows.slice(0, limit)}

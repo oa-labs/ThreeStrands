@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isPastEvent } from "./agendaEvents";
 import { CalendarAgenda, TOMORROW_AGENDA_ROWS } from "./CalendarAgenda";
@@ -33,6 +33,28 @@ function agendaOrder(section: HTMLElement): string[] {
 }
 
 describe("CalendarAgenda for the current day", () => {
+  it("awaits agenda refresh without changing its day, calendar filter, or expansion", async () => {
+    let finish!: () => void;
+    const refresh = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const reload = vi.fn();
+    const open = vi.fn();
+    const meeting = event("Keep this meeting", 9, 10);
+    render(<CalendarAgenda today={day} calendars={calendars} onOpenEvent={open}
+      schedule={{ events: [meeting], loading: false, error: null, reload, refresh }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Today's agenda" }));
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    fireEvent.wheel(agenda, { deltaY: -100 });
+    expect(screen.getByText("Refreshing…")).toBeVisible();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(); });
+    expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Today's agenda" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Today's agenda" }));
+    fireEvent.click(screen.getByRole("button", { name: /Keep this meeting/ }));
+    expect(open).toHaveBeenCalledWith(meeting);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   afterEach(cleanup);
 
   it("dims finished events and puts a Now divider before the first one still to finish", () => {

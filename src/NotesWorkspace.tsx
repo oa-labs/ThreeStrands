@@ -1,3 +1,6 @@
+import { refreshSyncedData } from "./refreshSyncedData";
+import { usePullToRefresh } from "./usePullToRefresh";
+import { PullToRefreshStatus } from "./PullToRefreshStatus";
 import { formatDateTime } from "./dateFormatting";
 import { NoteLinkPicker } from "./NoteLinkPicker";
 import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./noteEntities";
@@ -119,6 +122,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const searchCurrent = result?.query === query && result.scope === scope;
   const hits = query.trim() ? searchCurrent ? result.hits : [] : null;
   const [searchRevision, setSearchRevision] = useState(0);
+  const searchStateRef = useRef({ query, scope });
+  searchStateRef.current = { query, scope };
+  const searchVersion = useRef(0);
   useEffect(() => { writeNotesSearchState({ query, listView, includeTrash }); }, [query, listView, includeTrash]);
   const [creating, setCreating] = useState(false);
   const [focusEditor, setFocusEditor] = useState(false);
@@ -142,6 +148,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   }, [lastSave]);
   const rows = useRef(new Map<string, HTMLButtonElement>());
   const editorPane = useRef<HTMLDivElement>(null);
+  const listPane = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const titleInput = useRef<HTMLInputElement>(null);
   const body = useRef<NoteEditorHandle>(null);
@@ -156,13 +163,13 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const files = useMemo(() => noteFiles(() => openKey.current, setActionError), []);
 
   const loadRecent = useCallback(() => {
-    void mailClient.listRecentNotes(RECENT_LIMIT).then((notes) => { setRecent(notes); setListError(null); }, (reason) => setListError(errorMessage(reason)));
+    return mailClient.listRecentNotes(RECENT_LIMIT).then((notes) => { setRecent(notes); setListError(null); return true; }, (reason) => { setListError(errorMessage(reason)); return false; });
   }, []);
   const loadTrash = useCallback(() => {
-    void mailClient.listTrashedNotes(TRASH_LIMIT).then((notes) => { setTrashed(notes); setListError(null); }, (reason) => setListError(errorMessage(reason)));
+    return mailClient.listTrashedNotes(TRASH_LIMIT).then((notes) => { setTrashed(notes); setListError(null); return true; }, (reason) => { setListError(errorMessage(reason)); return false; });
   }, []);
   const loadConflicts = useCallback(() => {
-    void replicatedSyncConflicts().then((found) => {
+    return replicatedSyncConflicts().then((found) => {
       const byNote = noteConflictsById(found);
       setConflicts(byNote);
       // Device names are only needed to describe a conflict.
@@ -182,7 +189,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const loadLinks = useCallback((noteId: string | null) => {
     const version = ++linksVersion.current;
     if (!noteId) { setLinks(null); return; }
-    void mailClient.noteLinks(noteId).then((found) => { if (version === linksVersion.current) setLinks({ noteId, links: found }); }, logBackgroundFailure("Note links"));
+    return mailClient.noteLinks(noteId).then((found) => { if (version === linksVersion.current) setLinks({ noteId, links: found }); }, logBackgroundFailure("Note links"));
   }, []);
   const openNoteId = useRef<string | null>(null);
   const onSaved = useCallback((note: Note, relink?: NoteRelink) => {
@@ -200,13 +207,24 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const { refresh } = editor;
   const reloadAll = useCallback(() => {
     setSearchRevision((value) => value + 1);
-    loadRecent();
-    loadTrash();
-    loadConflicts();
-    loadLinks(openNoteId.current);
     files.retry();
-    void refresh().catch(logBackgroundFailure("Note refresh"));
+    return Promise.all([loadRecent(), loadTrash(), loadConflicts(), loadLinks(openNoteId.current), refresh().catch(logBackgroundFailure("Note refresh"))]);
   }, [loadRecent, loadTrash, loadConflicts, loadLinks, refresh, files]);
+  const refreshNotes = useCallback(async () => {
+    const [synced] = await Promise.allSettled([refreshSyncedData()]);
+    const results = await reloadAll();
+    const search = searchStateRef.current;
+    if (search.query.trim()) {
+      const version = ++searchVersion.current;
+      const hits = await mailClient.searchNotes(search.query, SEARCH_LIMIT, search.scope);
+      if (version === searchVersion.current && search.query === searchStateRef.current.query && search.scope === searchStateRef.current.scope) {
+        setResult({ ...search, hits });
+      }
+    }
+    if (synced.status === "rejected") throw synced.reason;
+    if (results.includes(false)) throw new Error("Notes could not be fully refreshed.");
+  }, [reloadAll]);
+  const pull = usePullToRefresh(listPane, refreshNotes);
   const noteId = editor.note?.id ?? null;
   useEffect(() => {
     let active = true;
@@ -273,10 +291,11 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   }, [request, selectedKey, editor.loading, editor.note]);
 
   useEffect(() => {
+    const version = ++searchVersion.current;
     if (!query.trim()) return;
     let active = true;
     const timer = window.setTimeout(() => {
-      void mailClient.searchNotes(query, SEARCH_LIMIT, scope).then((found) => { if (active) { setResult({ query, scope, hits: found }); setListError(null); } }, (reason) => { if (active) setListError(errorMessage(reason)); });
+      void mailClient.searchNotes(query, SEARCH_LIMIT, scope).then((found) => { if (active && version === searchVersion.current) { setResult({ query, scope, hits: found }); setListError(null); } }, (reason) => { if (active && version === searchVersion.current) setListError(errorMessage(reason)); });
     }, SEARCH_DELAY_MS);
     return () => { active = false; window.clearTimeout(timer); };
   }, [query, scope, searchRevision]);
@@ -455,7 +474,8 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     </header>
     <div className="notes-workspace-body" style={{ "--notes-list-width": `${listSize.width}px` } as CSSProperties}>
       <PanelResizeHandle {...listSize} label="Resize note list" controlsId="notes-list-pane" title="Drag to resize the note list. Use arrow keys to adjust; double-click to reset." />
-      <div id="notes-list-pane" className="notes-list-pane">
+      <div ref={listPane} id="notes-list-pane" className="notes-list-pane" aria-busy={pull.refreshing}>
+        <PullToRefreshStatus {...pull} />
         <div className="notes-search">
           <label className={`search-box${!searchFocused && !query.trim() ? " idle" : ""}`}>
             <Search size={ICON_SIZE.md} aria-hidden="true" />

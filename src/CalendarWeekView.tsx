@@ -319,7 +319,7 @@ export function CalendarWeekView({
   const { selectedAccountEmails, label: accountScope } = visibility;
   const showsHiddenCount = visibility.total > 1 && visibility.hidden.length > 0;
 
-  const { events, loading, error, reload } = useCalendarSchedule({
+  const { events, loading, error, reload, refresh } = useCalendarSchedule({
     timeMin: weekStart.toISOString(),
     timeMax: range.end.toISOString(),
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -776,7 +776,7 @@ export function CalendarWeekView({
           {meetingEventReference(selectedEvent) ? <EventNoteBacklinks occurrence={meetingEventReference(selectedEvent)!} onOpenNote={onOpenNote} /> : null}
           <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
         </> : <>
-          <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} onAddNote={onAddNote} schedule={todayVisible ? { events, loading, error, reload } : undefined} />
+          <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} onAddNote={onAddNote} schedule={todayVisible ? { events, loading, error, reload, refresh } : undefined} />
           <CalendarTasks
             tasks={openTasks}
             loading={tasksLoading}

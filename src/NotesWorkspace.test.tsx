@@ -1,3 +1,4 @@
+import { refreshSyncedData } from "./refreshSyncedData";
 import { StrictMode } from "react";
 import { useWorkspaces } from "./useWorkspaces";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -14,6 +15,8 @@ import { clearScheduleCache } from "./calendarScheduleCache";
 import { todayTarget, writeLastNoteTarget } from "./noteDrafts";
 import { markdownEntityLink } from "./noteEntities";
 import { replicatedSyncConflicts, replicatedSyncDeviceRoster, replicatedSyncResolveConflict, type FrontierConflict } from "./replicatedSync";
+
+vi.mock("./refreshSyncedData", () => ({ refreshSyncedData: vi.fn(async () => {}) }));
 
 // The editor has its own tests; here a text box stands in for it.
 vi.mock("./NoteEditor", () => import("./test/NoteEditorStub"));
@@ -35,6 +38,48 @@ const noteList = () => within(screen.getByRole("list", { name: "Notes" }));
 
 describe("Notes workspace", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.mocked(replicatedSyncConflicts).mockResolvedValue([]); localStorage.clear(); });
+
+  it("pulls peer notes without replacing an unfinished title or body, selection, or search scope", async () => {
+    let finish!: () => void;
+    vi.mocked(refreshSyncedData).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const note = await mailClient.createNote(uniqueTitle("Refresh target"), "Original body");
+    const update = vi.spyOn(mailClient, "updateNote");
+    const searchNotes = vi.spyOn(mailClient, "searchNotes");
+    const view = render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: note.title } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include Trash" }));
+    await screen.findByRole("list", { name: "Matching notes" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Unfinished rename" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: "Unfinished local body" } });
+    fireEvent.wheel(view.container.querySelector(".notes-list-pane")!, { deltaY: -100 });
+    expect(screen.getByText("Refreshing…")).toBeInTheDocument();
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument());
+    expect(screen.getByRole("searchbox", { name: "Search Notes" })).toHaveValue(note.title);
+    expect(screen.getByRole("checkbox", { name: "Include Trash" })).toBeChecked();
+    expect(searchNotes).toHaveBeenLastCalledWith(note.title, expect.any(Number), "all");
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Unfinished rename");
+    expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue("Unfinished local body");
+    expect(view.container.querySelector(".notes-list-select[aria-current='true']")).toHaveTextContent(note.title);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the current Notes search when it changes while device sync is pending", async () => {
+    let finish!: () => void;
+    vi.mocked(refreshSyncedData).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const note = await mailClient.createNote(uniqueTitle("Search refresh"), "Keep my note");
+    const search = vi.spyOn(mailClient, "searchNotes");
+    const view = render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "old search" } });
+    fireEvent.wheel(view.container.querySelector(".notes-list-pane")!, { deltaY: -100 });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: note.title } });
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument());
+    expect(search).toHaveBeenLastCalledWith(note.title, expect.any(Number), "active");
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title);
+  });
 
   it("converts checklists and tasks explicitly while retaining item identity", async () => {
     const note = await mailClient.createNote(uniqueTitle("Mixed items"), "- [ ] Local only\n- (x) Shared task\n");

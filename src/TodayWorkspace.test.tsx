@@ -1,10 +1,13 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { refreshSyncedData } from "./refreshSyncedData";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { CalendarOption, ContactProfile, OpenPromise, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { nextMeeting, TodayWorkspace } from "./TodayWorkspace";
 import { todayItem, todayThread } from "./test/todayMail";
+
+vi.mock("./refreshSyncedData", () => ({ refreshSyncedData: vi.fn(async () => {}) }));
 
 const openUrl = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl }));
@@ -47,8 +50,9 @@ function renderToday(overrides: Partial<Parameters<typeof TodayWorkspace>[0]> = 
     onOpenThread: vi.fn(), onOpenEvent: vi.fn(), onEditTask: vi.fn(), onTasksChanged: vi.fn(), onOpenInbox: vi.fn(), onOpenCalendar: vi.fn(),
     onOpenTasks: vi.fn(), onOpenContact: vi.fn(), onOpenKeepInTouch: vi.fn(),
   };
-  render(<TodayWorkspace accountId="you@example.com" refreshKey="" taskRefreshKey={0} calendarConnected={false} calendars={calendars} {...handlers} {...overrides} />);
-  return handlers;
+  const page = (next: Partial<Parameters<typeof TodayWorkspace>[0]> = {}) => <TodayWorkspace accountId="you@example.com" refreshKey="" taskRefreshKey={0} calendarConnected={false} calendars={calendars} {...handlers} {...overrides} {...next} />;
+  const view = render(page());
+  return { ...handlers, rerenderToday: (next: Partial<Parameters<typeof TodayWorkspace>[0]>) => view.rerender(page(next)) };
 }
 
 function mockMail(threads: TodayMail[], total = threads.length) {
@@ -65,6 +69,57 @@ describe("TodayWorkspace", () => {
     mockMail([]);
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); openUrl.mockReset(); localStorage.clear(); });
+
+  it.each(["you@example.com", null])("pulls fresh sources for the current account (%s) without changing agenda choices", async (accountId) => {
+    let finish!: (status: Awaited<ReturnType<typeof mailClient.sync>>) => void;
+    const status = await mailClient.syncStatus();
+    const sync = vi.spyOn(mailClient, "sync").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    renderToday({ accountId, calendarConnected: true });
+    await screen.findByText("Nothing unread.");
+    fireEvent.click(screen.getByRole("button", { name: "Today's agenda" }));
+    const tasks = vi.mocked(mailClient.listTasks);
+    tasks.mockResolvedValue([task("fresh", { title: "Fresh task" })]);
+    fireEvent.wheel(screen.getByRole("region", { name: "Today" }), { deltaY: -100 });
+    expect(await screen.findByText("Refreshing…")).toBeInTheDocument();
+    await waitFor(() => expect(sync).toHaveBeenCalledWith(accountId ? { accountId, catchUp: false } : { catchUp: false }));
+    await act(async () => { finish(status); });
+    await screen.findByRole("button", { name: "Fresh task" });
+    await waitFor(() => expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument());
+    expect(refreshSyncedData).toHaveBeenCalled();
+    expect(tasks).toHaveBeenLastCalledWith(accountId ?? undefined);
+    expect(screen.getByRole("button", { name: "Today's agenda" })).toHaveAttribute("aria-expanded", "false");
+    expect(calendars[0].selected).toBe(true);
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not restore the previous account after a slow pull finishes", async () => {
+    let finish!: (status: Awaited<ReturnType<typeof mailClient.sync>>) => void;
+    const status = await mailClient.syncStatus();
+    const sync = vi.spyOn(mailClient, "sync").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    vi.mocked(mailClient.listTasks).mockImplementation(async (accountId) => [task(accountId!)]);
+    const { rerenderToday } = renderToday();
+    await screen.findByRole("button", { name: "Task you@example.com" });
+    fireEvent.wheel(screen.getByRole("region", { name: "Today" }), { deltaY: -100 });
+    await waitFor(() => expect(sync).toHaveBeenCalled());
+    rerenderToday({ accountId: "work@example.com" });
+    await screen.findByRole("button", { name: "Task work@example.com" });
+    await act(async () => { finish(status); });
+    expect(screen.queryByRole("button", { name: "Task you@example.com" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Task work@example.com" })).toBeInTheDocument();
+    expect(mailClient.listTodayMail).toHaveBeenLastCalledWith("work@example.com");
+  });
+
+  it("keeps a failed refresh's existing mail visible and reports the failure", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sync = vi.spyOn(mailClient, "sync").mockRejectedValue(new Error("Server unavailable"));
+    mockMail([todayItem("keep", { sender: "Dana <dana@example.org>" }, { subject: "Keep this conversation" })]);
+    renderToday();
+    await screen.findByText("Keep this conversation");
+    fireEvent.wheel(screen.getByRole("region", { name: "Today" }), { deltaY: -100 });
+    await screen.findByText("Refresh failed: Server unavailable");
+    expect(sync).toHaveBeenCalled();
+    expect(screen.getByText("Keep this conversation")).toBeInTheDocument();
+  });
 
   describe("mail", () => {
     it("groups unread mail for the account in view and opens a conversation", async () => {

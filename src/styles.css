@@ -4206,3 +4206,5 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .time-picker-options [role="option"] { padding: var(--space-2); border-radius: var(--radius-sm); font-size: var(--text-body); cursor: pointer; white-space: nowrap; }
 .time-picker-options [data-active="true"], .time-picker-options [role="option"]:hover { background: var(--hover); }
 .time-picker-options [aria-selected="true"] { color: var(--accent); font-weight: var(--weight-semibold); }
+
+.pull-refresh-status { display: flex; align-items: center; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3); font-size: var(--text-secondary); }

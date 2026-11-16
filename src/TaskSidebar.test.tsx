@@ -1,3 +1,4 @@
+import { refreshSyncedData } from "./refreshSyncedData";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,8 @@ import { mailClient } from "./data/client";
 import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
 import type { Goal, ThreadTask } from "./domain";
 import { formatPeriod, periodFor, shiftPeriod } from "./goals";
+
+vi.mock("./refreshSyncedData", () => ({ refreshSyncedData: vi.fn(async () => {}) }));
 
 function workspaceTask(id: string, overrides: Partial<ThreadTask> = {}): ThreadTask {
   return {
@@ -33,6 +36,45 @@ describe("TaskSidebar", () => {
     cleanup();
     vi.restoreAllMocks();
     localStorage.clear();
+  });
+
+  it("pulls device changes while preserving account, task view, search, selection, and unsaved details", async () => {
+    let finish!: () => void;
+    vi.mocked(refreshSyncedData).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const first = workspaceTask("first", { title: "First", notes: "Original notes" });
+    const second = workspaceTask("second", { title: "Second" });
+    const list = vi.spyOn(mailClient, "listTasks").mockResolvedValue([first, second]);
+    const update = vi.spyOn(mailClient, "updateTask");
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+    await screen.findByText("First", { selector: "strong" });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search tasks" }), { target: { value: "First" } });
+    fireEvent.click(screen.getByRole("button", { name: /^All/ }));
+    const description = screen.getByRole("textbox", { name: "Description" });
+    fireEvent.change(description, { target: { value: "Unfinished local detail" } });
+    list.mockResolvedValue([{ ...first, notes: "Peer detail" }, second]);
+    fireEvent.wheel(screen.getByLabelText("Task list"), { deltaY: -100 });
+    expect(screen.getByText("Refreshing…")).toBeInTheDocument();
+    await waitFor(() => expect(refreshSyncedData).toHaveBeenCalled());
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument());
+    expect(list).toHaveBeenLastCalledWith("you@example.com");
+    expect(screen.getByRole("searchbox", { name: "Search tasks" })).toHaveValue("First");
+    expect(screen.getByRole("button", { name: /^All/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("First");
+    expect(description).toHaveValue("Unfinished local detail");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("leaves task board scrolling free of refresh gestures", async () => {
+    const refresh = vi.mocked(refreshSyncedData);
+    refresh.mockClear();
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("first")]);
+    const view = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Board" }));
+    await screen.findByText("first", { selector: "strong" });
+    fireEvent.wheel(view.container.querySelector(".task-board-cards")!, { deltaY: -100 });
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("includes note tasks without inventing an account or due date, and writes completion to the note", async () => {

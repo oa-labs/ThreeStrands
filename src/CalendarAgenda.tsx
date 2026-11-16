@@ -1,5 +1,5 @@
 import { CalendarDays, NotebookPen } from "lucide-react";
-import type { ReactNode } from "react";
+import { useCallback, useRef, type ReactNode } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { addDays, formatEventTime, startOfLocalDay } from "./calendarTime";
@@ -11,8 +11,12 @@ import type { CalendarOption, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { meetingEventReference } from "./meetingNoteEntry";
 
-type Schedule = ReturnType<typeof useCalendarSchedule>;
+import { usePullToRefresh } from "./usePullToRefresh";
+import { PullToRefreshStatus } from "./PullToRefreshStatus";
+
+type Schedule = Omit<ReturnType<typeof useCalendarSchedule>, "refresh"> & { refresh?: () => Promise<void> };
 type AgendaProps = {
+  pullToRefresh?: boolean;
   /** The day the agenda lists. */
   today: Date;
   calendars: CalendarOption[];
@@ -64,7 +68,10 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ today, calendars, onOpenEvent, onAddNote, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
+  const agendaRef = useRef<HTMLElement>(null);
+  const refresh = useCallback(async () => { if (refreshSchedule) await refreshSchedule(); else reload(); }, [refreshSchedule, reload]);
+  const pull = usePullToRefresh(agendaRef, pullToRefresh ? refresh : undefined);
   const colors = useCalendarColors();
   const selected = calendars.filter((calendar) => calendar.selected);
   const agenda = agendaEventsFor(events, today, calendars);
@@ -98,12 +105,15 @@ function Agenda({ today, calendars, onOpenEvent, onAddNote, now, day = "today", 
   if (now && pastCount > 0 && pastCount === agenda.length) rows.push(<NowDivider key="now" now={now} />);
   const text = AGENDA_TEXT[day];
   return <ContextSection
+    sectionRef={agendaRef}
+    busy={pull.refreshing}
     id={id ?? text.id}
     title={text.title}
     note={showDate ? today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : undefined}
     count={agenda.length}
     rows={rows}
     limit={day === "tomorrow" ? TOMORROW_AGENDA_ROWS : rows.length}
+    status={<PullToRefreshStatus {...pull} />}
     footer={<>
       {loading ? <p className="context-status" role="status">{text.loading}</p> : null}
       {error ? <p className="context-status">{text.title} couldn't be fully loaded. <button type="button" className="btn-link" onClick={reload}>Try Again</button></p> : null}

@@ -1,3 +1,6 @@
+import { refreshSyncedData } from "./refreshSyncedData";
+import { usePullToRefresh } from "./usePullToRefresh";
+import { PullToRefreshStatus } from "./PullToRefreshStatus";
 import { noteTaskAsTask } from "./noteEntities";
 import { changeNoteItem, useNoteChanges } from "./noteMutations";
 import { NoteBacklinks } from "./NoteEntityContext";
@@ -123,6 +126,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const sessionKey=accountId ?? "all";
   const restored=useRef(sessions?.current.get(sessionKey));
   const root=useRef<HTMLElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const [tasks, setTasks] = useState<ThreadTask[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [otherAccountGoals, setOtherAccountGoals] = useState<OtherAccountGoals[]>([]);
@@ -185,13 +189,25 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       setNoteWarnings(warnings);
       setGoals(accountId ? allGoals.filter((goal) => goal.accountId === accountId) : allGoals);
       setOtherAccountGoals(accountId ? goalCountsByOtherAccount(allGoals, accountId) : []);
+      return true;
     } catch (reason) {
       if (generation===loadGeneration.current) setError(errorMessage(reason));
+      return false;
     } finally {
       if (generation===loadGeneration.current) setLoading(false);
     }
   }, [accountId]);
 
+  const refreshTasks = useCallback(async () => {
+    await saveQueue.current.catch(() => {});
+    const [synced] = await Promise.allSettled([refreshSyncedData()]);
+    const [reconciled] = await Promise.allSettled([mailClient.reconcileTasks()]);
+    const loaded = await load();
+    if (synced.status === "rejected") throw synced.reason;
+    if (reconciled.status === "rejected") throw reconciled.reason;
+    if (loaded === false) throw new Error("Tasks could not be loaded.");
+  }, [load]);
+  const pull = usePullToRefresh(listRef, board ? undefined : refreshTasks);
   useNoteChanges(load);
   const cancelLoads=useCallback(() => { loadGeneration.current++; }, []);
   useEffect(() => { void load(); return cancelLoads; }, [load, refreshKey, cancelLoads]);
@@ -566,7 +582,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         </div>
       </section>;
     })}
-  </div> : <div className="tasks-list">
+  </div> : <div ref={listRef} className="tasks-list" aria-label="Task list" aria-busy={pull.refreshing}>
     {displayedGroups.map((group) => (
       <section key={group.name} aria-labelledby={`task-group-${group.name.replace(/\s/g, "-")}`}>
         <h3 id={`task-group-${group.name.replace(/\s/g, "-")}`}>{group.name}</h3>
@@ -627,6 +643,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             })}
           </nav>
           {!board && !loading && tasks.length > 0 && displayedGroups.length === 0 ? <p className="tasks-status">{view === "All" ? "No open tasks. Add a task or view completed work." : `No tasks in ${view.toLowerCase()}.`}</p> : null}
+          <PullToRefreshStatus {...pull} />
           {taskList}
           {draggedTask && cardDrag ? <div className="task-drag-preview" aria-hidden="true" style={{ left: cardDrag.x - cardDrag.offsetX, top: cardDrag.y - cardDrag.offsetY, width: cardDrag.width }}>
             <strong>{draggedTask.title}</strong>
