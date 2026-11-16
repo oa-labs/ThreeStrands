@@ -214,6 +214,7 @@ pub(super) struct OutputSchema {
 /// opposed to auth, quota, or availability failures that a retry would not fix.
 struct ProviderError {
     rejected_request: bool,
+    retry_after: Option<std::time::Duration>,
     message: String,
 }
 
@@ -221,6 +222,7 @@ impl From<String> for ProviderError {
     fn from(message: String) -> Self {
         Self {
             rejected_request: false,
+            retry_after: None,
             message,
         }
     }
@@ -229,6 +231,7 @@ impl From<String> for ProviderError {
 /// One request to a model: where it goes and what it asks. Named fields keep
 /// the two prompts, and the endpoint and key, from trading places unnoticed.
 pub(super) struct AiCall<'a> {
+    pub(super) feature: crate::ai::manifest::Feature,
     pub(super) provider: AiProvider,
     pub(super) model: &'a str,
     pub(super) endpoint: Option<&'a str>,
@@ -264,17 +267,29 @@ pub(super) async fn call_provider_reply(
     call: AiCall<'_>,
     reasoning: Reasoning,
 ) -> Result<ProviderReply, String> {
+    let context = super::manifest::PreparedContext::new(call.prompt, super::usage::scope())?;
     let request = ProviderRequest {
+        context: Some(&context.manifest),
+        feature: call.feature,
         provider: call.provider,
         model: call.model,
         system_prompt: call.system_prompt,
-        prompt: call.prompt,
+        prompt: &context.payload,
         max_tokens: call.max_tokens,
         temperature: call.temperature,
         reasoning,
     };
     let base_url = call.provider.base_url(call.endpoint)?;
-    send_with_fallbacks(&base_url, request, call.schema, call.api_key).await
+    let future = send_with_fallbacks(&base_url, request, call.schema, call.api_key);
+    if super::requests::running() {
+        future.await
+    } else {
+        #[cfg(test)]
+        let runtime = super::requests::Runtime::new();
+        #[cfg(not(test))]
+        let runtime = super::requests::RUNTIME.clone();
+        runtime.run(call.feature.id(), None, future).await
+    }
 }
 
 /// Sends a request, dropping optional parameters when the provider rejects
@@ -303,9 +318,23 @@ async fn send_with_fallbacks(
         }
     }
     let mut attempts = attempts.into_iter().peekable();
+    let mut transient_retries = 0;
     while let Some((reasoning, schema)) = attempts.next() {
         request.reasoning = reasoning;
-        match send_provider_request(base_url, &request, schema, api_key).await {
+        let result = loop {
+            let result = send_provider_request(base_url, &request, schema, api_key).await;
+            if let Err(error) = &result {
+                if let Some(delay) = error.retry_after {
+                    if transient_retries < super::requests::MAX_TRANSIENT_RETRIES {
+                        transient_retries += 1;
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                }
+            }
+            break result;
+        };
+        match result {
             Err(error) if error.rejected_request && attempts.peek().is_some() => {
                 let (next_reasoning, next_schema) = *attempts.peek().unwrap();
                 log::warn!(
@@ -340,6 +369,8 @@ fn describe_schema(schema: Option<&OutputSchema>) -> String {
 }
 
 pub(super) struct ProviderRequest<'a> {
+    pub(super) context: Option<&'a super::manifest::ContextManifest>,
+    pub(super) feature: crate::ai::manifest::Feature,
     pub(super) provider: AiProvider,
     pub(super) model: &'a str,
     pub(super) system_prompt: &'a str,
@@ -394,39 +425,107 @@ async fn send_provider_request(
     schema: Option<&OutputSchema>,
     api_key: &str,
 ) -> Result<ProviderReply, ProviderError> {
-    match request.provider.descriptor().protocol {
-        ApiProtocol::Anthropic => {
-            let client = ai_client()?;
-            let response = authorize(
-                client.post(format!("{base_url}/messages")),
-                ApiProtocol::Anthropic,
-                api_key,
-            )
-            .json(&anthropic_body(request, schema))
-            .send()
-            .await
-            .map_err(display)?;
-            let text = checked(response).await?.text().await.map_err(display)?;
-            record_usage(request, &text);
-            parse_provider_reply(ApiProtocol::Anthropic, &text).map_err(ProviderError::from)
+    let context = match request.context {
+        Some(context) => context.clone(),
+        None => {
+            super::manifest::PreparedContext::new(request.prompt, super::usage::scope())?.manifest
         }
-        ApiProtocol::OpenAiCompatible => {
-            let client = ai_client()?;
-            let response = authorize(
-                client.post(format!("{base_url}/chat/completions")),
-                ApiProtocol::OpenAiCompatible,
-                api_key,
-            )
-            .json(&openai_body(request, schema))
-            .send()
-            .await
-            .map_err(display)?;
-            let text = checked(response).await?.text().await.map_err(display)?;
-            record_usage(request, &text);
-            parse_provider_reply(ApiProtocol::OpenAiCompatible, &text).map_err(ProviderError::from)
-        }
-        ApiProtocol::Disabled => Err("Select an AI provider in settings".to_string().into()),
+    };
+    let schema_bytes = schema.map(|schema| serde_json::to_vec(&schema.schema).expect("JSON value"));
+    let record = super::requests::RequestRecord {
+        attempt_id: uuid::Uuid::new_v4().to_string(),
+        request_id: String::new(),
+        at: chrono::Utc::now().to_rfc3339(),
+        feature: request.feature.id().into(),
+        provider: request.provider.id().into(),
+        model: request.model.into(),
+        endpoint_revision: super::manifest::fingerprint(base_url.as_bytes()),
+        prompt_version: request.feature.prompt_version(),
+        schema_version: request.feature.schema_version(),
+        prompt_revision: super::manifest::fingerprint(request.system_prompt.as_bytes()),
+        schema_revision: schema_bytes
+            .as_ref()
+            .map(|bytes| super::manifest::fingerprint(bytes)),
+        context,
+        response_revision: None,
+        outcome: "dispatched".into(),
+        request_outcome: "running".into(),
+        charged_usd: 0.0,
+        price: None,
+    };
+    let reservation = super::requests::reserve_current(
+        record,
+        request.system_prompt.len()
+            + request.prompt.len()
+            + schema_bytes.as_ref().map_or(0, Vec::len),
+        request.max_tokens,
+    )?;
+    if let Some(text) = super::evaluation::replay_response(request.provider.descriptor().protocol) {
+        let parsed = parse_provider_reply(request.provider.descriptor().protocol, &text);
+        reservation.finish(
+            &text,
+            0,
+            0,
+            None,
+            false,
+            if parsed.is_ok() {
+                "received"
+            } else {
+                "rejected"
+            },
+        )?;
+        return parsed.map_err(ProviderError::from);
     }
+    let protocol = request.provider.descriptor().protocol;
+    let (path, body) = match protocol {
+        ApiProtocol::Anthropic => ("messages", anthropic_body(request, schema)),
+        ApiProtocol::OpenAiCompatible => ("chat/completions", openai_body(request, schema)),
+        ApiProtocol::Disabled => {
+            return Err("Select an AI provider in settings".to_string().into())
+        }
+    };
+    let response = authorize(
+        ai_client()?.post(format!("{base_url}/{path}")),
+        protocol,
+        api_key,
+    )
+    .json(&body)
+    .send()
+    .await
+    .map_err(display)?;
+    let status = response.status().as_u16();
+    let response = match checked(response).await {
+        Ok(response) => response,
+        Err(error) => {
+            reservation.failed(&format!("http_{status}"))?;
+            return Err(error);
+        }
+    };
+    let text = response.text().await.map_err(display)?;
+    record_usage(request, &text);
+    let parsed = parse_provider_reply(protocol, &text);
+    let (input, output, cost) = super::usage::parse_usage(protocol, &text);
+    let has_usage = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .is_some_and(|value| {
+            value.get("usage").is_some_and(|usage| {
+                usage.is_object()
+                    && (usage.get("input_tokens").is_some() || usage.get("prompt_tokens").is_some())
+            })
+        });
+    reservation.finish(
+        &text,
+        input,
+        output,
+        cost,
+        has_usage,
+        if parsed.is_ok() {
+            "received"
+        } else {
+            "rejected"
+        },
+    )?;
+    parsed.map_err(ProviderError::from)
 }
 
 /// Validate completion before parsing content: a cut-off answer can still be
@@ -526,6 +625,7 @@ pub async fn test_connection(
         return Err("Set a model name in AI settings".to_string());
     }
     call_provider(AiCall {
+        feature: crate::ai::manifest::Feature::Connection,
         provider,
         model: model.trim(),
         endpoint,
@@ -694,14 +794,36 @@ fn parse_anthropic_content(body: &str) -> Result<String, String> {
         .ok_or_else(|| "AI provider returned no content".to_string())
 }
 
+fn retry_delay(header: &str) -> Option<std::time::Duration> {
+    let seconds = header.parse::<u64>().ok().or_else(|| {
+        chrono::DateTime::parse_from_rfc2822(header).ok().map(|at| {
+            (at.with_timezone(&chrono::Utc) - chrono::Utc::now())
+                .num_seconds()
+                .max(0) as u64
+        })
+    })?;
+    (seconds <= super::requests::MAX_RETRY_SECONDS).then(|| std::time::Duration::from_secs(seconds))
+}
+
 async fn checked(response: reqwest::Response) -> Result<reqwest::Response, ProviderError> {
     let status = response.status();
     if status.is_success() {
         return Ok(response);
     }
+    // Retry only explicit rate-limit/transient HTTP responses, never ambiguous
+    // transport failures or timeouts. Long Retry-After values are surfaced.
+    let retry_after = if matches!(status.as_u16(), 429 | 502 | 503 | 504) {
+        match response.headers().get(reqwest::header::RETRY_AFTER) {
+            Some(header) => header.to_str().ok().and_then(retry_delay),
+            None => Some(std::time::Duration::from_secs(1)),
+        }
+    } else {
+        None
+    };
     // Error bodies can echo prompts, credentials, or private generated text.
     Err(ProviderError {
         rejected_request: matches!(status.as_u16(), 400 | 404 | 422),
+        retry_after,
         message: format!("AI provider returned {status}"),
     })
 }
@@ -957,6 +1079,8 @@ mod tests {
 
     fn provider_request(provider: AiProvider) -> ProviderRequest<'static> {
         ProviderRequest {
+            context: None,
+            feature: crate::ai::manifest::Feature::Connection,
             provider,
             model: "model",
             system_prompt: "system",
@@ -1038,7 +1162,7 @@ mod tests {
             (StatusCode::NOT_FOUND, 2, true),
             (StatusCode::UNPROCESSABLE_ENTITY, 2, true),
             (StatusCode::UNAUTHORIZED, 1, false),
-            (StatusCode::TOO_MANY_REQUESTS, 1, false),
+            (StatusCode::TOO_MANY_REQUESTS, 3, false),
         ] {
             let requests: RequestLog = Arc::new(Mutex::new(Vec::new()));
             let app = Router::new()
@@ -1050,6 +1174,7 @@ mod tests {
                 axum::serve(listener, app).await.unwrap();
             });
             let result = call_provider(AiCall {
+                feature: crate::ai::manifest::Feature::Connection,
                 provider: AiProvider::Custom,
                 model: "model",
                 endpoint: Some(&endpoint),
@@ -1079,6 +1204,8 @@ mod tests {
     #[test]
     fn only_fireworks_requests_turn_reasoning_off_and_only_when_asked() {
         let request = |provider, reasoning| ProviderRequest {
+            context: None,
+            feature: crate::ai::manifest::Feature::Connection,
             reasoning,
             ..provider_request(provider)
         };
@@ -1176,10 +1303,18 @@ mod tests {
             let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
             let request = ProviderRequest {
+                context: None,
+                feature: crate::ai::manifest::Feature::Connection,
                 reasoning: Reasoning::Off,
                 ..provider_request(AiProvider::Fireworks)
             };
-            let reply = send_with_fallbacks(&base_url, request, Some(&schema), "key").await;
+            let reply = super::super::requests::Runtime::new()
+                .run(
+                    "connection",
+                    None,
+                    send_with_fallbacks(&base_url, request, Some(&schema), "key"),
+                )
+                .await;
             let case = (rejects_reasoning, rejects_schema);
             assert!(reply.is_ok(), "{case:?}: {:?}", reply.err());
             let carried = requests
@@ -1199,9 +1334,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_failure_other_than_a_rejected_request_does_not_retry_without_the_reasoning_switch() {
+    async fn rate_limit_retries_preserve_the_reasoning_switch() {
         use axum::http::StatusCode;
-        async fn respond(State(calls): State<Arc<Mutex<usize>>>) -> StatusCode {
+        async fn respond(
+            State(calls): State<Arc<Mutex<usize>>>,
+            Json(payload): Json<serde_json::Value>,
+        ) -> StatusCode {
+            assert_eq!(payload["reasoning_effort"], "none");
             *calls.lock().unwrap() += 1;
             StatusCode::TOO_MANY_REQUESTS
         }
@@ -1213,19 +1352,96 @@ mod tests {
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let request = ProviderRequest {
+            context: None,
+            feature: crate::ai::manifest::Feature::Connection,
             reasoning: Reasoning::Off,
             ..provider_request(AiProvider::Fireworks)
         };
-        assert!(send_with_fallbacks(&base_url, request, None, "key")
+        assert!(super::super::requests::Runtime::new()
+            .run(
+                "connection",
+                None,
+                send_with_fallbacks(&base_url, request, None, "key")
+            )
             .await
             .is_err());
-        assert_eq!(*calls.lock().unwrap(), 1);
+        assert_eq!(*calls.lock().unwrap(), 3);
+        server.abort();
+    }
+
+    #[test]
+    fn retry_after_respects_the_bound_and_never_turns_a_long_delay_into_an_immediate_retry() {
+        assert_eq!(retry_delay("0"), Some(std::time::Duration::ZERO));
+        assert_eq!(retry_delay("5"), Some(std::time::Duration::from_secs(5)));
+        for value in ["6", "999", "invalid", "-1"] {
+            assert!(retry_delay(value).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn transient_retry_recovers_and_reserves_each_attempt_before_dispatch() {
+        async fn respond(State(calls): State<Arc<Mutex<usize>>>) -> axum::response::Response {
+            use axum::response::IntoResponse;
+            let mut count = calls.lock().unwrap();
+            *count += 1;
+            if *count == 1 {
+                return (
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    [("Retry-After", "0")],
+                )
+                    .into_response();
+            }
+            Json(json!({"choices":[{"message":{"content":"Recovered"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3}})).into_response()
+        }
+        let calls = Arc::new(Mutex::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/chat/completions", post(respond))
+            .with_state(calls.clone());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let runtime = super::super::requests::Runtime::new();
+        let control = super::super::requests::RequestControl {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            price: Some(super::super::requests::ModelPrice {
+                input_per_million: 1.0,
+                output_per_million: 1.0,
+            }),
+        };
+        let result = runtime
+            .run(
+                "summary",
+                Some(control),
+                call_provider(AiCall {
+                    feature: crate::ai::manifest::Feature::Summary,
+                    provider: AiProvider::Custom,
+                    model: "retry-test",
+                    endpoint: Some(&endpoint),
+                    system_prompt: "system",
+                    prompt: "private",
+                    max_tokens: 100,
+                    temperature: 0.2,
+                    schema: None,
+                    api_key: "key",
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, "Recovered");
+        assert_eq!(*calls.lock().unwrap(), 2);
+        let snapshot = runtime.snapshot().unwrap();
+        assert_eq!(snapshot.records.len(), 2);
+        assert_eq!(snapshot.records[1].outcome, "http_429");
+        assert_eq!(snapshot.records[0].outcome, "received");
+        assert!(snapshot.charged_usd > 0.00001); // failed-attempt billing stays reserved
         server.abort();
     }
 
     #[test]
     fn only_openrouter_requests_ask_for_reported_cost() {
         let request = |provider| ProviderRequest {
+            context: None,
+            feature: crate::ai::manifest::Feature::Connection,
             provider,
             model: "m",
             system_prompt: "s",
@@ -1310,6 +1526,7 @@ mod tests {
             "",
         ] {
             let result = call_provider(AiCall {
+                feature: crate::ai::manifest::Feature::Connection,
                 provider: AiProvider::Custom,
                 model: content,
                 endpoint: Some(&endpoint),
@@ -1345,6 +1562,7 @@ mod tests {
             .unwrap();
         });
         let error = call_provider(AiCall {
+            feature: crate::ai::manifest::Feature::Connection,
             provider: AiProvider::Custom,
             model: "test",
             endpoint: Some(&endpoint),

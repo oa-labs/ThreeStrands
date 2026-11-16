@@ -1,3 +1,4 @@
+import { invokeAi } from "../aiRequests";
 import type { WritingProfile } from "../writingProfiles";
 import type { NoteDocument, NoteTaskRecord, NoteReference, NoteCapture, NoteBacklink } from "../noteEntities";
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
@@ -211,9 +212,9 @@ export interface MailClient extends CorrespondenceClient {
     endpoint: string | null,
   ): Promise<ThreadBriefResult>;
   replyAssistContext(draftId: string): Promise<ReplyAssistContext>;
-  reviewDraft(request: DraftReviewRequest, provider: AiProvider, model: string, endpoint: string | null): Promise<DraftReviewResult>;
+  reviewDraft(request: DraftReviewRequest, provider: AiProvider, model: string, endpoint: string | null, owner?: string): Promise<DraftReviewResult>;
   /** Reads when to meet from a draft's conversation; the calendar is searched separately. */
-  findTimes(request: FindTimesRequest, provider: AiProvider, model: string, endpoint: string | null): Promise<TimeSearch>;
+  findTimes(request: FindTimesRequest, provider: AiProvider, model: string, endpoint: string | null, owner?: string): Promise<TimeSearch>;
   generateReply(
     context: ReplyAssistContext,
     instruction: string,
@@ -222,6 +223,7 @@ export interface MailClient extends CorrespondenceClient {
     endpoint: string | null,
     reasoning?: AiReasoning,
     profile?: WritingProfile,
+    owner?: string,
   ): Promise<ReplyAssistResult>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   /** Fetches Gmail search hits missing from the local cache so a subsequent local search can include historical archived mail. Returns a report of what the server search could do, for the UI to word. */
@@ -532,24 +534,24 @@ const tauriClient: MailClient = {
   filePreview: (messageId, attachmentId) => complete("file_preview", { messageId, attachmentId }),
   previewCalendarAttachment: (messageId, attachmentId) => complete("preview_calendar_attachment", { messageId, attachmentId }),
   summarizeThread: (threadId, provider, model, endpoint, reasoning = "default") =>
-    complete("ai_summarize_thread", { threadId, provider, model, endpoint, reasoning }),
+    invokeAi("ai_summarize_thread", { threadId, provider, model, endpoint, reasoning }),
   analyzeThread: (threadId, userTimeZone, provider, model, endpoint) =>
-    complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
+    invokeAi("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
   aiUsageSummary: (days) => read("ai_usage_summary", { days }),
   aiActivity: (limit) => read("ai_activity", { limit }),
   aiDiagnostics: () => read("ai_diagnostics"),
   setAiDiagnosticCapture: (enabled) => complete("set_ai_diagnostic_capture", { enabled }),
   clearAiDiagnostics: () => complete("clear_ai_diagnostics"),
   openLogsFolder: () => complete("open_logs_folder"),
-  threadChat: (request, provider, model, endpoint) => complete("ai_thread_chat", { request, provider, model, endpoint }),
+  threadChat: (request, provider, model, endpoint) => invokeAi("ai_thread_chat", { request, provider, model, endpoint }),
   removeThreadSuggestion: (threadId, revision, proposal) => complete("remove_thread_suggestion", { threadId, revision, proposal }),
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
-    complete("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
+    invokeAi("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
-  reviewDraft: (request, provider, model, endpoint) => complete("ai_review_draft", { request, provider, model, endpoint }),
-  findTimes: (request, provider, model, endpoint) => complete("ai_find_times", { request, provider, model, endpoint }),
-  generateReply: (context, instruction, provider, model, endpoint, reasoning = "default", profile) =>
-    complete("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning, ...(profile ? { profile } : {}) }),
+  reviewDraft: (request, provider, model, endpoint, owner) => invokeAi("ai_review_draft", { request, provider, model, endpoint }, owner),
+  findTimes: (request, provider, model, endpoint, owner) => invokeAi("ai_find_times", { request, provider, model, endpoint }, owner),
+  generateReply: (context, instruction, provider, model, endpoint, reasoning = "default", profile, owner) =>
+    invokeAi("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning, ...(profile ? { profile } : {}) }, owner),
   searchThreads: (request, accountId) => read("search_threads", { request, accountId }),
   backfillSearchThreads: (query, accountId) => complete("backfill_search_threads", { query, accountId }),
   snoozeThreads: (ids, until) => complete("snooze_threads", { ids, until }),
@@ -607,7 +609,7 @@ const tauriClient: MailClient = {
   setFileStar: (accountId, messageId, attachmentId, starred) => complete("set_file_star", { accountId, messageId, attachmentId, starred }),
   contactFiles: (id, limit) => read("contact_files", { id, limit }),
   listContactTasks: (id) => read("list_contact_tasks", { id }),
-  enrichContact: (id, provider, model, endpoint, emptyFields, searchMore = false, accountId, reasoning = "default") => complete("ai_enrich_contact", { id, provider, model, endpoint, emptyFields, searchMore, accountId, reasoning }),
+  enrichContact: (id, provider, model, endpoint, emptyFields, searchMore = false, accountId, reasoning = "default") => invokeAi("ai_enrich_contact", { id, provider, model, endpoint, emptyFields, searchMore, accountId, reasoning }),
   pinContact: (accountId, email, displayName) => complete("pin_contact", { accountId, email, displayName }),
   unpinContact: (accountId, email) => complete("unpin_contact", { accountId, email }),
   unsubscribe: (messageId) => complete("unsubscribe", { messageId }),

@@ -289,6 +289,7 @@ impl Database {
     /// `last_message_at` when the summary request read it). A slower request
     /// for an older revision never replaces one saved for a newer revision.
     /// Returns whether the summary was saved.
+    #[cfg(test)]
     pub fn set_thread_summary(
         &self,
         thread_id: &str,
@@ -297,13 +298,39 @@ impl Database {
         revision: &str,
         focus_from: Option<&str>,
     ) -> DbResult<bool> {
-        self.with_connection(|connection| {
-            Ok(connection.execute(
+        self.set_thread_summary_with_provenance(
+            thread_id,
+            summary,
+            generated_at,
+            revision,
+            focus_from,
+            None,
+        )
+    }
+    pub fn set_thread_summary_with_provenance(
+        &self,
+        thread_id: &str,
+        summary: &str,
+        generated_at: &str,
+        revision: &str,
+        focus_from: Option<&str>,
+        provenance: Option<&crate::ai::requests::RequestRecord>,
+    ) -> DbResult<bool> {
+        let json = provenance
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(super::serialization_error)?;
+        self.with_transaction(|connection| {
+            let changed = connection.execute(
                 "UPDATE threads SET summary = ?1, summary_generated_at = ?2, summary_revision = ?3,
                     summary_focus_from = ?5
                  WHERE id = ?4 AND (summary_revision IS NULL OR summary_revision <= ?3)",
                 params![summary, generated_at, revision, thread_id, focus_from],
-            )? > 0)
+            )? > 0;
+            if changed {
+                connection.execute("INSERT INTO ai_result_provenance(thread_id,summary_json) VALUES(?1,?2) ON CONFLICT(thread_id) DO UPDATE SET summary_json=excluded.summary_json", rusqlite::params![thread_id, json])?;
+            }
+            Ok(changed)
         })
     }
 

@@ -1748,7 +1748,7 @@ export function App() {
             />
           ) : null}
           chat={(person) => visibleDetail ? (
-            <ThreadChat
+            <ThreadChat threadId={visibleDetail.thread.id}
               key={visibleDetail.thread.id}
               enabled={aiChatFeatureEnabled}
               available={aiChatAvailable}

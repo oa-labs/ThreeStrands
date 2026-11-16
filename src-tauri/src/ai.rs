@@ -7,10 +7,13 @@ mod compose;
 mod contact;
 mod context;
 pub(crate) mod diagnostics;
+pub mod evaluation;
 pub mod find_times;
+pub mod manifest;
 mod output;
 mod proposals;
 mod provider;
+pub mod requests;
 #[cfg(test)]
 mod test_support;
 mod usage;
@@ -33,7 +36,7 @@ pub use context::{sent_message_count, ActionMessageInput, ThreadMessageInput};
 pub use provider::{
     configured, get_key, list_models, set, test_connection, AiProvider, ModelInfo, Reasoning,
 };
-pub use usage::{set_usage_recorder, with_purpose, RequestPurpose};
+pub use usage::{set_usage_recorder, with_purpose, with_purpose_recorded, RequestPurpose};
 
 #[cfg(test)]
 mod tests {

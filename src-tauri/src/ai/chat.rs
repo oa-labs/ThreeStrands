@@ -210,6 +210,7 @@ pub async fn chat(request: ChatRequest, api_key: &str) -> Result<ChatAnswer, Str
     let bounded = action_context(&request.messages, None);
     let prompt = build_chat_prompt(&request, &bounded)?;
     let content = call_provider(AiCall {
+        feature: crate::ai::manifest::Feature::Chat,
         provider: request.provider,
         model: &request.model,
         endpoint: request.endpoint.as_deref(),

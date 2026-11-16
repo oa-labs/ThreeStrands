@@ -29,11 +29,17 @@ pub(crate) async fn ai_test_connection(
     provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
+    control: Option<ai::requests::RequestControl>,
 ) -> AppResult<()> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
-    ai::test_connection(provider, &model, endpoint.as_deref(), &api_key)
-        .await
-        .map_err(AppError::from)
+    let mut purpose = ai::RequestPurpose::new("connection");
+    purpose.control = control;
+    ai::with_purpose(
+        purpose,
+        ai::test_connection(provider, &model, endpoint.as_deref(), &api_key),
+    )
+    .await
+    .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -55,17 +61,24 @@ pub(crate) async fn ai_summarize_thread(
     endpoint: Option<String>,
     reasoning: Option<ai::Reasoning>,
     state: State<'_, AppState>,
+    control: Option<ai::requests::RequestControl>,
 ) -> AppResult<SummaryResult> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     let detail = state.database.get_thread(&thread_id)?;
     let revision = detail.thread.last_message_at.clone();
     let user_addresses = account_addresses(&state, &detail.thread.account_id)?;
     let focus_from = brief_focus(&state, &detail, &user_addresses)?;
-    let purpose = ai::RequestPurpose::about(
+    let mut purpose = ai::RequestPurpose::about(
         "summary",
         &detail.thread.subject,
         Some(ai::sent_message_count(detail.messages.len())),
     );
+    purpose.control = control;
+    purpose.scope = ai::manifest::SourceScope {
+        account_ids: vec![detail.thread.account_id.clone()],
+        record_id: Some(thread_id.clone()),
+        revision: Some(revision.clone()),
+    };
     let request = ai::SummarizeRequest {
         provider,
         model,
@@ -83,13 +96,15 @@ pub(crate) async fn ai_summarize_thread(
             .collect(),
         focus_from: focus_from.clone(),
     };
-    let summary = ai::with_purpose(purpose, ai::summarize(request, &api_key)).await?;
+    let (summary, provenance) =
+        ai::with_purpose_recorded(purpose, ai::summarize(request, &api_key)).await?;
     save_thread_summary(
         &state,
         &thread_id,
         summary,
         &revision,
         focus_from.as_deref(),
+        provenance.as_ref(),
     )
 }
 
@@ -173,14 +188,16 @@ fn save_thread_summary(
     summary: String,
     revision: &str,
     focus_from: Option<&str>,
+    provenance: Option<&ai::requests::RequestRecord>,
 ) -> AppResult<SummaryResult> {
     let generated_at = Utc::now().to_rfc3339();
-    if !state.database.set_thread_summary(
+    if !state.database.set_thread_summary_with_provenance(
         thread_id,
         &summary,
         &generated_at,
         revision,
         focus_from,
+        provenance,
     )? {
         if let Ok(detail) = state.database.get_thread(thread_id) {
             let thread = detail.thread;
@@ -282,16 +299,18 @@ fn cache_thread_analysis(
     analysis: ActionAnalysis,
     replace_same_revision: bool,
     focus_from: Option<&str>,
+    provenance: Option<&ai::requests::RequestRecord>,
 ) -> AppResult<ActionAnalysis> {
     let messages = state.database.get_thread(thread_id)?.messages;
     let analysis = without_invitation_meetings(analysis, &messages);
-    let saved = database_result(state.database.save_thread_analysis(
+    let saved = database_result(state.database.save_thread_analysis_with_provenance(
         thread_id,
         revision,
         &analysis,
         &Utc::now().to_rfc3339(),
         replace_same_revision,
         focus_from,
+        provenance,
     ))?;
     if saved {
         return Ok(analysis);
@@ -345,6 +364,7 @@ pub(crate) async fn ai_analyze_thread(
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
+    control: Option<ai::requests::RequestControl>,
 ) -> AppResult<ActionAnalysis> {
     let (revision, request) = thread_analysis_request(
         &thread_id,
@@ -367,17 +387,23 @@ pub(crate) async fn ai_analyze_thread(
         "starting analysis for thread {thread_id} with provider {provider:?} model {model}"
     );
     let focus_from = request.focus_from.clone();
-    let purpose = ai::RequestPurpose::about(
+    let mut purpose = ai::RequestPurpose::about(
         "suggestions",
         &request.subject,
         Some(ai::sent_message_count(request.messages.len())),
     );
-    let analysis = match ai::diagnostics::with_request(
+    purpose.control = control;
+    purpose.scope = ai::manifest::SourceScope {
+        account_ids: vec![state.database.get_thread(&thread_id)?.thread.account_id],
+        record_id: Some(thread_id.clone()),
+        revision: Some(revision.clone()),
+    };
+    let (analysis, provenance) = match ai::diagnostics::with_request(
         "suggestions",
         &thread_id,
         provider,
         &model,
-        ai::with_purpose(purpose, ai::analyze(request, &api_key)),
+        ai::with_purpose_recorded(purpose, ai::analyze(request, &api_key)),
     )
     .await
     {
@@ -400,6 +426,7 @@ pub(crate) async fn ai_analyze_thread(
         analysis,
         false,
         focus_from.as_deref(),
+        provenance.as_ref(),
     )
 }
 
@@ -746,6 +773,7 @@ pub(crate) async fn ai_thread_chat(
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
+    control: Option<ai::requests::RequestControl>,
 ) -> AppResult<ThreadChatReply> {
     let question = request.question.trim().to_string();
     if question.is_empty() {
@@ -759,7 +787,7 @@ pub(crate) async fn ai_thread_chat(
         .into());
     }
     let thread_id = request.thread_id.clone();
-    let (_revision, analysis_request) = thread_analysis_request(
+    let (revision, analysis_request) = thread_analysis_request(
         &thread_id,
         request.user_time_zone.clone(),
         provider,
@@ -858,11 +886,19 @@ pub(crate) async fn ai_thread_chat(
         searched.len(),
         shared_attachments.len()
     );
-    let purpose = ai::RequestPurpose::about(
+    let mut purpose = ai::RequestPurpose::about(
         "chat",
         &chat_request.subject,
         Some(ai::sent_message_count(chat_request.messages.len())),
     );
+    purpose.control = control;
+    purpose.scope = ai::manifest::SourceScope {
+        account_ids: std::iter::once(state.database.get_thread(&thread_id)?.thread.account_id)
+            .chain(searched.iter().map(|source| source.account_id.clone()))
+            .collect(),
+        record_id: Some(thread_id.clone()),
+        revision: Some(revision.clone()),
+    };
     let answer = match ai::diagnostics::with_request(
         "chat",
         &thread_id,
@@ -933,6 +969,7 @@ pub(crate) async fn ai_brief_thread(
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
+    control: Option<ai::requests::RequestControl>,
 ) -> AppResult<ThreadBriefResult> {
     let (revision, request) = thread_analysis_request(
         &thread_id,
@@ -949,17 +986,23 @@ pub(crate) async fn ai_brief_thread(
         "starting brief for thread {thread_id} with provider {provider:?} model {model}"
     );
     let focus_from = request.focus_from.clone();
-    let purpose = ai::RequestPurpose::about(
+    let mut purpose = ai::RequestPurpose::about(
         "brief",
         &request.subject,
         Some(ai::sent_message_count(request.messages.len())),
     );
-    let brief = match ai::diagnostics::with_request(
+    purpose.control = control;
+    purpose.scope = ai::manifest::SourceScope {
+        account_ids: vec![state.database.get_thread(&thread_id)?.thread.account_id],
+        record_id: Some(thread_id.clone()),
+        revision: Some(revision.clone()),
+    };
+    let (brief, provenance) = match ai::diagnostics::with_request(
         "brief",
         &thread_id,
         provider,
         &model,
-        ai::with_purpose(purpose, ai::brief(request, &api_key)),
+        ai::with_purpose_recorded(purpose, ai::brief(request, &api_key)),
     )
     .await
     {
@@ -981,6 +1024,7 @@ pub(crate) async fn ai_brief_thread(
         brief.summary,
         &revision,
         focus_from.as_deref(),
+        provenance.as_ref(),
     )?;
     let analysis = cache_thread_analysis(
         &state,
@@ -989,6 +1033,7 @@ pub(crate) async fn ai_brief_thread(
         brief.analysis,
         true,
         focus_from.as_deref(),
+        provenance.as_ref(),
     )?;
     Ok(ThreadBriefResult {
         summary,
@@ -1010,6 +1055,7 @@ pub(crate) async fn ai_enrich_contact(
     account_id: Option<String>,
     reasoning: Option<ai::Reasoning>,
     state: State<'_, AppState>,
+    control: Option<ai::requests::RequestControl>,
 ) -> AppResult<ai::ContactEnrichmentResult> {
     let profile = state
         .database
@@ -1027,6 +1073,7 @@ pub(crate) async fn ai_enrich_contact(
         .map(|value| value.to_ascii_lowercase())
         .collect::<HashSet<_>>();
     let mut messages = Vec::new();
+    let mut source_accounts = HashSet::new();
     for item in timeline {
         let detail = state.database.get_thread(&item.thread_id)?;
         for (index, message) in detail.messages.into_iter().enumerate() {
@@ -1039,6 +1086,7 @@ pub(crate) async fn ai_enrich_contact(
                     .any(|(_, email)| addresses.contains(&email.to_ascii_lowercase()))
             });
             if sender_matches || recipient_matches {
+                source_accounts.insert(detail.thread.account_id.clone());
                 messages.push(ai::ContactMessageInput {
                     id: message.id,
                     thread_id: item.thread_id.clone(),
@@ -1053,10 +1101,13 @@ pub(crate) async fn ai_enrich_contact(
         }
     }
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
-    let purpose = ai::RequestPurpose {
+    let mut purpose = ai::RequestPurpose {
         message_count: Some(messages.len()),
         ..ai::RequestPurpose::new("contact")
     };
+    purpose.control = control;
+    purpose.scope.account_ids = source_accounts.into_iter().collect();
+    purpose.scope.record_id = Some(id);
     ai::with_purpose(
         purpose,
         ai::enrich_contact(
@@ -1127,6 +1178,7 @@ pub(crate) async fn ai_find_times(
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
+    control: Option<ai::requests::RequestControl>,
 ) -> AppResult<ai::find_times::TimeSearch> {
     let zone = (request.user_time_zone.chars().count() <= 100)
         .then(|| request.user_time_zone.parse::<chrono_tz::Tz>().ok())
@@ -1159,7 +1211,8 @@ pub(crate) async fn ai_find_times(
     };
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     log::info!(target: "ai_find_times", "finding times with provider {provider:?} model {model}, {} message(s)", messages.len());
-    let purpose = ai::RequestPurpose::about("find_times", &subject, Some(messages.len()));
+    let mut purpose = ai::RequestPurpose::about("find_times", &subject, Some(messages.len()));
+    purpose.control = control;
     ai::with_purpose(
         purpose,
         ai::find_times::find_times(
@@ -1190,9 +1243,11 @@ pub(crate) async fn ai_review_draft(
     provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
+    control: Option<ai::requests::RequestControl>,
 ) -> AppResult<ai::DraftReviewResult> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
-    let purpose = ai::RequestPurpose::about("draft_review", &request.subject, None);
+    let mut purpose = ai::RequestPurpose::about("draft_review", &request.subject, None);
+    purpose.control = control;
     ai::with_purpose(
         purpose,
         ai::review_draft(request, provider, &model, endpoint.as_deref(), &api_key),
@@ -1220,6 +1275,7 @@ pub(crate) async fn ai_generate_reply(
     endpoint: Option<String>,
     reasoning: Option<ai::Reasoning>,
     profile: Option<ai::ReplyWritingProfile>,
+    control: Option<ai::requests::RequestControl>,
 ) -> AppResult<ReplyAssistResult> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     // Re-apply the native bounds even though normal callers received this
@@ -1237,8 +1293,9 @@ pub(crate) async fn ai_generate_reply(
             })
             .collect(),
     );
-    let purpose =
+    let mut purpose =
         ai::RequestPurpose::about("reply", &bounded.subject, Some(bounded.messages.len()));
+    purpose.control = control;
     let body = ai::with_purpose(
         purpose,
         ai::generate_reply(
@@ -1281,4 +1338,48 @@ pub(crate) fn open_logs_folder(app: tauri::AppHandle) -> AppResult<()> {
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command(async)]
+pub(crate) fn ai_request_snapshot(
+    include_history: Option<bool>,
+) -> AppResult<ai::requests::RequestSnapshot> {
+    ai::requests::RUNTIME
+        .snapshot_limit(if include_history.unwrap_or(false) {
+            20
+        } else {
+            0
+        })
+        .map_err(AppError::from)
+}
+#[tauri::command(async)]
+pub(crate) fn set_ai_request_policy(policy: ai::requests::RequestPolicy) -> AppResult<()> {
+    ai::requests::RUNTIME
+        .configure(policy)
+        .map_err(AppError::from)
+}
+#[tauri::command(async)]
+pub(crate) fn cancel_ai_request(request_id: String) -> AppResult<()> {
+    ai::requests::RUNTIME
+        .cancel(&request_id)
+        .map_err(AppError::from)
+}
+
+#[tauri::command(async)]
+pub(crate) fn ai_result_provenance(
+    thread_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<(
+    Option<ai::requests::RequestRecord>,
+    Option<ai::requests::RequestRecord>,
+)> {
+    state
+        .database
+        .ai_result_provenance(&thread_id)
+        .map_err(AppError::from)
+}
+
+#[tauri::command(async)]
+pub(crate) fn recover_ai_requests() -> AppResult<()> {
+    ai::requests::RUNTIME.recover().map_err(AppError::from)
 }

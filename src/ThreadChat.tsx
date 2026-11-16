@@ -1,3 +1,4 @@
+import { AiCancelButton } from "./AiRequestControls";
 import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { MessageSquareText, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -74,6 +75,7 @@ export const QUICK_QUESTIONS = [
  * chat. Nothing is shared unless the user picks it.
  */
 export function ThreadChat({
+  threadId,
   enabled,
   available,
   entries,
@@ -91,6 +93,7 @@ export function ThreadChat({
   onOpenSettings,
   renderAvailability,
 }: {
+  threadId?: string;
   enabled: boolean;
   available: boolean;
   entries: ChatEntry[];
@@ -303,6 +306,7 @@ export function ThreadChat({
         </div>
       ))}
       {pending ? <p className="context-status" role="status">Thinking…</p> : null}
+      <AiCancelButton owner={threadId} command="ai_thread_chat" />
     </div> : pending ? <p className="context-status" role="status">Thinking…</p> : null}
     {error ? <div className="action-analysis-error" role="alert">
       <p>{error}</p>

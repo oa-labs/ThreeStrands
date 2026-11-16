@@ -1,3 +1,4 @@
+import { AiCancelButton } from "./AiRequestControls";
 import { hasWritingProfile, useWritingProfiles, writingProfileFor, type WritingProfile } from "./writingProfiles";
 import { listen } from "@tauri-apps/api/event";
 import { useAiAvailability } from "./useAiAvailability";
@@ -299,6 +300,7 @@ export const Composer = forwardRef<ComposerHandle, {
         endpoint,
         reasoning,
         replyProfile,
+        latest.current.id,
       );
       if (!bodyEditor.current) return;
       bodyEditor.current.prependText(`${result.body.trim()}\n\n`);
@@ -624,6 +626,7 @@ export const Composer = forwardRef<ComposerHandle, {
             ) : null}
             {replyAssistError ? <div className="notice compose-error" role="alert">{replyAssistError}</div> : null}
             <div className="reply-assist-actions">
+      <AiCancelButton owner={draft.id} command="ai_generate_reply" />
               <button
                 type="button"
                 className="btn btn-primary"

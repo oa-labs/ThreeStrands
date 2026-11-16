@@ -1,3 +1,4 @@
+import { AiCancelButton, AiCachedProvenance } from "./AiRequestControls";
 import { formatCompactDate } from "./dateFormatting";
 import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { useId, useState } from "react";
@@ -507,6 +508,8 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
         })}
       </ul> : null}
       {stale ? <p className="context-status">New messages since this brief.</p> : null}
+      {summaryText ? <AiCachedProvenance key={`${thread.id}:${thread.summaryGeneratedAt}`} threadId={thread.id} /> : null}
+      <AiCancelButton owner={thread.id} command={["ai_brief_thread", "ai_analyze_thread", "ai_summarize_thread"]} />
       {/* Which messages the brief covers, when not the whole conversation. */}
       {scopeNote ? <p className="thread-assist-shared">{scopeNote}</p> : null}
       {failureNotice}

@@ -52,6 +52,7 @@ const MIGRATIONS: &[Migration] = &[
     (105, to_v105),
     (106, to_v106),
     (107, to_v107),
+    (108, to_v108),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1433,6 +1434,17 @@ fn to_v106(tx: &rusqlite::Transaction) -> Result<(), String> {
     reindex_notes(tx)
 }
 
+/// Retain generation provenance with each cached AI result.
+fn to_v108(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS ai_result_provenance (
+        thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+        summary_json TEXT, analysis_json TEXT
+    );",
+    )
+    .map_err(|error| error.to_string())
+}
+
 /// A `[[link]]`'s backlink context is the line as text rather than its
 /// Markdown, so rows written before then are rebuilt.
 fn to_v107(tx: &rusqlite::Transaction) -> Result<(), String> {
@@ -1771,6 +1783,7 @@ mod tests {
         "table:draft_server_deletions",
         "table:discarded_drafts",
         "table:ai_activity",
+        "table:ai_result_provenance",
         "table:sender_delivery_patterns",
         "index:sender_delivery_requester",
         "table:conversation_snoozes",

@@ -66,6 +66,7 @@ pub async fn generate_reply(
     let prompt = build_reply_prompt(context, instruction, profile)?;
     let content = call_provider_reply(
         AiCall {
+            feature: crate::ai::manifest::Feature::Reply,
             provider,
             model,
             endpoint,
@@ -247,6 +248,7 @@ pub async fn review_draft(
     validate_review_request(&request)?;
     let prompt = serde_json::to_string(&request).map_err(display)?;
     let content = call_provider(AiCall {
+        feature: crate::ai::manifest::Feature::DraftReview,
         provider,
         model,
         endpoint,

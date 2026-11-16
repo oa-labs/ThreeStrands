@@ -159,6 +159,7 @@ async fn contact_suggestions_from_batch(
     .map_err(display)?;
     let reply = call_provider_reply(
         AiCall {
+            feature: crate::ai::manifest::Feature::Contact,
             provider: request.provider,
             model: &request.model,
             endpoint: request.endpoint.as_deref(),
@@ -464,10 +465,12 @@ fn parse_contact_suggestions(
     if values.len() > 20 {
         return Err("The AI provider returned too many contact suggestions".into());
     }
+    let payload = serde_json::json!({"messages": bounded.iter().map(|message| serde_json::json!({"sourceMessageId":message.id,"bodyText":message.body_text})).collect::<Vec<_>>()}).to_string();
+    let evidence_context = super::manifest::PreparedContext::new(&payload, Default::default())?;
     tally.returned += values.len();
     let mut result = Vec::new();
     for value in values {
-        match check_contact_suggestion(&value, bounded) {
+        match check_contact_suggestion(&value, bounded, &evidence_context) {
             Ok(suggestion) => result.push(suggestion),
             Err(reason) => tally.dropped.push(reason),
         }
@@ -479,6 +482,7 @@ fn parse_contact_suggestions(
 fn check_contact_suggestion(
     value: &serde_json::Value,
     bounded: &[ContactMessageInput],
+    context: &super::manifest::PreparedContext,
 ) -> Result<ContactFieldSuggestion, ContactSuggestionDrop> {
     let text_of = |key: &str| {
         value
@@ -504,7 +508,7 @@ fn check_contact_suggestion(
     if text.chars().count() > 4000 || excerpt.chars().count() > 300 {
         return Err(ContactSuggestionDrop::TooLong);
     }
-    if !source.body_text.contains(excerpt) {
+    if !context.exact_evidence(message_id, excerpt) {
         return Err(ContactSuggestionDrop::ExcerptNotFound);
     }
     let value = if field == "link" {

@@ -1,3 +1,4 @@
+import { AiCancelButton } from "./AiRequestControls";
 import { listen } from "@tauri-apps/api/event";
 import { useAiAvailability } from "./useAiAvailability";
 import { useWorkspaceCommands } from "./workspaceCommands";
@@ -263,7 +264,7 @@ export function ContactsWorkspace({onOpenThread,onOpenNote,onCompose,onSaved,onO
           </div></div>
           {showRail?<SidePanelControls panel={sidePanel} label="Contact context" controlsId={CONTACTS_SIDE_PANEL_ID}/>:null}
           {showRail?<aside id={CONTACTS_SIDE_PANEL_ID} hidden={sidePanel.collapsed} className="contact-context-rail" aria-label="Contact context">
-            {aiEnabled?<ContactEnrichmentCard ready={aiReady} onOpenSettings={onOpenAiSettings} suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}
+            {aiEnabled?<ContactEnrichmentCard contactId={selectedId} ready={aiReady} onOpenSettings={onOpenAiSettings} suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}
             {profile?<NoteBacklinkSection rows={noteMentions.rows} error={noteMentions.error} onOpenNote={onOpenNote}/>:null}
             {profile?<ContactFilesSection key={`${profile.id}:${profileRevision}`} contactId={profile.id} onShowMessage={threadId=>onOpenThread(threadId)}/>:null}
             {timeline.length?<RecentEmailsSection items={timeline} limit={CONTACT_RECENT_EMAIL_ROWS} onOpenThread={onOpenThread} onLoadOlder={timelineHasMore?()=>void loadOlder():undefined}/>:null}
@@ -297,11 +298,12 @@ function GrowingTextarea(props:TextareaHTMLAttributes<HTMLTextAreaElement>){
  * AI profile suggestions, laid out like the Brief card in the email context
  * panel. Nothing is written until the user picks "Use suggestion".
  */
-function ContactEnrichmentCard({ready,onOpenSettings,suggestions,notice,enriching,emailsReviewed,moreAvailable,onEnrich,onApply,onOpenThread}:{ready:boolean;onOpenSettings?():void;suggestions:ContactFieldSuggestion[];notice:{text:string;failed:boolean}|null;enriching:boolean;emailsReviewed:number;moreAvailable:boolean;onEnrich(searchMore:boolean):void;onApply(item:ContactFieldSuggestion):void;onOpenThread(id:string):void}){
+function ContactEnrichmentCard({contactId,ready,onOpenSettings,suggestions,notice,enriching,emailsReviewed,moreAvailable,onEnrich,onApply,onOpenThread}:{contactId:string|null;ready:boolean;onOpenSettings?():void;suggestions:ContactFieldSuggestion[];notice:{text:string;failed:boolean}|null;enriching:boolean;emailsReviewed:number;moreAvailable:boolean;onEnrich(searchMore:boolean):void;onApply(item:ContactFieldSuggestion):void;onOpenThread(id:string):void}){
   const headingId=useId();
   return <section className="context-section contact-enrichment" aria-labelledby={headingId}>
     <ContextSectionHeader title="Profile Suggestions" titleId={headingId} icon={<UserRound size={ICON_SIZE.xs}/>} actions={ready?<button type="button" className="btn btn-sm thread-assist-run" disabled={enriching} onClick={()=>onEnrich(false)}>{enriching?<LoaderCircle className="spin" size={ICON_SIZE.xs}/>:<Sparkles size={ICON_SIZE.xs}/>}Enhance With AI</button>:null}/>
     {!ready?<><p className="context-status">Set up an AI provider and API key in AI settings to fill empty fields from your emails.</p>{onOpenSettings?<button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Settings</button>:null}</>:enriching?<p className="context-status">Reading emails…</p>:!notice&&!suggestions.length&&emailsReviewed===0?<p className="context-status">Fill empty fields from your emails with this person. Nothing changes until you use a suggestion.</p>:null}
+    <AiCancelButton owner={contactId} command="ai_enrich_contact" />
     {notice?<p className={notice.failed?"context-status contacts-error":"context-status"} role={notice.failed?"alert":"status"}>{notice.text}</p>:null}
     {suggestions.map((item,index)=><article key={`${item.field}-${index}`} className="contact-suggestion">
       <span className="contact-suggestion-field">{CONTACT_SUGGESTION_FIELD_LABELS[item.field]}</span>

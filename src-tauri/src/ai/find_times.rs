@@ -170,6 +170,7 @@ pub async fn find_times(request: FindTimesRequest, api_key: &str) -> Result<Time
     let bounded = action_context(&request.messages, None);
     let prompt = build_find_times_prompt(&request, &bounded)?;
     let content = call_provider(AiCall {
+        feature: crate::ai::manifest::Feature::FindTimes,
         provider: request.provider,
         model: &request.model,
         endpoint: request.endpoint.as_deref(),

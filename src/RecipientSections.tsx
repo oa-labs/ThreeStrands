@@ -1,3 +1,4 @@
+import { AiCancelButton } from "./AiRequestControls";
 // Sections about the people a draft is going to, shared by a new message's panel and a reply's.
 
 import { useEffect, useRef, useState } from "react";
@@ -90,6 +91,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
   draftRef.current = draft;
   const context = (): FindTimesContext => ({
     sourceMessageId: draftRef.current.sourceId,
+    requestOwner: draftRef.current.id ?? draftRef.current.sourceId ?? undefined,
     draftSubject: draftRef.current.subject,
     draftText: draftRef.current.body,
   });
@@ -189,6 +191,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
       />
       {!search && !reading && (readError ?? offeredTimesError) ? <p className="context-status" role="alert">{readError ?? offeredTimesError}</p> : null}
       {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
+      <AiCancelButton owner={draft.id ?? draft.sourceId} command="ai_find_times" />
       {search && !reading ? <>
         {search.fallback ? <p className="context-status" role="alert">
           {search.fallback} <button type="button" className="btn-link" onClick={() => void findTimes()}>Try Again</button>
@@ -202,7 +205,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
             <span>{person.name ? `${person.name} (${person.email})` : person.email}</span>
           </label>)}
         </fieldset> : null}
-        <FindTimesCard
+        <FindTimesCard requestOwner={draft.id ?? draft.sourceId}
           key={search.key}
           plan={search.plan}
           reason={search.reason}
