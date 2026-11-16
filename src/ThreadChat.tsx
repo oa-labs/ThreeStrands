@@ -1,3 +1,4 @@
+import { AiCancelButton } from "./AiRequestControls";
 import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { MessageSquareText, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -303,6 +304,7 @@ export function ThreadChat({
         </div>
       ))}
       {pending ? <p className="context-status" role="status">Thinking…</p> : null}
+      <AiCancelButton command="ai_thread_chat" />
     </div> : pending ? <p className="context-status" role="status">Thinking…</p> : null}
     {error ? <div className="action-analysis-error" role="alert">
       <p>{error}</p>

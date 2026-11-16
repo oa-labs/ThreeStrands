@@ -1,3 +1,4 @@
+import { AiRequestControls } from "./AiRequestControls";
 import { CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
@@ -387,6 +388,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             </div>
           </details>
 
+          <AiRequestControls />
           <AiActivityList />
         </>
       ) : null}

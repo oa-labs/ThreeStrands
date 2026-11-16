@@ -1,3 +1,4 @@
+import { invokeAi } from "../aiRequests";
 import type { WritingProfile } from "../writingProfiles";
 import type { NoteDocument, NoteTaskRecord, NoteReference, NoteCapture, NoteBacklink } from "../noteEntities";
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
@@ -527,24 +528,24 @@ const tauriClient: MailClient = {
   filePreview: (messageId, attachmentId) => complete("file_preview", { messageId, attachmentId }),
   previewCalendarAttachment: (messageId, attachmentId) => complete("preview_calendar_attachment", { messageId, attachmentId }),
   summarizeThread: (threadId, provider, model, endpoint, reasoning = "default") =>
-    complete("ai_summarize_thread", { threadId, provider, model, endpoint, reasoning }),
+    invokeAi("ai_summarize_thread", { threadId, provider, model, endpoint, reasoning }),
   analyzeThread: (threadId, userTimeZone, provider, model, endpoint) =>
-    complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
+    invokeAi("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
   aiUsageSummary: (days) => read("ai_usage_summary", { days }),
   aiActivity: (limit) => read("ai_activity", { limit }),
   aiDiagnostics: () => read("ai_diagnostics"),
   setAiDiagnosticCapture: (enabled) => complete("set_ai_diagnostic_capture", { enabled }),
   clearAiDiagnostics: () => complete("clear_ai_diagnostics"),
   openLogsFolder: () => complete("open_logs_folder"),
-  threadChat: (request, provider, model, endpoint) => complete("ai_thread_chat", { request, provider, model, endpoint }),
+  threadChat: (request, provider, model, endpoint) => invokeAi("ai_thread_chat", { request, provider, model, endpoint }),
   removeThreadSuggestion: (threadId, revision, proposal) => complete("remove_thread_suggestion", { threadId, revision, proposal }),
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
-    complete("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
+    invokeAi("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
-  reviewDraft: (request, provider, model, endpoint) => complete("ai_review_draft", { request, provider, model, endpoint }),
-  findTimes: (request, provider, model, endpoint) => complete("ai_find_times", { request, provider, model, endpoint }),
+  reviewDraft: (request, provider, model, endpoint) => invokeAi("ai_review_draft", { request, provider, model, endpoint }),
+  findTimes: (request, provider, model, endpoint) => invokeAi("ai_find_times", { request, provider, model, endpoint }),
   generateReply: (context, instruction, provider, model, endpoint, reasoning = "default", profile) =>
-    complete("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning, ...(profile ? { profile } : {}) }),
+    invokeAi("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning, ...(profile ? { profile } : {}) }),
   searchThreads: (request, accountId) => read("search_threads", { request, accountId }),
   backfillSearchThreads: (query, accountId) => complete("backfill_search_threads", { query, accountId }),
   snoozeThreads: (ids, until) => complete("snooze_threads", { ids, until }),
@@ -602,7 +603,7 @@ const tauriClient: MailClient = {
   setFileStar: (accountId, messageId, attachmentId, starred) => complete("set_file_star", { accountId, messageId, attachmentId, starred }),
   contactFiles: (id, limit) => read("contact_files", { id, limit }),
   listContactTasks: (id) => read("list_contact_tasks", { id }),
-  enrichContact: (id, provider, model, endpoint, emptyFields, searchMore = false, accountId, reasoning = "default") => complete("ai_enrich_contact", { id, provider, model, endpoint, emptyFields, searchMore, accountId, reasoning }),
+  enrichContact: (id, provider, model, endpoint, emptyFields, searchMore = false, accountId, reasoning = "default") => invokeAi("ai_enrich_contact", { id, provider, model, endpoint, emptyFields, searchMore, accountId, reasoning }),
   pinContact: (accountId, email, displayName) => complete("pin_contact", { accountId, email, displayName }),
   unpinContact: (accountId, email) => complete("unpin_contact", { accountId, email }),
   unsubscribe: (messageId) => complete("unsubscribe", { messageId }),

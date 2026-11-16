@@ -1,3 +1,4 @@
+import { AiCancelButton } from "./AiRequestControls";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Sparkles, X } from "lucide-react";
 import { ContextSectionHeader } from "./ContextSections";
@@ -154,6 +155,7 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
     <div id={contentId} hidden={Boolean(applied) && !expanded}>
     {available ? <div className="draft-review-content">
       {busy ? <p className="context-section-note" role="status">Reviewing…</p> : null}
+      <AiCancelButton command="ai_review_draft" />
       {review && original && !busy ? <>
         <p className="draft-review-assessment" role="status">{review.assessment}</p>
         {review.suggestions.length ? <ol className="draft-review-suggestions">

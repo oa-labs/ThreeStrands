@@ -1,3 +1,4 @@
+import { AiCancelButton } from "./AiRequestControls";
 // The one card for offering open times: compose's Find Times, meeting
 // suggestions, and Thread Chat's availability answers all show it.
 
@@ -122,6 +123,7 @@ export function FindTimesCard({
       <button type="submit" className="btn btn-sm" disabled={reading || !instruction.trim()}><Sparkles size={ICON_SIZE.sm} />Adjust</button>
     </form>
     {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
+    <AiCancelButton command="ai_find_times" />
     {error ? <p className="context-status" role="alert">{error}</p> : null}
   </> : null;
 

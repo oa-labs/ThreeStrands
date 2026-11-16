@@ -52,6 +52,10 @@ The usage panel under **Settings → AI Provider → Models and Usage** shows re
 
 **Activity**, below it, lists recent requests: which feature sent them, the conversation's subject, how many messages, and the model and tokens used. It's kept on this device and never includes email text.
 
+You can cancel running AI work from its feature panel or **Request Controls**. Cancellation stops queued work or the app’s in-flight request; material already sent cannot be recalled and may still be billed. Up to two requests execute at once, with a bounded queue. Short rate-limit and temporary server failures retry at most twice; authentication failures and ambiguous network timeouts do not retry automatically.
+
+**Request Provenance** in Request Controls lists recent attempts with source references and generation fingerprints. It keeps up to 30 days, 500 attempts, and 8 MB on this device, without mail text or provider replies. Cached briefs retain their generation details with the cached conversation.
+
 ## What Is Shared {#what-is-shared}
 
 | Feature | Trigger and context | Your control |
@@ -72,7 +76,7 @@ Type `@` in **Ask About This Conversation** and choose a readable attachment. Se
 
 ### Provider Accounts and Billing {#provider-accounts-and-billing}
 
-Requests go directly to the provider you choose. Its API billing, model access, and data-handling terms apply; a consumer chat subscription may not include API access. Check those terms in your provider account before sharing sensitive content. Estimated app costs are not a bill or spending cap. Use [AI troubleshooting](troubleshooting.html#ai-is-unavailable-or-failing) for connection failures.
+Requests go directly to the provider you choose. Its API billing, model access, and data-handling terms apply; a consumer chat subscription may not include API access. Check those terms in your provider account before sharing sensitive content. Usage estimates are not a bill. **Request Controls** offers an optional daily estimated spending limit for this device; enter model prices first. Requests reserve their full output allowance before sending, and uncertain or cancelled billing keeps that reservation. Your provider’s bill may differ; Web Research has separate limits. Use [AI troubleshooting](troubleshooting.html#ai-is-unavailable-or-failing) for connection failures.
 
 ## Web Research {#web-research}
 

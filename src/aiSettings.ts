@@ -1,3 +1,4 @@
+import { invokeAi } from "./aiRequests";
 import { invoke } from "@tauri-apps/api/core";
 
 export const AI_PROVIDERS = [
@@ -353,7 +354,7 @@ export async function testAiConnection(
   endpoint: string,
 ): Promise<void> {
   if (!isTauri()) return;
-  await invoke("ai_test_connection", {
+  await invokeAi("ai_test_connection", {
     provider,
     model,
     endpoint: endpoint.trim() || null,

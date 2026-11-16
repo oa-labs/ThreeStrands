@@ -29,6 +29,8 @@ pub struct RequestPurpose {
     pub feature: &'static str,
     pub subject: Option<String>,
     pub message_count: Option<usize>,
+    pub control: Option<super::requests::RequestControl>,
+    pub scope: super::manifest::SourceScope,
 }
 
 impl RequestPurpose {
@@ -37,6 +39,8 @@ impl RequestPurpose {
             feature,
             subject: None,
             message_count: None,
+            control: None,
+            scope: Default::default(),
         }
     }
 
@@ -45,17 +49,54 @@ impl RequestPurpose {
             feature,
             subject: Some(subject.to_string()),
             message_count,
+            control: None,
+            scope: Default::default(),
         }
     }
 }
 
 tokio::task_local! {
     static REQUEST_PURPOSE: RequestPurpose;
+    static REQUEST_RECORDER: UsageRecorder;
 }
 
 /// Runs `future` with every provider request it makes tagged with `purpose`.
-pub async fn with_purpose<F: std::future::Future>(purpose: RequestPurpose, future: F) -> F::Output {
-    REQUEST_PURPOSE.scope(purpose, future).await
+pub async fn with_purpose<T>(
+    purpose: RequestPurpose,
+    future: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    let feature = purpose.feature;
+    let control = purpose.control.clone();
+    super::requests::RUNTIME
+        .run(feature, control, REQUEST_PURPOSE.scope(purpose, future))
+        .await
+}
+pub async fn with_purpose_recorded<T>(
+    purpose: RequestPurpose,
+    future: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<(T, Option<super::requests::RequestRecord>), String> {
+    let feature = purpose.feature;
+    let control = purpose.control.clone();
+    super::requests::RUNTIME
+        .run_recorded(
+            feature,
+            control,
+            Box::pin(REQUEST_PURPOSE.scope(purpose, future)),
+        )
+        .await
+}
+
+pub(super) fn scope() -> super::manifest::SourceScope {
+    REQUEST_PURPOSE
+        .try_with(|purpose| purpose.scope.clone())
+        .unwrap_or_default()
+}
+
+pub(super) async fn with_recorder<T>(
+    recorder: UsageRecorder,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    REQUEST_RECORDER.scope(recorder, future).await
 }
 
 pub type UsageRecorder = Arc<dyn Fn(&UsageEvent) + Send + Sync>;
@@ -73,7 +114,10 @@ pub fn set_usage_recorder(recorder: UsageRecorder) {
 pub(super) fn record_usage(request: &ProviderRequest<'_>, body: &str) {
     let (input_tokens, output_tokens, cost_usd) =
         parse_usage(request.provider.descriptor().protocol, body);
-    let recorder = USAGE_RECORDER.read().ok().and_then(|slot| slot.clone());
+    let recorder = REQUEST_RECORDER
+        .try_with(Clone::clone)
+        .ok()
+        .or_else(|| USAGE_RECORDER.read().ok().and_then(|slot| slot.clone()));
     if let Some(recorder) = recorder {
         recorder(&UsageEvent {
             provider: request.provider,
@@ -88,7 +132,7 @@ pub(super) fn record_usage(request: &ProviderRequest<'_>, body: &str) {
 
 /// Reads token counts, and a reported cost when present, from a successful
 /// response body. Missing or malformed usage reads as zero tokens.
-fn parse_usage(protocol: ApiProtocol, body: &str) -> (u64, u64, Option<f64>) {
+pub(super) fn parse_usage(protocol: ApiProtocol, body: &str) -> (u64, u64, Option<f64>) {
     #[derive(Deserialize, Default)]
     struct Envelope {
         #[serde(default)]
@@ -200,6 +244,7 @@ mod tests {
         let content = with_purpose(
             purpose.clone(),
             call_provider(AiCall {
+                feature: crate::ai::manifest::Feature::Connection,
                 provider: AiProvider::Custom,
                 model: "usage-test-model",
                 endpoint: Some(&endpoint),

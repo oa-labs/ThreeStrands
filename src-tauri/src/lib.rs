@@ -1101,6 +1101,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&data_dir)?;
     restrict_dir_to_owner(&data_dir);
     ai::diagnostics::initialize(data_dir.join("ai-diagnostics.json"));
+    if let Err(error) = ai::requests::RUNTIME.initialize(data_dir.join("ai-requests.json")) {
+        log::error!(target: "ai_provider", "{error}");
+    }
     let (opened_database, recovery) = db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
     let database = Arc::new(opened_database);
     let usage_database = database.clone();
@@ -1732,6 +1735,10 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::ai::ai_brief_thread,
         commands::ai::ai_usage_summary,
         commands::ai::ai_activity,
+        commands::ai::ai_request_snapshot,
+        commands::ai::ai_result_provenance,
+        commands::ai::set_ai_request_policy,
+        commands::ai::cancel_ai_request,
         commands::ai::ai_diagnostics,
         commands::ai::set_ai_diagnostic_capture,
         commands::ai::clear_ai_diagnostics,
@@ -1911,3 +1918,6 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
         _ => {}
     }
 }
+
+/// Synthetic developer evaluations; not exposed as an application command.
+pub use ai::evaluation as ai_evaluation;

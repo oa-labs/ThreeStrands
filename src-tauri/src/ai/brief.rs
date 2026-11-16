@@ -215,6 +215,7 @@ pub async fn brief(request: AnalyzeRequest, api_key: &str) -> Result<ThreadBrief
         &request.goals,
     )?;
     let content = call_provider(AiCall {
+        feature: crate::ai::manifest::Feature::Brief,
         provider: request.provider,
         model: &request.model,
         endpoint: request.endpoint.as_deref(),
@@ -273,6 +274,7 @@ pub async fn analyze(request: AnalyzeRequest, api_key: &str) -> Result<ActionAna
         &request.goals,
     )?;
     let content = call_provider(AiCall {
+        feature: crate::ai::manifest::Feature::Suggestions,
         provider: request.provider,
         model: &request.model,
         endpoint: request.endpoint.as_deref(),
@@ -707,6 +709,7 @@ pub async fn summarize(request: SummarizeRequest, api_key: &str) -> Result<Strin
     );
     let content = call_provider_reply(
         AiCall {
+            feature: crate::ai::manifest::Feature::Summary,
             provider: request.provider,
             model: &request.model,
             endpoint: request.endpoint.as_deref(),

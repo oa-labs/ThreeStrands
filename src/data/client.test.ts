@@ -25,7 +25,7 @@ describe("native AI request payloads", () => {
     const context = { subject: "Hello", messages: [] };
     const profile = { aboutYou: "Designer", reviewInstructions: "Be concise" };
     await client.generateReply(context, "Decline", "openai", "model", null, "default", profile);
-    expect(sent("ai_generate_reply")).toEqual({ context, instruction: "Decline", provider: "openai", model: "model", endpoint: null, reasoning: "default", profile });
+    expect(sent("ai_generate_reply")).toEqual({ control: { requestId: expect.any(String), price: null }, context, instruction: "Decline", provider: "openai", model: "model", endpoint: null, reasoning: "default", profile });
   });
 
   it("scopes a mailbox refresh to its account while keeping global refresh available", async () => {
@@ -58,11 +58,11 @@ describe("native AI request payloads", () => {
 
   it("forwards the reasoning switch for fast-tier work", async () => {
     await client.summarizeThread("thread-1", "fireworks", "fast", null, "off");
-    expect(sent("ai_summarize_thread")).toEqual({ threadId: "thread-1", provider: "fireworks", model: "fast", endpoint: null, reasoning: "off" });
+    expect(sent("ai_summarize_thread")).toEqual({ control: { requestId: expect.any(String), price: null }, threadId: "thread-1", provider: "fireworks", model: "fast", endpoint: null, reasoning: "off" });
 
     const context = { subject: "Hello", messages: [] };
     await client.generateReply(context, "", "fireworks", "fast", null, "off");
-    expect(sent("ai_generate_reply")).toEqual({ context, instruction: "", provider: "fireworks", model: "fast", endpoint: null, reasoning: "off" });
+    expect(sent("ai_generate_reply")).toEqual({ control: { requestId: expect.any(String), price: null }, context, instruction: "", provider: "fireworks", model: "fast", endpoint: null, reasoning: "off" });
 
     await client.enrichContact("contact-1", "fireworks", "fast", null, ["role"], false, undefined, "off");
     expect(sent("ai_enrich_contact")).toMatchObject({ id: "contact-1", model: "fast", emptyFields: ["role"], reasoning: "off" });

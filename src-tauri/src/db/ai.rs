@@ -54,6 +54,7 @@ impl Database {
     /// replaced by a slower request for an older one; suggestions saved for
     /// the same message are replaced only when `replace_same_revision` is
     /// set. Returns whether this set was saved.
+    #[cfg(test)]
     pub fn save_thread_analysis(
         &self,
         thread_id: &str,
@@ -63,9 +64,47 @@ impl Database {
         replace_same_revision: bool,
         focus_from: Option<&str>,
     ) -> DbResult<bool> {
-        let json = serde_json::to_string(analysis).map_err(super::serialization_error)?;
+        self.save_thread_analysis_with_provenance(
+            thread_id,
+            last_message_at,
+            analysis,
+            generated_at,
+            replace_same_revision,
+            focus_from,
+            None,
+        )
+    }
+    /// Results retain their own provenance after the short-lived request journal expires.
+    pub fn ai_result_provenance(
+        &self,
+        thread_id: &str,
+    ) -> DbResult<(
+        Option<crate::ai::requests::RequestRecord>,
+        Option<crate::ai::requests::RequestRecord>,
+    )> {
         self.with_connection(|connection| {
-            Ok(connection.execute(
+            let row: Option<(Option<String>,Option<String>)> = connection.query_row("SELECT summary_json,analysis_json FROM ai_result_provenance WHERE thread_id=?1", [thread_id], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
+            let (summary,analysis) = row.unwrap_or_default();
+            Ok((summary.and_then(|json| serde_json::from_str(&json).ok()), analysis.and_then(|json| serde_json::from_str(&json).ok())))
+        })
+    }
+    pub fn save_thread_analysis_with_provenance(
+        &self,
+        thread_id: &str,
+        last_message_at: &str,
+        analysis: &ActionAnalysis,
+        generated_at: &str,
+        replace_same_revision: bool,
+        focus_from: Option<&str>,
+        provenance: Option<&crate::ai::requests::RequestRecord>,
+    ) -> DbResult<bool> {
+        let json = serde_json::to_string(analysis).map_err(super::serialization_error)?;
+        let provenance_json = provenance
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(super::serialization_error)?;
+        self.with_transaction(|connection| {
+            let changed = connection.execute(
                 "INSERT INTO ai_thread_analyses(thread_id, last_message_at, analysis_json, generated_at, focus_from)
                  VALUES (?1, ?2, ?3, ?4, ?6)
                  ON CONFLICT(thread_id) DO UPDATE SET
@@ -76,7 +115,11 @@ impl Database {
                  WHERE excluded.last_message_at > ai_thread_analyses.last_message_at
                     OR (?5 AND excluded.last_message_at = ai_thread_analyses.last_message_at)",
                 params![thread_id, last_message_at, json, generated_at, replace_same_revision, focus_from],
-            )? > 0)
+            )? > 0;
+            if changed {
+                connection.execute("INSERT INTO ai_result_provenance(thread_id,analysis_json) VALUES(?1,?2) ON CONFLICT(thread_id) DO UPDATE SET analysis_json=excluded.analysis_json", params![thread_id,provenance_json])?;
+            }
+            Ok(changed)
         })
     }
 
@@ -323,6 +366,108 @@ mod tests {
             hidden_count,
             extra_count: 0,
         }
+    }
+
+    #[test]
+    fn cached_result_provenance_is_atomic_revision_guarded_and_deleted_with_mail() {
+        let database = database_with_thread();
+        let context = crate::ai::manifest::PreparedContext::new(
+            r#"{"messages":[{"sourceMessageId":"m1","bodyText":"Private source"}]}"#,
+            Default::default(),
+        )
+        .unwrap();
+        let provenance = crate::ai::requests::RequestRecord {
+            attempt_id: "attempt".into(),
+            request_id: "request".into(),
+            at: "2026-09-20T10:00:00Z".into(),
+            feature: "brief".into(),
+            provider: "custom".into(),
+            model: "model".into(),
+            endpoint_revision: "endpoint-hash".into(),
+            prompt_version: 1,
+            schema_version: 1,
+            prompt_revision: "prompt-hash".into(),
+            schema_revision: Some("schema-hash".into()),
+            context: context.manifest,
+            response_revision: Some("response-hash".into()),
+            outcome: "received".into(),
+            request_outcome: "succeeded".into(),
+            charged_usd: 0.1,
+            price: None,
+        };
+        let revision = "2026-09-20T10:00:00Z";
+        assert!(database
+            .set_thread_summary_with_provenance(
+                "account:thread",
+                "Summary",
+                revision,
+                revision,
+                None,
+                Some(&provenance)
+            )
+            .unwrap());
+        assert!(database
+            .save_thread_analysis_with_provenance(
+                "account:thread",
+                revision,
+                &analysis(0),
+                revision,
+                true,
+                None,
+                Some(&provenance)
+            )
+            .unwrap());
+        let (summary, suggestions) = database.ai_result_provenance("account:thread").unwrap();
+        assert_eq!(summary.unwrap().prompt_revision, "prompt-hash");
+        assert_eq!(suggestions.unwrap().request_id, "request");
+        // A late result must not detach the metadata from the winning result.
+        assert!(!database
+            .set_thread_summary_with_provenance(
+                "account:thread",
+                "Old",
+                revision,
+                "2026-09-19T10:00:00Z",
+                None,
+                None
+            )
+            .unwrap());
+        assert!(!database
+            .save_thread_analysis_with_provenance(
+                "account:thread",
+                "2026-09-19T10:00:00Z",
+                &analysis(0),
+                revision,
+                false,
+                None,
+                None
+            )
+            .unwrap());
+        assert!(database
+            .ai_result_provenance("account:thread")
+            .unwrap()
+            .0
+            .is_some());
+        // Legacy/unversioned writers must not retain metadata for different text.
+        database
+            .set_thread_summary("account:thread", "Replacement", revision, revision, None)
+            .unwrap();
+        assert!(database
+            .ai_result_provenance("account:thread")
+            .unwrap()
+            .0
+            .is_none());
+        assert!(database
+            .ai_result_provenance("account:thread")
+            .unwrap()
+            .1
+            .is_some());
+        database
+            .connection()
+            .unwrap()
+            .execute("DELETE FROM threads WHERE id='account:thread'", [])
+            .unwrap();
+        let result = database.ai_result_provenance("account:thread").unwrap();
+        assert!(result.0.is_none() && result.1.is_none());
     }
 
     #[test]
