@@ -357,8 +357,9 @@ the initial UX and data contracts, delivery stages, compatibility work, and
 acceptance coverage. Local preparation comes first, then manual follow-through
 and durable drafts, followed by privacy prerequisites and optional AI synthesis.
 Its daily-planning entry points, readiness summary, and shutdown follow-through
-state are specified there; the Plan Today routine itself still needs its own
-design.
+state are specified there. The proposed [daily planning design](docs/daily-planning-design.md)
+specifies Plan Today, Shut Down, the plan's storage in the daily note,
+carry/defer/drop, and Today's new layout.
 
 ### Reliability and expansion alongside this sequence
 
@@ -555,5 +556,6 @@ flowchart LR
 - [Today view design](docs/today-design.md) — what Today works out without AI, the planned reshaping around daily planning and meeting preparation, and the deferred AI layer.
 - [Notes workspace design](docs/notes-design.md) — implemented daily and regular Markdown notes, wiki links, backlinks, attachments, import/export, linked entities, note-derived tasks, and meeting notes; later work remains explicitly separated.
 - [Meeting preparation and follow-through](docs/meeting-preparation-design.md) — proposed implementation plan for local preparation, reviewed decisions and actions, durable follow-up drafts, and optional source-backed AI assistance.
+- [Daily planning and shutdown](docs/daily-planning-design.md) — proposed Plan Today and Shut Down routines, the plan stored in the daily note, carry/defer/drop decisions, and Today's reshaped layout.
 - [Delegated agents plan](docs/delegated-agents-plan.md) — implemented local demonstration and configured read-only web research; later routing and invitation evaluation remain proposed.
 - [Archived plans](docs/archive/) — completed plans (multi-account, database recovery, modularization, and layer boundary, Phase 2 compose, IMAP spike, Files workspace) kept for design history.

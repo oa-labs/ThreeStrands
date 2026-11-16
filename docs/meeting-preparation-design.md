@@ -20,8 +20,9 @@ and a **Shutdown** in a reshaped Today view: the plan's meeting step shows each 
 the day's meetings with its readiness and opens preparation, and Shutdown lists
 the day's meetings still awaiting follow-through. This design owns the meeting
 contracts those steps use. The routine itself (where the plan is stored, its
-other steps, carry/defer/drop, and Today's layout) needs its own design and is not
-specified here. Every meeting entry point must still work without the routine.
+other steps, carry/defer/drop, and Today's layout) is specified in the
+[daily planning design](daily-planning-design.md). Every meeting entry point must
+still work without the routine.
 
 Deliver a useful local workflow first, then optional, on-demand AI assistance.
 The complete first version includes preparation, reviewed note/task capture,
@@ -69,7 +70,9 @@ not a score: a meeting with no notes is not marked as failing.
 **Reserve Prep Time** adds a round task, "Prepare for <meeting title>", nested under
 the meeting's line in today's daily note, using the existing meeting capture to
 add the line first if it is missing. The user can then book the task before the
-meeting with existing task time blocking. Both steps are explicit. Repeating the
+meeting with task time blocking, once booking is extended to note tasks as the
+[daily planning design](daily-planning-design.md#booking-note-tasks) specifies;
+today it offers only mail and standalone tasks. Both steps are explicit. Repeating the
 action finds the existing prep task under that occurrence's line and offers it
 instead of adding a second one. Prep tasks are ordinary note tasks with their
 current completion semantics.

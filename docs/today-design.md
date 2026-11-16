@@ -77,8 +77,8 @@ around a daily loop, drawing on Sunsama's guided planning and shutdown:
 
 Phase 1's principles still hold. Today stays complete underneath: the plan is a
 layer the user curates, and nothing it leaves out is hidden from Tasks, Calendar,
-or Inbox. The routine, its storage, and the new layout need their own design;
-this section records the direction, not that design.
+or Inbox. The [daily planning design](daily-planning-design.md) specifies the
+routine, its storage, and the new layout; this section records the direction.
 
 Effect on phase 2 below: **Sort by Meaning** is deferred and no longer shapes
 Today's layout; if it ships, it feeds the compact mail signal. The AI **Plan My
