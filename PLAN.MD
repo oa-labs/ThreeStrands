@@ -1,16 +1,20 @@
 # ThreeStrands product plan
 
 **Status:** Current product baseline and forward-looking roadmap
-**Reviewed:** 2026-10-02 against the 0.55.1 codebase; provider, drafts, and
-roadmap status corrected 2026-10-26 for 0.174.0
-**Contact capabilities updated:** 2026-10-08 for 0.83.0
+**Reviewed:** 2026-11-15 against the 0.210.0 repository, current feature guides,
+and Notes, Today, sync, and delegated-agent designs.
+**Planning decision:** Refresh the baseline and sequence the connected-workflow
+additions below; Meeting preparation and follow-through is the next feature to
+scope. Planned additions are not implemented by this documentation update.
 
 ## Product direction
 
 ThreeStrands is a source-available, keyboard-first desktop email client for people
 who spend much of their day in their inbox. Its aim is to make important
-conversations easy to process while keeping follow-ups, scheduling context, and
-control of personal data close to the mail itself.
+conversations easy to process while connecting correspondence, notes, tasks,
+calendar time, and relationships. The daily workflow should carry context from
+preparing for a meeting through recording decisions, completing commitments,
+and following up, with control of personal data throughout.
 
 Project licensing is governed by the [PolyForm Perimeter License 1.0.1](LICENSE).
 The source can be inspected, built, used, and modified for permitted purposes;
@@ -52,6 +56,13 @@ particular platform package, or always-on service behavior.
 - Create account-specific Split Inboxes using a sending domain, Gmail label,
   or address pattern. Keep high-volume mail in its own view while the main
   inbox stays focused.
+- Save named searches as reusable Split Inboxes tabs with a single-account or
+  All accounts scope, Inbox Only, and quick filters. Rename, edit, reorder, or
+  delete them together. Saved searches stay on this device and do not route
+  mail out of Main.
+- Snooze conversations individually or in batches, reschedule them in Snoozed,
+  and return them on a new reply or at the selected time while a connected
+  installation is running. Reversible changes offer undo.
 
 ### Keep the whole conversation moving
 
@@ -62,6 +73,11 @@ particular platform package, or always-on service behavior.
   follow you to other devices and mail apps. A queued send has a ten-second undo window, and the
   durable outbox preserves pending work across restarts. Sent mail is
   reconciled with Gmail when the delivery result is uncertain.
+- Send from verified Gmail aliases with per-address signatures and
+  alias-preserving server drafts. Schedule a message for later from one fixed
+  sending computer; it must be awake, online, and running ThreeStrands, and
+  missed times require review. Optional encrypted sync shares delivery summaries
+  without transferring sending authority.
 - Turn a conversation into an action, follow-up, or waiting-for task; create
   standalone tasks too. Set due dates and repeating follow-ups. Waiting and
   follow-up tasks linked to a conversation can complete when a new reply
@@ -73,16 +89,33 @@ particular platform package, or always-on service behavior.
   this device. See [contact management](docs/address-book.md) for merge rules,
   interchange limits, and sync boundaries. A conversation context panel brings
   people, related tasks, and meetings beside the message.
+- Read selected macOS address books for names, email addresses, companies, and
+  job titles, with refresh and recipient suggestions. Source books stay
+  read-only; profiles saved in ThreeStrands remain independent. Direct Google
+  Contacts and CardDAV connections remain future work.
 - Unsubscribe when a message advertises a supported unsubscribe method, with
   confirmation before the request.
 
 ### Bring schedule and assistance into context
 
 - Connect Google Calendar separately from mail. See today's schedule or a
-  week view, choose visible calendars, preview calendar invitations, and
-  check available times against selected calendars and working hours. Put
+  day, three-day, workweek, or week view, choose visible calendars, preview
+  invitations, and check available times against selected calendars and working hours. Put
   selected times into a draft reply. Create events with invitees from the week
   view or a reviewed meeting suggestion, after checking the event dialog.
+  Edit events, answer invitations, and find times with guest availability
+  where access permits; unknown availability stays explicit. Availability
+  profiles support split working hours, account defaults, meeting-type hours,
+  and drive-time buffers.
+- Book time for an open task by dragging it onto the calendar, initially as a
+  30-minute event, or open the event editor to choose a time. The event links
+  back to the task; completing the task keeps the calendar event, and deleting
+  the event keeps the task. Automatic scheduling and rescheduling are future work.
+- Open **Today** for the agenda, free-time and conflict summary, unread mail
+  groups, tasks, and Keep in Touch reminders. **You said you would** detects
+  possible outstanding promises in recent sent mail locally, without AI; review
+  one, turn it into a task, or dismiss it. Goal tracking and period reviews
+  already connect tasks to quarterly, half-year, and yearly goals.
 - Optionally connect an AI provider with your own API key for thread
   summaries, draft assistance, and suggested tasks or meetings. Suggested
   actions stay proposals until you review them; the app does not create a
@@ -93,12 +126,6 @@ particular platform package, or always-on service behavior.
   send qualifying conversations after the reader stays on them. Settings show
   requests, tokens, and estimated costs, with an optional fast model for
   summaries, reply drafts, and contact enrichment.
-- Explore the **Agents** preview with a local demonstration: delegate from a
-  conversation or personal task, answer questions, discuss the sample result,
-  and request report revisions. Saved versions remain available. The preview
-  performs no external research; web research is planned separately in
-  [the delegated agents plan](docs/delegated-agents-plan.md).
-
 - Delegate read-only web research in **Agents** after configuring separate
   Anthropic and Exa keys and reviewing public search subjects. Answer clarification
   questions, discuss saved evidence, and explicitly revise reports with retained
@@ -106,6 +133,22 @@ particular platform package, or always-on service behavior.
   sharing choices; mailbox search, routing, and automatic invitation evaluation
   are not included. A local demonstration works without external requests. See
   [the delegated agents plan](docs/delegated-agents-plan.md).
+
+### Keep notes connected to the work
+
+- Write daily and regular Markdown notes, with wiki links, backlinks, images,
+  and attachments. Search titles and text, optionally include Trash, and reopen
+  notes from the command palette. Import a Markdown file or folder and export
+  to a Markdown folder.
+- Link notes to conversations, contacts, tasks, and events; open linked notes
+  from those records. Add a conversation to today's note. Round `( )` tasks
+  appear in **Tasks** and complete in either place; square `[ ]` checklists stay
+  local to their note.
+- Add a meeting line to a daily note with links to the event and attendees,
+  optionally linking a reusable meeting note. An event with an existing note
+  offers **Open Note**. Event details distinguish that occurrence's notes from
+  notes for the recurring series. Meeting preparation and reviewed follow-through
+  build on this foundation and remain planned below.
 
 ### Stay in control of local data
 
@@ -122,11 +165,15 @@ particular platform package, or always-on service behavior.
   backups and startup recovery protect access when the cache is damaged.
 
 **Encrypted sync:** End-to-end encrypted cross-device sync can replicate tasks,
-goals, saved contacts, snippets, Split Inboxes, selected preferences, and account
-display metadata through a shared folder, S3-compatible storage, or an IPFS connector. Devices
+goals, saved contacts and groups, snippets, signatures, Split Inboxes, snooze schedules,
+notes, selected preferences, and account display metadata through a shared folder,
+S3-compatible storage, or an IPFS connector. Devices
 can join with a code, recovery phrase, or approval from another device.
-Cached mail, attachments, drafts, queued sends, and provider credentials stay
-on each device. See [cross-device sync](docs/cross-device-sync.md) for the
+Notes have text-size and attachment limits and explicit conflict resolution;
+their attachments travel separately as encrypted objects. Cached mail, mail
+attachments, queued sends, and provider credentials stay on each device;
+drafts travel through the mail provider. Saved searches remain device-local.
+See [cross-device sync](docs/cross-device-sync.md) for the
 precise data boundary and connector behavior.
 
 ## Product roadmap — website draft
@@ -137,9 +184,12 @@ from the current feature set when publishing a website.
 
 | Direction | What users could expect |
 | --- | --- |
-| Snooze | Available in 0.190.0: put conversations aside, reschedule them in Snoozed, and return them automatically while a connected installation is running. |
-| Gmail sending aliases | Available in 0.191.0: use verified aliases, Gmail defaults, addressed replies, per-address signatures, and server drafts. |
-| Connected address books | Read selected macOS address books in 0.192.0; direct CardDAV and Google Contacts connections remain future work. |
+| Meeting preparation and follow-through | Bring previous notes, relevant correspondence, and commitments beside an upcoming meeting; review decisions, tasks, and a follow-up draft afterward. First feature to scope. |
+| Capture and relationship context | Capture a thought or task without leaving another app, reuse note templates, and see correspondence, meetings, notes, and logged interactions in a person's history. |
+| Realistic daily planning and review | Choose priorities against available calendar time, distinguish planned days from deadlines, and review unfinished work and goals. |
+| Search across the workspace | Find mail, notes, tasks, contacts, and events together, followed by optional answers linked to supporting material. |
+| Flexible focus time and assistance | Progress from suggested focus blocks and recurring routines to explicitly authorized rescheduling and reviewed reply preparation. |
+| Connected address books | Extend the existing read-only Mac connection where useful; direct CardDAV and Google Contacts connections remain future work. |
 | Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
 | More mail providers | Harden IMAP/SMTP (design and progress in `docs/imap-design.md`; read, triage, server search, and sending work today), then Microsoft 365. |
 | Encrypted sync reliability | Keep hardening optional encrypted sync across devices and app versions, especially upgrades and interrupted joins. |
@@ -147,17 +197,20 @@ from the current feature set when publishing a website.
 
 The roadmap should be revised as research and reliability work change
 priorities. Contact browsing and editing, meeting proposals, available-time
-replies, and reviewed calendar-event creation exist today. Task follow-ups exist
-today. Scheduled sending with one fixed sending device and synchronized
-summary visibility is implemented, and drafts follow the account across devices; conversation
-snoozing is implemented in 0.190.0.
+replies, reviewed calendar-event creation and editing, task follow-ups, manual
+task time blocking, daily and linked notes, Keep in Touch, and local promise
+detection exist today. Snooze, Gmail aliases, read-only Mac Contacts, provider
+drafts, and scheduled sending with a fixed sending device are implemented.
+The connected-workflow backlog below distinguishes extensions from these
+foundations and defines the recommended sequence.
 
 ## Competitive feature-gap backlog
 
 Initially assessed 2026-10-31 against the 0.189.1 repository and competitor
-documentation. Implementation status reviewed 2026-11-01 against merged 0.192.1,
-including snooze, Gmail sending aliases, and read-only macOS Contacts access.
-Competitor capabilities have not been reassessed.
+documentation. Baseline refreshed 2026-11-15 against 0.210.0, including Notes,
+Today, task time blocking, and delegated research. Superhuman, Reflect, Routine,
+Reclaim, and Dex product pages were revisited for the connected-workflow additions
+below; this is not a fresh exhaustive audit of every older comparison.
 This is an internal planning backlog, separate from the website
 roadmap above. It records capability gaps, not measured reliability or usability
 deficits. Priorities are proposals for the current individual, Gmail-first Mac
@@ -179,10 +232,69 @@ execution while devices are closed, and proactive assistance.
 | Microsoft 365 / Exchange | Gmail sign-in and password/app-password IMAP exist; dedicated Microsoft authentication, mail, and calendar integration do not. IMAP is not a substitute for modern authentication or delegation. | Define Microsoft authentication and provider contracts first, then mail and calendar support. Scope delegated/shared mailbox support explicitly rather than assuming basic account support includes it. | Expansion; planned, unscoped. |
 | Broader calendar support | Google Calendar supports event editing, invitations, availability, and task time blocking. Microsoft calendars and CalDAV/iCloud connections remain missing. | Define a calendar-provider contract and invitation/availability semantics; prioritize Microsoft with the Microsoft 365 work, then evaluate CalDAV/iCloud. | Expansion; discovery needed. |
 | Scheduled sending while devices are closed | Send Later uses one fixed sending computer, which must be awake, online, and running the app; missed times require review. | Evaluate provider-native scheduling or an explicitly authorized execution service. Record the architecture and privacy decision before promising delivery while every device is closed. Preserve uncertain-send reconciliation and duplicate prevention. | Architecture decision required. |
-| Proactive assistance and setup friction | Optional summaries, reply drafts, draft review, mailbox-search chat, Today reminders, and reply-completing follow-up tasks already exist. AI requires a user-supplied key; broader automatic classification and prepared follow-up drafts remain opportunities. | Research opt-in follow-up detection, reviewable prepared drafts, and classification; assess setup friction separately. Preserve explicit data-sharing controls and user review before sending. | Discovery; below core workflow gaps. |
+| Proactive assistance and setup friction | Optional summaries, reply drafts, draft review, mailbox-search chat, local promise detection in Today, and reply-completing follow-up tasks already exist. AI requires a user-supplied key. A consolidated commitment queue, prepared replies, and broader classification remain opportunities. | Extend the existing detection and task model through the reviewed reply and commitment queue below; scope richer classification with the rules contract. Assess setup friction separately and preserve explicit data-sharing controls and user review before sending. | Existing foundation; extensions sequenced below. |
 | Shared mail workflows | Personal tasks and cross-device sync exist; team comments, collaborative drafts, assignments, shared conversations, and delegated inbox workflows do not. | Validate team demand before designing permissions, shared state, revocation, and collaboration infrastructure. Coordinate delegated mailbox requirements with Microsoft support. | Deferred pending audience decision. |
 
-### Suggested focus for the next few weeks
+### Connected-workflow additions
+
+These additions are planned, not available. Priority numbers express product
+value; phases below express build order and dependencies. They extend the current
+individual workflow while keeping mail reliability and provider hardening active.
+
+| Priority / addition | User problem and smallest useful version | Dependencies and boundaries | Success measure to establish during scoping |
+| --- | --- | --- | --- |
+| 1. Meeting preparation and follow-through | Preparing requires opening several workspaces. Before a meeting, collect occurrence and series notes, relevant cached correspondence, and linked commitments with source links. Afterward, review decisions, proposed tasks, and a follow-up draft based on selected notes and messages. | Reuse event identity, backlinks, contacts, and existing task/draft flows. Begin with local context; AI synthesis is optional and uses explicitly selected material. No recording or transcription dependency. Scope next. | Time to prepare for a recurring meeting; accepted follow-through actions; duplicate notes or tasks created by repeat use. |
+| 2. Plan today against actual capacity | Due dates alone do not describe a realistic day. Select today's priorities, estimate duration, compare with free calendar time, and offer time blocks; distinguish a planned workday from a deadline and explicitly carry, defer, or drop unfinished work. | Extend Today and manual task booking, preserving the existing task and note-task contract. Reuse availability profiles and buffers; a calendar failure must not appear as free time. Scheduling starts as a reviewed proposal. | How often planned work fits available time; completion and explicit deferral of selected priorities. |
+| 3. Capture from anywhere | Thoughts are lost while switching apps. A system-wide shortcut opens a small window to save a note or task immediately, with optional links to a person, meeting, or conversation. | Reuse durable note/task saves and explicit typing scopes; return focus to the originating app. Source-preserving browser clipping, voice, and mobile capture are later extensions with their own platform contracts. | Time and steps from shortcut to durable capture; successful recovery after interruption. |
+| 4. Complete relationship timeline | Context about a person is spread across history and notes. Show emails, meetings, linked notes, completed follow-ups, and manually logged interactions in one chronological view. Let Mark Contacted optionally record what happened and what to discuss next. | Extend Contacts and Keep in Touch with source links, explicit account scope, and cached-history limits. Preserve current reminder semantics until any change is deliberately scoped. No LinkedIn scraping or automatic profile replacement. | Time to find the last meaningful interaction and next commitment; usefulness of due check-ins. |
+| 5. Find and ask across the workspace | Users must remember where a fact lives. Start with filtered search across mail, notes, tasks, contacts, and events; then offer optional questions with links to supporting records. | Reuse existing indexes and references, preserve workspace search state, and disclose unavailable or uncached history. Retrieval, bounded AI sharing, and citation validation precede generated answers. | Time to retrieve a known fact; supported answers and clear handling of missing evidence. |
+| 6. Protect focus time and recurring routines | Free calendar gaps do not ensure time for important work. Define a weekly focus target and flexible recurring activities, then suggest suitable blocks. | Build on capacity planning, availability profiles, and calendar writes. Start with reviewed placement; later permit rescheduling only for designated flexible blocks, with pinned times, explanations, undo, and explicit execution ownership. | Focus time reserved against the user's target; conflicts and unwanted schedule changes. |
+| 7. Reviewed reply and commitment queue | Unanswered mail, promises, waiting-for tasks, and relationship check-ins require separate reviews. Bring them into one actionable queue with source-linked reasons, then offer contextual draft replies for review. | Extend existing promise detection, follow-up completion, Keep in Touch, and planned Today prioritization. Deduplicate overlapping evidence; allow dismissal and correction. Prepared drafts never send automatically. | Missed commitments, duplicate reminders, and useful prepared drafts after user review. |
+| 8. Daily and weekly review | Unfinished work and goals drift without a deliberate review. Reusable note templates collect outstanding work, promises, people to contact, goal progress, and upcoming capacity, with explicit carry/defer/drop choices. | Basic daily-note and meeting templates can ship early; populated reviews follow capacity planning and reuse goal-period reviews. Save as linked notes; keep square checklists note-local and round tasks aggregated. | Review completion, unresolved commitments carried forward deliberately, and time spent preparing the review. |
+
+Measures are proposed evaluation criteria, not collected telemetry or established
+benchmarks. Define a lightweight evaluation during each feature's scoping; any
+new telemetry remains a separate, explicit decision.
+
+### Recommended sequence and next feature
+
+1. **First: connect the existing context.** Scope Meeting preparation and
+   follow-through next, then capture from anywhere, relationship history, and
+   reusable daily-note and meeting templates. The first meeting workflow must be
+   useful with existing notes, contacts, tasks, and cached mail; it does not wait
+   for the complete timeline, global search, or a new recording service.
+2. **Next: plan and review deliberately.** Add capacity-aware daily planning,
+   populated daily/weekly reviews, and search across the workspace. Extend the
+   [Today design](docs/today-design.md), which already plans meaning-based sorting
+   and a Top of mind strip, instead of creating competing priority lists. Basic
+   search comes before contextual AI answers.
+3. **Later: add flexible scheduling and broader assistance.** Introduce focus
+   targets and recurring routines through suggestions before authorized
+   rescheduling. Build the consolidated reply and commitment queue on existing
+   signals, then add prepared replies and sourced cross-workspace answers as
+   optional AI. Extend capture to browser and mobile after their data and
+   platform boundaries are defined.
+
+The intended end-to-end workflow is: open an upcoming meeting, see where you left
+off with its participants, record decisions in a linked note, turn commitments
+into tasks, reserve time to complete them, and prepare the follow-up.
+
+For **Meeting preparation and follow-through**, the next design should settle:
+
+- Entry points from Calendar and Today, the smallest useful local preparation
+  view, relevance and account scope, and how the user chooses supporting material.
+- Occurrence versus series context, rescheduled meetings, unrelated events with
+  the same title, changed attendees, and unavailable or incomplete cached history.
+- A reviewed path from decisions to existing tasks and draft composition, with
+  repeat-use duplicate prevention, preserved unsaved notes/drafts, and explicit
+  review before any message is sent.
+- Optional AI sharing and source attribution, a useful no-AI experience, and
+  focused automated coverage plus developer-owned hands-on validation.
+
+This update records the next feature and its scoping questions; it does not
+freeze the meeting UX or implement the feature. Delivery dates remain unset.
+
+### Reliability and expansion alongside this sequence
 
 Conversation snooze (0.190.0), Gmail sending aliases (0.191.0), and read-only
 macOS Contacts access (0.192.0) are merged. Their remaining live-account and
@@ -198,11 +310,17 @@ views; complete installed-build and live-account validation before broader relea
 Settings transfer, cross-device sync, and an explicit Update View action for
 temporary search edits remain later improvements.
 
-Next, scope richer rules separately: agree on conditions, actions, previews,
+Scope richer rules separately: agree on conditions, actions, previews,
 account scope, execution timing, retries, and undo, including whether rules run
-locally or at the provider. Continue reliability and release checks alongside that work.
-This sequence is not a delivery-date commitment. If broader adoption becomes the
-immediate goal, revisit mobile continuity and Microsoft 365 as expansion priorities.
+locally or at the provider. Meeting preparation is the next feature focus;
+richer rules are a separate backlog item rather than a prerequisite. Continue
+mail, IMAP, sync, and release checks alongside the connected-workflow work.
+If broader adoption becomes the immediate goal, revisit mobile continuity and
+Microsoft 365 as expansion priorities.
+Keep shared inboxes, sales pipelines, custom database builders, and meeting
+recording infrastructure deferred until audience demand justifies their scope.
+Always-on execution and cross-device scheduling ownership require explicit
+architecture decisions before promising behavior while every installation is closed.
 
 ### Comparison references
 
@@ -216,20 +334,34 @@ The comparison uses [Gmail snooze](https://support.google.com/mail/answer/762201
 [Superhuman features](https://superhuman.com/plans/mail), and
 [Shortwave's assistant and platform support](https://www.shortwave.com/docs/guides/ai-assistant/).
 Competitor capabilities can change; recheck relevant references when scoping work.
+The connected-workflow recommendations draw on the following current product
+pages, reviewed 2026-11-15. These are inspiration sources; the proposed scope and
+sequence are ThreeStrands product decisions, not claims of complete feature parity.
+
+| Inspiration | Relevant capability and ThreeStrands direction |
+| --- | --- |
+| [Superhuman](https://superhuman.com/plans/mail) | Auto Drafts, Auto Reminders, Auto Labels, and Ask AI inform reviewed reply preparation, commitment review, and inspectable classification. |
+| [Reflect](https://reflect.app/) | Daily notes, backlinks, web clipping, and answers linked to source notes inform capture and retrieval beyond the Notes foundation already built. The current site distinguishes Reflect Open from Classic. |
+| [Routine](https://routine.co/) | Desktop hotkey capture, task/calendar planning, and meeting actions inform capture, capacity planning, and meeting follow-through. |
+| [Reclaim](https://reclaim.ai/) | Focus protection, flexible recurring habits, and calendar adaptation inform progressive focus scheduling. |
+| [Dex](https://getdex.com/) | Relationship context, notes, and keep-in-touch workflows inform a combined history and more useful personal check-ins. |
+
 Our current behavior is documented in the help guides for
 [compatibility](site/docs/compatibility.md), [triage](site/docs/triage.md),
 [composition](site/docs/compose.md), [contacts](site/docs/contacts.md),
 [calendar](site/docs/calendar.md),
-[search](site/docs/search.md), and [AI](site/docs/ai.md).
+[search](site/docs/search.md), [AI](site/docs/ai.md),
+[Notes](site/docs/notes.md), [Today](site/docs/today.md), and
+[Tasks and Goals](site/docs/tasks-and-goals.md).
 
 ## Current product model and decisions
 
 ### Audience and scope
 
 The primary user is an individual who wants a fast daily mail workflow across
-one or more mail accounts. Tasks, calendar context, and optional AI support
-that workflow. ThreeStrands is not yet a general-purpose mail client: Gmail is
-the mature adapter, and an IMAP/SMTP adapter (aimed first at Proton Mail
+one or more mail accounts. Notes, tasks, calendar context, relationships, and
+optional AI support that workflow. Gmail is the mature adapter, and an
+IMAP/SMTP adapter (aimed first at Proton Mail
 Bridge) reads, triages, searches, and sends but is still being hardened.
 
 The app does not operate a backend for mailbox access or cross-device sync.
@@ -271,8 +403,10 @@ flowchart LR
   data and application-owned workflow data have deliberately different sync
   boundaries.
 - Split Inbox rules currently match a domain, label, or address pattern and
-  are scoped to one account. Snippets are shared across accounts locally.
-  Tasks can be standalone or linked to a thread; a new inbound reply can
+  are scoped to one account; saved-search tabs can instead target one account
+  or All accounts and remain device-local. Snippets are shared across accounts locally.
+  Tasks can be standalone, linked to a thread, or derived from round tasks in
+  saved Markdown notes; square checklists remain note-local. A new inbound reply can
   complete a linked waiting or follow-up task. AI action extraction offers
   reviewable proposals rather than directly mutating tasks or calendar.
 
@@ -310,12 +444,14 @@ flowchart LR
    recovery, and cross-device sync compatibility. Report progress in user
    terms rather than treating a feature's presence in code as proof of
    production reliability.
-3. **Build the near-term roadmap deliberately.** Verify scheduled-send
-   behavior around native sleep and shutdown; define snooze behavior before
-   adding it.
-   Extend the existing standalone address book with connected provider address
-   books after defining ownership and conflict behavior.
-   Mature replicated sync before presenting it as a standard feature.
+3. **Validate implemented features and scope extensions deliberately.** Keep
+   installed-build checks for snooze, Gmail aliases, Mac Contacts, provider
+   drafts, and scheduled sends, including sleep and shutdown behavior. Exercise
+   Notes imports, attachments, concurrent edits, and cross-version sync. Use the
+   connected-workflow sequence above for additions, beginning with meeting
+   preparation; define ownership and conflicts before extending address books
+   or scheduling automation. Mature optional replicated sync before presenting
+   it as a standard feature.
 4. **Expand integrations from tested contracts.** The Rust provider traits
    isolate Gmail-specific access. Add another provider only with its own
    threading, folder, search, mutation, and send semantics plus contract and
@@ -350,5 +486,6 @@ flowchart LR
 - [Features and known limitations](docs/features.md) and [contact management](docs/address-book.md) — current capabilities, shortcuts, and outstanding live-account checks.
 - [IMAP/SMTP provider design](docs/imap-design.md) — provider design and phase progress.
 - [Today view design](docs/today-design.md) — what Today works out without AI, and the phase 2 AI layer (meaning sort, Top of mind strip).
-- [Notes workspace design](docs/notes-design.md) — proposed Markdown notes synchronized as replicated records, with wiki links, backlinks, a WYSIWYG editor, and Markdown folder export.
+- [Notes workspace design](docs/notes-design.md) — implemented daily and regular Markdown notes, wiki links, backlinks, attachments, import/export, linked entities, note-derived tasks, and meeting notes; later work remains explicitly separated.
+- [Delegated agents plan](docs/delegated-agents-plan.md) — implemented local demonstration and configured read-only web research; later routing and invitation evaluation remain proposed.
 - [Archived plans](docs/archive/) — completed plans (multi-account, database recovery, modularization, and layer boundary, Phase 2 compose, IMAP spike, Files workspace) kept for design history.
