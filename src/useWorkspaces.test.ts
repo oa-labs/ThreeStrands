@@ -355,6 +355,41 @@ describe("Notes requests", () => {
     expect(result.current.notesRequest!.id).toBeGreaterThan(today.id);
   });
 
+  it("returns from a linked contact without issuing a new note request", () => {
+    const { result } = setup();
+    act(() => result.current.openNotesView());
+    act(() => result.current.contactCardActions.onOpenContact("pete"));
+    expect(result.current.rightWorkspace).toBe("contacts");
+    expect(result.current.contactAddressBookTarget).toBe("pete");
+    expect(result.current.canReturnFromContacts).toBe(true);
+    act(() => result.current.contactCardActions.onOpenContact("ana"));
+    expect(result.current.canReturnFromContacts).toBe(true);
+    act(() => result.current.returnFromContacts());
+    expect(result.current.rightWorkspace).toBe("notes");
+    expect(result.current.notesRequest).toBeNull();
+    expect(result.current.canReturnFromContacts).toBe(false);
+  });
+
+  it.each(["openContactsView", "openKeepInTouchView", "openContactGroupsView", "openTasksView"] as const)("clears the contact return destination on %s", (navigate) => {
+    const { result } = setup();
+    act(() => result.current.openNotesView());
+    act(() => result.current.contactCardActions.onOpenContact("pete"));
+    act(() => result.current[navigate]());
+    expect(result.current.canReturnFromContacts).toBe(false);
+    act(() => result.current.openContactsView());
+    act(() => result.current.returnFromContacts());
+    expect(result.current.rightWorkspace).not.toBe("notes");
+  });
+
+  it("does not return to Notes for contacts opened from Mail", () => {
+    const { result } = setup();
+    act(() => result.current.setRightWorkspace(null));
+    act(() => result.current.contactCardActions.onOpenContact("pete"));
+    expect(result.current.canReturnFromContacts).toBe(false);
+    act(() => result.current.returnFromContacts());
+    expect(result.current.rightWorkspace).toBe("contacts");
+  });
+
   it("keeps a newer request when an older request is acknowledged", () => {
     const { result } = setup();
     act(() => result.current.openNote("first"));
