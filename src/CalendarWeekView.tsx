@@ -11,29 +11,23 @@ import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, 
 import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { isPreparable, preparationKey, type MeetingPreparationHost } from "./meetingPrep";
-import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { EventViewer, eventCalendarLabel } from "./CalendarSidebar";
 import { HoverTooltip } from "./AppChrome";
 import {
   HOUR_HEIGHT,
-  HOURS,
   addDays,
   formatEventTime,
-  hourLabel,
   isSameDay,
-  layOutDayEvents,
   occursOnDay,
   startOfLocalDay,
   startOfWeek,
-  timeZoneLabel,
 } from "./calendarTime";
 import { isEditableTarget } from "./commands";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import { revalidateScheduleCache } from "./calendarScheduleCache";
-import { responseLabel } from "./calendarResponse";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { CalendarColorRow } from "./CalendarColorMenu";
-import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
 import { errorMessage } from "./errors";
@@ -41,7 +35,8 @@ import { ICON_SIZE } from "./iconSizes";
 import { defaultEventCalendar, openTasksFor, showCalendar, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
 import type { Notice } from "./useNotice";
 import { formatShortcut } from "./shortcutLabels";
-import { distinctWorkingLocations, isWorkingLocation, WorkingLocationChip } from "./WorkingLocation";
+import { DayTimeGrid, sameEvent, SLOT_MINUTES, slotAt, type DayGridPreview } from "./DayTimeGrid";
+import { useTaskBlockDrag } from "./useTaskBlockDrag";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
 /** Calendar accounts collapsed in the week view's calendar list, remembered on this device. */
@@ -50,32 +45,12 @@ const DEFAULT_WEEK_SCROLL_TOP = 7 * HOUR_HEIGHT;
 const MAX_WEEK_SCROLL_TOP = 24 * HOUR_HEIGHT;
 /** How often the "now" indicator re-renders, in milliseconds. */
 const NOW_TICK_MS = 60_000;
-const SLOT_MINUTES = 15;
-/** How far, in pixels, a task row moves before it counts as dragged rather than clicked. */
-const TASK_DRAG_THRESHOLD = 4;
-/** Distance from the grid's top or bottom edge, in pixels, that scrolls it during a task drag. */
-const TASK_DRAG_SCROLL_EDGE = 40;
-const TASK_DRAG_SCROLL_STEP = 16;
-
-function sameEvent(left: ScheduleEvent | null, right: ScheduleEvent): boolean {
-  return left?.id === right.id && left.accountId === right.accountId && left.calendarId === right.calendarId;
-}
-
-function slotAt(clientY: number, column: HTMLElement): number {
-  const offset = Math.max(0, Math.min(24 * HOUR_HEIGHT - 1, clientY - column.getBoundingClientRect().top));
-  return Math.floor(offset / HOUR_HEIGHT * 60 / SLOT_MINUTES) * SLOT_MINUTES;
-}
 
 function eventRangeFromSlots(day: Date, anchor: number, current: number, dragged: boolean) {
   const startMinutes = Math.min(anchor, current);
   const endMinutes = dragged ? Math.max(anchor, current) + SLOT_MINUTES : anchor + 60;
   const at = (minutes: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, minutes);
   return { start: at(startMinutes), end: at(endMinutes), startMinutes, endMinutes };
-}
-
-/** The start of a task block dropped at `clientY`, kept within the day. */
-function taskBlockStartAt(clientY: number, column: HTMLElement): number {
-  return Math.min(slotAt(clientY, column), 24 * 60 - TASK_BLOCK_MINUTES);
 }
 
 function readWeekScrollTop(): number {
@@ -97,11 +72,6 @@ function readCollapsedCalendarAccounts(): Set<string> {
     const stored: unknown = JSON.parse(raw ?? "[]");
     return new Set(Array.isArray(stored) ? stored.filter((email): email is string => typeof email === "string") : []);
   }, new Set<string>());
-}
-
-function weekdayLabel(date: Date): string {
-  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date);
-  return `${weekday} ${date.getDate()}`;
 }
 
 function monthTitle(date: Date): string {
@@ -303,13 +273,8 @@ export function CalendarWeekView({
   const [navigationOpen, setNavigationOpen] = useState(session?.current?.navigationOpen ?? false);
   const eventTrigger = useRef<HTMLButtonElement | null>(null);
   const focusAgendaDetails = useRef(false);
-  const calendarColors = useCalendarColors();
   const [newEventRange, setNewEventRange] = useState<{ start: Date; end: Date; task?: ThreadTask } | null>(null);
-  const [dragPreview, setDragPreview] = useState<{ dayIndex: number; startMinutes: number; endMinutes: number; label?: string } | null>(null);
-  const taskDragRef = useRef<{ task: ThreadTask; pointerId: number; x: number; y: number; moved: boolean } | null>(null);
-  const endTaskDrag = useRef<(() => void) | null>(null);
-  const suppressTaskClick = useRef(false);
-  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [selectionPreview, setSelectionPreview] = useState<DayGridPreview | null>(null);
   const dragRef = useRef<{ dayIndex: number; anchor: number; pointerId: number } | null>(null);
   const [now, setNow] = useState(() => new Date());
   const gridRef = useRef<HTMLDivElement>(null);
@@ -422,7 +387,7 @@ export function CalendarWeekView({
     const current = slotAt(clientY, column);
     const range = eventRangeFromSlots(day, drag.anchor, current, current !== drag.anchor);
     dragRef.current = null;
-    setDragPreview(null);
+    setSelectionPreview(null);
     setSelectedEvent(null);
     setNewEventRange({ start: range.start, end: range.end });
   };
@@ -458,73 +423,16 @@ export function CalendarWeekView({
     }
   };
 
-  /** The week column under the pointer, and where a task block dropped there starts. */
-  const taskDropAt = (clientX: number, clientY: number) => {
-    const target = document.elementFromPoint(clientX, clientY);
-    const column = target instanceof Element ? target.closest<HTMLElement>(".calendar-week-column") : null;
-    if (!column || !gridRef.current?.contains(column)) return null;
-    return { dayIndex: Number(column.dataset.dayIndex), startMinutes: taskBlockStartAt(clientY, column) };
-  };
-
-  const startTaskDrag = (task: ThreadTask, event: ReactPointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || taskDragRef.current) return;
-    taskDragRef.current = { task, pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
-    const move = (pointer: PointerEvent) => {
-      const drag = taskDragRef.current;
-      if (!drag || pointer.pointerId !== drag.pointerId) return;
-      if (!drag.moved) {
-        if (Math.hypot(pointer.clientX - drag.x, pointer.clientY - drag.y) < TASK_DRAG_THRESHOLD) return;
-        drag.moved = true;
-        setDraggingTaskId(drag.task.id);
-      }
-      pointer.preventDefault();
-      const grid = gridRef.current?.getBoundingClientRect();
-      if (grid && pointer.clientX >= grid.left && pointer.clientX <= grid.right) {
-        if (pointer.clientY < grid.top + TASK_DRAG_SCROLL_EDGE) gridRef.current!.scrollTop -= TASK_DRAG_SCROLL_STEP;
-        else if (pointer.clientY > grid.bottom - TASK_DRAG_SCROLL_EDGE) gridRef.current!.scrollTop += TASK_DRAG_SCROLL_STEP;
-      }
-      const drop = taskDropAt(pointer.clientX, pointer.clientY);
-      setDragPreview(drop ? { ...drop, endMinutes: drop.startMinutes + TASK_BLOCK_MINUTES, label: drag.task.title } : null);
-    };
-    const finish = (pointer: PointerEvent) => {
-      const drag = taskDragRef.current;
-      if (!drag || pointer.pointerId !== drag.pointerId) return;
-      end();
-      if (!drag.moved) return;
-      // The click that may follow a drag released over the row is not a request to schedule it.
-      suppressTaskClick.current = true;
-      window.setTimeout(() => { suppressTaskClick.current = false; }, 0);
-      const drop = taskDropAt(pointer.clientX, pointer.clientY);
-      if (drop && days[drop.dayIndex]) void bookTask(drag.task, days[drop.dayIndex], drop.startMinutes);
-    };
-    const cancel = (pointer: PointerEvent) => { if (pointer.pointerId === taskDragRef.current?.pointerId) end(); };
-    const escape = (key: KeyboardEvent) => {
-      if (key.key !== "Escape") return;
-      key.preventDefault();
-      key.stopPropagation();
-      end();
-    };
-    const end = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", cancel);
-      window.removeEventListener("keydown", escape, true);
-      taskDragRef.current = null;
-      endTaskDrag.current = null;
-      setDraggingTaskId(null);
-      setDragPreview(null);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", cancel);
-    window.addEventListener("keydown", escape, true);
-    endTaskDrag.current = end;
-  };
-  useEffect(() => () => endTaskDrag.current?.(), []);
+  const taskDrag = useTaskBlockDrag<ThreadTask>({
+    gridRef,
+    days,
+    blockMinutes: TASK_BLOCK_MINUTES,
+    onDrop: (task, day, startMinutes) => void bookTask(task, day, startMinutes),
+  });
 
   /** Opens New Event for the task, at the next half hour on the shown day. */
   const scheduleTask = (task: ThreadTask) => {
-    if (suppressTaskClick.current) return;
+    if (taskDrag.clickSuppressed()) return;
     const day = startOfLocalDay(anchor);
     const minutes = isSameDay(day, now)
       ? Math.min(Math.ceil((now.getHours() * 60 + now.getMinutes()) / TASK_BLOCK_MINUTES) * TASK_BLOCK_MINUTES, 24 * 60 - TASK_BLOCK_MINUTES)
@@ -566,24 +474,9 @@ export function CalendarWeekView({
   const snapshot=useRef<CalendarWorkspaceSnapshot | null>(null);
   snapshot.current={selected:selectedEvent,initialEvent,mode,navigationOpen};
   useLayoutEffect(() => () => { if (session) session.current=snapshot.current; }, [session]);
-  // Working locations, even one set for part of a day, head the all-day row
-  // rather than taking a block of time in the grid.
-  const locationsByDay = useMemo(
-    () => days.map((day) => distinctWorkingLocations(events.filter((event) => occursOnDay(event, day)))),
-    [days, events],
-  );
-  const allDayByDay = useMemo(
-    () => days.map((day) => events.filter((event) => event.allDay && !isWorkingLocation(event) && occursOnDay(event, day))),
-    [days, events],
-  );
-  const hasAllDay = allDayByDay.some((dayEvents) => dayEvents.length > 0) || locationsByDay.some((locations) => locations.length > 0);
-  const timedByDay = useMemo(
-    () => days.map((day) => layOutDayEvents(events.filter((event) => !event.allDay && !isWorkingLocation(event) && occursOnDay(event, day)), day)),
-    [days, events],
-  );
 
   return (
-    <section className={`calendar-week${draggingTaskId ? " calendar-week-task-drag" : ""}`} aria-label="Calendar week" style={{ "--calendar-day-count": days.length } as CSSProperties}>
+    <section className={`calendar-week${taskDrag.draggingId ? " calendar-week-task-drag" : ""}`} aria-label="Calendar week" style={{ "--calendar-day-count": days.length } as CSSProperties}>
       <div className="calendar-week-main">
         <header className="calendar-week-header">
           <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account" title={selectedAccountEmails.join(", ") || undefined}>· {accountScope}</span></span><h1>{monthTitle(weekStart)}</h1><p className="calendar-visible-range">{weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{days.length > 1 ? ` – ${days.at(-1)!.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</p></div>
@@ -607,152 +500,38 @@ export function CalendarWeekView({
             </div>
           </div>
         ) : null}
-        <div className="calendar-week-days" role="row">
-          <span className="calendar-week-gutter" aria-hidden="true" />
-          {days.map((day) => (
-            <span
-              key={day.toDateString()}
-              className={`calendar-week-day-label${isSameDay(day, today) ? " calendar-week-day-today" : ""}`}
-              aria-current={isSameDay(day, today) ? "date" : undefined}
-            >
-              {weekdayLabel(day)}
-            </span>
-          ))}
-        </div>
-        {hasAllDay ? (
-          <div className="calendar-week-all-day" aria-label="All-day events">
-            <span className="calendar-week-gutter">All day</span>
-            {days.map((day, index) => (
-              <div key={day.toDateString()}>
-                {locationsByDay[index].map((event) => (
-                  <WorkingLocationChip
-                    key={`${event.accountId}:${event.calendarId}:${event.id}`}
-                    event={event}
-                    data-calendar-event-trigger
-                    aria-expanded={sameEvent(selectedEvent, event)}
-                    onClick={(click) => { eventTrigger.current=click.currentTarget; setSelectedEvent((current) => sameEvent(current,event) ? null : event); }}
-                    style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
-                  />
-                ))}
-                {allDayByDay[index].map((event) => (
-                  <button
-                    type="button"
-                    className="calendar-all-day-event"
-                    key={`${event.accountId}:${event.calendarId}:${event.id}`}
-                    data-calendar-event-trigger
-                    data-response-status={event.responseStatus ?? undefined}
-                    aria-expanded={sameEvent(selectedEvent, event)}
-                    onClick={(click) => { eventTrigger.current=click.currentTarget; setSelectedEvent((current) => sameEvent(current,event) ? null : event); }}
-                    onKeyDown={(key) => { if (key.key==="Enter") { key.preventDefault(); setSelectedEvent(event); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "Meeting context" })); } }}
-                    style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
-                    title={event.location?.trim() ? `${event.title}, ${event.location.trim()}` : undefined}
-                  >
-                    {event.title}{event.location?.trim() ? `, ${event.location.trim()}` : ""}
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <div className="calendar-week-timezone"><span className="calendar-week-gutter">{timeZoneLabel(anchor)}</span></div>
-        <div
-          className="calendar-week-scroll"
-          tabIndex={-1}
-          ref={gridRef}
+        <DayTimeGrid
+          days={days}
+          events={events}
+          now={now}
+          loading={loading}
+          selectedEvent={selectedEvent}
+          onToggleEvent={(event, trigger) => { eventTrigger.current=trigger; setSelectedEvent((current) => sameEvent(current,event) ? null : event); }}
+          onOpenEventContext={(event) => { setSelectedEvent(event); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "Meeting context" })); }}
+          preview={taskDrag.preview ?? selectionPreview}
+          scrollRef={gridRef}
           onScroll={(event) => saveWeekScrollTop(event.currentTarget.scrollTop)}
-        >
-          <div className="calendar-week-grid">
-            <div className="calendar-hour-labels" aria-hidden="true">
-              {HOURS.map((hour) => (
-                <span key={hour} style={{ top: hour * HOUR_HEIGHT }}>{hourLabel(hour)}</span>
-              ))}
-            </div>
-            {days.map((day, dayIndex) => (
-              <div
-                className="calendar-week-column"
-                key={day.toDateString()}
-                data-day-index={dayIndex}
-                aria-label={`Create event on ${new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(day)}`}
-                onPointerDown={(event) => {
-                  if (event.button !== 0 || (event.target as HTMLElement).closest("[data-calendar-event-trigger]")) return;
-                  const anchor = slotAt(event.clientY, event.currentTarget);
-                  dragRef.current = { dayIndex, anchor, pointerId: event.pointerId };
-                  setDragPreview({ dayIndex, startMinutes: anchor, endMinutes: anchor + 60 });
-                  event.currentTarget.setPointerCapture?.(event.pointerId);
-                }}
-                onPointerMove={(event) => {
-                  const drag = dragRef.current;
-                  if (!drag || drag.dayIndex !== dayIndex || drag.pointerId !== event.pointerId) return;
-                  const current = slotAt(event.clientY, event.currentTarget);
-                  const range = eventRangeFromSlots(day, drag.anchor, current, current !== drag.anchor);
-                  setDragPreview({ dayIndex, startMinutes: range.startMinutes, endMinutes: range.endMinutes });
-                }}
-                onPointerUp={(event) => finishSelection(day, dayIndex, event.currentTarget, event.clientY, event.pointerId)}
-                onPointerCancel={() => { dragRef.current = null; setDragPreview(null); }}
-              >
-                {HOURS.map((hour) => <div className="calendar-hour-line" key={hour} />)}
-                {dragPreview?.dayIndex === dayIndex ? (
-                  <div className="calendar-create-selection" aria-hidden="true" style={{
-                    top: dragPreview.startMinutes / 60 * HOUR_HEIGHT,
-                    height: (dragPreview.endMinutes - dragPreview.startMinutes) / 60 * HOUR_HEIGHT,
-                  }}>{dragPreview.label ? <span>{dragPreview.label}</span> : null}</div>
-                ) : null}
-                {timedByDay[dayIndex].map(({ event, lane, lanes, span }) => {
-                  const start = new Date(event.start);
-                  const end = new Date(event.end);
-                  const dayStart = startOfLocalDay(day);
-                  const dayEnd = addDays(dayStart, 1);
-                  const startMinutes = start <= dayStart ? 0 : start.getHours() * 60 + start.getMinutes();
-                  const endMinutes = end >= dayEnd ? 24 * 60 : end.getHours() * 60 + end.getMinutes();
-                  const height = Math.max(20, ((Math.max(startMinutes, endMinutes) - startMinutes) / 60) * HOUR_HEIGHT);
-                  const durationMinutes = (end.getTime() - start.getTime()) / 60000;
-                  const location = event.location?.trim();
-                  const compactLocation = durationMinutes <= 30 && location;
-                  const separateLocation = height > HOUR_HEIGHT;
-                  const startTime = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(start);
-                  const className = [
-                    "calendar-schedule-event",
-                    durationMinutes <= 30 && "calendar-schedule-event-compact",
-                    durationMinutes <= 15 && "calendar-schedule-event-tight",
-                  ].filter(Boolean).join(" ");
-                  return (
-                    <button
-                      type="button"
-                      className={className}
-                      key={`${event.accountId}:${event.calendarId}:${event.id}`}
-                      data-calendar-event-trigger
-                      data-response-status={event.responseStatus ?? undefined}
-                      aria-expanded={sameEvent(selectedEvent, event)}
-                      onClick={(click) => { eventTrigger.current=click.currentTarget; setSelectedEvent((current) => sameEvent(current,event) ? null : event); }}
-                    onKeyDown={(key) => { if (key.key==="Enter") { key.preventDefault(); setSelectedEvent(event); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "Meeting context" })); } }}
-                      style={{
-                        ...calendarColorStyle(calendarColors, event.accountId, event.calendarId),
-                        top: (startMinutes / 60) * HOUR_HEIGHT,
-                        height,
-                        left: `${(lane / lanes) * 100}%`,
-                        width: `${(span / lanes) * 100}%`,
-                      }}
-                      title={`${event.title}, ${formatEventTime(event)}${location ? `, ${location}` : ""}${responseLabel(event) ? `, ${responseLabel(event)}` : ""}`}
-                    >
-                      <strong>{event.title}{compactLocation ? <span>, {startTime}, {location}</span> : null}</strong>
-                      {durationMinutes > 30 ? <span>{formatEventTime(event)}{location && !separateLocation ? ` · ${location}` : ""}</span> : null}
-                      {durationMinutes > 30 && location && separateLocation ? <span>{location}</span> : null}
-                    </button>
-                  );
-                })}
-                {isSameDay(day, today) ? (
-                  <div
-                    className="calendar-now-indicator"
-                    data-testid="calendar-now-indicator"
-                    aria-hidden="true"
-                    style={{ top: ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_HEIGHT }}
-                  />
-                ) : null}
-              </div>
-            ))}
-          </div>
-          {loading ? <p className="calendar-grid-status">Loading schedule…</p> : null}
-        </div>
+          timeZoneAt={anchor}
+          columnProps={(day, dayIndex) => ({
+            "aria-label": `Create event on ${new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(day)}`,
+            onPointerDown: (event) => {
+              if (event.button !== 0 || (event.target as HTMLElement).closest("[data-calendar-event-trigger]")) return;
+              const anchor = slotAt(event.clientY, event.currentTarget);
+              dragRef.current = { dayIndex, anchor, pointerId: event.pointerId };
+              setSelectionPreview({ dayIndex, startMinutes: anchor, endMinutes: anchor + 60 });
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+            },
+            onPointerMove: (event) => {
+              const drag = dragRef.current;
+              if (!drag || drag.dayIndex !== dayIndex || drag.pointerId !== event.pointerId) return;
+              const current = slotAt(event.clientY, event.currentTarget);
+              const range = eventRangeFromSlots(day, drag.anchor, current, current !== drag.anchor);
+              setSelectionPreview({ dayIndex, startMinutes: range.startMinutes, endMinutes: range.endMinutes });
+            },
+            onPointerUp: (event) => finishSelection(day, dayIndex, event.currentTarget, event.clientY, event.pointerId),
+            onPointerCancel: () => { dragRef.current = null; setSelectionPreview(null); },
+          })}
+        />
         {newEventRange ? <CreateCalendarEventDialog
           start={newEventRange.start}
           end={newEventRange.end}
@@ -807,9 +586,9 @@ export function CalendarWeekView({
             events={events}
             now={now}
             multipleAccounts={new Set(mailAccountIds).size > 1}
-            draggingTaskId={draggingTaskId}
+            draggingTaskId={taskDrag.draggingId}
             onSchedule={scheduleTask}
-            onDragStart={startTaskDrag}
+            onDragStart={taskDrag.startDrag}
             onChanged={tasksChanged}
             onNotice={onNotice}
           />
