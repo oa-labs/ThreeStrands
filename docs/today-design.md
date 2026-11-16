@@ -57,10 +57,40 @@ Added after the Dia comparison:
   open task is left out. Each row can become a follow-up task, or be dismissed
   on this device.
 
+## Direction change: Today as the daily loop (2026-11-16)
+
+User feedback is that the agenda and task columns are Today's valuable parts.
+The centre unread-mail column, grouped by addressing heuristics, does not surface
+important mail reliably enough to earn its space. The
+[product plan](../PLAN.MD#connected-workflow-additions) therefore reshapes Today
+around a daily loop, drawing on Sunsama's guided planning and shutdown:
+
+- A guided **Plan Today** routine: settle yesterday's unfinished planned items,
+  choose priorities, walk through the day's meetings with their readiness and
+  preparation (see [meeting preparation](meeting-preparation-design.md)), and
+  check the plan against free time.
+- A **Shutdown** that offers meeting follow-through and carry, defer, or drop for
+  unfinished planned items.
+- The agenda, the day's plan, tasks, promises, and Keep in Touch lead the layout.
+  Mail shrinks to a compact, collapsible signal (such as Invitations and a count
+  needing a reply, with a path to Inbox) rather than a full column.
+
+Phase 1's principles still hold. Today stays complete underneath: the plan is a
+layer the user curates, and nothing it leaves out is hidden from Tasks, Calendar,
+or Inbox. The routine, its storage, and the new layout need their own design;
+this section records the direction, not that design.
+
+Effect on phase 2 below: **Sort by Meaning** is deferred and no longer shapes
+Today's layout; if it ships, it feeds the compact mail signal. The AI **Plan My
+Day** button becomes an optional step inside Plan Today (for example, suggesting
+priorities), and the routine without AI takes the plain name. The Top of mind
+strip's ideas (a small budget, one focus item, cited joins) carry into that step.
+
 ## Phase 2: the AI layer
 
 Phase 2 was already planned as AI grouping plus a "Plan my day" button. The
-Dia comparison sharpens it into two features.
+Dia comparison sharpens it into two features. See the direction change above
+for how the daily loop changes their place in Today.
 
 ### Sort mail by meaning
 

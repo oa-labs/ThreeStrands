@@ -1,8 +1,10 @@
 # Meeting preparation and follow-through
 
 **Status:** Proposed implementation plan; no feature code implemented.
-**Baseline:** 0.210.0 repository, reviewed 2026-11-15.
-**Priority:** Next feature in the [product plan](../PLAN.MD#recommended-sequence-and-next-feature).
+**Baseline:** 0.210.0 repository, reviewed 2026-11-15; daily-loop entry points
+added 2026-11-16.
+**Priority:** Next feature in the [product plan](../PLAN.MD#recommended-sequence-and-next-feature),
+delivered alongside a first daily plan and shutdown.
 
 ## Outcome and scope
 
@@ -11,6 +13,15 @@ commitments without assembling them across workspaces. After the meeting, review
 its decisions and actions, keep them in the linked note, and prepare an email
 through the normal composer. Every source remains reachable and every write is
 an explicit user action.
+
+Preparation and follow-through are part of the user's day, not only buttons on an
+event. The product plan pairs this feature with a guided **Plan Today** routine
+and a **Shutdown** in a reshaped Today view: the plan's meeting step shows each of
+the day's meetings with its readiness and opens preparation, and Shutdown lists
+the day's meetings still awaiting follow-through. This design owns the meeting
+contracts those steps use. The routine itself (where the plan is stored, its
+other steps, carry/defer/drop, and Today's layout) needs its own design and is not
+specified here. Every meeting entry point must still work without the routine.
 
 Deliver a useful local workflow first, then optional, on-demand AI assistance.
 The complete first version includes preparation, reviewed note/task capture,
@@ -38,10 +49,39 @@ the Notes sketch are later work; the first AI request uses a bounded selection.
 
 ## User experience
 
+### Prepare during daily planning
+
+Plan Today's meeting step lists the day's meetings, excluding declined events, in
+time order. Its evening variant lists tomorrow's. Each row shows the meeting's
+readiness from the batch summary below, without loading message or note bodies:
+
+- whether this occurrence has a linked note, and whether earlier occurrences of
+  the exact series have notes;
+- the number of open commitments linked through those notes or the event's
+  originating conversation, with candidate counts kept separate;
+- the date of the most recent cached conversation with an attendee in the
+  meeting's mail scope, or that the scope needs choosing.
+
+Row actions are **Prepare** (opens the meeting view below), **Open Note / Add
+Note**, **Reserve Prep Time**, and **No Prep Needed**. Readiness is a description,
+not a score: a meeting with no notes is not marked as failing.
+
+**Reserve Prep Time** adds a round task, "Prepare for <meeting title>", nested under
+the meeting's line in today's daily note, using the existing meeting capture to
+add the line first if it is missing. The user can then book the task before the
+meeting with existing task time blocking. Both steps are explicit. Repeating the
+action finds the existing prep task under that occurrence's line and offers it
+instead of adding a second one. Prep tasks are ordinary note tasks with their
+current completion semantics.
+
+**No Prep Needed** hides the meeting from the step's outstanding count for that day
+on this device, like a dismissed promise, and can be undone. It never changes the
+event or its notes.
+
 ### Prepare from Calendar or Today
 
 Add **Prepare** to timed and all-day event details in Calendar and to event actions
-in Today. A command-palette action is available when a concrete event is selected.
+in Today's agenda. A command-palette action is available when a concrete event is selected.
 Do not allocate a new single-letter shortcut in v1. Meetings without attendees can
 still use their own notes; writable-calendar access is not required for reading
 context or writing a local note.
@@ -62,7 +102,8 @@ then the following sections using shared `ContextSection` and `ContextRow` patte
    not asserted meeting commitments.
 
 Open source records using existing navigation. Provide a return action to the
-same event/date and origin (Calendar or Today), without losing mail selection,
+same event/date and origin (Calendar, Today, or the planning step it came from,
+at the same meeting), without losing mail selection,
 reader state, Notes search, or unsaved work. Closing preparation returns focus to
 its trigger. Forms and source selection open explicit modals; merely opening the
 view must not autofocus an input, create a note, or call an AI provider.
@@ -74,6 +115,15 @@ available; do not add a competing meeting notebook or silently merge notes.
 ### Review after the meeting
 
 Offer **Review Follow-through** in the same meeting view, including for past events.
+Shutdown lists the day's meetings that have ended, excluding declined events, and
+offers the same action for each one that has not been reviewed, plus **No
+Follow-through** to set it aside for that day on this device.
+
+A meeting counts as reviewed when a note contains a follow-through section linked
+to that occurrence. Derive this from saved note content, which syncs, so the state
+is the same on every device. Do not derive it from capture receipts, which are
+local. A review started but not saved leaves the meeting unreviewed and offers to
+resume the local recovery record on that device.
 It opens a modal with a chosen source excerpt and editable proposed decisions and
 actions. Without AI, the user enters these directly or selects existing note items;
 there is no claim that local code has inferred the meeting's decisions.
@@ -156,6 +206,14 @@ Use these rules in order:
   tasks remain available as history but are not open commitments. Current heuristics
   for promises are evidence candidates, not proof that a promise is unfinished.
 
+The batch readiness summary applies the same identity, scope, and categorization
+rules as full context, but returns only flags, counts, and dates. It never loads
+message bodies or note text beyond what is needed to find the linked meeting
+block, and it bounds the number of events per request. A meeting whose mail scope
+needs choosing reports that instead of guessing an account. Readiness must agree
+with the full view it opens: a count in the plan is the number of rows in that
+category when Prepare opens, given unchanged sources.
+
 Show cache/retrieval limits, source timestamps, and a retry on partial errors. Empty
 results differ from unavailable data. Event deletion, cancellation, account removal,
 or a missing cache entry disables unsafe actions while keeping readable saved notes
@@ -223,7 +281,7 @@ Names below are proposed contracts to add, not existing APIs.
 
 | Layer | Work |
 | --- | --- |
-| UI/controller | `MeetingPreparation` and `useMeetingPreparation` share the event view between Calendar and Today; `MeetingFollowThroughDialog` owns explicit editing and source selection. App only wires navigation and compose handoff. |
+| UI/controller | `MeetingPreparation` and `useMeetingPreparation` share the event view between Calendar, Today, and the planning steps; `MeetingFollowThroughDialog` owns explicit editing and source selection. `MeetingReadinessList` and `useMeetingReadiness` render a day's meetings for the plan's meeting step and Shutdown, so the routine reuses them instead of querying meeting data itself. App only wires navigation and compose handoff. |
 | Typed client/demo | Extend `src/domain.ts`, `src/data/client.ts`, and `src/data/demoClient.ts` with context, source-selection, review, and mutation results. Demo fixtures exercise the same shape without real mail or AI. |
 | Native retrieval | `commands/meetings.rs` and a meeting-context service query existing calendar, note-link, contact-history, mail, and task data. Add narrowly scoped DB helpers and indexes only where query evidence requires them. Register commands in `src-tauri/src/lib.rs`. |
 | Markdown | Extend the shared note parsing/capture layer with meeting block extraction and guarded follow-through insertion. Reuse note indexing, task markers, sync budget checks, and change notifications. |
@@ -234,6 +292,13 @@ Suggested command boundaries:
 
 - `meeting_context(reference, mailScope, cursor)` returns the event snapshot,
   categorized source candidates, revision tokens, and per-section availability.
+- `meeting_readiness(references, mailScopes)` returns, per event, note presence,
+  commitment and candidate counts, latest correspondence date, follow-through
+  state, and per-event availability or errors, without bodies. One failing event
+  does not fail the batch.
+- `reserve_meeting_prep(reference, dailyNote, expectedRevision, operationId)`
+  adds or returns the occurrence's prep task under its meeting line, using the same
+  guarded note mutation and receipts as follow-through capture.
 - `meeting_source_preview(reference, selections)` resolves bounded local excerpts
   and produces the exact source manifest without a provider request.
 - `analyze_meeting(reference, selectionRevision, selections, purpose)` performs
@@ -278,6 +343,8 @@ created reviews.
 
 ## Compatibility and retention
 
+- **No Prep Needed** and **No Follow-through** choices are device-local, kept per
+  occurrence and day like dismissed promises, and expire with ordinary retention.
 - Local context indexes, review recovery, and operation receipts do not become new
   replicated entities or settings-export fields. Apply normal account/note deletion
   cleanup. Bound recovery retention and offer discard; ordinary saved notes/drafts
@@ -302,27 +369,37 @@ created reviews.
 ### 1. Freeze contracts and extraction
 
 Implement typed event/source/revision contracts, bounded retrieval policy, and
-shared fixtures for meeting excerpt extraction. Add native context queries and
-matching demo fixtures. Cover identity, scope, partial cache, and query bounds.
-Gate: known event context is deterministic, local, bounded, and contains no
-unrelated daily-note text. Record concrete policy budgets and recovery retention
-before stages that depend on them.
+shared fixtures for meeting excerpt extraction. Add native context queries, the
+batch readiness summary, and matching demo fixtures. Cover identity, scope,
+partial cache, and query bounds. Gate: known event context is deterministic,
+local, bounded, and contains no unrelated daily-note text; readiness for a day's
+meetings agrees with full context and loads no bodies. Record concrete policy
+budgets, the per-request event limit, and recovery retention before stages that
+depend on them.
 
 ### 2. Ship local preparation
 
 Add the shared read-only meeting view, Calendar/Today/palette wiring, source
-navigation/return, refresh handling, and existing Open Note/Add Note actions.
+navigation/return, refresh handling, and existing Open Note/Add Note actions. Add
+the readiness list, **Reserve Prep Time**, and **No Prep Needed** for the plan's
+meeting step; until the routine ships, the list can appear above Today's agenda.
 Gate: a recurring meeting can be prepared from local sources with AI disabled,
-without duplicate notes, focus theft, or lost draft/editor state. Missing mail
-accounts or one failing section do not prevent access to available notes.
+without duplicate notes or prep tasks, focus theft, or lost draft/editor state.
+Missing mail accounts or one failing section or event do not prevent access to
+available notes.
+
+The first Plan Today routine and Today's reshaped layout follow this stage under
+their own design, using the readiness list as the meeting step.
 
 ### 3. Ship manual follow-through and durable drafts
 
 Add review editing/recovery, guarded note insertion, round-task/checklist capture,
-existing-task linking, capture receipts, guarded undo, and idempotent composer
-handoff. Gate: a user can record decisions, track actions, and open/resume a
-follow-up draft without AI; retries and restart preserve work without replaying it.
-This is the first complete local preparation-to-follow-up workflow.
+existing-task linking, capture receipts, guarded undo, idempotent composer
+handoff, and the follow-through state Shutdown uses. Ship together with the first
+Shutdown. Gate: a user can record decisions, track actions, and open/resume a
+follow-up draft without AI; retries and restart preserve work without replaying
+it; Shutdown lists the same unreviewed meetings on every synced device. This is
+the first complete local preparation-to-follow-up workflow.
 
 ### 4. Ship privacy and compatibility prerequisites
 
@@ -357,7 +434,8 @@ agents do not start a dev server or use browser screenshots for appearance revie
 | Notes/tasks | Pending body/title edits; local recovery draft; concurrent sync conflict; Trash/delete during review; exact size limits; repeat apply and lost IPC response; transactional rollback; stable round-task IDs and two-way completion; checklist remains note-local; guarded undo after later edits/completion. |
 | Drafts | Existing unsaved composer; failed save; explicit reply thread/account; aliases/signatures/reply headers; recipient changes; calendar-only account; duplicate click, restart, lost handoff response; resume existing draft; deleted/sent draft; no send or outbox entry before user sends. |
 | AI/privacy | Off/no key; setting migration defaults; excluded note selected directly or restored from recovery; exclusion toggled before request/apply; full daily-note leakage negative; unselected mail/calendar fields absent; oversized request; stale sources; source prompt injection; invalid JSON/citations; partial invalid proposals; failure retains edited review; activity and cost reporting. |
-| Navigation/accessibility | Prepare from Calendar and Today; palette enablement; source/return wiring; note-request acknowledgement; Escape closes topmost surface; read mode keeps shortcuts; explicit form typing scope; restored trigger focus; accessible labels/descriptions; compact shared rows and wrapping under style-token rules. |
+| Readiness/planning | Readiness counts match full context; no bodies loaded; per-request event limit below/exact/above; one failing event in a batch; declined and all-day events; scope needing a choice; Reserve Prep Time adds the meeting line when missing, reuses an existing prep task on repeat and after a lost response; No Prep Needed and No Follow-through undo and stay device-local; follow-through state from a note saved on another device; unsaved review stays unreviewed. |
+| Navigation/accessibility | Prepare from the plan's meeting step, Shutdown, Calendar, and Today, returning to the same step and meeting; palette enablement; source/return wiring; note-request acknowledgement; Escape closes topmost surface; read mode keeps shortcuts; explicit form typing scope; restored trigger focus; accessible labels/descriptions; compact shared rows and wrapping under style-token rules. |
 
 Use Rust unit/DB/command tests for retrieval, parsing, transaction, privacy, and
 idempotency contracts. Use pure TS tests for ranking/presentation, `renderHook` for
@@ -375,7 +453,8 @@ requires unavailable signing. If `crates/` changes, also run `cargo test --works
 No new dependency is expected; any dependency change must follow dependency safety
 and vet/deny checks without exemptions.
 
-Developer acceptance: prepare a recurring meeting, follow a source and return,
+Developer acceptance: review the day's meetings from the planning step, reserve
+prep time for one and book it, prepare a recurring meeting, follow a source and return,
 record decisions and actions, complete a note task from Tasks, draft and resume a
 follow-up, repeat the actions, and exercise offline/reconnect and a note changed
 on another device. With AI configured, verify the reviewed sharing boundary and

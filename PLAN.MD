@@ -2,10 +2,12 @@
 
 **Status:** Current product baseline and forward-looking roadmap
 **Reviewed:** 2026-11-15 against the 0.210.0 repository, current feature guides,
-and Notes, Today, sync, and delegated-agent designs.
+and Notes, Today, sync, and delegated-agent designs. Daily-loop sequencing
+revised 2026-11-16.
 **Planning decision:** Refresh the baseline and sequence the connected-workflow
-additions below; Meeting preparation and follow-through is the next feature to
-scope. Planned additions are not implemented by this documentation update.
+additions below as one daily loop. Meeting preparation and follow-through is the
+next feature, delivered alongside a first guided daily plan and shutdown in a
+reshaped Today. Planned additions are not implemented by this documentation update.
 
 ## Product direction
 
@@ -184,9 +186,9 @@ from the current feature set when publishing a website.
 
 | Direction | What users could expect |
 | --- | --- |
-| Meeting preparation and follow-through | Bring previous notes, relevant correspondence, and commitments beside an upcoming meeting; review decisions, tasks, and a follow-up draft afterward. First feature to scope. |
+| Daily planning, meeting preparation, and follow-through | Start the day with a short guided plan: settle yesterday's unfinished work, choose priorities, get ready for each meeting with its previous notes, correspondence, and commitments, and check the plan against free time. End the day by reviewing meeting decisions, tasks, and follow-up drafts, then carrying, deferring, or dropping what remains. First feature to scope. |
 | Capture and relationship context | Capture a thought or task without leaving another app, reuse note templates, and see correspondence, meetings, notes, and logged interactions in a person's history. |
-| Realistic daily planning and review | Choose priorities against available calendar time, distinguish planned days from deadlines, and review unfinished work and goals. |
+| Realistic capacity and weekly review | Estimate work against available calendar time, distinguish planned days from deadlines, and review the week's unfinished work and goals. |
 | Search across the workspace | Find mail, notes, tasks, contacts, and events together, followed by optional answers linked to supporting material. |
 | Flexible focus time and assistance | Progress from suggested focus blocks and recurring routines to explicitly authorized rescheduling and reviewed reply preparation. |
 | Connected address books | Extend the existing read-only Mac connection where useful; direct CardDAV and Google Contacts connections remain future work. |
@@ -210,7 +212,8 @@ Initially assessed 2026-10-31 against the 0.189.1 repository and competitor
 documentation. Baseline refreshed 2026-11-15 against 0.210.0, including Notes,
 Today, task time blocking, and delegated research. Superhuman, Reflect, Routine,
 Reclaim, and Dex product pages were revisited for the connected-workflow additions
-below; this is not a fresh exhaustive audit of every older comparison.
+below, and Sunsama's daily planning pages were added on 2026-11-16; this is not a
+fresh exhaustive audit of every older comparison.
 This is an internal planning backlog, separate from the website
 roadmap above. It records capability gaps, not measured reliability or usability
 deficits. Priorities are proposals for the current individual, Gmail-first Mac
@@ -241,16 +244,35 @@ These additions are planned, not available. Priority numbers express product
 value; phases below express build order and dependencies. They extend the current
 individual workflow while keeping mail reliability and provider hardening active.
 
+**One daily loop.** Meeting preparation, daily planning, and review are parts of
+one loop rather than separate features. Plan the morning, which includes getting
+ready for the day's meetings; work through the day; then shut down, which includes
+meeting follow-through and explicit carry, defer, or drop decisions. A **Prepare**
+button that the user has to remember is used less than a planning step that walks
+through each meeting. Follow-through belongs at shutdown, when the day's meetings
+are over. Calendar and Prepare entry points remain for meetings outside the routine.
+
+**Reshape Today around the loop.** Feedback on the current Today view is that its
+agenda and task columns are the valuable parts. The centre unread-mail column,
+grouped by addressing heuristics, does not reliably surface important mail and is
+low value. Today becomes the home of the daily loop: agenda with meeting readiness,
+the day's plan and tasks, promises, and Keep in Touch reminders lead. Mail shrinks
+to a compact, collapsible signal (for example, Invitations and a count of messages
+needing a reply, with a path to Inbox) rather than a full column. The
+[Today design](docs/today-design.md) records the change. Mail's meaning-based sort
+is deferred and no longer drives Today's layout; planning becomes the curated
+layer instead.
+
 | Priority / addition | User problem and smallest useful version | Dependencies and boundaries | Success measure to establish during scoping |
 | --- | --- | --- | --- |
-| 1. Meeting preparation and follow-through | Preparing requires opening several workspaces. Before a meeting, collect occurrence and series notes, relevant cached correspondence, and linked commitments with source links. Afterward, review decisions, proposed tasks, and a follow-up draft based on selected notes and messages. | Reuse event identity, backlinks, contacts, and existing task/draft flows. Begin with local context; AI synthesis is optional and uses explicitly selected material. No recording or transcription dependency. Scope next. | Time to prepare for a recurring meeting; accepted follow-through actions; duplicate notes or tasks created by repeat use. |
-| 2. Plan today against actual capacity | Due dates alone do not describe a realistic day. Select today's priorities, estimate duration, compare with free calendar time, and offer time blocks; distinguish a planned workday from a deadline and explicitly carry, defer, or drop unfinished work. | Extend Today and manual task booking, preserving the existing task and note-task contract. Reuse availability profiles and buffers; a calendar failure must not appear as free time. Scheduling starts as a reviewed proposal. | How often planned work fits available time; completion and explicit deferral of selected priorities. |
+| 1. Meeting preparation and follow-through | Preparing requires opening several workspaces. Before a meeting, collect occurrence and series notes, relevant cached correspondence, and linked commitments with source links. Afterward, review decisions, proposed tasks, and a follow-up draft based on selected notes and messages. The daily plan's meeting step and the shutdown's follow-through step are its primary entry points. | Reuse event identity, backlinks, contacts, and existing task/draft flows. Begin with local context; AI synthesis is optional and uses explicitly selected material. No recording or transcription dependency. Scope next, with the first daily plan. | Time to prepare for a recurring meeting; share of the day's meetings prepared or explicitly marked as needing no preparation; accepted follow-through actions; duplicate notes or tasks created by repeat use. |
+| 2. Daily plan and shutdown | Due dates alone do not describe a realistic day, and nothing prompts the user to decide what today is for. A first guided **Plan Today** routine in Today: settle yesterday's unfinished planned items (carry, defer, or drop), choose priorities from tasks, promises, and Keep in Touch reminders, walk through today's meetings with their readiness and a Prepare action, and compare planned work with free time using existing task time blocking. A matching **Shutdown** lists today's meetings awaiting follow-through and unfinished planned items. Duration estimates and workload warnings follow later. | Extend Today, daily notes, and manual task booking, preserving the existing task and note-task contract. Prefer storing the plan as a section of today's daily note that links existing tasks rather than copying them, so it syncs without a new entity. Reuse availability profiles and buffers; a calendar failure must not appear as free time. Scheduling starts as a reviewed proposal. No plan publishing to chat services. | How often the plan is made; how often planned work fits available time; completion and explicit deferral of selected priorities. |
 | 3. Capture from anywhere | Thoughts are lost while switching apps. A system-wide shortcut opens a small window to save a note or task immediately, with optional links to a person, meeting, or conversation. | Reuse durable note/task saves and explicit typing scopes; return focus to the originating app. Source-preserving browser clipping, voice, and mobile capture are later extensions with their own platform contracts. | Time and steps from shortcut to durable capture; successful recovery after interruption. |
 | 4. Complete relationship timeline | Context about a person is spread across history and notes. Show emails, meetings, linked notes, completed follow-ups, and manually logged interactions in one chronological view. Let Mark Contacted optionally record what happened and what to discuss next. | Extend Contacts and Keep in Touch with source links, explicit account scope, and cached-history limits. Preserve current reminder semantics until any change is deliberately scoped. No LinkedIn scraping or automatic profile replacement. | Time to find the last meaningful interaction and next commitment; usefulness of due check-ins. |
 | 5. Find and ask across the workspace | Users must remember where a fact lives. Start with filtered search across mail, notes, tasks, contacts, and events; then offer optional questions with links to supporting records. | Reuse existing indexes and references, preserve workspace search state, and disclose unavailable or uncached history. Retrieval, bounded AI sharing, and citation validation precede generated answers. | Time to retrieve a known fact; supported answers and clear handling of missing evidence. |
 | 6. Protect focus time and recurring routines | Free calendar gaps do not ensure time for important work. Define a weekly focus target and flexible recurring activities, then suggest suitable blocks. | Build on capacity planning, availability profiles, and calendar writes. Start with reviewed placement; later permit rescheduling only for designated flexible blocks, with pinned times, explanations, undo, and explicit execution ownership. | Focus time reserved against the user's target; conflicts and unwanted schedule changes. |
 | 7. Reviewed reply and commitment queue | Unanswered mail, promises, waiting-for tasks, and relationship check-ins require separate reviews. Bring them into one actionable queue with source-linked reasons, then offer contextual draft replies for review. | Extend existing promise detection, follow-up completion, Keep in Touch, and planned Today prioritization. Deduplicate overlapping evidence; allow dismissal and correction. Prepared drafts never send automatically. | Missed commitments, duplicate reminders, and useful prepared drafts after user review. |
-| 8. Daily and weekly review | Unfinished work and goals drift without a deliberate review. Reusable note templates collect outstanding work, promises, people to contact, goal progress, and upcoming capacity, with explicit carry/defer/drop choices. | Basic daily-note and meeting templates can ship early; populated reviews follow capacity planning and reuse goal-period reviews. Save as linked notes; keep square checklists note-local and round tasks aggregated. | Review completion, unresolved commitments carried forward deliberately, and time spent preparing the review. |
+| 8. Weekly review and planning estimates | The daily plan covers one day; the week's unfinished work and goals still drift. Reusable note templates collect outstanding work, promises, people to contact, goal progress, and upcoming capacity, with explicit carry/defer/drop choices. Add duration estimates and workload warnings to the daily plan once its first version is in use. | Basic daily-note and meeting templates can ship early; populated reviews follow the daily plan and reuse goal-period reviews. Estimates as task data need sync-protocol compatibility, and note tasks cannot carry them today. Save reviews as linked notes; keep square checklists note-local and round tasks aggregated. | Review completion, unresolved commitments carried forward deliberately, and time spent preparing the review. |
 
 Measures are proposed evaluation criteria, not collected telemetry or established
 benchmarks. Define a lightweight evaluation during each feature's scoping; any
@@ -258,16 +280,29 @@ new telemetry remains a separate, explicit decision.
 
 ### Recommended sequence and next feature
 
-1. **First: connect the existing context.** Scope Meeting preparation and
-   follow-through next, then capture from anywhere, relationship history, and
-   reusable daily-note and meeting templates. The first meeting workflow must be
-   useful with existing notes, contacts, tasks, and cached mail; it does not wait
-   for the complete timeline, global search, or a new recording service.
-2. **Next: plan and review deliberately.** Add capacity-aware daily planning,
-   populated daily/weekly reviews, and search across the workspace. Extend the
-   [Today design](docs/today-design.md), which already plans meaning-based sorting
-   and a Top of mind strip, instead of creating competing priority lists. Basic
-   search comes before contextual AI answers.
+1. **First: build the daily loop from existing context.** Interleave meeting
+   preparation with a first daily plan and shutdown in a reshaped Today:
+   1. Meeting preparation stages 1–2: context contracts, a batch readiness
+      summary, and the local preparation view.
+   2. **Plan Today**, first version: a guided routine built almost entirely from
+      existing Today data, daily notes, and task time blocking, with a meeting
+      step that shows readiness and opens preparation. Reshape Today around it,
+      reducing the mail column to a compact signal.
+   3. Meeting preparation stage 3 and **Shutdown** together: manual
+      follow-through and durable drafts, offered at the end of the day for the
+      day's meetings, alongside carry/defer/drop of unfinished planned items.
+   4. Meeting preparation stages 4–5: privacy prerequisites and optional AI
+      synthesis.
+
+   Then add capture from anywhere, relationship history, and reusable daily-note
+   and meeting templates. The first workflow must be useful with existing notes,
+   contacts, tasks, and cached mail; it does not wait for duration estimates, the
+   complete timeline, global search, or a new recording service.
+2. **Next: estimate and review deliberately.** Add duration estimates and
+   workload warnings to the daily plan, populated weekly reviews, and search
+   across the workspace. Extend the [Today design](docs/today-design.md) instead of
+   creating competing priority lists; optional AI priority suggestions become a
+   step inside Plan Today. Basic search comes before contextual AI answers.
 3. **Later: add flexible scheduling and broader assistance.** Introduce focus
    targets and recurring routines through suggestions before authorized
    rescheduling. Build the consolidated reply and commitment queue on existing
@@ -275,14 +310,38 @@ new telemetry remains a separate, explicit decision.
    optional AI. Extend capture to browser and mobile after their data and
    platform boundaries are defined.
 
-The intended end-to-end workflow is: open an upcoming meeting, see where you left
-off with its participants, record decisions in a linked note, turn commitments
-into tasks, reserve time to complete them, and prepare the follow-up.
+The intended end-to-end workflow is: plan the day, see which meetings need
+preparation and where you left off with their participants, record decisions in
+a linked note, turn commitments into tasks, reserve time to complete them, prepare
+the follow-up, and close the day by deciding what carries forward.
+
+For **Plan Today and Shutdown**, the next design should settle:
+
+- Where the plan lives. Prefer a plan section in today's daily note that links
+  existing tasks, so it syncs and follows the round-task contract without a new
+  entity. A "planned for" date on tasks would need sync-protocol compatibility,
+  and note tasks cannot carry one today.
+- The smallest routine: which steps are required, which can be skipped, and how
+  an unfinished or skipped plan is shown without nagging. Morning and evening
+  (plan tomorrow at shutdown) variants.
+- How Today's layout changes: what remains of the mail column, how the plan and
+  agenda lead, and how the existing keyboard and workspace behavior is preserved.
+- Capacity in the first version: free time from the existing day summary minus
+  booked task blocks, without estimates or workload warnings. A calendar failure
+  must never read as free time.
+- Carry/defer/drop semantics for planned items, including note tasks, completed
+  items, and items planned on another device.
+- Naming: the routine without AI takes the plain **Plan Today** name. The Today
+  design's AI **Plan My Day** button becomes an optional step inside the routine.
 
 For **Meeting preparation and follow-through**, the next design should settle:
 
-- Entry points from Calendar and Today, the smallest useful local preparation
-  view, relevance and account scope, and how the user chooses supporting material.
+- Entry points from the daily plan's meeting step, Shutdown, Calendar, and Today,
+  the smallest useful local preparation view, relevance and account scope, and how
+  the user chooses supporting material.
+- A batch readiness summary for a day's meetings that the plan can show without
+  loading message or note bodies, and a follow-through state that is the same on
+  every device.
 - Occurrence versus series context, rescheduled meetings, unrelated events with
   the same title, changed attendees, and unavailable or incomplete cached history.
 - A reviewed path from decisions to existing tasks and draft composition, with
@@ -297,6 +356,9 @@ The proposed [implementation plan](docs/meeting-preparation-design.md) now recor
 the initial UX and data contracts, delivery stages, compatibility work, and
 acceptance coverage. Local preparation comes first, then manual follow-through
 and durable drafts, followed by privacy prerequisites and optional AI synthesis.
+Its daily-planning entry points, readiness summary, and shutdown follow-through
+state are specified there; the Plan Today routine itself still needs its own
+design.
 
 ### Reliability and expansion alongside this sequence
 
@@ -347,6 +409,7 @@ sequence are ThreeStrands product decisions, not claims of complete feature pari
 | [Superhuman](https://superhuman.com/plans/mail) | Auto Drafts, Auto Reminders, Auto Labels, and Ask AI inform reviewed reply preparation, commitment review, and inspectable classification. |
 | [Reflect](https://reflect.app/) | Daily notes, backlinks, web clipping, and answers linked to source notes inform capture and retrieval beyond the Notes foundation already built. The current site distinguishes Reflect Open from Classic. |
 | [Routine](https://routine.co/) | Desktop hotkey capture, task/calendar planning, and meeting actions inform capture, capacity planning, and meeting follow-through. |
+| [Sunsama](https://www.sunsama.com/daily-planning) | Guided daily planning and [shutdown](https://www.sunsama.com/features/daily-planning-and-shutdown) routines, workload warnings, and explicit carry-over choices inform the daily loop: Plan Today with a meeting-preparation step, and Shutdown with meeting follow-through. Plan publishing to chat services and third-party task imports are not adopted. |
 | [Reclaim](https://reclaim.ai/) | Focus protection, flexible recurring habits, and calendar adaptation inform progressive focus scheduling. |
 | [Dex](https://getdex.com/) | Relationship context, notes, and keep-in-touch workflows inform a combined history and more useful personal check-ins. |
 
@@ -489,7 +552,7 @@ flowchart LR
 - [Settings transfer](docs/settings-transfer.md) and [email rendering policy](docs/email-rendering-policy.md) — persistent-format and reader boundaries.
 - [Features and known limitations](docs/features.md) and [contact management](docs/address-book.md) — current capabilities, shortcuts, and outstanding live-account checks.
 - [IMAP/SMTP provider design](docs/imap-design.md) — provider design and phase progress.
-- [Today view design](docs/today-design.md) — what Today works out without AI, and the phase 2 AI layer (meaning sort, Top of mind strip).
+- [Today view design](docs/today-design.md) — what Today works out without AI, the planned reshaping around daily planning and meeting preparation, and the deferred AI layer.
 - [Notes workspace design](docs/notes-design.md) — implemented daily and regular Markdown notes, wiki links, backlinks, attachments, import/export, linked entities, note-derived tasks, and meeting notes; later work remains explicitly separated.
 - [Meeting preparation and follow-through](docs/meeting-preparation-design.md) — proposed implementation plan for local preparation, reviewed decisions and actions, durable follow-up drafts, and optional source-backed AI assistance.
 - [Delegated agents plan](docs/delegated-agents-plan.md) — implemented local demonstration and configured read-only web research; later routing and invitation evaluation remain proposed.
