@@ -145,6 +145,23 @@ mentions the same canonical target as a plan item or a `### Not today` item. A
 deferral is **due** on its date. Comparison uses canonical references, never link
 labels.
 
+### Plan history
+
+Plan sections are also the record of what was planned when. Two facts are derived
+from them, through the indexed plan item rows, never by reparsing every note:
+
+- **Carry count.** The number of plan days, within the last `PLAN_HISTORY_DAYS`
+  (90), on which the same canonical target appears as a plan item with a
+  `carried` marker. A card shows it as "Carried 3 times" when it is at least one.
+  A count is a fact about the notes, not a judgment; it never changes an item's
+  order or hides it.
+- **Planned days.** The dates on which a target appeared as a plan item, used to
+  show "Planned Mon, Tue" for a goal's tasks (see [Goals](#goals-on-cards)).
+
+Both are computed for whatever notes are on this device. A plan section written on
+another device counts once its note has synced. Edits to old notes change history
+accordingly; nothing is stored separately.
+
 ## Plan Today
 
 ### Entry points
@@ -152,10 +169,11 @@ labels.
 - **Plan Today** in Today's header while today's note has no plan items; once it
   does, the header shows the plan's progress and **Edit Plan**.
 - The palette command **Plan Today**, and **Plan Tomorrow** (the evening variant).
-- **Add to Today's Plan** on task rows in Today and Tasks, and on promise and
-  Keep in Touch rows in Today: a one-step reversible action that adds a single
-  item without opening the routine. A promise first becomes a follow-up task
-  through the existing **Make a Task** flow.
+- **Add to Today's Plan** on task rows in Tasks and on every source card in Today:
+  a one-step reversible action that adds a single item without opening the
+  routine. A promise first becomes a follow-up task through the existing **Make a
+  Task** flow; a starred conversation without an open task opens the prefilled
+  task form first, as in [Candidate sources](#candidate-sources).
 
 No new single-letter shortcut in this version.
 
@@ -170,18 +188,29 @@ not change it.
 
 Steps can be skipped. Nothing is written until **Save Plan**.
 
-1. **Review.** Unfinished, unsettled items from earlier plans in the last
-   `PLAN_LOOKBACK_DAYS` (7), newest plan first, plus deferrals due today or
-   earlier. Each offers **Carry**, **Defer…** (choose a date after the plan date),
-   or **Drop**, with **Carry All**. Items finished since are listed as done, with
-   no choice needed. Items left undecided stay unsettled and appear again next
-   time. An empty review is skipped automatically.
-2. **Choose.** Candidates, each with its reason: overdue and due-today tasks,
-   in-progress tasks, waiting-for tasks whose wait date has passed, open promises,
-   and due Keep in Touch check-ins. A search adds any open task. **New Task** types
-   a plan-only round task. Selected items form an ordered list; move up and down
-   with buttons and `Alt+Up/Down`. Show a quiet note above five items ("Most
-   people finish three to five planned items"), never a limit.
+1. **Review.** Two columns about the most recent earlier plan in the last
+   `PLAN_LOOKBACK_DAYS` (7), titled with its day ("Yesterday", or "Friday"):
+   - **Done:** that plan's items finished since, the meetings attended that day
+     (ended, not declined), and **Also done**: tasks completed that day that were
+     not in the plan. Read-only; each opens its source.
+   - **Didn't get to:** that plan's unfinished, unsettled items, then unsettled
+     items from older plans in the window grouped by date, then deferrals due on
+     or before the plan date. Each offers **Carry**, **Defer…** (choose a date after
+     the plan date), or **Drop**, with **Carry All**. Each shows its carry count.
+     From `PLAN_CARRY_HINT` (3) carries, the row adds a quiet hint, "Carried 3
+     times. Defer or drop it?", without changing the default choice.
+
+   Items left undecided stay unsettled and appear again next time. With nothing in
+   either column, the step is skipped automatically. There are no time totals or
+   charts: without time tracking or estimates, they would be invented.
+2. **Choose.** A [source switcher](#candidate-sources) beside the selected list:
+   **Suggested** (the default: overdue and due-today tasks, in-progress tasks,
+   waiting-for tasks whose wait date has passed, open promises, and due Keep in
+   Touch check-ins, each with its reason), **Tasks**, **Starred Mail**, **You Said
+   You Would**, **Keep in Touch**, **Goals**, and **Notes**. A search adds any open
+   task. **New Task** types a plan-only round task. Selected items form an ordered
+   list; move up and down with buttons and `Alt+Up/Down`. Show a quiet note above
+   five items ("Most people finish three to five planned items"), never a limit.
 3. **Meetings.** The day's meetings, from the meeting design's
    [readiness list](meeting-preparation-design.md#prepare-during-daily-planning):
    readiness, **Prepare**, **Open Note / Add Note**, **Reserve Prep Time**, and
@@ -206,6 +235,40 @@ Reopening the routine with **Edit Plan** starts from the saved plan: current ite
 selected in order, with the same steps. Removing an item from today's plan removes
 its line; it does not mark the item dropped, since dropping is a decision about
 unfinished work from an earlier day.
+
+### Candidate sources
+
+The Choose step and Today's left column share one source switcher: a tab list
+with arrow-key navigation, showing one source at a time, so a long list from one
+source never buries the others. Every candidate is a card. Items already in the
+plan are marked rather than repeated.
+
+| Source | Candidates | Adding to the plan |
+| --- | --- | --- |
+| Suggested (Choose only) | As in step 2, each with its reason. | As for its own source. |
+| Tasks | Open and in-progress mail and standalone tasks, overdue and due first, then the rest in task display order. | Links the task. |
+| Starred Mail | Starred conversations, newest first, with account and sender. A conversation that already has an open task shows that task instead. | Opens the existing task form prefilled from the conversation (title from the subject, linked to the conversation and its account); saving creates the task and adds it. Cancel writes nothing. A conversation with an open task adds that task. Adding never unstars or archives the conversation. |
+| You Said You Would | Open promises, as in Today. | Makes a follow-up task through **Make a Task**, then links it. |
+| Keep in Touch | Due check-ins. | Links the contact. |
+| Goals | Active goals of the current periods, each with its open tasks and its planned days. | Links a goal's task. **New Task for Goal** opens the existing task form with the goal set. |
+| Notes | Open round tasks in other notes, newest note first, with the note's title. | Links the note task, saving its marker first if it is provisional. |
+
+Starred mail is the user's own choice of what matters, so it is the mail source
+for planning; the old addressing-based groups are not offered as candidates. The
+source lists are bounded and paged (`PLAN_SOURCE_PAGE`, 50), use existing local
+queries, and never search the server. Sources with mail-account scope (Tasks,
+Starred Mail, You Said You Would, Goals) follow Today's account selector and label
+each card's account; Keep in Touch and Notes are account-independent.
+
+### Goals on cards
+
+A card for a task with a goal shows the goal's title, which opens the goal. In the
+Goals source, each goal lists its tasks with the days they were planned in the
+goal's current period ("Planned Mon, Tue"), from [plan history](#plan-history),
+and its open task count. This connects daily plans to the existing goals and
+period reviews without adding weekly objectives: goals keep their horizons,
+periods, and reviews. Goals belong to a mail account and only mail and standalone
+tasks carry a goal; note tasks and check-ins show none.
 
 ### Capacity in the first version
 
@@ -252,11 +315,13 @@ Two columns, with work on the left and time on the right:
   **Plan Today**, or "3 of 5 planned done" with **Edit Plan**, and **Shut Down**.
 - **Plan column (left):** the plan items as cards, in order, the focus item first.
   A card shows the item's title, its source (account, note, or contact), its
-  state, and its booked time when it has one ("10:30 am"). Below the plan,
-  **Also due** (overdue and due-today tasks not in the plan), **You said you
-  would**, and Keep in Touch use the same cards, each with **Add to Today's Plan**.
-  Without a plan, the column shows those sections with a single line offering
-  **Plan Today**.
+  state, its booked time when it has one ("10:30 am"), its goal when it has one,
+  and its carry count when it has been carried. Below the plan, the
+  [source switcher](#candidate-sources) shows one source at a time, with **Also
+  Due** (overdue and due-today tasks not in the plan) in place of Suggested and
+  selected by default. Its cards offer **Add to Today's Plan** and can be dragged
+  onto the day view. The selected source is a per-device convenience. Without a
+  plan, the column shows the switcher with a single line offering **Plan Today**.
 - **Day view (right):** today's schedule as a time grid; see [Day view](#day-view).
   Tomorrow's first events show below it, as the agenda shows them now.
 - **Mail signal:** the unread-mail column is removed. A one-line, collapsible
@@ -308,11 +373,12 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
   default calendar choice, the selected-calendar fix-up, and a **Booked … for
   "Title"** notice with **Undo**. Escape cancels a drag. A drop outside the grid
   does nothing. A press without a drag activates the card.
-- **Dragging an unplanned item.** Dropping a card from **Also due**, **You said
-  you would**, or Keep in Touch books the block and adds the item to today's plan
-  in one action. A promise becomes a follow-up task first through **Make a Task**;
-  a Keep in Touch check-in is booked as an event titled "Check in with <name>"
-  with no task link. The plan write uses the guarded note mutation; if it is
+- **Dragging an unplanned item.** Dropping a card from any source books the block
+  and adds the item to today's plan in one action. A promise becomes a follow-up
+  task first through **Make a Task**. A starred conversation without an open task
+  opens the prefilled task form with the dropped time shown; saving creates the
+  task, books the block, and adds it, and Cancel writes nothing. A Keep in Touch
+  check-in is booked as an event titled "Check in with <name>" with no task link. The plan write uses the guarded note mutation; if it is
   refused, the booking stays and the notice says the item could not be added to
   the plan, with **Open Note**.
 - **Keyboard.** Every card has **Book**, which opens the event editor for its task
@@ -342,10 +408,12 @@ The same modal form pattern as Plan Today, for the current date:
    unreviewed meetings offer **Review Follow-through** and **No Follow-through**.
    Reviewing opens the follow-through dialog over the routine and returns to this
    step.
-2. **Plan.** Planned items, done ones first. Each unfinished item offers **Carry to
+2. **Plan.** The same two columns as Plan Today's Review, for today. **Done** lists
+   finished planned items, the meetings attended, and **Also done** (unplanned
+   tasks completed today), read-only. **Didn't get to** lists unfinished planned
+   items with their carry counts and the same hint; each offers **Carry to
    Tomorrow**, **Defer…**, or **Drop**, or can be left undecided for the next
-   morning's review. Unplanned work completed today is listed as "Also done",
-   read-only.
+   morning's review.
 3. **Close.** An optional **Notes on the day** text field, a summary of choices,
    and **Finish**. **Plan Tomorrow** finishes and opens Plan Today for tomorrow's
    date with the carried items already selected.
@@ -378,10 +446,10 @@ Names are proposed, not existing APIs.
 | Layer | Work |
 | --- | --- |
 | Markdown | Plan section parsing, plan item kinds, decision markers, and item-level insertion/removal in the shared note parser, with shared TS/Rust fixtures. Extend the editor to keep plan markers hidden and preserved. |
-| Native | `daily_plan(date)` returns parsed items with resolved state, settledness, and per-item availability. `plan_review(date)` returns unsettled items from the lookback window and due deferrals. `save_daily_plan(date, expectedRevision, operationId, changes)` applies item-level changes in one guarded transaction. Index plan items in the existing note entity link rows so settledness queries do not reparse every note. |
+| Native | `daily_plan(date)` returns parsed items with resolved state, settledness, and per-item availability. `plan_review(date)` returns the Done and Didn't get to columns: the reviewed plan's finished items, attended meetings, and tasks completed that day outside the plan, then unsettled items from the lookback window and due deferrals, each with its carry count. `plan_history(targets, from, to)` returns carry counts and planned days for the given targets. `plan_sources(source, scope, cursor)` returns one page of candidates for a source, using existing local queries for tasks, starred conversations, promises, Keep in Touch, goals, and note tasks. `save_daily_plan(date, expectedRevision, operationId, changes)` applies item-level changes in one guarded transaction. Index plan items in the existing note entity link rows so settledness queries do not reparse every note. |
 | Booking | Note task references as event source tasks, in `taskBooking.ts`, the calendar model, and `CalendarTasks`. |
 | Shared day grid | Extract the one-day time grid and the pointer task-block drag (threshold, preview, edge scrolling, Escape, booking with Undo) from `CalendarWeekView` into a shared component and hook. Calendar's views use them unchanged; Today and the Fit step render one day. Drop targets accept a plan card source as well as a Calendar task row. |
-| UI/controller | `PlanTodayDialog` and `ShutDownDialog` with `useDailyPlan`; `TodayPlanColumn` (cards), `TodayDayView`, and `TodayMailSignal` in a reshaped `TodayWorkspace`; `planCapacity` in `todayInsights.ts`. The meeting step reuses `MeetingReadinessList`; the day view's readiness indicators use the same `meeting_readiness` results. |
+| UI/controller | `PlanTodayDialog` and `ShutDownDialog` with `useDailyPlan`; `TodayPlanColumn` (cards), `PlanSourceSwitcher` (shared by the Choose step and Today), `PlanReviewColumns` (shared by Review and Shut Down), `TodayDayView`, and `TodayMailSignal` in a reshaped `TodayWorkspace`; `planCapacity` in `todayInsights.ts`. The meeting step reuses `MeetingReadinessList`; the day view's readiness indicators use the same `meeting_readiness` results. |
 | Typed client/demo | Extend `src/domain.ts`, `src/data/client.ts`, and `src/data/demoClient.ts` with plan and review shapes and fixtures. |
 
 ## Compatibility
@@ -400,20 +468,23 @@ Names are proposed, not existing APIs.
 ## Delivery stages
 
 1. **Contracts.** Plan section format, parser, markers, shared fixtures, native
-   read/review/save, `planCapacity`, and note task booking. Gate: a plan round-trips
-   through save, export, import, and an older editor's serialization without losing
-   items or markers, and repeated saves create no duplicate lines.
+   read/review/save, plan history and candidate source queries, `planCapacity`, and
+   note task booking. Gate: a plan round-trips through save, export, import, and an
+   older editor's serialization without losing items or markers; repeated saves
+   create no duplicate lines; history and source queries are bounded and indexed.
 2. **Reshaped Today.** Extract the shared day grid with Calendar's behavior
-   unchanged, then the plan cards reading the saved plan, **Add to Today's Plan**,
+   unchanged, then the plan cards reading the saved plan with goals and carry
+   counts, the source switcher with Starred Mail and Goals, **Add to Today's Plan**,
    the day view with drag-to-book and **Book**, the narrow-width agenda fallback,
    the mail signal replacing the mail column, and meeting readiness on the day view
    (after meeting preparation stage 2). Gate: Today is useful without ever running
    the routine; every Calendar drag and booking test still passes against the
    shared grid; no mail-derived information that the old column provided is lost
    without a path to it.
-3. **Plan Today.** The five-step routine, Edit Plan, and Plan Tomorrow. Gate: a user
-   can review, choose, prepare, fit, and save a plan with the calendar available or
-   not, and restart mid-routine without losing choices.
+3. **Plan Today.** The five-step routine with the Done / Didn't get to review and
+   the source switcher, Edit Plan, and Plan Tomorrow. Gate: a user can review,
+   choose from every source, prepare, fit, and save a plan with the calendar
+   available or not, and restart mid-routine without losing choices.
 4. **Shut Down**, shipped with meeting preparation stage 3. Gate: meetings and
    unfinished items can be closed out, decisions appear in the next morning's
    review, and the day's closed state agrees across synced devices.
@@ -427,8 +498,11 @@ Names are proposed, not existing APIs.
 | --- | --- |
 | Parsing | Plan section bounds; `### Not today` exclusion; nested content under items; links inside code or escaped; malformed and duplicate markers; free-text items; plan heading inside a fenced block; a note with Meetings but no Plan. |
 | Writes | Draft flush; stale version; conflict; Trash; size limit; unclosed fence; lost response with the same operation ID; Undo after later edits; reorder keeps nested content; removal of an exact item only; text written by hand in the section kept. |
-| Review | Lookback boundary below/exact/above seven days; items completed since; carried, deferred, dropped settledness; deferral due today, past, and future; unavailable targets; the same task planned on two earlier days; plan made on another device. |
-| Choose/fit | Candidate reasons; promise becoming a task first; provisional note task marker saved before linking; working hours split windows; outside working hours; calendar unavailable; declined and all-day events; booking a note task and a mail task; old events with replicated task ids. |
+| Review | Lookback boundary below/exact/above seven days; Done includes finished planned items, attended meetings (not declined or upcoming), and unplanned tasks completed that day; note tasks completed on another device without local completion history; Didn't get to ordering; carried, deferred, dropped settledness; deferral due today, past, and future; unavailable targets; the same task planned on two earlier days; plan made on another device; both columns empty skips the step. |
+| History | Carry count below/exact/above `PLAN_CARRY_HINT`; history window boundary; counts from a note synced from another device; an old note edited by hand; planned days within a goal's period only; counts never reorder or hide items. |
+| Sources | Each source's candidates, paging at `PLAN_SOURCE_PAGE`, and account scope; items already planned marked, not repeated; starred conversation with and without an open task; task form Cancel writes nothing; adding never unstars or archives; dropping a starred card on the day view books only after the form saves; New Task for Goal sets the goal; provisional note task marker saved before linking; selected source restored per device; arrow-key tab navigation. |
+| Goals | Goal title on cards for tasks with goals; none on note tasks and check-ins; open task counts; goal from another account labelled. |
+| Choose/fit | Suggested candidate reasons; promise becoming a task first; working hours split windows; outside working hours; calendar unavailable; declined and all-day events; booking a note task and a mail task; old events with replicated task ids. |
 | Today | Layout without calendar, without mail accounts, with no plan, with a finished plan; mail signal counts and Invitations; unread-from-attendees count on day-view meetings; account selector scope; pull-to-refresh; narrow-width agenda fallback with **Book** and no dragging. |
 | Day view | Shared grid renders Calendar's existing views unchanged; scroll to now; dimmed declined and finished events; readiness indicators; event details with Prepare and Escape back to the meeting; card and block linked highlight; booked-time label on cards; schedule load failure and Try Again. |
 | Drag and book | Drag below the threshold activates the card; drop preview and edge scrolling; Escape cancels; drop outside the grid; drop of a plan card, an Also due task, a note task, a promise (task made first), and a Keep in Touch check-in (unlinked event); refused plan write keeps the booking and says so; Undo removes only the event; no writable calendar; **Book** opens the editor at the next free stretch; two quick drops of the same card. |
@@ -441,17 +515,20 @@ component tests for the dialogs and Today columns; and slim App tests only for
 entry points and palette wiring. Extend the existing Today, Notes, and task booking
 suites rather than adding parallel ones.
 
-Developer acceptance: plan a day with carried items, a new task, and a block
-booked by dragging a card onto the day view and another by **Book**; prepare a meeting from the routine; complete items from Tasks and Notes;
-shut down with one deferral and one carry; plan tomorrow; open the same day on a
+Developer acceptance: plan a day with carried items (one carried three times), a
+new task, a starred conversation, and a goal's task, with a block booked by
+dragging a card onto the day view and another by **Book**; prepare a meeting from
+the routine; complete items from Tasks and Notes; shut down with one deferral and
+one carry, checking the Done column; plan tomorrow; open the same day on a
 second device; repeat with the calendar offline.
 
 ## Proposed measures
 
 Lightweight, explicit evaluation during development, with no telemetry: how often
 a plan is made, how many planned items finish or are deliberately carried, deferred,
-or dropped, and whether users still open Inbox from Today for mail the signal did
-not show.
+or dropped, how often items reach the carry hint and what is then decided, which
+sources plans draw from (including starred mail), and whether users still open
+Inbox from Today for mail the signal did not show.
 
 ## Later, not in this design
 
