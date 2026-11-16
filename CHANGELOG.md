@@ -29,7 +29,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Select recipient badges in **To**, **Cc**, or **Bcc** by clicking them, with the arrow keys, or with <kbd>⌘/Ctrl + a</kbd>, then cut, copy, paste, delete, or drag them between fields together.
 - Drag the right edge of the note list in **Notes** to make it wider or narrower, as you can with the lists in **Mail** and **Contacts**.
 - Every **Settings** page now has the same layout: it opens with a section heading at the same spacing, and its explanations use the same text size.
-- The side panel in **Mail**, **Contacts**, **Notes**, **Files**, **Tasks**, and **Calendar** now resizes from its left edge. Drag it past that edge to hide it, or press <kbd>\</kbd>; the button on its edge, or <kbd>\</kbd> again, brings it back. Each view remembers whether you hid it, and the width you choose applies everywhere.
+- The side panel in **Mail**, **Contacts**, **Notes**, **Files**, **Tasks**, and **Calendar** now resizes from its left edge. Drag it past that edge to hide it, or press <kbd>&#92;</kbd>; the button on its edge, or <kbd>&#92;</kbd> again, brings it back. Each view remembers whether you hid it, and the width you choose applies everywhere.
 - Suggested and proposed meeting times now show the day around them on your
   calendar, including short-break warnings, so you can see what you have before
   and after without opening Calendar.

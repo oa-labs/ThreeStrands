@@ -950,6 +950,16 @@ test.describe("changelog", () => {
     expect(() => renderChangelogPage(fixture.replace("### Fixed", "### Changes"))).toThrow(/groups are New, Improved, Fixed/);
   });
 
+  test("keeps keyboard shortcuts closed so release notes can wrap", async ({ page }) => {
+    await page.goto("./changelog.html");
+    const shortcuts = page.locator(".changelog-body kbd");
+    await expect(shortcuts.filter({ hasText: /^\\$/ })).toHaveCount(2);
+    const malformed = await shortcuts.evaluateAll((keys) => keys
+      .filter((key) => key.children.length > 0 || key.textContent?.includes("</kbd>"))
+      .map((key) => key.outerHTML));
+    expect(malformed).toEqual([]);
+  });
+
   test("lists every published section in the sidebar, each jumping to its heading", async ({ page }) => {
     const sections = publishedSections();
     expect(sections.length).toBeGreaterThan(0);
