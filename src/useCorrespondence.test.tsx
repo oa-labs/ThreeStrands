@@ -214,6 +214,39 @@ describe("useCorrespondence", () => {
     expect(result.current.parkedDraft).toBeNull();
   });
 
+  it("publishes pending edits when parking a draft and retains the editor if saving fails", async () => {
+    const written = { ...draft, subject: "Plans", body: "Started here" };
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([written]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([]);
+    const save = vi.spyOn(mailClient, "saveDraft").mockRejectedValue(new Error("Storage unavailable"));
+    let state: ReturnType<typeof useCorrespondence>;
+    function Harness() {
+      state = useCorrespondence([], undefined, undefined, ...snippetArgs, null);
+      return <>
+        <button onClick={() => state.openDraft(written)}>Open</button>
+        {state.renderComposer()}
+      </>;
+    }
+    try {
+      render(<Harness />);
+      await waitFor(() => expect(state.drafts).toEqual([written]));
+      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Updated plans" } });
+      await act(async () => { await expect(state.closeDraft()).rejects.toThrow("Storage unavailable"); });
+      expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue("Updated plans");
+      expect(state!.activeDraft?.id).toBe(written.id);
+      save.mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+      await act(async () => { await state.closeDraft(); });
+      expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument();
+      expect(state!.drafts).toEqual([expect.objectContaining({ id: written.id, subject: "Updated plans" })]);
+      expect(state!.parkedDraft?.subject).toBe("Updated plans");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("never offers back a draft its composer discarded", async () => {
     const written = { ...draft, subject: "Throwaway", body: "Not needed" };
     const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([written]);

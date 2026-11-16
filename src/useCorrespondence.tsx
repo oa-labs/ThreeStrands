@@ -221,10 +221,13 @@ export function useCorrespondence(
   // Saves pending edits before the composer unmounts, so leaving a draft for
   // another folder never drops what was typed since the last autosave.
   const closeComposer = useCallback(async () => {
-    await editor.current?.flush();
+    const saved = await editor.current?.flush();
+    // Publish the saved version before leaving: conversation draft cards and
+    // Return to Draft must not depend on opening Drafts or the next sync.
+    if (saved) setDrafts((current) => [saved, ...current.filter((draft) => draft.id !== saved.id)]);
     if (activeRef.current) setParkedId(activeRef.current.id);
     setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
-  }, []);
+  }, [setDrafts]);
   // Called when navigating to the inline Drafts/Outbox view: makes sure
   // whatever was being edited is saved and the lists are current.
   const openList = useCallback(async () => {
