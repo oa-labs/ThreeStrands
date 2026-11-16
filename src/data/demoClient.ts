@@ -5,6 +5,7 @@ import type { FindAvailabilityRequest } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
 import { createDemoNotes } from "./demoNotes";
 import { createDemoMeetings } from "./demoMeetings";
+import { createDemoPlans } from "./demoPlans";
 import type { WorkspaceFile } from "../domain";
 import { attachmentKind } from "../attachmentKind";
 import { demoCorrespondence } from "./demoCorrespondence";
@@ -1991,6 +1992,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     ...demoSignatureClient,
     ...demoNotes,
+    ...createDemoPlans({ tasks: () => tasks, goals: () => goals, contacts: () => client.listContactProfiles("", 5000), notes: demoNotes }),
     ...createDemoMeetings({
       events: connectedEvents,
       threads: () => threads,

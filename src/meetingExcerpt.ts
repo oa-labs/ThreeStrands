@@ -6,9 +6,9 @@ import { noteInlineText } from "./notePreview";
  * bounded meeting block. */
 export type MeetingBlock = { kind: "excerpt" | "reference"; start: number; end: number };
 
-type Line = { start: number; text: string };
+export type Line = { start: number; text: string };
 
-function lines(body: string): Line[] {
+export function lines(body: string): Line[] {
   const out: Line[] = [];
   let offset = 0;
   for (const piece of body.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
@@ -18,22 +18,22 @@ function lines(body: string): Line[] {
   return out;
 }
 
-const lineEnd = (line: Line) => line.start + line.text.length;
+export const lineEnd = (line: Line) => line.start + line.text.length;
 
-function indent(text: string): number {
+export function indent(text: string): number {
   return [...(/^[ \t]*/.exec(text)?.[0] ?? "")].reduce((column, ch) => ch === "\t" ? column + 4 - column % 4 : column + 1, 0);
 }
 
-const isListItem = (text: string) => /^[ \t]*(?:[-+*]|\d+[.)])[ \t]/.test(text);
+export const isListItem = (text: string) => /^[ \t]*(?:[-+*]|\d+[.)])[ \t]/.test(text);
 
-function fenceRun(text: string): { mark: string; run: number; trailing: boolean } | null {
+export function fenceRun(text: string): { mark: string; run: number; trailing: boolean } | null {
   const match = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(text);
   return match ? { mark: match[1][0], run: match[1].length, trailing: match[2].trim() !== "" } : null;
 }
 
 /** The end of the list item's block on line `at`, or null when a nested
  * fence never closes. */
-function itemEnd(all: Line[], at: number): number | null {
+export function itemEnd(all: Line[], at: number): number | null {
   const itemIndent = indent(all[at].text);
   let end = lineEnd(all[at]);
   let fence: { mark: string; run: number } | null = null;

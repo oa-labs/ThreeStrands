@@ -105,6 +105,13 @@ describe("native account requests", () => {
     const entry = { event: reference, time: "3:00pm", attendees: [], name: "Sync", linkNote: false };
     await client.reserveMeetingPrep("2026-11-16", "v1", entry);
     expect(invoke).toHaveBeenLastCalledWith("reserve_meeting_prep", { date: "2026-11-16", expected: "v1", entry });
+    await client.dailyPlan("2026-11-16");
+    expect(invoke).toHaveBeenLastCalledWith("daily_plan", { date: "2026-11-16" });
+    const additions = [{ kind: "newTask" as const, title: "Draft memo" }];
+    await client.addToDailyPlan("2026-11-16", null, additions);
+    expect(invoke).toHaveBeenLastCalledWith("add_to_daily_plan", { date: "2026-11-16", expected: null, additions });
+    await client.removeFromDailyPlan("2026-11-16", "v2", "key");
+    expect(invoke).toHaveBeenLastCalledWith("remove_from_daily_plan", { date: "2026-11-16", expected: "v2", key: "key" });
   });
 
   it("checks meeting guests through the event's calendar account", async () => {

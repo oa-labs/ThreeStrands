@@ -1,6 +1,10 @@
 # Daily planning and shutdown
 
-**Status:** Proposed design; no feature code implemented.
+**Status:** Stage 1 in progress: the plan section format, parser, item-level
+writes, and plan reading are implemented (`src-tauri/src/daily_plan.rs`,
+`src-tauri/src/db/daily_plan.rs`, `src/dailyPlan.ts`, `fixtures/daily-plan.json`);
+review, history, sources, capacity, and note-task booking remain. No user-visible
+feature yet.
 **Baseline:** 0.210.0 repository, reviewed 2026-11-16.
 **Priority:** Part of the daily loop in the [product plan](../PLAN.MD#connected-workflow-additions),
 interleaved with [meeting preparation](meeting-preparation-design.md).

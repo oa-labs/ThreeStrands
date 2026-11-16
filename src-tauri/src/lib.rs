@@ -14,6 +14,7 @@ mod commands;
 mod contact_interchange;
 mod correspondence;
 mod credentials;
+mod daily_plan;
 mod db;
 mod default_apps;
 mod draft_pull;
@@ -1808,6 +1809,9 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::meetings::meeting_context,
         commands::meetings::meeting_readiness,
         commands::meetings::reserve_meeting_prep,
+        commands::plans::daily_plan,
+        commands::plans::add_to_daily_plan,
+        commands::plans::remove_from_daily_plan,
         commands::notes::resolve_note_conversation,
         commands::notes::resolve_note_contact,
         commands::notes::add_meeting_to_daily_note,

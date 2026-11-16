@@ -32,18 +32,18 @@ pub struct MeetingBlock {
     pub end: usize,
 }
 
-struct Line<'a> {
-    start: usize,
-    text: &'a str,
+pub(crate) struct Line<'a> {
+    pub(crate) start: usize,
+    pub(crate) text: &'a str,
 }
 
 impl Line<'_> {
-    fn end(&self) -> usize {
+    pub(crate) fn end(&self) -> usize {
         self.start + self.text.len()
     }
 }
 
-fn lines(body: &str) -> Vec<Line<'_>> {
+pub(crate) fn lines(body: &str) -> Vec<Line<'_>> {
     let mut out = Vec::new();
     let mut offset = 0;
     for piece in body.split_inclusive('\n') {
@@ -58,7 +58,7 @@ fn lines(body: &str) -> Vec<Line<'_>> {
 
 /// Leading whitespace in columns, with tabs to the next multiple of four, as
 /// the note parser counts it.
-fn indent(line: &str) -> usize {
+pub(crate) fn indent(line: &str) -> usize {
     line.chars()
         .take_while(|ch| matches!(ch, ' ' | '\t'))
         .fold(0, |column, ch| {
@@ -70,7 +70,7 @@ fn indent(line: &str) -> usize {
         })
 }
 
-fn is_list_item(line: &str) -> bool {
+pub(crate) fn is_list_item(line: &str) -> bool {
     let rest = line.trim_start_matches([' ', '\t']);
     let bytes = rest.as_bytes();
     let marker = if matches!(bytes.first(), Some(b'-' | b'+' | b'*')) {
@@ -87,7 +87,7 @@ fn is_list_item(line: &str) -> bool {
 
 /// A fence opening or closing on this line: its character and run length,
 /// and whether anything but whitespace follows the run.
-fn fence_run(line: &str) -> Option<(u8, usize, bool)> {
+pub(crate) fn fence_run(line: &str) -> Option<(u8, usize, bool)> {
     let text = line.trim_start_matches([' ', '\t']);
     let mark = *text.as_bytes().first()?;
     if !matches!(mark, b'`' | b'~') {
@@ -99,7 +99,7 @@ fn fence_run(line: &str) -> Option<(u8, usize, bool)> {
 
 /// The end of the block of the list item on line `at`, or `None` when a
 /// nested fence never closes and the block can't be bounded.
-fn item_end(lines: &[Line<'_>], at: usize) -> Option<usize> {
+pub(crate) fn item_end(lines: &[Line<'_>], at: usize) -> Option<usize> {
     let item_indent = indent(lines[at].text);
     let mut end = lines[at].end();
     let mut fence: Option<(u8, usize)> = None;

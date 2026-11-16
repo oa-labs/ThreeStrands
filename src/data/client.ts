@@ -6,7 +6,8 @@ import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, 
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
-import type { MeetingContext, MeetingReadiness, PrepReservation } from "../domain";
+import type { DailyPlan, MeetingContext, MeetingReadiness, PlanSave, PrepReservation } from "../domain";
+import type { PlanAddition } from "../dailyPlan";
 import {
   BOUNDED_LOCAL_READ,
   invokeWithPolicy,
@@ -433,6 +434,11 @@ export interface MailClient extends CorrespondenceClient {
   meetingReadiness(references: NoteReference[], mailScope?: string[] | null): Promise<MeetingReadiness[]>;
   /** Reserve Prep Time: a prep task under the meeting's line in `date`'s note, adding the line when needed. */
   reserveMeetingPrep(date: string, expected: string | null, entry: MeetingEntry): Promise<PrepReservation>;
+  /** The plan in `date`'s daily note with each item's state. */
+  dailyPlan(date: string): Promise<DailyPlan>;
+  /** Adds items after the plan's existing ones; links already there are reported in `already`. */
+  addToDailyPlan(date: string, expected: string | null, additions: PlanAddition[]): Promise<PlanSave>;
+  removeFromDailyPlan(date: string, expected: string | null, key: string): Promise<PlanSave>;
   resolveNoteConversation(reference: NoteReference): Promise<string | null>;
   /** The contact a contact reference opens, or null when this device has none. */
   resolveNoteContact(reference: NoteReference): Promise<string | null>;
@@ -705,6 +711,9 @@ const tauriClient: MailClient = {
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
   meetingReadiness: (references, mailScope = null) => read("meeting_readiness", { references, mailScope }),
   reserveMeetingPrep: (date, expected, entry) => complete("reserve_meeting_prep", { date, expected, entry }),
+  dailyPlan: (date) => read("daily_plan", { date }),
+  addToDailyPlan: (date, expected, additions) => complete("add_to_daily_plan", { date, expected, additions }),
+  removeFromDailyPlan: (date, expected, key) => complete("remove_from_daily_plan", { date, expected, key }),
   resolveNoteConversation: (reference) => read("resolve_note_conversation", { reference }),
   resolveNoteContact: (reference) => read("resolve_note_contact", { reference }),
   captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),

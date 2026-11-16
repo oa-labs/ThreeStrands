@@ -64,3 +64,35 @@ export async function reserveMeetingPrep(date: string, entry: MeetingEntry) {
     await notesChanged(id);
   } };
 }
+
+/** Adds items to `date`'s plan after saving any open typing in that day's
+ * note. Undo restores the note if nothing changed it since. */
+export async function addToDailyPlan(date: string, additions: import("./dailyPlan").PlanAddition[]) {
+  const id = noteTargetKey({ kind: "daily", date });
+  await prepareNoteMutation(id);
+  const current = await mailClient.getDailyNote(date);
+  const saved = await mailClient.addToDailyPlan(date, current?.updatedAt ?? null, additions);
+  if (saved.changed.length) await notesChanged(id);
+  return { ...saved, async undo() {
+    if (!saved.changed.length) return;
+    await prepareNoteMutation(id);
+    const result = await mailClient.saveDailyNote(date, saved.previousBody, saved.note.updatedAt);
+    if (!result.saved) throw new Error("That day's note changed after the plan was updated. Open Note to change it.");
+    await notesChanged(id);
+  } };
+}
+
+/** Takes one item off `date`'s plan, after saving any open typing there. */
+export async function removeFromDailyPlan(date: string, key: string) {
+  const id = noteTargetKey({ kind: "daily", date });
+  await prepareNoteMutation(id);
+  const current = await mailClient.getDailyNote(date);
+  const saved = await mailClient.removeFromDailyPlan(date, current?.updatedAt ?? null, key);
+  await notesChanged(id);
+  return { ...saved, async undo() {
+    await prepareNoteMutation(id);
+    const result = await mailClient.saveDailyNote(date, saved.previousBody, saved.note.updatedAt);
+    if (!result.saved) throw new Error("That day's note changed after the plan was updated. Open Note to change it.");
+    await notesChanged(id);
+  } };
+}

@@ -50,21 +50,21 @@ pub struct MeetingCapture {
 }
 
 /// What a refused insert into a daily note says, naming that note.
-struct DailyInsertMessages {
-    changed: &'static str,
-    conflict: &'static str,
-    fence: &'static str,
+pub(super) struct DailyInsertMessages {
+    pub(super) changed: &'static str,
+    pub(super) conflict: &'static str,
+    pub(super) fence: &'static str,
 }
 
 /// A daily note checked for adding to: still the version the action began
 /// from, not in Trash, and without a body conflict.
-struct DailyInsertStart {
-    note: Option<Note>,
-    previous_body: String,
-    parsed: note_entities::ParsedNote,
+pub(super) struct DailyInsertStart {
+    pub(super) note: Option<Note>,
+    pub(super) previous_body: String,
+    pub(super) parsed: note_entities::ParsedNote,
 }
 
-fn begin_daily_insert(
+pub(super) fn begin_daily_insert(
     tx: &Transaction<'_>,
     date: &str,
     expected: Option<&str>,

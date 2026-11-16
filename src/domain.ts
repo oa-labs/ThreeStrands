@@ -1099,6 +1099,26 @@ export type MeetingContext = {
 };
 /** What Reserve Prep Time did: `added` is false when the meeting already had a prep task. */
 export type PrepReservation = { note: Note; added: boolean; addedMeetingLine: boolean; previousBody: string; taskId: string | null };
+/** One item of a day's plan with its current state (`src-tauri/src/db/daily_plan.rs`). */
+export type DailyPlanItem = {
+  /** The canonical target it names, or `line:<offset>` for free text. */
+  key: string;
+  kind: import("./dailyPlan").PlanItemKind;
+  reference: import("./noteEntities").NoteReference | null;
+  title: string;
+  state: "open" | "inProgress" | "done" | "cancelled" | "text" | "unavailable";
+  marker: import("./dailyPlan").PlanMarker | null;
+  /** The task's id as Tasks lists it (`note:<note>:<marker>` for a note task). */
+  taskId: string | null;
+  accountId: string | null;
+  goal: { id: string; title: string } | null;
+  contactId: string | null;
+  start: number;
+  end: number;
+};
+/** The plan in a day's daily note. `revision` is the note's version, or null without a note. */
+export type DailyPlan = { date: string; noteId: string; revision: string | null; items: DailyPlanItem[]; notToday: DailyPlanItem[] };
+export type PlanSave = { note: Note; changed: string[]; already: string[]; previousBody: string };
 /** Counts for one meeting in a day's list; they agree with its full context. */
 export type MeetingReadiness = {
   reference: import("./noteEntities").NoteReference;

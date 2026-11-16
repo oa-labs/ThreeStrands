@@ -1,0 +1,195 @@
+{
+  "references": {
+    "T": {
+      "version": 1,
+      "kind": "task",
+      "id": "task-1"
+    },
+    "N": {
+      "version": 1,
+      "kind": "task",
+      "id": "11111111-1111-4111-8111-111111111111",
+      "note": "note-1"
+    },
+    "C": {
+      "version": 1,
+      "kind": "contact",
+      "id": "ann@example.org"
+    }
+  },
+  "parse": [
+    {
+      "name": "a note without a plan",
+      "body": "## Meetings\n\n- 9am Sync\n",
+      "expected": null
+    },
+    {
+      "name": "a plan heading inside code is not a plan",
+      "body": "```\n## Plan\n- x\n```\n",
+      "expected": null
+    },
+    {
+      "name": "every kind of item, nested content, and decisions",
+      "body": "# Monday\n\n## Plan\n\n- [Send deck]({T}) <!-- threestrands-plan:carried 2026-11-15 -->\n  - with the appendix\n- [Memo]({N})\n- ( ) Draft hiring plan <!-- threestrands-task:22222222-2222-4222-8222-222222222222 -->\n- (x) Book room\n- [Check in with Ann]({C})\n- Think about Q4\n\n### Not today\n\n- [Old]({T}) <!-- threestrands-plan:deferred 2026-11-20 -->\n- Survey <!-- threestrands-plan:dropped -->\n\n## Meetings\n\n- 9am Sync\n",
+      "expected": [
+        {
+          "kind": "task",
+          "text": "- [Send deck]({T}) <!-- threestrands-plan:carried 2026-11-15 -->\n  - with the appendix",
+          "marker": {
+            "kind": "carried",
+            "date": "2026-11-15"
+          }
+        },
+        {
+          "kind": "noteTask",
+          "text": "- [Memo]({N})"
+        },
+        {
+          "kind": "newTask",
+          "text": "- ( ) Draft hiring plan <!-- threestrands-task:22222222-2222-4222-8222-222222222222 -->"
+        },
+        {
+          "kind": "newTask",
+          "text": "- (x) Book room",
+          "checked": true
+        },
+        {
+          "kind": "contact",
+          "text": "- [Check in with Ann]({C})"
+        },
+        {
+          "kind": "text",
+          "text": "- Think about Q4"
+        }
+      ],
+      "notToday": [
+        {
+          "kind": "task",
+          "text": "- [Old]({T}) <!-- threestrands-plan:deferred 2026-11-20 -->",
+          "marker": {
+            "kind": "deferred",
+            "date": "2026-11-20"
+          }
+        },
+        {
+          "kind": "text",
+          "text": "- Survey <!-- threestrands-plan:dropped -->",
+          "marker": {
+            "kind": "dropped"
+          }
+        }
+      ]
+    },
+    {
+      "name": "malformed markers are ignored",
+      "body": "## Plan\n- a <!-- threestrands-plan:carried someday -->\n- b <!-- threestrands-plan:exploded -->\n",
+      "expected": [
+        {
+          "kind": "text",
+          "text": "- a <!-- threestrands-plan:carried someday -->"
+        },
+        {
+          "kind": "text",
+          "text": "- b <!-- threestrands-plan:exploded -->"
+        }
+      ]
+    },
+    {
+      "name": "the section ends at the next level-2 heading, and a deeper heading stays inside",
+      "body": "## Plan\n- a\n### Notes\n- b\n## Other\n- c\n",
+      "expected": [
+        {
+          "kind": "text",
+          "text": "- a"
+        },
+        {
+          "kind": "text",
+          "text": "- b"
+        }
+      ]
+    },
+    {
+      "name": "an empty plan",
+      "body": "## Plan\n\n## Meetings\n",
+      "expected": []
+    }
+  ],
+  "insert": [
+    {
+      "name": "into an empty note",
+      "body": "",
+      "lines": [
+        "- [Send deck]({T})"
+      ],
+      "expected": "## Plan\n\n- [Send deck]({T})\n"
+    },
+    {
+      "name": "before the Meetings section",
+      "body": "# Monday\n\n## Meetings\n\n- 9am Sync\n",
+      "lines": [
+        "- a",
+        "- b"
+      ],
+      "expected": "# Monday\n\n## Plan\n\n- a\n- b\n\n## Meetings\n\n- 9am Sync\n"
+    },
+    {
+      "name": "at the end of other text",
+      "body": "Journal",
+      "lines": [
+        "- a"
+      ],
+      "expected": "Journal\n\n## Plan\n\n- a\n"
+    },
+    {
+      "name": "after the last item, before Not today",
+      "body": "## Plan\n\n- a\n  - nested\n\n### Not today\n\n- old\n",
+      "lines": [
+        "- b"
+      ],
+      "expected": "## Plan\n\n- a\n  - nested\n- b\n\n### Not today\n\n- old\n"
+    },
+    {
+      "name": "into an empty plan",
+      "body": "## Plan\n\n## Meetings\n",
+      "lines": [
+        "- a"
+      ],
+      "expected": "## Plan\n\n- a\n\n## Meetings\n"
+    },
+    {
+      "name": "a new Not today subsection",
+      "body": "## Plan\n\n- a\n\n## Meetings\n",
+      "lines": [
+        "- old"
+      ],
+      "notToday": true,
+      "expected": "## Plan\n\n- a\n\n### Not today\n\n- old\n\n## Meetings\n"
+    },
+    {
+      "name": "after existing Not today items",
+      "body": "## Plan\n\n- a\n\n### Not today\n\n- old\n",
+      "lines": [
+        "- older"
+      ],
+      "notToday": true,
+      "expected": "## Plan\n\n- a\n\n### Not today\n\n- old\n- older\n"
+    },
+    {
+      "name": "Not today in a new plan",
+      "body": "",
+      "lines": [
+        "- old"
+      ],
+      "notToday": true,
+      "expected": "## Plan\n\n### Not today\n\n- old\n"
+    },
+    {
+      "name": "a note with unclosed code",
+      "body": "```\ncode",
+      "lines": [
+        "- a"
+      ],
+      "expected": "ERROR: unclosed fence"
+    }
+  ]
+}
