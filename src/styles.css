@@ -3453,12 +3453,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .recipient-chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); flex: 1; min-width: 0; padding: var(--space-1) 0; }
 .recipient-field.drag-over { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 .recipient-chip-row input { flex: 1 1 120px; min-width: 60px; padding: var(--space-1) var(--space-0-5); }
-.recipient-chip { display: inline-flex; align-items: center; gap: var(--space-1); flex-shrink: 0; padding: var(--space-1) var(--space-1-5) var(--space-1) var(--space-2); border-radius: var(--radius-pill); background: var(--hover); font-size: var(--text-secondary); cursor: grab; user-select: none; -webkit-user-select: none; }
+.recipient-chip { display: inline-flex; align-items: center; gap: var(--space-0-5); flex-shrink: 0; padding: var(--space-1) var(--space-1-5) var(--space-1) var(--space-2); border-radius: var(--radius-pill); background: var(--hover); font-size: var(--text-secondary); cursor: grab; user-select: none; -webkit-user-select: none; }
 .recipient-chip:active { cursor: grabbing; }
 .recipient-chip.selected { background: color-mix(in srgb, var(--accent) 22%, var(--hover)); box-shadow: inset 0 0 0 1px var(--accent); }
 .recipient-chip.invalid.selected { box-shadow: inset 0 0 0 1px var(--error); }
 .recipient-chip-label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recipient-chip-remove { display: grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; border: 0; border-radius: var(--radius-circle); color: var(--muted); background: transparent; cursor: pointer; }
+.recipient-chip-remove { display: grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; padding: 0; border: 0; border-radius: var(--radius-circle); color: var(--muted); background: transparent; cursor: pointer; }
 .recipient-chip-remove:hover { color: var(--text); background: var(--selected); }
 .recipient-suggestions { position: absolute; z-index: var(--z-local-popover); top: 100%; left: 0; right: 0; margin: var(--space-1) 0 0; padding: var(--space-1); list-style: none; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); box-shadow: var(--shadow-popover); max-height: 240px; overflow: auto; }
 .recipient-suggestions li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-2); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-body); }
