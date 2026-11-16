@@ -401,7 +401,7 @@ impl Database {
             let changed = connection
                 .execute(
                     "UPDATE tasks SET status='completed', completion_source='reply', completed_at=?1, updated_at=?1
-                     WHERE status IN ('open', 'in_progress') AND kind IN ('waiting_for', 'follow_up')
+                     WHERE status IN ('open', 'in_progress') AND kind = 'waiting_for'
                        AND wait_after IS NOT NULL
                        AND EXISTS (
                          SELECT 1 FROM threads
@@ -572,6 +572,30 @@ mod tests {
         let reopened = database.set_task_status(&task.id, "open", "user").unwrap();
         assert_eq!(reopened.completion_source, None);
         assert_eq!(reopened.completed_at, None);
+    }
+
+    #[test]
+    fn replies_do_not_complete_action_or_follow_up_tasks() {
+        for kind in ["action", "follow_up"] {
+            for status in ["open", "in_progress"] {
+                let database = database_with_thread();
+                let request = serde_json::from_value(serde_json::json!({
+                    "accountId": "account@example.com", "threadId": "account:thread",
+                    "subjectSnapshot": "Planning", "title": "Send the draft", "kind": kind,
+                }))
+                .unwrap();
+                let task = database.create_task(&request).unwrap();
+                database.set_task_status(&task.id, status, "user").unwrap();
+                database.connection().unwrap().execute(
+                    "UPDATE threads SET last_received_at='2026-09-20T10:00:00Z' WHERE id='account:thread'", [],
+                ).unwrap();
+                assert_eq!(database.reconcile_waiting_tasks().unwrap(), 0);
+                let tasks = database.list_tasks(None, Some(status)).unwrap();
+                assert_eq!(tasks.len(), 1);
+                assert_eq!(tasks[0].completion_source, None);
+                assert_eq!(tasks[0].completed_at, None);
+            }
+        }
     }
 
     #[test]
