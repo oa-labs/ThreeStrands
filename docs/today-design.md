@@ -71,7 +71,8 @@ around a daily loop, drawing on Sunsama's guided planning and shutdown:
   check the plan against free time.
 - A **Shutdown** that offers meeting follow-through and carry, defer, or drop for
   unfinished planned items.
-- The agenda, the day's plan, tasks, promises, and Keep in Touch lead the layout.
+- The day's plan, tasks, promises, and Keep in Touch lead the layout as cards,
+  beside a one-day calendar view of today where dragging a card books time for it.
   Mail shrinks to a compact, collapsible signal (such as Invitations and a count
   needing a reply, with a path to Inbox) rather than a full column.
 

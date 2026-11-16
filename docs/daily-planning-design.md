@@ -188,17 +188,19 @@ Steps can be skipped. Nothing is written until **Save Plan**.
    **No Prep Needed**. Opening preparation from here returns to this step with the
    routine's choices intact. Prep tasks are ordinary note tasks under the meeting
    line, not plan items, but they count toward the plan's capacity.
-4. **Fit.** A compact day line: meetings, already booked task blocks, and free
-   stretches within working hours, with the total free time left. Planned items
-   that are not booked list beside it, each with **Book** to place a
-   `TASK_BLOCK_MINUTES` block in a free stretch the user picks, through the
-   existing event creation path and calendar choice. Booking is optional and
-   writes to the calendar only when the user confirms each block. If the calendar
-   is unavailable, the step says so and the plan can still be saved.
+4. **Fit.** The same arrangement as Today's layout, inside the dialog: the chosen
+   items as cards on the left and the plan date's [day view](#day-view) on the
+   right, with the free time left above it. Drag a card onto the day view to book
+   a `TASK_BLOCK_MINUTES` block, or use the card's **Book** action to open the
+   event editor at the next free stretch. Booking is optional. A booking made here
+   is a calendar write that happens at the drop, with the usual Undo notice; it
+   does not wait for **Save Plan**. If the calendar is unavailable, the step says
+   so and the plan can still be saved.
 5. **Save.** A preview of the lines that will be written to the note. **Save Plan**
    writes them in one guarded transaction; **Copy Plan** copies a plain-text
    version. Calendar bookings made in step 4 are already separate confirmed events
-   and are not undone by cancelling the routine.
+   and are not undone by cancelling the routine. A card booked in step 4 whose item
+   is not saved stays booked; the step 5 preview names those bookings.
 
 Reopening the routine with **Edit Plan** starts from the saved plan: current items
 selected in order, with the same steps. Removing an item from today's plan removes
@@ -222,6 +224,9 @@ now)`, beside `dayShape` in `src/todayInsights.ts`:
   hold a block.
 - The step reports facts only: free time left, items booked, items not booked.
   Without estimates, it does not claim the plan fits or overflows.
+- Every booked block is `TASK_BLOCK_MINUTES` (30) long when created. The user can
+  change its length in the event editor; capacity then reads the event's actual
+  times. Cards carry no duration of their own.
 
 ### Booking note tasks
 
@@ -237,32 +242,89 @@ replicated task id keep their meaning.
 ## Today's new layout
 
 Today keeps its key (`0`), its role as a read surface, and its live updates. It
-has no text inputs; the routine and every form open as modals.
+has no text inputs; the routine and every form open as modals. Today stays one
+day: there is no multi-day board, and tomorrow is planned through **Plan
+Tomorrow**.
 
-- **Header:** the date, the day summary line, and the plan status: **Plan Today**,
-  or "3 of 5 planned done" with **Edit Plan**, and **Shut Down**.
-- **Agenda column:** today's agenda and Tomorrow as now, with each meeting's
-  readiness from the meeting design (note, prior notes, open commitments) and
-  **Prepare** beside **Add Note**. The existing "also in your meeting" join moves
-  here from the mail rows: a meeting shows "2 unread from attendees" when unread
-  conversations come from its attendees, opening the first one.
-- **Plan column:** the plan items in order, the focus item first, each with its
-  state, booked time if any, and source link. Below it, **Also due** (overdue and
-  due-today tasks not in the plan), **You said you would**, and Keep in Touch,
-  each with **Add to Today's Plan**. Without a plan, the column shows those
-  sections with a single line offering **Plan Today**.
+Two columns, with work on the left and time on the right:
+
+- **Header:** the date, the day summary line, the mail signal, and the plan status:
+  **Plan Today**, or "3 of 5 planned done" with **Edit Plan**, and **Shut Down**.
+- **Plan column (left):** the plan items as cards, in order, the focus item first.
+  A card shows the item's title, its source (account, note, or contact), its
+  state, and its booked time when it has one ("10:30 am"). Below the plan,
+  **Also due** (overdue and due-today tasks not in the plan), **You said you
+  would**, and Keep in Touch use the same cards, each with **Add to Today's Plan**.
+  Without a plan, the column shows those sections with a single line offering
+  **Plan Today**.
+- **Day view (right):** today's schedule as a time grid; see [Day view](#day-view).
+  Tomorrow's first events show below it, as the agenda shows them now.
 - **Mail signal:** the unread-mail column is removed. A one-line, collapsible
-  signal under the header shows **Invitations** (listed, since they are calendar
+  signal in the header shows **Invitations** (listed, since they are calendar
   decisions) and counts of **Needs a reply** and other unread mail, with
   **Open Inbox**. The phase 1 grouping in `src/todayMail.ts` still computes the
   counts. Collapsed state is a per-device convenience.
 
-Account scope: the plan, agenda, and meeting readiness are account-independent;
-every task row shows its account. Today's account selector continues to filter
-**Also due**, promises, and the mail signal, as it filters them today.
+Account scope: the plan, day view, and meeting readiness are account-independent;
+every task card shows its account. Today's account selector continues to filter
+**Also due**, promises, and the mail signal, as it filters them today. The day view
+shows the calendars selected in Calendar, as the agenda does now.
+
+Below a width breakpoint the day view is replaced by the current agenda list, with
+the same readiness and actions, and dragging is not offered; **Book** still works.
+The breakpoint is a layout token, not a number in component code.
 
 Pull-to-refresh, the minute clock, and the existing keyboard navigation of rows
-are kept. Rows use the shared `ContextSection` and `ContextRow` patterns.
+are kept. Cards are `ContextRow`s with card styling, so they keep its keyboard and
+accessibility behavior.
+
+### Day view
+
+The day view is the Calendar workspace's time grid for one day, not a second
+calendar implementation. Extract from `CalendarWeekView` a shared day-grid
+component and a task-block drag hook, used by Calendar's week, workweek, three-day,
+and day views and by Today and the Fit step. Calendar's behavior does not change.
+
+- **Contents.** Timed events laid out as in Calendar, all-day events and working
+  locations above the grid, and the **Now** line, as in Calendar. Declined and
+  finished events are dimmed. Today does not shade working hours, since Calendar
+  doesn't; if Calendar adds it, Today inherits it through the shared grid. The grid scrolls to the
+  current time on open.
+- **Meetings.** Each meeting shows a small readiness indicator from the meeting
+  design: a note mark when the occurrence has a note and a count of open
+  commitments. A meeting with unread conversations from its attendees shows that
+  count; this replaces the "Also in your meeting" note that the mail rows carried.
+  Selecting a meeting shows its details in Today, using Calendar's event details
+  component, with **Prepare**, **Open Note / Add Note**, **Reserve Prep Time**,
+  **Join**, and the existing event actions. Escape closes the details and returns
+  focus to the meeting.
+- **Booked blocks.** A task block names its task and shows the task's state. A
+  card and its block are linked: focusing or hovering one highlights the other,
+  and selecting the block offers **Open Task** and **Mark Done**, as Calendar's
+  booked-task details do.
+- **Dragging.** Pressing and dragging a card past the existing drag threshold
+  shows the drop preview, scrolls the grid near its edges, and books a
+  `TASK_BLOCK_MINUTES` block at the drop, exactly as Calendar does today: the
+  default calendar choice, the selected-calendar fix-up, and a **Booked … for
+  "Title"** notice with **Undo**. Escape cancels a drag. A drop outside the grid
+  does nothing. A press without a drag activates the card.
+- **Dragging an unplanned item.** Dropping a card from **Also due**, **You said
+  you would**, or Keep in Touch books the block and adds the item to today's plan
+  in one action. A promise becomes a follow-up task first through **Make a Task**;
+  a Keep in Touch check-in is booked as an event titled "Check in with <name>"
+  with no task link. The plan write uses the guarded note mutation; if it is
+  refused, the booking stays and the notice says the item could not be added to
+  the plan, with **Open Note**.
+- **Keyboard.** Every card has **Book**, which opens the event editor for its task
+  at the next free stretch that holds a block, so booking never requires a
+  pointer. Dragging is never the only way to do anything.
+- **Moving and resizing.** Existing blocks are moved, resized, or deleted through
+  Calendar's event editor. Direct dragging of existing events in the day view is
+  not part of this design; if Calendar gains it, Today inherits it through the
+  shared grid.
+- **Unavailable calendar.** Without a calendar connection, or when the schedule
+  fails to load, the day view shows that state with **Try Again** and the cards
+  stay usable; free time is shown as unavailable, never as an open day.
 
 ## Shut Down
 
@@ -318,7 +380,8 @@ Names are proposed, not existing APIs.
 | Markdown | Plan section parsing, plan item kinds, decision markers, and item-level insertion/removal in the shared note parser, with shared TS/Rust fixtures. Extend the editor to keep plan markers hidden and preserved. |
 | Native | `daily_plan(date)` returns parsed items with resolved state, settledness, and per-item availability. `plan_review(date)` returns unsettled items from the lookback window and due deferrals. `save_daily_plan(date, expectedRevision, operationId, changes)` applies item-level changes in one guarded transaction. Index plan items in the existing note entity link rows so settledness queries do not reparse every note. |
 | Booking | Note task references as event source tasks, in `taskBooking.ts`, the calendar model, and `CalendarTasks`. |
-| UI/controller | `PlanTodayDialog` and `ShutDownDialog` with `useDailyPlan`; `TodayPlanColumn` and `TodayMailSignal` in a reshaped `TodayWorkspace`; `planCapacity` in `todayInsights.ts`. The meeting step reuses `MeetingReadinessList`. |
+| Shared day grid | Extract the one-day time grid and the pointer task-block drag (threshold, preview, edge scrolling, Escape, booking with Undo) from `CalendarWeekView` into a shared component and hook. Calendar's views use them unchanged; Today and the Fit step render one day. Drop targets accept a plan card source as well as a Calendar task row. |
+| UI/controller | `PlanTodayDialog` and `ShutDownDialog` with `useDailyPlan`; `TodayPlanColumn` (cards), `TodayDayView`, and `TodayMailSignal` in a reshaped `TodayWorkspace`; `planCapacity` in `todayInsights.ts`. The meeting step reuses `MeetingReadinessList`; the day view's readiness indicators use the same `meeting_readiness` results. |
 | Typed client/demo | Extend `src/domain.ts`, `src/data/client.ts`, and `src/data/demoClient.ts` with plan and review shapes and fixtures. |
 
 ## Compatibility
@@ -340,11 +403,14 @@ Names are proposed, not existing APIs.
    read/review/save, `planCapacity`, and note task booking. Gate: a plan round-trips
    through save, export, import, and an older editor's serialization without losing
    items or markers, and repeated saves create no duplicate lines.
-2. **Reshaped Today.** Plan column reading the saved plan, **Add to Today's Plan**,
-   the mail signal replacing the mail column, and agenda readiness (after meeting
-   preparation stage 2). Gate: Today is useful without ever running the routine;
-   no mail-derived information that the old column provided is lost without a path
-   to it.
+2. **Reshaped Today.** Extract the shared day grid with Calendar's behavior
+   unchanged, then the plan cards reading the saved plan, **Add to Today's Plan**,
+   the day view with drag-to-book and **Book**, the narrow-width agenda fallback,
+   the mail signal replacing the mail column, and meeting readiness on the day view
+   (after meeting preparation stage 2). Gate: Today is useful without ever running
+   the routine; every Calendar drag and booking test still passes against the
+   shared grid; no mail-derived information that the old column provided is lost
+   without a path to it.
 3. **Plan Today.** The five-step routine, Edit Plan, and Plan Tomorrow. Gate: a user
    can review, choose, prepare, fit, and save a plan with the calendar available or
    not, and restart mid-routine without losing choices.
@@ -363,7 +429,9 @@ Names are proposed, not existing APIs.
 | Writes | Draft flush; stale version; conflict; Trash; size limit; unclosed fence; lost response with the same operation ID; Undo after later edits; reorder keeps nested content; removal of an exact item only; text written by hand in the section kept. |
 | Review | Lookback boundary below/exact/above seven days; items completed since; carried, deferred, dropped settledness; deferral due today, past, and future; unavailable targets; the same task planned on two earlier days; plan made on another device. |
 | Choose/fit | Candidate reasons; promise becoming a task first; provisional note task marker saved before linking; working hours split windows; outside working hours; calendar unavailable; declined and all-day events; booking a note task and a mail task; old events with replicated task ids. |
-| Today | Layout without calendar, without mail accounts, with no plan, with a finished plan; mail signal counts and Invitations; unread-from-attendees join on agenda rows; account selector scope; pull-to-refresh. |
+| Today | Layout without calendar, without mail accounts, with no plan, with a finished plan; mail signal counts and Invitations; unread-from-attendees count on day-view meetings; account selector scope; pull-to-refresh; narrow-width agenda fallback with **Book** and no dragging. |
+| Day view | Shared grid renders Calendar's existing views unchanged; scroll to now; dimmed declined and finished events; readiness indicators; event details with Prepare and Escape back to the meeting; card and block linked highlight; booked-time label on cards; schedule load failure and Try Again. |
+| Drag and book | Drag below the threshold activates the card; drop preview and edge scrolling; Escape cancels; drop outside the grid; drop of a plan card, an Also due task, a note task, a promise (task made first), and a Keep in Touch check-in (unlinked event); refused plan write keeps the booking and says so; Undo removes only the event; no writable calendar; **Book** opens the editor at the next free stretch; two quick drops of the same card. |
 | Shut Down | Ended versus upcoming meetings; follow-through state from another device; carry to tomorrow pre-selected next morning; optional notes text; day-closed state derivation. |
 | Navigation/accessibility | Modal scope, focus placement, Tab trap, Escape keep/discard, restored focus; step list semantics; reorder by keyboard; Prepare and return to the routine; palette enablement. |
 
@@ -373,8 +441,8 @@ component tests for the dialogs and Today columns; and slim App tests only for
 entry points and palette wiring. Extend the existing Today, Notes, and task booking
 suites rather than adding parallel ones.
 
-Developer acceptance: plan a day with carried items, a new task, and a booked
-block; prepare a meeting from the routine; complete items from Tasks and Notes;
+Developer acceptance: plan a day with carried items, a new task, and a block
+booked by dragging a card onto the day view and another by **Book**; prepare a meeting from the routine; complete items from Tasks and Notes;
 shut down with one deferral and one carry; plan tomorrow; open the same day on a
 second device; repeat with the calendar offline.
 
@@ -394,4 +462,8 @@ not show.
   design's Plan My Day and Top of mind ideas, with cited candidates.
 - A weekly plan and review built on the same section format.
 - A reminder to plan or shut down, which needs a decision about notifications.
-- Plan items with times of day, or plans spanning several days.
+- Plan items with times of day apart from booked blocks.
+- A multi-day board of plans. Today stays one day; the next day is planned with
+  **Plan Tomorrow**.
+- Dragging existing events within Today's day view, unless Calendar gains it first.
+- Durations other than the fixed `TASK_BLOCK_MINUTES` block at booking time.

@@ -255,8 +255,9 @@ are over. Calendar and Prepare entry points remain for meetings outside the rout
 **Reshape Today around the loop.** Feedback on the current Today view is that its
 agenda and task columns are the valuable parts. The centre unread-mail column,
 grouped by addressing heuristics, does not reliably surface important mail and is
-low value. Today becomes the home of the daily loop: agenda with meeting readiness,
-the day's plan and tasks, promises, and Keep in Touch reminders lead. Mail shrinks
+low value. Today becomes the home of the daily loop: the day's plan, tasks,
+promises, and Keep in Touch reminders as cards beside a one-day calendar view with
+meeting readiness, where dragging a card books time for it. Mail shrinks
 to a compact, collapsible signal (for example, Invitations and a count of messages
 needing a reply, with a path to Inbox) rather than a full column. The
 [Today design](docs/today-design.md) records the change. Mail's meaning-based sort
