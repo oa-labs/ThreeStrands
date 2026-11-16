@@ -477,6 +477,34 @@ describe("ThreadAssist", () => {
     expect(screen.queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
   });
 
+  it.each([true, false])("prioritizes booking with a secondary scheduler (calendar connected: %s)", async (calendarConnected) => {
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "schedule", title: "Podcast interview", participants: ["Jennifer Williams"], location: null,
+      rawTimeLanguage: "book a time here", normalizedStart: null, normalizedEnd: null, searchRangeStart: null, searchRangeEnd: null,
+      durationMinutes: 30, timeZone: null, confidence: 0.9,
+      evidence: { sourceMessageId: "message-1", excerpt: "Please book a time here." },
+    };
+    vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+    const bookingDetail = { ...detail, messages: [{ ...detail.messages[0], bodyHtml: '<p><a href="https://appointments.example.org/podcast?host=jen">Book a time here</a></p>', bodyText: "Please book a time here." }] };
+    const onReplyWithTimes = vi.fn();
+    render(<ThreadAssist {...props({ detail: bookingDetail, suggestions: { requested: true, proposals: [meeting] }, scheduling: { calendarConnected, onReplyWithTimes } })} />);
+    const open = screen.getByRole("link", { name: "Open booking page" });
+    expect(open).toHaveClass("btn-primary");
+    expect(open).toHaveAttribute("href", "https://appointments.example.org/podcast?host=jen");
+    expect(screen.queryByRole("group", { name: "Schedule" })).not.toBeInTheDocument();
+    const offer = screen.getByRole("button", { name: "Offer my own times" });
+    expect(offer).not.toHaveClass("btn-primary");
+    expect(offer).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(open);
+    expect(openUrl).toHaveBeenCalledWith("https://appointments.example.org/podcast?host=jen");
+    expect(onReplyWithTimes).not.toHaveBeenCalled();
+    fireEvent.click(offer);
+    expect(offer).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("group", { name: "Schedule" })).toBeVisible();
+    fireEvent.click(offer);
+    expect(screen.queryByRole("group", { name: "Schedule" })).not.toBeInTheDocument();
+  });
+
   it("flags uncertain suggestions for a closer look and schedules an unzoned meeting in the user's time zone", async () => {
     const meeting: ActionProposal = {
       type: "meeting",
@@ -499,16 +527,18 @@ describe("ThreadAssist", () => {
     const onReview = vi.fn();
     render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting], onReview }, scheduling: { calendarConnected: true } })} />);
 
-    // The flag names what may be wrong, and its Edit opens the editor to check it.
+    // The flag names what may be wrong; Edit stays in the shared card menu.
     expect(screen.getByText("Unclear which week").closest(".proposal-uncertain")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Edit to check: Unclear which week" }));
+    expect(screen.queryByRole("button", { name: /Edit to check/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
     expect(onReview).toHaveBeenCalledWith(0, meeting, "edit");
     // The email's wording of the time reads as a quote, not a description.
     expect(screen.getByText("sometime next week")).toHaveClass("proposal-time-language");
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Find Times" })).not.toBeInTheDocument();
     const schedule = screen.getByRole("group", { name: "Schedule" });
-    expect(within(schedule).getByText("Times in Eastern Time (the email didn’t say)")).toBeInTheDocument();
+    expect(within(schedule).getByText("Eastern Time · assumed")).toBeInTheDocument();
     await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ maxPerDay: SLOTS_PER_DAY })));
     expect(await within(schedule).findByText("No open times within the selected hours for this range.")).toBeInTheDocument();
     // The quote is the way into the evidence, so the card has no second "From the email".

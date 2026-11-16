@@ -1,3 +1,4 @@
+import { HoverTooltip } from "./AppChrome";
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { CalendarCheck, CalendarPlus, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
 import { type ReactNode, useContext, useCallback, useEffect, useEffectEvent, useId, useRef, useState } from "react";
@@ -221,6 +222,7 @@ export function MeetingScheduler({
   const [specificOpen, setSpecificOpen] = useState(true);
   const specificSlotSeen = useRef<string | null>(null);
   const previewId = useId();
+  const timeZoneHelpId = useId();
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const refresh = () => setAttempt((value) => value + 1);
@@ -403,7 +405,12 @@ export function MeetingScheduler({
   const coverageNote = (text: string) => <p className="meeting-scheduler-note" role="note">
     {text} <button type="button" className="btn-link" onClick={onOpenCalendarSettings}>Calendar Settings</button>
   </p>;
-  const assumedZone = plan.timeZoneAssumed ? <small className="meeting-scheduler-note">Times in {zoneName(timeZone)} (the email didn&rsquo;t say)</small> : null;
+  const assumedZone = plan.timeZoneAssumed ? <small className="meeting-scheduler-note">
+    <HoverTooltip label="The email didn’t specify a time zone, so these times use your availability time zone." placement="bottom">
+      <span tabIndex={0} aria-describedby={timeZoneHelpId}>{zoneName(timeZone)} · assumed</span>
+    </HoverTooltip>
+    <span id={timeZoneHelpId} className="sr-only">The email didn’t specify a time zone, so these times use your availability time zone.</span>
+  </small> : null;
 
   if (calendarConnected && needsHours && query?.kind === "range") return <div className="meeting-scheduler" role="group" aria-label="Schedule">
     {adjust}

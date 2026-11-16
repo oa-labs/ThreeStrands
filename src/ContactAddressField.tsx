@@ -4,12 +4,13 @@ import { Check, Copy, Star, Users, X } from "lucide-react";
 import { matchingGroups, memberCountLabel } from "./contactGroups";
 import { mailClient } from "./data/client";
 import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
-import { isEmailAddress, normalizePastedEmailAddresses, splitTypedAddresses } from "./emailAddress";
+import { isEmailAddress, normalizePastedEmailAddresses, splitAddressList, splitTypedAddresses } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 const EMAIL_SEPARATOR_KEYS = new Set(["Enter", ",", ";", " "]);
+const PARTICIPANT_SEPARATOR_KEYS = new Set(["Enter", ";"]);
 const LINK_SEPARATOR_KEYS = new Set(["Enter", " "]);
 const EMAIL_SEPARATORS = /[\s,;]+/;
 const LINK_SEPARATORS = /\s+/;
@@ -80,6 +81,14 @@ export function EmailBadgeField({ label, values, calendarAccount, disabled, onCh
   return <ContactMultiValueField kind="email" label={label} inputLabel={label} suggestContacts calendarAccount={calendarAccount} requireAddresses values={values} disabled={disabled} onChange={onChange} onPendingChange={onPendingChange} knownNames={knownNames} onNamesChange={onNamesChange} />;
 }
 
+/** Suggestions describe people by name or address; only event invitees require addresses. */
+export function ProposalParticipantsField({ values, onChange }: {
+  values: string[];
+  onChange(values: string[]): void;
+}) {
+  return <ContactMultiValueField kind="participant" label="Participants" inputLabel="Participants" suggestContacts values={values} onChange={onChange} />;
+}
+
 export function ContactLinksField({ links, disabled, onChange }: {
   links: string[];
   disabled?: boolean;
@@ -91,7 +100,7 @@ export function ContactLinksField({ links, disabled, onChange }: {
 function ContactMultiValueField({ kind, label, inputLabel, primary = false, suggestContacts = false, calendarAccount = null, requireAddresses = false, values, disabled, onChange, onPendingChange, knownNames, onNamesChange }: {
   knownNames?: ReadonlyMap<string, string>;
   onNamesChange?(names: ReadonlyMap<string, string>): void;
-  kind: "email" | "link";
+  kind: "email" | "link" | "participant";
   label: string;
   inputLabel: string;
   /** The first address is the contact's primary one, and any other can be promoted. */
@@ -106,8 +115,9 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
   onChange(values: string[]): void;
   onPendingChange?(text: string): void;
 }) {
-  const isEmail = kind === "email";
-  const itemName = isEmail ? "address" : "link";
+  const isParticipant = kind === "participant";
+  const isEmail = kind !== "link";
+  const itemName = isParticipant ? "person" : isEmail ? "address" : "link";
   const labelId = useId();
   const listId = useId();
   const hintId = useId();
@@ -208,6 +218,17 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
   };
 
   const commit = (text: string) => {
+    if (isParticipant) {
+      // A display name is valid proposal data. Keep spaces within names and
+      // header-style addresses intact; never infer an email address from a name.
+      const next = [...values];
+      for (const value of splitAddressList(text.replace(/;/g, ",")).map((value) => value.trim()).filter(Boolean)) {
+        if (!next.some((existing) => existing.toLocaleLowerCase() === value.toLocaleLowerCase())) next.push(value);
+      }
+      changeDraft("");
+      if (next.length !== values.length) onChange(next);
+      return;
+    }
     if (!requireAddresses) {
       const next = addAll(values, text, kind);
       changeDraft("");
@@ -284,7 +305,7 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
     }
     // A space may be part of a name being looked up, but never of an address.
     if (event.key === " " && suggestContacts && draft.trim() && !draft.includes("@")) return;
-    if ((isEmail ? EMAIL_SEPARATOR_KEYS : LINK_SEPARATOR_KEYS).has(event.key)) {
+    if ((isParticipant ? PARTICIPANT_SEPARATOR_KEYS : isEmail ? EMAIL_SEPARATOR_KEYS : LINK_SEPARATOR_KEYS).has(event.key)) {
       event.preventDefault();
       commit(draft);
     } else if (event.key === "Backspace" && !draft && values.length) {
@@ -312,7 +333,7 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
               : <button type="button" className="recipient-chip-remove" aria-label={`Make ${value} primary`} title="Make primary address" disabled={disabled} onClick={() => makePrimary(value)}>
                 <Star size={ICON_SIZE.xs} aria-hidden="true" />
               </button> : null}
-            <button type="button" className="recipient-chip-remove contact-multi-value-copy" aria-label={copied === value ? `Copied ${value}` : `Copy ${value}`} title={`Copy ${itemName}`} onClick={() => void copy(value)}>
+            <button type="button" className="recipient-chip-remove contact-multi-value-copy" aria-label={copied === value ? `Copied ${value}` : `Copy ${value}`} title={`Copy ${isParticipant ? "name or address" : itemName}`} onClick={() => void copy(value)}>
               {copied === value ? <Check size={ICON_SIZE.xs} aria-hidden="true" /> : <Copy size={ICON_SIZE.xs} aria-hidden="true" />}
             </button>
             <button type="button" className="recipient-chip-remove" aria-label={`Remove ${badgeName(value)}`} disabled={disabled} onClick={() => remove(value)}>
@@ -333,9 +354,9 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
             "aria-activedescendant": open ? `${listId}-${active}` : undefined,
           } : {}}
           type="text"
-          inputMode={isEmail ? "email" : "url"}
+          inputMode={isParticipant ? "text" : isEmail ? "email" : "url"}
           {...SEARCH_INPUT_ATTRIBUTES}
-          placeholder={values.length ? `Add another ${itemName}` : isEmail ? "name@example.com" : "https://example.com"}
+          placeholder={values.length ? `Add another ${itemName}` : isParticipant ? "Name or email address" : isEmail ? "name@example.com" : "https://example.com"}
           disabled={disabled}
           value={draft}
           onChange={(event) => changeDraft(event.target.value)}
@@ -396,7 +417,7 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
       ) : null}
       {hint ? <p id={hintId} className="recipient-field-hint" role="alert">{hint}</p> : null}
       {groupNote ? <p className="recipient-group-note" role="status">{groupNote}</p> : null}
-      {copyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy {isEmail ? "email address" : "link"}</span> : null}
+      {copyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy {isParticipant ? "participant" : isEmail ? "email address" : "link"}</span> : null}
     </div>
   );
 }

@@ -135,7 +135,7 @@ describe("MeetingScheduler", () => {
       rangeStart: range.query!.start, rangeEnd: range.query!.end, maxPerDay: SLOTS_PER_DAY,
       preferences: { ...preferences, defaultDurationMinutes: 45 },
     });
-    expect(screen.getByText("Times in Eastern Time (the email didn’t say)")).toBeInTheDocument();
+    expect(screen.getByText("Eastern Time · assumed")).toHaveAccessibleDescription("The email didn’t specify a time zone, so these times use your availability time zone.");
     expect(screen.getByRole("combobox", { name: "Meeting Length" })).toHaveValue("45");
     // The time zone and the ways to narrow the times come before the times; the reply is the main action.
     const hours = screen.getByRole("group", { name: "Part of the day" });
