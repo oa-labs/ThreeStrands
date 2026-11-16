@@ -1965,7 +1965,7 @@ describe("returning from a jump", () => {
 
   it("books a plan item from Today on a connected calendar and offers Undo in the app's notice", async () => {
     vi.spyOn(mailClient, "dailyPlan").mockImplementation(async (date) => ({ date, noteId: `daily:${date}`, revision: "r1", notToday: [], items: [{
-      key: "plan-memo", kind: "newTask", reference: null, title: "Draft the memo", state: "open", marker: null,
+      key: "plan-memo", kind: "newTask", reference: null, title: "Draft the memo", state: "open", marker: null, carryCount: 0,
       taskId: `note:daily:${date}:m1`, accountId: null, goal: null, contactId: null, start: 0, end: 0,
     }] }));
     const create = vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => ({

@@ -69,7 +69,7 @@ const emptyPlan = (date = localDate(0)): DailyPlan => ({ date, noteId: `daily:${
 function planItem(key: string, overrides: Partial<DailyPlanItem> = {}): DailyPlanItem {
   return {
     key: JSON.stringify(["task", null, null, null, key]), kind: "task", reference: { version: 1, kind: "task", id: key }, title: `Task ${key}`,
-    state: "open", marker: null, taskId: key, accountId: "you@example.com", goal: null, contactId: null, start: 0, end: 0, ...overrides,
+    state: "open", marker: null, carryCount: 0, taskId: key, accountId: "you@example.com", goal: null, contactId: null, start: 0, end: 0, ...overrides,
   };
 }
 
