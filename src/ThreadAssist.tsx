@@ -10,6 +10,7 @@ import { FindTimesCard } from "./FindTimesCard";
 import { MoreActionsMenu } from "./MoreActionsMenu";
 import { planMeeting } from "./scheduling";
 import { safeWebUrl } from "./calendarTime";
+import { meetingBookingUrl } from "./meetingBooking";
 import { EventLocation } from "./EventLocation";
 import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
@@ -278,7 +279,7 @@ export function reminderTask(meeting: MeetingProposal, now: Date): TaskProposal 
  * from the user, so the card folds to one line that opens it there; the
  * hidden card keeps checking, so the suggestion returns if the event goes.
  */
-function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEmails, ownNames, people: conversation }: {
+function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEmails, ownNames, people: conversation, bookingUrl }: {
   proposal: ActionProposal;
   index: number;
   source: string | null;
@@ -288,7 +289,10 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
   ownNames: string[];
   /** The conversation's other people, to recognize an event already on the calendar. */
   people: string[];
+  bookingUrl: string | null;
 }) {
+  const [offerOwnTimes, setOfferOwnTimes] = useState(false);
+  const schedulerId = useId();
   const [matchedEvent, setMatchedEvent] = useState<ScheduleEvent | null>(null);
   const matched = matchedEvent !== null;
   const note = uncertaintyNote(proposal);
@@ -347,6 +351,11 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
       </span></p> : where?.place ? <p className="proposal-detail"><MapPin size={ICON_SIZE.sm} aria-hidden="true" /><span><EventLocation location={where.place} /></span></p> : null}
       {people ? <p className="proposal-detail"><Users size={ICON_SIZE.sm} aria-hidden="true" /><span>{people}</span></p> : null}
     </> : proposal.notes || due ? <p>{[proposal.notes, due ? `Due ${due}` : null].filter(Boolean).join(" · ")}</p> : null}
+    {bookingUrl ? <div className="proposal-actions">
+      <a className="btn btn-sm btn-primary" href={bookingUrl} title={bookingUrl} onClick={(event) => { event.preventDefault(); void openUrl(bookingUrl); }}>Open booking page</a>
+      <button type="button" className="btn btn-sm" aria-expanded={offerOwnTimes} aria-controls={schedulerId} onClick={() => setOfferOwnTimes((shown) => !shown)}>Offer my own times</button>
+    </div> : null}
+    {proposal.type === "meeting" ? <div id={schedulerId} hidden={Boolean(bookingUrl) && !offerOwnTimes}>
     {proposal.type === "meeting" && proposal.intent === "schedule" && scheduling.offeredTimesShown ? <div className="meeting-scheduler" role="group" aria-label="Schedule">
       <p className="context-status">The email offers times for this meeting.</p>
       <div className="meeting-scheduler-actions">
@@ -369,6 +378,7 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
       matchedActions={dismiss}
       moreActions={[{ label: "Edit", onSelect: edit }]}
     /> : null}
+    </div> : null}
     {proposal.type === "task" ? <div className="proposal-actions">
       <button type="button" className="btn btn-sm btn-primary" onClick={() => suggestions.onReview(index, proposal, "accept")}>Add Task…</button>
     </div> : null}
@@ -544,6 +554,7 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
           ownEmails={ownEmails}
           ownNames={ownNames}
           people={people}
+          bookingUrl={proposal.type === "meeting" ? meetingBookingUrl(proposal, detail.messages.find((message) => message.id === proposal.evidence.sourceMessageId)) : null}
         />)}
       </div> : null}
     </div>
