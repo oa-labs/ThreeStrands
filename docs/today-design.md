@@ -1,7 +1,7 @@
 # Today view design
 
-Today (key `0`) is the day at a glance: the agenda, unread mail, tasks, and
-the promises waiting on the user. It's a live dashboard, not a snapshot. It
+Today (key `0`) is the day at a glance: the day's plan beside today's
+calendar, with tasks, promises, check-ins, and a line about unread mail. It's a live dashboard, not a snapshot. It
 updates as mail syncs and the clock moves, and every row opens the thing it
 describes.
 
@@ -86,6 +86,14 @@ Today's layout; if it ships, it feeds the compact mail signal. The AI **Plan My
 Day** button becomes an optional step inside Plan Today (for example, suggesting
 priorities), and the routine without AI takes the plain name. The Top of mind
 strip's ideas (a small budget, one focus item, cited joins) carry into that step.
+
+**As built (daily planning stage 2).** The phase 1 columns above are replaced:
+Today is two columns, the plan (or one meeting's preparation) beside a one-day
+time grid, with the mail groups reduced to a header line (invitations listed,
+counts of Needs a reply and other unread, **Open Inbox**). The "Also in your
+meeting" note on mail rows became a count of unread mail from attendees on each
+meeting in the day view. Tasks, promises, and Keep in Touch are tabs of the
+plan's source switcher. See [Today's new layout](daily-planning-design.md#todays-new-layout).
 
 ## Phase 2: the AI layer
 

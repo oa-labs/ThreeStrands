@@ -50,6 +50,23 @@ describe("DayTimeGrid", () => {
     expect(screen.getByRole("button", { name: /Tomorrow/ })).toBeInTheDocument();
   });
 
+  it("adds an optional description, mark, and row key to events without changing undecorated ones", () => {
+    const { container } = renderGrid({
+      events: [offsite, standup, review],
+      eventDecoration: (event) => event.id === "Review" ? { description: "Has notes", mark: <b>N</b>, rowKey: "meeting:review" }
+        : event.id === "Offsite" ? { description: "All day away" } : null,
+    });
+    const decorated = screen.getByRole("button", { name: /Review/ });
+    expect(decorated).toHaveAccessibleDescription("Has notes");
+    expect(decorated).toHaveAttribute("data-row-key", "meeting:review");
+    expect(decorated.querySelector(".calendar-event-mark")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("button", { name: "Offsite" })).toHaveAccessibleDescription("All day away");
+    const plain = screen.getByRole("button", { name: /Standup/ });
+    expect(plain).not.toHaveAttribute("aria-describedby");
+    expect(plain).not.toHaveAttribute("data-row-key");
+    expect(container.querySelectorAll(".calendar-event-mark")).toHaveLength(1);
+  });
+
   it("lists all-day events above the grid", () => {
     renderGrid({ events: [offsite, standup] });
     expect(within(screen.getByLabelText("All-day events")).getByRole("button", { name: "Offsite" })).toBeInTheDocument();

@@ -454,8 +454,10 @@ available notes.
   preparation has the same actions. <kbd>↓</kbd>/<kbd>↑</kbd> move to the next or previous meeting;
   <kbd>Escape</kbd>, <kbd>p</kbd>, or choosing the meeting again closes it and
   returns focus to the trigger. On Today, choosing an agenda event prepares it;
-  **Open in Calendar** is among its actions. This is the interim placement until
-  Plan Today ships, which removes the mail column anyway.
+  **Open in Calendar** is among its actions. This was the interim placement; since
+  daily planning stage 2, Today has no mail column and preparation replaces the
+  plan in the left column, chosen from the day view (or the agenda list in a
+  narrow window), whose meetings carry the readiness summary.
 - Under the title, an action row offers the next steps: Add Note / Open Note,
   **Reserve Prep Time**, Join, and Open in Calendar on Today (Calendar's details
   already offer Open Note and Join). An empty **This meeting** offers Add Note.

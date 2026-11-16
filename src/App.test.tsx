@@ -1942,13 +1942,14 @@ describe("returning from a jump", () => {
     return today;
   }
 
-  it.each(["Today's agenda", "Tomorrow", "Next meeting"])("returns to Today with Escape after opening %s", async (entry) => {
+  it.each(["Day view", "Today's agenda", "Tomorrow", "Next meeting"])("returns to Today with Escape after opening %s", async (entry) => {
     const today = await openTodayWithCalendar();
     const title = entry === "Tomorrow" ? "Planning" : "Project review";
     if (entry === "Next meeting") fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
     else {
-      // On Today, choosing an agenda event prepares it; Open in Calendar is the jump.
-      fireEvent.click(within(within(today).getByRole("region", { name: entry })).getByRole("button", { name: new RegExp(`^${title}`) }));
+      // On Today, choosing an event in the day view (or the narrow-width agenda) prepares it; Open in Calendar is the jump.
+      const where = entry === "Day view" ? within(today).getByRole("group", { name: entry }) : within(today).getByRole("region", { name: entry });
+      fireEvent.click(within(where).getByRole("button", { name: new RegExp(`^${title}`) }));
       const preparation = await within(today).findByRole("region", { name: `Preparation for ${title}` });
       fireEvent.click(within(preparation).getByRole("button", { name: "Open in Calendar" }));
     }
@@ -1960,6 +1961,27 @@ describe("returning from a jump", () => {
     expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.getByRole("region", { name: "Today" })).toBeInTheDocument();
+  });
+
+  it("books a plan item from Today on a connected calendar and offers Undo in the app's notice", async () => {
+    vi.spyOn(mailClient, "dailyPlan").mockImplementation(async (date) => ({ date, noteId: `daily:${date}`, revision: "r1", notToday: [], items: [{
+      key: "plan-memo", kind: "newTask", reference: null, title: "Draft the memo", state: "open", marker: null,
+      taskId: `note:daily:${date}:m1`, accountId: null, goal: null, contactId: null, start: 0, end: 0,
+    }] }));
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => ({
+      id: "booked", accountId: request.accountId, calendarId: request.calendarId, title: request.title, allDay: false, start: request.start, end: request.end, sourceTaskId: request.sourceTaskId ?? null,
+    }));
+    const today = await openTodayWithCalendar();
+    fireEvent.click(await within(today).findByRole("button", { name: "Book: Draft the memo" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      accountId: "calendar@example.com", title: "Draft the memo", sourceTaskId: "note:daily:2026-10-26:m1",
+    })));
+    // The next free half hour after now, before the 10:00 meeting (the test clock may have moved past 9:00).
+    const start = Date.parse(create.mock.calls[0][0].start);
+    expect(start).toBeGreaterThanOrEqual(new Date(2026, 9, 26, 9).getTime());
+    expect(start).toBeLessThanOrEqual(new Date(2026, 9, 26, 9, 30).getTime());
+    expect(await screen.findByText(/^Booked 9:\d\d\s?am for “Draft the memo”$/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
   it("dismisses a calendar dialog before Escape returns to Today", async () => {
@@ -2161,6 +2183,7 @@ describe("empty mail states", () => {
     expect(within(panel).queryByRole("region", { name: "Keep in touch" })).not.toBeInTheDocument();
     fireEvent.click(within(next).getByRole("button", { name: "Open Today" }));
     const today = await screen.findByRole("region", { name: "Today" });
+    fireEvent.click(within(today).getByRole("tab", { name: "Keep in Touch" }));
     expect(await within(today).findByRole("region", { name: "Keep in touch" })).toBeInTheDocument();
     // Launch reopens the last view, so return to Mail before relaunching.
     fireEvent.keyDown(window, { key: "1" });

@@ -1865,9 +1865,12 @@ export function App() {
         taskRefreshKey={taskRevision}
         calendarConnected={calendarConnected}
         calendars={calendar.calendars}
+        calendarAccounts={calendar.accounts}
         onOpenThread={jumpToThread}
         onOpenEvent={(event) => openCalendarView(eventDate(event), event)}
         onAddNote={(event) => { void openMeetingNote(event); }}
+        onOpenNote={(noteId) => openNote(noteId)}
+        onNotice={setNotice}
         onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
         onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         onOpenInbox={() => executeById("view.mail")}

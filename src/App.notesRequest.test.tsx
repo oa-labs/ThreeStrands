@@ -198,7 +198,8 @@ it("prepares a meeting on Today, opens a source note, and comes back to the same
   expect(await screen.findByRole("region", { name: "Preparation for Prep review" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Close Preparation" }));
   await waitFor(() => expect(screen.queryByRole("region", { name: "Preparation for Prep review" })).not.toBeInTheDocument());
-  expect(screen.getByRole("group", { name: "Unread mail" })).toBeInTheDocument();
+  // Closing preparation brings back today's plan in the left column.
+  expect(screen.getByRole("group", { name: "Plan" })).toBeInTheDocument();
 
   // p prepares the next meeting and Escape closes it.
   fireEvent.keyDown(window, { key: "p" });

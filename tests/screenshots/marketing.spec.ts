@@ -189,10 +189,12 @@ const scenes: Scene[] = [
       await waitForMessage(page);
       await page.keyboard.press("0");
       const today = page.getByRole("region", { name: "Today", exact: true });
-      await expect(today.getByRole("group", { name: "Agenda", exact: true }).getByText("Team standup").first()).toBeVisible();
-      await expect(today.getByRole("group", { name: "Unread mail", exact: true }).getByText(/Design crit: onboarding flow v3/).first()).toBeVisible();
-      await expect(today.getByRole("group", { name: "Tasks", exact: true }).getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
+      await expect(today.getByRole("group", { name: "Day view", exact: true }).getByText("Team standup").first()).toBeVisible();
+      await expect(today.getByRole("group", { name: "Mail", exact: true }).getByRole("button", { name: "Open Inbox" })).toBeVisible();
+      await today.getByRole("tab", { name: "You Said You Would" }).click();
       await expect(today.getByRole("region", { name: "You said you would", exact: true }).getByText(/interview notes/).first()).toBeVisible();
+      await today.getByRole("tab", { name: "Tasks", exact: true }).click();
+      await expect(today.getByRole("region", { name: "Open tasks", exact: true }).getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
     },
   },
   {

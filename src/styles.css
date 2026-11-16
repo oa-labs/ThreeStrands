@@ -162,6 +162,8 @@
   --dot-size: 8px;          /* status and color dots */
   --check-size: 16px;       /* checkboxes and menu check marks */
   --swatch-size: 22px;      /* color swatches */
+  --today-day-view-min: 300px; /* narrowest day view beside Today's plan */
+  --today-column-min: 280px;   /* narrowest Today column once they stack */
   /* Entrance animations; motion.test.ts keeps one-shot entrances at 200ms or less. */
   --duration-entrance: 160ms;
   --duration-spin: 1s;
@@ -3709,17 +3711,39 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .calendar-week-days, .calendar-week-all-day, .calendar-week-grid { grid-template-columns: 72px repeat(var(--calendar-day-count, 7), minmax(0, 1fr)); }
 .calendar-week-controls { flex-wrap: wrap; justify-content: flex-end; }
 .calendar-visible-range { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-meta); }
-/* Today: three columns of context rows under a page header; they stack when the window is narrow. */
+/* Today: the plan (or a meeting's preparation) beside a day view of today, under a page header.
+   Below Today's breakpoint the agenda list takes the day view's place and the columns stack. */
 .app-shell.today-open { grid-template-columns: 58px minmax(0, 1fr); }
 .today-workspace { grid-column: 2; min-width: 0; min-height: 0; overflow: auto; background: var(--background); }
 /* Wide windows center the page so the three columns stay a readable width. */
-.today-page { width: 100%; max-width: 1400px; margin-inline: auto; }
+.today-page { width: 100%; max-width: 1400px; margin-inline: auto; container: today / inline-size; }
 .today-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-4); padding: var(--pane-header-padding); border-bottom: 1px solid var(--border); }
 .today-header h1 { margin: var(--space-1) 0 0; font-size: var(--text-page-title); }
 .today-day-shape { margin: var(--space-1) 0 0; color: var(--secondary); font-size: var(--text-body); }
 .today-shared-meetings { color: var(--accent); }
 .today-next { display: flex; align-items: center; gap: var(--space-2); }
-.today-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; gap: var(--space-8); padding: var(--space-4) var(--pane-inset); }
+.today-columns { display: grid; grid-template-columns: minmax(0, 2fr) minmax(var(--today-day-view-min), 1fr); align-items: start; gap: var(--space-8); padding: var(--space-4) var(--pane-inset); }
+.today-heading { min-width: 0; }
+.today-plan-progress { margin: var(--space-1) 0 0; color: var(--secondary); font-size: var(--text-body); }
+.today-mail-signal { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); color: var(--secondary); font-size: var(--text-body); }
+.today-mail-signal-toggle { display: inline-flex; align-items: center; gap: var(--space-1); }
+.today-mail-signal-body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
+.today-plan-focus { border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.today-in-plan { color: var(--muted); font-size: var(--text-meta); }
+.today-sources { margin-top: var(--space-4); }
+.today-source-tabs { margin: 0 0 var(--space-2) var(--context-row-inset); }
+.today-source-panel > .context-status { padding: var(--space-2) var(--context-row-inset); }
+.today-day-view { height: 75vh; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.today-day-view-actions { display: flex; align-items: center; gap: var(--space-2); }
+.calendar-event-mark { display: inline-flex; align-items: center; gap: var(--space-0-5); margin-right: var(--space-1); vertical-align: middle; }
+.calendar-event-mark-count { font-size: var(--text-micro); font-weight: var(--weight-semibold); }
+.today-agenda-fallback { display: none; }
+/* The breakpoint lives here, not in component code: container conditions can't read custom properties. */
+@container today (width < 820px) {
+  .today-columns { grid-template-columns: repeat(auto-fit, minmax(var(--today-column-min), 1fr)); }
+  .today-day-view { display: none; }
+  .today-agenda-fallback { display: block; }
+}
 .today-column { min-width: 0; }
 /* Today is the home screen, read at a glance many times a day, so its rows sit
    a step above the email list: card-title titles over body-size details. */
@@ -3736,7 +3760,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .agenda-now::after { content: ""; flex: 1; border-top: 1px solid currentColor; }
 .today-column-link { margin: 0; padding: var(--space-3) var(--context-row-inset); }
 /* Meeting preparation: in Calendar's event details, and in place of Today's columns. */
-/* Preparation takes the mail column's place, so it reads at Today's sizes;
+/* Preparation takes the plan's place, so it reads at Today's sizes;
    its heading line and notes match the rows. */
 .today-preparation .context-section-note { font-size: var(--text-body); }
 .meeting-prep-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); padding-inline: var(--context-row-inset); }

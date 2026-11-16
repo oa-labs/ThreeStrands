@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type Ref, type UIEvent } from "react";
+import { Fragment, useId, useMemo, type CSSProperties, type ReactNode, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type Ref, type UIEvent } from "react";
 import {
   HOUR_HEIGHT,
   HOURS,
@@ -20,6 +20,17 @@ import { distinctWorkingLocations, isWorkingLocation, WorkingLocationChip } from
 export const SLOT_MINUTES = 15;
 /** Each day column carries this class and a `data-day-index`, which drop targeting reads. */
 export const DAY_COLUMN_CLASS = "calendar-week-column";
+
+/** Optional marks on an event's button, such as Today's meeting readiness;
+ * Calendar passes none, so its rendering does not change. */
+export type DayGridEventDecoration = {
+  /** Read as the button's accessible description. */
+  description?: string | null;
+  /** A small decorative mark before the title. */
+  mark?: ReactNode;
+  /** Names the event for commands that act on the one in focus (`data-row-key`). */
+  rowKey?: string;
+};
 
 /** A highlighted stretch of one day column: a selection or a drop preview. */
 export type DayGridPreview = { dayIndex: number; startMinutes: number; endMinutes: number; label?: string };
@@ -57,6 +68,7 @@ export function DayTimeGrid({
   onScroll,
   timeZoneAt = days[0],
   columnProps,
+  eventDecoration,
 }: {
   days: Date[];
   events: ScheduleEvent[];
@@ -75,8 +87,20 @@ export function DayTimeGrid({
   timeZoneAt?: Date;
   /** Extra attributes for a day column, such as a label and pointer handlers. */
   columnProps?(day: Date, dayIndex: number): HTMLAttributes<HTMLDivElement>;
+  eventDecoration?(event: ScheduleEvent): DayGridEventDecoration | null;
 }) {
   const calendarColors = useCalendarColors();
+  const gridId = useId();
+  const decorate = (event: ScheduleEvent, id: string) => {
+    const decoration = eventDecoration?.(event);
+    if (!decoration) return { attributes: {}, mark: null, description: null };
+    const descriptionId = decoration.description ? `${gridId}-${id}` : undefined;
+    return {
+      attributes: { "aria-describedby": descriptionId, "data-row-key": decoration.rowKey },
+      mark: decoration.mark ? <span className="calendar-event-mark" aria-hidden="true">{decoration.mark}</span> : null,
+      description: descriptionId ? <span id={descriptionId} hidden>{decoration.description}</span> : null,
+    };
+  };
   const today = startOfLocalDay(now);
   const dayCount = { "--calendar-day-count": days.length } as CSSProperties;
   // Working locations, even one set for part of a day, head the all-day row
@@ -127,11 +151,11 @@ export function DayTimeGrid({
                   style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
                 />
               ))}
-              {allDayByDay[index].map((event) => (
+              {allDayByDay[index].map((event, eventIndex) => { const decoration = decorate(event, `all-day-${index}-${eventIndex}`); return (<Fragment key={`${event.accountId}:${event.calendarId}:${event.id}`}>
                 <button
                   type="button"
                   className="calendar-all-day-event"
-                  key={`${event.accountId}:${event.calendarId}:${event.id}`}
+                  {...decoration.attributes}
                   data-calendar-event-trigger
                   data-response-status={event.responseStatus ?? undefined}
                   aria-expanded={sameEvent(selectedEvent, event)}
@@ -140,9 +164,10 @@ export function DayTimeGrid({
                   style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
                   title={event.location?.trim() ? `${event.title}, ${event.location.trim()}` : undefined}
                 >
-                  {event.title}{event.location?.trim() ? `, ${event.location.trim()}` : ""}
+                  {decoration.mark}{event.title}{event.location?.trim() ? `, ${event.location.trim()}` : ""}
                 </button>
-              ))}
+                {decoration.description}
+              </Fragment>); })}
             </div>
           ))}
         </div>
@@ -174,7 +199,8 @@ export function DayTimeGrid({
                   height: (preview.endMinutes - preview.startMinutes) / 60 * HOUR_HEIGHT,
                 }}>{preview.label ? <span>{preview.label}</span> : null}</div>
               ) : null}
-              {timedByDay[dayIndex].map(({ event, lane, lanes, span }) => {
+              {timedByDay[dayIndex].map(({ event, lane, lanes, span }, eventIndex) => {
+                const decoration = decorate(event, `timed-${dayIndex}-${eventIndex}`);
                 const start = new Date(event.start);
                 const end = new Date(event.end);
                 const dayStart = startOfLocalDay(day);
@@ -193,10 +219,11 @@ export function DayTimeGrid({
                   durationMinutes <= 15 && "calendar-schedule-event-tight",
                 ].filter(Boolean).join(" ");
                 return (
+                  <Fragment key={`${event.accountId}:${event.calendarId}:${event.id}`}>
                   <button
                     type="button"
                     className={className}
-                    key={`${event.accountId}:${event.calendarId}:${event.id}`}
+                    {...decoration.attributes}
                     data-calendar-event-trigger
                     data-response-status={event.responseStatus ?? undefined}
                     aria-expanded={sameEvent(selectedEvent, event)}
@@ -211,10 +238,12 @@ export function DayTimeGrid({
                     }}
                     title={`${event.title}, ${formatEventTime(event)}${location ? `, ${location}` : ""}${responseLabel(event) ? `, ${responseLabel(event)}` : ""}`}
                   >
-                    <strong>{event.title}{compactLocation ? <span>, {startTime}, {location}</span> : null}</strong>
+                    <strong>{decoration.mark}{event.title}{compactLocation ? <span>, {startTime}, {location}</span> : null}</strong>
                     {durationMinutes > 30 ? <span>{formatEventTime(event)}{location && !separateLocation ? ` · ${location}` : ""}</span> : null}
                     {durationMinutes > 30 && location && separateLocation ? <span>{location}</span> : null}
                   </button>
+                  {decoration.description}
+                  </Fragment>
                 );
               })}
               {isSameDay(day, today) ? (

@@ -3,8 +3,9 @@
 **Status:** Stage 1 in progress: the plan section format, parser, item-level
 writes, and plan reading are implemented (`src-tauri/src/daily_plan.rs`,
 `src-tauri/src/db/daily_plan.rs`, `src/dailyPlan.ts`, `fixtures/daily-plan.json`);
-review, history, sources, capacity, and note-task booking remain. No user-visible
-feature yet.
+review, history, sources, capacity, and note-task booking remain. Stage 2's
+reshaped Today is built apart from the parts that depend on them (see
+[As built](#as-built-stage-2)).
 **Baseline:** 0.210.0 repository, reviewed 2026-11-16.
 **Priority:** Part of the daily loop in the [product plan](../PLAN.MD#connected-workflow-additions),
 interleaved with [meeting preparation](meeting-preparation-design.md).
@@ -412,6 +413,46 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
 - **Unavailable calendar.** Without a calendar connection, or when the schedule
   fails to load, the day view shows that state with **Try Again** and the cards
   stay usable; free time is shown as unavailable, never as an open day.
+
+### As built (stage 2)
+
+- `TodayWorkspace` lays out the plan column (`PlanCards`, `PlanSourceSwitcher` in
+  `src/TodayPlan.tsx`) beside `TodayDayView`, with `TodayMailSignal` in the header.
+  The ratio is `minmax(0, 2fr) minmax(var(--today-day-view-min), 1fr)`. The
+  narrow fallback is a CSS container query on `.today-page` (container `today`):
+  both the day view and the agenda list are rendered, and the query shows one.
+  Container conditions can't read custom properties, so the breakpoint number
+  lives in that one CSS rule rather than a token.
+- The plan is read with `useDailyPlan` (`mailClient.dailyPlan`), again on any note
+  change and on task changes, and written with `addToDailyPlan` /
+  `removeFromDailyPlan` from `src/noteCapture.ts`, with Undo and **Open Note** on
+  refusal. Note tasks are checked off with `changeNoteItem`.
+- Sources are registered as `PlanSource` entries (`id`, `label`, groups of
+  `PlanCandidate` cards). A candidate names its plan key, so planned cards are
+  marked "In plan" (Also Due hides them), and a `resolve()` that returns what to
+  add and what to book, creating a promise's task first through **Make a Task**.
+  Starred Mail, Goals, and Notes are added by registering more entries; Suggested
+  belongs to the routine's Choose step.
+- Booking lives in `src/todayBooking.ts`: `bookBlock` uses Calendar's default
+  calendar choice and selected-calendar fix-up; `blockRequest` tags the block with
+  the item's `taskId` (a note task's `note:<noteId>:<markerId>`) or none for a
+  check-in. Drops use `useTaskBlockDrag`; a source drop books first and then adds,
+  and a refused plan write keeps the booking and says so with **Open Note**.
+- **Book** books directly, without the event editor: the first quarter-hour start
+  at or after now whose `TASK_BLOCK_MINUTES` overlap no attending timed event
+  (`nextFreeSlot`), with the same notice and Undo, or "No free half hour is left
+  today". It is simpler than opening the editor at the next free stretch: one
+  keystroke has the same effect as a drop, the result is visible in the day view
+  and reversible with Undo, and the editor is one click away on the event. It does
+  not yet bound the search by working hours; that belongs with `planCapacity`.
+  While the schedule is unread or failed, Book says free time is unknown.
+- Day-view meetings carry their readiness summary and a count of unread mail from
+  attendees as the event's accessible description, with a small mark for a note
+  or unread mail, through an optional `eventDecoration` on `DayTimeGrid` that
+  Calendar doesn't pass.
+- Not yet: Plan Today / Edit Plan / Shut Down in the header, carry counts, Starred
+  Mail, Goals, Notes, free time (`planCapacity`), the card-and-block linked
+  highlight, and Open Task / Mark Done on a selected block.
 
 ## Shut Down
 
