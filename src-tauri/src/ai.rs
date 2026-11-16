@@ -23,6 +23,7 @@ pub use chat::{chat, chat_search_terms, ChatAttachmentInput, ChatRequest, ChatTh
 pub(crate) use chat::{MAX_CHAT_TURN_CHARS, MAX_MAILBOX_CHAT_THREADS};
 pub use compose::{
     generate_reply, reply_context, review_draft, DraftReviewRequest, DraftReviewResult,
+    ReplyWritingProfile,
 };
 pub(crate) use compose::{MAX_WRITING_PROFILE_ABOUT_CHARS, MAX_WRITING_PROFILE_INSTRUCTIONS_CHARS};
 pub use contact::{
@@ -322,6 +323,7 @@ mod tests {
                 }],
             },
             "",
+            &super::ReplyWritingProfile::default(),
             AiProvider::Custom,
             "test",
             Some(&endpoint),

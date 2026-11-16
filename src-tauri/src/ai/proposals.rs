@@ -105,8 +105,8 @@ pub(super) fn validate_proposal_items(
         }
         let mut proposal: ActionProposal = match serde_json::from_value(item.clone()) {
             Ok(proposal) => proposal,
-            Err(error) => {
-                log::warn!(target: "ai_analyze_thread", "withheld action proposal with an invalid schema: {error}");
+            Err(_) => {
+                log::warn!(target: "ai_analyze_thread", "withheld action proposal with an invalid schema");
                 super::diagnostics::rejected(
                     "The AI provider returned a suggestion with an invalid schema",
                     Some(&item),

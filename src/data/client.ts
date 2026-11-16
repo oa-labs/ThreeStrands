@@ -1,3 +1,4 @@
+import type { WritingProfile } from "../writingProfiles";
 import type { NoteDocument, NoteTaskRecord, NoteReference, NoteCapture, NoteBacklink } from "../noteEntities";
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
 import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
@@ -219,6 +220,7 @@ export interface MailClient extends CorrespondenceClient {
     model: string,
     endpoint: string | null,
     reasoning?: AiReasoning,
+    profile?: WritingProfile,
   ): Promise<ReplyAssistResult>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   /** Fetches Gmail search hits missing from the local cache so a subsequent local search can include historical archived mail. Returns a report of what the server search could do, for the UI to word. */
@@ -541,8 +543,8 @@ const tauriClient: MailClient = {
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
   reviewDraft: (request, provider, model, endpoint) => complete("ai_review_draft", { request, provider, model, endpoint }),
   findTimes: (request, provider, model, endpoint) => complete("ai_find_times", { request, provider, model, endpoint }),
-  generateReply: (context, instruction, provider, model, endpoint, reasoning = "default") =>
-    complete("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning }),
+  generateReply: (context, instruction, provider, model, endpoint, reasoning = "default", profile) =>
+    complete("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning, ...(profile ? { profile } : {}) }),
   searchThreads: (request, accountId) => read("search_threads", { request, accountId }),
   backfillSearchThreads: (query, accountId) => complete("backfill_search_threads", { query, accountId }),
   snoozeThreads: (ids, until) => complete("snooze_threads", { ids, until }),

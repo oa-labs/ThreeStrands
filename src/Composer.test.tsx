@@ -1,3 +1,4 @@
+import { saveWritingProfiles } from "./writingProfiles";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createRef } from "react";
@@ -1468,6 +1469,7 @@ describe("Composer Reply Assist", () => {
   };
 
   beforeEach(async () => {
+    saveWritingProfiles({});
     saveAiProvider("openai");
     saveAiFeatures({ ...DEFAULT_AI_FEATURES, draftAssist: true });
     await setAiApiKey("test-key");
@@ -1479,6 +1481,7 @@ describe("Composer Reply Assist", () => {
     await clearAiApiKey();
     saveAiProvider("none");
     saveAiFeatures(DEFAULT_AI_FEATURES);
+    saveWritingProfiles({});
   });
 
   it.each(["reply", "replyAll"] as const)("groups writing tools with the quote toggle below the %s body", async (mode) => {
@@ -1557,12 +1560,37 @@ describe("Composer Reply Assist", () => {
       "gpt-4o",
       null,
       "default",
+      undefined,
     ));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Assist" })).not.toBeInTheDocument());
     const editor = screen.getByRole("textbox", { name: "Message Body" });
     await waitFor(() => expect(editor).toHaveTextContent('<img src=x onerror="alert(1)">Friday works for me.'));
     expect(editor.querySelector("img")).toBeNull();
     expect(screen.getByLabelText("Quoted Text")).toHaveTextContent("Can we meet Friday?");
+  });
+
+  it.each([true, false])("previews and sends the account profile snapshot when storage is available: %s", async (storageAvailable) => {
+    const profile = { aboutYou: "I run a design studio.", reviewInstructions: "Keep replies warm and brief." };
+    if (!storageAvailable) vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => { throw new Error("Storage unavailable"); });
+    saveWritingProfiles({
+      [replyDraft.account]: profile,
+      "other@example.com": { aboutYou: "Private other account", reviewInstructions: "Other instructions" },
+    });
+    vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
+    const generate = vi.spyOn(mailClient, "generateReply").mockResolvedValue({ body: "Thanks for the update." });
+    await act(async () => {
+      render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Draft Reply/ }));
+    const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
+    expect(await within(assist).findByText(profile.aboutYou)).toBeVisible();
+    expect(within(assist).getByText(profile.reviewInstructions)).toBeVisible();
+    expect(within(assist).queryByText("Private other account")).not.toBeInTheDocument();
+    expect(generate).not.toHaveBeenCalled();
+    // A settings update after preview must not silently send different material.
+    act(() => saveWritingProfiles({ [replyDraft.account]: { aboutYou: "Changed profile", reviewInstructions: "" } }));
+    fireEvent.click(within(assist).getByRole("button", { name: "Generate Draft" }));
+    await waitFor(() => expect(generate).toHaveBeenCalledWith(context, "", "openai", "gpt-4o", null, "default", profile));
   });
 
   it("opens a reply with the quoted source as a citation and saves a quoted text alternative", async () => {
@@ -1620,9 +1648,9 @@ describe("Composer Reply Assist", () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
-  it("preserves the editable draft when Reply Assist fails", async () => {
+  it.each(["Provider unavailable", "The AI model ran out of output space before answering."])("preserves the editable draft when Reply Assist fails: %s", async (failure) => {
     vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
-    vi.spyOn(mailClient, "generateReply").mockRejectedValue(new Error("Provider unavailable"));
+    vi.spyOn(mailClient, "generateReply").mockRejectedValue(new Error(failure));
     render(
       <Composer
         draft={replyDraft}
@@ -1634,7 +1662,7 @@ describe("Composer Reply Assist", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "Generate Draft" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Provider unavailable");
+    expect(await screen.findByRole("alert")).toHaveTextContent(failure);
     expect(screen.getByLabelText("Quoted Text")).toHaveTextContent("Can we meet Friday?");
   });
 

@@ -32,11 +32,11 @@ pub(super) fn decode_json_output(
     }
     let trimmed = strip_markdown_fences(content);
     if trimmed.is_empty() {
-        log::error!(target: "ai_analyze_thread", "empty {target} output (raw content: {content:?})");
+        log::error!(target: "ai_analyze_thread", "empty {target} output");
         return Err(OutputDecodeError::Empty);
     }
     serde_json::from_str(trimmed).map_err(|error| {
-        log::error!(target: "ai_analyze_thread", "malformed {target} JSON: {error} (raw content: {content:?})");
+        log::error!(target: "ai_analyze_thread", "malformed {target} JSON at line {}, column {}", error.line(), error.column());
         OutputDecodeError::Malformed
     })
 }
@@ -54,6 +54,24 @@ pub(super) fn contains_quoted_history(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_output_and_schema_errors_never_log_private_values() {
+        let private = "PRIVATE_CORRESPONDENCE_PROFILE_AND_KEY";
+        let logs = super::super::test_support::capture_logs(|| {
+            let _ = decode_json_output(&format!(r#"{{"secret":"{private}", broken}}"#), "test");
+            let _ = super::super::brief::parse_action_proposals(
+                &format!(r#"{{"secret":"{private}"}}"#),
+                &[],
+            );
+            let _ = super::super::proposals::validate_proposal_items(
+                vec![serde_json::json!({"type": private})],
+                &[],
+            );
+        });
+        assert_eq!(logs.len(), 3);
+        assert!(logs.iter().all(|line| !line.contains(private)));
+    }
 
     #[test]
     fn strips_markdown_json_fence_around_action_proposals() {

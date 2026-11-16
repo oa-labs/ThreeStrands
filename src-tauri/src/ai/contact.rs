@@ -8,8 +8,8 @@ use crate::models::{ContactFieldSuggestion, ContactProfile};
 
 use super::output::strip_markdown_fences;
 use super::provider::{
-    call_provider_reply, describe_reply, reply_was_cut_off, AiCall, AiProvider, OutputSchema,
-    Reasoning, CUT_OFF_REPLY_ERROR, STRUCTURED_OUTPUT_TOKENS,
+    call_provider_reply, describe_reply, AiCall, AiProvider, OutputSchema, Reasoning,
+    STRUCTURED_OUTPUT_TOKENS,
 };
 
 pub struct ContactMessageInput {
@@ -173,20 +173,13 @@ async fn contact_suggestions_from_batch(
     )
     .await?;
     let mut tally = ContactSuggestionTally::default();
-    let suggestions = parse_contact_suggestions(&reply.content, batch, &mut tally)
-        .inspect_err(|error| {
+    let suggestions =
+        parse_contact_suggestions(&reply.content, batch, &mut tally).inspect_err(|error| {
             log::warn!(
                 target: "ai_enrich_contact",
                 "contact suggestions rejected: {error} ({})",
                 describe_reply(&reply)
             );
-        })
-        .map_err(|error| {
-            if reply_was_cut_off(&reply) {
-                CUT_OFF_REPLY_ERROR.to_string()
-            } else {
-                error
-            }
         })?;
     let kept = retain_contact_suggestions_for_fields(suggestions, allowed, &mut tally);
     let mut line = format!(

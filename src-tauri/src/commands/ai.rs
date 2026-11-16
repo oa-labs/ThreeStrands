@@ -1219,6 +1219,7 @@ pub(crate) async fn ai_generate_reply(
     model: String,
     endpoint: Option<String>,
     reasoning: Option<ai::Reasoning>,
+    profile: Option<ai::ReplyWritingProfile>,
 ) -> AppResult<ReplyAssistResult> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     // Re-apply the native bounds even though normal callers received this
@@ -1243,6 +1244,7 @@ pub(crate) async fn ai_generate_reply(
         ai::generate_reply(
             &bounded,
             &instruction,
+            &profile.unwrap_or_default(),
             provider,
             &model,
             endpoint.as_deref(),

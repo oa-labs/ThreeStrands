@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * What Draft Review knows about the user when they write from one account:
+ * What writing assistance knows about the user when they write from one account:
  * who they are, and how they want drafts reviewed. Both are written by the
- * user and sent with every review from that account.
+ * user and sent with each review or confirmed reply-generation request from that account.
  */
 export type WritingProfile = {
   aboutYou: string;
@@ -31,7 +31,7 @@ export function writingProfileKey(account: string): string {
   return account.trim().toLowerCase();
 }
 
-/** Whether a profile has anything for Draft Review to use. */
+/** Whether a profile has anything for writing assistance to use. */
 export function hasWritingProfile(profile: WritingProfile): boolean {
   return Boolean(profile.aboutYou.trim() || profile.reviewInstructions.trim());
 }

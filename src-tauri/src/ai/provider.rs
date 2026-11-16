@@ -169,21 +169,19 @@ pub(super) fn reply_was_cut_off(reply: &ProviderReply) -> bool {
 pub(super) const CUT_OFF_REPLY_ERROR: &str =
     "The AI model ran out of output space before answering. Try again, or choose a model that reasons less.";
 
-/// Summarizes a rejected reply for the log: its length, why the provider
-/// stopped (a length stop means the output was cut off), and a capped prefix
-/// of the raw text so the failure can be diagnosed without logging an
-/// unbounded reply.
+/// Content-free diagnostic metadata. Provider stop reasons are untrusted too.
 pub(super) fn describe_reply(reply: &ProviderReply) -> String {
-    let length = reply.content.chars().count();
-    let prefix: String = reply.content.chars().take(MAX_LOGGED_REPLY_CHARS).collect();
-    let elided = if length > MAX_LOGGED_REPLY_CHARS {
-        format!(", first {MAX_LOGGED_REPLY_CHARS} shown")
-    } else {
-        String::new()
+    let reason = match reply.stop_reason.as_deref() {
+        Some(
+            reason @ ("length" | "max_tokens" | "stop" | "end_turn" | "tool_use" | "content_filter"
+            | "refusal"),
+        ) => reason,
+        None => "unreported",
+        _ => "other",
     };
     format!(
-        "{length} chars, stop reason: {}{elided}; raw content: {prefix:?}",
-        reply.stop_reason.as_deref().unwrap_or("unreported")
+        "{} chars, stop reason: {reason}",
+        reply.content.chars().count()
     )
 }
 
@@ -200,9 +198,6 @@ pub(super) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::fro
 /// reply drafts get the smaller one.
 pub(super) const STRUCTURED_OUTPUT_TOKENS: usize = 16_000;
 pub(super) const TEXT_OUTPUT_TOKENS: usize = 8_000;
-
-/// How much of a rejected reply is written to the log for diagnosis.
-const MAX_LOGGED_REPLY_CHARS: usize = 2_000;
 
 /// A JSON Schema the provider should constrain its reply to. Every provider
 /// requires an object at the root, so array results are wrapped in a single
@@ -413,10 +408,7 @@ async fn send_provider_request(
             .map_err(display)?;
             let text = checked(response).await?.text().await.map_err(display)?;
             record_usage(request, &text);
-            Ok(ProviderReply {
-                content: parse_anthropic_content(&text)?,
-                stop_reason: parse_stop_reason(ApiProtocol::Anthropic, &text),
-            })
+            parse_provider_reply(ApiProtocol::Anthropic, &text).map_err(ProviderError::from)
         }
         ApiProtocol::OpenAiCompatible => {
             let client = ai_client()?;
@@ -431,13 +423,34 @@ async fn send_provider_request(
             .map_err(display)?;
             let text = checked(response).await?.text().await.map_err(display)?;
             record_usage(request, &text);
-            Ok(ProviderReply {
-                content: parse_openai_content(&text)?,
-                stop_reason: parse_stop_reason(ApiProtocol::OpenAiCompatible, &text),
-            })
+            parse_provider_reply(ApiProtocol::OpenAiCompatible, &text).map_err(ProviderError::from)
         }
         ApiProtocol::Disabled => Err("Select an AI provider in settings".to_string().into()),
     }
+}
+
+/// Validate completion before parsing content: a cut-off answer can still be
+/// valid JSON, plain text, or an empty content field after reasoning.
+fn parse_provider_reply(protocol: ApiProtocol, body: &str) -> Result<ProviderReply, String> {
+    let mut reply = ProviderReply {
+        content: String::new(),
+        stop_reason: parse_stop_reason(protocol, body),
+    };
+    if reply_was_cut_off(&reply) {
+        return Err(CUT_OFF_REPLY_ERROR.to_string());
+    }
+    if matches!(
+        reply.stop_reason.as_deref(),
+        Some("content_filter" | "refusal")
+    ) {
+        return Err("The AI provider declined the request".to_string());
+    }
+    reply.content = match protocol {
+        ApiProtocol::Anthropic => parse_anthropic_content(body)?,
+        ApiProtocol::OpenAiCompatible => parse_openai_content(body)?,
+        ApiProtocol::Disabled => return Err("Select an AI provider in settings".to_string()),
+    };
+    Ok(reply)
 }
 
 fn openai_body(request: &ProviderRequest<'_>, schema: Option<&OutputSchema>) -> serde_json::Value {
@@ -596,7 +609,8 @@ fn parse_models(body: &str) -> Result<Vec<ModelInfo>, String> {
         #[serde(default, alias = "display_name")]
         name: Option<String>,
     }
-    let parsed: ModelsResponse = serde_json::from_str(body).map_err(display)?;
+    let parsed: ModelsResponse = serde_json::from_str(body)
+        .map_err(|_| "The AI provider returned an invalid response".to_string())?;
     Ok(parsed
         .data
         .into_iter()
@@ -632,7 +646,8 @@ fn parse_openai_content(body: &str) -> Result<String, String> {
         #[serde(default)]
         refusal: Option<String>,
     }
-    let parsed: ChatResponse = serde_json::from_str(body).map_err(display)?;
+    let parsed: ChatResponse = serde_json::from_str(body)
+        .map_err(|_| "The AI provider returned an invalid response".to_string())?;
     let message = parsed
         .choices
         .into_iter()
@@ -640,8 +655,8 @@ fn parse_openai_content(body: &str) -> Result<String, String> {
         .map(|choice| choice.message)
         .ok_or_else(|| "AI provider returned no choices".to_string())?;
     match (message.content, message.refusal) {
-        (Some(content), _) => Ok(content),
-        (None, Some(_)) => Err("The AI provider declined the request".to_string()),
+        (_, Some(_)) => Err("The AI provider declined the request".to_string()),
+        (Some(content), None) => Ok(content),
         (None, None) => Err("AI provider returned no content".to_string()),
     }
 }
@@ -662,7 +677,8 @@ fn parse_anthropic_content(body: &str) -> Result<String, String> {
         #[serde(default)]
         input: Option<serde_json::Value>,
     }
-    let parsed: MessagesResponse = serde_json::from_str(body).map_err(display)?;
+    let parsed: MessagesResponse = serde_json::from_str(body)
+        .map_err(|_| "The AI provider returned an invalid response".to_string())?;
     if let Some(input) = parsed
         .content
         .iter()
@@ -683,11 +699,10 @@ async fn checked(response: reqwest::Response) -> Result<reqwest::Response, Provi
     if status.is_success() {
         return Ok(response);
     }
-    let body = response.text().await.unwrap_or_default();
-    let truncated: String = body.chars().take(300).collect();
+    // Error bodies can echo prompts, credentials, or private generated text.
     Err(ProviderError {
         rejected_request: matches!(status.as_u16(), 400 | 404 | 422),
-        message: format!("AI provider returned {status}: {truncated}"),
+        message: format!("AI provider returned {status}"),
     })
 }
 
@@ -911,31 +926,23 @@ mod tests {
     }
 
     #[test]
-    fn rejected_reply_summary_reports_length_and_stop_reason_and_caps_the_content() {
-        let short = describe_reply(&ProviderReply {
-            content: "<think>hmm</think>".into(),
-            stop_reason: Some("length".into()),
-        });
-        assert_eq!(
-            short,
-            "18 chars, stop reason: length; raw content: \"<think>hmm</think>\""
-        );
-
-        let at_limit = describe_reply(&ProviderReply {
-            content: "a".repeat(MAX_LOGGED_REPLY_CHARS),
-            stop_reason: None,
-        });
-        assert!(at_limit.starts_with(&format!(
-            "{MAX_LOGGED_REPLY_CHARS} chars, stop reason: unreported; raw content: "
-        )));
-        assert!(!at_limit.contains("shown"));
-
-        let long = describe_reply(&ProviderReply {
-            content: format!("{}tail", "a".repeat(MAX_LOGGED_REPLY_CHARS)),
-            stop_reason: Some("stop".into()),
-        });
-        assert!(long.contains(&format!("first {MAX_LOGGED_REPLY_CHARS} shown")));
-        assert!(!long.contains("tail"));
+    fn rejected_reply_summary_contains_only_metadata() {
+        let private = "private correspondence and writing profile";
+        for (stop_reason, expected) in [
+            (Some("length"), "length"),
+            (None, "unreported"),
+            (Some(private), "other"),
+        ] {
+            let description = describe_reply(&ProviderReply {
+                content: private.repeat(1000),
+                stop_reason: stop_reason.map(str::to_string),
+            });
+            assert_eq!(
+                description,
+                format!("{} chars, stop reason: {expected}", private.len() * 1000)
+            );
+            assert!(!description.contains(private));
+        }
     }
 
     #[test]
@@ -1234,6 +1241,124 @@ mod tests {
         assert!(openai_body(&request(AiProvider::OpenAi), None)
             .get("usage")
             .is_none());
+    }
+
+    #[test]
+    fn completion_status_is_checked_before_parsing_for_both_protocols() {
+        for (protocol, payload) in [
+            (
+                ApiProtocol::OpenAiCompatible,
+                json!({"choices":[{"message":{"content":null},"finish_reason":"length"}]}),
+            ),
+            (
+                ApiProtocol::Anthropic,
+                json!({"content":[],"stop_reason":"max_tokens"}),
+            ),
+        ] {
+            assert_eq!(
+                parse_provider_reply(protocol, &payload.to_string())
+                    .err()
+                    .unwrap(),
+                CUT_OFF_REPLY_ERROR
+            );
+        }
+        for (protocol, payload) in [
+            (
+                ApiProtocol::OpenAiCompatible,
+                json!({"choices":[{"message":{"content":"Partial private text"},"finish_reason":"content_filter"}]}),
+            ),
+            (
+                ApiProtocol::Anthropic,
+                json!({"content":[{"type":"text","text":"Private refusal"}],"stop_reason":"refusal"}),
+            ),
+        ] {
+            assert_eq!(
+                parse_provider_reply(protocol, &payload.to_string())
+                    .err()
+                    .unwrap(),
+                "The AI provider declined the request"
+            );
+        }
+        assert_eq!(parse_openai_content(r#"{"choices":[{"message":{"content":"partial text","refusal":"private refusal"}}]}"#).unwrap_err(), "The AI provider declined the request");
+        // Serde errors can quote offending values; never propagate those strings.
+        let error =
+            parse_openai_content(r#"{"choices":[{"message":{"content":42,"refusal":"private"}}]}"#)
+                .unwrap_err();
+        assert_eq!(error, "The AI provider returned an invalid response");
+    }
+
+    #[tokio::test]
+    async fn truncated_replies_are_rejected_even_when_the_content_is_valid() {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            Json(
+                json!({"choices": [{"message": {"content": payload["model"]}, "finish_reason": "length"}]}),
+            )
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/chat/completions", post(handler)),
+            )
+            .await
+            .unwrap();
+        });
+        for content in [
+            "A plausible but incomplete reply",
+            r#"{"answer":"A valid JSON object"}"#,
+            "",
+        ] {
+            let result = call_provider(AiCall {
+                provider: AiProvider::Custom,
+                model: content,
+                endpoint: Some(&endpoint),
+                system_prompt: "system",
+                prompt: "private email",
+                max_tokens: 100,
+                temperature: 0.2,
+                schema: None,
+                api_key: "key",
+            })
+            .await;
+            assert_eq!(result.unwrap_err(), CUT_OFF_REPLY_ERROR);
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn provider_error_bodies_are_never_exposed() {
+        async fn handler() -> (axum::http::StatusCode, &'static str) {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                "private email, profile, and secret key",
+            )
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/chat/completions", post(handler)),
+            )
+            .await
+            .unwrap();
+        });
+        let error = call_provider(AiCall {
+            provider: AiProvider::Custom,
+            model: "test",
+            endpoint: Some(&endpoint),
+            system_prompt: "system",
+            prompt: "private email",
+            max_tokens: 100,
+            temperature: 0.2,
+            schema: None,
+            api_key: "key",
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error, "AI provider returned 400 Bad Request");
+        server.abort();
     }
 
     #[test]

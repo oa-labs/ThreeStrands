@@ -48,3 +48,32 @@ pub(super) fn chat_request(question: &str) -> ChatRequest {
         user_time_zone: "America/New_York".into(),
     }
 }
+
+/// Capture only this thread's logs, so parallel tests cannot mix private fixtures.
+pub(super) fn capture_logs(run: impl FnOnce()) -> Vec<String> {
+    use std::{cell::RefCell, sync::Once};
+    thread_local! { static CAPTURE: RefCell<Option<Vec<String>>> = const { RefCell::new(None) }; }
+    struct TestLogger;
+    impl log::Log for TestLogger {
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record<'_>) {
+            CAPTURE.with(|capture| {
+                if let Some(lines) = capture.borrow_mut().as_mut() {
+                    lines.push(record.args().to_string());
+                }
+            });
+        }
+        fn flush(&self) {}
+    }
+    static INIT: Once = Once::new();
+    static LOGGER: TestLogger = TestLogger;
+    INIT.call_once(|| {
+        log::set_logger(&LOGGER).unwrap();
+        log::set_max_level(log::LevelFilter::Trace);
+    });
+    CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    run();
+    CAPTURE.with(|capture| capture.borrow_mut().take().unwrap())
+}

@@ -48,7 +48,7 @@ export function WritingProfileSettings({ accounts, draftReviewOn, onOpenAiSettin
   }, [profiles, selected]);
 
   if (!selected) return <section className="settings-section writing-profile-settings" aria-label="Writing Profile">
-    <h3>Draft Review</h3>
+    <h3>Writing assistance</h3>
     <p className="settings-hint">Connect a mail account to write a profile for it.</p>
   </section>;
 
@@ -64,13 +64,14 @@ export function WritingProfileSettings({ accounts, draftReviewOn, onOpenAiSettin
   }
 
   return <section className="settings-section writing-profile-settings" aria-label="Writing Profile">
-    <h3>Draft Review</h3>
+    <h3>Writing assistance</h3>
     <p className="settings-hint">
-      Draft Review sends this to your AI provider with every review of email you write from this account, along with
-      any goal you add for that email. It treats what you write in About You as true and may suggest using it.
+      Draft Reply and Draft Review send this to your AI provider when you use them from this account.
+      Reply Assist shows the profile before you generate. About You supplies facts about you; Review Instructions
+      also guides how replies are written.
     </p>
     {draftReviewOn ? null : <p className="settings-hint" role="note">
-      Draft Review is off, so this profile isn’t used yet. Turn on Writing in AI Provider to use it.
+      Writing assistance is off, so this profile isn’t used yet. Turn on Writing in AI Provider to use it.
       {onOpenAiSettings ? <> <button type="button" className="btn-link" onClick={onOpenAiSettings}>AI Provider</button></> : null}
     </p>}
     {accounts.length > 1 ? <label className="settings-field">

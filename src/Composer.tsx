@@ -1,3 +1,4 @@
+import { hasWritingProfile, useWritingProfiles, writingProfileFor, type WritingProfile } from "./writingProfiles";
 import { listen } from "@tauri-apps/api/event";
 import { useAiAvailability } from "./useAiAvailability";
 import { draftSignatureSnapshot, type SignatureState } from "./signatures";
@@ -102,6 +103,8 @@ export const Composer = forwardRef<ComposerHandle, {
   const replyAssistAvailable = replyAssistEnabled && aiDraftAvailable;
   const [replyAssistOpen, setReplyAssistOpen] = useState(false);
   const [replyAssistContext, setReplyAssistContext] = useState<ReplyAssistContext | null>(null);
+  const writingProfiles = useWritingProfiles();
+  const [replyProfile, setReplyProfile] = useState<WritingProfile | undefined>();
   const [replyInstruction, setReplyInstruction] = useState("");
   const [replyAssistBusy, setReplyAssistBusy] = useState(false);
   const [replyAssistError, setReplyAssistError] = useState("");
@@ -266,6 +269,8 @@ export const Composer = forwardRef<ComposerHandle, {
     setReplyAssistBusy(true);
     setReplyAssistError("");
     setReplyAssistContext(null);
+    const profile = writingProfileFor(writingProfiles, latest.current.account);
+    setReplyProfile(hasWritingProfile(profile) ? profile : undefined);
     try {
       setReplyAssistContext(await mailClient.replyAssistContext(latest.current.id));
     } catch (reason) {
@@ -273,7 +278,7 @@ export const Composer = forwardRef<ComposerHandle, {
     } finally {
       if (mounted.current) setReplyAssistBusy(false);
     }
-  }, [latest]);
+  }, [latest, writingProfiles]);
   async function generateReply(confirmed = false) {
     if (!replyAssistContext || !bodyEditor.current) return;
     captureBody();
@@ -293,6 +298,7 @@ export const Composer = forwardRef<ComposerHandle, {
         model,
         endpoint,
         reasoning,
+        replyProfile,
       );
       if (!bodyEditor.current) return;
       bodyEditor.current.prependText(`${result.body.trim()}\n\n`);
@@ -591,8 +597,13 @@ export const Composer = forwardRef<ComposerHandle, {
             {replyAssistInstruction ? <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction}</p> : null}
             {replyAssistContext ? (
               <details open className="reply-assist-context">
-                <summary>Exact email content sent to {readAiProvider()}</summary>
+                <summary>Exact context sent to {readAiProvider()}</summary>
                 <div className="reply-assist-context-body">
+                  {replyProfile ? <section aria-label="Writing Profile sent with reply">
+                    <p><strong>Writing Profile</strong></p>
+                    {replyProfile.aboutYou ? <><p>About You</p><pre>{replyProfile.aboutYou}</pre></> : null}
+                    {replyProfile.reviewInstructions ? <><p>Review Instructions</p><pre>{replyProfile.reviewInstructions}</pre></> : null}
+                  </section> : null}
                   <p><strong>Subject:</strong> {replyAssistContext.subject}</p>
                   {replyAssistContext.messages.map((message, index) => (
                     <article key={`${message.sentAt}-${index}`}>

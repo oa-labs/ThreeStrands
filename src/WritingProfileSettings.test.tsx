@@ -83,7 +83,7 @@ describe("Writing profile settings", () => {
     setWritingProfile("work@example.com", { aboutYou: "CEO", reviewInstructions: "" });
     const onOpenAiSettings = vi.fn();
     renderSettings({ draftReviewOn: false, onOpenAiSettings });
-    expect(screen.getByRole("note")).toHaveTextContent("Draft Review is off");
+    expect(screen.getByRole("note")).toHaveTextContent("Writing assistance is off");
     expect(screen.getByRole("textbox", { name: "About You" })).toHaveValue("CEO");
     fireEvent.click(screen.getByRole("button", { name: "AI Provider" }));
     expect(onOpenAiSettings).toHaveBeenCalledOnce();
