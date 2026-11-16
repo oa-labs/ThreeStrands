@@ -161,14 +161,42 @@ describe("calendar sidebar", () => {
     const summaries = [...screen.getByRole("region", { name: "Product planning details" }).querySelectorAll("summary")];
     expect(summaries.map((summary) => summary.textContent)).toEqual(["1 attendee", "Description"]);
     for (const summary of summaries) {
-      // The leading icon fills the rows' icon column; the chevron trails the label.
+      // The leading icon fills the rows' icon column.
       expect(summary.firstElementChild?.tagName.toLowerCase()).toBe("svg");
-      expect(summary.querySelector("span .calendar-event-disclosure")).not.toBeNull();
+      expect(summary.querySelector(".calendar-event-disclosure")).not.toBeNull();
     }
     const summary = declarations(".calendar-event-viewer-details > details > summary");
     expect(summary).toMatchObject({ display: "grid", "list-style": "none" });
     expect(summary["font-weight"]).toBeUndefined();
     expect(declarations(".calendar-event-viewer-details > details > summary::-webkit-details-marker")).toMatchObject({ display: "none" });
+  });
+
+  it("reserves a separate first-row column for the attendee chevron when the response summary wraps", () => {
+    const attendees = Array.from({ length: 15 }, (_, index) => `guest${index}@example.com`);
+    const attendeeResponses = Object.fromEntries(attendees.map((email, index) => [email, index < 7 ? "accepted" : index < 10 ? "declined" : "needsAction"] as const));
+    const event = { id: "planning", accountId: "calendar@example.com", title: "Product planning",
+      start: "2026-10-05T14:00:00-04:00", end: "2026-10-05T14:45:00-04:00", allDay: false,
+      attendees, attendeeResponses };
+    render(<EventViewer embedded event={event} onDismiss={() => {}} onUpdated={() => {}} />);
+    const details = screen.getByRole("group");
+    const toggle = details.querySelector("summary")!;
+    expect(toggle).toHaveTextContent("15 attendees · 7 going, 3 not going, 5 awaiting");
+    expect(toggle).toHaveClass("calendar-event-attendees-toggle");
+    expect([...toggle.children].map((child) => child.tagName.toLowerCase())).toEqual(["svg", "span", "svg"]);
+    expect(toggle.lastElementChild).toHaveClass("calendar-event-disclosure");
+    expect(toggle.children[1].querySelector("svg")).toBeNull();
+    expect(declarations(".calendar-event-attendees > .calendar-event-attendees-toggle")).toMatchObject({
+      "grid-template-columns": "var(--event-detail-icon-column) minmax(0, 1fr) auto",
+    });
+    expect(declarations(".calendar-event-viewer-details > details > summary")).toMatchObject({ display: "grid", "align-items": "start" });
+    expect(declarations(".calendar-event-attendees-toggle > .calendar-event-disclosure")).toMatchObject({ "margin-left": "0" });
+    expect(details).not.toHaveAttribute("open");
+    fireEvent.click(toggle);
+    expect(details).toHaveAttribute("open");
+    expect(within(details).getAllByRole("listitem")).toHaveLength(15);
+    expect(declarations(".calendar-event-viewer-details > details[open] > summary .calendar-event-disclosure")).toMatchObject({ transform: "rotate(90deg)" });
+    fireEvent.click(toggle);
+    expect(details).not.toHaveAttribute("open");
   });
 
   it("keeps embedded event details at their own height with the actions beside the title", () => {

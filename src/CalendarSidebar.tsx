@@ -129,7 +129,7 @@ function EventAttendees({ event, attendees }: { event: ScheduleEvent; attendees:
   const summary = attendeeResponseSummary(event);
   return (
     <details className="calendar-event-attendees">
-      <summary><Users size={ICON_SIZE.lg} /><span>{attendees.length === 1 ? "1 attendee" : `${attendees.length} attendees`}{summary ? <span className="calendar-event-attendee-summary"> · {summary}</span> : null}<DisclosureChevron /></span></summary>
+      <summary className="calendar-event-attendees-toggle"><Users size={ICON_SIZE.lg} /><span>{attendees.length === 1 ? "1 attendee" : `${attendees.length} attendees`}{summary ? <span className="calendar-event-attendee-summary"> · {summary}</span> : null}</span><DisclosureChevron /></summary>
       <ul>{attendees.map((email) => {
         const status = event.attendeeResponses?.[email];
         const label = attendeeResponseLabel(status);

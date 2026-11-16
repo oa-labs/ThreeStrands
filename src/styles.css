@@ -2119,6 +2119,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-event-viewer-details > details[open] > summary .calendar-event-disclosure { transform: rotate(90deg); }
 .calendar-event-viewer-details > details > :not(summary) { margin-left: calc(var(--event-detail-icon-column) + var(--space-2)); }
 .calendar-event-viewer-details > details ul { margin-top: var(--space-1); margin-bottom: 0; padding-left: 0; list-style: none; }
+/* Reserve the chevron column so a long response summary cannot wrap it onto its own line. */
+.calendar-event-attendees > .calendar-event-attendees-toggle { grid-template-columns: var(--event-detail-icon-column) minmax(0, 1fr) auto; }
+.calendar-event-attendees-toggle > .calendar-event-disclosure { margin-left: 0; }
 .calendar-event-attendee-summary { color: var(--secondary); font-weight: var(--weight-regular); }
 .calendar-event-attendee-response { color: var(--muted); }
 .calendar-event-attendee-response[data-response-status="accepted"] { color: var(--accent); }
