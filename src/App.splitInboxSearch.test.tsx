@@ -27,6 +27,41 @@ describe("split inbox search shortcuts", () => {
     vi.restoreAllMocks();
   });
 
+  it("parks a reply all in a split, shows it on return, and opens Drafts with g then d", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    const threads = await mailClient.listThreads();
+    const [first, second] = threads;
+    vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([{
+      id: "work-split", name: "Work", matchKind: "label", matchValue: "work", sortOrder: 0,
+      createdAt: "2026-03-01T00:00:00Z", accountId: "demo@example.com",
+    }]);
+    vi.spyOn(mailClient, "listSplitInboxPage").mockResolvedValue({ threads, hasMore: false });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Work" }));
+    const list = await screen.findByRole("listbox", { name: "Work" });
+    fireEvent.click(await within(list).findByRole("option", { name: new RegExp(first.subject) }));
+    await screen.findByRole("heading", { name: first.subject });
+    fireEvent.keyDown(document.body, { key: "a" });
+    const body = await screen.findByRole("textbox", { name: "Message Body" });
+    body.textContent = "Keep my reply all edits";
+    fireEvent.input(body);
+    fireEvent.click(within(list).getByRole("option", { name: new RegExp(second.subject) }));
+    await screen.findByRole("heading", { name: second.subject });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());
+    fireEvent.click(within(list).getByRole("option", { name: new RegExp(first.subject) }));
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Draft" }));
+    expect(await screen.findByRole("textbox", { name: "Message Body" })).toHaveTextContent("Keep my reply all edits");
+    fireEvent.click(within(list).getByRole("option", { name: new RegExp(second.subject) }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());
+    fireEvent.keyDown(document.body, { key: "g" });
+    fireEvent.keyDown(document.body, { key: "d" });
+    const drafts = await screen.findByRole("listbox", { name: "Drafts" });
+    fireEvent.click(within(drafts).getByRole("option", { name: new RegExp(first.subject) }));
+    expect(await screen.findByRole("textbox", { name: "Message Body" })).toHaveTextContent("Keep my reply all edits");
+    fireEvent.click(screen.getByRole("button", { name: "Discard Draft" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());
+  });
+
   it("reveals Starred after starring without switching and hides an emptied tab after leaving", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     let followUp = { ...(await mailClient.listThreads())[0]!, starred: false };

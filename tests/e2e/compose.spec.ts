@@ -367,23 +367,69 @@ for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"], ["f", "Forward
   });
 }
 
-test("switching conversations saves an edited reply all and shows the selected thread", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
-  await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
-  await page.keyboard.press("a");
+for (const mailbox of ["Inbox", "Work"] as const) {
+  test(`switching ${mailbox} conversations preserves reply all, resumes it in the thread, and supports g then d`, async ({ page }) => {
+    await page.goto("/");
+    if (mailbox === "Work") {
+      await page.getByRole("button", { name: "Add Split Inbox", exact: true }).click();
+      const settings = page.getByRole("dialog", { name: "Settings" });
+      await settings.getByRole("textbox", { name: "Split Inbox Name" }).fill("Work");
+      await settings.getByRole("combobox", { name: "Match By" }).selectOption("pattern");
+      await settings.getByRole("textbox", { name: "Address Pattern" }).fill("t");
+      await settings.getByRole("button", { name: "Add Split Inbox", exact: true }).click();
+      await expect(settings.getByRole("textbox", { name: "Split Inbox Name" })).toHaveValue("");
+      await settings.getByRole("button", { name: "Close", exact: true }).click();
+      await page.getByRole("radio", { name: /^demo@example.com/ }).click();
+      await page.getByRole("tab", { name: "Work" }).click();
+    }
+    await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+    await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
+    await page.keyboard.press("a");
+    const reply = page.getByRole("dialog", { name: "Reply Message" });
+    await expect(reply.getByRole("heading", { name: "Reply All" })).toBeVisible();
+    await reply.getByRole("textbox", { name: "Message Body" }).fill("Keep this reply all draft");
+    const list = page.getByRole("listbox", { name: mailbox });
+    await list.getByRole("option", { name: /Phase 1: read and triage/ }).click();
+    await expect(reply).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Conversation" }).getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
+    await list.getByRole("option", { name: /Welcome to ThreeStrands/ }).click();
+    await page.getByRole("button", { name: "Resume Draft" }).click();
+    await expect(reply.getByRole("textbox", { name: "Message Body" })).toHaveText("Keep this reply all draft");
+    await list.getByRole("option", { name: /Phase 1: read and triage/ }).click();
+    await expect(reply).toHaveCount(0);
+    await page.keyboard.press("g");
+    await page.keyboard.press("d");
+    await page.getByRole("listbox", { name: "Drafts" }).getByRole("option", { name: /Welcome to ThreeStrands/ }).click();
+    await expect(reply.getByRole("textbox", { name: "Message Body" })).toHaveText("Keep this reply all draft");
+  });
+}
 
-  const reply = page.getByRole("dialog", { name: "Reply Message" });
-  await expect(reply.getByRole("heading", { name: "Reply All" })).toBeVisible();
-  await reply.getByRole("textbox", { name: "Message Body" }).fill("Keep this reply all draft");
-  await page.getByRole("listbox").getByRole("option", { name: /Phase 1: read and triage/ }).click();
-
-  await expect(reply).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Conversation" }).getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
-  await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
-  await page.getByRole("option", { name: /Welcome to ThreeStrands/ }).click();
-  await expect(reply.getByRole("textbox", { name: "Message Body" })).toHaveText("Keep this reply all draft");
-});
+for (const mode of ["new", "replyAll"] as const) {
+  test(`standalone ${mode} fills the writing area down to its tools`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1200 });
+    await page.goto("/");
+    await page.getByRole("heading", { name: "Welcome to ThreeStrands" }).waitFor();
+    if (mode === "new") await page.getByRole("button", { name: "New Message (c)" }).click();
+    else {
+      await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
+      await page.keyboard.press("a");
+    }
+    const composer = page.getByRole("dialog", { name: mode === "new" ? "New Message" : "Reply Message" });
+    await composer.getByRole("textbox", { name: "Message Body" }).fill("A short draft");
+    if (mode === "replyAll") {
+      await composer.getByRole("button", { name: "Save and Close Draft" }).click();
+      await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
+      await page.getByRole("option", { name: /Welcome to ThreeStrands/ }).click();
+    }
+    await expect.poll(() => composer.evaluate((element) => {
+      const content = element.querySelector(".composer-content")!;
+      const children = [...content.children].filter((child) => child.getBoundingClientRect().height > 0);
+      const last = children.at(-1)!.getBoundingClientRect();
+      return Math.abs(content.getBoundingClientRect().bottom - last.bottom);
+    })).toBeLessThanOrEqual(1);
+    await expect(composer.getByRole("button", { name: "Send", exact: true })).toBeInViewport({ ratio: 1 });
+  });
+}
 
 for (const width of [900, 1280]) {
   test(`Reply Assist opens in the viewport over a long reply and Escape returns to compose (${width}px)`, async ({ page }) => {

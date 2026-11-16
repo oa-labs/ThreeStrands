@@ -3490,8 +3490,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-body { font-synthesis: style; display: block; width: 100%; min-height: 0; height: auto; flex-shrink: 0; padding: var(--space-3) 0; overflow: visible; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: var(--text-reading); line-height: var(--leading-normal); white-space: pre-wrap; }
 /* Keep room to write, but let text grow in the shared composer-content scroller.
    A fixed editor height creates nested scrolling and separates the final line
-   from the signature. Only the authored body needs a minimum writing area. */
-.compose-authored { position: relative; min-height: max(200px, min(32vh, 360px)); }
+   from the signature. Only the authored body needs a minimum writing area;
+   it also fills spare space so the tools stay at the bottom of a tall draft. */
+.compose-authored { position: relative; flex-grow: 1; min-height: max(200px, min(32vh, 360px)); }
 .composer-new .compose-authored { min-height: max(200px, min(45vh + 90px, 600px, 100vh - 400px)); }
 /* An empty editor has no line box, so WebKit draws no caret. The anchor break
    supplies one and is removed as soon as the body has any other content, so

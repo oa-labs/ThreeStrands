@@ -599,11 +599,8 @@ export function App() {
       openResult();
       return;
     }
-    void correspondence.flushDraft()
-      .then(() => {
-        correspondence.context.openInbox();
-        openResult();
-      })
+    void correspondence.closeDraft()
+      .then(openResult)
       .catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
   }, [composingApart, correspondence, selectThread, selectedId, setNotice, isTabbedMailbox, queryRef]);
   const {
