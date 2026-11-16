@@ -125,11 +125,21 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       if (!scope.length) conversations = { ...bounded(items, DEMO_MEETING_LIMITS.conversations), status: "scopeRequired", message: "Choose which mail accounts to look in for related mail." };
       else {
         const since = now.getTime() - DEMO_MEETING_LIMITS.mailLookbackDays * 86_400_000;
-        const matches = sources.threads()
-          .filter((thread) => scope.includes(thread.accountId) && !thread.trashed && Date.parse(thread.lastMessageAt) >= since && !items.some((item) => item.threadId === thread.id))
+        const recent = sources.threads()
+          .filter((thread) => scope.includes(thread.accountId) && !thread.trashed && Date.parse(thread.lastMessageAt) >= since)
+          .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt) || a.id.localeCompare(b.id));
+        // As natively: conversations naming the meeting first, then mail with
+        // several attendees, then mail with one, newest first within each.
+        const title = event.title.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+        if ([...title].length >= 4) for (const thread of recent) {
+          if (thread.subject.toLowerCase().includes(title) && !items.some((item) => item.threadId === thread.id)) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "title", attendees: [] });
+        }
+        const several = Math.min(2, lookup.length);
+        const matches = recent
+          .filter((thread) => !items.some((item) => item.threadId === thread.id))
           .map((thread) => ({ thread, matched: lookup.filter((address) => thread.participants.some((participant) => normalizeContactAddress(participant).includes(address))).sort() }))
           .filter(({ matched }) => matched.length)
-          .sort((a, b) => b.thread.lastMessageAt.localeCompare(a.thread.lastMessageAt) || a.thread.id.localeCompare(b.thread.id));
+          .sort((a, b) => Number(a.matched.length < several) - Number(b.matched.length < several));
         for (const { thread, matched } of matches) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "attendees", attendees: matched });
         conversations = bounded(items, DEMO_MEETING_LIMITS.conversations);
       }
@@ -148,7 +158,7 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
     }
     for (const conversation of conversations.items) for (const task of sources.tasks().filter((task) => task.threadId === conversation.threadId && active(task))) {
       const candidate = conversation.reason === "attendees";
-      commitments.push({ id: task.id, title: task.title, status: task.status, noteId: null, threadId: task.threadId, accountId: task.accountId, origin: candidate ? "attendeeConversation" : "originConversation", candidate });
+      commitments.push({ id: task.id, title: task.title, status: task.status, noteId: null, threadId: task.threadId, accountId: task.accountId, origin: candidate ? "attendeeConversation" : conversation.reason === "title" ? "titleConversation" : "originConversation", candidate });
     }
     const unique = commitments.filter((item, index) => commitments.findIndex((other) => other.id === item.id) === index);
     unique.sort((a, b) => Number(a.candidate) - Number(b.candidate));

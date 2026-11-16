@@ -1945,10 +1945,13 @@ describe("returning from a jump", () => {
   it.each(["Today's agenda", "Tomorrow", "Next meeting"])("returns to Today with Escape after opening %s", async (entry) => {
     const today = await openTodayWithCalendar();
     const title = entry === "Tomorrow" ? "Planning" : "Project review";
-    const button = entry === "Next meeting"
-      ? within(today).getByRole("button", { name: /^Next: Project review/ })
-      : within(within(today).getByRole("region", { name: entry })).getByRole("button", { name: new RegExp(`^${title}`) });
-    fireEvent.click(button);
+    if (entry === "Next meeting") fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
+    else {
+      // On Today, choosing an agenda event prepares it; Open in Calendar is the jump.
+      fireEvent.click(within(within(today).getByRole("region", { name: entry })).getByRole("button", { name: new RegExp(`^${title}`) }));
+      const preparation = await within(today).findByRole("region", { name: `Preparation for ${title}` });
+      fireEvent.click(within(preparation).getByRole("button", { name: "Open in Calendar" }));
+    }
     expect(await screen.findByRole("region", { name: `${title} details` })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Calendar week" })).toBeInTheDocument();
 

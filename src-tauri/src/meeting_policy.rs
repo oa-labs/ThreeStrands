@@ -20,6 +20,9 @@ pub const MAX_LINKED_NOTE_PREVIEW_BYTES: usize = 1024;
 pub const MAX_MEETING_ATTENDEES: usize = 50;
 /// Most conversations listed, the originating one included.
 pub const MAX_MEETING_CONVERSATIONS: usize = 10;
+/// Most recent conversations with attendees examined to rank those that
+/// involve several attendees first.
+pub const MAX_ATTENDEE_CANDIDATE_THREADS: usize = 100;
 /// How far back attendee correspondence is looked for.
 pub const MEETING_MAIL_LOOKBACK_DAYS: i64 = 90;
 /// Most commitments listed, definite ones before candidates.

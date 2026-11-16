@@ -3,13 +3,11 @@ import { useMemo, useState } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { formatEventTime } from "./calendarTime";
 import type { ScheduleEvent } from "./domain";
-import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
-import { defaultMeetingEntry, noPrepKey, readinessByKey, readinessSummary, readNoPrepNeeded, setNoPrepNeeded } from "./meetingPrep";
-import { meetingDate, meetingEventReference } from "./meetingNoteEntry";
-import { reserveMeetingPrep } from "./noteCapture";
-import { dailyNoteName } from "./noteDates";
-import { noteReferenceHref, noteReferenceKey } from "./noteEntities";
+import { noPrepKey, preparationKey, readinessByKey, readinessSummary, readNoPrepNeeded, setNoPrepNeeded } from "./meetingPrep";
+import { reservePrepTime } from "./meetingPrepActions";
+import { meetingEventReference } from "./meetingNoteEntry";
+import { noteReferenceKey } from "./noteEntities";
 import type { Notice } from "./useNotice";
 import { useMeetingReadiness } from "./useMeetingPreparation";
 
@@ -23,6 +21,8 @@ type Props = {
   /** Opens a day's note, focused on the meeting's link. */
   onOpenNote(noteId: string, href?: string): void;
   onNotice(notice: Notice): void;
+  /** The meeting being prepared (`preparationKey`), shown selected. */
+  selectedKey?: string | null;
 };
 
 /**
@@ -31,7 +31,7 @@ type Props = {
  * offers Prepare, Reserve Prep Time (a prep task under its line in its day's
  * note), and No Prep Needed (this device only, undoable).
  */
-export function MeetingReadinessList({ events, ownAddresses, refreshKey, onPrepare, onOpenNote, onNotice }: Props) {
+export function MeetingReadinessList({ events, ownAddresses, refreshKey, onPrepare, onOpenNote, onNotice, selectedKey = null }: Props) {
   const references = useMemo(() => events.flatMap((event) => { const reference = meetingEventReference(event); return reference ? [reference] : []; }), [events]);
   const readiness = useMeetingReadiness(references, refreshKey);
   const byKey = readinessByKey(readiness.rows);
@@ -42,21 +42,7 @@ export function MeetingReadinessList({ events, ownAddresses, refreshKey, onPrepa
     const key = noPrepKey(event);
     if (!key || busy) return;
     setBusy(key);
-    try {
-      const date = meetingDate(event);
-      const reserved = await reserveMeetingPrep(date, await defaultMeetingEntry(event, ownAddresses));
-      const action = { label: "Open Note", run: () => onOpenNote(reserved.note.id, noteReferenceHref(meetingEventReference(event)!)) };
-      if (!reserved.added) onNotice({ message: "This meeting already has a prep task", action });
-      else onNotice({
-        message: `Prep task added to ${dailyNoteName(date)}`,
-        action,
-        undo: () => void reserved.undo().catch((reason) => onNotice({ message: errorMessage(reason), action })),
-      });
-    } catch (reason) {
-      onNotice({ message: errorMessage(reason) });
-    } finally {
-      setBusy(null);
-    }
+    try { await reservePrepTime(event, ownAddresses, onNotice, onOpenNote); } finally { setBusy(null); }
   };
   const toggleSkip = (event: ScheduleEvent, chosen: boolean) => {
     const key = noPrepKey(event);
@@ -71,8 +57,11 @@ export function MeetingReadinessList({ events, ownAddresses, refreshKey, onPrepa
     if (!reference || !key) return [];
     const skip = skipped.includes(key);
     const row = byKey.get(noteReferenceKey(reference));
+    const prepKey = preparationKey(event);
     return [<ContextRow
       key={key}
+      rowKey={prepKey ? `meeting:${prepKey}` : undefined}
+      pressed={selectedKey !== null ? prepKey === selectedKey : undefined}
       className={skip ? "meeting-readiness-skipped" : undefined}
       icon={<CalendarCheck size={ICON_SIZE.sm} />}
       title={event.title}

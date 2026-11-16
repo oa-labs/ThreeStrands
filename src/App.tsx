@@ -2,6 +2,7 @@ import { addMeetingToDailyNote, captureConversation } from "./noteCapture";
 import { MeetingNoteDialog } from "./MeetingNoteDialog";
 import { meetingEventReference, primaryMeetingNote } from "./meetingNoteEntry";
 import { preparationKey } from "./meetingPrep";
+import { MeetingPrepActions, reservePrepTime } from "./meetingPrepActions";
 import type { MeetingCommitment } from "./domain";
 import type { MeetingEntry } from "./noteMeetings";
 import { dailyNoteName } from "./noteDates";
@@ -776,6 +777,15 @@ export function App() {
     onOpenThread={(threadId) => openFromPreparation(origin, event, () => jumpToThread(threadId))}
     onOpenTask={(commitment) => openFromPreparation(origin, event, () => openEntityReference(commitmentHref(commitment)))}
     onClose={close}
+    onAddNote={() => { void openMeetingNote(event); }}
+    // Calendar's details already offer Open Note / Add Note and Join beside the event.
+    actions={<MeetingPrepActions
+      event={event}
+      onAddNote={origin === "today" ? () => { void openMeetingNote(event); } : undefined}
+      onReservePrep={() => void reservePrepTime(event, meetingOwnAddresses, setNotice, (noteId, href) => openNote(noteId, undefined, href))}
+      onOpenInCalendar={origin === "today" ? () => openCalendarView(eventDate(event), event) : undefined}
+      showJoin={origin === "today"}
+    />}
   /></Suspense>;
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
@@ -783,7 +793,10 @@ export function App() {
     createCalendarEvent: () => { openCalendarView(); setCreateCalendarEventRequested(true); },
     addToTodaysNote,
     addMeetingNote: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => { void openMeetingNote(calendarSelectedEvent); } : undefined,
-    prepareMeeting: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => setCalendarPreparing(preparationKey(calendarSelectedEvent)) : undefined,
+    prepareMeeting: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent)
+      ? () => setCalendarPreparing((current) => current === preparationKey(calendarSelectedEvent) ? null : preparationKey(calendarSelectedEvent)) : undefined,
+    meetingPrepOpen: rightWorkspace === "today" ? todayPreparing !== null
+      : rightWorkspace === "week" ? Boolean(calendarSelectedEvent && calendarPreparing !== null && preparationKey(calendarSelectedEvent) === calendarPreparing) : false,
     snoozeSelected: openSnooze, returnSnoozedSelected: conversationSnooze.returnToInbox,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },

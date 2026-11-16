@@ -19,13 +19,15 @@ A line under the date summarizes your remaining meetings, free time, conflicts, 
 - **Tomorrow** shows the first few events the next day.
 - **Join** opens your next online meeting.
 - **Add Note**, beside your next meeting or on any event in the agenda, writes a line about the meeting in that day's note. See [Meeting Notes](notes.html#meeting-notes).
+- Click an event to [prepare for it](#get-ready-for-meetings) beside the agenda; **Open in Calendar** in its preparation opens it in Calendar.
 - Overlapping meetings are marked. **Recorded** means the invitation says a session will be recorded; it does not guarantee a recording will be available.
 
 ## Get Ready for Meetings {#get-ready-for-meetings}
 
 **Meeting prep**, above the agenda, lists the meetings still ahead today with what is ready for each: whether the meeting has notes, earlier meetings in its series with notes, open commitments, and when you last had mail with its attendees.
 
-- Click a meeting, or **Prepare** on the agenda or beside your next meeting, to [prepare for it](calendar.html#prepare-for-a-meeting) here on Today. Close preparation to return to the columns.
+- Click a meeting here or in the agenda, click **Prepare** beside your next meeting, or press <kbd>p</kbd> to [prepare for it](calendar.html#prepare-for-a-meeting). Preparation appears beside the agenda, in place of unread mail, and the meeting stays highlighted. Press <kbd>↓</kbd> or <kbd>↑</kbd> for the next or previous meeting. Press <kbd>Escape</kbd> or <kbd>p</kbd>, or click the meeting again, to bring back unread mail.
+- Above preparation, **Add Note** (or **Open Note**), **Reserve Prep Time**, **Join**, and **Open in Calendar** offer the next steps.
 - **Reserve Prep Time** adds a task, "Prepare for" and the meeting's name, under the meeting's line in that day's note, adding the line if the note doesn't have one. It appears in **Tasks**. Doing it again finds the task already there.
 - **No Prep Needed** sets a meeting aside on this computer only; click the arrow to bring it back.
 

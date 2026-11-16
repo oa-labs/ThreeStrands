@@ -34,13 +34,15 @@ function saveCollapsed(id: string, collapsed: boolean) {
 
 /**
  * A section's collapsed state, remembered per device under `id`, and a
- * toggle that flips and saves it.
+ * toggle that flips and saves it. A section that starts collapsed remembers
+ * being opened instead, under its own key, so the two kinds never mix.
  */
-export function useRememberedCollapse(id: string): [boolean, () => void] {
-  const [collapsed, setCollapsed] = useState(() => readCollapsed().has(id));
+export function useRememberedCollapse(id: string, defaultCollapsed = false): [boolean, () => void] {
+  const key = defaultCollapsed ? `opened:${id}` : id;
+  const [collapsed, setCollapsed] = useState(() => readCollapsed().has(key) !== defaultCollapsed);
   const toggle = () => {
     setCollapsed(!collapsed);
-    saveCollapsed(id, !collapsed);
+    saveCollapsed(key, !collapsed !== defaultCollapsed);
   };
   return [collapsed, toggle];
 }
@@ -108,7 +110,7 @@ function revealIfTruncated(line: HTMLElement | null) {
  * off shows its full text on hover. A small icon `action` sits at the end of
  * the detail line, under the date, so dates keep the panel's right edge.
  */
-export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, pressed, disabled, onPointerDown, actions, trailing, wrapTitle, className }: {
+export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, pressed, disabled, onPointerDown, actions, trailing, wrapTitle, className, rowKey }: {
   as?: "div" | "article";
   /** A decorative glyph, drawn inside the row's button. */
   icon?: ReactNode;
@@ -135,6 +137,8 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   /** Lets a long title wrap, for titles the user wrote, such as tasks. */
   wrapTitle?: boolean;
   className?: string;
+  /** Names what the row stands for, so a command can act on the row in focus. */
+  rowKey?: string;
 }) {
   const titleRef = useRef<HTMLElement>(null);
   const detailRef = useRef<HTMLElement>(null);
@@ -151,7 +155,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
     </span>
   </>;
   return (
-    <Element className={classes} style={actions?.length ? { "--context-row-action-count": actions.length } as CSSProperties : undefined} onMouseEnter={revealTruncated} onPointerDown={onPointerDown}>
+    <Element className={classes} data-row-key={rowKey} style={actions?.length ? { "--context-row-action-count": actions.length } as CSSProperties : undefined} onMouseEnter={revealTruncated} onPointerDown={onPointerDown}>
       {control ? <span className="context-row-glyph context-row-control">{control}</span> : null}
       {onActivate
         ? <button type="button" className="context-row-main" aria-pressed={pressed} disabled={disabled} onClick={onActivate}>{body}</button>
@@ -167,7 +171,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
  * and whose rows stop at a few with "Show more" (only when two or more would be hidden), so stacked sections stay
  * scannable instead of pushing everything else down.
  */
-export function ContextSection({ sectionRef, busy, status, id, title, label, count, actions, note, rows, limit = CONTEXT_SECTION_ROWS, footer, closing, className }: {
+export function ContextSection({ sectionRef, busy, status, id, title, label, count, actions, note, rows, limit = CONTEXT_SECTION_ROWS, footer, closing, className, defaultCollapsed = false }: {
   sectionRef?: RefObject<HTMLElement | null>;
   busy?: boolean;
   status?: ReactNode;
@@ -189,8 +193,10 @@ export function ContextSection({ sectionRef, busy, status, id, title, label, cou
   /** Always shown last, under the rows and any "Show more", such as a section's decisions. */
   closing?: ReactNode;
   className?: string;
+  /** Starts collapsed until the user opens it, for secondary lists. */
+  defaultCollapsed?: boolean;
 }) {
-  const [collapsed, toggle] = useRememberedCollapse(id);
+  const [collapsed, toggle] = useRememberedCollapse(id, defaultCollapsed);
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
   const headingId = useId();

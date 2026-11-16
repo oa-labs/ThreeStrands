@@ -750,3 +750,93 @@ fn reserving_prep_goes_under_an_existing_meeting_line_and_refuses_stale_or_unbou
         .is_err());
     assert_eq!(db.get_note(&prose.id).unwrap().unwrap().body, prose.body);
 }
+
+#[test]
+fn conversations_naming_the_meeting_come_first_then_mail_with_several_attendees() {
+    let meeting = event(
+        "evt-1",
+        None,
+        "Benefits Review",
+        "2026-11-16T15:00:00Z",
+        &["ann@example.org", "bo@example.org"],
+    );
+    let db = setup(&[meeting]);
+    let mut invitation = mail(
+        "inv",
+        "invitation",
+        "2026-11-12T09:00:00Z",
+        "Ann <ann@example.org>",
+        &[ME],
+    );
+    invitation.subject = "Invitation: Benefits review @ Mon Nov 16".into();
+    db.upsert_thread(ME, &[invitation]).unwrap();
+    db.upsert_thread(
+        ME,
+        &[mail(
+            "solo",
+            "ann-only",
+            "2026-11-15T09:00:00Z",
+            "Ann <ann@example.org>",
+            &[ME],
+        )],
+    )
+    .unwrap();
+    db.upsert_thread(
+        ME,
+        &[mail(
+            "both",
+            "ann-and-bo",
+            "2026-11-13T09:00:00Z",
+            "Ann <ann@example.org>",
+            &[ME, "bo@example.org"],
+        )],
+    )
+    .unwrap();
+
+    let result = context(&db, &occurrence("evt-1", None));
+    let threads: Vec<_> = result
+        .conversations
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.thread_id
+                    .trim_start_matches(&format!("{ME}:"))
+                    .to_string(),
+                item.reason,
+            )
+        })
+        .collect();
+    assert_eq!(
+        threads,
+        [
+            ("invitation".to_string(), ConversationReason::Title),
+            ("ann-and-bo".to_string(), ConversationReason::Attendees),
+            ("ann-only".to_string(), ConversationReason::Attendees),
+        ]
+    );
+    assert_eq!(
+        result.conversations.items[1].attendees,
+        ["ann@example.org", "bo@example.org"]
+    );
+
+    // A title too short to be telling matches nothing by subject.
+    let short = event("evt-2", None, "1:1", "2026-11-16T15:00:00Z", &[]);
+    db.cache_note_events(ME, &[], "", "", &[short]).unwrap();
+    assert!(context(&db, &occurrence("evt-2", None))
+        .conversations
+        .items
+        .is_empty());
+}
+
+#[test]
+fn an_attendee_is_found_in_headers_only_as_a_whole_address() {
+    assert!(mentions_address("ann <ann@example.org>", "ann@example.org"));
+    assert!(mentions_address(
+        "[\"ann@example.org\",\"bo@example.org\"]",
+        "bo@example.org"
+    ));
+    assert!(!mentions_address("joann@example.org", "ann@example.org"));
+    assert!(!mentions_address("ann@example.org.uk", "ann@example.org"));
+    assert!(!mentions_address("ann@example.organic", "ann@example.org"));
+}

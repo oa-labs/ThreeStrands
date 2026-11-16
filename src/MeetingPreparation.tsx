@@ -23,6 +23,22 @@ type Props = {
   onOpenThread(threadId: string): void;
   onOpenTask(commitment: MeetingCommitment): void;
   onClose(): void;
+  /** What to do next for this meeting, such as Add Note and Join, under the title. */
+  actions?: ReactNode;
+  /** Offered where the meeting has no notes yet. */
+  onAddNote?(): void;
+};
+
+const CONVERSATION_REASON: Record<MeetingConversation["reason"], string> = {
+  origin: "This invitation came from here",
+  title: "Names this meeting",
+  attendees: "",
+};
+const COMMITMENT_ORIGIN: Record<MeetingCommitment["origin"], string> = {
+  meetingNote: "In this meeting's notes",
+  originConversation: "On the invitation's conversation",
+  titleConversation: "On a conversation about this meeting",
+  attendeeConversation: "On a conversation with an attendee",
 };
 
 const shortDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -54,7 +70,7 @@ function noteTitle(source: MeetingNoteSource): string {
  * Opening it reads only local data; nothing is written, and nothing takes
  * focus on its own.
  */
-export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote, onOpenThread, onOpenTask, onClose }: Props) {
+export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote, onOpenThread, onOpenTask, onClose, actions, onAddNote }: Props) {
   const reference = meetingEventReference(event);
   const prep = useMeetingPreparation(reference, refreshKey);
   const [choosingScope, setChoosingScope] = useState(false);
@@ -86,7 +102,7 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
     icon={<Mail size={ICON_SIZE.sm} />}
     title={item.subject || "(No subject)"}
     date={shortDate(item.lastMessageAt)}
-    detail={[item.reason === "origin" ? "This invitation came from here" : `With ${item.attendees.join(", ")}`, mailAccounts.length > 1 ? item.accountId : null].filter(Boolean).join(" · ")}
+    detail={[item.reason === "attendees" ? `With ${item.attendees.join(", ")}` : CONVERSATION_REASON[item.reason], mailAccounts.length > 1 ? item.accountId : null].filter(Boolean).join(" · ")}
     onActivate={() => onOpenThread(item.threadId)}
   />);
   const commitmentRows = (items: readonly MeetingCommitment[]) => items.map((item) => <ContextRow
@@ -94,13 +110,18 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
     icon={<CheckSquare size={ICON_SIZE.sm} />}
     title={item.title}
     wrapTitle
-    detail={item.origin === "meetingNote" ? "In this meeting's notes" : item.origin === "originConversation" ? "On the invitation's conversation" : "On a conversation with an attendee"}
+    detail={COMMITMENT_ORIGIN[item.origin]}
     onActivate={() => onOpenTask(item)}
   />);
 
   const definite = context?.commitments.items.filter((item) => !item.candidate) ?? [];
   const candidates = context?.commitments.items.filter((item) => item.candidate) ?? [];
   const conversations = context?.conversations;
+  // Mail naming the meeting, or with several of its attendees, leads; mail
+  // with a single attendee is often about something else, so it waits below.
+  const several = Math.min(2, context?.event?.attendees.length ?? 0);
+  const related = conversations?.items.filter((item) => item.reason !== "attendees" || item.attendees.length >= several) ?? [];
+  const otherMail = conversations?.items.filter((item) => !related.includes(item)) ?? [];
   const scopeAction = mailAccounts.length > 1 || conversations?.status === "scopeRequired"
     ? <button type="button" className="btn-link" onClick={() => setChoosingScope(true)}>{conversations?.status === "scopeRequired" ? "Choose Accounts…" : "Mail Accounts…"}</button>
     : null;
@@ -112,27 +133,37 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
       actions={<button type="button" className="btn-icon btn-icon-sm" aria-label="Close Preparation" title="Close Preparation" onClick={onClose}><X size={ICON_SIZE.sm} aria-hidden="true" /></button>}
     />
     <p className="context-section-note">{event.title} · {formatEventTime(event)}{context?.event?.attendees.length ? ` · ${context.event.attendees.join(", ")}` : ""}</p>
+    {actions ? <div className="meeting-prep-actions" role="group" aria-label="Meeting actions">{actions}</div> : null}
     {prep.loading && !context ? <p className="context-status" role="status">Loading preparation…</p> : null}
     {prep.error ? <p className="context-status" role="alert">{prep.error} <button type="button" className="btn-link" onClick={prep.reload}>Try Again</button></p> : null}
     {context ? <>
       {!context.event ? <p className="context-status">This meeting isn't in this device's calendar cache, so only its notes are shown.</p> : null}
       <ContextSection id="meeting-prep-this" title="This meeting" count={context.thisMeeting.items.length}
         rows={sourceRows(context.thisMeeting.items, "this")}
-        footer={sectionStatus(context.thisMeeting, "No notes for this meeting yet.")} />
+        footer={<>
+          {sectionStatus(context.thisMeeting, "No notes for this meeting yet.")}
+          {onAddNote && context.thisMeeting.items.length === 0 && context.thisMeeting.status !== "unavailable"
+            ? <p className="context-status"><button type="button" className="btn-link" onClick={onAddNote}>Add Note</button> to start this meeting's notes in its day's note.</p> : null}
+        </>} />
       <ContextSection id="meeting-prep-previous" title="Previous meetings" count={context.previousMeetings.items.length}
         rows={occurrenceRows(context.previousMeetings.items)}
         footer={sectionStatus(context.previousMeetings, context.event?.seriesId ? "No notes from earlier meetings in this series." : "This meeting doesn't repeat.")} />
       {context.seriesNotes.items.length || context.seriesNotes.status === "unavailable" ? <ContextSection id="meeting-prep-series" title="Series notes" count={context.seriesNotes.items.length}
         rows={sourceRows(context.seriesNotes.items, "series")}
         footer={sectionStatus(context.seriesNotes, "")} /> : null}
-      <ContextSection id="meeting-prep-mail" title="Conversations" count={conversations?.items.length}
+      <ContextSection id="meeting-prep-mail" title="Conversations" count={related.length}
         actions={scopeAction}
         note={context.mailScope.length ? `Looking in ${context.mailScope.join(", ")}, last ${context.limits.mailLookbackDays} days` : undefined}
-        rows={conversationRows(conversations?.items ?? [])}
+        rows={conversationRows(related)}
         footer={<>
           {conversations?.status === "scopeRequired" ? <p className="context-status">{conversations.message}</p> : null}
-          {sectionStatus(conversations, "No recent mail with this meeting's attendees.")}
+          {conversations?.status === "unavailable" ? <p className="context-status">{conversations.message}</p> : null}
+          {conversations && conversations.status !== "unavailable" && conversations.status !== "scopeRequired" && related.length === 0
+            ? <p className="context-status">{otherMail.length ? "No mail about this meeting or with several of its attendees." : "No recent mail about this meeting or with its attendees."}</p> : null}
         </>} />
+      {otherMail.length || conversations?.omitted ? <ContextSection id="meeting-prep-other-mail" title="Other mail with attendees" count={otherMail.length} defaultCollapsed
+        rows={conversationRows(otherMail)}
+        footer={conversations?.omitted ? <p className="context-status">{conversations.omitted} more not shown.</p> : null} /> : null}
       <ContextSection id="meeting-prep-commitments" title="Open commitments" count={definite.length}
         rows={commitmentRows(definite)}
         footer={<>

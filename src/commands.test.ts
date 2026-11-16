@@ -248,12 +248,15 @@ describe("command registry", () => {
     }
     expect(Object.fromEntries([...owners].filter(([, ids]) => ids.length > 1))).toEqual({
       j: ["notes.next", "thread.next", "tasks.next"],
-      arrowdown: ["notes.next", "thread.next", "tasks.next"],
+      // Meeting preparation moves between meetings only on Today, while preparing.
+      arrowdown: ["notes.next", "meetings.next", "thread.next", "tasks.next"],
       k: ["notes.previous", "thread.previous", "tasks.previous"],
-      arrowup: ["notes.previous", "thread.previous", "tasks.previous"],
+      arrowup: ["notes.previous", "meetings.previous", "thread.previous", "tasks.previous"],
       e: ["tasks.completeSelected", "thread.archive"],
       "shift+e": ["tasks.reopenSelected", "thread.unarchive"],
       o: ["files.open", "tasks.openSelected", "thread.toggleOlderMessages"],
+      // Previous Message in Mail; Prepare for Meeting on Today and in Calendar.
+      p: ["message.previous", "meetings.prepare"],
       s: ["files.star", "thread.star"],
       "shift+n": ["calendar.new", "contacts.new", "agents.new", "notes.new"],
       "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
@@ -267,8 +270,9 @@ describe("command registry", () => {
       "mod+j": ["draft.replyAssist", "chat.open"],
       tab: ["mailbox.nextSplit", "tasks.nextView", "contacts.nextView"],
       "shift+tab": ["mailbox.previousSplit", "contacts.previousView", "tasks.previousView"],
-      // Close Search stands aside while Back is available.
-      escape: ["navigation.back", "search.close"],
+      // Close Search stands aside while Back is available; closing meeting
+      // preparation comes first while it is open.
+      escape: ["meetings.closePrepare", "navigation.back", "search.close"],
     });
 
     for (const focusedPane of ["mail", "tasks", "notes", "contacts", "files", "calendar", "agents"] as const) {

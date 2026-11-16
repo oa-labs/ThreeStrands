@@ -438,13 +438,31 @@ available notes.
 
 - In Calendar, **Prepare** sits beside Open Note / Add Note in the event details
   and on each agenda row. While preparing, the view takes the place of the
-  details' note backlinks and related mail, which it covers. The palette command
-  **Prepare for Meeting** is enabled while an event's details are open.
+  details' note backlinks and related mail, which it covers. **Prepare for
+  Meeting** (<kbd>p</kbd>, and the palette) toggles it while an event's details
+  are open; <kbd>Escape</kbd> closes it before any other Escape action.
 - On Today, **Meeting prep** sits above the agenda and lists the meetings still
   ahead that a note can link, excluding declined events and working locations.
-  Prepare, from that list, the agenda, or the next-meeting card, shows the view in
-  place of Today's columns; closing it returns focus to the trigger. This is the
-  interim placement until Plan Today ships.
+  There is no separate mode: choosing a meeting there or in the agenda, Prepare on
+  the next-meeting card, or <kbd>p</kbd> (the meeting row in focus, else the next
+  meeting) shows its preparation in place of the unread-mail column, beside the
+  agenda, at Today's type sizes. The meeting stays highlighted and its Prepare
+  buttons pressed. <kbd>↓</kbd>/<kbd>↑</kbd> move to the next or previous meeting;
+  <kbd>Escape</kbd>, <kbd>p</kbd>, or choosing the meeting again closes it and
+  returns focus to the trigger. On Today, choosing an agenda event prepares it;
+  **Open in Calendar** is among its actions. This is the interim placement until
+  Plan Today ships, which removes the mail column anyway.
+- Under the title, an action row offers the next steps: Add Note / Open Note,
+  **Reserve Prep Time**, Join, and Open in Calendar on Today (Calendar's details
+  already offer Open Note and Join). An empty **This meeting** offers Add Note.
+- **Conversations** lead with the originating message, then recent conversations
+  whose subject contains the meeting's title (at least four characters; invitations
+  and their replies), then mail involving two or more attendees (every attendee for
+  a one-attendee meeting), counted from each thread's From, To, and Cc headers
+  without reading bodies. Mail with a single attendee follows under **Other mail
+  with attendees**, collapsed by default, since with colleagues it is often about
+  something else. At most `MAX_ATTENDEE_CANDIDATE_THREADS` (100) recent attendee
+  threads are examined for this ranking.
 - Opening a source uses the existing note, conversation, and task navigation and
   shows a **Back to Meeting** notice. The meeting being prepared in Calendar and on
   Today is kept in App state, so returning restores the same view.

@@ -178,7 +178,17 @@ it("prepares a meeting on Today, opens a source note, and comes back to the same
   fireEvent.click(await screen.findByRole("button", { name: "Back to Meeting" }));
   expect(await screen.findByRole("region", { name: "Preparation for Prep review" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Close Preparation" }));
-  expect(await screen.findByRole("region", { name: "Today's agenda" })).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Preparation for Prep review" })).not.toBeInTheDocument());
+  expect(screen.getByRole("group", { name: "Unread mail" })).toBeInTheDocument();
+
+  // p prepares the next meeting and Escape closes it.
+  fireEvent.keyDown(window, { key: "p" });
+  expect(await screen.findByRole("region", { name: "Preparation for Prep review" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Today's agenda" })).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Preparation for Prep review" })).not.toBeInTheDocument());
+  // Escape closed preparation without leaving Today.
+  expect(screen.getByRole("region", { name: "Today's agenda" })).toBeInTheDocument();
 });
 
 it("prepares the meeting open in Calendar from its details and from the command palette", async () => {
@@ -202,5 +212,9 @@ it("prepares the meeting open in Calendar from its details and from the command 
   fireEvent.click(screen.getByRole("button", { name: /^Command Palette/ }));
   fireEvent.change(screen.getByRole("textbox", { name: "Filter Commands" }), { target: { value: "Prepare for Meeting" } });
   fireEvent.click(await screen.findByRole("button", { name: /Prepare for Meeting/ }));
+  expect(await rail.findByRole("region", { name: "Preparation for Calendar prep" })).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(rail.queryByRole("region", { name: "Preparation for Calendar prep" })).not.toBeInTheDocument());
+  fireEvent.keyDown(window, { key: "p" });
   expect(await rail.findByRole("region", { name: "Preparation for Calendar prep" })).toBeInTheDocument();
 });

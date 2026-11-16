@@ -351,6 +351,7 @@ export function CalendarWeekView({
     preparation?.onChange(null);
     requestAnimationFrame(() => prepareButton.current?.focus());
   };
+  useWorkspaceCommands({ "meetings.closePrepare": () => { if (preparingSelected) closePreparation(); } }, active);
   const prepareAgendaEvent = (event: ScheduleEvent) => {
     openAgendaEvent(event);
     preparation?.onChange(preparationKey(event));

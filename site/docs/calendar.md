@@ -101,14 +101,14 @@ Click **Add Note** on an event in the agenda, in **Today**, or in an event's det
 
 ## Prepare for a Meeting {#prepare-for-a-meeting}
 
-Click **Prepare** in an event's details, beside an event in the agenda, or on **Today**, or choose **Prepare for Meeting** in the command palette while an event's details are open. Preparation lists:
+Click **Prepare** in an event's details, beside an event in the agenda, or on **Today**, or press <kbd>p</kbd> (also **Prepare for Meeting** in the command palette) while an event's details are open. Press <kbd>p</kbd> or <kbd>Escape</kbd> to close it. Preparation lists:
 
 - **This meeting**: the part of a note about this meeting, such as its line in a daily note and what you wrote under it, and the meeting note it links. Other entries in the same note are left out.
 - **Previous meetings**: notes from earlier meetings in the same recurring series, newest first. A different event with the same title is never counted.
-- **Conversations**: the message the invitation came from and recent mail with the attendees, from the last 90 days, in the calendar's own mail account. Choose **Mail Accounts…** to look in other accounts; when the calendar has no matching mail account, choose one first.
+- **Conversations**: the message the invitation came from, conversations whose subject names the meeting, such as its invitation, and recent mail with two or more of the attendees, from the last 90 days, in the calendar's own mail account. Mail with only one attendee is often about something else, so it waits under **Other mail with attendees**, closed until you open it. Choose **Mail Accounts…** to look in other accounts; when the calendar has no matching mail account, choose one first.
 - **Open commitments**: open tasks in this meeting's notes and on the invitation's conversation. Tasks on other conversations with attendees are listed separately under **Possibly related**, since they may be about something else.
 
-Click any item to open it, then **Back to Meeting** to return. Preparation reads only what is on your computer: it doesn't search the server, contact an AI provider, or change notes or events. Long lists say how many items they leave out.
+Buttons under the meeting's title offer the next steps, such as **Reserve Prep Time**; when the meeting has no notes yet, **This meeting** offers **Add Note**. Click any item to open it, then **Back to Meeting** to return. Preparation reads only what is on your computer: it doesn't search the server, contact an AI provider, or change notes or events. Long lists say how many items they leave out.
 
 ## Book Time for Tasks {#book-time-for-tasks}
 

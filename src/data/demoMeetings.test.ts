@@ -56,6 +56,20 @@ describe("demo meeting preparation", () => {
     await expect(meetings.meetingContext(occurrence("evt"), ["unknown@example.com"])).rejects.toThrow();
   });
 
+  it("ranks conversations naming the meeting, then several attendees, then one, as natively", async () => {
+    const meetings = setup(
+      [event("evt", "2026-11-16T15:00:00Z", { title: "Benefits Review", attendees: ["ann@example.org", "bo@example.org"] })],
+      [],
+      [
+        { ...thread("solo", ["Ann <ann@example.org>"], "2026-11-15T09:00:00Z") },
+        { ...thread("both", ["Ann <ann@example.org>", "Bo <bo@example.org>"], "2026-11-13T09:00:00Z") },
+        { ...thread("invite", ["Ann <ann@example.org>"], "2026-11-12T09:00:00Z"), subject: "Invitation: Benefits Review @ Mon" },
+      ],
+    );
+    const context = await meetings.meetingContext(occurrence("evt"));
+    expect(context.conversations.items.map((item) => [item.threadId, item.reason])).toEqual([["invite", "title"], ["both", "attendees"], ["solo", "attendees"]]);
+  });
+
   it("asks for a mail scope when the calendar isn't a mail account and explains a missing event", async () => {
     const meetings = setup([event("evt", "2026-11-16T15:00:00Z", { attendees: ["ann@example.org"] })], [{ dailyDate: "2026-11-16", body: `- [3pm](${href("gone")})\n` }], [], [], []);
     expect((await meetings.meetingContext(occurrence("evt"))).conversations.status).toBe("scopeRequired");

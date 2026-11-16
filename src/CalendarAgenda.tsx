@@ -10,6 +10,7 @@ import { useCalendarSchedule } from "./useCalendarSchedule";
 import type { CalendarOption, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { meetingEventReference } from "./meetingNoteEntry";
+import { preparationKey } from "./meetingPrep";
 
 import { usePullToRefresh } from "./usePullToRefresh";
 import { PullToRefreshStatus } from "./PullToRefreshStatus";
@@ -41,6 +42,8 @@ type AgendaProps = {
   onAddNote?(event: ScheduleEvent): void;
   /** Offers Prepare on each event that a note can link. */
   onPrepare?(event: ScheduleEvent): void;
+  /** The meeting being prepared (`preparationKey`), shown selected. */
+  selectedKey?: string | null;
 };
 
 type AgendaDay = "today" | "tomorrow" | "chosen";
@@ -70,7 +73,7 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, selectedKey = null, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
   const agendaRef = useRef<HTMLElement>(null);
   const refresh = useCallback(async () => { if (refreshSchedule) await refreshSchedule(); else reload(); }, [refreshSchedule, reload]);
   const pull = usePullToRefresh(agendaRef, pullToRefresh ? refresh : undefined);
@@ -94,15 +97,19 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
       ? [`Overlaps ${overlapping.map((other) => other.title).join(", ")}`, mentionsRecording(event) ? "Recorded" : null]
       : [];
     const detail = [formatEventTime(event), ...conflict, event.location, calendar?.name, account, responseLabel(event)].filter(Boolean).join(" · ");
+    const key = preparationKey(event);
+    const isSelected = selectedKey !== null && key === selectedKey;
     rows.push(<ContextRow
+      rowKey={key ? `meeting:${key}` : undefined}
+      pressed={selectedKey !== null ? isSelected : undefined}
       key={`${event.accountId}:${event.calendarId}:${event.id}`}
-      className={[now && isPastEvent(event, now) ? "agenda-event-past" : "", isDeclined(event) ? "agenda-event-declined" : "", overlapping.length ? "agenda-event-conflict" : ""].filter(Boolean).join(" ") || undefined}
+      className={[now && isPastEvent(event, now) ? "agenda-event-past" : "", isDeclined(event) ? "agenda-event-declined" : "", overlapping.length ? "agenda-event-conflict" : "", isSelected ? "agenda-event-selected" : ""].filter(Boolean).join(" ") || undefined}
       icon={<CalendarDays size={ICON_SIZE.sm} style={{ ...calendarColorStyle(colors, event.accountId, event.calendarId), color: "var(--calendar-color, var(--accent))" }} />}
       title={event.title}
       detail={detail}
       onActivate={() => onOpenEvent(event)}
       actions={meetingEventReference(event) && (onPrepare || onAddNote) ? [
-        ...(onPrepare ? [<PrepareButton key="prepare" event={event} onPrepare={onPrepare} />] : []),
+        ...(onPrepare ? [<PrepareButton key="prepare" event={event} onPrepare={onPrepare} pressed={selectedKey !== null ? isSelected : undefined} />] : []),
         ...(onAddNote ? [<AddNoteButton key="note" event={event} onAddNote={onAddNote} />] : []),
       ] : undefined}
     />);
@@ -128,8 +135,8 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
 }
 
 /** Prepare for one agenda event: its notes, earlier meetings, mail, and commitments. */
-export function PrepareButton({ event, onPrepare }: { event: ScheduleEvent; onPrepare(event: ScheduleEvent): void }) {
-  return <button type="button" className="btn-icon btn-icon-sm" aria-label={`Prepare for ${event.title}`} title="Prepare" onClick={() => onPrepare(event)}><ClipboardList size={ICON_SIZE.sm} aria-hidden="true" /></button>;
+export function PrepareButton({ event, onPrepare, pressed }: { event: ScheduleEvent; onPrepare(event: ScheduleEvent): void; pressed?: boolean }) {
+  return <button type="button" className="btn-icon btn-icon-sm" aria-label={`Prepare for ${event.title}`} title="Prepare" aria-pressed={pressed} onClick={() => onPrepare(event)}><ClipboardList size={ICON_SIZE.sm} aria-hidden="true" /></button>;
 }
 
 /** Add Note for one agenda event. */

@@ -135,6 +135,9 @@ pub struct MeetingOccurrence {
 pub enum ConversationReason {
     /// The message the event was created from.
     Origin,
+    /// A recent conversation whose subject names the meeting, such as its
+    /// invitation and replies to it.
+    Title,
     /// Recent mail with one or more attendees.
     Attendees,
 }
@@ -158,6 +161,8 @@ pub enum CommitmentOrigin {
     MeetingNote,
     /// A task on the conversation the event came from.
     OriginConversation,
+    /// A task on a conversation whose subject names the meeting.
+    TitleConversation,
     /// A task on a conversation with an attendee: possibly related.
     AttendeeConversation,
 }
@@ -575,8 +580,78 @@ fn origin_conversation(c: &Connection, message: &str) -> DbResult<Option<Meeting
     Ok(if found.len() == 1 { found.pop() } else { None })
 }
 
-/// Recent conversations with the attendees in `accounts`, newest first, up
-/// to one more than the limit so the section can say it was cut.
+/// Shortest meeting title matched against subjects; shorter ones, such as
+/// "1:1", would match unrelated mail.
+const MIN_TITLE_MATCH_CHARS: usize = 4;
+
+/// Recent conversations in `accounts` whose subject contains the meeting's
+/// title, newest first. Case is folded for ASCII only, as SQLite's `lower`.
+fn title_conversations(
+    c: &Connection,
+    accounts: &[String],
+    title: &str,
+    since: DateTime<Utc>,
+) -> DbResult<Vec<MeetingConversation>> {
+    let key = title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    if key.chars().count() < MIN_TITLE_MATCH_CHARS {
+        return Ok(Vec::new());
+    }
+    let mut q = c.prepare(
+        "SELECT t.id,t.account_id,t.subject,t.last_message_at FROM threads t
+         WHERE t.account_id IN (SELECT value FROM json_each(?1)) AND t.trashed=0
+           AND julianday(t.last_message_at)>=julianday(?3) AND instr(lower(t.subject),?2)>0
+         ORDER BY t.last_message_at DESC, t.id LIMIT ?4",
+    )?;
+    let rows = q
+        .query_map(
+            params![
+                serde_json::to_string(accounts).map_err(super::serialization_error)?,
+                key,
+                since.to_rfc3339(),
+                (policy::MAX_MEETING_CONVERSATIONS + 2) as i64,
+            ],
+            |r| {
+                Ok(MeetingConversation {
+                    thread_id: r.get(0)?,
+                    account_id: r.get(1)?,
+                    subject: r.get(2)?,
+                    last_message_at: r.get(3)?,
+                    reason: ConversationReason::Title,
+                    attendees: Vec::new(),
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Whether `address` appears in `headers` as a whole address, not inside a
+/// longer one (`ann@x.org` is not in `joann@x.org`).
+fn mentions_address(headers: &str, address: &str) -> bool {
+    let part = |ch: char| ch.is_ascii_alphanumeric() || "._%+-@".contains(ch);
+    headers.match_indices(address).any(|(at, _)| {
+        let before = headers[..at].chars().next_back();
+        let mut after = headers[at + address.len()..].chars();
+        // A following "." ends the address only when no more of it follows.
+        let continues = match after.next() {
+            Some('.') => after.next().is_some_and(|ch| ch.is_ascii_alphanumeric()),
+            Some(ch) => part(ch),
+            None => false,
+        };
+        !before.is_some_and(part) && !continues
+    })
+}
+
+/// Recent conversations with the attendees in `accounts`, up to one more
+/// than the limit so the section can say it was cut. A conversation lists
+/// every attendee its messages' From, To, and Cc headers name. Those with two
+/// or more attendees come first (with every attendee when the meeting has only
+/// one), since mail with a single colleague is often about something else;
+/// newest first within each. Message bodies are never read.
 fn attendee_conversations(
     c: &Connection,
     accounts: &[String],
@@ -587,20 +662,20 @@ fn attendee_conversations(
         return Ok(Vec::new());
     }
     let mut q = c.prepare(
-        "SELECT ci.thread_id,t.account_id,t.subject,t.last_message_at,json_group_array(DISTINCT ci.email)
+        "SELECT ci.thread_id,t.account_id,t.subject,t.last_message_at
          FROM contact_interactions ci JOIN threads t ON t.id=ci.thread_id
          WHERE ci.account_id IN (SELECT value FROM json_each(?1))
            AND ci.email IN (SELECT value FROM json_each(?2))
            AND julianday(ci.sent_at)>=julianday(?3) AND t.trashed=0
          GROUP BY ci.thread_id ORDER BY MAX(ci.sent_at) DESC, ci.thread_id LIMIT ?4",
     )?;
-    let rows = q
+    let candidates = q
         .query_map(
             params![
                 serde_json::to_string(accounts).map_err(super::serialization_error)?,
                 serde_json::to_string(attendees).map_err(super::serialization_error)?,
                 since.to_rfc3339(),
-                (policy::MAX_MEETING_CONVERSATIONS + 2) as i64,
+                policy::MAX_ATTENDEE_CANDIDATE_THREADS as i64,
             ],
             |r| {
                 Ok((
@@ -608,28 +683,39 @@ fn attendee_conversations(
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
                 ))
             },
         )?
         .collect::<Result<Vec<_>, _>>()?;
-    rows.into_iter()
-        .map(
-            |(thread_id, account_id, subject, last_message_at, matched)| {
-                let mut attendees: Vec<String> =
-                    serde_json::from_str(&matched).map_err(super::serialization_error)?;
-                attendees.sort();
-                Ok(MeetingConversation {
-                    thread_id,
-                    account_id,
-                    subject,
-                    last_message_at,
-                    reason: ConversationReason::Attendees,
-                    attendees,
-                })
-            },
-        )
-        .collect()
+    let mut headers = c.prepare(
+        "SELECT lower(sender || ' ' || recipients_json || ' ' || coalesce(cc_json,'')) FROM messages WHERE thread_id=?1",
+    )?;
+    let several = attendees.len().min(2);
+    let mut found = Vec::new();
+    for (thread_id, account_id, subject, last_message_at) in candidates {
+        let text = headers
+            .query_map([&thread_id], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+            .join(" ");
+        let mut matched: Vec<String> = attendees
+            .iter()
+            .filter(|address| mentions_address(&text, address))
+            .cloned()
+            .collect();
+        matched.sort();
+        found.push(MeetingConversation {
+            thread_id,
+            account_id,
+            subject,
+            last_message_at,
+            reason: ConversationReason::Attendees,
+            attendees: matched,
+        });
+    }
+    // Stable: newest first within each group.
+    found.sort_by_key(|item| item.attendees.len() < several);
+    found.truncate(policy::MAX_MEETING_CONVERSATIONS + 2);
+    Ok(found)
 }
 
 fn conversations(
@@ -655,7 +741,10 @@ fn conversations(
         return Ok(result);
     };
     let since = now - chrono::Duration::days(policy::MEETING_MAIL_LOOKBACK_DAYS);
-    for conversation in attendee_conversations(c, accounts, attendees, since)? {
+    let related = title_conversations(c, accounts, &event.title, since)?
+        .into_iter()
+        .chain(attendee_conversations(c, accounts, attendees, since)?);
+    for conversation in related {
         if !items
             .iter()
             .any(|item| item.thread_id == conversation.thread_id)
@@ -766,6 +855,7 @@ fn commitments(
     for thread in &conversations.items {
         let (origin, candidate) = match thread.reason {
             ConversationReason::Origin => (CommitmentOrigin::OriginConversation, false),
+            ConversationReason::Title => (CommitmentOrigin::TitleConversation, false),
             ConversationReason::Attendees => (CommitmentOrigin::AttendeeConversation, true),
         };
         let rows = q

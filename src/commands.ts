@@ -129,8 +129,10 @@ export type CommandContext = {
   addToTodaysNote?(): Promise<CommandResult>;
   /** Opens Add Note for the calendar event whose details are open. */
   addMeetingNote?(): void;
-  /** Opens preparation for the meeting whose details are open in Calendar. */
+  /** Toggles preparation for the meeting whose details are open in Calendar. */
   prepareMeeting?(): void;
+  /** Whether meeting preparation is open in the workspace in view. */
+  meetingPrepOpen?: boolean;
   openAgentsView?(): void;
   delegateSelected?(): void;
   openTodayView?(): void;
@@ -251,6 +253,10 @@ export const commands: Command[] = [
   { id: "draft.replyAll", title: "Reply All", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.replyAll) },
   { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.forward) },
   { id: "draft.editAsNew", title: "Edit as New", keys: ["Shift+c"], keywords: ["send again", "resend", "copy", "duplicate", "use as draft"], group: "Compose", enabled: (c) => (c.mailbox === "outbox" ? c.focusedPane === "mail" : c.selectedId !== null && isThreadMailbox(c)) && !c.composerActive && c.canEditAsNew, run: (c) => complete(c.editAsNew) },
+  // Before Go Back, so Escape leaves preparation first.
+  { id: "meetings.closePrepare", title: "Close Meeting Preparation", keys: ["Escape"], group: "Navigation", enabled: (c) => Boolean(c.meetingPrepOpen) && (c.focusedPane === "today" || c.focusedPane === "calendar") && !c.composerActive, run: () => complete(() => runWorkspaceCommand("meetings.closePrepare")) },
+  { id: "meetings.next", title: "Prepare Next Meeting", keys: ["ArrowDown"], group: "Navigation", enabled: (c) => Boolean(c.meetingPrepOpen) && c.focusedPane === "today" && !c.composerActive, run: () => complete(() => runWorkspaceCommand("meetings.next")) },
+  { id: "meetings.previous", title: "Prepare Previous Meeting", keys: ["ArrowUp"], group: "Navigation", enabled: (c) => Boolean(c.meetingPrepOpen) && c.focusedPane === "today" && !c.composerActive, run: () => complete(() => runWorkspaceCommand("meetings.previous")) },
   { id: "navigation.back", title: "Go Back", keys: ["Escape"], group: "Navigation", enabled: (c) => c.canGoBack && !c.composerActive, run: (c) => complete(c.goBack) },
   // Escape inside the search box closes it there; this covers focus on a result or the reader.
   { id: "search.close", title: "Close Search", keys: ["Escape"], group: "Navigation", enabled: (c) => Boolean(c.searchOpen) && c.focusedPane === "mail" && !c.canGoBack && !c.composerActive, run: (c) => complete(() => c.closeSearch?.()) },
@@ -696,8 +702,10 @@ export const commands: Command[] = [
     enabled: (c) => !c.composerActive && Boolean(c.addMeetingNote), run: (c) => complete(() => c.addMeetingNote?.()),
   },
   {
-    id: "meetings.prepare", title: "Prepare for Meeting", keywords: ["meeting prep", "agenda", "previous notes", "calendar", "event"], keys: [], group: "Application",
-    enabled: (c) => !c.composerActive && Boolean(c.prepareMeeting), run: (c) => complete(() => c.prepareMeeting?.()),
+    id: "meetings.prepare", title: "Prepare for Meeting", keywords: ["meeting prep", "agenda", "previous notes", "calendar", "event"], keys: ["p"], group: "Application",
+    // On Today: the meeting in focus, else the next one. In Calendar: the event whose details are open.
+    enabled: (c) => !c.composerActive && (c.focusedPane === "today" || (c.focusedPane === "calendar" && Boolean(c.prepareMeeting))),
+    run: (c) => complete(() => c.focusedPane === "today" ? runWorkspaceCommand("meetings.prepare") : c.prepareMeeting?.()),
   },
   {
     id: "notes.today", title: "Open Today's Note", keywords: ["daily", "journal", "notes"], keys: [], group: "Navigation",

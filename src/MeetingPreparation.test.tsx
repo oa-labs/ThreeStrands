@@ -9,6 +9,7 @@ import { meetingEventReference } from "./meetingNoteEntry";
 import { NOTES_CHANGED } from "./noteMutations";
 import { noteReferenceHref, type NoteReference } from "./noteEntities";
 import { useMeetingPreparation } from "./useMeetingPreparation";
+import { MeetingPrepActions } from "./meetingPrepActions";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
 
@@ -132,12 +133,61 @@ describe("MeetingPreparation", () => {
     expect(view.getByText(/Related mail needs this meeting's attendees/)).toBeInTheDocument();
   });
 
+  it("leads with mail naming the meeting or several attendees, keeps one-attendee mail collapsed, and offers Add Note and the actions", async () => {
+    const base = context();
+    vi.spyOn(mailClient, "meetingContext").mockResolvedValue(context({
+      event: { ...base.event!, attendees: ["ann@example.org", "bo@example.org"] },
+      thisMeeting: section([]),
+      conversations: section([
+        { threadId: "inv", accountId: ME, subject: "Invitation: Meeting evt", lastMessageAt: "2026-11-12T09:00:00Z", reason: "title", attendees: [] },
+        { threadId: "both", accountId: ME, subject: "Budget for the review", lastMessageAt: "2026-11-13T09:00:00Z", reason: "attendees", attendees: ["ann@example.org", "bo@example.org"] },
+        { threadId: "solo", accountId: ME, subject: "Lunch on Friday", lastMessageAt: "2026-11-15T09:00:00Z", reason: "attendees", attendees: ["ann@example.org"] },
+      ]),
+    }));
+    const onAddNote = vi.fn();
+    renderPrep({ onAddNote, actions: <button type="button">Reserve Prep Time</button> });
+    const view = within(await screen.findByRole("region", { name: "Preparation for Meeting evt" }));
+    const related = within(await view.findByRole("region", { name: "Conversations" }));
+    expect(related.getByRole("button", { name: /Invitation: Meeting evt/ })).toHaveTextContent("Names this meeting");
+    expect(related.getByRole("button", { name: /Budget for the review/ })).toBeInTheDocument();
+    expect(related.queryByText("Lunch on Friday")).not.toBeInTheDocument();
+    const other = view.getByRole("region", { name: "Other mail with attendees" });
+    expect(within(other).getByText("Lunch on Friday")).not.toBeVisible();
+    fireEvent.click(within(other).getByRole("button", { name: /Other mail with attendees/ }));
+    expect(within(other).getByText("Lunch on Friday")).toBeVisible();
+
+    expect(within(view.getByRole("group", { name: "Meeting actions" })).getByRole("button", { name: "Reserve Prep Time" })).toBeInTheDocument();
+    fireEvent.click(within(view.getByRole("region", { name: "This meeting" })).getByRole("button", { name: "Add Note" }));
+    expect(onAddNote).toHaveBeenCalled();
+  });
+
   it("offers Try Again after a failure", async () => {
     const load = vi.spyOn(mailClient, "meetingContext").mockRejectedValueOnce(new Error("Database busy")).mockResolvedValue(context());
     renderPrep();
     fireEvent.click(await screen.findByRole("button", { name: "Try Again" }));
     await screen.findByText(/Decided to ship/);
     expect(load).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("MeetingPrepActions", () => {
+  it("offers Add Note until the meeting has a note, then Open Note, with Reserve Prep Time, Join, and Open in Calendar", async () => {
+    const handlers = { onAddNote: vi.fn(), onReservePrep: vi.fn(), onOpenInCalendar: vi.fn() };
+    const online = meeting("evt", { conferenceUrl: "https://meet.example.com/x" });
+    const { unmount } = render(<MeetingPrepActions event={online} {...handlers} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Note" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reserve Prep Time" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open in Calendar" }));
+    expect(screen.getByRole("button", { name: "Join" })).toBeInTheDocument();
+    expect(handlers.onAddNote).toHaveBeenCalled();
+    expect(handlers.onReservePrep).toHaveBeenCalled();
+    expect(handlers.onOpenInCalendar).toHaveBeenCalled();
+    unmount();
+
+    await mailClient.createNote("Notes for evt", `- [Meeting](${noteReferenceHref(reference())})`);
+    render(<MeetingPrepActions event={meeting()} onAddNote={vi.fn()} showJoin={false} />);
+    expect(await screen.findByRole("button", { name: "Open Note" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Join" })).not.toBeInTheDocument();
   });
 });
 
