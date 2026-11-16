@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
-import type { PlanCandidate as SourceCandidate } from "./domain";
+import type { PlanCandidate as SourceCandidate, PlanSourceKind, PlanSourcePage } from "./domain";
 import type { CalendarAccount, CalendarOption, ContactProfile, DailyPlan, DailyPlanItem, Note, OpenPromise, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { HOUR_HEIGHT } from "./calendarTime";
 import type { WorkingHours } from "./todayInsights";
@@ -84,7 +84,13 @@ const calendarAccounts: CalendarAccount[] = [{ email: "cal@example.com", connect
 /** Weekdays nine to five in this machine's zone, as the default availability profile has them. */
 const workingHours: WorkingHours = { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", workingWindows: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "09:00", end: "17:00" })) };
 
-const chooseSource = (name: string) => fireEvent.click(screen.getByRole("tab", { name }));
+/** A source tab, or a source behind More Sources. */
+const chooseSource = (name: string) => {
+  const tab = screen.queryByRole("tab", { name });
+  if (tab) { fireEvent.click(tab); return; }
+  fireEvent.click(screen.getByRole("button", { name: "More Sources" }));
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+};
 
 describe("TodayWorkspace", () => {
   beforeEach(() => {
@@ -94,6 +100,8 @@ describe("TodayWorkspace", () => {
     vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([]);
     vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([]);
     vi.spyOn(mailClient, "dailyPlan").mockImplementation(async (date) => emptyPlan(date));
+    // Suggested is the first source; it reads planSources as soon as Today opens.
+    vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [] });
     mockMail([]);
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); openUrl.mockReset(); localStorage.clear(); });
@@ -231,7 +239,19 @@ describe("TodayWorkspace", () => {
       const listTodayMail = mockMail([]);
       renderToday({ accountId: null });
       await waitFor(() => expect(listTodayMail).toHaveBeenCalledWith(undefined));
-      expect(screen.getByText("· All accounts", { selector: ".eyebrow-account" })).toBeInTheDocument();
+      expect(within(screen.getByRole("group", { name: "Mail" })).getByText("· All accounts", { selector: ".today-mail-signal-scope" })).toBeInTheDocument();
+      expect(document.querySelector(".today-source-scope")).toHaveTextContent("All accounts");
+    });
+
+    it("says unread rather than other unread when nothing else is counted, and reads as a summary", async () => {
+      mockMail([todayItem("news", { listUnsubscribe: true })]);
+      renderToday();
+      const signal = within(screen.getByRole("group", { name: "Mail" }));
+      expect(await signal.findByText("1 unread")).toBeInTheDocument();
+      // Only the chevron folds the line; the summary itself is text, not a link.
+      expect(signal.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent)).toEqual(["Mail", "Open Inbox"]);
+      fireEvent.click(signal.getByRole("button", { name: "Mail" }));
+      expect(signal.getByText("1 unread")).toBeInTheDocument();
     });
 
     it("says when nothing is unread, and counts unread past the newest it reads", async () => {
@@ -251,13 +271,15 @@ describe("TodayWorkspace", () => {
       expect(screen.queryByText("Nothing unread")).not.toBeInTheDocument();
     });
 
-    it("opens the Inbox, Calendar, and Tasks from Today", async () => {
+    it("opens the Inbox, Calendar, and Tasks from Today, Tasks from its own tab", async () => {
       const { onOpenInbox, onOpenCalendar, onOpenTasks } = renderToday();
       fireEvent.click(await screen.findByRole("button", { name: "Open Inbox" }));
       expect(onOpenInbox).toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "Open Calendar" }));
       expect(onOpenCalendar).toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Open Tasks" }));
+      expect(screen.queryByRole("button", { name: "Open Tasks" })).not.toBeInTheDocument();
+      chooseSource("Tasks");
+      fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Open Tasks" }));
       expect(onOpenTasks).toHaveBeenCalled();
     });
   });
@@ -273,7 +295,7 @@ describe("TodayWorkspace", () => {
       ]);
       const { onEditTask, onOpenTasks } = renderToday();
 
-      // Also Due is the default source.
+      // Suggested comes first; with nothing suggested, Also Due lends its first cards beneath.
       expect(within(await screen.findByRole("region", { name: "Overdue" })).getByText("Task late")).toBeInTheDocument();
       expect(listTasks).toHaveBeenCalledWith("you@example.com");
       expect(within(screen.getByRole("region", { name: "Due today" })).getByText("Task now")).toBeInTheDocument();
@@ -566,22 +588,28 @@ describe("TodayWorkspace", () => {
     it("moves between sources with the arrow keys, Home, and End, and remembers the choice", async () => {
       renderToday();
       const tabs = screen.getAllByRole("tab");
-      expect(tabs.map((tab) => tab.textContent)).toEqual(["Also Due", "Tasks", "You Said You Would", "Keep in Touch", "Starred Mail", "Goals", "Notes"]);
+      // Starred Mail, Goals, and Notes wait behind More Sources, so the row stays one line.
+      expect(tabs.map((tab) => tab.textContent)).toEqual(["Suggested", "Also Due", "Tasks", "You Said You Would", "Keep in Touch"]);
       expect(tabs[0]).toHaveAttribute("aria-selected", "true");
-      expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Also Due");
+      expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Suggested");
+      expect(screen.getByRole("button", { name: "More Sources" })).toHaveAttribute("aria-haspopup", "menu");
 
       tabs[0].focus();
       fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+      expect(screen.getByRole("tab", { name: "Also Due" })).toHaveFocus();
+      fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
       expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute("aria-selected", "true");
       expect(screen.getByRole("tab", { name: "Tasks" })).toHaveFocus();
+      // Arrow keys, Home, and End reach the sources behind More Sources too, which join the row while chosen.
       fireEvent.keyDown(document.activeElement!, { key: "End" });
-      expect(screen.getByRole("tab", { name: "Notes" })).toHaveFocus();
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Notes" })).toHaveFocus());
       fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
-      expect(screen.getByRole("tab", { name: "Also Due" })).toHaveFocus();
+      expect(screen.getByRole("tab", { name: "Suggested" })).toHaveFocus();
+      expect(screen.queryByRole("tab", { name: "Notes" })).not.toBeInTheDocument();
       fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
-      expect(screen.getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true"));
       fireEvent.keyDown(document.activeElement!, { key: "Home" });
-      expect(screen.getByRole("tab", { name: "Also Due" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "Suggested" })).toHaveAttribute("aria-selected", "true");
       chooseSource("You Said You Would");
       cleanup();
 
@@ -653,14 +681,23 @@ describe("TodayWorkspace", () => {
     });
     const saved = () => ({ note: note("daily", "r2"), changed: ["k"], already: [], previousBody: "" });
     beforeEach(() => { vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null); });
+    /** Pages for one source, in order (the last repeats), and nothing for the others, such as Suggested. */
+    const serve = (kind: PlanSourceKind, pages: PlanSourcePage[] | Error) => {
+      const queue = Array.isArray(pages) ? [...pages] : null;
+      return vi.mocked(mailClient.planSources).mockImplementation(async (_date, source) => {
+        if (source !== kind) return { next: null, candidates: [] };
+        if (!queue) throw pages;
+        return queue.length > 1 ? queue.shift()! : queue[0];
+      });
+    };
 
     it("reads Starred Mail for the account in view only once its tab is chosen, and marks planned cards", async () => {
-      const sources = vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+      const sources = serve("starredMail", [{ next: null, candidates: [
         candidate("with-task", { title: "Contract review", taskId: "t1", threadId: "th1", detail: "Contract thread" }),
         candidate("planned", { title: "Already planned", planned: true, threadId: "th2" }),
-      ] });
+      ] }]);
       const { onEditTask, onOpenThread } = renderToday();
-      expect(sources).not.toHaveBeenCalled();
+      expect(sources).not.toHaveBeenCalledWith(expect.anything(), "starredMail", expect.anything(), expect.anything());
       chooseSource("Starred Mail");
       const region = within(await screen.findByRole("region", { name: "Starred mail" }));
       expect(sources).toHaveBeenCalledWith(localDate(0), "starredMail", "you@example.com", null);
@@ -675,9 +712,9 @@ describe("TodayWorkspace", () => {
     });
 
     it("adds a starred conversation's task only after the task form saves, and Cancel writes nothing", async () => {
-      vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+      serve("starredMail", [{ next: null, candidates: [
         candidate("conv", { title: "Board deck", threadId: "th9", action: { kind: "taskForm", threadId: "th9", accountId: "you@example.com" } }),
-      ] });
+      ] }]);
       const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
       const mutate = vi.spyOn(mailClient, "mutateThread");
       const mutateMany = vi.spyOn(mailClient, "mutateThreads");
@@ -704,9 +741,9 @@ describe("TodayWorkspace", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date(2026, 9, 28, 10, 7));
       try {
-        vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+        serve("starredMail", [{ next: null, candidates: [
           candidate("conv", { title: "Board deck", threadId: "th9", action: { kind: "taskForm", threadId: "th9", accountId: "you@example.com" } }),
-        ] });
+        ] }]);
         const create = vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => ({ id: "booked", accountId: request.accountId, calendarId: request.calendarId, title: request.title, allDay: false, start: request.start, end: request.end }));
         vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
         const onCreateTask = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(task("made", { title: "Send the board deck" }));
@@ -733,9 +770,10 @@ describe("TodayWorkspace", () => {
     });
 
     it("pages with Show More", async () => {
-      const sources = vi.spyOn(mailClient, "planSources")
-        .mockResolvedValueOnce({ next: "50", candidates: [candidate("one", { title: "First page" })] })
-        .mockResolvedValueOnce({ next: null, candidates: [candidate("two", { title: "Second page" })] });
+      const sources = serve("starredMail", [
+        { next: "50", candidates: [candidate("one", { title: "First page" })] },
+        { next: null, candidates: [candidate("two", { title: "Second page" })] },
+      ]);
       renderToday();
       chooseSource("Starred Mail");
       fireEvent.click(await screen.findByRole("button", { name: "Show More" }));
@@ -746,10 +784,10 @@ describe("TodayWorkspace", () => {
     });
 
     it("lists goals with their tasks, and makes a task for a goal before adding it", async () => {
-      const sources = vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+      const sources = serve("goals", [{ next: null, candidates: [
         candidate("goal:g1", { title: "Close Q4 deals", reason: "goal", detail: "2026-Q4", openTasks: 2, goal: { id: "g1", title: "Close Q4 deals" }, action: { kind: "newTaskForGoal", goalId: "g1", accountId: "you@example.com" } }),
         candidate("gt", { title: "Call Acme", reason: "goalTask", taskId: "gt", goal: { id: "g1", title: "Close Q4 deals" }, plannedDays: ["2026-10-26", "2026-10-27"] }),
-      ] });
+      ] }]);
       const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
       const onCreateTask = vi.fn().mockResolvedValue(task("new-goal-task", { title: "Draft the Acme proposal", goalId: "g1" }));
       renderToday({ onCreateTask, onNotice: vi.fn() });
@@ -767,9 +805,9 @@ describe("TodayWorkspace", () => {
 
     it("lists open note tasks from other notes for every account and opens their note", async () => {
       const addition = { kind: "link" as const, reference: { version: 1 as const, kind: "task" as const, id: "m1", note: "note-7" }, label: "Write the agenda" };
-      const sources = vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [
+      const sources = serve("notes", [{ next: null, candidates: [
         candidate("nt", { title: "Write the agenda", reason: "noteTask", detail: "Team notes", accountId: null, taskId: "note:note-7:m1", action: { kind: "link", addition } }),
-      ] });
+      ] }]);
       const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
       const onOpenNote = vi.fn();
       renderToday({ onOpenNote, onNotice: vi.fn() });
@@ -784,10 +822,103 @@ describe("TodayWorkspace", () => {
     });
 
     it("says when a source can't be read", async () => {
-      vi.spyOn(mailClient, "planSources").mockRejectedValue(new Error("Database is locked"));
+      serve("goals", new Error("Database is locked"));
       renderToday();
       chooseSource("Goals");
       expect(await within(screen.getByRole("tabpanel")).findByRole("alert")).toHaveTextContent("Database is locked");
+    });
+  });
+
+  describe("Suggested and the empty-source fallback", () => {
+    const suggestion = (key: string, overrides: Partial<SourceCandidate> = {}): SourceCandidate => ({
+      key, title: `Suggestion ${key}`, reason: "overdue", detail: null, accountId: "you@example.com", due: null, taskId: key, threadId: null,
+      contactId: null, goal: null, plannedDays: [], openTasks: null, planned: false,
+      action: { kind: "link", addition: { kind: "link", reference: { version: 1, kind: "task", id: key }, label: `Suggestion ${key}` } }, ...overrides,
+    });
+    const saved = () => ({ note: note("daily", "r2"), changed: ["k"], already: [], previousBody: "" });
+    beforeEach(() => { vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null); });
+
+    it("opens on Suggested for the account in view, with each card's reason, and adds one to the plan", async () => {
+      const sources = vi.mocked(mailClient.planSources).mockResolvedValue({ next: null, candidates: [
+        suggestion("late", { title: "Send the invoice", reason: "overdue" }),
+        suggestion("ada", { title: "Ada Lovelace", reason: "keepInTouch", taskId: null, contactId: "c-ada",
+          action: { kind: "link", addition: { kind: "link", reference: { version: 1, kind: "contact", id: "ada@example.com", contact: "c-ada" }, label: "Ada Lovelace" } } }),
+      ] });
+      const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
+      const { onOpenContact } = renderToday({ onNotice: vi.fn() });
+      expect(screen.getByRole("tab", { name: "Suggested" })).toHaveAttribute("aria-selected", "true");
+      const region = within(await screen.findByRole("region", { name: "Suggested" }));
+      expect(sources).toHaveBeenCalledWith(localDate(0), "suggested", "you@example.com", null);
+      expect(region.getByText("Overdue")).toBeInTheDocument();
+      expect(region.getByText("Keep in Touch")).toBeInTheDocument();
+      fireEvent.click(region.getByRole("button", { name: /^Ada Lovelace/ }));
+      expect(onOpenContact).toHaveBeenCalledWith("c-ada");
+      fireEvent.click(region.getByRole("button", { name: "Add to Today's Plan: Send the invoice" }));
+      await waitFor(() => expect(add).toHaveBeenCalledWith(localDate(0), null, [{ kind: "link", reference: { version: 1, kind: "task", id: "late" }, label: "Suggestion late" }]));
+    });
+
+    it("turns a suggested promise into a task first, and leaves out promises dismissed on this device", async () => {
+      const promise = (id: string, excerpt: string): OpenPromise => ({ thread: todayThread(`thread-${id}`, { subject: "Report", accountId: "you@example.com" }), messageId: id,
+        sentAt: "2026-10-22T10:00:00Z", recipients: ["Jill <jill@example.org>"], excerpt });
+      vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([promise("p1", "I'll send the report"), promise("p2", "Let me check")]);
+      localStorage.clear();
+      vi.mocked(mailClient.planSources).mockResolvedValue({ next: null, candidates: [
+        suggestion("conv-1", { title: "I'll send the report", reason: "promise", taskId: null, threadId: "thread-p1", action: { kind: "makeTask", threadId: "thread-p1", messageId: "p1" } }),
+        suggestion("conv-2", { title: "Let me check", reason: "promise", taskId: null, threadId: "thread-p2", action: { kind: "makeTask", threadId: "thread-p2", messageId: "p2" } }),
+      ] });
+      const created = task("made", { title: "I'll send the report" });
+      vi.spyOn(mailClient, "createTask").mockResolvedValue(created);
+      const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue(saved());
+      const { onEditTask } = renderToday({ onNotice: vi.fn() });
+      chooseSource("You Said You Would");
+      fireEvent.click(await screen.findByRole("button", { name: "Dismiss: Let me check" }));
+      chooseSource("Suggested");
+      const region = within(await screen.findByRole("region", { name: "Suggested" }));
+      expect(region.queryByText("Let me check")).not.toBeInTheDocument();
+      fireEvent.click(region.getByRole("button", { name: "Add to Today's Plan: I'll send the report" }));
+      await waitFor(() => expect(add).toHaveBeenCalledWith(localDate(0), null, [{ kind: "link", reference: { version: 1, kind: "task", id: "made" }, label: "I'll send the report" }]));
+      expect(onEditTask).toHaveBeenCalledWith(created);
+    });
+
+    it("says an empty Suggested in one line and lends the next source's first cards, with a way to switch", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue(["a", "b", "c", "d"].map((id) => task(id, { dueKind: "date", dueValue: localDate(-1) })));
+      renderToday();
+      const panel = within(screen.getByRole("tabpanel"));
+      expect(await panel.findByText("Nothing to suggest right now.")).toBeInTheDocument();
+      const overdue = within(await panel.findByRole("region", { name: "Overdue" }));
+      expect(overdue.getAllByRole("article")).toHaveLength(3);
+      fireEvent.click(panel.getByRole("button", { name: "Also Due" }));
+      expect(screen.getByRole("tab", { name: "Also Due" })).toHaveAttribute("aria-selected", "true");
+      expect(within(screen.getByRole("region", { name: "Overdue" })).getAllByRole("article")).toHaveLength(4);
+      expect(screen.queryByText("Nothing to suggest right now.")).not.toBeInTheDocument();
+    });
+
+    it("lends from the next non-empty source after a remembered empty one, and stays one line when every source is empty", async () => {
+      localStorage.setItem("threestrands.today.planSource", "promises");
+      vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([contact("ada", "Ada Lovelace", daysFromNow(-3))]);
+      renderToday();
+      const panel = within(screen.getByRole("tabpanel"));
+      expect(await panel.findByText("Nothing you said you would do is waiting.")).toBeInTheDocument();
+      expect(await panel.findByRole("region", { name: "Keep in touch" })).toBeInTheDocument();
+      expect(panel.getByRole("button", { name: "Keep in Touch" })).toBeInTheDocument();
+      cleanup();
+
+      vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([]);
+      renderToday();
+      expect(await within(screen.getByRole("tabpanel")).findByText("Nothing you said you would do is waiting.")).toBeInTheDocument();
+      await waitFor(() => expect(mailClient.listTasks).toHaveBeenCalled());
+      expect(within(screen.getByRole("tabpanel")).queryByRole("region")).not.toBeInTheDocument();
+    });
+
+    it("reaches Starred Mail, Goals, and Notes through More Sources by keyboard", async () => {
+      renderToday();
+      const more = screen.getByRole("button", { name: "More Sources" });
+      fireEvent.keyDown(more, { key: "ArrowDown" });
+      const menu = await screen.findByRole("menu", { name: "More Sources" });
+      expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Starred Mail", "Goals", "Notes"]);
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Goals" }));
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Goals" })).toHaveAttribute("aria-selected", "true"));
+      expect(within(screen.getByRole("tablist")).getAllByRole("tab")).toHaveLength(6);
     });
   });
 
@@ -827,6 +958,72 @@ describe("TodayWorkspace", () => {
       expect(screen.queryByRole("group", { name: "Plan" })).not.toBeInTheDocument();
       fireEvent.click(within(screen.getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Design sync/ }));
       expect(preparation.onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("dims finished meetings, and marks only the meeting being prepared as selected", async () => {
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [
+        event("benefits", -120, { title: "Benefits Review", responseStatus: "needsAction" }),
+        event("skip", 60, { title: "Optional talk", responseStatus: "declined" }),
+        event("next", 20, { title: "Design sync" }),
+      ], errors: [] });
+      vi.spyOn(mailClient, "meetingReadiness").mockResolvedValue([]);
+      const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => null), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
+      const { rerenderToday } = renderToday({ calendarConnected: true, preparation });
+      const day = within(await screen.findByRole("group", { name: "Day view" }));
+      const benefits = await day.findByRole("button", { name: /^Benefits Review/ });
+      expect(benefits).toHaveAttribute("data-past", "true");
+      expect(benefits).not.toHaveAttribute("data-selected");
+      expect(benefits).toHaveAttribute("aria-expanded", "false");
+      expect(day.getByRole("button", { name: /^Design sync/ })).not.toHaveAttribute("data-past");
+      expect(day.getByRole("button", { name: /^Optional talk/ })).toHaveAttribute("data-response-status", "declined");
+
+      rerenderToday({ calendarConnected: true, preparation: { ...preparation, event: event("next", 20, { title: "Design sync" }) } });
+      const sync = within(screen.getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Design sync/ });
+      expect(sync).toHaveAttribute("data-selected", "true");
+      expect(within(screen.getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Benefits Review/ })).not.toHaveAttribute("data-selected");
+
+      // In Today, an unanswered invitation is filled, and only data-selected rings a block.
+      const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
+      const rules = new Map<string, string>();
+      css.walkRules(/^\.today-day-view \.calendar-schedule-event\[/, (rule) => { rules.set(rule.selector, rule.toString()); });
+      expect(rules.get(".today-day-view .calendar-schedule-event[data-past=\"true\"]")).toContain("opacity: var(--opacity-dimmed)");
+      expect(rules.get(".today-day-view .calendar-schedule-event[data-response-status=\"needsAction\"]")).toContain("color-mix");
+      expect(rules.get(".today-day-view .calendar-schedule-event[data-selected=\"true\"]")).toContain("box-shadow");
+    });
+
+    it("shows a short meeting's time and its readiness marks at a glance", async () => {
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [event("ops", 30, { title: "Operations Team Meeting" })], errors: [] });
+      vi.spyOn(mailClient, "meetingReadiness").mockImplementation(async (references) => references.map((reference) => ({
+        reference, eventAvailable: true, hasOccurrenceNote: true, priorOccurrencesWithNotes: 0, seriesNotes: 0, openCommitments: 2,
+        candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, unavailableSections: [], error: null })));
+      const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => null), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
+      renderToday({ calendarConnected: true, preparation });
+      const ops = await within(await screen.findByRole("group", { name: "Day view" })).findByRole("button", { name: /^Operations Team Meeting/ });
+      expect(ops).toHaveTextContent(/Operations Team Meeting, 10:30\s?AM/i);
+      await waitFor(() => expect(ops.querySelector(".calendar-event-mark")).not.toBeNull());
+      expect(ops.querySelector(".calendar-event-mark")).toHaveTextContent("2");
+      expect(ops.querySelector(".calendar-event-mark svg.lucide-notebook-pen")).not.toBeNull();
+      expect(ops).toHaveAccessibleDescription(/Has notes · 2 open commitments/);
+    });
+
+    it("opens on the working day, shades the time outside it, and sizes the grid to fit", async () => {
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+      renderToday({ calendarConnected: true, workingHours });
+      const day = await screen.findByRole("group", { name: "Day view" });
+      expect(day).toHaveClass("today-day-view-working");
+      expect(day.style.getPropertyValue("--today-day-view-grid-h")).toBe(`${8.5 * HOUR_HEIGHT}px`);
+      // Ten o'clock is inside working hours, so the top is half an hour before now.
+      expect(day.querySelector<HTMLElement>(".calendar-week-scroll")!.scrollTop).toBe(9.5 * HOUR_HEIGHT);
+      const shaded = [...day.querySelectorAll<HTMLElement>(".calendar-outside-hours")].map((shade) => [shade.style.top, shade.style.height]);
+      expect(shaded).toEqual([["0px", `${9 * HOUR_HEIGHT}px`], [`${17 * HOUR_HEIGHT}px`, `${7 * HOUR_HEIGHT}px`]]);
+    });
+
+    it("keeps its old opening and height without working hours", async () => {
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+      renderToday({ calendarConnected: true });
+      const day = await screen.findByRole("group", { name: "Day view" });
+      expect(day).not.toHaveClass("today-day-view-working");
+      expect(day.querySelector(".calendar-outside-hours")).toBeNull();
     });
 
     it("prepares the day-view meeting in focus with p", async () => {
@@ -1015,17 +1212,27 @@ describe("TodayWorkspace", () => {
     it("points to Settings instead of loading a schedule when no calendar is connected", async () => {
       renderToday({ calendarConnected: false });
       expect(within(screen.getByRole("region", { name: "Today's agenda" })).getByText(/Connect a calendar in Settings/)).toBeInTheDocument();
-      expect(screen.getByText("· you@example.com", { selector: ".eyebrow-account" })).not.toHaveAttribute("title");
+      expect(document.querySelector(".today-mail-signal-scope")).toHaveTextContent("you@example.com");
       expect(mailClient.listScheduleEvents).not.toHaveBeenCalled();
       // Without a calendar the header has nothing to say about the day beyond its date.
       await waitFor(() => expect(mailClient.listTasks).toHaveBeenCalled());
       expect(document.querySelector(".today-day-shape")).toBeNull();
     });
 
-    it("names the account like other views and says the day view covers every calendar", async () => {
+    it("names the account beside the mail line and the sources it scopes, not over the whole page", async () => {
       renderToday({ calendarConnected: true });
-      expect(await screen.findByText("· you@example.com", { selector: ".eyebrow-account" }))
-        .toHaveAttribute("title", "Mail and tasks follow this account. The day view shows all your calendars.");
+      await screen.findByRole("group", { name: "Day view" });
+      // The plan and the day view cover every account.
+      expect(document.querySelector(".today-header .eyebrow")).toHaveTextContent(/^Today$/);
+      expect(within(screen.getByRole("group", { name: "Mail" })).getByText("· you@example.com", { selector: ".today-mail-signal-scope" })).toBeInTheDocument();
+      for (const name of ["Suggested", "Also Due", "Tasks", "You Said You Would", "Starred Mail", "Goals"]) {
+        chooseSource(name);
+        expect(document.querySelector(".today-source-scope"), name).toHaveTextContent("you@example.com");
+      }
+      for (const name of ["Keep in Touch", "Notes"]) {
+        chooseSource(name);
+        expect(document.querySelector(".today-source-scope"), name).toBeNull();
+      }
     });
 
     it("counts a meeting on two calendars once, and skips declined ones for the count and the next meeting", async () => {
@@ -1058,7 +1265,7 @@ describe("TodayWorkspace", () => {
       expect(cs).toHaveClass("agenda-event-conflict");
       expect(within(cs as HTMLElement).getByText(/Overlaps Ramp AI deep dive · Recorded/)).toBeInTheDocument();
       expect(within(agenda).getByText("Elder meeting").closest(".context-row")).not.toHaveClass("agenda-event-conflict");
-      expect(screen.getByText(/^3 meetings · Double-booked at .+ \(CS Updates is recorded\) · Last meeting ends/, { selector: ".today-day-shape" })).toBeInTheDocument();
+      expect(screen.getByText(/^3 meetings · next at .+ · double-booked at .+ \(CS Updates is recorded\) · last meeting ends/, { selector: ".today-day-shape" })).toBeInTheDocument();
     });
 
     it("offers Add Note on the next meeting and today's agenda when it can", async () => {
@@ -1184,7 +1391,7 @@ describe("TodayWorkspace tomorrow", () => {
     const tomorrow = await screen.findByRole("region", { name: "Tomorrow" });
     expect(await within(tomorrow).findByText("Dentist")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Today's agenda" })).queryByText("Dentist")).not.toBeInTheDocument();
-    expect(screen.getByText(/^No meetings$/, { selector: ".today-day-shape" })).toBeInTheDocument();
+    expect(screen.getByText(/^No meetings today$/, { selector: ".today-day-shape" })).toBeInTheDocument();
     const [timeMin, timeMax] = listEvents.mock.calls[0];
     expect(new Date(timeMax).getTime() - new Date(timeMin).getTime()).toBeGreaterThanOrEqual(47 * 3_600_000);
   });

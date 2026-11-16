@@ -108,3 +108,19 @@ export function bookedFor(taskId: string | null, events: readonly ScheduleEvent[
 function sameSource(left: BookedSource | null, right: BookedSource): boolean {
   return left !== null && sourceTaskId(left) === sourceTaskId(right);
 }
+
+/**
+ * `day`'s working windows in local minutes after midnight, merged, from the
+ * default availability profile; null when the working hours are unknown,
+ * and empty on a day without any.
+ */
+export function workingSpans(workingHours: WorkingHours | null, day: Date): { startMinutes: number; endMinutes: number }[] | null {
+  if (!workingHours) return null;
+  const midnight = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  const capacity = planCapacity([], workingHours, new Date(0), schedulingDay(midnight.getTime() + 12 * 3_600_000, workingHours.timeZone));
+  if (!capacity) return null;
+  const minutes = (instant: Date) => Math.round((instant.getTime() - midnight.getTime()) / 60_000);
+  return capacity.stretches
+    .map((stretch) => ({ startMinutes: Math.max(0, minutes(stretch.start)), endMinutes: Math.min(24 * 60, minutes(stretch.end)) }))
+    .filter((span) => span.endMinutes > span.startMinutes);
+}

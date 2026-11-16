@@ -80,6 +80,34 @@ export function dayShape(events: readonly ScheduleEvent[], now: Date): string {
   return parts.join(" · ");
 }
 
+/**
+ * Today's header line about meetings, true at any time of day: "No meetings
+ * today", "2 meetings · next at 2:00 pm", "2 meetings · in Standup until
+ * 10:30 am", or "2 meetings, both finished · last ended 3:30 pm", followed
+ * by any double-booking still ahead and, with more than one meeting left,
+ * when the last ends. Declined and all-day events aren't meetings here.
+ */
+export function daySummary(events: readonly ScheduleEvent[], now: Date): string {
+  const meetings = events.filter(isAttending).sort((left, right) => eventDate(left).getTime() - eventDate(right).getTime());
+  if (meetings.length === 0) return "No meetings today";
+  const total = `${meetings.length} meeting${meetings.length === 1 ? "" : "s"}`;
+  const remaining = meetings.filter((event) => new Date(event.end).getTime() > now.getTime());
+  if (remaining.length === 0) {
+    const lastEnd = new Date(Math.max(...meetings.map((event) => new Date(event.end).getTime())));
+    const finished = meetings.length === 1 ? "finished" : meetings.length === 2 ? "both finished" : "all finished";
+    return `${total}, ${finished} · ${meetings.length === 1 ? "ended" : "last ended"} ${formatClockTime(lastEnd)}`;
+  }
+  const current = remaining.find((event) => eventDate(event).getTime() <= now.getTime());
+  const parts = [total, current ? `in ${current.title} until ${formatClockTime(new Date(current.end))}` : `next at ${formatClockTime(eventDate(remaining[0]))}`];
+  // The rest of dayShape: double-bookings, and when the last meeting ends once there's more than one left.
+  for (const part of dayShape(events, now).split(" · ")) {
+    if (!part || part.startsWith("Free until")) continue;
+    if (part.startsWith("Last meeting ends") && remaining.length < 2) continue;
+    parts.push(part.charAt(0).toLocaleLowerCase() + part.slice(1));
+  }
+  return parts.join(" · ");
+}
+
 /** The meetings still ahead today, or under way, that `address` is invited to. */
 export function meetingsWith(address: string, events: readonly ScheduleEvent[], now: Date): ScheduleEvent[] {
   const email = address.toLocaleLowerCase();

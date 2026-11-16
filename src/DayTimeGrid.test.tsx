@@ -67,6 +67,28 @@ describe("DayTimeGrid", () => {
     expect(container.querySelectorAll(".calendar-event-mark")).toHaveLength(1);
   });
 
+  it("shades given stretches, shows a short block's time, and marks past and selected events only when asked", () => {
+    const short = event("Ops", "2026-09-22T15:00:00", "2026-09-22T15:30:00");
+    const { container, unmount } = renderGrid({ events: [short, review] });
+    // Calendar passes none of these, so nothing changes there.
+    expect(screen.getByRole("button", { name: /Ops/ })).toHaveTextContent(/^Ops$/);
+    expect(container.querySelector(".calendar-outside-hours")).toBeNull();
+    expect(container.querySelector("[data-past], [data-selected]")).toBeNull();
+    unmount();
+
+    const shaded = renderGrid({
+      events: [short, review], shortTimes: true, shade: [{ dayIndex: 0, startMinutes: 0, endMinutes: 9 * 60 }, { dayIndex: 1, startMinutes: 0, endMinutes: 60 }],
+      eventDecoration: (event) => event.id === "Review" ? { past: true } : { selected: true },
+    });
+    expect(screen.getByRole("button", { name: /Ops/ })).toHaveTextContent(/^Ops, 3:00\s?PM$/i);
+    expect(screen.getByRole("button", { name: /Review/ })).toHaveTextContent(/^Review/);
+    expect(screen.getByRole("button", { name: /Review/ })).toHaveAttribute("data-past", "true");
+    expect(screen.getByRole("button", { name: /Ops/ })).toHaveAttribute("data-selected", "true");
+    const shades = shaded.container.querySelectorAll<HTMLElement>(".calendar-outside-hours");
+    expect(shades).toHaveLength(1);
+    expect(shades[0]).toHaveStyle({ top: "0px", height: `${9 * HOUR_HEIGHT}px` });
+  });
+
   it("lists all-day events above the grid", () => {
     renderGrid({ events: [offsite, standup] });
     expect(within(screen.getByLabelText("All-day events")).getByRole("button", { name: "Offsite" })).toBeInTheDocument();

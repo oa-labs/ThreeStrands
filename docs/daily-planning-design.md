@@ -480,6 +480,29 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
   attendees as the event's accessible description, with a small mark for a note
   or unread mail, through an optional `eventDecoration` on `DayTimeGrid` that
   Calendar doesn't pass.
+- After the developer's review of the installed app:
+  - **Suggested** (`planSources(date, "suggested", account)`) is the first tab and
+    the default, each card naming its reason. An empty source still shows, in one
+    line, with the first `SOURCE_FALLBACK_CARDS` (3) cards of the next source in
+    tab order that has some beneath it and a link to switch, so the first view is
+    never two empty states. The tabs use Mail's light split-tab style; Starred
+    Mail, Goals, and Notes sit behind **More Sources** (`overflow`) and join the
+    row while chosen; arrow keys still move through every source.
+  - The day view opens on the default profile's working hours (their start, or
+    half an hour before now inside them), shades time outside them
+    (`DayTimeGrid`'s `shade`), and is as tall as the working day so Tomorrow stays
+    in view (`dayViewLayout`). Unknown hours keep the old opening and height.
+  - Finished meetings carry `data-past` and dim; only the meeting being prepared
+    carries `data-selected`. The "selected" look the developer saw was Calendar's
+    unanswered-invitation style (white fill, 2px outline), which Today now draws
+    filled with a dashed edge. Short blocks show their start time (`shortTimes`),
+    and readiness marks (notes, open commitments, unread from attendees) are
+    visible in the block. Calendar passes none of these props.
+  - The summary line is `daySummary` ("2 meetings · next at 2:00 pm", "2 meetings,
+    both finished · last ended 3:30 pm", "No meetings today"). The account in view
+    is named beside the mail line and the mail-scoped sources, not in the page
+    eyebrow; the mail line is text with a chevron to fold it; **Open Tasks** is at
+    the foot of the Tasks tab.
 - Not yet: Plan Today / Edit Plan / Shut Down in the header, a free-time line
   from `planCapacity`, and Open Task / Mark Done on a selected block (choosing a
   block still prepares or opens it like any event).
