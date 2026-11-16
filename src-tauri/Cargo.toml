@@ -7,6 +7,16 @@ license-file = "../LICENSE"
 edition = "2021"
 default-run = "threestrands"
 
+# Tauri discovers Cargo binaries when assembling installers. Keep the
+# developer evaluator out of ordinary builds and distributed app bundles.
+[features]
+ai-eval = []
+
+[[bin]]
+name = "ai-eval"
+path = "src/bin/ai-eval.rs"
+required-features = ["ai-eval"]
+
 [lib]
 name = "threestrands_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

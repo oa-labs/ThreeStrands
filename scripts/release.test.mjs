@@ -7,6 +7,26 @@ import { delimiter, join } from "node:path";
 import { describe, it } from "node:test";
 import { prepareReleaseAssets, releaseMetadata, setAppVersion, stampReviewed, updaterPublicKey, verifyUpdateSignature } from "./release.mjs";
 
+describe("developer evaluator packaging", () => {
+  it("requires an opt-in feature so Cargo and Tauri exclude ai-eval from normal builds", () => {
+    const result = spawnSync("cargo", ["metadata", "--format-version", "1", "--no-deps", "--offline",
+      "--manifest-path", new URL("../src-tauri/Cargo.toml", import.meta.url).pathname], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    const app = JSON.parse(result.stdout).packages.find((pkg) => pkg.name === "threestrands");
+    const evaluator = app.targets.find((target) => target.name === "ai-eval");
+    assert.deepEqual(evaluator["required-features"], ["ai-eval"]);
+    assert.deepEqual(app.features["ai-eval"], []);
+    assert.ok(!(app.features.default ?? []).includes("ai-eval"));
+    assert.ok(app.targets.some((target) => target.name === "threestrands" && !target["required-features"]));
+  });
+
+  it("enables the evaluator feature through the documented developer command", async () => {
+    const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+    assert.match(pkg.scripts["eval:ai"], /--features ai-eval\b/);
+    assert.match(pkg.scripts["eval:ai"], /--bin ai-eval --$/);
+  });
+});
+
 describe("Linux CI container builds", () => {
   for (const [path, job] of [["release.yml", "linux"], ["linux-build.yml", "linux-amd64"]]) {
     it(`${path} selects an OCI-capable builder before building the amd64 devcontainer`, async () => {

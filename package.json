@@ -13,7 +13,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "eval:ai": "cargo run --manifest-path src-tauri/Cargo.toml --bin ai-eval --",
+    "eval:ai": "cargo run --manifest-path src-tauri/Cargo.toml --features ai-eval --bin ai-eval --",
     "screenshots": "playwright test --config playwright.screenshots.config.ts",
     "site:dev": "vite --config site/vite.config.ts",
     "site:build": "tsc --noEmit -p site && vite build --config site/vite.config.ts",

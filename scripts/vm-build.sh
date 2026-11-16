@@ -68,7 +68,7 @@ cmd_sign_app() {
   # Match Tauri: hardened runtime and a secure timestamp, binary first.
   codesign --force --options runtime --timestamp --sign "$identity" "$binary"
   codesign --force --options runtime --timestamp --sign "$identity" "$app"
-  codesign --verify --strict --verbose=2 "$app"
+  codesign --verify --deep --strict --verbose=2 "$app"
   echo "Signed $app with $identity"
 }
 
@@ -96,7 +96,7 @@ submit_for_notarization() {
 
 # Fail unless the file is validly signed with a Developer ID identity.
 require_developer_id() {
-  codesign --verify --strict "$1" 2>/dev/null || die "$1 is not validly signed (run: scripts/vm-build.sh sign-app)"
+  codesign --verify --deep --strict "$1" 2>/dev/null || die "$1 is not validly signed (run: scripts/vm-build.sh sign-app)"
   local details
   details="$(codesign -dvv "$1" 2>&1)"
   [[ "$details" == *$'\nAuthority=Developer ID Application'* ]] ||
