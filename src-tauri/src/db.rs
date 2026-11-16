@@ -43,6 +43,8 @@ mod mutations;
 pub(crate) mod note_attachments;
 pub(crate) mod note_entities;
 pub(crate) mod notes;
+pub(crate) mod plan_review;
+pub(crate) mod plan_sources;
 pub(crate) use note_entities::{MeetingCapture, NoteCapture, NoteDocument, NoteTask};
 mod outbox;
 mod recovery;

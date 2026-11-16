@@ -6,7 +6,7 @@ import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, 
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
-import type { DailyPlan, MeetingContext, MeetingReadiness, PlanSave, PrepReservation } from "../domain";
+import type { DailyPlan, MeetingContext, MeetingReadiness, PlanHistory, PlanReview, PlanSave, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
 import type { PlanAddition } from "../dailyPlan";
 import {
   BOUNDED_LOCAL_READ,
@@ -439,6 +439,12 @@ export interface MailClient extends CorrespondenceClient {
   /** Adds items after the plan's existing ones; links already there are reported in `already`. */
   addToDailyPlan(date: string, expected: string | null, additions: PlanAddition[]): Promise<PlanSave>;
   removeFromDailyPlan(date: string, expected: string | null, key: string): Promise<PlanSave>;
+  /** Carry counts and planned days of plan item keys over `from..=to` (at most `PLAN_HISTORY_DAYS`). */
+  planHistory(targets: string[], from: string, to: string): Promise<PlanHistory[]>;
+  /** The Done and Didn't get to columns for planning `date`. */
+  planReview(date: string): Promise<PlanReview>;
+  /** One page of plan candidates; `accountId` scopes the mail sources. */
+  planSources(date: string, source: PlanSourceKind, accountId?: string | null, cursor?: string | null): Promise<PlanSourcePage>;
   resolveNoteConversation(reference: NoteReference): Promise<string | null>;
   /** The contact a contact reference opens, or null when this device has none. */
   resolveNoteContact(reference: NoteReference): Promise<string | null>;
@@ -714,6 +720,9 @@ const tauriClient: MailClient = {
   dailyPlan: (date) => read("daily_plan", { date }),
   addToDailyPlan: (date, expected, additions) => complete("add_to_daily_plan", { date, expected, additions }),
   removeFromDailyPlan: (date, expected, key) => complete("remove_from_daily_plan", { date, expected, key }),
+  planHistory: (targets, from, to) => read("plan_history", { targets, from, to }),
+  planReview: (date) => read("plan_review", { date }),
+  planSources: (date, source, accountId = null, cursor = null) => read("plan_sources", { date, source, accountId, cursor }),
   resolveNoteConversation: (reference) => read("resolve_note_conversation", { reference }),
   resolveNoteContact: (reference) => read("resolve_note_contact", { reference }),
   captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),

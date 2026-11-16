@@ -51,6 +51,9 @@ pub struct DailyPlanItem {
     pub goal: Option<PlanGoal>,
     /// A check-in's saved contact, when one owns the address.
     pub contact_id: Option<String>,
+    /// Plan days within `PLAN_HISTORY_DAYS` up to this plan's date on which
+    /// the same target was carried (see `plan_history`).
+    pub carry_count: u32,
     pub start: usize,
     pub end: usize,
 }
@@ -77,14 +80,14 @@ pub struct PlanSave {
     pub previous_body: String,
 }
 
-fn item_key(line: &PlanLine) -> String {
+pub(super) fn item_key(line: &PlanLine) -> String {
     line.reference
         .as_ref()
         .and_then(|reference| reference.target().ok())
         .unwrap_or_else(|| format!("line:{}", line.start))
 }
 
-fn task_state(status: &str) -> PlanItemState {
+pub(super) fn task_state(status: &str) -> PlanItemState {
     match status {
         "in_progress" => PlanItemState::InProgress,
         "completed" => PlanItemState::Done,
@@ -114,7 +117,12 @@ fn contact_for(c: &Connection, reference: &NoteReference) -> DbResult<Option<Str
     .optional()?)
 }
 
-fn resolve(c: &Connection, date: &str, note_id: &str, line: &PlanLine) -> DbResult<DailyPlanItem> {
+pub(super) fn resolve(
+    c: &Connection,
+    date: &str,
+    note_id: &str,
+    line: &PlanLine,
+) -> DbResult<DailyPlanItem> {
     let mut item = DailyPlanItem {
         key: item_key(line),
         kind: line.kind,
@@ -126,6 +134,7 @@ fn resolve(c: &Connection, date: &str, note_id: &str, line: &PlanLine) -> DbResu
         account_id: None,
         goal: None,
         contact_id: None,
+        carry_count: 0,
         start: line.start,
         end: line.end,
     };
@@ -304,6 +313,11 @@ impl Database {
                     plan.not_today.push(resolve(c, date, &note_id, line)?);
                 }
             }
+            super::plan_review::fill_carry_counts(
+                c,
+                date,
+                plan.items.iter_mut().chain(plan.not_today.iter_mut()),
+            )?;
             Ok(plan)
         })
     }

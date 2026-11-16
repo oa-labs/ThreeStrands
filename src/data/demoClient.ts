@@ -1992,7 +1992,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     ...demoSignatureClient,
     ...demoNotes,
-    ...createDemoPlans({ tasks: () => tasks, goals: () => goals, contacts: () => client.listContactProfiles("", 5000), notes: demoNotes }),
+    ...createDemoPlans({ tasks: () => tasks, goals: () => goals, contacts: () => client.listContactProfiles("", 5000), notes: demoNotes, threads: () => threads, events: connectedEvents, promises: (accountId) => client.listOpenPromises(accountId) }),
     ...createDemoMeetings({
       events: connectedEvents,
       threads: () => threads,

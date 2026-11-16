@@ -1113,12 +1113,61 @@ export type DailyPlanItem = {
   accountId: string | null;
   goal: { id: string; title: string } | null;
   contactId: string | null;
+  /** Plan days within `PLAN_HISTORY_DAYS` up to the plan's date on which this target was carried. */
+  carryCount: number;
   start: number;
   end: number;
 };
 /** The plan in a day's daily note. `revision` is the note's version, or null without a note. */
 export type DailyPlan = { date: string; noteId: string; revision: string | null; items: DailyPlanItem[]; notToday: DailyPlanItem[] };
 export type PlanSave = { note: Note; changed: string[]; already: string[]; previousBody: string };
+/** Carry count and planned days (oldest first) of one plan item key over a range. */
+export type PlanHistory = { target: string; carryCount: number; plannedDays: string[] };
+/** An item Review offers to carry, defer, or drop, with the plan it came from. */
+export type PlanReviewItem = DailyPlanItem & { plannedOn: string };
+/** A task completed on the reviewed day outside its plan. */
+export type PlanCompletedTask = { key: string; taskId: string; title: string; accountId: string | null; noteId: string | null; noteTitle: string | null; completedAt: string };
+/** Plan Today's Review step (`src-tauri/src/db/plan_review.rs`). */
+export type PlanReview = {
+  date: string;
+  /** The most recent earlier plan within `PLAN_LOOKBACK_DAYS`, or null. */
+  reviewed: string | null;
+  done: DailyPlanItem[];
+  alsoDone: PlanCompletedTask[];
+  /** Ended, attended meetings of the reviewed day; null when that day isn't cached (unknown, not empty). */
+  meetings: ScheduleEvent[] | null;
+  /** The reviewed plan's unsettled items, then older plans', then deferrals due by `date`. */
+  didntGetTo: PlanReviewItem[];
+};
+export type PlanSourceKind = "suggested" | "tasks" | "starredMail" | "promises" | "keepInTouch" | "goals" | "notes";
+export type PlanCandidateReason = "overdue" | "dueToday" | "inProgress" | "waiting" | "open" | "promise" | "keepInTouch" | "starred" | "goal" | "goalTask" | "noteTask";
+/** What adding a candidate takes: the item itself, or a task made first. */
+export type PlanCandidateAction =
+  | { kind: "link"; addition: import("./dailyPlan").PlanAddition }
+  | { kind: "makeTask"; threadId: string; messageId: string }
+  | { kind: "taskForm"; threadId: string; accountId: string }
+  | { kind: "newTaskForGoal"; goalId: string; accountId: string };
+export type PlanCandidate = {
+  /** The plan item key adding it produces; a conversation's target before its task exists; `goal:<id>` for a goal. */
+  key: string;
+  title: string;
+  reason: PlanCandidateReason;
+  detail: string | null;
+  accountId: string | null;
+  due: string | null;
+  taskId: string | null;
+  threadId: string | null;
+  contactId: string | null;
+  goal: { id: string; title: string } | null;
+  /** A goal's task: the days it was planned in the goal's period. */
+  plannedDays: string[];
+  /** A goal: its open tasks. */
+  openTasks: number | null;
+  /** Already a plan item on the plan's date. */
+  planned: boolean;
+  action: PlanCandidateAction;
+};
+export type PlanSourcePage = { candidates: PlanCandidate[]; next: string | null };
 /** Counts for one meeting in a day's list; they agree with its full context. */
 export type MeetingReadiness = {
   reference: import("./noteEntities").NoteReference;

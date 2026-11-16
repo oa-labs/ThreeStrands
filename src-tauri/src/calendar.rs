@@ -2557,6 +2557,16 @@ mod tests {
             Some(serde_json::json!({ "private": { "threestrandsSourceMessage": "message-1" } }))
         );
         assert_eq!(tags(None, Some(" ")), None);
+        // A note task is booked under its Tasks id, note id and marker id.
+        assert_eq!(
+            tags(
+                None,
+                Some("note:daily:2026-11-16:2f0c6f5e-0a7b-4c1e-9d55-3a1f0e2b7c11")
+            ),
+            Some(
+                serde_json::json!({ "private": { "threestrandsSourceTask": "note:daily:2026-11-16:2f0c6f5e-0a7b-4c1e-9d55-3a1f0e2b7c11" } })
+            )
+        );
     }
 
     #[test]
@@ -2623,6 +2633,11 @@ mod tests {
         assert_eq!(
             task(serde_json::json!({ "private": { "threestrandsSourceMessage": "message-1" } })),
             None
+        );
+        assert_eq!(
+            task(serde_json::json!({ "private": { "threestrandsSourceTask": "note:daily:2026-11-16:m1" } }))
+                .as_deref(),
+            Some("note:daily:2026-11-16:m1")
         );
     }
 

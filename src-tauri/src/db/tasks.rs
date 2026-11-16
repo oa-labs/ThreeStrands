@@ -52,7 +52,7 @@ fn is_active_status(status: &str) -> bool {
     matches!(status, "open" | "in_progress")
 }
 
-fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadTask> {
+pub(super) fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadTask> {
     Ok(ThreadTask {
         id: row.get(0)?,
         account_id: row.get(1)?,
@@ -77,7 +77,7 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadTask> {
     })
 }
 
-fn select_sql() -> &'static str {
+pub(super) fn select_sql() -> &'static str {
     "SELECT id, account_id, thread_id, source_message_id, subject_snapshot,
             title, notes, kind, due_kind, due_value, time_zone,
             repeat_interval_days, status, completion_source, evidence_text,

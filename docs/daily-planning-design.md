@@ -1,11 +1,15 @@
 # Daily planning and shutdown
 
-**Status:** Stage 1 in progress: the plan section format, parser, item-level
-writes, and plan reading are implemented (`src-tauri/src/daily_plan.rs`,
+**Status:** Stage 1 (contracts) is implemented: the plan section format,
+parser, item-level writes, and plan reading (`src-tauri/src/daily_plan.rs`,
 `src-tauri/src/db/daily_plan.rs`, `src/dailyPlan.ts`, `fixtures/daily-plan.json`);
-review, history, sources, capacity, and note-task booking remain. Stage 2's
-reshaped Today is built apart from the parts that depend on them (see
-[As built](#as-built-stage-2)).
+plan history and review (`src-tauri/src/db/plan_review.rs`); candidate sources
+(`src-tauri/src/db/plan_sources.rs`); `planCapacity` in `src/todayInsights.ts`;
+and note-task booking in `src/taskBooking.ts`. The demo client follows the same
+rules (`src/data/demoPlans.ts`). Plan saves with operation receipts and Undo
+(`save_daily_plan`) and the editor's marker handling remain. Stage 2's reshaped Today
+is built; its use of these pieces is listed under [As built](#as-built-stage-2).
+See also [As built (stage 1)](#as-built-stage-1).
 **Baseline:** 0.210.0 repository, reviewed 2026-11-16.
 **Priority:** Part of the daily loop in the [product plan](../PLAN.MD#connected-workflow-additions),
 interleaved with [meeting preparation](meeting-preparation-design.md).
@@ -513,6 +517,62 @@ Names are proposed, not existing APIs.
 | Shared day grid | Extract the one-day time grid and the pointer task-block drag (threshold, preview, edge scrolling, Escape, booking with Undo) from `CalendarWeekView` into a shared component and hook. Calendar's views use them unchanged; Today and the Fit step render one day. Drop targets accept a plan card source as well as a Calendar task row. |
 | UI/controller | `PlanTodayDialog` and `ShutDownDialog` with `useDailyPlan`; `TodayPlanColumn` (cards), `PlanSourceSwitcher` (shared by the Choose step and Today), `PlanReviewColumns` (shared by Review and Shut Down), `TodayDayView`, and `TodayMailSignal` in a reshaped `TodayWorkspace`; `planCapacity` in `todayInsights.ts`. The meeting step reuses `MeetingReadinessList`; the day view's readiness indicators use the same `meeting_readiness` results. |
 | Typed client/demo | Extend `src/domain.ts`, `src/data/client.ts`, and `src/data/demoClient.ts` with plan and review shapes and fixtures. |
+
+## As built (stage 1)
+
+Where the stage 1 contracts differ from the text above, and why:
+
+- **No plan item index table.** History, settledness, and due deferrals read
+  plan sections from daily notes on this device, but only the bounded set that
+  can matter: notes linking a target come from the existing `note_entity_links`
+  target index, and daily notes in a date range are a primary-key range read,
+  since daily note ids are `daily:YYYY-MM-DD`. A round task typed in a plan is
+  found through its own note, which its target names. So there is no schema
+  change, and nothing to rebuild or keep in step with note edits.
+- **`plan_history(targets, from, to)`** accepts at most 200 targets
+  (`MAX_PLAN_HISTORY_TARGETS`) and a range of at most `PLAN_HISTORY_DAYS`
+  dates. A day counts once per target; a carry counts when any of that day's
+  plan items for the target has a `carried` marker. `daily_plan(date)` returns
+  `carryCount` on each linked item over the 90 days ending on its date.
+- **Settled also by the same day's Not today.** Shut Down records decisions
+  about a day's unfinished items in that day's own `### Not today`, so a Not
+  today mention in the item's own plan settles it, as a later plan's mention
+  does. Otherwise a deferral to tomorrow would also show the item as unsettled.
+- **Review.** `plan_review(date)` returns `reviewed` (the latest earlier plan
+  with plan items within `PLAN_LOOKBACK_DAYS`), `done`, `alsoDone` (at most
+  50), `meetings`, and `didntGetTo`. Unavailable items stay in Didn't get to
+  so they can be dropped; cancelled items appear in neither column. Due
+  deferrals are found in plans as old as `PLAN_HISTORY_DAYS`, not only the
+  seven-day window, by reading only daily notes whose text has a deferral
+  marker. A note task's completion time is when this device first saw it
+  checked, so one finished on another device counts on the day it synced.
+  `meetings` comes from the calendar cache and is `null` when nothing of that
+  day is cached for a connected calendar: unknown, never an empty day. Copies
+  of one meeting on two calendars count once.
+- **Sources.** `plan_sources(date, source, accountId, cursor)` takes the plan
+  date too, so Plan Tomorrow ranks by tomorrow's dates ("due" means due on the
+  plan date). The cursor is an opaque string. Each candidate carries `key`,
+  `title`, `reason`, `detail`, `accountId`, `due`, `taskId`, `threadId`,
+  `contactId`, `goal`, `plannedDays`, `openTasks`, `planned` (already a plan
+  item that day), and an `action`: `link` with the `PlanAddition` to save,
+  `makeTask` for a promise, `taskForm` for a starred conversation without an
+  open task, or `newTaskForGoal`. A promise or a starred conversation without a
+  task is keyed by its conversation target until the task exists. Waiting-for
+  tasks count as past their wait date when their due date is on or before the
+  plan date. The Goals source lists each current goal (key `goal:<id>`, with
+  its open task count) followed by its open tasks; planned days are limited to
+  the goal's period and the last 90 days. Dismissed promises are a per-device
+  list, so the client filters them as Today does.
+- **Capacity.** `planCapacity(events, workingHours, now, day?)` takes the
+  booked blocks as part of `events` (they are events with a source task),
+  returns `null` for an unknown schedule or working hours, and reports working
+  minutes, free minutes, free stretches (each marked `holdsBlock` and `named`),
+  and booked blocks in working hours. Working-location entries are not busy.
+- **Note-task booking.** A note task's block stores its Tasks id,
+  `note:<noteId>:<markerId>`, as the source task. `bookedSource`,
+  `bookedTaskFor`, and `bookedBlock` resolve both forms, and
+  `openTasksFor(..., { includeNoteTasks: true })` offers note tasks. Calendar's
+  task list is unchanged; it does not yet include note tasks.
 
 ## Compatibility
 

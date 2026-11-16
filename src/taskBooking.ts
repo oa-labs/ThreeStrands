@@ -37,11 +37,52 @@ export async function showCalendar(calendar: CalendarOption, calendars: Calendar
   ]);
 }
 
-/** The To Do and In Progress tasks of these accounts, in board order. */
-export function openTasksFor(tasks: ThreadTask[], accountIds: string[]): ThreadTask[] {
+/**
+ * The To Do and In Progress tasks of these accounts, in board order. With
+ * `includeNoteTasks`, open note tasks (which have no account) can be booked too.
+ */
+export function openTasksFor(tasks: ThreadTask[], accountIds: string[], { includeNoteTasks = false }: { includeNoteTasks?: boolean } = {}): ThreadTask[] {
   return tasks
-    .filter((task) => isActiveTaskStatus(task.status) && accountIds.includes(task.accountId))
+    .filter((task) => isActiveTaskStatus(task.status) && (task.source === "note" ? includeNoteTasks : accountIds.includes(task.accountId)))
     .sort(compareTasksForDisplay);
+}
+
+/**
+ * The task a booked event's source task names: a replicated task id, or a
+ * note task as Tasks names it, `note:<noteId>:<markerId>`. Marker ids never
+ * contain a colon, so the note id is everything between. Events booked before
+ * note tasks could be booked hold replicated ids and keep that meaning.
+ */
+export type BookedSource = { kind: "task"; id: string } | { kind: "noteTask"; noteId: string; markerId: string };
+
+export function bookedSource(sourceTaskId: string | null | undefined): BookedSource | null {
+  const id = sourceTaskId?.trim();
+  if (!id) return null;
+  const note = /^note:(.+):([^:]+)$/.exec(id);
+  return note ? { kind: "noteTask", noteId: note[1], markerId: note[2] } : { kind: "task", id };
+}
+
+/** The source a block booked for `task` records. */
+export function taskSource(task: ThreadTask): BookedSource {
+  if (task.noteSource) return { kind: "noteTask", noteId: task.noteSource.noteId, markerId: task.noteSource.markerId };
+  return bookedSource(task.id) ?? { kind: "task", id: task.id };
+}
+
+/** The event's `sourceTaskId` value for a block booked for `source`. */
+export function sourceTaskId(source: BookedSource): string {
+  return source.kind === "noteTask" ? `note:${source.noteId}:${source.markerId}` : source.id;
+}
+
+function sameSource(left: BookedSource | null, right: BookedSource): boolean {
+  if (!left || left.kind !== right.kind) return false;
+  return left.kind === "task" ? left.id === (right as typeof left).id
+    : left.noteId === (right as typeof left).noteId && left.markerId === (right as typeof left).markerId;
+}
+
+/** The task among `tasks` that a booked event was booked for, mail, standalone, or note task. */
+export function bookedTaskFor(event: Pick<ScheduleEvent, "sourceTaskId">, tasks: readonly ThreadTask[]): ThreadTask | undefined {
+  const source = bookedSource(event.sourceTaskId);
+  return source ? tasks.find((task) => sameSource(source, taskSource(task))) : undefined;
 }
 
 /** A timed block of `TASK_BLOCK_MINUTES` for the task, tagged so the calendar can name it later. */
@@ -54,13 +95,14 @@ export function taskBlockRequest(task: ThreadTask, calendar: CalendarOption, sta
     end: new Date(start.getTime() + TASK_BLOCK_MINUTES * 60_000).toISOString(),
     description: "",
     attendees: [],
-    sourceTaskId: task.id,
+    sourceTaskId: sourceTaskId(taskSource(task)),
   };
 }
 
 /** The block booked for the task among `events`: the next one still to end, else the latest. */
 export function bookedBlock(task: ThreadTask, events: ScheduleEvent[], now: Date): ScheduleEvent | null {
-  const blocks = events.filter((event) => event.sourceTaskId === task.id)
+  const source = taskSource(task);
+  const blocks = events.filter((event) => sameSource(bookedSource(event.sourceTaskId), source))
     .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   return blocks.find((event) => Date.parse(event.end) > now.getTime()) ?? blocks.at(-1) ?? null;
 }

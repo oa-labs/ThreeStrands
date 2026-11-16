@@ -32,7 +32,7 @@ import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
-import { defaultEventCalendar, openTasksFor, showCalendar, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
+import { bookedTaskFor, defaultEventCalendar, openTasksFor, showCalendar, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
 import type { Notice } from "./useNotice";
 import { formatShortcut } from "./shortcutLabels";
 import { DayTimeGrid, sameEvent, SLOT_MINUTES, slotAt, type DayGridPreview } from "./DayTimeGrid";
@@ -394,7 +394,7 @@ export function CalendarWeekView({
 
   const { tasks: accountTasks, loading: tasksLoading, error: tasksError, reload: reloadTasks } = useAccountTasks(mailAccountIds, taskRefreshKey);
   const openTasks = openTasksFor(accountTasks, mailAccountIds);
-  const bookedTask = selectedEvent?.sourceTaskId ? accountTasks.find((task) => task.id === selectedEvent.sourceTaskId) : undefined;
+  const bookedTask = selectedEvent ? bookedTaskFor(selectedEvent, accountTasks) : undefined;
   const tasksChanged = () => { reloadTasks(); onTasksChanged?.(); };
 
   const bookTask = async (task: ThreadTask, day: Date, startMinutes: number) => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CalendarAccount, CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
-import { bookedBlock, defaultEventCalendar, openTasksFor, primaryCalendarsFirst, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
+import { bookedBlock, bookedSource, bookedTaskFor, defaultEventCalendar, openTasksFor, primaryCalendarsFirst, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
+import { noteTaskAsTask } from "./noteEntities";
 
 function calendar(id: string, accountId: string, overrides: Partial<CalendarOption> = {}): CalendarOption {
   return { id, accountId, name: id, primary: false, selected: true, writable: true, ...overrides };
@@ -15,6 +16,11 @@ function task(id: string, overrides: Partial<ThreadTask> = {}): ThreadTask {
 
 function block(id: string, start: string, end: string, sourceTaskId: string | null = "proposal"): ScheduleEvent {
   return { id, accountId: "joel@example.com", title: id, start, end, allDay: false, sourceTaskId };
+}
+
+function noteTask(title: string, overrides: { checked?: boolean; markerId?: string } = {}): ThreadTask {
+  const markerId = overrides.markerId ?? "m1";
+  return noteTaskAsTask({ id: `note:daily:2026-11-16:${markerId}`, markerId, noteId: "daily:2026-11-16", noteTitle: "Monday", title, checked: overrides.checked ?? false, updatedAt: "2026-11-16T09:00:00Z", completedAt: null, conflicted: false });
 }
 
 describe("task booking", () => {
@@ -64,6 +70,39 @@ describe("task booking", () => {
     ];
     expect(openTasksFor(tasks, ["joel@example.com"]).map((item) => item.id)).toEqual(["doing", "later", "undated"]);
     expect(openTasksFor(tasks, [])).toEqual([]);
+  });
+
+  it("offers open note tasks for booking only when asked", () => {
+    const chore = noteTask("Draft memo");
+    const done = noteTask("Filed", { checked: true, markerId: "m2" });
+    const tasks = [task("undated"), chore, done];
+    expect(openTasksFor(tasks, ["joel@example.com"]).map((item) => item.title)).toEqual(["undated"]);
+    expect(openTasksFor(tasks, ["joel@example.com"], { includeNoteTasks: true }).map((item) => item.title).sort()).toEqual(["Draft memo", "undated"]);
+    expect(openTasksFor(tasks, [], { includeNoteTasks: true }).map((item) => item.title)).toEqual(["Draft memo"]);
+  });
+
+  it("books a note task under its Tasks id and finds its block and task again", () => {
+    const chore = noteTask("Draft memo");
+    const start = new Date(2026, 10, 16, 10, 0);
+    const request = taskBlockRequest(chore, calendar("primary", "joel@example.com"), start);
+    expect(request.sourceTaskId).toBe("note:daily:2026-11-16:m1");
+    expect(bookedSource(request.sourceTaskId)).toEqual({ kind: "noteTask", noteId: "daily:2026-11-16", markerId: "m1" });
+    const booked = block("chore", "2026-11-16T15:00:00Z", "2026-11-16T15:30:00Z", request.sourceTaskId);
+    const now = new Date("2026-11-16T12:00:00Z");
+    expect(bookedBlock(chore, [booked], now)?.id).toBe("chore");
+    // Another marker in the same note, or a replicated task, isn't this task.
+    expect(bookedBlock(noteTask("Other", { markerId: "m9" }), [booked], now)).toBeNull();
+    expect(bookedBlock(task("m1"), [booked], now)).toBeNull();
+    expect(bookedTaskFor(booked, [task("proposal"), chore])?.title).toBe("Draft memo");
+  });
+
+  it("keeps old events booked for replicated tasks linked to them", () => {
+    const proposal = task("proposal");
+    const old = block("old", "2026-10-28T09:00:00Z", "2026-10-28T09:30:00Z", " proposal ");
+    expect(bookedSource(old.sourceTaskId)).toEqual({ kind: "task", id: "proposal" });
+    expect(bookedTaskFor(old, [noteTask("Draft memo"), proposal])).toBe(proposal);
+    expect(bookedTaskFor(block("unlinked", "2026-10-28T09:00:00Z", "2026-10-28T09:30:00Z", null), [proposal])).toBeUndefined();
+    expect(bookedSource("  ")).toBeNull();
   });
 
   it("asks for a thirty-minute block tagged with the task", () => {
