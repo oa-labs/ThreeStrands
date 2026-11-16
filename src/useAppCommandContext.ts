@@ -96,7 +96,7 @@ export function useAppCommandContext({
   const {
     rightWorkspace, setRightWorkspace, setContactsView, toggleSchedule, showMailContext, openTasks, openTasksView,
     openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openNotesView, openTodaysNote, openTodayView,
-    canReturnFromCalendar, returnFromCalendar,
+    canReturnFromCalendar, returnFromCalendar, canReturnFromContacts, returnFromContacts,
   } = workspaces;
   const {
     accountSplitInboxes, returnStep, goBack, goToInboxTab, openMailView, goToSplitTab,
@@ -135,8 +135,8 @@ export function useAppCommandContext({
     selectedArchived: selected?.archived ?? false,
     selectedTrashed: selected?.trashed ?? false,
     canUnsubscribe,
-    canGoBack: canReturnFromCalendar || returnStep !== null,
-    goBack: canReturnFromCalendar ? returnFromCalendar : goBack,
+    canGoBack: canReturnFromContacts || canReturnFromCalendar || returnStep !== null,
+    goBack: canReturnFromContacts ? returnFromContacts : canReturnFromCalendar ? returnFromCalendar : goBack,
     searchOpen: searchOpen && isTabbedMailbox,
     closeSearch,
     canNavigateMessages: displayedMessages.length > 1,
@@ -347,7 +347,7 @@ export function useAppCommandContext({
   }), [
     createCalendarEvent,
     addToTodaysNote, addMeetingNote, prepareMeeting, meetingPrepOpen, snoozeSelected, returnSnoozedSelected, correspondence.context, parkedDraft, openDraft, openDraftRow, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
-    selectedId, selected, canUnsubscribe, returnStep, goBack, canReturnFromCalendar, returnFromCalendar, displayedMessages,
+    selectedId, selected, canUnsubscribe, returnStep, goBack, canReturnFromCalendar, returnFromCalendar, canReturnFromContacts, returnFromContacts, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread, selectedTaskIsNote,
     aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, correspondence.activeDraft?.mode, refreshMail, toggleSchedule, showMailContext, openTasks, openMailView, openTasksView,

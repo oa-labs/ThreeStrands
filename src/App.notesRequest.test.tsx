@@ -45,7 +45,7 @@ it("opens a note found from the command palette", async () => {
   expect(screen.queryByRole("textbox", { name: "Filter Commands" })).not.toBeInTheDocument();
 });
 
-it("opens a contact linked from a note in Contacts, and lists the note on the contact", async () => {
+it("opens a linked contact, lists its note, and returns with Escape preserving the note and search", async () => {
   localStorage.clear();
   const contact = await mailClient.saveContactProfile({ id: null, displayName: "Pete Linkfollow", role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses: ["pete.linkfollow@example.com"], birthday: null });
   const href = noteReferenceHref({ version: 1, kind: "contact", id: "pete.linkfollow@example.com", contact: contact.id });
@@ -57,10 +57,29 @@ it("opens a contact linked from a note in Contacts, and lists the note on the co
   lastEditorProps.current!.onOpenEntity!(noteReferenceHref({ version: 1, kind: "contact", id: "nobody.saved@example.com" }));
   expect(await screen.findByText("No contact for nobody.saved@example.com on this device")).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title);
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "Meeting with Pete" } });
+  const editedBody = `${note.body}\nFollow up on the agenda.`;
+  fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: editedBody } });
   lastEditorProps.current!.onOpenEntity!(href);
   expect(await screen.findByDisplayValue("Pete Linkfollow")).toBeInTheDocument();
   const notes = await within(await screen.findByRole("complementary", { name: "Contact context" })).findByRole("region", { name: "Notes" });
   expect(within(notes).getByRole("button", { name: /Meeting with Pete/ })).toBeInTheDocument();
+
+  // Escape dismisses an overlay or the contact search before returning to Notes.
+  fireEvent.click(screen.getByRole("button", { name: /^Command Palette/ }));
+  await screen.findByRole("textbox", { name: "Filter Commands" });
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "Filter Commands" })).not.toBeInTheDocument());
+  expect(screen.getByDisplayValue("Pete Linkfollow")).toBeInTheDocument();
+  const search = screen.getByRole("textbox", { name: "Search Contacts" });
+  fireEvent.focus(search);
+  fireEvent.keyDown(search, { key: "Escape" });
+  expect(screen.getByDisplayValue("Pete Linkfollow")).toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+  expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(editedBody);
+  expect(screen.getByRole("searchbox", { name: "Search Notes" })).toHaveValue("Meeting with Pete");
 });
 
 it("adds a meeting from Today's next-meeting card to today's note, and Undo takes it out", async () => {

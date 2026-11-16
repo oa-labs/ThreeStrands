@@ -67,6 +67,17 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     setRightWorkspace(calendarReturnWorkspace.workspace);
     setCalendarReturnWorkspace(null);
   }, [canReturnFromCalendar, calendarReturnWorkspace]);
+  const [contactsReturnNotes, setContactsReturnNotes] = useState(false);
+  useEffect(() => {
+    if (rightWorkspace !== "contacts") setContactsReturnNotes(false);
+  }, [rightWorkspace]);
+  const canReturnFromContacts = rightWorkspace === "contacts" && contactsReturnNotes;
+  const returnFromContacts = useCallback(() => {
+    if (!canReturnFromContacts) return;
+    // Reopen the remembered note and list context without a new note request.
+    setRightWorkspace("notes");
+    setContactsReturnNotes(false);
+  }, [canReturnFromContacts]);
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
   const [contactsView, setContactsView] = useState<ContactsView>(readContactsView);
   useEffect(() => { writeContactsView(contactsView); }, [contactsView]);
@@ -186,10 +197,15 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     setRightWorkspace("tasks");
   }, []);
 
-  const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
-  const openKeepInTouchView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("keepInTouch"); setRightWorkspace("contacts"); }, []);
-  const openContactGroupsView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("groups"); setRightWorkspace("contacts"); }, []);
-  const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setContactsView("all"); setRightWorkspace("contacts"); }, []);
+  const openContactsView = useCallback(() => { setContactsReturnNotes(false); setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
+  const openKeepInTouchView = useCallback(() => { setContactsReturnNotes(false); setContactAddressBookTarget(null); setContactsView("keepInTouch"); setRightWorkspace("contacts"); }, []);
+  const openContactGroupsView = useCallback(() => { setContactsReturnNotes(false); setContactAddressBookTarget(null); setContactsView("groups"); setRightWorkspace("contacts"); }, []);
+  const openContactInAddressBook = useCallback((id: string) => {
+    if (rightWorkspace !== "contacts") setContactsReturnNotes(rightWorkspace === "notes");
+    setContactAddressBookTarget(id);
+    setContactsView("all");
+    setRightWorkspace("contacts");
+  }, [rightWorkspace]);
   // The participant picked from a message header or the panel's person
   // switcher. It holds while the reader stays on the message it was picked
   // from; moving to another message, or another conversation, returns the
@@ -227,6 +243,6 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     sideColumn, setSideColumn, scheduleShown, showMailContext, openTasksView,
     narrowLayout, sideDrawerOpen, setSideDrawerOpen: setDrawerRequested, mailPanel,
     openAgentsView, openFilesView, openNotesView, openTodaysNote, openNote, notesRequest, consumeNotesRequest, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
-    contextPersonEmail, openCalendarView, canReturnFromCalendar, returnFromCalendar,
+    contextPersonEmail, openCalendarView, canReturnFromCalendar, returnFromCalendar, canReturnFromContacts, returnFromContacts,
   };
 }
