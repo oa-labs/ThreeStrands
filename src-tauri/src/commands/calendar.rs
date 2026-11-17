@@ -426,6 +426,7 @@ mod calendar_event_request_tests {
             attendees: vec!["guest@example.com".into()],
             source_message_id: None,
             source_task_id: None,
+            source_plan_key: None,
         }
     }
 

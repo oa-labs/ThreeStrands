@@ -3,9 +3,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runWorkspaceCommand } from "./workspaceCommands";
 import { act } from "react";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
+import { useEscapeDismiss } from "./useEscapeDismiss";
 
 describe("shared workspace context rail",()=>{
   afterEach(()=>{cleanup();localStorage.clear();});
+  it("leaves Escape to the topmost overlay before returning from the rail", () => {
+    const dismiss = vi.fn();
+    const onReturn = vi.fn();
+    function Overlay() {
+      useEscapeDismiss(dismiss);
+      return <button>Overlay control</button>;
+    }
+    const view = render(<WorkspaceContextRail label="Note context" onReturn={onReturn}><Overlay /></WorkspaceContextRail>);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Overlay control" }), { key: "Escape" });
+    expect(dismiss).toHaveBeenCalledOnce();
+    expect(onReturn).not.toHaveBeenCalled();
+    view.rerender(<WorkspaceContextRail label="Note context" onReturn={onReturn}><button>Panel control</button></WorkspaceContextRail>);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Panel control" }), { key: "Escape" });
+    expect(onReturn).toHaveBeenCalledOnce();
+  });
   it("uses the email framing and retains editable content while collapsed",async()=>{
     render(<WorkspaceContextRail label="Task context"><input aria-label="Notes" defaultValue="Draft" /></WorkspaceContextRail>);
     const input=screen.getByRole("textbox",{name:"Notes"});

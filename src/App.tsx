@@ -759,6 +759,7 @@ export function App() {
   // occurrence, and preparation beside a linked note. Both survive opening a
   // source, so Back to Meeting finds them as they were.
   const [calendarPreparing, setCalendarPreparing] = useState<string | null>(null);
+  const [notePreparationVisible, setNotePreparationVisible] = useState(false);
   const [notePreparation, setNotePreparation] = useState<{ noteId: string; event: ScheduleEvent } | null>(null);
 
   const prepMailAccounts = useMemo(() => accounts.map((account) => ({ email: account.email, label: account.nickname?.trim() || account.displayName?.trim() || account.email })), [accounts]);
@@ -822,7 +823,7 @@ export function App() {
     addMeetingNote: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => { void openMeetingNote(calendarSelectedEvent); } : undefined,
     prepareMeeting: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent)
       ? () => setCalendarPreparing((current) => current === preparationKey(calendarSelectedEvent) ? null : preparationKey(calendarSelectedEvent)) : undefined,
-    meetingPrepOpen: rightWorkspace === "notes" ? Boolean(notePreparation) : rightWorkspace === "week" ? Boolean(calendarSelectedEvent && calendarPreparing !== null && preparationKey(calendarSelectedEvent) === calendarPreparing) : false,
+    meetingPrepOpen: rightWorkspace === "notes" ? notePreparationVisible : rightWorkspace === "week" ? Boolean(calendarSelectedEvent && calendarPreparing !== null && preparationKey(calendarSelectedEvent) === calendarPreparing) : false,
     snoozeSelected: openSnooze, returnSnoozedSelected: conversationSnooze.returnToInbox,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
@@ -1917,7 +1918,7 @@ export function App() {
       {agents.activity ? <aside className="agent-activity" role="status"><button className="btn-link agent-activity-action" onClick={() => { const id = agents.activity!.id; agents.patchView(id, { version: null, tab: agents.activity!.label.startsWith("Answer needed") ? "conversation" : "result" }); openAgent(id); }}>{agents.activity.label}</button><button className="btn-icon btn-icon-sm" aria-label="Dismiss Agent Notification" onClick={agents.dismissActivity}><X size={ICON_SIZE.sm} /></button></aside> : null}
       {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Agents…</p>}><AgentsWorkspace controller={agents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAgentPersonalTask} onOpenResearchSettings={() => openSettingsAt("research")} settingsOpen={settingsOpen} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "notes" ? <ErrorBoundary area="Notes" variant="side"><Suspense fallback={null}><NotesWorkspace request={notesRequest} onRequestConsumed={consumeNotesRequest} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} onOpenContact={contactCardActions.onOpenContact} onOpenEntity={openEntityReference} onReturn={notesReturnMail ? () => { setRightWorkspace(null); setNotesReturnMail(false); } : undefined}
-        meetingPreparation={notePreparation} onMeetingPreparationChange={setNotePreparation}
+        meetingPreparation={notePreparation} onMeetingPreparationChange={setNotePreparation} onPreparationVisibilityChange={setNotePreparationVisible}
         renderMeetingPreparation={(event, close, noteId) => renderPreparation("notes", noteId)(event, close)}
         calendars={calendar.calendars} onOpenEvent={(event) => openCalendarView(eventDate(event), event)} onAddNote={(event) => { void openMeetingNote(event); }} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "files" ? <ErrorBoundary area="Files" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenNote={openNote} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense></ErrorBoundary> : null}

@@ -314,7 +314,7 @@ impl Database {
             PlanSource::Promises => page_of(self.promise_candidates(account, &now)?, offset),
             PlanSource::KeepInTouch => page_of(self.keep_in_touch_candidates(day, &now)?, offset),
             PlanSource::Goals => page_of(self.goal_candidates(day, account)?, offset),
-            PlanSource::Notes => self.note_candidates(date, offset)?,
+            PlanSource::Notes => self.note_candidates(offset)?,
         };
         let planned = self.planned_keys(date)?;
         for candidate in &mut page.candidates {
@@ -641,18 +641,17 @@ impl Database {
         })
     }
 
-    /// Open round tasks in notes other than the plan's own, newest note first.
-    fn note_candidates(&self, date: &str, offset: usize) -> DbResult<PlanSourcePage> {
-        let own = crate::notes::daily_note_id(date);
+    /// Open round tasks in every note, newest note first. Plan identities deduplicate the inbox.
+    fn note_candidates(&self, offset: usize) -> DbResult<PlanSourcePage> {
         self.with_connection(|c| {
             let mut q = c.prepare(
                 "SELECT t.note_id,t.marker_id,t.title,n.title FROM note_tasks t JOIN notes n ON n.id=t.note_id
-                 WHERE n.trashed=0 AND t.checked=0 AND t.note_id!=?1
-                 ORDER BY n.updated_at DESC, t.note_id, t.rowid LIMIT ?2 OFFSET ?3",
+                 WHERE n.trashed=0 AND t.checked=0
+                 ORDER BY n.updated_at DESC, t.note_id, t.rowid LIMIT ?1 OFFSET ?2",
             )?;
             let rows = q
                 .query_map(
-                    params![own, (PLAN_SOURCE_PAGE + 1) as i64, offset as i64],
+                    params![(PLAN_SOURCE_PAGE + 1) as i64, offset as i64],
                     |r| {
                         Ok((
                             r.get::<_, String>(0)?,

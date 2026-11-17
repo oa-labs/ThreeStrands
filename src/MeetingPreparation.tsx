@@ -141,7 +141,7 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
     <ContextSectionHeader
       title="Preparation"
       icon={<ClipboardList size={ICON_SIZE.xs} />}
-      actions={<button type="button" className="btn-icon btn-icon-sm" aria-label="Close Preparation" title="Close Preparation" onClick={onClose}><X size={ICON_SIZE.sm} aria-hidden="true" /></button>}
+      actions={<button type="button" className="btn-icon btn-icon-sm" aria-label="Close Preparation" title="Close preparation" onClick={onClose}><X size={ICON_SIZE.sm} aria-hidden="true" /></button>}
     />
     <p className="context-section-note">{event.title} · {formatEventTime(event)}{context?.event?.attendees.length ? ` · ${context.event.attendees.join(", ")}` : ""}</p>
     {actions ? <div className="meeting-prep-actions" role="group" aria-label="Meeting actions">{actions}</div> : null}

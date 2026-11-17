@@ -11,19 +11,19 @@ Click **Today** in the sidebar or press <kbd>0</kbd>. To start there every time,
 
 <ts-shot scene="today" alt="Today with the day's plan and its sources on the left and a time grid of today on the right."></ts-shot>
 
-Today has two columns: a **Planning inbox** of cards on the left, and a larger **Today’s schedule** on the right. **Day details** reveals the mail and meeting summaries when you want them. In the evening, Today turns into a [review of the day](#review-your-day) with tomorrow on the right.
+Today has two columns: a **Planning Inbox** of cards on the left, and a larger **Today’s Schedule** on the right. **Day Details** reveals the mail and meeting summaries when you want them. In the evening, Today turns into a [review of the day](#review-your-day) with tomorrow on the right.
 
 ## Read Your Day {#read-your-day}
 
-Open **Day details** for a summary of the day's meetings: "2 meetings · next at 2:00 pm", the meeting you're in and when it ends, or "2 meetings, both finished · last ended 3:30 pm", along with any double-booking still ahead. Once your plan has items, the next line says how many are done, such as "3 of 5 planned done". The day view needs a [Google Calendar connection](calendar.html#connect-google-calendar).
+Open **Day Details** for a summary of the day's meetings: "2 meetings · next at 2:00 pm", the meeting you're in and when it ends, or "2 meetings, both finished · last ended 3:30 pm", along with any double-booking still ahead. Once your plan has items, the next line says how many are done, such as "3 of 5 planned done". The day view needs a [Google Calendar connection](calendar.html#connect-google-calendar).
 
 - The day view shows today as a time grid with the **Now** line. It opens on your working hours (the **Default** profile in **Settings → Availability → Profiles**), starting a little before now once the working day has begun, and shades the time outside them; evening hours scroll inside it. Without working hours, it opens on now.
 - Finished and declined meetings are dimmed. A short meeting shows its start time after its title.
 - **Review Today** shows tomorrow’s schedule.
-- **Join**, under **Day details**, opens your next online meeting.
+- **Join**, under **Day Details**, opens your next online meeting.
 - Each meeting’s note icon opens its existing note, or adds the meeting to its daily note and opens it. See [Meeting Notes](notes.html#meeting-notes).
 - Click a meeting’s title to open it in Calendar. Use its note icon to [prepare alongside its notes](#get-ready-for-meetings).
-- In a narrow window, the day view gives way to the list of today's events, which marks overlapping meetings and says when a session will be **Recorded**. Dragging onto the day isn't available there; **Book** still works.
+- In a narrow window, the day view gives way to the list of today's events, which marks overlapping meetings and says when a session will be **Recorded**. Dragging onto the day isn't available there; **Schedule** still works.
 
 ## Review Your Day {#review-your-day}
 
@@ -41,13 +41,13 @@ The header shows **Day closed** when every finished meeting has been reviewed or
 
 ## Plan Your Day {#plan-your-day}
 
-**Today's plan** lists what you chose to do today, in order. The first item not yet done is your focus and is highlighted. Each card shows where it comes from (a mail account, a note, or **Keep in Touch**), its goal when it has one, the time you booked for it, and how many times it has been carried over from an earlier day ("Carried 3 times"). Pointing at or focusing a card highlights its booked time in the day view, and the other way around.
+The **Planning Inbox** is one list of active, unscheduled items. Items you chose for today appear first; other tasks, emails, and contacts follow. An item appears once even when it is both planned and offered by another source. Scheduled work appears on the calendar, and completed work stays available in **Review Today**.
 
-- Check a task off on its card. Click a card to open the task, its note, or the person.
-- **Book** reserves the next free half hour today, on the quarter hour, within your working hours (the **Default** profile in **Settings → Availability → Profiles**) and around the meetings you're attending. If no half hour is left, Today says so; if your calendar couldn't be read, it says free time is unknown rather than guessing. **Undo** removes the booked time.
-- **Remove from Today's Plan** takes the item off the plan without changing the task. **Undo** puts it back.
+- Check a task off on its card. Click a card to open its task, note, conversation, or contact.
+- The **Schedule** icon reserves the next free half hour today, on the quarter hour, within your working hours (the **Default** profile in **Settings → Availability → Profiles**) and around meetings. If no half hour is left, Today says so; if the calendar couldn't be read, free time is unknown. **Undo** removes the block and returns the item to the inbox.
+- The card’s **⋯** menu holds secondary actions: **Add to Today's Plan**, **Remove from Today's Plan**, or, for a promise, **Make a Task** and **Dismiss**. Removing an item from the plan keeps its source task, email, or contact.
 
-The plan is the **Plan** section of today's daily note in [Notes](notes.html), so you can also read and edit it there. Planning something never changes its due date.
+The plan remains the **Plan** section of today's daily note in [Notes](notes.html). Planning something never changes its due date, and hiding a scheduled card never completes or deletes its source.
 
 ### Plan Today {#plan-today}
 
@@ -56,7 +56,7 @@ The plan is the **Plan** section of today's daily note in [Notes](notes.html), s
 Move between the steps with **Next** and **Back**, or jump to one in the step list; every step can be skipped. Nothing is written to your note until you save.
 
 1. **Review**: what you got done from your last plan (finished items, the meetings you attended, and other tasks you finished that day), and what you **Didn't Get To**. For each, choose **Carry** (into this plan), **Defer…** (until a later date), or **Drop**, or **Carry All**. Items you leave undecided come back next time. An item carried three times or more asks whether to defer or drop it, but nothing is decided for you. Without anything to review, the step is skipped.
-2. **Choose**: the same sources as Today, a search of every open task, and **New Task** to type a task that lives in the plan. Your choices form an ordered list; move items with the arrows or <kbd>Option/Alt + ↑</kbd> and <kbd>Option/Alt + ↓</kbd>. Removing an item that was already in the plan takes its line out of the note. Past five items, Today notes that most people finish three to five.
+2. **Choose**: individual sources, including Goals, a search of every open task, and **New Task** to type a task that lives in the plan. Your choices form an ordered list; move items with the arrows or <kbd>Option/Alt + ↑</kbd> and <kbd>Option/Alt + ↓</kbd>. Removing an item that was already in the plan takes its line out of the note. Past five items, Today notes that most people finish three to five.
 3. **Meetings**: the day's meetings with what is ready for them, **Reserve Prep Time**, and **No Prep Needed**. **Prepare** opens the meeting's preparation inside Plan Today; **Back to Meetings** returns with your choices as they were.
 4. **Fit**: your choices beside the day's calendar, with the free time left in your working hours. **Book** or drag a card onto the day to reserve half an hour. Booking happens right away, with **Undo**, and stays even if you don't save the plan.
 5. **Save**: exactly what will be written to the note, and any time already booked. **Save Plan** (or <kbd>⌘/Ctrl + Enter</kbd> from any step) writes it all at once; **Undo** in the notice reverses it if the note hasn't changed since. **Copy Plan** copies the plan as plain text.
@@ -65,36 +65,32 @@ Carried items are marked with the day they came from, and deferred or dropped on
 
 ### Add to the Plan {#add-to-the-plan}
 
-Below the plan, choose a source. Today opens on **Suggested**; **Starred Mail**, **Goals**, and **Notes** are under **More Sources** (⋯).
+Use four filters above the list:
 
-- **Suggested**: what is pressing, each with its reason: overdue and due-today tasks, tasks in progress, tasks waiting past their date, promises, and people due for a check-in.
-- **Also Due**: tasks overdue or due today that aren't in the plan yet.
-- **Tasks**: all your open tasks.
-- **You Said You Would**: [promises](#you-said-you-would) from your sent mail.
-- **Keep in Touch**: people due for a check-in.
-- **Starred Mail**: conversations you starred, newest first. One that already has an open task offers that task. Otherwise **Add to Today's Plan** opens a new task from the conversation for you to save; it's added only when you save, and **Cancel** changes nothing. Adding never unstars or archives the conversation.
-- **Goals**: your goals for the current period, each followed by its open tasks and the days they were planned ("Planned Mon, Tue"). **New Task for Goal** opens a new task with the goal chosen and adds it once you save.
-- **Notes**: open tasks in your other notes, with the note's name. Click one to open its note.
+- **All** combines the other three categories, with each item appearing once.
+- **Tasks** includes open tasks, including goal tasks and tasks in any note. Square `[ ]` checklists stay local to their notes.
+- **Emails** includes starred conversations and promises not yet turned into tasks. A conversation that already has an open task appears under **Tasks**. Scheduling a starred conversation opens its task form first; **Cancel** writes nothing and books no time.
+- **Contacts** includes people due for a check-in.
 
-Suggested, Starred Mail, Goals, and Notes show 50 at a time; **Show More** reads the next 50. When the source you're on has nothing, Today says so in one line and shows the first few cards of the next source that has some, with a link to switch to it. Use the arrow keys to move between sources, including those under **More Sources**; Today remembers the one you chose. **Open Tasks** is at the foot of **Tasks**. **Add to Today's Plan** adds a card to the plan. A promise becomes a task first, which opens for you to adjust. Cards already in the plan say **In plan**.
+The count follows the active filter. A plus means more items can be read with **Show More**. Arrow keys, Home, and End move between filters, and Today remembers your choice. Refresh preserves the chosen filter and expanded list.
 
-Drag a card from the plan or a source onto the day view to book half an hour at that time, even outside your working hours (Today mentions it when it is). Dragging a source card also adds it to the plan; a starred conversation or a goal opens its new task first and books only once you save it. A **Keep in Touch** card books "Check in with" and the person's name. If the plan can't be changed, for example because the note changed on another device, the time stays booked and **Open Note** lets you fix the note. Dragging is never required: **Add to Today's Plan** and **Book** do the same from the keyboard.
+Drag a card onto the schedule to reserve half an hour at that time, including outside working hours when you choose to. Scheduling also adds the item to today’s plan. A contact card books a check-in, without creating a task. If the plan can't be changed, the time stays booked, and **Open Note** lets you resolve the note. **Schedule** offers the same booking flow from the keyboard.
 
 ## Get Ready for Meetings {#get-ready-for-meetings}
 
-Use the note icon on a meeting in **Today’s schedule** to open its existing note, or start its entry in the daily note. Press <kbd>p</kbd> on Today for the meeting in focus, or the next meeting if none is focused. The note opens at the meeting’s link.
+Use the note icon on a meeting in **Today’s Schedule** to open its existing note, or start its entry in the daily note. Press <kbd>p</kbd> on Today for the meeting in focus, or the next meeting if none is focused. The note opens at the meeting’s link.
 
-- In the note’s **Links** section, the **Prepare meeting** icon opens [preparation](calendar.html#prepare-for-a-meeting) in the side panel. The editor stays visible, so you can write while reviewing previous notes, related conversations, and commitments.
+- In the note’s **Links** section, the **Prepare Meeting** icon opens [preparation](calendar.html#prepare-for-a-meeting) in the side panel. The editor stays visible, so you can write while reviewing previous notes, related conversations, and commitments.
 - **Close Preparation** or <kbd>Escape</kbd> returns to note details. If you open a source, **Back to Meeting** restores the original note and its preparation.
 - **Reserve Prep Time** adds a task, "Prepare for" and the meeting's name, under the meeting's line in that day's note, adding the line if the note doesn't have one. It appears in **Tasks**. Doing it again finds the task already there.
 - Working locations, such as **Home** or **Office**, aren't meetings, so they offer no **Prepare** or **Add Note**; clicking one opens it in Calendar.
 
 ## Keep an Eye on Mail {#keep-an-eye-on-mail}
 
-Under **Day details**, the **Mail** line lists calendar invitations by name, since they need an answer in Calendar, and counts what **needs a reply** (messages written to you and at most two others by people you write to) and the rest of your unread mail. Click an invitation to open it, or **Open Inbox** for everything else. The arrow before **Mail** folds the line to a short summary; Today remembers that on this computer.
+Under **Day Details**, the **Mail** line lists calendar invitations by name, since they need an answer in Calendar, and counts what **needs a reply** (messages written to you and at most two others by people you write to) and the rest of your unread mail. Click an invitation to open it, or **Open Inbox** for everything else. The arrow before **Mail** folds the line to a short summary; Today remembers that on this computer.
 
-The mail line and the mail and task sources (**Suggested**, **Also Due**, **Tasks**, **You Said You Would**, **Starred Mail**, and **Goals**) follow the selected mail account, named above the planning inbox; **Keep in Touch** and **Notes** always include all accounts. The plan and the day view cover every account: the day view includes every calendar you show in **Calendar**. If it looks wrong, check [calendar selection](troubleshooting.html#calendar-availability-looks-wrong). **Open Calendar** leads to the full workspace.
+Mail, email candidates, and ordinary task candidates follow the selected mail account, named above the inbox when several accounts are configured. Contacts and note tasks include all accounts. Saved plan items also remain visible across accounts. The plan and the day view cover every account: the day view includes every calendar you show in **Calendar**. If it looks wrong, check [calendar selection](troubleshooting.html#calendar-availability-looks-wrong). **Open Calendar** leads to the full workspace.
 
 ## You Said You Would {#you-said-you-would}
 
-**You Said You Would** finds promises in your own sent mail from the last two weeks, such as “I'll send the report over,” when you have not written to that person since. Click one to open its conversation, turn it into a task, add it to your plan, or dismiss it. Detection runs on your computer without AI. Review the suggestion; it may not know you already finished the work elsewhere.
+In the **Emails** filter, **You Said You Would** finds promises in your own sent mail from the last two weeks, such as “I'll send the report over,” when you have not written to that person since. Click one to open its conversation, turn it into a task, add it to your plan, or dismiss it. Detection runs on your computer without AI. Review the suggestion; it may not know you already finished the work elsewhere.

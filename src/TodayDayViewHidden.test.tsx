@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HOUR_HEIGHT } from "./calendarTime";
 import type { ScheduleEvent } from "./domain";
 import { hiddenEvents, TodayDayView } from "./TodayDayView";
@@ -31,7 +31,12 @@ describe("hiddenEvents", () => {
 });
 
 describe("TodayDayView hidden-event indicators", () => {
-  afterEach(() => cleanup());
+  beforeEach(() => {
+    // Initial scrolling captures the opening time, separately from the minute-by-minute clock.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 28, 10));
+  });
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
   const day = new Date(2026, 9, 28);
   const meeting = (id: string, h: number): ScheduleEvent => ({
     id, accountId: "a@example.com", calendarId: "primary", title: id,

@@ -1,13 +1,11 @@
-import { CalendarClock, CircleMinus, CirclePlus, ContactRound, NotebookPen } from "lucide-react";
+import { CirclePlus } from "lucide-react";
 import { useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { HoverTooltip } from "./AppChrome";
-import { formatClockTime } from "./agendaEvents";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { MoreActionsMenu } from "./MoreActionsMenu";
 import type { PlanAddition } from "./dailyPlan";
-import type { DailyPlan, DailyPlanItem, ScheduleEvent } from "./domain";
+import type { DailyPlan, DailyPlanItem } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
-import { bookedFor, type BlockTarget } from "./todayBooking";
+import { type BlockTarget } from "./todayBooking";
 import { bookedSource, sourceTaskId } from "./taskBooking";
 
 /** One key for a task however its booked block names it, so a card and its block can find each other. */
@@ -35,6 +33,8 @@ export type PlanCandidate = {
   resolve(): Promise<{ addition: PlanAddition; block: BlockTarget; title: string } | null>;
   /** Already in the plan by the source's own reckoning, such as a starred conversation whose task is planned. */
   inPlan?: boolean;
+  /** Canonical task identity, when the source already has a task. */
+  taskId?: string | null;
   /** The add button's name when adding first creates something, such as "New Task for Goal". */
   addLabel?: string;
   /** How its row reads; Add to Today's Plan and dragging are added by the switcher. */
@@ -86,12 +86,11 @@ export function trackedItems(plan: DailyPlan | null): DailyPlanItem[] {
 }
 
 export const isFinished = (item: DailyPlanItem) => item.state === "done" || item.state === "cancelled";
-const isOpen = (item: DailyPlanItem) => item.state === "open" || item.state === "inProgress";
 
 /** What a block booked for the item is for: its task, or a check-in with no task. */
 export function itemBlock(item: DailyPlanItem): BlockTarget {
   return item.kind === "contact"
-    ? { title: `Check in with ${item.title}`, sourceTaskId: null, accountId: null }
+    ? { title: `Check in with ${item.title}`, sourceTaskId: null, accountId: null, sourcePlanKey: item.key }
     : { title: item.title, sourceTaskId: item.taskId, accountId: item.accountId };
 }
 
@@ -101,86 +100,9 @@ export function planProgress(plan: DailyPlan | null): string | null {
   return tracked.length ? `${tracked.filter(isFinished).length} of ${tracked.length} planned done` : null;
 }
 
-function itemSource(item: DailyPlanItem): string | null {
-  if (item.state === "unavailable") return "Unavailable on this device";
-  if (item.kind === "noteTask" || item.kind === "newTask") return "Note";
-  if (item.kind === "contact") return "Keep in Touch";
-  return item.accountId;
-}
-
-/**
- * Today's plan: one card per item in order. The first open item is the
- * day's focus. Tasks can be checked off; every tracked card offers Book and
- * Remove from Today's Plan and can be dragged onto the day view.
- */
 /** "Carried 3 times", from the plan's history; a fact, never a reason to reorder. */
 export function carriedLabel(count: number): string | null {
   return count >= 1 ? `Carried ${count} ${count === 1 ? "time" : "times"}` : null;
-}
-
-export function PlanCards({ plan, error, events, now, onToggle, onActivate, onBook, onRemove, drag, linked, onLink }: {
-  plan: DailyPlan | null;
-  error: string | null;
-  /** Today's events, for each task's booked time. */
-  events: readonly ScheduleEvent[];
-  now: Date;
-  onToggle(item: DailyPlanItem): void;
-  onActivate(item: DailyPlanItem): void;
-  onBook(item: DailyPlanItem): void;
-  onRemove(item: DailyPlanItem): void;
-  drag: DragHooks;
-  /** The task whose card and booked block are highlighted together. */
-  linked?: string | null;
-  /** Hovering or focusing a card with a task, and leaving it. */
-  onLink?(taskId: string | null): void;
-}) {
-  const items = plan?.items ?? [];
-  const focus = items.find(isOpen);
-  const rows = items.map((item) => {
-    const booked = bookedFor(item.taskId, [...events], now);
-    const detail = [itemSource(item), item.goal?.title, booked ? formatClockTime(new Date(booked.start)) : null, carriedLabel(item.carryCount ?? 0)].filter(Boolean).join(" · ");
-    const checkable = (item.kind === "task" || item.kind === "noteTask" || item.kind === "newTask") && item.taskId && item.state !== "unavailable" && item.state !== "cancelled";
-    const done = isFinished(item);
-    const isLinked = Boolean(linked && item.taskId && linkKey(item.taskId) === linked);
-    const classes = ["context-task", "today-plan-card", done ? "context-task-done" : "", item === focus ? "today-plan-focus" : "", isLinked ? "today-plan-linked" : ""].filter(Boolean).join(" ");
-    const usable = item.state !== "unavailable" && item.kind !== "text";
-    const hover = item.taskId && onLink ? {
-      onMouseEnter: () => onLink(linkKey(item.taskId!)), onMouseLeave: () => onLink(null),
-      onFocus: () => onLink(linkKey(item.taskId!)), onBlur: () => onLink(null),
-    } : {};
-    return <div key={item.key} className="today-plan-card-link" {...hover}><ContextRow
-      as="article"
-      className={classes}
-      rowKey={`plan:${item.key}`}
-      control={checkable ? <HoverTooltip label={done ? "Mark not done" : "Mark done"}>
-        <input type="checkbox" className="context-task-checkbox" checked={done}
-          aria-label={done ? `Mark ${item.title} not done` : `Mark ${item.title} done`} onChange={() => onToggle(item)} />
-      </HoverTooltip> : undefined}
-      icon={item.kind === "contact" ? <ContactRound size={ICON_SIZE.sm} /> : item.kind === "newTask" || item.kind === "noteTask" ? <NotebookPen size={ICON_SIZE.sm} /> : undefined}
-      title={item.title}
-      wrapTitle
-      detail={detail || undefined}
-      onActivate={item.kind === "text" ? undefined : () => { if (!drag.clickSuppressed()) onActivate(item); }}
-      onPointerDown={usable && !done ? (event) => drag.startDrag({ id: `plan:${item.key}`, title: item.title, kind: "item", item }, event) : undefined}
-      actions={[
-        ...(usable && !done ? [<button key="book" type="button" className="btn-icon btn-icon-sm" aria-label={`Book: ${item.title}`} title="Book the next free half hour" onClick={() => onBook(item)}>
-          <CalendarClock size={ICON_SIZE.sm} />
-        </button>] : []),
-        <button key="remove" type="button" className="btn-icon btn-icon-sm" aria-label={`Remove from Today's Plan: ${item.title}`} title="Remove from today's plan" onClick={() => onRemove(item)}>
-          <CircleMinus size={ICON_SIZE.sm} />
-        </button>,
-      ]}
-    /></div>;
-  });
-  return <ContextSection
-    id="today-plan"
-    title="Today's plan"
-    count={items.length || undefined}
-    limit={items.length}
-    rows={rows}
-    footer={error ? <p className="form-error" role="alert">{error}</p>
-      : plan && items.length === 0 ? <p className="context-status">Nothing is planned yet. Choose Add to Today's Plan on a card below, or drag one onto the day.</p> : undefined}
-  />;
 }
 
 /**

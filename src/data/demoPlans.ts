@@ -281,8 +281,7 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
         const found = await history([...starts.keys()], shiftDay(date, -(PLAN_HISTORY_DAYS - 1)), date);
         for (const candidate of all) if (starts.has(candidate.key)) candidate.plannedDays = (found.get(candidate.key)?.plannedDays ?? []).filter((day) => day >= starts.get(candidate.key)!);
       } else {
-        const own = `daily:${date}`;
-        const notes = (await sources.notes.listNoteTasks()).filter((task) => !task.checked && task.noteId !== own);
+        const notes = (await sources.notes.listNoteTasks()).filter((task) => !task.checked);
         const order = [...new Set(notes.map((task) => task.noteId))];
         all = notes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || order.indexOf(a.noteId) - order.indexOf(b.noteId))
           .map((task) => {

@@ -249,20 +249,20 @@ unfinished work from an earlier day.
 
 ### Candidate sources
 
-The Choose step and Today's left column share one source switcher: a tab list
-with arrow-key navigation, showing one source at a time, so a long list from one
-source never buries the others. Every candidate is a card. Items already in the
-plan are marked rather than repeated.
+The Choose step offers individual sources through a tab list with arrow-key
+navigation. Every candidate is a card, and chosen items are marked. Today's
+Planning Inbox combines these sources into All, Tasks, Emails, and Contacts;
+planned items lead the list, and scheduled or finished items leave the inbox.
 
 | Source | Candidates | Adding to the plan |
 | --- | --- | --- |
 | Suggested (Choose only) | As in step 2, each with its reason. | As for its own source. |
 | Tasks | Open and in-progress mail and standalone tasks, overdue and due first, then the rest in task display order. | Links the task. |
 | Starred Mail | Starred conversations, newest first, with account and sender. A conversation that already has an open task shows that task instead. | Opens the existing task form prefilled from the conversation (title from the subject, linked to the conversation and its account); saving creates the task and adds it. Cancel writes nothing. A conversation with an open task adds that task. Adding never unstars or archives the conversation. |
-| You Said You Would | Open promises, as in Today. | Makes a follow-up task through **Make a Task**, then links it. |
+| You Said You Would | Open promises, as in Today. | Makes an action task through **Make a Task**, then links it. |
 | Keep in Touch | Due check-ins. | Links the contact. |
 | Goals | Active goals of the current periods, each with its open tasks and its planned days. | Links a goal's task. **New Task for Goal** opens the existing task form with the goal set. |
-| Notes | Open round tasks in other notes, newest note first, with the note's title. | Links the note task, saving its marker first if it is provisional. |
+| Notes | Open round tasks in every note, newest note first, with the note's title. | Links the note task, saving its marker first if it is provisional. |
 
 Starred mail is the user's own choice of what matters, so it is the mail source
 for planning; the old addressing-based groups are not offered as candidates. The
@@ -323,8 +323,15 @@ Tomorrow**.
 Two columns: a planning inbox on the left and today’s schedule on the right.
 The inbox takes about one-third of the width and the schedule about two-thirds,
 with minimum column widths and the responsive agenda fallback described below.
-Existing plan items remain in the inbox above the candidate source cards; an empty
-plan leaves room for those cards instead of showing a second empty state.
+The inbox uses All, Tasks, Emails, and Contacts filters over one list. Active,
+unscheduled plan items lead, followed by an interleaved set of tasks, emails, and
+contacts. Plan and candidate identities merge, including tasks linked from starred
+conversations. Completed items remain in Review Today; scheduled items live on the
+calendar. Note and goal tasks belong under Tasks, including tasks in today’s note;
+square checklists remain note-local. Secondary actions are in each card’s menu.
+Contact bookings carry a private `sourcePlanKey` alongside task bookings’ existing
+source identity, so calendar refresh, Undo, and restart preserve inbox membership.
+The new event field is optional when older cached events are read.
 
 Meeting titles open Calendar. A separate note icon opens the occurrence’s existing
 note or adds the event to its daily note and opens it at the event reference.
@@ -333,24 +340,15 @@ available from the event’s link in the Notes context rail while the editor sta
 visible. Closing it returns to note details, and Back to Meeting restores the same
 note and preparation after opening a source. Today’s inbox is never replaced.
 
-- **Header:** the date, a short planning heading, and the plan status. **Day details** reveals the day summary and mail signal:
-  **Plan Today**, or "3 of 5 planned done" with **Edit Plan**, and **Shut Down**.
-- **Plan column (left):** the plan items as cards, in order, the focus item first.
-  A card shows the item's title, its source (account, note, or contact), its
-  state, its booked time when it has one ("10:30 am"), its goal when it has one,
-  and its carry count when it has been carried. Below the plan, the
-  [source switcher](#candidate-sources) shows one source at a time, with **Also
-  Due** (overdue and due-today tasks not in the plan) in place of Suggested and
-  selected by default. Its cards offer **Add to Today's Plan** and can be dragged
-  onto the day view. The selected source is a per-device convenience. Without a
-  plan, the column shows the switcher with a single line offering **Plan Today**.
-- **Day view (right):** today's schedule as a time grid; see [Day view](#day-view).
-  Tomorrow’s events appear in **Review Today** instead of below the daytime grid.
-- **Mail signal:** the unread-mail column is removed. A one-line, collapsible
-  signal in the header shows **Invitations** (listed, since they are calendar
-  decisions) and counts of **Needs a reply** and other unread mail, with
-  **Open Inbox**. The phase 1 grouping in `src/todayMail.ts` still computes the
-  counts. Collapsed state is a per-device convenience.
+- **Header:** the date, the planning title, plan progress, Plan Today / Edit Plan,
+  Day Details, and Review Today. Day Details reveals the meeting summary and mail.
+- **Planning inbox (left):** four filters and a matching count, with one card per
+  active unscheduled item. Schedule is the primary action; plan edits, promise
+  conversion, and dismissal remain in the card’s secondary menu. Pagination and
+  refresh retain the current filter and expanded list.
+- **Schedule (right):** today’s time grid. Tomorrow appears in Review Today.
+- **Mail signal:** under Day Details, invitations by name and counts of reply-needed
+  and other unread mail, with Open Inbox. Its collapse state remains device-local.
 
 Account scope: the plan, day view, and meeting readiness are account-independent;
 every task card shows its account. Today's account selector continues to filter
@@ -427,12 +425,13 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
   change and on task changes, and written with `addToDailyPlan` /
   `removeFromDailyPlan` from `src/noteCapture.ts`, with Undo and **Open Note** on
   refusal. Note tasks are checked off with `changeNoteItem`.
-- Sources are registered as `PlanSource` entries (`id`, `label`, groups of
-  `PlanCandidate` cards). A candidate names its plan key, so planned cards are
-  marked "In plan" (Also Due hides them), and a `resolve()` that returns what to
-  add and what to book, creating a promise's task first through **Make a Task**.
-  Suggested belongs to the routine's Choose step.
-- **Starred Mail**, **Goals**, and **Notes** are tabs fed by
+- The guided planner registers sources as `PlanSource` entries (`id`, `label`,
+  groups of `PlanCandidate` cards). A candidate names its plan key and a
+  `resolve()` that returns what to add and what to book, creating a promise's
+  task first through **Make a Task**. Suggested belongs to the routine's Choose
+  step. The inbox converts candidates into one deduplicated list, with planned
+  entries first and secondary actions in each card's menu.
+- **Starred Mail**, **Goals**, and **Notes** in the guided planner are fed by
   `planSources(date, source, accountId, cursor)` through `usePlanSourcePage`, read
   only while the tab shows, a page at a time with **Show More** on `next`, and again
   when the plan, tasks, or mail change. Starred Mail and Goals pass Today's account;
@@ -442,11 +441,11 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
   (`createTaskInEditor` in `useTaskActions`: prefilled from the conversation and
   linked to it, or with the goal chosen) and which resolves with the task once it
   saves, or null on Cancel, so Cancel writes nothing. Dropping such a card waits
-  for the save before booking. A candidate's own `planned` flag also marks it "In
-  plan". Also Due, Tasks, You Said You Would, and Keep in Touch stay on Today's
-  existing reads: moving them to `planSources` would change their tested grouping
-  (Overdue / Due today sections, struck-through completions in place, Dismiss)
-  without simplifying anything.
+  for the save before booking. The inbox reads Starred Mail and Notes together,
+  retaining expanded pages across refresh. Tasks, promises, and due contacts
+  continue using their existing local reads; all contribute to the matching
+  filter count. Goal tasks appear under Tasks, while creating tasks from a goal
+  stays in the guided planner.
 - Booking lives in `src/todayBooking.ts`: `bookBlock` uses Calendar's default
   calendar choice and selected-calendar fix-up; `blockRequest` tags the block with
   the item's `taskId` (a note task's `note:<noteId>:<markerId>`) or none for a

@@ -3760,23 +3760,27 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-page { width: 100%; max-width: 1600px; margin-inline: auto; container: today / inline-size; }
 .today-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: var(--space-4); padding: var(--pane-header-padding); border-bottom: 1px solid var(--border); }
 .today-header h1 { margin: var(--space-2) 0 0; font-size: var(--text-page-title); }
+.planning-inbox { font-size: var(--text-body); }
+.planning-inbox-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); margin-bottom: var(--space-3); }
+.planning-inbox-tab { padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--secondary); font-size: var(--text-control); font-weight: var(--weight-medium); cursor: pointer; }
+.planning-inbox-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.planning-inbox-tab[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border-color: var(--accent); color: var(--accent); }
+.notes-meeting-preparation:focus { outline: none; box-shadow: var(--focus-ring); }
 .today-intro { margin: var(--space-2) 0 0; color: var(--secondary); font-size: var(--text-body); }
 .today-details { flex-basis: 100%; }
 .today-details[hidden] { display: none; }
 .today-panel-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-4); }
 .today-panel-heading h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--text-pane-title); }
-.today-work, .today-time { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+.today-work, .today-time { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
 .today-work { padding: 0 var(--space-3) var(--space-3); }
 .today-work .today-panel-heading { padding-inline: var(--space-1); }
 .today-work .today-sources { margin-top: 0; }
 .today-work .today-source-bar { flex-wrap: wrap; margin-left: 0; }
 .today-work .today-source-tabs { flex-wrap: wrap; overflow: visible; }
 .today-work .today-source-tabs .mailbox-tab + .mailbox-tab::before { content: none; }
-.today-work .today-source-tabs .mailbox-tab { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: var(--text-meta); }
+.today-work .today-source-tabs .mailbox-tab { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: var(--text-control); }
 .today-work .today-source-tabs .mailbox-tab.active { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--accent); }
 .today-work .today-inbox-card, .today-work .today-plan-card { margin-block: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); }
-.today-work .context-row-title { font-size: var(--text-body); }
-.today-work .context-row-detail, .today-work .context-row-date { font-size: var(--text-meta); }
 .today-time > .today-day-view { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 .today-day-shape { margin: var(--space-1) 0 0; color: var(--secondary); font-size: var(--text-body); }
 .today-shared-meetings { color: var(--accent); }
@@ -3869,8 +3873,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-source-tabs .mailbox-tab { padding-block: var(--space-0-5); border-bottom: 2px solid transparent; }
 .today-source-tabs .mailbox-tab.active { border-bottom-color: var(--accent); }
 /* A row's actions line up with its title line, not the whole row, and the title line leaves them room. */
-.today-work .context-row-has-action { --context-row-title-line: calc(var(--text-secondary) * var(--leading-normal)); --context-row-action-inset: calc(var(--context-row-action-count, 1) * (var(--control-h-xs) + var(--space-1))); }
-.today-work .context-row-has-action .context-row-action { align-self: start; align-items: center; height: var(--context-row-title-line); margin-top: var(--space-1-5); }
+.today-work .context-row-has-action { --context-row-title-line: calc(var(--text-body) * var(--leading-normal)); --context-row-action-inset: calc(var(--context-row-action-count, 1) * (var(--control-h-xs) + var(--space-1))); }
+.today-work .context-row-has-action .context-row-action { align-self: start; align-items: center; height: var(--context-row-title-line); margin-top: var(--space-2); }
 .today-work .context-row-has-action .context-row-line { padding-right: var(--context-row-action-inset); }
 .today-work .context-row-has-action .context-row-detail { padding-right: 0; }
 .today-day-view { height: 75vh; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
@@ -3916,6 +3920,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-column .context-row-main { padding: var(--space-2) 0; }
 .today-column .context-row-control { margin-top: var(--space-2); }
 .today-column > .context-status { padding: var(--space-3) var(--context-row-inset); }
+/* Inbox cards use list typography after the broader Today review styles. */
+.today-work .context-row-title { font-size: var(--text-body); }
+.today-work .context-row-detail, .today-work .context-row-date { font-size: var(--text-meta); }
+.today-work .context-row-icon, .today-work .context-row-control { height: calc(var(--text-body) * var(--leading-normal)); }
+.planning-inbox .context-link-button { font-size: var(--text-control); }
 /* Agenda of the current day: finished events dim, and a Now rule sits before the rest. */
 .agenda-event-past, .agenda-event-declined { opacity: var(--opacity-dimmed); }
 .agenda-event-conflict .context-row-detail { color: var(--warning); }

@@ -125,6 +125,8 @@ export type CreateCalendarEventRequest = {
   sourceMessageId?: string;
   /** The task the event books time for, kept privately on the event the same way. */
   sourceTaskId?: string;
+  /** Stable plan source identity, including contacts without a task. Kept privately on the event. */
+  sourcePlanKey?: string;
 };
 
 /** All-day events carry `YYYY-MM-DD` dates with an exclusive end; timed events carry ISO times. */
@@ -169,6 +171,8 @@ export type ScheduleEvent = {
   sourceMessageId?: string | null;
   /** The task ThreeStrands booked this event for, when it did. */
   sourceTaskId?: string | null;
+  /** The planning item this block schedules, when created from Today. */
+  sourcePlanKey?: string | null;
   /**
    * The provider's kind of entry when it is not an ordinary event, such as
    * Google's `workingLocation`, `outOfOffice`, or `focusTime`.

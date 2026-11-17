@@ -101,7 +101,7 @@ Click **Add Note** on an event in the agenda or in an event's details to write a
 
 ## Prepare for a Meeting {#prepare-for-a-meeting}
 
-Click **Prepare** in an event's details or beside an event in the agenda, or press <kbd>p</kbd> (also **Prepare for Meeting** in the command palette) while an event's details are open. Press <kbd>p</kbd> or <kbd>Escape</kbd> to close it. On **Today**, the meeting’s note icon opens its notes; use **Prepare meeting** on the event link in **Notes** to prepare beside the editor. Preparation lists:
+Click **Prepare** in an event's details or beside an event in the agenda, or press <kbd>p</kbd> (also **Prepare for Meeting** in the command palette) while an event's details are open. Press <kbd>p</kbd> or <kbd>Escape</kbd> to close it. On **Today**, the meeting’s note icon opens its notes; use **Prepare Meeting** on the event link in **Notes** to prepare beside the editor. Preparation lists:
 
 - **This meeting**: the part of a note about this meeting, such as its line in a daily note and what you wrote under it, and the meeting note it links. Other entries in the same note are left out.
 - **Previous meetings**: notes from earlier meetings in the same recurring series, newest first. A different event with the same title is never counted.

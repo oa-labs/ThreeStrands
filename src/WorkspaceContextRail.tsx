@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { PanelResizeHandle } from "./PanelResizeHandle";
 import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
 import { ICON_SIZE } from "./iconSizes";
 import { formatShortcut } from "./shortcutLabels";
 import { useSidePanel } from "./SidePanel";
+import { escapeDismissPending } from "./useEscapeDismiss";
 
 const NARROW_LAYOUT = 900;
 
@@ -17,10 +18,14 @@ const NARROW_LAYOUT = 900;
  * narrow window the panel opens over the view, without a divider, and closes
  * from its own button or Escape.
  */
-export function WorkspaceContextRail({ label, children, onReturn }: { label: string; children: ReactNode; onReturn?(): void }) {
+export function WorkspaceContextRail({ label, children, onReturn, onVisibilityChange }: { label: string; children: ReactNode; onReturn?(): void; onVisibilityChange?(visible: boolean): void }) {
   const panel = useRef<HTMLElement>(null);
   const side = useSidePanel({ view: label, panel: useCallback(() => panel.current, []), onReturn });
   const { collapsed, setCollapsed, setHidden, size } = side;
+  useLayoutEffect(() => {
+    onVisibilityChange?.(!collapsed);
+    return () => onVisibilityChange?.(false);
+  }, [collapsed, onVisibilityChange]);
   useEffect(() => {
     const focus = (event: Event) => {
       if (!(event instanceof CustomEvent) || event.detail!==label) return;
@@ -45,6 +50,9 @@ export function WorkspaceContextRail({ label, children, onReturn }: { label: str
       title={`Drag to resize the side panel, or past its edge to hide it (${shortcut}). Use arrow keys to adjust; double-click to reset.`}
       collapse={{ collapsed, threshold: side.threshold, onChange: setHidden }} />
     <aside ref={panel} hidden={collapsed} id={id} className="context-panel workspace-context-rail" aria-label={label} tabIndex={-1}
-      onKeyDown={(event) => handleContextPanelKeyDown(event, () => { if (window.innerWidth<=NARROW_LAYOUT) setCollapsed(true); onReturn?.(); })}>{children}</aside>
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && (event.defaultPrevented || escapeDismissPending())) return;
+        handleContextPanelKeyDown(event, () => { if (window.innerWidth<=NARROW_LAYOUT) setCollapsed(true); onReturn?.(); });
+      }}>{children}</aside>
   </div>;
 }

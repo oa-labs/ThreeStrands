@@ -14,7 +14,7 @@ import type { Notice } from "./useNotice";
  * note task as `note:<noteId>:<markerId>`), or nothing, such as a check-in.
  * `accountId` prefers that account's calendars, as Calendar does for a task.
  */
-export type BlockTarget = { title: string; sourceTaskId: string | null; accountId: string | null };
+export type BlockTarget = { title: string; sourceTaskId: string | null; accountId: string | null; sourcePlanKey?: string };
 
 /** What booking needs from the app: where events can go and how to say what happened. */
 export type BookingContext = {
@@ -36,6 +36,7 @@ export function blockRequest(target: BlockTarget, calendar: CalendarOption, star
     attendees: [],
     // Stored as Calendar stores it, so both name the same booked task.
     ...(source ? { sourceTaskId: sourceTaskId(source) } : {}),
+    ...(target.sourcePlanKey ? { sourcePlanKey: target.sourcePlanKey } : {}),
   };
 }
 
