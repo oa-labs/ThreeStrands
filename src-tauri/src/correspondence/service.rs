@@ -474,6 +474,34 @@ impl Correspondence {
                 }
                 Ok(serde_json::to_value(draft).map_err(error)?)
             }
+            Handoff {
+                handoff_id,
+                account,
+                mode,
+                source_id,
+                to,
+                cc,
+                subject,
+                body,
+            } => {
+                let seed = HandoffSeed {
+                    to,
+                    cc,
+                    subject,
+                    body,
+                };
+                let handoff = self
+                    .open_handoff(&handoff_id, &account, &mode, source_id, seed)
+                    .await?;
+                Ok(serde_json::to_value(handoff).map_err(error)?)
+            }
+            HandoffStatus { handoff_id } => {
+                uuid::Uuid::parse_str(&handoff_id).map_err(|_| "Invalid handoff id")?;
+                Ok(
+                    serde_json::to_value(self.database.draft_handoff_status(&handoff_id)?)
+                        .map_err(error)?,
+                )
+            }
             CreateFromSent { source_id, account } => {
                 self.ensure_source_metadata(&source_id, &account).await?;
                 let identities = self.source_identities(&account).await;
@@ -791,6 +819,84 @@ impl Correspondence {
             }
         }
     }
+    /// The draft of a follow-up handoff. The first request creates it with
+    /// the reviewed values, together with the handoff's record; every later
+    /// one, including a retry after a lost response, finds that record and
+    /// returns where the draft stands without making another. Nothing is
+    /// queued or sent: the user sends from the composer as usual.
+    async fn open_handoff(
+        &self,
+        handoff_id: &str,
+        account: &str,
+        mode: &str,
+        source_id: Option<String>,
+        seed: HandoffSeed,
+    ) -> Result<crate::db::DraftHandoff, String> {
+        uuid::Uuid::parse_str(handoff_id).map_err(|_| "Invalid handoff id")?;
+        if let Some(existing) = self.database.draft_handoff_status(handoff_id)? {
+            return Ok(existing);
+        }
+        if !self
+            .database
+            .list_accounts()?
+            .iter()
+            .any(|known| known.email.eq_ignore_ascii_case(account))
+        {
+            return Err("Choose a mail account on this device to draft from.".into());
+        }
+        seed.validate()?;
+        let source_id = match mode {
+            "new" => None,
+            "reply" | "replyAll" => {
+                let source = source_id.ok_or("Choose the conversation to reply to")?;
+                self.ensure_source_metadata(&source, account).await?;
+                Some(source)
+            }
+            _ => return Err("Unknown compose mode".into()),
+        };
+        if let Some(source) = &source_id {
+            // Never write a follow-up into a reply the user already started.
+            let thread = self
+                .database
+                .message_metadata(source)
+                .ok()
+                .flatten()
+                .and_then(|raw| serde_json::from_str::<crate::mime::RawMessage>(&raw).ok())
+                .map(|message| message.thread_id);
+            let started = self.database.drafts()?.into_iter().any(|draft| {
+                draft.account == account
+                    && matches!(draft.mode.as_str(), "reply" | "replyAll")
+                    && (draft.source_id.as_deref() == Some(source.as_str())
+                        || (thread.is_some() && draft.thread_id == thread))
+            });
+            if started {
+                return Err("A reply to this conversation is already in Drafts. Open it there, or choose New Message.".into());
+            }
+        }
+        let identities = self.source_identities(account).await;
+        let mut draft =
+            match self
+                .database
+                .build_draft(mode, source_id, account, &identities, false)?
+            {
+                super::model::BuiltDraft::New(draft) => draft,
+                super::model::BuiltDraft::Existing(_) => {
+                    return Err("A reply to this conversation is already in Drafts.".into())
+                }
+            };
+        seed.apply(&mut draft);
+        let created = self.database.insert_handoff_draft(handoff_id, &mut draft)?;
+        let mut handoff = self
+            .database
+            .draft_handoff_status(handoff_id)?
+            .ok_or("The follow-up draft couldn't be found")?;
+        handoff.created = created;
+        if let Some(draft) = &mut handoff.draft {
+            draft.server_draft = self.database.server_draft_status(draft)?;
+        }
+        Ok(handoff)
+    }
+
     pub fn cleanup(&self) -> Result<(), String> {
         self.database.purge_discarded_drafts(unix_millis())?;
         let mut retained: HashSet<String> = self
@@ -1413,6 +1519,56 @@ impl Correspondence {
 
 /// Whether the primary account's address is already established: its key is
 /// a real address and a sending identity has been recorded.
+/// The reviewed values a follow-up draft starts with.
+struct HandoffSeed {
+    to: String,
+    cc: String,
+    subject: String,
+    body: String,
+}
+
+impl HandoffSeed {
+    fn validate(&self) -> Result<(), String> {
+        use crate::meeting_policy::{
+            MAX_FOLLOW_UP_BODY_BYTES, MAX_FOLLOW_UP_RECIPIENTS, MAX_FOLLOW_UP_SUBJECT_CHARS,
+        };
+        if self.subject.chars().count() > MAX_FOLLOW_UP_SUBJECT_CHARS
+            || self.subject.contains(['\r', '\n'])
+        {
+            return Err(format!(
+                "Shorten the subject to {MAX_FOLLOW_UP_SUBJECT_CHARS} characters on one line."
+            ));
+        }
+        if self.body.len() > MAX_FOLLOW_UP_BODY_BYTES {
+            return Err("The follow-up is too long to start a draft with. Shorten it.".into());
+        }
+        let recipients = super::addresses(&self.to)?.len() + super::addresses(&self.cc)?.len();
+        if recipients > MAX_FOLLOW_UP_RECIPIENTS {
+            return Err(format!(
+                "A follow-up can start with at most {MAX_FOLLOW_UP_RECIPIENTS} recipients."
+            ));
+        }
+        Ok(())
+    }
+
+    /// A new message takes the reviewed recipients and subject; a reply keeps
+    /// its own, as any reply does. Either way the reviewed text comes first,
+    /// with the signature after it, and nothing goes in Bcc.
+    fn apply(self, draft: &mut super::Draft) {
+        if draft.mode == "new" {
+            draft.to = self.to;
+            draft.cc = self.cc;
+            draft.subject = self.subject;
+        }
+        draft.bcc = String::new();
+        let authored = self.body.encode_utf16().count();
+        draft.body = format!("{}{}", self.body, draft.body);
+        if let Some(signature) = &mut draft.signature {
+            signature.text_offset = authored;
+        }
+    }
+}
+
 fn identity_known(key: &str, has_compose_identity: bool) -> bool {
     !crate::auth::is_placeholder_key(key) && has_compose_identity
 }
@@ -1432,6 +1588,73 @@ mod identity_refresh_tests {
         assert!(
             !identity_known("you@example.com", false),
             "no sending identity yet"
+        );
+    }
+}
+
+#[cfg(test)]
+mod handoff_seed_tests {
+    use super::HandoffSeed;
+    use crate::meeting_policy::{MAX_FOLLOW_UP_BODY_BYTES, MAX_FOLLOW_UP_SUBJECT_CHARS};
+
+    fn seed(subject: &str, body: &str) -> HandoffSeed {
+        HandoffSeed {
+            to: "ann@example.org, Bo <bo@example.org>".into(),
+            cc: String::new(),
+            subject: subject.into(),
+            body: body.into(),
+        }
+    }
+
+    fn draft(mode: &str) -> super::Draft {
+        serde_json::from_value(serde_json::json!({
+            "id": "d", "revision": 0, "account": "me@example.com", "mode": mode,
+            "sourceId": null, "threadId": null, "replyId": null, "references": [],
+            "to": "cy@example.org", "cc": "", "bcc": "x@example.org", "subject": "Re: Plan",
+            "body": "\n\nOn Monday, Cy wrote:\n> hi", "attachments": [], "updatedAt": 0,
+            "signature": {"id": "s", "name": "S", "html": "<p>S</p>", "text": "S", "automatic": true, "htmlOffset": 0, "textOffset": 0}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn limits_hold_below_at_and_above() {
+        assert!(seed(&"s".repeat(MAX_FOLLOW_UP_SUBJECT_CHARS), "b")
+            .validate()
+            .is_ok());
+        assert!(seed(&"s".repeat(MAX_FOLLOW_UP_SUBJECT_CHARS + 1), "b")
+            .validate()
+            .is_err());
+        assert!(seed("Line\nbreak", "b").validate().is_err());
+        assert!(seed("s", &"b".repeat(MAX_FOLLOW_UP_BODY_BYTES))
+            .validate()
+            .is_ok());
+        assert!(seed("s", &"b".repeat(MAX_FOLLOW_UP_BODY_BYTES + 1))
+            .validate()
+            .is_err());
+    }
+
+    #[test]
+    fn a_new_message_takes_the_reviewed_values_and_a_reply_keeps_its_own_recipients() {
+        let mut new = draft("new");
+        seed("Follow-up: Sync", "Decided: ship.").apply(&mut new);
+        assert_eq!(new.to, "ann@example.org, Bo <bo@example.org>");
+        assert_eq!(new.subject, "Follow-up: Sync");
+        assert_eq!(new.bcc, "", "nothing goes in Bcc");
+        assert!(new.body.starts_with("Decided: ship."));
+        assert_eq!(new.signature.unwrap().text_offset, "Decided: ship.".len());
+
+        let mut reply = draft("replyAll");
+        seed("Ignored", "Thanks — notes below.").apply(&mut reply);
+        assert_eq!(reply.to, "cy@example.org");
+        assert_eq!(reply.subject, "Re: Plan");
+        assert_eq!(
+            reply.body,
+            "Thanks — notes below.\n\nOn Monday, Cy wrote:\n> hi"
+        );
+        assert_eq!(
+            reply.signature.unwrap().text_offset,
+            "Thanks — notes below.".encode_utf16().count()
         );
     }
 }

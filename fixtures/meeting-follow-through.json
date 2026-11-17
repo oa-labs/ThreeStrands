@@ -1,0 +1,232 @@
+{
+  "references": {
+    "A": {
+      "version": 1,
+      "kind": "event",
+      "id": "evt-a",
+      "account": "you@example.com",
+      "calendar": "work"
+    },
+    "B": {
+      "version": 1,
+      "kind": "event",
+      "id": "evt-b",
+      "account": "you@example.com",
+      "calendar": "work"
+    },
+    "TASK": {
+      "version": 1,
+      "kind": "task",
+      "id": "task-1"
+    }
+  },
+  "target": "A",
+  "sections": [
+    {
+      "name": "a nested section under the meeting line, not another meeting's",
+      "body": "## Meetings\n\n- [9:30am]({A}) for Sync\n  - Agenda\n  - Follow-through 2026-11-16 <!-- threestrands-follow-through -->\n    - Decision: Ship\n    - ( ) Send deck\n- [11am]({B}) for Other\n  - Follow-through 2026-11-16 <!-- threestrands-follow-through -->\n    - Decision: Not ours\n",
+      "sections": [
+        {
+          "date": "2026-11-16",
+          "text": "  - Follow-through 2026-11-16 <!-- threestrands-follow-through -->\n    - Decision: Ship\n    - ( ) Send deck"
+        }
+      ]
+    },
+    {
+      "name": "a top-level section in a reusable note that links the occurrence",
+      "body": "# Sync notes\n\nRunning notes\n\n- Follow-through 2026-11-16: [Sync]({A}) <!-- threestrands-follow-through -->\n  - Decision: Ship\n\n- Follow-through 2026-11-09: [Sync]({B}) <!-- threestrands-follow-through -->\n  - Decision: Earlier meeting\n",
+      "sections": [
+        {
+          "date": "2026-11-16",
+          "text": "- Follow-through 2026-11-16: [Sync]({A}) <!-- threestrands-follow-through -->\n  - Decision: Ship"
+        }
+      ]
+    },
+    {
+      "name": "a marker in code, in a quote, escaped, or outside the meeting's block doesn't count",
+      "body": "- [9:30am]({A}) for Sync\n  ```\n  - Follow-through 2026-11-16 <!-- threestrands-follow-through -->\n  ```\n  > - Follow-through 2026-11-16 <!-- threestrands-follow-through -->\n  - Follow-through 2026-11-16 \\<!-- threestrands-follow-through -->\n- Follow-through 2026-11-16 <!-- threestrands-follow-through -->\n",
+      "sections": []
+    },
+    {
+      "name": "a link outside a list item is only a reference",
+      "body": "See [Sync]({A}) <!-- threestrands-follow-through -->\n",
+      "sections": []
+    },
+    {
+      "name": "a section without a date still counts",
+      "body": "- [9:30am]({A}) for Sync\n  - Follow-through <!-- threestrands-follow-through -->\n    - Decision: Ship\n",
+      "sections": [
+        {
+          "date": null,
+          "text": "  - Follow-through <!-- threestrands-follow-through -->\n    - Decision: Ship"
+        }
+      ]
+    },
+    {
+      "name": "two reviews of one meeting",
+      "body": "- [9:30am]({A}) for Sync\n  - Follow-through 2026-11-15 <!-- threestrands-follow-through -->\n    - Decision: Old\n  - Follow-through 2026-11-16 <!-- threestrands-follow-through -->\n    - ( ) New\n",
+      "sections": [
+        {
+          "date": "2026-11-15",
+          "text": "  - Follow-through 2026-11-15 <!-- threestrands-follow-through -->\n    - Decision: Old"
+        },
+        {
+          "date": "2026-11-16",
+          "text": "  - Follow-through 2026-11-16 <!-- threestrands-follow-through -->\n    - ( ) New"
+        }
+      ]
+    }
+  ],
+  "insert": [
+    {
+      "name": "after the meeting line, as a top-level item that links the meeting",
+      "body": "## Meetings\n\n- [9:30am]({A}) for Sync\n  - Agenda\n    - Detail\n- [11am]({B}) for Other\n",
+      "meeting": "Sync",
+      "date": "2026-11-16",
+      "items": [
+        {
+          "kind": "decision",
+          "text": "Ship on  Friday"
+        },
+        {
+          "kind": "task",
+          "text": "Send the deck"
+        },
+        {
+          "kind": "checklist",
+          "text": "Book the room"
+        },
+        {
+          "kind": "action",
+          "text": "Dana checks pricing"
+        },
+        {
+          "kind": "link",
+          "task": {
+            "version": 1,
+            "kind": "task",
+            "id": "task-1"
+          },
+          "title": "Review contract"
+        }
+      ],
+      "expected": "## Meetings\n\n- [9:30am]({A}) for Sync\n  - Agenda\n    - Detail\n- Follow-through 2026-11-16: [Sync]({A}) <!-- threestrands-follow-through -->\n  - Decision: Ship on Friday\n  - ( ) Send the deck\n  - [ ] Book the room\n  - Action: Dana checks pricing\n  - [Review contract]({TASK})\n- [11am]({B}) for Other\n"
+    },
+    {
+      "name": "a second review goes after the first",
+      "body": "- [9:30am]({A}) for Sync\n- Follow-through 2026-11-15: [Sync]({A}) <!-- threestrands-follow-through -->\n  - Decision: Old\n- [11am]({B}) for Other\n",
+      "meeting": "Sync",
+      "date": "2026-11-16",
+      "items": [
+        {
+          "kind": "task",
+          "text": "New"
+        }
+      ],
+      "expected": "- [9:30am]({A}) for Sync\n- Follow-through 2026-11-15: [Sync]({A}) <!-- threestrands-follow-through -->\n  - Decision: Old\n- Follow-through 2026-11-16: [Sync]({A}) <!-- threestrands-follow-through -->\n  - ( ) New\n- [11am]({B}) for Other\n"
+    },
+    {
+      "name": "after the top-level item holding a nested meeting line",
+      "body": "- Monday\n  1. [9:30am]({A}) for Sync\n- Tuesday\n",
+      "meeting": "Sync",
+      "date": "2026-11-16",
+      "items": [
+        {
+          "kind": "decision",
+          "text": "Ship"
+        }
+      ],
+      "expected": "- Monday\n  1. [9:30am]({A}) for Sync\n- Follow-through 2026-11-16: [Sync]({A}) <!-- threestrands-follow-through -->\n  - Decision: Ship\n- Tuesday\n"
+    },
+    {
+      "name": "at the end of a meeting line without a final newline",
+      "body": "- [9:30am]({A}) for Sync",
+      "meeting": "Sync",
+      "date": "2026-11-16",
+      "items": [
+        {
+          "kind": "checklist",
+          "text": "Room"
+        }
+      ],
+      "expected": "- [9:30am]({A}) for Sync\n- Follow-through 2026-11-16: [Sync]({A}) <!-- threestrands-follow-through -->\n  - [ ] Room"
+    },
+    {
+      "name": "appended to a reusable note that doesn't link the meeting yet",
+      "body": "# Sync notes\n\nRunning notes",
+      "meeting": "Sync [weekly]",
+      "date": "2026-11-16",
+      "items": [
+        {
+          "kind": "decision",
+          "text": "Ship"
+        },
+        {
+          "kind": "task",
+          "text": "Use *bold* and [x] <!-- y -->"
+        }
+      ],
+      "expected": "# Sync notes\n\nRunning notes\n\n- Follow-through 2026-11-16: [Sync \\[weekly\\]]({A}) <!-- threestrands-follow-through -->\n  - Decision: Ship\n  - ( ) Use \\*bold\\* and \\[x\\] \\<!-- y -->\n"
+    },
+    {
+      "name": "an empty note",
+      "body": "",
+      "meeting": "  ",
+      "date": "2026-11-16",
+      "items": [
+        {
+          "kind": "decision",
+          "text": "Ship"
+        }
+      ],
+      "expected": "- Follow-through 2026-11-16: [Meeting]({A}) <!-- threestrands-follow-through -->\n  - Decision: Ship\n"
+    },
+    {
+      "name": "a note ending inside a code block that never closes is refused",
+      "body": "Notes\n```\ncode\n",
+      "meeting": "Sync",
+      "date": "2026-11-16",
+      "items": [
+        {
+          "kind": "decision",
+          "text": "Ship"
+        }
+      ],
+      "expected": "ERROR: This note has a code block that never closes. Open it before saving follow-through."
+    },
+    {
+      "name": "a review needs something to save",
+      "body": "",
+      "meeting": "Sync",
+      "date": "2026-11-16",
+      "items": [],
+      "expected": "ERROR: Add a decision or an action to save."
+    },
+    {
+      "name": "blank text is refused",
+      "body": "",
+      "meeting": "Sync",
+      "date": "2026-11-16",
+      "items": [
+        {
+          "kind": "task",
+          "text": "   "
+        }
+      ],
+      "expected": "ERROR: Each decision and action needs some text."
+    },
+    {
+      "name": "an invalid date is refused",
+      "body": "",
+      "meeting": "Sync",
+      "date": "2026-13-01",
+      "items": [
+        {
+          "kind": "decision",
+          "text": "Ship"
+        }
+      ],
+      "expected": "ERROR: Invalid date"
+    }
+  ]
+}

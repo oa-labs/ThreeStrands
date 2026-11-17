@@ -47,3 +47,39 @@ pub(crate) async fn reserve_meeting_prep(
     run_database_task(move || database.reserve_meeting_prep(&date, expected.as_deref(), &entry))
         .await
 }
+
+/// Review Follow-through: appends the accepted decisions and actions to one
+/// of the occurrence's notes in a guarded transaction with a receipt, so a
+/// retry with the same `operation_id` returns the first result.
+#[tauri::command]
+pub(crate) async fn save_meeting_follow_through(
+    reference: NoteReference,
+    destination: crate::db::meeting_follow_through::FollowThroughDestination,
+    expected_revision: String,
+    operation_id: String,
+    accepted: crate::db::meeting_follow_through::AcceptedFollowThrough,
+    state: State<'_, AppState>,
+) -> AppResult<crate::db::meeting_follow_through::FollowThroughSave> {
+    let database = state.database.clone();
+    run_database_task(move || {
+        database.save_meeting_follow_through(
+            &reference,
+            &destination,
+            &expected_revision,
+            &operation_id,
+            &accepted,
+        )
+    })
+    .await
+}
+
+/// Undo for a saved follow-through: removes exactly that section while the
+/// note is unchanged since it was saved.
+#[tauri::command]
+pub(crate) async fn undo_meeting_follow_through(
+    operation_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<crate::db::meeting_follow_through::FollowThroughUndo> {
+    let database = state.database.clone();
+    run_database_task(move || database.undo_meeting_follow_through(&operation_id)).await
+}

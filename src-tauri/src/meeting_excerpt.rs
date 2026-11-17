@@ -203,6 +203,19 @@ pub fn bounded_text(text: &str, limit: usize) -> (String, bool) {
     (text[..end].to_string(), true)
 }
 
+/// The indent that nests a new list item under the list item starting at
+/// byte `start`: aligned with that item's text, so it nests under any marker.
+pub(crate) fn child_indent(body: &str, start: usize) -> Result<String, String> {
+    let item_line = body[start..].split('\n').next().unwrap_or_default();
+    let leading = &item_line[..item_line.len() - item_line.trim_start_matches([' ', '\t']).len()];
+    let rest = &item_line[leading.len()..];
+    let marker = rest
+        .find([' ', '\t'])
+        .ok_or_else(|| "Invalid meeting line".to_string())?;
+    let gap = rest[marker..].len() - rest[marker..].trim_start_matches([' ', '\t']).len();
+    Ok(format!("{leading}{}", " ".repeat(marker + gap)))
+}
+
 /// What [`insert_prep_task`] did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PrepInsert {
@@ -244,14 +257,7 @@ pub fn insert_prep_task(
     }) {
         return Ok(PrepInsert::Existing);
     }
-    let item_line = body[block.start..].split('\n').next().unwrap_or_default();
-    let leading = &item_line[..item_line.len() - item_line.trim_start_matches([' ', '\t']).len()];
-    let rest = &item_line[leading.len()..];
-    let marker = rest
-        .find([' ', '\t'])
-        .ok_or_else(|| "Invalid meeting line".to_string())?;
-    let gap = rest[marker..].len() - rest[marker..].trim_start_matches([' ', '\t']).len();
-    let indent = format!("{leading}{}", " ".repeat(marker + gap));
+    let indent = child_indent(body, block.start)?;
     let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
     let title =
         crate::note_meetings::escape_inline(if name.is_empty() { "Meeting" } else { &name });

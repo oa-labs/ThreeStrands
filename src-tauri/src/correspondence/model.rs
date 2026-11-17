@@ -173,6 +173,23 @@ pub enum Request {
         /// back to the most-recently-used account.
         account: Option<String>,
     },
+    /// Opens the one draft of a follow-up handoff: created with the
+    /// reviewed values the first time, resumed after that. Never sends.
+    Handoff {
+        handoff_id: String,
+        account: String,
+        /// "new", or "reply"/"replyAll" to `source_id`.
+        mode: String,
+        source_id: Option<String>,
+        to: String,
+        cc: String,
+        subject: String,
+        body: String,
+    },
+    /// Where a follow-up handoff's draft stands, without creating one.
+    HandoffStatus {
+        handoff_id: String,
+    },
     /// "Edit as New": a new, unaddressed draft copied from a message the
     /// account sent.
     CreateFromSent {
@@ -256,6 +273,14 @@ pub enum Request {
     },
 }
 
+/// A draft [`Database::build_draft`] made, or the existing one it found.
+pub(crate) enum BuiltDraft {
+    /// Already stored: a reply to the same message, or one written elsewhere.
+    Existing(Draft),
+    /// Not stored yet.
+    New(Draft),
+}
+
 impl Database {
     pub fn create_draft(
         &self,
@@ -264,16 +289,36 @@ impl Database {
         account: &str,
         identities: &[crate::provider::SendingIdentity],
     ) -> Result<Draft, String> {
+        match self.build_draft(mode, source_id, account, identities, true)? {
+            BuiltDraft::Existing(existing) => Ok(existing),
+            BuiltDraft::New(mut d) => {
+                self.insert_draft(&mut d)?;
+                Ok(d)
+            }
+        }
+    }
+
+    /// A new draft with its compose defaults, not yet stored. With `reuse`,
+    /// a reply to a message that already has one returns that draft instead;
+    /// without it, such a draft is never touched.
+    pub(crate) fn build_draft(
+        &self,
+        mode: &str,
+        source_id: Option<String>,
+        account: &str,
+        identities: &[crate::provider::SendingIdentity],
+        reuse: bool,
+    ) -> Result<BuiltDraft, String> {
         if !["new", "reply", "replyAll", "forward"].contains(&mode) {
             return Err("Unknown compose mode".into());
         }
-        if mode != "new" {
+        if reuse && mode != "new" {
             if let Some(existing) = self
                 .drafts()?
                 .into_iter()
                 .find(|d| d.account == account && d.mode == mode && d.source_id == source_id)
             {
-                return Ok(existing);
+                return Ok(BuiltDraft::Existing(existing));
             }
         }
         let mut d = Draft {
@@ -323,7 +368,7 @@ impl Database {
             // A reply written in another app arrives with its conversation
             // but not the message it answers. Replying in that conversation
             // reopens it rather than starting a second reply.
-            if mode != "forward" {
+            if reuse && mode != "forward" {
                 let imported = self.drafts()?.into_iter().find(|d| {
                     d.account == account
                         && d.source_id.is_none()
@@ -335,7 +380,7 @@ impl Database {
                     let expected = existing.revision;
                     existing.revision += 1;
                     if self.update_draft_without_push(&mut existing, expected)? == 1 {
-                        return Ok(existing);
+                        return Ok(BuiltDraft::Existing(existing));
                     }
                 }
             }
@@ -474,8 +519,7 @@ impl Database {
             }
         }
         d.signature = self.default_draft_signature(&d.account, d.sender_address(), &d.mode)?;
-        self.insert_draft(&mut d)?;
-        Ok(d)
+        Ok(BuiltDraft::New(d))
     }
     /// "Edit as New": an unaddressed new message that starts from the
     /// subject, body, and attachments of a message this account sent. Only

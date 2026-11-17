@@ -52,3 +52,24 @@ pub const LIMITS: MeetingLimits = MeetingLimits {
     mail_lookback_days: MEETING_MAIL_LOOKBACK_DAYS,
     commitments: MAX_MEETING_COMMITMENTS,
 };
+
+/// Most decisions and actions one follow-through section saves.
+pub const MAX_FOLLOW_THROUGH_ITEMS: usize = 50;
+/// Longest decision or action, in characters, after spaces are collapsed.
+pub const MAX_FOLLOW_THROUGH_ITEM_CHARS: usize = 500;
+/// How long an operation receipt is kept, so a retry within it returns the
+/// original result instead of writing again.
+pub const OPERATION_RECEIPT_RETENTION_DAYS: i64 = 30;
+/// Most operation receipts kept; the oldest go first.
+pub const MAX_OPERATION_RECEIPTS: usize = 500;
+/// Most follow-up draft handoffs remembered; the oldest go first. A
+/// forgotten handoff can't be resumed, so reopening it starts a new draft.
+pub const MAX_DRAFT_HANDOFFS: usize = 500;
+/// How long a follow-up draft handoff is remembered.
+pub const DRAFT_HANDOFF_RETENTION_DAYS: i64 = 90;
+/// Longest subject a follow-up draft can start with, in characters.
+pub const MAX_FOLLOW_UP_SUBJECT_CHARS: usize = 998;
+/// Longest body a follow-up draft can start with, in UTF-8 bytes.
+pub const MAX_FOLLOW_UP_BODY_BYTES: usize = 65_536;
+/// Most recipients a follow-up draft can start with.
+pub const MAX_FOLLOW_UP_RECIPIENTS: usize = 100;

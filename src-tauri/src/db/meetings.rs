@@ -187,6 +187,34 @@ pub struct MeetingCommitment {
     pub candidate: bool,
 }
 
+/// A follow-through section saved for this occurrence.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowThroughRecord {
+    pub note_id: String,
+    pub title: String,
+    pub daily_date: Option<String>,
+    pub revision: String,
+    /// The review's date, from the section's line.
+    pub date: Option<String>,
+    pub text: String,
+    pub truncated: bool,
+    /// Byte range of the section in the note body.
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Whether the meeting has been reviewed, from saved note content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FollowThroughState {
+    /// A note holds a follow-through section linked to this occurrence.
+    Reviewed,
+    NotReviewed,
+    /// The notes couldn't be read.
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeetingContext {
@@ -200,6 +228,8 @@ pub struct MeetingContext {
     pub series_notes: MeetingSection<MeetingNoteSource>,
     pub conversations: MeetingSection<MeetingConversation>,
     pub commitments: MeetingSection<MeetingCommitment>,
+    /// Follow-through sections saved for this occurrence, in any note.
+    pub follow_through: MeetingSection<FollowThroughRecord>,
     pub limits: MeetingLimits,
 }
 
@@ -218,6 +248,7 @@ pub struct MeetingReadiness {
     pub candidate_commitments: usize,
     pub latest_correspondence_at: Option<String>,
     pub scope_required: bool,
+    pub follow_through: FollowThroughState,
     /// Sections that couldn't be read.
     pub unavailable_sections: Vec<String>,
     /// Why this meeting couldn't be checked at all; the counts are then zero.
@@ -394,6 +425,55 @@ fn this_meeting(
     sources.extend(linked_notes(c, excerpts, &mut seen)?);
     Ok(MeetingSection::bounded(
         sources,
+        policy::MAX_MEETING_NOTE_SOURCES,
+    ))
+}
+
+/// The notes "This meeting" lists for the occurrence, which are the ones its
+/// follow-through can be saved to.
+pub(super) fn occurrence_note_ids(
+    c: &Connection,
+    reference: &NoteReference,
+) -> DbResult<HashSet<String>> {
+    let target = reference.target().map_err(DatabaseError::invalid)?;
+    let mut excerpts = Vec::new();
+    Ok(this_meeting(c, reference, &target, &mut excerpts)?
+        .items
+        .into_iter()
+        .map(|source| source.note_id)
+        .collect())
+}
+
+/// Follow-through sections for this occurrence in every note linking it.
+fn follow_through(
+    c: &Connection,
+    reference: &NoteReference,
+    target: &str,
+) -> DbResult<MeetingSection<FollowThroughRecord>> {
+    let mut records = Vec::new();
+    for note in notes_linking(c, target)? {
+        for section in crate::meeting_follow_through::sections(&note.id, &note.body, reference)
+            .map_err(DatabaseError::invalid)?
+        {
+            let (text, truncated) = meeting_excerpt::bounded_text(
+                &note.body[section.start..section.end],
+                policy::MAX_MEETING_EXCERPT_BYTES,
+            );
+            records.push(FollowThroughRecord {
+                note_id: note.id.clone(),
+                title: note.title.clone(),
+                daily_date: note.daily_date.clone(),
+                revision: note.updated_at.clone(),
+                date: section.date,
+                text,
+                truncated,
+                start: section.start,
+                end: section.end,
+            });
+        }
+    }
+    Ok(MeetingSection::bounded(
+        records,
         policy::MAX_MEETING_NOTE_SOURCES,
     ))
 }
@@ -968,6 +1048,7 @@ fn build(c: &Connection, inputs: &Inputs<'_>) -> DbResult<MeetingContext> {
     let lookup = &attendees[..attendees.len().min(policy::MAX_MEETING_ATTENDEES)];
     let conversations = section(conversations(c, event.as_ref(), &scope, lookup, inputs.now));
     let commitments = section(commitments(c, &excerpts, &conversations, event.is_some()));
+    let follow_through = section(follow_through(c, reference, &target));
 
     Ok(MeetingContext {
         reference: reference.clone(),
@@ -991,6 +1072,7 @@ fn build(c: &Connection, inputs: &Inputs<'_>) -> DbResult<MeetingContext> {
         series_notes,
         conversations,
         commitments,
+        follow_through,
         limits: policy::LIMITS,
     })
 }
@@ -1003,6 +1085,7 @@ fn readiness(context: &MeetingContext) -> MeetingReadiness {
         ("seriesNotes", context.series_notes.status),
         ("conversations", context.conversations.status),
         ("commitments", context.commitments.status),
+        ("followThrough", context.follow_through.status),
     ] {
         if status == SectionStatus::Unavailable {
             unavailable.push(name.to_string());
@@ -1034,6 +1117,11 @@ fn readiness(context: &MeetingContext) -> MeetingReadiness {
             .map(|conversation| conversation.last_message_at.clone())
             .max(),
         scope_required: context.conversations.status == SectionStatus::ScopeRequired,
+        follow_through: match context.follow_through.status {
+            SectionStatus::Unavailable => FollowThroughState::Unknown,
+            _ if context.follow_through.items.is_empty() => FollowThroughState::NotReviewed,
+            _ => FollowThroughState::Reviewed,
+        },
         unavailable_sections: unavailable,
         error: None,
     }
@@ -1051,6 +1139,7 @@ fn unreadable(reference: &NoteReference, error: &DatabaseError) -> MeetingReadin
         candidate_commitments: 0,
         latest_correspondence_at: None,
         scope_required: false,
+        follow_through: FollowThroughState::Unknown,
         unavailable_sections: Vec::new(),
         error: Some("This meeting couldn't be checked on this device.".into()),
     }

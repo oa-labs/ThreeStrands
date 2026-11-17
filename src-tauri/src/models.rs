@@ -1329,7 +1329,7 @@ pub struct UpdateSnippetRequest {
 /// A Markdown note. Daily notes have a `daily_date`, which is also their
 /// title. `updated_at` and `trashed_at` are when this device saw the
 /// change; they aren't synchronized.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {
     pub id: String,
