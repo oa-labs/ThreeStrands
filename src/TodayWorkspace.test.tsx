@@ -937,7 +937,15 @@ describe("TodayWorkspace", () => {
       expect(await panel.findByText("Nothing to suggest right now.")).toBeInTheDocument();
       const overdue = within(await panel.findByRole("region", { name: "Overdue" }));
       expect(overdue.getAllByRole("article")).toHaveLength(3);
-      fireEvent.click(panel.getByRole("button", { name: "Also Due" }));
+      // The count is the group's size, and the cut-off is owned up to with a way to see all of it.
+      expect(panel.getByText(/^Meanwhile, from/)).toBeInTheDocument();
+      expect(within(overdue.getByRole("heading", { level: 3 }).closest("header")!).getByText("4")).toBeInTheDocument();
+      fireEvent.click(overdue.getByRole("button", { name: "Show all 4 in Also Due" }));
+      expect(screen.getByRole("tab", { name: "Also Due" })).toHaveAttribute("aria-selected", "true");
+      expect(within(screen.getByRole("region", { name: "Overdue" })).getAllByRole("article")).toHaveLength(4);
+      expect(screen.queryByRole("button", { name: /^Show all/ })).not.toBeInTheDocument();
+      chooseSource("Suggested");
+      fireEvent.click(await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Also Due" }));
       expect(screen.getByRole("tab", { name: "Also Due" })).toHaveAttribute("aria-selected", "true");
       expect(within(screen.getByRole("region", { name: "Overdue" })).getAllByRole("article")).toHaveLength(4);
       expect(screen.queryByText("Nothing to suggest right now.")).not.toBeInTheDocument();

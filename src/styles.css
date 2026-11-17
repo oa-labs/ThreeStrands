@@ -2513,6 +2513,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-row-action { grid-row:1; grid-column:2; align-self:end; justify-self:end; display:flex; align-items:center; gap:var(--space-1); }
 /* Both stay in row one; auto-placement would otherwise move the main button below the action. */
 .context-row-has-action .context-row-main { grid-row:1; }
+/* A one-line row's actions center in its highlight; end-aligned they sat on the row's bottom edge, below the title's midline. */
+.context-row-has-action:not(:has(.context-row-detail)) .context-row-action { align-self:center; }
 .context-row-has-action .context-row-detail { --context-row-action-inset:calc(var(--context-row-action-count, 1) * (var(--control-h-xs) + var(--space-1))); padding-right:var(--context-row-action-inset); }
 .context-row-trailing { grid-column:3; display:flex; align-self:center; align-items:center; gap:var(--space-1); margin-left:var(--space-1); }
 .context-task-checkbox { width:var(--check-size); height:var(--check-size); margin:0; accent-color:var(--accent); cursor:pointer; }
@@ -3824,7 +3826,27 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-source-tabs { flex-wrap: nowrap; overflow: hidden; }
 .today-source-scope { margin-left: auto; overflow: hidden; color: var(--muted); font-size: var(--text-meta); text-overflow: ellipsis; white-space: nowrap; }
 .today-source-fallback { margin-top: var(--space-2); }
-.today-source-panel > .context-status { padding: var(--space-2) var(--context-row-inset); }
+/* The Plan column keeps one left content edge, the rows' checkbox edge (--context-row-inset): section
+   titles, empty states, the tab row, the lead-in, and row titles all start there. Collapse chevrons hang
+   in the gutter to its left instead of indenting the title. */
+.today-work .context-section-toggle .context-row-glyph { margin-left: calc(var(--context-glyph-column) * -1); }
+.today-work .context-collapsible > div > .context-status,
+.today-work .context-collapsible > div > .context-link-button { margin-left: var(--context-row-inset); }
+.today-work .context-status { padding-inline: var(--context-row-inset); }
+.today-work .context-collapsible > div > .context-status { padding-inline: 0; }
+.today-source-panel > .context-status { padding-block: var(--space-2); }
+/* Body copy reads at the row titles' size, in the secondary color; only section titles stay small caps. */
+.today-work .context-status { color: var(--secondary); font-size: var(--text-secondary); }
+.today-work .context-status .btn-link, .today-work .context-link-button { font-size: inherit; }
+.today-source-fallback .context-section { padding-top: 0; }
+/* Selected source: the underline marks the active tab, as the app's other tab strips do. */
+.today-source-tabs .mailbox-tab { padding-block: var(--space-0-5); border-bottom: 2px solid transparent; }
+.today-source-tabs .mailbox-tab.active { border-bottom-color: var(--accent); }
+/* A row's actions line up with its title line, not the whole row, and the title line leaves them room. */
+.today-work .context-row-has-action { --context-row-title-line: calc(var(--text-secondary) * var(--leading-normal)); --context-row-action-inset: calc(var(--context-row-action-count, 1) * (var(--control-h-xs) + var(--space-1))); }
+.today-work .context-row-has-action .context-row-action { align-self: start; align-items: center; height: var(--context-row-title-line); margin-top: var(--space-1-5); }
+.today-work .context-row-has-action .context-row-line { padding-right: var(--context-row-action-inset); }
+.today-work .context-row-has-action .context-row-detail { padding-right: 0; }
 .today-day-view { height: 75vh; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
 /* With working hours, the grid is as tall as the working day (set inline) so Tomorrow stays in view; evenings scroll inside it. */
 .today-day-view-working { height: auto; }
