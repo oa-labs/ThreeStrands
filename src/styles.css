@@ -3727,7 +3727,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-heading { min-width: 0; }
 .today-plan-progress { margin: var(--space-1) 0 0; color: var(--secondary); font-size: var(--text-body); }
 .today-mail-signal { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); color: var(--secondary); font-size: var(--text-body); }
-.today-mail-signal-toggle { display: inline-flex; align-items: center; gap: var(--space-1); }
+.today-mail-signal-label { color: var(--text); font-weight: var(--weight-semibold); }
+.today-mail-signal-scope { color: var(--muted); font-weight: var(--weight-regular); }
 .today-mail-signal-body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
 .today-plan-focus { border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .today-in-plan { color: var(--muted); font-size: var(--text-meta); }
@@ -3736,11 +3737,24 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-plan-linked { border-radius: var(--radius-sm); box-shadow: 0 0 0 2px var(--accent); }
 .calendar-schedule-event[data-linked="true"] { box-shadow: 0 0 0 2px var(--accent); }
 .today-sources { margin-top: var(--space-4); }
-.today-source-tabs { margin: 0 0 var(--space-2) var(--context-row-inset); }
+/* The source tabs are a light row of words, as Mail's split tabs are, so the plan above leads. */
+.today-source-bar { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2) var(--context-row-inset); }
+.today-source-tabs { flex-wrap: nowrap; overflow: hidden; }
+.today-source-scope { margin-left: auto; overflow: hidden; color: var(--muted); font-size: var(--text-meta); text-overflow: ellipsis; white-space: nowrap; }
+.today-source-fallback { margin-top: var(--space-2); }
 .today-source-panel > .context-status { padding: var(--space-2) var(--context-row-inset); }
 .today-day-view { height: 75vh; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+/* With working hours, the grid is as tall as the working day (set inline) so Tomorrow stays in view; evenings scroll inside it. */
+.today-day-view-working { height: auto; }
+.today-day-view-working .calendar-week-scroll { flex: none; height: min(var(--today-day-view-grid-h), 65vh); }
+.calendar-outside-hours { position: absolute; left: 0; right: 0; background: color-mix(in srgb, var(--muted) 10%, transparent); pointer-events: none; }
+/* Today: finished meetings dim; selected means the meeting being prepared, nothing else. An
+   unanswered invitation keeps a filled block here, so it can't be mistaken for that selection. */
+.today-day-view .calendar-schedule-event[data-past="true"] { opacity: var(--opacity-dimmed); }
+.today-day-view .calendar-schedule-event[data-response-status="needsAction"] { background: color-mix(in srgb, var(--calendar-color, var(--accent)) 25%, var(--raised)); border: 1px dashed var(--calendar-color, var(--accent)); }
+.today-day-view .calendar-schedule-event[data-selected="true"] { opacity: 1; box-shadow: 0 0 0 2px var(--accent); }
 .today-day-view-actions { display: flex; align-items: center; gap: var(--space-2); }
-.calendar-event-mark { display: inline-flex; align-items: center; gap: var(--space-0-5); margin-right: var(--space-1); vertical-align: middle; }
+.calendar-event-mark { display: inline-flex; align-items: center; gap: var(--space-0-5); margin-right: var(--space-1); color: var(--accent); vertical-align: middle; }
 .calendar-event-mark-count { font-size: var(--text-micro); font-weight: var(--weight-semibold); }
 .today-agenda-fallback { display: none; }
 /* The breakpoint lives here, not in component code: container conditions can't read custom properties. */

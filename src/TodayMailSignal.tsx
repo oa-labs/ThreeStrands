@@ -14,9 +14,11 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * decisions), counts of what needs a reply and of other unread mail, and
  * Open Inbox for the rest. Collapsing it is remembered on this device.
  */
-export function TodayMailSignal({ mail, error, onOpenThread, onOpenInbox }: {
+export function TodayMailSignal({ mail, error, scope, onOpenThread, onOpenInbox }: {
   mail: { threads: TodayMail[]; total: number } | null;
   error: string | null;
+  /** The mail account in view, or "All accounts"; the line counts only its mail. */
+  scope?: string;
   onOpenThread(threadId: string): void;
   onOpenInbox(): void;
 }) {
@@ -27,20 +29,26 @@ export function TodayMailSignal({ mail, error, onOpenThread, onOpenInbox }: {
   const reply = groups.reply.length;
   // The newest conversations are grouped; the rest of the total counts as other unread.
   const other = mail ? Math.max(0, mail.total - invitations.length - reply) : 0;
+  // "Other" only reads right beside something it's other than.
+  const rest = other ? `${other} ${invitations.length || reply ? "other " : ""}unread` : null;
+  const restAfterReply = other ? `${other} ${reply ? "other " : ""}unread` : null;
   const summary = error ? "Mail couldn't be read"
     : !mail ? "Reading mail…"
       : mail.total === 0 ? "Nothing unread"
-        : [invitations.length ? plural(invitations.length, "invitation") : null, reply ? `${reply} needs a reply` : null, other ? `${other} other unread` : null].filter(Boolean).join(" · ");
+        : [invitations.length ? plural(invitations.length, "invitation") : null, reply ? `${reply} needs a reply` : null, rest].filter(Boolean).join(" · ");
   return <div className="today-mail-signal" role="group" aria-label="Mail">
-    <button type="button" className="btn-link today-mail-signal-toggle" aria-expanded={!collapsed} aria-controls={collapsed ? undefined : bodyId} onClick={() => setCollapsed((value) => !value)}>
-      {collapsed ? <ChevronRight size={ICON_SIZE.sm} /> : <ChevronDown size={ICON_SIZE.sm} />}Mail
+    {/* A summary to read, not a link: only the chevron folds it. */}
+    <button type="button" className="btn-icon btn-icon-sm today-mail-signal-toggle" aria-label="Mail" title={collapsed ? "Show mail details" : "Hide mail details"}
+      aria-expanded={!collapsed} aria-controls={collapsed ? undefined : bodyId} onClick={() => setCollapsed((value) => !value)}>
+      {collapsed ? <ChevronRight size={ICON_SIZE.sm} /> : <ChevronDown size={ICON_SIZE.sm} />}
     </button>
+    <span className="today-mail-signal-label">Mail{scope ? <span className="today-mail-signal-scope"> · {scope}</span> : null}</span>
     {collapsed ? <span className="today-mail-signal-summary">{summary}</span> : <span id={bodyId} className="today-mail-signal-body">
       {error ? <span role="alert" className="form-error">{error}</span> : null}
       {invitations.length ? <span className="today-mail-signal-invitations">Invitations:{" "}
         {invitations.map((item, index) => <span key={item.thread.id}>{index ? ", " : null}<button type="button" className="btn-link" onClick={() => onOpenThread(item.thread.id)}>{item.thread.subject || "(no subject)"}</button></span>)}
       </span> : null}
-      {mail && !error ? <span>{mail.total === 0 ? "Nothing unread" : [reply ? `${reply} needs a reply` : null, other ? `${other} other unread` : null].filter(Boolean).join(" · ")}</span> : null}
+      {mail && !error ? <span>{mail.total === 0 ? "Nothing unread" : [reply ? `${reply} needs a reply` : null, restAfterReply].filter(Boolean).join(" · ")}</span> : null}
     </span>}
     <button type="button" className="btn-link" onClick={onOpenInbox}>Open Inbox</button>
   </div>;

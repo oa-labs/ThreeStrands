@@ -34,7 +34,14 @@ export type DayGridEventDecoration = {
   linked?: boolean;
   /** Hovering or focusing the event, and leaving it; lets the caller highlight what it is linked to. */
   onLinkHover?(active: boolean): void;
+  /** Already over, so drawn dimmed (`data-past`). */
+  past?: boolean;
+  /** The one event the caller is working with, such as the meeting being prepared (`data-selected`). */
+  selected?: boolean;
 };
+
+/** A stretch of a day column to shade, such as time outside working hours. */
+export type DayGridShade = { dayIndex: number; startMinutes: number; endMinutes: number };
 
 /** A highlighted stretch of one day column: a selection or a drop preview. */
 export type DayGridPreview = { dayIndex: number; startMinutes: number; endMinutes: number; label?: string };
@@ -73,6 +80,8 @@ export function DayTimeGrid({
   timeZoneAt = days[0],
   columnProps,
   eventDecoration,
+  shade,
+  shortTimes = false,
 }: {
   days: Date[];
   events: ScheduleEvent[];
@@ -92,6 +101,10 @@ export function DayTimeGrid({
   /** Extra attributes for a day column, such as a label and pointer handlers. */
   columnProps?(day: Date, dayIndex: number): HTMLAttributes<HTMLDivElement>;
   eventDecoration?(event: ScheduleEvent): DayGridEventDecoration | null;
+  /** Stretches drawn shaded behind the events; Calendar passes none. */
+  shade?: DayGridShade[];
+  /** A block too short for two lines still shows its start time after the title, with or without a location. */
+  shortTimes?: boolean;
 }) {
   const calendarColors = useCalendarColors();
   const gridId = useId();
@@ -104,6 +117,8 @@ export function DayTimeGrid({
         "aria-describedby": descriptionId,
         "data-row-key": decoration.rowKey,
         "data-linked": decoration.linked ? "true" : undefined,
+        "data-past": decoration.past ? "true" : undefined,
+        "data-selected": decoration.selected ? "true" : undefined,
         ...(decoration.onLinkHover ? {
           onMouseEnter: () => decoration.onLinkHover?.(true),
           onMouseLeave: () => decoration.onLinkHover?.(false),
@@ -207,6 +222,12 @@ export function DayTimeGrid({
               data-day-index={dayIndex}
             >
               {HOURS.map((hour) => <div className="calendar-hour-line" key={hour} />)}
+              {shade?.filter((span) => span.dayIndex === dayIndex && span.endMinutes > span.startMinutes).map((span) => (
+                <div key={`${span.startMinutes}-${span.endMinutes}`} className="calendar-outside-hours" aria-hidden="true" style={{
+                  top: span.startMinutes / 60 * HOUR_HEIGHT,
+                  height: (span.endMinutes - span.startMinutes) / 60 * HOUR_HEIGHT,
+                }} />
+              ))}
               {preview?.dayIndex === dayIndex ? (
                 <div className="calendar-create-selection" aria-hidden="true" style={{
                   top: preview.startMinutes / 60 * HOUR_HEIGHT,
@@ -252,7 +273,7 @@ export function DayTimeGrid({
                     }}
                     title={`${event.title}, ${formatEventTime(event)}${location ? `, ${location}` : ""}${responseLabel(event) ? `, ${responseLabel(event)}` : ""}`}
                   >
-                    <strong>{decoration.mark}{event.title}{compactLocation ? <span>, {startTime}, {location}</span> : null}</strong>
+                    <strong>{decoration.mark}{event.title}{compactLocation ? <span>, {startTime}, {location}</span> : shortTimes && durationMinutes <= 30 ? <span>, {startTime}</span> : null}</strong>
                     {durationMinutes > 30 ? <span>{formatEventTime(event)}{location && !separateLocation ? ` · ${location}` : ""}</span> : null}
                     {durationMinutes > 30 && location && separateLocation ? <span>{location}</span> : null}
                   </button>

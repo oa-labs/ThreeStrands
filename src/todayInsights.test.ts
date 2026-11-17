@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatClockTime } from "./agendaEvents";
 import type { ScheduleEvent } from "./domain";
-import { agendaConflicts, dayShape, FREE_STRETCH_MINUTES, meetingsWith, mentionsRecording, planCapacity, sharedMeetingsNote, type WorkingHours } from "./todayInsights";
+import { agendaConflicts, dayShape, daySummary, FREE_STRETCH_MINUTES, meetingsWith, mentionsRecording, planCapacity, sharedMeetingsNote, type WorkingHours } from "./todayInsights";
 import { TASK_BLOCK_MINUTES } from "./taskBooking";
 
 const now = new Date(2026, 9, 26, 10, 0);
@@ -77,6 +77,37 @@ describe("dayShape", () => {
   it("says when no meeting is left, and says nothing for a day without meetings", () => {
     expect(dayShape([meeting("Done", at(8), at(9))], now)).toBe("No more meetings today");
     expect(dayShape([], now)).toBe("");
+  });
+});
+
+describe("daySummary", () => {
+  const benefits = meeting("Benefits Review", at(11), at(12));
+  const ops = meeting("Operations", at(15), at(15, 30));
+
+  it("says there are no meetings, counting neither declined nor all-day events", () => {
+    expect(daySummary([], now)).toBe("No meetings today");
+    expect(daySummary([meeting("Skip", at(11), at(12), { responseStatus: "declined" }), meeting("Offsite", at(0), at(23, 59), { allDay: true })], now)).toBe("No meetings today");
+  });
+
+  it("names the next meeting in the morning, and when the last ends while more than one is left", () => {
+    expect(daySummary([benefits, ops], at(9))).toBe(`2 meetings · next at ${clock(11)} · last meeting ends ${clock(15, 30)}`);
+    expect(daySummary([ops], at(9))).toBe(`1 meeting · next at ${clock(15)}`);
+  });
+
+  it("names the meeting under way, and the next between meetings", () => {
+    expect(daySummary([benefits, ops], at(11, 15))).toBe(`2 meetings · in Benefits Review until ${clock(12)} · last meeting ends ${clock(15, 30)}`);
+    expect(daySummary([benefits, ops], at(13))).toBe(`2 meetings · next at ${clock(15)}`);
+  });
+
+  it("says when every meeting has finished", () => {
+    expect(daySummary([benefits, ops], at(17, 30))).toBe(`2 meetings, both finished · last ended ${clock(15, 30)}`);
+    expect(daySummary([benefits], at(17, 30))).toBe(`1 meeting, finished · ended ${clock(12)}`);
+    expect(daySummary([benefits, ops, meeting("Late", at(16), at(16, 30))], at(17, 30))).toBe(`3 meetings, all finished · last ended ${clock(16, 30)}`);
+  });
+
+  it("keeps double-bookings still ahead", () => {
+    const clash = meeting("Clash", at(15, 15), at(16));
+    expect(daySummary([benefits, ops, clash], at(13))).toBe(`3 meetings · next at ${clock(15)} · double-booked at ${clock(15, 15)} · last meeting ends ${clock(16)}`);
   });
 });
 

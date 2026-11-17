@@ -3,6 +3,7 @@ import { useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as 
 import { HoverTooltip } from "./AppChrome";
 import { formatClockTime } from "./agendaEvents";
 import { ContextRow, ContextSection } from "./ContextSections";
+import { MoreActionsMenu } from "./MoreActionsMenu";
 import type { PlanAddition } from "./dailyPlan";
 import type { DailyPlan, DailyPlanItem, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
@@ -57,9 +58,18 @@ export type PlanSource = {
   empty: string;
   /** Hides candidates already in the plan instead of marking them. */
   hidePlanned?: boolean;
-  /** Loading or a read failure, shown above the groups. */
+  /** Loading or a read failure, shown above the groups; no fallback is shown meanwhile. */
   status?: ReactNode;
+  /** Kept behind the More Sources menu until chosen, so the tab row stays one line. */
+  overflow?: boolean;
+  /** The mail account its cards follow, shown beside the tabs while it is chosen. */
+  scope?: string;
+  /** Always last in its panel, such as Open Tasks. */
+  footer?: ReactNode;
 };
+
+/** Cards a fallback shows from the next source when the chosen one is empty. */
+export const SOURCE_FALLBACK_CARDS = 3;
 
 /** What dragging a plan card or a source card carries onto the day view. */
 export type PlanDragSource = { id: string; title: string } & ({ kind: "item"; item: DailyPlanItem } | { kind: "candidate"; candidate: PlanCandidate });
@@ -190,6 +200,12 @@ export function PlanSourceSwitcher({ sources, selected, onSelect, planned, onAdd
   const tabs = useRef<HTMLDivElement>(null);
   const current = sources.find((source) => source.id === selected) ?? sources[0];
   if (!current) return null;
+  const choose = (target: PlanSource) => {
+    onSelect(target.id);
+    // An overflow source joins the row once chosen, so focus it after it renders.
+    requestAnimationFrame(() => tabs.current?.querySelector<HTMLButtonElement>(`[data-source="${target.id}"]`)?.focus());
+  };
+  // Arrow keys, Home, and End move through every source, those behind More Sources included.
   const move = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const at = sources.indexOf(current);
     const target = event.key === "ArrowRight" ? sources[(at + 1) % sources.length]
@@ -198,12 +214,24 @@ export function PlanSourceSwitcher({ sources, selected, onSelect, planned, onAdd
     if (!target) return;
     event.preventDefault();
     event.stopPropagation();
-    onSelect(target.id);
     tabs.current?.querySelector<HTMLButtonElement>(`[data-source="${target.id}"]`)?.focus();
+    choose(target);
   };
   const inPlan = (candidate: PlanCandidate) => Boolean(candidate.inPlan) || (candidate.planKey !== null && planned.has(candidate.planKey));
-  const groups = current.groups.map((group) => ({ ...group, candidates: current.hidePlanned ? group.candidates.filter((candidate) => !inPlan(candidate)) : group.candidates }))
+  const groupsOf = (source: PlanSource) => source.groups.map((group) => ({ ...group, candidates: source.hidePlanned ? group.candidates.filter((candidate) => !inPlan(candidate)) : group.candidates }))
     .filter((group) => group.candidates.length > 0 || group.closing);
+  const groups = groupsOf(current);
+  // An empty source still shows, but the first view is never two empty states: the next source
+  // with cards (in tab order) lends its first few beneath, with a way to switch to it.
+  const fallback = groups.length || current.status ? null : (() => {
+    const at = sources.indexOf(current);
+    for (let step = 1; step < sources.length; step++) {
+      const source = sources[(at + step) % sources.length];
+      const lent = groupsOf(source).filter((group) => group.candidates.length > 0);
+      if (!source.status && lent.length) return { source, groups: lent };
+    }
+    return null;
+  })();
   const row = (candidate: PlanCandidate) => {
     const planned = inPlan(candidate);
     const activate = candidate.row.onActivate;
@@ -222,17 +250,29 @@ export function PlanSourceSwitcher({ sources, selected, onSelect, planned, onAdd
       ]}
     />;
   };
+  const shown = sources.filter((source) => !source.overflow || source === current);
+  const more = sources.filter((source) => source.overflow && source !== current);
   return <div className="today-sources">
-    <div className="segmented today-source-tabs" role="tablist" aria-label="Plan Sources" ref={tabs} onKeyDown={move}>
-      {sources.map((source) => <button key={source.id} type="button" className="segment" role="tab" id={`today-source-${source.id}`}
-        data-source={source.id} aria-controls="today-source-panel" aria-selected={source === current} tabIndex={source === current ? 0 : -1}
-        onClick={() => onSelect(source.id)}>{source.label}</button>)}
+    <div className="today-source-bar">
+      <div className="mailbox-tab-list today-source-tabs" role="tablist" aria-label="Plan Sources" ref={tabs} onKeyDown={move}>
+        {shown.map((source) => <button key={source.id} type="button" className={`mailbox-tab${source === current ? " active" : ""}`} role="tab" id={`today-source-${source.id}`}
+          data-source={source.id} aria-controls="today-source-panel" aria-selected={source === current} tabIndex={source === current ? 0 : -1}
+          onClick={() => onSelect(source.id)}>{source.label}</button>)}
+      </div>
+      {more.length ? <MoreActionsMenu label="More Sources" compact actions={more.map((source) => ({ label: source.label, onSelect: () => choose(source) }))} /> : null}
+      {current.scope ? <span className="today-source-scope" title="These cards follow the mail account in view">{current.scope}</span> : null}
     </div>
     <div id="today-source-panel" role="tabpanel" aria-labelledby={`today-source-${current.id}`} className="today-source-panel">
       {current.status}
       {groups.length ? groups.map((group) => <ContextSection key={group.id} id={group.id} title={group.title} count={group.candidates.length}
         limit={group.limit} rows={group.candidates.map(row)} closing={group.closing} footer={group.footer} />)
         : current.status ? null : <p className="context-status">{current.empty}</p>}
+      {fallback ? <div className="today-source-fallback">
+        <p className="context-status">From <button type="button" className="btn-link" onClick={() => choose(fallback.source)}>{fallback.source.label}</button>:</p>
+        {fallback.groups.map((group) => <ContextSection key={group.id} id={group.id} title={group.title} count={group.candidates.length}
+          limit={SOURCE_FALLBACK_CARDS} rows={group.candidates.slice(0, SOURCE_FALLBACK_CARDS).map(row)} />)}
+      </div> : null}
+      {current.footer}
     </div>
   </div>;
 }
