@@ -1873,6 +1873,7 @@ export function App() {
       ) : null}
       {rightWorkspace === "today" ? <ErrorBoundary area="Today" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><TodayWorkspace
         accountId={activeAccountId}
+        mailAccountCount={accounts.length}
         refreshKey={syncStatus?.lastSuccessfulSync ?? ""}
         taskRefreshKey={taskRevision}
         calendarConnected={calendarConnected}

@@ -148,6 +148,16 @@ describe("CalendarAgenda rows", () => {
     expect(screen.getByText(/· Family · me@home\.example$/)).toBeInTheDocument();
   });
 
+  it("names the calendar on each row only when the events come from more than one calendar", () => {
+    const { unmount } = render(<CalendarAgenda today={day} calendars={calendars} onOpenEvent={vi.fn()} schedule={{ loading: false, error: null, reload: vi.fn(), events: [event("Standup", 9, 10), event("Review", 15, 16)] }} />);
+    expect(screen.queryAllByText(/Work/)).toHaveLength(0);
+    unmount();
+    const two: CalendarOption[] = [...calendars, { id: "team", accountId: "cal@example.com", name: "Team", primary: false, selected: true, writable: true }];
+    render(<CalendarAgenda today={day} calendars={two} onOpenEvent={vi.fn()} schedule={{ loading: false, error: null, reload: vi.fn(), events: [event("Standup", 9, 10), event("Review", 15, 16, { calendarId: "team" })] }} />);
+    expect(screen.getByText(/· Work$/)).toBeInTheDocument();
+    expect(screen.getByText(/· Team$/)).toBeInTheDocument();
+  });
+
   it("shows a meeting on two calendars once, as the copy you haven't declined", () => {
     renderAgenda([
       event("Sync", 9, 10, { responseStatus: "declined" }),
@@ -207,6 +217,10 @@ describe("CalendarAgenda with a stated working location", () => {
       schedule={{ events: [office, place("Home"), ...meetings], loading: false, error: null, reload: vi.fn() }} />);
     const section = screen.getByRole("region", { name: "Tomorrow" });
     expect(section.querySelector(".context-section-note")).toHaveTextContent(/^.+ · Office$/);
+    // The date, separator, and location share one element, so the note's flex layout cannot leave the dot trailing the date.
+    const note = section.querySelector(".context-section-note")!;
+    expect(note.children).toHaveLength(1);
+    expect(note.firstElementChild).toContainElement(note.querySelector(".agenda-working-location"));
     expect(agendaOrder(section)).toEqual(["a", "b", "c"]);
     expect(screen.queryByRole("button", { name: /Show more/ })).not.toBeInTheDocument();
   });

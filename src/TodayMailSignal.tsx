@@ -35,7 +35,7 @@ export function TodayMailSignal({ mail, error, scope, onOpenThread, onOpenInbox 
   const summary = error ? "Mail couldn't be read"
     : !mail ? "Reading mail…"
       : mail.total === 0 ? "Nothing unread"
-        : [invitations.length ? plural(invitations.length, "invitation") : null, reply ? `${reply} needs a reply` : null, rest].filter(Boolean).join(" · ");
+        : [invitations.length ? plural(invitations.length, "invitation") : null, reply ? `${reply} ${reply === 1 ? "needs" : "need"} a reply` : null, rest].filter(Boolean).join(" · ");
   return <div className="today-mail-signal" role="group" aria-label="Mail">
     {/* A summary to read, not a link: only the chevron folds it. */}
     <button type="button" className="btn-icon btn-icon-sm today-mail-signal-toggle" aria-label="Mail" title={collapsed ? "Show mail details" : "Hide mail details"}
@@ -48,7 +48,7 @@ export function TodayMailSignal({ mail, error, scope, onOpenThread, onOpenInbox 
       {invitations.length ? <span className="today-mail-signal-invitations">Invitations:{" "}
         {invitations.map((item, index) => <span key={item.thread.id}>{index ? ", " : null}<button type="button" className="btn-link" onClick={() => onOpenThread(item.thread.id)}>{item.thread.subject || "(no subject)"}</button></span>)}
       </span> : null}
-      {mail && !error ? <span>{mail.total === 0 ? "Nothing unread" : [reply ? `${reply} needs a reply` : null, restAfterReply].filter(Boolean).join(" · ")}</span> : null}
+      {mail && !error ? <span>{mail.total === 0 ? "Nothing unread" : [reply ? `${reply} ${reply === 1 ? "needs" : "need"} a reply` : null, restAfterReply].filter(Boolean).join(" · ")}</span> : null}
     </span>}
     <button type="button" className="btn-link" onClick={onOpenInbox}>Open Inbox</button>
   </div>;

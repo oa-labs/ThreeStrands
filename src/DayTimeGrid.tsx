@@ -1,4 +1,5 @@
 import { Fragment, useId, useMemo, type CSSProperties, type ReactNode, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type Ref, type UIEvent } from "react";
+import { formatClockTime } from "./agendaEvents";
 import {
   HOUR_HEIGHT,
   HOURS,
@@ -263,7 +264,7 @@ export function DayTimeGrid({
                 const location = event.location?.trim();
                 const compactLocation = durationMinutes <= 30 && location;
                 const separateLocation = height > HOUR_HEIGHT;
-                const startTime = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(start);
+                const startTime = formatClockTime(start);
                 const className = [
                   "calendar-schedule-event",
                   durationMinutes <= 30 && "calendar-schedule-event-compact",

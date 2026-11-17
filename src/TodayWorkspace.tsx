@@ -58,6 +58,8 @@ type Schedule = ReturnType<typeof useCalendarSchedule>;
 export type TodayWorkspaceProps = {
   /** The mail account in view, or null for all accounts; scopes mail and tasks. */
   accountId: string | null;
+  /** How many mail accounts are configured; the account in view is named only when there is more than one. */
+  mailAccountCount?: number;
   /** Changes when mail syncs, so the unread list is read again. */
   refreshKey: string;
   taskRefreshKey: number;
@@ -149,7 +151,7 @@ function ScheduledToday(props: TodayWorkspaceProps) {
 }
 
 function TodayLayout({
-  accountId, refreshKey, taskRefreshKey, calendars, calendarAccounts = [], schedule,
+  accountId, mailAccountCount = 1, refreshKey, taskRefreshKey, calendars, calendarAccounts = [], schedule,
   onOpenThread, onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenInbox, onOpenCalendar, onOpenTasks, onOpenContact, onOpenKeepInTouch,
   onOpenNote, onNotice, workingHours = null, onCreateTask, preparation, planRequest = null, onPlanRequestConsumed,
 }: TodayWorkspaceProps & { schedule: Schedule | null }) {
@@ -635,7 +637,7 @@ function TodayLayout({
   const pageCandidates = (page: typeof remote, kind: PlanSourceKind | null) => page.candidates
     .filter((candidate) => candidate.action.kind !== "makeTask" || !dismissed.includes(candidate.action.messageId)).map(remoteCandidate(kind));
   // The plan and the day view cover every account; these sources follow the account in view, and say so beside the tabs.
-  const scope = accountId ?? "All accounts";
+  const scope = mailAccountCount > 1 ? accountId ?? "All accounts" : undefined;
   /** The switcher's tabs with `selected` showing, its remote cards from `page`. Choose leaves out Also Due, which Suggested covers. */
   const sourcesFor = (selected: string, page: typeof remote, choose: boolean): PlanSource[] => {
     const cards = pageCandidates(page, REMOTE_SOURCES[selected] ?? null);

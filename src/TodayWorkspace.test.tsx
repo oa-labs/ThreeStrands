@@ -242,7 +242,7 @@ describe("TodayWorkspace", () => {
 
     it("merges every account when none is selected", async () => {
       const listTodayMail = mockMail([]);
-      renderToday({ accountId: null });
+      renderToday({ accountId: null, mailAccountCount: 2 });
       await waitFor(() => expect(listTodayMail).toHaveBeenCalledWith(undefined));
       expect(within(screen.getByRole("group", { name: "Mail" })).getByText("· All accounts", { selector: ".today-mail-signal-scope" })).toBeInTheDocument();
       expect(document.querySelector(".today-source-scope")).toHaveTextContent("All accounts");
@@ -930,8 +930,33 @@ describe("TodayWorkspace", () => {
       expect(onEditTask).toHaveBeenCalledWith(created);
     });
 
+    it.each([null, "you@example.com"])("leaves the account out of the mail line and the sources with one mail account (%s)", async (accountId) => {
+      mockMail([]);
+      renderToday({ accountId });
+      await within(screen.getByRole("group", { name: "Mail" })).findByText("Nothing unread");
+      expect(document.querySelector(".today-mail-signal-scope")).not.toBeInTheDocument();
+      expect(document.querySelector(".today-source-scope")).not.toBeInTheDocument();
+    });
+
+    it("names the account in view in the mail line and beside the sources with several mail accounts", async () => {
+      mockMail([]);
+      renderToday({ accountId: "you@example.com", mailAccountCount: 2 });
+      await within(screen.getByRole("group", { name: "Mail" })).findByText("Nothing unread");
+      expect(document.querySelector(".today-mail-signal-scope")).toHaveTextContent("you@example.com");
+      expect(document.querySelector(".today-source-scope")).toHaveTextContent("you@example.com");
+    });
+
+    it.each([3, 4])("lends all %i cards from the next source with no link", async (count) => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue(["a", "b", "c", "d"].slice(0, count).map((id) => task(id, { dueKind: "date", dueValue: localDate(-1) })));
+      renderToday();
+      const panel = within(screen.getByRole("tabpanel"));
+      const overdue = within(await panel.findByRole("region", { name: "Overdue" }));
+      expect(overdue.getAllByRole("article")).toHaveLength(count);
+      expect(overdue.queryByRole("button", { name: /^Show all/ })).not.toBeInTheDocument();
+    });
+
     it("says an empty Suggested in one line and lends the next source's first cards, with a way to switch", async () => {
-      vi.mocked(mailClient.listTasks).mockResolvedValue(["a", "b", "c", "d"].map((id) => task(id, { dueKind: "date", dueValue: localDate(-1) })));
+      vi.mocked(mailClient.listTasks).mockResolvedValue(["a", "b", "c", "d", "e"].map((id) => task(id, { dueKind: "date", dueValue: localDate(-1) })));
       renderToday();
       const panel = within(screen.getByRole("tabpanel"));
       expect(await panel.findByText("Nothing to suggest right now.")).toBeInTheDocument();
@@ -939,15 +964,15 @@ describe("TodayWorkspace", () => {
       expect(overdue.getAllByRole("article")).toHaveLength(3);
       // The count is the group's size, and the cut-off is owned up to with a way to see all of it.
       expect(panel.getByText(/^Meanwhile, from/)).toBeInTheDocument();
-      expect(within(overdue.getByRole("heading", { level: 3 }).closest("header")!).getByText("4")).toBeInTheDocument();
-      fireEvent.click(overdue.getByRole("button", { name: "Show all 4 in Also Due" }));
+      expect(within(overdue.getByRole("heading", { level: 3 }).closest("header")!).getByText("5")).toBeInTheDocument();
+      fireEvent.click(overdue.getByRole("button", { name: "Show all 5 in Also Due" }));
       expect(screen.getByRole("tab", { name: "Also Due" })).toHaveAttribute("aria-selected", "true");
-      expect(within(screen.getByRole("region", { name: "Overdue" })).getAllByRole("article")).toHaveLength(4);
+      expect(within(screen.getByRole("region", { name: "Overdue" })).getAllByRole("article")).toHaveLength(5);
       expect(screen.queryByRole("button", { name: /^Show all/ })).not.toBeInTheDocument();
       chooseSource("Suggested");
       fireEvent.click(await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Also Due" }));
       expect(screen.getByRole("tab", { name: "Also Due" })).toHaveAttribute("aria-selected", "true");
-      expect(within(screen.getByRole("region", { name: "Overdue" })).getAllByRole("article")).toHaveLength(4);
+      expect(within(screen.getByRole("region", { name: "Overdue" })).getAllByRole("article")).toHaveLength(5);
       expect(screen.queryByText("Nothing to suggest right now.")).not.toBeInTheDocument();
     });
 
@@ -1269,7 +1294,7 @@ describe("TodayWorkspace", () => {
     afterEach(() => { vi.useRealTimers(); });
 
     it("points to Settings instead of loading a schedule when no calendar is connected", async () => {
-      renderToday({ calendarConnected: false });
+      renderToday({ calendarConnected: false, mailAccountCount: 2 });
       expect(within(screen.getByRole("region", { name: "Today's agenda" })).getByText(/Connect a calendar in Settings/)).toBeInTheDocument();
       expect(document.querySelector(".today-mail-signal-scope")).toHaveTextContent("you@example.com");
       expect(mailClient.listScheduleEvents).not.toHaveBeenCalled();
@@ -1279,7 +1304,7 @@ describe("TodayWorkspace", () => {
     });
 
     it("names the account beside the mail line and the sources it scopes, not over the whole page", async () => {
-      renderToday({ calendarConnected: true });
+      renderToday({ calendarConnected: true, mailAccountCount: 2 });
       await screen.findByRole("group", { name: "Day view" });
       // The plan and the day view cover every account.
       expect(document.querySelector(".today-header .eyebrow")).toHaveTextContent(/^Today$/);

@@ -44,6 +44,14 @@ describe("DayTimeGrid", () => {
     expect(container.querySelector(".calendar-week-all-day")).not.toBeInTheDocument();
   });
 
+  it("writes a compact event's start time the way event times are written", () => {
+    const sync = event("JBLC - Virtual", "2026-09-22T11:30:00", "2026-09-22T12:00:00", { location: "Room 4" });
+    renderGrid({ events: [sync], shortTimes: true });
+    const label = screen.getByRole("button", { name: /JBLC/ }).querySelector("strong")!.textContent!;
+    expect(label).toMatch(/, 11:30\s[ap]m, Room 4$/);
+    expect(label).not.toMatch(/[AP]M/);
+  });
+
   it("leaves all-day events and working locations out of the lanes, and stacks a late starter over a long event", () => {
     const location = event("Home", "2026-09-22T08:00:00", "2026-09-22T17:00:00", { eventType: "workingLocation" });
     const long = event("Long", "2026-09-22T09:30:00", "2026-09-22T11:35:00");

@@ -89,6 +89,8 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
   const selected = calendars.filter((calendar) => calendar.selected);
   const agenda = agendaEventsFor(events, today, calendars).filter((event) => workingLocation === undefined || !isWorkingLocation(event));
   const multipleAccounts = new Set(selected.map((calendar) => calendar.accountId)).size > 1;
+  // One calendar needs no name on each row; the name (often the account address) only tells calendars apart.
+  const multipleCalendars = new Set(agenda.map((event) => `${event.accountId}\u0000${event.calendarId}`)).size > 1;
   const conflicts = markConflicts ? agendaConflicts(agenda) : new Map<ScheduleEvent, ScheduleEvent[]>();
   const pastCount = now ? agenda.filter((event) => isPastEvent(event, now)).length : 0;
   // All-day events list first and are never past during their day, so the
@@ -104,7 +106,7 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
     const conflict = overlapping.length
       ? [`Overlaps ${overlapping.map((other) => other.title).join(", ")}`, mentionsRecording(event) ? "Recorded" : null]
       : [];
-    const detail = [formatEventTime(event), describe?.(event), ...conflict, event.location, calendar?.name, account, responseLabel(event)].filter(Boolean).join(" · ");
+    const detail = [formatEventTime(event), describe?.(event), ...conflict, event.location, multipleCalendars ? calendar?.name : null, account, responseLabel(event)].filter(Boolean).join(" · ");
     const key = preparationKey(event);
     const isSelected = selectedKey !== null && key === selectedKey;
     rows.push(<ContextRow
@@ -126,7 +128,8 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
   const text = AGENDA_TEXT[day];
   const dateText = showDate ? today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : null;
   const dateNote = dateText || workingLocation
-    ? <>{dateText}{dateText && workingLocation ? " · " : null}{workingLocation ? <span className="agenda-working-location"><WorkingLocationIcon type={workingLocation.workingLocationType} />{workingLocation.title}</span> : null}</>
+    // One element, so the note's flex layout cannot strand the separator from the location.
+    ? <span>{dateText}{dateText && workingLocation ? " · " : null}{workingLocation ? <span className="agenda-working-location"><WorkingLocationIcon type={workingLocation.workingLocationType} />{workingLocation.title}</span> : null}</span>
     : undefined;
   return <ContextSection
     sectionRef={agendaRef}
