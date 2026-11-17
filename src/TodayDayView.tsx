@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useState, type CSSProperties, type RefObject } from "react";
 import { HOUR_HEIGHT, eventDayBounds, occursOnDay, startOfLocalDay } from "./calendarTime";
+import { formatClockTime } from "./agendaEvents";
 import { DayTimeGrid, type DayGridEventDecoration, type DayGridPreview, type DayGridShade } from "./DayTimeGrid";
 import type { ScheduleEvent } from "./domain";
 import { isWorkingLocation } from "./WorkingLocation";
@@ -61,9 +62,9 @@ export function hiddenEvents(spans: GridSpan[], scrollTop: number, viewportHeigh
   return result;
 }
 
-const clockFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+/** A time on the grid, written as Today writes times ("7:00 pm"). */
 function clockLabel(minutes: number): string {
-  return clockFormat.format(new Date(2000, 0, 1, Math.floor(minutes / 60), minutes % 60));
+  return formatClockTime(new Date(2000, 0, 1, Math.floor(minutes / 60), minutes % 60));
 }
 
 /**
