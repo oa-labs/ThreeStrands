@@ -428,6 +428,10 @@ impl Database {
                 "{} WHERE thread_id=?1 AND status IN ('open','in_progress') ORDER BY created_at,id LIMIT 1",
                 select_sql()
             ))?;
+            let mut completed = c.prepare(
+                "SELECT EXISTS(SELECT 1 FROM tasks WHERE thread_id=?1 AND status='completed'
+                 AND source_message_id=(SELECT id FROM messages WHERE thread_id=?1 ORDER BY sent_at DESC,id DESC LIMIT 1))",
+            )?;
             let mut candidates = Vec::new();
             for thread in &page.threads {
                 let sender = thread.participants.first().cloned();
@@ -435,6 +439,11 @@ impl Database {
                 let task = open
                     .query_row([&thread.id], task_from_row)
                     .optional()?;
+                // Completing work from the current message settles this suggestion,
+                // while a later message can offer new work. The star remains untouched.
+                if task.is_none() && completed.query_row([&thread.id], |row| row.get::<_, bool>(0))? {
+                    continue;
+                }
                 let mut out = match task {
                     Some(task) => {
                         let mut out = task_candidate(&task, PlanCandidateReason::Starred, &goals)?;

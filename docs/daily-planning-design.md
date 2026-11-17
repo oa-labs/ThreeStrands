@@ -252,7 +252,9 @@ unfinished work from an earlier day.
 The Choose step offers individual sources through a tab list with arrow-key
 navigation. Every candidate is a card, and chosen items are marked. Today's
 Planning Inbox combines these sources into All, Tasks, Emails, and Contacts;
-planned items lead the list, and scheduled or finished items leave the inbox.
+planned items lead the list, and scheduled or finished items leave the active
+list. Finished tasks appear in a separate Completed card, with checked boxes
+to reopen them; its history comes from saved task and note-task completions.
 
 | Source | Candidates | Adding to the plan |
 | --- | --- | --- |
@@ -326,8 +328,9 @@ with minimum column widths and the responsive agenda fallback described below.
 The inbox uses All, Tasks, Emails, and Contacts filters over one list. Active,
 unscheduled plan items lead, followed by an interleaved set of tasks, emails, and
 contacts. Plan and candidate identities merge, including tasks linked from starred
-conversations. Completed items remain in Review Today; scheduled items live on the
-calendar. Note and goal tasks belong under Tasks, including tasks in today’s note;
+conversations. Completed tasks have a separate, reopenable Completed card and
+remain available in Review Today; scheduled items live on the calendar.
+Note and goal tasks belong under Tasks, including tasks in today’s note;
 square checklists remain note-local. Secondary actions are in each card’s menu.
 Contact bookings carry a private `sourcePlanKey` alongside task bookings’ existing
 source identity, so calendar refresh, Undo, and restart preserve inbox membership.
@@ -345,7 +348,10 @@ note and preparation after opening a source. Today’s inbox is never replaced.
 - **Planning inbox (left):** four filters and a matching count, with one card per
   active unscheduled item. Schedule is the primary action; plan edits, promise
   conversion, and dismissal remain in the card’s secondary menu. Pagination and
-  refresh retain the current filter and expanded list.
+  refresh retain the current filter and expanded list. Task and email suggestions
+  have Done checkboxes. Starred mail first uses the task form; promises create an
+  action task linked to the exact sent message. Completion preserves email flags
+  and settles the current message, while a later message can offer new work.
 - **Schedule (right):** today’s time grid. Tomorrow appears in Review Today.
 - **Mail signal:** under Day Details, invitations by name and counts of reply-needed
   and other unread mail, with Open Inbox. Its collapse state remains device-local.

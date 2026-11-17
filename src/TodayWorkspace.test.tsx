@@ -108,6 +108,7 @@ describe("TodayWorkspace", () => {
     clearScheduleCache();
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listNoteTasks").mockResolvedValue([]);
     vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([]);
     vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([]);
     vi.spyOn(mailClient, "dailyPlan").mockImplementation(async (date) => emptyPlan(date));
@@ -315,14 +316,80 @@ describe("TodayWorkspace", () => {
       expect(inbox().queryByRole("heading", { name: /Overdue|Due Today|Open Tasks/ })).not.toBeInTheDocument();
     });
 
-    it("checks a task off and removes it from the active planning inbox", async () => {
+    it("checks a task off into Completed and reopens it from there", async () => {
       vi.mocked(mailClient.listTasks).mockResolvedValue([task("now", { dueKind: "date", dueValue: localDate(0) })]);
-      const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue(task("now", { status: "completed", dueKind: "date", dueValue: localDate(0) }));
+      const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (_id, status) => task("now", { status, completedAt: status === "completed" ? new Date().toISOString() : null }));
       const { onTasksChanged } = renderToday();
       fireEvent.click(await screen.findByRole("checkbox", { name: "Mark Task now Done" }));
       await waitFor(() => expect(setTaskStatus).toHaveBeenCalledWith("now", "completed"));
       expect(screen.queryByRole("checkbox", { name: "Mark Task now Done" })).not.toBeInTheDocument();
+      const completed = within(screen.getByRole("region", { name: "Completed" }));
+      expect(completed.getByRole("checkbox", { name: "Mark Task now Not Done" })).toBeChecked();
+      expect(inbox().getByLabelText("0 unscheduled items")).toHaveTextContent("0");
+      fireEvent.click(completed.getByRole("checkbox", { name: "Mark Task now Not Done" }));
+      await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("now", "open"));
+      expect(await screen.findByRole("checkbox", { name: "Mark Task now Done" })).not.toBeChecked();
       expect(onTasksChanged).toHaveBeenCalled();
+    });
+
+    it("retains today's saved completions after refreshing and reopening Today, with ordinary tasks scoped to the account", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([
+        task("finished", { status: "completed", completedAt: new Date().toISOString() }),
+        task("old", { status: "completed", completedAt: daysFromNow(-1) }),
+        task("other-account", { accountId: "other@example.com", status: "completed", completedAt: new Date().toISOString() }),
+        task("cancelled", { status: "cancelled", completedAt: new Date().toISOString() }),
+      ]);
+      vi.mocked(mailClient.listNoteTasks).mockResolvedValue([{ id: "note:n:m1", markerId: "m1", noteId: "n", noteTitle: "Project Notes", title: "Finished note task", checked: true, completedAt: new Date().toISOString(), updatedAt: "r1", conflicted: false }]);
+      const onOpenNote = vi.fn();
+      const { rerenderToday, onEditTask } = renderToday({ onOpenNote });
+      const completed = within(await screen.findByRole("region", { name: "Completed" }));
+      expect(await completed.findByRole("checkbox", { name: "Mark Task finished Not Done" })).toBeChecked();
+      expect(completed.getByRole("checkbox", { name: "Mark Finished note task Not Done" })).toBeChecked();
+      expect(completed.queryByText(/Task old|Task other-account|Task cancelled/)).not.toBeInTheDocument();
+      expect(inbox().getByLabelText("0 unscheduled items")).toHaveTextContent("0");
+      fireEvent.click(completed.getByRole("button", { name: "Task finished" }));
+      expect(onEditTask).toHaveBeenCalledWith(expect.objectContaining({ id: "finished", status: "completed" }));
+      fireEvent.click(completed.getByRole("button", { name: /^Finished note task/ }));
+      expect(onOpenNote).toHaveBeenCalledWith("n");
+      rerenderToday({ taskRefreshKey: 1 });
+      expect(completed.getByRole("checkbox", { name: "Mark Task finished Not Done" })).toBeChecked();
+      cleanup(); renderToday();
+      expect(await screen.findByRole("checkbox", { name: "Mark Task finished Not Done" })).toBeChecked();
+      expect(await screen.findByRole("checkbox", { name: "Mark Finished note task Not Done" })).toBeChecked();
+    });
+
+    it("moves a note task into Completed and back with guarded note writes", async () => {
+      let checked = false;
+      let revision = "r1";
+      const reference = { version: 1 as const, kind: "task" as const, id: "m1", note: "n" };
+      vi.mocked(mailClient.listNoteTasks).mockImplementation(async () => [{ id: "note:n:m1", markerId: "m1", noteId: "n", noteTitle: "Project Notes", title: "Prepare proposal", checked, completedAt: checked ? new Date().toISOString() : null, updatedAt: revision, conflicted: false }]);
+      vi.mocked(mailClient.planSources).mockImplementation(async (_date, source) => ({ next: null, candidates: source === "notes" && !checked ? [{
+        key: planItemKey(reference), title: "Prepare proposal", reason: "noteTask", detail: "Project Notes", accountId: null, due: null, taskId: "note:n:m1", threadId: null,
+        contactId: null, goal: null, plannedDays: [], openTasks: null, planned: false, action: { kind: "link", addition: { kind: "link", reference, label: "Prepare proposal" } },
+      }] : [] }));
+      vi.spyOn(mailClient, "getNote").mockImplementation(async () => note("n", revision));
+      const patch = vi.spyOn(mailClient, "patchNoteItem").mockImplementation(async (_note, _marker, _version, next) => {
+        checked = next!; revision = checked ? "r2" : "r3"; return note("n", revision);
+      });
+      renderToday();
+      const complete = await screen.findByRole("checkbox", { name: "Mark Prepare proposal Done" }); complete.focus(); fireEvent.click(complete);
+      const reopen = await screen.findByRole("checkbox", { name: "Mark Prepare proposal Not Done" });
+      expect(reopen).toBeChecked(); expect(reopen).toHaveFocus();
+      expect(patch).toHaveBeenLastCalledWith("n", "m1", "r1", true, undefined);
+      expect(screen.queryByRole("checkbox", { name: "Mark Prepare proposal Done" })).not.toBeInTheDocument();
+      fireEvent.click(reopen);
+      expect(await screen.findByRole("checkbox", { name: "Mark Prepare proposal Done" })).not.toBeChecked();
+      expect(patch).toHaveBeenLastCalledWith("n", "m1", "r2", false, undefined);
+    });
+
+    it("keeps a task active when completing it fails", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([task("keep")]);
+      vi.spyOn(mailClient, "setTaskStatus").mockRejectedValue(new Error("Could not save completion"));
+      renderToday();
+      fireEvent.click(await screen.findByRole("checkbox", { name: "Mark Task keep Done" }));
+      await screen.findByText("Could not save completion");
+      expect(screen.getByRole("checkbox", { name: "Mark Task keep Done" })).not.toBeChecked();
+      expect(screen.queryByRole("region", { name: "Completed" })).not.toBeInTheDocument();
     });
 
     it("lists only people who are due or overdue, and opens their contact", async () => {
@@ -367,6 +434,23 @@ describe("TodayWorkspace", () => {
       thread: todayThread(`thread-${id}`, { subject: "ArtBrew report", accountId: "you@example.com" }),
       messageId: id, sentAt: "2026-10-22T10:00:00Z", recipients: ["Jill Hart <jill@example.org>"],
       excerpt: "I'll reconnect your server, run the report and send it over", ...overrides,
+    });
+
+    it("marks a promise done as a linked completed action task without opening the editor", async () => {
+      const suggestion = promise("p1", { excerpt: "Send the report" });
+      vi.mocked(mailClient.listOpenPromises).mockResolvedValue([suggestion]);
+      const created = task("promise-task", { threadId: suggestion.thread.id, sourceMessageId: "p1", title: suggestion.excerpt });
+      const create = vi.spyOn(mailClient, "createTask").mockResolvedValue(created);
+      const complete = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue({ ...created, status: "completed", completedAt: new Date().toISOString() });
+      const { onEditTask } = renderToday(); chooseSource("Emails");
+      const checkbox = await screen.findByRole("checkbox", { name: "Mark Send the report Done" }); checkbox.focus(); fireEvent.click(checkbox); fireEvent.click(checkbox);
+      expect(await screen.findByRole("checkbox", { name: "Mark Send the report Not Done" })).toBeChecked();
+      expect(create).toHaveBeenCalledOnce();
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ sourceMessageId: "p1", threadId: suggestion.thread.id, kind: "action" }));
+      expect(complete).toHaveBeenCalledExactlyOnceWith(created.id, "completed");
+      expect(onEditTask).not.toHaveBeenCalled();
+      expect(screen.getByRole("region", { name: "Completed" })).toHaveTextContent("Send the report");
+      expect(screen.queryByRole("checkbox", { name: "Mark Send the report Done" })).not.toBeInTheDocument();
     });
 
     it("lists promises still waiting on you and opens the conversation", async () => {
@@ -486,11 +570,21 @@ describe("TodayWorkspace", () => {
       await within(screen.getByRole("group", { name: "Day view" })).findByText(/Review the contract/);
       const cards = inbox().getAllByRole("article");
       expect(cards.map((card) => within(card).getByRole("button", { name: /^(Draft|Sam)/ }).textContent)).toEqual([expect.stringContaining("Draft the memo"), expect.stringContaining("Sam Ortiz")]);
-      expect(inbox().queryByText("Send the deck")).not.toBeInTheDocument();
+      expect(within(screen.getByRole("region", { name: "Completed" })).getByText("Send the deck")).toBeInTheDocument();
       expect(inbox().queryByText("Review the contract")).not.toBeInTheDocument();
       expect(within(cards[0]).getByText("Note")).toBeInTheDocument();
       expect(within(cards[1]).queryByRole("checkbox")).not.toBeInTheDocument();
       expect(screen.getByText("1 of 4 planned done", { selector: ".today-plan-progress" })).toBeInTheDocument();
+    });
+
+    it("deduplicates a completed planned task against its completion history and never treats cancelled work as completed", async () => {
+      withPlan([planItem("done", { state: "done", title: "Finished once" }), planItem("cancelled", { state: "cancelled", title: "Cancelled work" })]);
+      vi.mocked(mailClient.listTasks).mockResolvedValue([task("done", { title: "Finished once", status: "completed", completedAt: new Date().toISOString() })]);
+      renderToday();
+      const completed = within(await screen.findByRole("region", { name: "Completed" }));
+      expect(completed.getAllByRole("checkbox")).toHaveLength(1);
+      expect(completed.getByRole("checkbox", { name: "Mark Finished once Not Done" })).toBeChecked();
+      expect(inbox().queryByText("Cancelled work")).not.toBeInTheDocument();
     });
 
     it("keeps an empty plan out of the inbox and offers Plan Today without a progress line", async () => {
@@ -514,7 +608,7 @@ describe("TodayWorkspace", () => {
       fireEvent.click(screen.getByRole("checkbox", { name: "Mark Draft the memo Done" }));
       await waitFor(() => expect(patch).toHaveBeenCalledWith("note-7", "m1", "v7", true, undefined));
       expect(onTasksChanged).toHaveBeenCalledTimes(2);
-      expect(screen.queryByRole("checkbox", { name: "Mark Send the deck Not Done" })).not.toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Mark Send the deck Not Done" })).toBeChecked();
     });
 
     it("opens a note task's note, a check-in's contact, and a task for editing", async () => {
@@ -695,6 +789,49 @@ describe("TodayWorkspace", () => {
         return queue.length > 1 ? queue.shift()! : queue[0];
       });
     };
+
+    it("marks starred work done after the task form saves, without booking time or adding it to the plan", async () => {
+      serve("starredMail", [{ next: null, candidates: [candidate("conversation", { title: "Review proposal", threadId: "thread", action: { kind: "taskForm", threadId: "thread", accountId: "you@example.com" } })] }, { next: null, candidates: [] }]);
+      const created = task("email-task", { title: "Review proposal", threadId: "thread", sourceMessageId: "message" });
+      const onCreateTask = vi.fn().mockResolvedValue(created);
+      const complete = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue({ ...created, status: "completed", completedAt: new Date().toISOString() });
+      const add = vi.spyOn(mailClient, "addToDailyPlan");
+      const book = vi.spyOn(mailClient, "createCalendarEvent");
+      renderToday({ onCreateTask }); chooseSource("Emails");
+      fireEvent.click(await screen.findByRole("checkbox", { name: "Mark Review proposal Done" }));
+      expect(await screen.findByRole("checkbox", { name: "Mark Review proposal Not Done" })).toBeChecked();
+      expect(onCreateTask).toHaveBeenCalledExactlyOnceWith({ kind: "conversation", threadId: "thread", accountId: "you@example.com" });
+      expect(complete).toHaveBeenCalledExactlyOnceWith(created.id, "completed");
+      expect(add).not.toHaveBeenCalled(); expect(book).not.toHaveBeenCalled();
+      expect(screen.queryByRole("checkbox", { name: "Mark Review proposal Done" })).not.toBeInTheDocument();
+    });
+
+    it("leaves a starred suggestion active on task-form Cancel and prevents another action while it is pending", async () => {
+      serve("starredMail", [{ next: null, candidates: [candidate("conversation", { title: "Review proposal", threadId: "thread", action: { kind: "taskForm", threadId: "thread", accountId: "you@example.com" } })] }]);
+      let finish!: (task: ThreadTask | null) => void;
+      const onCreateTask = vi.fn(() => new Promise<ThreadTask | null>((resolve) => { finish = resolve; }));
+      const complete = vi.spyOn(mailClient, "setTaskStatus");
+      renderToday({ onCreateTask }); chooseSource("Emails");
+      const checkbox = await screen.findByRole("checkbox", { name: "Mark Review proposal Done" });
+      fireEvent.click(checkbox); fireEvent.click(checkbox);
+      expect(onCreateTask).toHaveBeenCalledOnce(); expect(checkbox).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Schedule: Review proposal" })).toBeDisabled();
+      await act(async () => finish(null));
+      expect(checkbox).toBeEnabled(); expect(checkbox).not.toBeChecked();
+      expect(complete).not.toHaveBeenCalled();
+      expect(screen.queryByRole("region", { name: "Completed" })).not.toBeInTheDocument();
+    });
+
+    it("does not claim email work is completed when the task status cannot save", async () => {
+      serve("starredMail", [{ next: null, candidates: [candidate("conversation", { title: "Review proposal", threadId: "thread", action: { kind: "taskForm", threadId: "thread", accountId: "you@example.com" } })] }]);
+      const onNotice = vi.fn();
+      vi.spyOn(mailClient, "setTaskStatus").mockRejectedValue(new Error("Completion failed"));
+      renderToday({ onCreateTask: vi.fn().mockResolvedValue(task("created")), onNotice }); chooseSource("Emails");
+      fireEvent.click(await screen.findByRole("checkbox", { name: "Mark Review proposal Done" }));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "Completion failed" }));
+      expect(screen.queryByRole("region", { name: "Completed" })).not.toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Mark Review proposal Done" })).not.toBeChecked();
+    });
 
     it("reads starred mail for All and places conversations with existing tasks under Tasks", async () => {
       const sources = serve("starredMail", [{ next: null, candidates: [candidate("with-task", { title: "Contract review", taskId: "t1", threadId: "th1", detail: "Contract thread" }), candidate("planned", { title: "Already planned", planned: true, threadId: "th2" })] }]);
@@ -935,7 +1072,7 @@ describe("TodayWorkspace", () => {
       expect(inbox().queryByText("Ada Lovelace")).not.toBeInTheDocument();
       chooseSource("Contacts"); expect(inbox().getByText("Ada Lovelace")).toBeInTheDocument();
       cleanup(); vi.mocked(mailClient.listKeepInTouch).mockResolvedValue([]); renderToday();
-      await inbox().findByText("Nothing to schedule here.");
+      await inbox().findByText("You're up to date with all keep in touch contact goals");
       expect(inbox().queryByRole("article")).not.toBeInTheDocument();
     });
 
@@ -1071,6 +1208,11 @@ describe("TodayWorkspace", () => {
 
       const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
       const hidden: string[] = [];
+      const clipping: string[] = [];
+      css.walkRules((rule) => rule.walkDecls("overflow", (declaration) => {
+        if (rule.selectors.includes(".today-time") || rule.selectors.includes(".today-work")) clipping.push(`${rule.selector}:${declaration.value}`);
+      }));
+      expect(clipping).toEqual([".today-time:hidden"]);
       css.walkAtRules("container", (rule) => {
         if (!rule.params.startsWith("today ")) return;
         rule.walkRules((inner) => inner.walkDecls("display", (declaration) => { hidden.push(`${inner.selector}:${declaration.value}`); }));

@@ -1993,7 +1993,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     ...demoSignatureClient,
     ...demoNotes,
-    ...createDemoPlans({ tasks: () => tasks, goals: () => goals, contacts: () => client.listContactProfiles("", 5000), notes: demoNotes, threads: () => threads, events: connectedEvents, promises: (accountId) => client.listOpenPromises(accountId) }),
+    ...createDemoPlans({ tasks: () => tasks, goals: () => goals, contacts: () => client.listContactProfiles("", 5000), notes: demoNotes, threads: () => threads, latestMessageId: (id) => { const thread = threads.find((candidate) => candidate.id === id); return thread ? messagesFor(thread).at(-1)?.id ?? null : null; }, events: connectedEvents, promises: (accountId) => client.listOpenPromises(accountId) }),
     ...createDemoMeetings({
       events: connectedEvents,
       threads: () => threads,

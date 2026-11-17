@@ -41,6 +41,7 @@ import type { WorkingHours } from "./todayInsights";
 import { usePlanSourcePage } from "./usePlanSourcePage";
 import type { TaskFormRequest } from "./useTaskActions";
 import { useDailyPlan } from "./useDailyPlan";
+import { useTodayCompletedNotes } from "./useTodayCompletedNotes";
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
 import { isFinished, itemBlock, carriedLabel, linkKey, planProgress, type PlanCandidate, type PlanDragSource, type PlanSource } from "./TodayPlan";
 import { PlanningInbox, uniqueInboxEntries, interleaveInboxCategories, type InboxCategory, type InboxEntry, type InboxFilter } from "./PlanningInbox";
@@ -158,6 +159,7 @@ function TodayLayout({
   }, []);
 
   const pageRef = useRef<HTMLElement>(null);
+  const planDate = todayTarget(now).date;
   const accountRef = useRef(accountId);
   accountRef.current = accountId;
   const loadVersion = useRef(0);
@@ -171,7 +173,7 @@ function TodayLayout({
   const [announcement, setAnnouncement] = useState("");
   const [reconnect, setReconnect] = useState<ContactProfile[]>([]);
   const [promises, setPromises] = useState<OpenPromise[]>([]);
-  // Tasks completed today, for the evening view's Done when today has no plan to review.
+  // Saved completion history is shared by the inbox and evening review.
   const [completedToday, setCompletedToday] = useState<ThreadTask[]>([]);
   const [dayClosedState, setDayClosed] = useState(false);
   const [dismissed, setDismissed] = useState(readDismissedPromises);
@@ -196,23 +198,20 @@ function TodayLayout({
     else setMailError(errorMessage(mailResult.reason));
     if (taskResult.status === "fulfilled") {
       setTasks(taskResult.value.filter((task) => isActiveTaskStatus(task.status)).sort(compareTasksForDisplay));
-      const today = startOfLocalDay(new Date()).getTime();
-      setCompletedToday(taskResult.value.filter((task) => task.status === "completed" && task.completedAt && startOfLocalDay(new Date(task.completedAt)).getTime() === today));
+      setCompletedToday(taskResult.value.filter((task) => task.status === "completed" && task.completedAt && todayTarget(new Date(task.completedAt)).date === planDate));
     }
     if (contactResult.status === "fulfilled") setReconnect(contactResult.value.filter((profile) => isKeepInTouchDue(profile))
       .sort((left, right) => (left.keepInTouchDueAt ?? "").localeCompare(right.keepInTouchDueAt ?? "")));
     if (promiseResult.status === "fulfilled") setPromises(promiseResult.value);
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
-  }, [accountId]);
+  }, [accountId, planDate]);
   const cancelLoads = useCallback(() => { loadVersion.current++; }, []);
   useEffect(() => {
     void load().catch(logBackgroundFailure("Today refresh"));
     return cancelLoads;
   }, [load, refreshKey, taskRefreshKey, cancelLoads]);
 
-  // The plan date is today's, read once per day rather than per render.
-  const planDate = todayTarget(now).date;
   const { plan, error: planError, reload: reloadPlan } = useDailyPlan(planDate, `${refreshKey}:${taskRefreshKey}`);
 
   const reloadSchedule = schedule?.refresh;
@@ -240,7 +239,7 @@ function TodayLayout({
   const planWriteFailed = (reason: unknown) => notice({ message: errorMessage(reason), action: openNoteAction });
 
   /** The existing Make a Task flow: an action task from the promise, opened for editing. */
-  const trackPromise = async (promise: OpenPromise): Promise<ThreadTask | null> => {
+  const trackPromise = async (promise: OpenPromise, edit = true): Promise<ThreadTask | null> => {
     try {
       const created = await mailClient.createTask({
         accountId: promise.thread.accountId,
@@ -256,7 +255,7 @@ function TodayLayout({
       setTasks((current) => [...(current ?? []).filter((task) => task.id !== created.id), created].sort(compareTasksForDisplay));
       setAnnouncement(`Task added: ${created.title}`);
       onTasksChanged();
-      onEditTask(created);
+      if (edit) onEditTask(created);
       return created;
     } catch (reason) {
       setAnnouncement(errorMessage(reason));
@@ -264,14 +263,19 @@ function TodayLayout({
     }
   };
 
-  // Checking a task off keeps its row in place, struck through, until Today is read again.
+  const applyTaskUpdate = (updated: ThreadTask) => {
+    setTasks((current) => [...(current ?? []).filter((candidate) => candidate.id !== updated.id), updated].sort(compareTasksForDisplay));
+    setCompletedToday((current) => [...current.filter((candidate) => candidate.id !== updated.id), ...(updated.status === "completed" ? [updated] : [])]);
+  };
+  // Successful completion moves the task to Completed, where it can be reopened.
   const toggleDone = async (task: ThreadTask) => {
     const done = isActiveTaskStatus(task.status);
     try {
       const updated = await mailClient.setTaskStatus(task.id, done ? "completed" : "open");
-      setTasks((current) => current?.map((candidate) => candidate.id === task.id ? updated : candidate) ?? null);
+      applyTaskUpdate(updated);
       setAnnouncement(`${done ? "Completed" : "Reopened"}: ${task.title}`);
       onTasksChanged();
+      void reloadPlan();
     } catch (reason) {
       setAnnouncement(errorMessage(reason));
     }
@@ -451,7 +455,7 @@ function TodayLayout({
         await changeNoteItem(note.noteId, note.markerId, expected, { checked: !finished });
       } else if (item.taskId) {
         const updated = await mailClient.setTaskStatus(item.taskId, finished ? "open" : "completed");
-        setTasks((current) => current?.map((candidate) => candidate.id === updated.id ? updated : candidate) ?? null);
+        applyTaskUpdate(updated);
       }
       setAnnouncement(`${finished ? "Reopened" : "Completed"}: ${item.title}`);
       onTasksChanged();
@@ -549,6 +553,7 @@ function TodayLayout({
   const inboxRefreshKey = `${refreshKey}:${taskRefreshKey}:${plan?.revision ?? ""}:${inboxRevision}`;
   const starredPage = usePlanSourcePage(planDate, evening ? null : "starredMail", accountId, inboxRefreshKey, true);
   const notesPage = usePlanSourcePage(planDate, evening ? null : "notes", null, inboxRefreshKey, true);
+  const completedNotes = useTodayCompletedNotes(planDate, inboxRefreshKey);
   const createForPlan = async (request: TaskFormRequest) => {
     if (!onCreateTask) return null;
     const created = await onCreateTask(request);
@@ -556,6 +561,25 @@ function TodayLayout({
     return created;
   };
   const taskResolution = (task: Pick<ThreadTask, "id" | "title" | "accountId">) => ({ addition: { kind: "link" as const, reference: taskReference(task.id), label: task.title }, block: { title: task.title, sourceTaskId: task.id, accountId: task.accountId, sourcePlanKey: planItemKey(taskReference(task.id)) }, title: task.title });
+  const completingEmails = useRef(new Set<string>());
+  const [busyEmails, setBusyEmails] = useState(new Set<string>());
+  const completeEmail = async (key: string, resolve: () => Promise<{ taskId: string } | null>) => {
+    if (completingEmails.current.has(key)) return;
+    completingEmails.current.add(key); setBusyEmails(new Set(completingEmails.current));
+    try {
+      const resolved = await resolve();
+      if (!resolved) return;
+      const updated = await mailClient.setTaskStatus(resolved.taskId, "completed");
+      applyTaskUpdate(updated);
+      starredPage.remove(key);
+      setAnnouncement(`Completed: ${updated.title}`);
+      onTasksChanged(); setInboxRevision((value) => value + 1);
+    } catch (reason) {
+      notice({ message: errorMessage(reason) });
+    } finally {
+      completingEmails.current.delete(key); setBusyEmails(new Set(completingEmails.current));
+    }
+  };
   const openCandidateTask = async (taskId: string) => {
     const parts = noteTaskParts(taskId);
     if (parts) { onOpenNote?.(parts.noteId); return; }
@@ -683,25 +707,28 @@ function TodayLayout({
   const scheduled = (key: string | null, taskId?: string | null) => todaysEvents.some((event) => !isDeclined(event) && (
     (key !== null && event.sourcePlanKey === key) || (taskId && linkKey(event.sourceTaskId) === linkKey(taskId))
   ));
-  const plannedEntries: InboxEntry[] = (plan?.items ?? []).filter((item) => !isFinished(item) && !scheduled(item.key, item.taskId)).map((item) => {
+  const completedIds = new Set([...completedToday.map((task) => task.id), ...completedNotes.tasks.map((task) => task.id)]);
+  const planEntry = (item: DailyPlanItem): InboxEntry => {
+    const done = item.state === "done";
     const checkable = item.taskId && ["task", "noteTask", "newTask"].includes(item.kind) && item.state !== "unavailable";
     const usable = item.state !== "unavailable" && item.kind !== "text";
     const source = { id: `plan:${item.key}`, title: item.title, kind: "item" as const, item };
     return {
-      id: source.id, identities: identities(item.key, item.taskId), category: item.kind === "contact" ? "contacts" : "tasks", title: item.title,
-      source: usable ? source : null, schedule: usable ? () => bookNext(itemBlock(item)) : undefined,
+      id: source.id, identities: identities(item.key, item.taskId), category: item.kind === "contact" ? "contacts" : done && completedToday.some((task) => task.id === item.taskId && task.threadId) ? "emails" : "tasks", title: item.title,
+      source: usable && !done ? source : null, schedule: usable && !done ? () => bookNext(itemBlock(item)) : undefined,
       actions: [{ label: "Remove from Today's Plan", onSelect: () => void removeItem(item) }],
       row: {
         rowKey: source.id, wrapTitle: true, className: "context-task today-plan-card",
-        control: checkable ? <input type="checkbox" className="context-task-checkbox" checked={false} aria-label={`Mark ${item.title} Done`} onChange={() => void togglePlanItem(item)} /> : undefined,
+        control: checkable ? <input type="checkbox" className="context-task-checkbox" checked={done} aria-label={`Mark ${item.title} ${done ? "Not Done" : "Done"}`} onChange={() => void togglePlanItem(item)} /> : undefined,
         icon: item.kind === "contact" ? <ContactRound size={ICON_SIZE.sm} /> : item.kind === "noteTask" || item.kind === "newTask" ? <NotebookPen size={ICON_SIZE.sm} /> : undefined,
         detail: [item.state === "unavailable" ? "Unavailable on this device" : item.kind === "noteTask" || item.kind === "newTask" ? "Note" : (accountId === null || item.accountId !== accountId) ? item.accountId : null, item.goal?.title, carriedLabel(item.carryCount ?? 0)].filter(Boolean).join(" · ") || undefined,
         onActivate: item.kind === "text" ? undefined : () => void activatePlanItem(item),
       },
     };
-  });
+  };
+  const plannedEntries = (plan?.items ?? []).filter((item) => !isFinished(item) && !completedIds.has(item.taskId ?? "") && !scheduled(item.key, item.taskId)).map(planEntry);
   const candidateEntry = (candidate: PlanCandidate, category: InboxCategory, actions: InboxEntry["actions"] = []): InboxEntry | null => {
-    if (scheduled(candidate.planKey, candidate.taskId)) return null;
+    if (completedIds.has(candidate.taskId ?? "") || scheduled(candidate.planKey, candidate.taskId)) return null;
     const planItem = (plan?.items ?? []).find((item) => item.key === candidate.planKey || (item.taskId && item.taskId === candidate.taskId));
     if (planItem && isFinished(planItem)) return null;
     const keys = identities(candidate.planKey, candidate.taskId);
@@ -712,30 +739,61 @@ function TodayLayout({
       actions: [...(!planItem && !candidate.inPlan ? [{ label: "Add to Today's Plan", onSelect: () => void addCandidate(candidate) }] : []), ...actions],
     };
   };
+  const setNoteTaskDone = async (taskId: string | null | undefined, title: string, checked: boolean) => {
+    const parts = noteTaskParts(taskId ?? null);
+    if (!parts) return;
+    try {
+      const note = await mailClient.getNote(parts.noteId);
+      if (!note) throw new Error("That note isn't on this device");
+      await changeNoteItem(parts.noteId, parts.markerId, note.updatedAt, { checked });
+      setAnnouncement(`${checked ? "Completed" : "Reopened"}: ${title}`);
+      onTasksChanged(); setInboxRevision((value) => value + 1);
+    } catch (reason) { notice({ message: errorMessage(reason) }); }
+  };
   const noteCandidates = pageCandidates(notesPage, "notes").map((candidate) => ({ ...candidate, row: {
     ...candidate.row,
-    control: <input type="checkbox" className="context-task-checkbox" checked={false} aria-label={`Mark ${candidate.title} Done`} onChange={() => void (async () => {
-      const parts = noteTaskParts(candidate.taskId ?? null);
-      if (!parts) return;
-      try {
-        const note = await mailClient.getNote(parts.noteId);
-        if (!note) throw new Error("That note isn't on this device");
-        await changeNoteItem(parts.noteId, parts.markerId, note.updatedAt, { checked: true });
-        onTasksChanged(); setInboxRevision((value) => value + 1);
-      } catch (reason) { notice({ message: errorMessage(reason) }); }
-    })()} />,
+    control: <input type="checkbox" className="context-task-checkbox" checked={false} aria-label={`Mark ${candidate.title} Done`} onChange={() => void setNoteTaskDone(candidate.taskId, candidate.title, true)} />,
   } }));
   const candidates: (InboxEntry | null)[] = [
     ...tasks.filter((task) => isActiveTaskStatus(task.status) && (accountId === null || task.accountId === accountId)).map((task) => candidateEntry(taskCandidate(task), "tasks")),
     ...noteCandidates.map((candidate) => candidateEntry(candidate, "tasks")),
-    ...pageCandidates(starredPage, "starredMail").map((candidate) => candidateEntry(candidate, candidate.taskId ? "tasks" : "emails")),
-    ...openPromises.filter((promise) => accountId === null || promise.thread.accountId === accountId).map((promise) => candidateEntry(promiseCandidate(promise), "emails", [
+    ...pageCandidates(starredPage, "starredMail").map((candidate) => {
+      const entry = candidateEntry(candidate, candidate.taskId ? "tasks" : "emails");
+      if (!entry || candidate.taskId) return entry;
+      const key = candidate.planKey ?? candidate.id;
+      return { ...entry, busy: busyEmails.has(key), row: { ...entry.row, control: <input type="checkbox" className="context-task-checkbox" checked={false} disabled={busyEmails.has(key)} aria-label={`Mark ${candidate.title} Done`} onChange={() => void completeEmail(key, async () => {
+        const resolved = await candidate.resolve();
+        return resolved?.block.sourceTaskId ? { taskId: resolved.block.sourceTaskId } : null;
+      })} /> } };
+    }),
+    ...openPromises.filter((promise) => accountId === null || promise.thread.accountId === accountId).map((promise) => {
+      const candidate = promiseCandidate(promise);
+      candidate.row = { ...candidate.row, control: <input type="checkbox" className="context-task-checkbox" checked={false} disabled={busyEmails.has(candidate.id)} aria-label={`Mark ${candidate.title} Done`} onChange={() => void completeEmail(candidate.id, async () => {
+        const created = await trackPromise(promise, false);
+        return created ? { taskId: created.id } : null;
+      })} /> };
+      const entry = candidateEntry(candidate, "emails", [
       { label: "Make a Task", onSelect: () => void trackPromise(promise) },
       { label: "Dismiss", onSelect: () => setDismissed(dismissPromise(promise.messageId)) },
-    ])),
+      ]);
+      return entry ? { ...entry, busy: busyEmails.has(candidate.id) } : null;
+    }),
     ...reconnect.map((profile) => candidateEntry(contactCandidate(profile), "contacts")),
   ];
   const inboxEntries = uniqueInboxEntries([...plannedEntries, ...interleaveInboxCategories(candidates.filter((entry): entry is InboxEntry => entry !== null))]);
+  const completedEntries = uniqueInboxEntries([
+    ...(plan?.items ?? []).filter((item) => item.state === "done").map(planEntry),
+    ...completedToday.filter((task) => accountId === null || task.accountId === accountId).map((task): InboxEntry => ({
+      id: `task:${task.id}`, identities: identities(planItemKey(taskReference(task.id)), task.id), category: task.threadId ? "emails" : "tasks", title: task.title, source: null, actions: [],
+      row: { wrapTitle: true, onActivate: () => onEditTask(task), detail: accountId === null ? task.accountId : undefined,
+        control: <input type="checkbox" className="context-task-checkbox" checked aria-label={`Mark ${task.title} Not Done`} onChange={() => void toggleDone(task)} /> },
+    })),
+    ...completedNotes.tasks.map((task): InboxEntry => ({
+      id: task.id, identities: identities(planItemKey({ version: 1, kind: "task", id: task.markerId, note: task.noteId }), task.id), category: "tasks", title: task.title, source: null, actions: [],
+      row: { wrapTitle: true, detail: task.noteTitle, onActivate: () => onOpenNote?.(task.noteId),
+        control: <input type="checkbox" className="context-task-checkbox" checked aria-label={`Mark ${task.title} Not Done`} onChange={() => void setNoteTaskDone(task.id, task.title, false)} /> },
+    })),
+  ]);
   const inboxPages = (filter: InboxFilter) => filter === "contacts" ? [] : filter === "emails" ? [starredPage] : filter === "tasks" ? [notesPage, starredPage] : [notesPage, starredPage];
   const inboxUnavailable = (filter: InboxFilter) => Boolean(planError
     || ((filter === "all" || filter === "tasks") && sourceErrors.tasks)
@@ -757,7 +815,7 @@ function TodayLayout({
   const openCompletedTask = (task: PlanCompletedTask) => { if (task.noteId) onOpenNote?.(task.noteId); else void openCandidateTask(task.taskId); };
 
   return <section ref={pageRef} className="today-workspace" aria-label="Today" aria-busy={pull.refreshing}>
-    <div className="today-page">
+    <div className={`today-page${evening ? "" : " today-page-planning"}`}>
     <PullToRefreshStatus {...pull} />
     <header className="today-header">
       {backdrop ? <TodayBackdrop view={view} now={now} /> : null}
@@ -801,7 +859,7 @@ function TodayLayout({
         onMakeTask={(promise) => void trackPromise(promise)} onDismissPromise={(promise) => setDismissed(dismissPromise(promise.messageId))}
         onClosedChange={setDayClosed} />
       : <div className="today-column today-work">
-        <PlanningInbox entries={inboxEntries} scope={scope} status={inboxStatus} unavailable={inboxUnavailable}
+        <PlanningInbox entries={inboxEntries} completed={completedEntries} completedError={completedNotes.error} scope={scope} status={inboxStatus} unavailable={inboxUnavailable}
           loading={(filter) => loadingSources || inboxPages(filter).some((page) => page.loading)}
           hasMore={(filter) => inboxPages(filter).some((page) => Boolean(page.next))}
           onLoadMore={(filter) => { for (const page of inboxPages(filter)) if (page.next) void page.loadMore(); }} drag={drag} />

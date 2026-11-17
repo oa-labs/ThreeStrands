@@ -270,6 +270,71 @@ fn starred_mail_offers_a_conversations_open_task_or_the_task_form() {
 }
 
 #[test]
+fn completing_a_starred_messages_work_keeps_the_star_and_allows_work_from_a_later_message() {
+    let db = database();
+    clear_seed_threads(&db);
+    db.adopt_account(ME).unwrap();
+    let mut original = message(
+        "starred-work",
+        "follow-up",
+        "2026-11-14T09:00:00Z",
+        "Please review",
+    );
+    original.labels = vec!["INBOX".into(), "STARRED".into()];
+    db.upsert_thread(ME, std::slice::from_ref(&original))
+        .unwrap();
+    let thread_id = page(&db, PlanSource::StarredMail, Some(ME), None).candidates[0]
+        .thread_id
+        .clone()
+        .unwrap();
+    let message_id = db.message_ids_for_thread(&thread_id).unwrap().remove(0);
+    let work = task(
+        &db,
+        ME,
+        "Review the proposal",
+        serde_json::json!({"threadId": thread_id, "sourceMessageId": message_id, "subjectSnapshot": "Proposal follow-up"}),
+    );
+    db.set_task_status(&work.id, "completed", "user").unwrap();
+    assert!(page(&db, PlanSource::StarredMail, Some(ME), None)
+        .candidates
+        .is_empty());
+    let starred = db.list_starred_page(Some(ME), 0, 10).unwrap();
+    assert_eq!(starred.threads.len(), 1);
+    assert!(!starred.threads[0].archived);
+    assert_eq!(
+        db.message_ids_for_thread(&thread_id).unwrap(),
+        vec![message_id]
+    );
+
+    // Reopening the task offers that existing work, without creating another task.
+    db.set_task_status(&work.id, "open", "user").unwrap();
+    assert_eq!(
+        page(&db, PlanSource::StarredMail, Some(ME), None).candidates[0]
+            .task_id
+            .as_deref(),
+        Some(work.id.as_str())
+    );
+    db.set_task_status(&work.id, "cancelled", "user").unwrap();
+    assert!(matches!(
+        page(&db, PlanSource::StarredMail, Some(ME), None).candidates[0].action,
+        PlanCandidateAction::TaskForm { .. }
+    ));
+    db.set_task_status(&work.id, "completed", "user").unwrap();
+    let mut later = message(
+        "new-work",
+        "follow-up",
+        "2026-11-15T09:00:00Z",
+        "One more question",
+    );
+    later.labels = vec!["INBOX".into()];
+    db.upsert_thread(ME, &[original, later]).unwrap();
+    assert!(matches!(
+        page(&db, PlanSource::StarredMail, Some(ME), None).candidates[0].action,
+        PlanCandidateAction::TaskForm { .. }
+    ));
+}
+
+#[test]
 fn goals_list_current_goals_with_open_tasks_and_planned_days_in_the_period() {
     let db = database();
     db.adopt_account(ME).unwrap();

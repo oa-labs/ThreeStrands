@@ -11,7 +11,7 @@ Click **Today** in the sidebar or press <kbd>0</kbd>. To start there every time,
 
 <ts-shot scene="today" alt="Today with the day's plan and its sources on the left and a time grid of today on the right."></ts-shot>
 
-Today has two columns: a **Planning Inbox** of cards on the left, and a larger **Today’s Schedule** on the right. **Day Details** reveals the mail and meeting summaries when you want them. In the evening, Today turns into a [review of the day](#review-your-day) with tomorrow on the right.
+Today has two columns: a **Planning Inbox** of cards on the left, and a larger **Today’s Schedule** on the right. They fill the space below the header, with the schedule scrolling inside its card. **Day Details** reveals the mail and meeting summaries when you want them. In the evening, Today turns into a [review of the day](#review-your-day) with tomorrow on the right.
 
 ## Read Your Day {#read-your-day}
 
@@ -41,9 +41,10 @@ The header shows **Day closed** when every finished meeting has been reviewed or
 
 ## Plan Your Day {#plan-your-day}
 
-The **Planning Inbox** is one list of active, unscheduled items. Items you chose for today appear first; other tasks, emails, and contacts follow. An item appears once even when it is both planned and offered by another source. Scheduled work appears on the calendar, and completed work stays available in **Review Today**.
+The **Planning Inbox** is one list of active, unscheduled items. Items you chose for today appear first; other tasks, emails, and contacts follow. An item appears once even when it is both planned and offered by another source. Scheduled work appears on the calendar. Finished tasks appear in a separate **Completed** card, with checked boxes to reopen them. The card includes today's saved task and note-task completions, so refreshing or reopening Today keeps the history.
 
-- Check a task off on its card. Click a card to open its task, note, conversation, or contact.
+- Check a task off on its card. **Completed** appears under **All** and **Tasks**; **Emails** shows completed email tasks. Click a card to open its task, note, conversation, or contact.
+- Check an email suggestion off to record its work as completed. A starred conversation opens the task form first; **Cancel** leaves it alone. A promise creates a task linked to its sent message and completes that task. Neither flow changes the email's read, star, or archive state, adds it to the plan, or books time. Completed work from the current message stops being suggested, and a later message can offer new work.
 - The **Schedule** icon reserves the next free half hour today, on the quarter hour, within your working hours (the **Default** profile in **Settings → Availability → Profiles**) and around meetings. If no half hour is left, Today says so; if the calendar couldn't be read, free time is unknown. **Undo** removes the block and returns the item to the inbox.
 - The card’s **⋯** menu holds secondary actions: **Add to Today's Plan**, **Remove from Today's Plan**, or, for a promise, **Make a Task** and **Dismiss**. Removing an item from the plan keeps its source task, email, or contact.
 
@@ -72,7 +73,7 @@ Use four filters above the list:
 - **Emails** includes starred conversations and promises not yet turned into tasks. A conversation that already has an open task appears under **Tasks**. Scheduling a starred conversation opens its task form first; **Cancel** writes nothing and books no time.
 - **Contacts** includes people due for a check-in.
 
-The count follows the active filter. A plus means more items can be read with **Show More**. Arrow keys, Home, and End move between filters, and Today remembers your choice. Refresh preserves the chosen filter and expanded list.
+The count follows the active filter and counts only unscheduled items. **Completed** has its own count. A plus means more items can be read with **Show More**. Arrow keys, Home, and End move between filters, and Today remembers your choice. Refresh preserves the chosen filter and expanded list.
 
 Drag a card onto the schedule to reserve half an hour at that time, including outside working hours when you choose to. Scheduling also adds the item to today’s plan. A contact card books a check-in, without creating a task. If the plan can't be changed, the time stays booked, and **Open Note** lets you resolve the note. **Schedule** offers the same booking flow from the keyboard.
 

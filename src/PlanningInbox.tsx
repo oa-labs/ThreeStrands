@@ -1,6 +1,6 @@
 import { CalendarClock } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
-import { ContextRow } from "./ContextSections";
+import { ContextRow, ContextSection } from "./ContextSections";
 import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
@@ -25,6 +25,7 @@ export type InboxEntry = {
   source: PlanDragSource | null;
   schedule?(): Promise<unknown> | void;
   actions: MoreAction[];
+  busy?: boolean;
 };
 
 /** Planned entries lead. Every source after them contributes only new identities. */
@@ -55,8 +56,10 @@ function initialFilter(): InboxFilter {
   return readLocalStorage(INBOX_FILTER_KEY, (raw) => FILTERS.some((filter) => filter.id === raw) ? raw as InboxFilter : fallback, fallback);
 }
 
-export function PlanningInbox({ entries, scope, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
+export function PlanningInbox({ entries, completed = [], completedError, scope, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
   entries: InboxEntry[];
+  completed?: InboxEntry[];
+  completedError?: string | null;
   scope?: string;
   status(filter: InboxFilter): ReactNode;
   unavailable?(filter: InboxFilter): boolean;
@@ -74,11 +77,26 @@ export function PlanningInbox({ entries, scope, status, unavailable = () => fals
   const [busyEntries, setBusyEntries] = useState(new Set<string>());
   const [actionError, setActionError] = useState<string | null>(null);
   const restore = useRef<{ id: string; index: number; trigger: HTMLButtonElement } | null>(null);
+  const completionFocus = useRef<{ key: string; trigger: HTMLInputElement } | null>(null);
   const items = entries.filter((entry) => filter === "all" || entry.category === filter);
   const busy = loading(filter);
   const more = hasMore(filter);
   const noun = items.length === 1 ? "item" : "items";
   const count = items.length <= limit + 1 ? items.length : limit;
+  const completedItems = completed.filter((entry) => filter === "all" || filter === "tasks" || entry.category === filter);
+  const showCompleted = filter !== "contacts";
+  const rowKey = (entry: InboxEntry) => entry.identities.find((identity) => identity.startsWith("task:")) ?? entry.id;
+  useLayoutEffect(() => {
+    const request = completionFocus.current;
+    if (!request || request.trigger.isConnected) return;
+    completionFocus.current = null;
+    if (document.activeElement !== document.body) return;
+    const row = [...(panel.current?.querySelectorAll<HTMLElement>("[data-row-key]") ?? [])].find((element) => element.dataset.rowKey === request.key && !element.closest("[hidden]"));
+    const target = row?.querySelector<HTMLInputElement>('input[type="checkbox"]')
+      ?? panel.current?.querySelector<HTMLButtonElement>(".today-completed-card .context-section-toggle")
+      ?? tabs.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]');
+    target?.focus();
+  }, [entries, completed, filter]);
   useLayoutEffect(() => {
     const request = restore.current;
     if (!request || items.some((entry) => entry.id === request.id)) return;
@@ -91,7 +109,7 @@ export function PlanningInbox({ entries, scope, status, unavailable = () => fals
     target?.focus();
   }, [items]);
   const schedule = async (entry: InboxEntry, index: number, trigger: HTMLButtonElement) => {
-    if (pending.current.has(entry.id)) return;
+    if (entry.busy || pending.current.has(entry.id)) return;
     restore.current = { id: entry.id, index, trigger };
     pending.current.add(entry.id); setBusyEntries(new Set(pending.current)); setActionError(null);
     try { await entry.schedule?.(); }
@@ -119,22 +137,31 @@ export function PlanningInbox({ entries, scope, status, unavailable = () => fals
       {FILTERS.map((choice) => <button key={choice.id} type="button" className="planning-inbox-tab" role="tab" id={`${id}-${choice.id}`} data-filter={choice.id}
         aria-selected={filter === choice.id} aria-controls={`${id}-items`} tabIndex={filter === choice.id ? 0 : -1} onClick={() => select(choice.id)}>{choice.label}</button>)}
     </div>
-    <div ref={panel} role="tabpanel" id={`${id}-items`} aria-labelledby={`${id}-${filter}`} aria-busy={busy}>
+    <div ref={panel} role="tabpanel" id={`${id}-items`} aria-labelledby={`${id}-${filter}`} aria-busy={busy} onChangeCapture={(event) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement && target.type === "checkbox" && document.activeElement === target) {
+        const key = target.closest<HTMLElement>("[data-row-key]")?.dataset.rowKey;
+        if (key) completionFocus.current = { key, trigger: target };
+      }
+    }}>
       {status(filter)}
       {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
-      {!items.length && !unavailable(filter) ? <p className="context-status">{busy ? "Reading planning items…" : "Nothing to schedule here."}</p> : null}
-      {items.slice(0, count).map((entry, index) => <ContextRow {...entry.row} key={entry.id} as="article" title={entry.title}
+      {!items.length && !unavailable(filter) && (busy || !more) ? <p className="context-status">{busy ? "Reading planning items…" : filter === "contacts" ? "You're up to date with all keep in touch contact goals" : "Nothing to schedule here."}</p> : null}
+      {items.slice(0, count).map((entry, index) => <ContextRow {...entry.row} key={entry.id} as="article" title={entry.title} rowKey={rowKey(entry)}
         className={[entry.row.className, "today-inbox-card"].filter(Boolean).join(" ")}
         onActivate={entry.row.onActivate ? () => { if (!drag.clickSuppressed()) entry.row.onActivate?.(); } : undefined}
-        onPointerDown={entry.source ? (event) => { if (!pending.current.has(entry.id) && entry.source) drag.startDrag(entry.source, event); } : undefined}
+        onPointerDown={entry.source ? (event) => { if (!entry.busy && !pending.current.has(entry.id) && entry.source) drag.startDrag(entry.source, event); } : undefined}
         actions={[
-          ...(entry.schedule ? [<button key="schedule" type="button" className="btn-icon btn-icon-sm" aria-label={`Schedule: ${entry.title}`} title="Schedule the next free half hour" disabled={busyEntries.has(entry.id)} onClick={(event) => void schedule(entry, index, event.currentTarget)}><CalendarClock size={ICON_SIZE.sm} /></button>] : []),
-          ...(entry.actions.length ? [<MoreActionsMenu key="more" compact label={`Actions for ${entry.title}`} actions={entry.actions.map((action) => ({ ...action, disabled: busyEntries.has(entry.id) || action.disabled }))} />] : []),
+          ...(entry.schedule ? [<button key="schedule" type="button" className="btn-icon btn-icon-sm" aria-label={`Schedule: ${entry.title}`} title="Schedule the next free half hour" disabled={entry.busy || busyEntries.has(entry.id)} onClick={(event) => void schedule(entry, index, event.currentTarget)}><CalendarClock size={ICON_SIZE.sm} /></button>] : []),
+          ...(entry.actions.length ? [<MoreActionsMenu key="more" compact label={`Actions for ${entry.title}`} actions={entry.actions.map((action) => ({ ...action, disabled: entry.busy || busyEntries.has(entry.id) || action.disabled }))} />] : []),
         ]} />)}
       {count < items.length || more ? <button type="button" className="btn-link context-link-button" disabled={busy} onClick={() => {
         if (count < items.length) setLimit((value) => value + INBOX_PAGE_SIZE);
         else onLoadMore(filter);
       }}>Show More</button> : null}
+      {showCompleted && (completedItems.length || (filter !== "emails" && completedError)) ? <ContextSection id="today-completed" title="Completed" className="today-completed-card" count={completedItems.length}
+        status={filter !== "emails" && completedError ? <p className="form-error" role="alert">Completed note tasks: {completedError}</p> : undefined}
+        rows={completedItems.map((entry) => <ContextRow {...entry.row} key={entry.id} as="div" title={entry.title} rowKey={rowKey(entry)} className="context-task context-task-done" />)} /> : null}
     </div>
   </section>;
 }

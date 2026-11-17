@@ -26,6 +26,7 @@ type Sources = {
   contacts(): ContactProfile[] | Promise<ContactProfile[]>;
   notes: Pick<MailClient, "getDailyNote" | "saveDailyNote" | "getNote" | "listNoteTasks">;
   threads?(): Thread[];
+  latestMessageId?(threadId: string): string | null;
   events?(): ScheduleEvent[];
   promises?(accountId?: string): Promise<OpenPromise[]>;
   now?(): Date;
@@ -251,6 +252,7 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
         all = open.map((task) => forTask(task, dueReason(task) ?? (task.status === "in_progress" ? "inProgress" : "open")));
       } else if (source === "starredMail") {
         all = (sources.threads?.() ?? []).filter((thread) => thread.starred && !thread.trashed && !thread.labels.includes("SPAM") && inScope(thread.accountId))
+          .filter((thread) => open.some((task) => task.threadId === thread.id) || !sources.tasks().some((task) => task.threadId === thread.id && task.status === "completed" && task.sourceMessageId && task.sourceMessageId === sources.latestMessageId?.(thread.id)))
           .sort((a, b) => Date.parse(b.lastReceivedAt) - Date.parse(a.lastReceivedAt))
           .map((thread) => {
             const task = open.find((candidate) => candidate.threadId === thread.id);
