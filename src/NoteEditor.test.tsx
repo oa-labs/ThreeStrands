@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { NoteEditor, linkMenuItems, type NoteEditorHandle } from "./NoteEditor";
 import { noteLinkTarget, openNoteLink } from "./noteLinks";
 import type { NoteSyntaxMode } from "./noteSyntaxMode";
@@ -46,6 +46,8 @@ function fakeFiles() {
   } satisfies NoteFiles;
 }
 
+const TASK_ID = "4ec77948-4813-5e64-93f9-c660ae48947f";
+
 /** Markdown that must come back unchanged after loading and saving. */
 const ROUND_TRIP: Record<string, string> = {
   headings: "# One\n\n## Two\n\nText under.\n",
@@ -53,6 +55,16 @@ const ROUND_TRIP: Record<string, string> = {
   "ordered list": "1. one\n2. two\n",
   "round task list": "- ( ) todo\n- (x) done\n",
   "persisted round task": "- ( ) Proposal <!-- threestrands-task:4ec77948-4813-5e64-93f9-c660ae48947f -->\n",
+  "carried plain item": "- Free text <!-- threestrands-plan:carried 2026-11-16 -->\n",
+  "carried link item": "- [Report](https://example.com/x) <!-- threestrands-plan:carried 2026-11-16 -->\n",
+  "dropped item": "- Gone <!-- threestrands-plan:dropped -->\n",
+  "task id then plan marker": `- ( ) Proposal <!-- threestrands-task:${TASK_ID} --> <!-- threestrands-plan:carried 2026-11-16 -->\n`,
+  "plan marker then task id": `- ( ) Proposal <!-- threestrands-plan:deferred 2026-11-20 --> <!-- threestrands-task:${TASK_ID} -->\n`,
+  "follow-through marker": "- Follow-through 2026-11-16: [Sync](https://example.com/s) <!-- threestrands-follow-through -->\n  - Send notes\n",
+  "plan section": "## Plan\n\n- [A](https://example.com/a) <!-- threestrands-plan:carried 2026-11-16 -->\n  - nested\n- Plain\n- ( ) Mine\n\n### Not today\n\n- B <!-- threestrands-plan:deferred 2026-11-20 -->\n- C <!-- threestrands-plan:dropped -->\n",
+  "ordered plan item": "1. One <!-- threestrands-plan:carried 2026-11-16 -->\n2. Two\n",
+  "malformed plan marker": "- Free <!-- threestrands-plan:carried tomorrow -->\n",
+  "plan marker in fence": "```\n- x <!-- threestrands-plan:dropped -->\n```\n",
   "compact checklists": "- [] Milk\n",
   "compact round tasks": "- () Send mail\n",
   "uppercase checked items": "- [X] Checklist\n- (X) Task\n",
@@ -92,6 +104,49 @@ describe("NoteEditor", () => {
     expect(box.querySelector("[data-html-comment]")).toBeInTheDocument();
     expect(box.textContent).not.toContain(id);
     expect(ref.current!.markdown()).toBe(source);
+  });
+
+  describe.each(["hide", "hybrid", "show"] as const)("inert plan markers in %s mode", (mode) => {
+    const carried = "<!-- threestrands-plan:carried 2026-11-16 -->";
+    it.each([
+      ["a plain item", `- Free text ${carried}\n`],
+      ["a link item", `- [Report](https://example.com/x) ${carried}\n`],
+      ["a dropped item", "- Gone <!-- threestrands-plan:dropped -->\n"],
+      ["a task id then plan marker", `- ( ) Proposal <!-- threestrands-task:${TASK_ID} --> ${carried}\n`],
+      ["an ordered item", `1. First ${carried}\n2. Second\n`],
+      ["a follow-through section line", "- Follow-through 2026-11-16: [Sync](https://example.com/s) <!-- threestrands-follow-through -->\n"],
+    ])("hides the marker on %s and saves it byte for byte", async (_name, source) => {
+      const { box, ref, onChange } = await editorFor(source, { mode });
+      expect(box.textContent).not.toContain("threestrands-");
+      expect(box.textContent).not.toContain("<!--");
+      // The rest of the line is parsed, not shown as one unparsed run.
+      if (source.includes("](")) expect(box.querySelector("a.md-link")).not.toBeNull();
+      expect(ref.current!.markdown()).toBe(source);
+      expect(onChange).not.toHaveBeenCalled();
+    });
+    it("keeps the marker on its item when the item's text is edited", async () => {
+      const { box, ref } = await editorFor(`- Free text ${carried}\n- Other\n`, { mode });
+      const node = box.querySelector(".list-content p")?.firstChild;
+      if (!(node instanceof Text)) throw new Error("No item text");
+      await act(async () => { node.data = "Edited text"; await new Promise((resolve) => setTimeout(resolve, 20)); });
+      expect(ref.current!.markdown()).toBe(`- Edited text ${carried}\n- Other\n`);
+    });
+    it("still finds a task whose id sits in a hidden marker run", async () => {
+      const { box, ref } = await editorFor(`- First\n- ( ) Proposal <!-- threestrands-task:${TASK_ID} --> ${carried}\n`, { mode });
+      // jsdom has no layout; scrolling to the new selection measures it.
+      Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => Object.assign([], { item: () => null }) });
+      Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect() });
+      onTestFinished(() => { delete (Range.prototype as { getClientRects?: unknown }).getClientRects; delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect; });
+      act(() => ref.current!.revealTask(TASK_ID));
+      const items = box.querySelectorAll(".list-content");
+      await waitFor(() => expect(items[1].contains(document.getSelection()?.anchorNode ?? null)).toBe(true));
+    });
+    it("leaves a malformed marker and one inside a fence as authored content", async () => {
+      const source = "- Free <!-- threestrands-plan:carried tomorrow -->\n\n```\n- x <!-- threestrands-plan:dropped -->\n```\n";
+      const { box, ref } = await editorFor(source, { mode });
+      expect(box.textContent).toContain("threestrands-plan:dropped");
+      expect(ref.current!.markdown()).toBe(source);
+    });
   });
 
   it("prevents internal reference links from navigating on a middle click", async () => {

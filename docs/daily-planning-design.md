@@ -11,7 +11,7 @@ rules (`src/data/demoPlans.ts`). Stage 2's reshaped Today is listed under
 `save_daily_plan` and its receipts and Undo, under
 [As built (stage 3)](#as-built-stage-3), and stage 4's evening view and optional
 backdrop under [As built (stage 4)](#as-built-stage-4). The editor's marker
-handling remains. See also [As built (stage 1)](#as-built-stage-1).
+handling is built too, as noted under stage 4. See also [As built (stage 1)](#as-built-stage-1).
 **Baseline:** 0.210.0 repository, reviewed 2026-11-16.
 **Priority:** Part of the daily loop in the [product plan](../PLAN.MD#connected-workflow-additions),
 interleaved with [meeting preparation](meeting-preparation-design.md).
@@ -794,6 +794,18 @@ device-local input.
 - **No Prep Needed** and **No Follow-through** are device-local, as the meeting
   design specifies. The mail signal's collapsed state is a per-device preference.
 - None of these become replicated entities or settings-export fields.
+
+- **Marker handling in the note editor.** `toEditorMarkdown` and
+  `fromEditorMarkdown` (`src/noteEntities.ts`) hide the trailing inert comments
+  of any list item (plan decisions, task ids, and the follow-through marker) by
+  moving them onto an indented block comment, which the editor draws as nothing
+  in every syntax mode, and folding them back on save. Only a validated run of
+  markers, each after a single space at the end of a live list item (outside
+  code, quotes, and open comments), moves; anything else stays authored
+  content. Saving also takes back the blank lines the editor adds between the
+  items of a list holding a hidden block, so an untouched note saves byte for
+  byte, and a note saved by the previous release's editor, which showed the
+  markers inline, loads and saves unchanged.
 
 ## Native and client contracts
 

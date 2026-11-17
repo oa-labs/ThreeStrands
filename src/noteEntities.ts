@@ -96,7 +96,10 @@ function indentationColumns(line: string): number {
 /** Source-range scanner for the editor adapter. Never rewrites a whole body
  * with a regex: fenced/indented code, quotes and comments remain literal.
  * Native owns durable ids and projection; shared fixtures keep the grammar aligned. */
-export function noteItemRanges(body: string) {
+export function noteItemRanges(body: string) { return scanListItems(body).items; }
+function scanListItems(body: string) {
+  /** Every list item line the scanner treats as live, task or not. */
+  const lines: { start: number; end: number; prefix: string; bullet: string }[] = [];
   const found: { start: number; end: number; markerStart: number; markerEnd: number; textStart: number; task: boolean; checked: boolean; bullet: string; prefix: string; id?: string }[] = [];
   let offset = 0, fence: { ch: string; size: number } | null = null, comment = false;
   let listIndent: number | null = null;
@@ -115,6 +118,7 @@ export function noteItemRanges(body: string) {
     if (text && indent === 0 && !list) listIndent = null;
     if (code) { offset += piece.length; continue; }
     if (list) listIndent = indent;
+    if (list && !comment) lines.push({ start: offset, end: offset + line.length, prefix: list[0], bullet: list[2] });
     if (list && !comment) {
       const at = list[0].length, rest = line.slice(at);
       const marker = /^(\((?: |x|X)?\)|\[(?: |x|X)?\])([ \t]+)(.+)$/.exec(rest);
@@ -133,24 +137,41 @@ export function noteItemRanges(body: string) {
     }
     offset += piece.length;
   }
-  return found;
+  return { items: found, lines };
 }
+const MARKER_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const MARKER_DATE = "\\d{4}-\\d{2}-\\d{2}";
+/** One inert metadata comment the app writes at the end of a list item: a task
+ * id, a plan decision (`daily_plan.rs`), or the follow-through section marker
+ * (`meeting_follow_through.rs`). Anything else stays authored content. */
+const MARKER = `<!-- (?:threestrands-task:${MARKER_UUID}|threestrands-plan:(?:carried ${MARKER_DATE}|deferred ${MARKER_DATE}|dropped)|threestrands-follow-through) -->`;
+const markerSuffix = new RegExp(`((?: ${MARKER})+)$`, "i");
+const markerBlock = new RegExp(`^(?:\\r?\\n)[ \\t]*(?:\\r?\\n[ \\t]*)?(${MARKER}(?: ${MARKER})*)(?=[ \\t]*(?:\\r?\\n|$))`, "i");
+const planDate = (run: string) => [...run.matchAll(new RegExp(`threestrands-plan:\\w+ (${MARKER_DATE})`, "gi"))].every((m) => !Number.isNaN(Date.parse(`${m[1]}T00:00:00Z`)));
+const endsWithMarker = (line: string) => markerSuffix.test(line) && planDate(markerSuffix.exec(line)![1]);
+
 /** Meowdown's + [ ] round tasks are an editor representation. The persisted
  * grammar is ( ); standard Markdown [ ] remains a square checklist. */
 export function toEditorMarkdown(body: string): string {
+  // Inert metadata comments trailing a list item (task id, plan decision,
+  // follow-through marker) move onto their own indented line: a block comment
+  // is an invisible atom in meowdown, while an inline comment would show as
+  // prose and stop the rest of the line from rendering. The move is reversible
+  // by `fromEditorMarkdown`; only an exactly spaced, validated run moves.
+  for (const item of scanListItems(body).lines.reverse()) {
+    const line = body.slice(item.start, item.end);
+    let run = markerSuffix.exec(line);
+    if (run && !planDate(run[1])) run = null;
+    // Legacy leniency: a lone task id after any spacing was always hidden.
+    const lone = new RegExp(`[ \\t]*<!-- threestrands-task:${MARKER_UUID} -->$`, "i").exec(line);
+    const at = run && !/[ \t]/.test(line[run.index - 1] ?? " ") ? run.index : lone && !run ? lone.index : -1;
+    const text = at < 0 ? "" : line.slice(item.prefix.length, at).replace(/^(?:\((?: |x|X)?\)|\[(?: |x|X)?\])[ \t]*/, "");
+    if (at < 0 || !text.trim()) continue;
+    const indent = item.prefix.replace(/[^ \t]/g, " ");
+    body = body.slice(0, item.start + at) + `\n\n${indent}${line.slice(at).trim()}` + body.slice(item.end);
+  }
   for (const item of noteItemRanges(body).reverse()) {
     const state = item.checked ? "x" : " ";
-    // A block comment is an invisible atom in meowdown; an inline comment
-    // would expose the durable task id as prose. Keep this view transform
-    // reversible, including metadata retained on converted checklists.
-    if (item.id) {
-      const line = body.slice(item.start, item.end);
-      const anchor = /[ \t]*<!-- threestrands-task:[^\n]* -->$/.exec(line);
-      if (anchor) {
-        const indent = /^\s*/.exec(item.prefix)![0];
-        body = body.slice(0, item.start + anchor.index) + `\n\n${indent}  ${anchor[0].trim()}` + body.slice(item.end);
-      }
-    }
     if (item.task) body = body.slice(0, item.start) + item.prefix.replace(item.bullet, "+") + `[${state}]` + body.slice(item.markerEnd);
     else {
       body = body.slice(0, item.markerStart) + `[${state}]` + body.slice(item.markerEnd);
@@ -159,15 +180,38 @@ export function toEditorMarkdown(body: string): string {
   }
   return body;
 }
+/** A list item with a metadata block holds two blocks, so the editor writes
+ * its whole list loose (a blank line between every item). Once the blocks are
+ * folded back, take those blank lines out again where the saved note had none
+ * between the same items, so an untouched note saves byte for byte. */
+function restoreTightLists(body: string, original: string): string {
+  const gaps = (text: string) => {
+    const lines = scanListItems(text).lines;
+    return { lines, gaps: lines.slice(1).map((next, i) => text.slice(lines[i].end, next.start)) };
+  };
+  const now = gaps(body), before = gaps(original);
+  const aligned = now.lines.length === before.lines.length;
+  const originalBlank = before.gaps.some((gap) => /^\r?\n(?:[ \t]*\r?\n)+$/.test(gap));
+  for (let i = now.gaps.length - 1; i >= 0; i--) {
+    if (!/^\r?\n(?:[ \t]*\r?\n)+$/.test(now.gaps[i])) continue;
+    const tight = aligned ? /^\r?\n$/.test(before.gaps[i]) : !originalBlank;
+    if (!tight) continue;
+    const break_ = /^\r?\n/.exec(now.gaps[i])![0];
+    body = body.slice(0, now.lines[i].end) + break_ + body.slice(now.lines[i + 1].start);
+  }
+  return body;
+}
 export function fromEditorMarkdown(body: string, original = ""): string {
   // Fold only a validated, adjacent metadata block belonging to a list
   // item. Other comments remain authored content.
-  for (const item of noteItemRanges(body).reverse()) {
-    if (item.id) continue;
+  let folded = false;
+  for (const item of scanListItems(body).lines.reverse()) {
+    if (endsWithMarker(body.slice(item.start, item.end))) continue;
     const following = body.slice(item.end);
-    const anchor = /^(?:\r?\n)[ \t]*(?:\r?\n[ \t]*)?<!-- threestrands-task:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) -->/i.exec(following);
-    if (anchor) body = body.slice(0, item.end) + ` <!-- threestrands-task:${anchor[1]} -->` + following.slice(anchor[0].length);
+    const block = markerBlock.exec(following);
+    if (block && planDate(block[1])) { body = body.slice(0, item.end) + ` ${block[1]}` + following.slice(block[0].length); folded = true; }
   }
+  if (folded) body = restoreTightLists(body, original);
   const source = noteItemRanges(original);
   const originalText = (item: ReturnType<typeof noteItemRanges>[number], value: string) => value.slice(item.textStart, item.end).replace(/<!--.*?-->/g, "").trim();
   const ranges = noteItemRanges(body);
