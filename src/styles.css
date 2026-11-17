@@ -3839,7 +3839,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-work .context-status { color: var(--secondary); font-size: var(--text-secondary); }
 .today-work .context-status .btn-link, .today-work .context-link-button { font-size: inherit; }
 .today-source-fallback .context-section { padding-top: 0; }
-/* Selected source: the underline marks the active tab, as the app's other tab strips do. */
+/* Selected source: an accent underline marks the active tab; Mail's tabs mark it by weight alone, which is too faint here among dot separators. */
 .today-source-tabs .mailbox-tab { padding-block: var(--space-0-5); border-bottom: 2px solid transparent; }
 .today-source-tabs .mailbox-tab.active { border-bottom-color: var(--accent); }
 /* A row's actions line up with its title line, not the whole row, and the title line leaves them room. */
