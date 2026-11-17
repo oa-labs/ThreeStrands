@@ -30,6 +30,8 @@ export type DayGridEventDecoration = {
   description?: string | null;
   /** A small decorative mark before the title. */
   mark?: ReactNode;
+  /** A sibling control, never nested inside the event button. */
+  action?: ReactNode;
   /** Names the event for commands that act on the one in focus (`data-row-key`). */
   rowKey?: string;
   /** Shown as linked to something outside the grid, such as the card a block was booked for. */
@@ -122,9 +124,10 @@ export function DayTimeGrid({
   const gridId = useId();
   const decorate = (event: ScheduleEvent, id: string) => {
     const decoration = eventDecoration?.(event);
-    if (!decoration) return { attributes: {}, mark: null, description: null };
+    if (!decoration) return { attributes: {}, mark: null, action: null, description: null };
     const descriptionId = decoration.description ? `${gridId}-${id}` : undefined;
     return {
+      action: decoration.action,
       attributes: {
         "aria-describedby": descriptionId,
         "data-row-key": decoration.rowKey,
@@ -194,10 +197,10 @@ export function DayTimeGrid({
                   style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
                 />
               ))}
-              {allDayByDay[index].map((event, eventIndex) => { const decoration = decorate(event, `all-day-${index}-${eventIndex}`); return (<Fragment key={`${event.accountId}:${event.calendarId}:${event.id}`}>
+              {allDayByDay[index].map((event, eventIndex) => { const decoration = decorate(event, `all-day-${index}-${eventIndex}`); return (<div className="calendar-all-day-entry" key={`${event.accountId}:${event.calendarId}:${event.id}`}>
                 <button
                   type="button"
-                  className="calendar-all-day-event"
+                  className={`calendar-all-day-event${decoration.action ? " calendar-event-has-action" : ""}`}
                   {...decoration.attributes}
                   data-calendar-event-trigger
                   data-response-status={event.responseStatus ?? undefined}
@@ -209,8 +212,9 @@ export function DayTimeGrid({
                 >
                   {decoration.mark}{event.title}{event.location?.trim() ? `, ${event.location.trim()}` : ""}
                 </button>
+                {decoration.action ? <span className="calendar-all-day-action">{decoration.action}</span> : null}
                 {decoration.description}
-              </Fragment>); })}
+              </div>); })}
             </div>
           ))}
         </div>
@@ -274,7 +278,7 @@ export function DayTimeGrid({
                   <Fragment key={`${event.accountId}:${event.calendarId}:${event.id}`}>
                   <button
                     type="button"
-                    className={className}
+                    className={`${className}${decoration.action ? " calendar-event-has-action" : ""}`}
                     {...decoration.attributes}
                     data-calendar-event-trigger
                     data-layer={layer}
@@ -295,6 +299,7 @@ export function DayTimeGrid({
                     {durationMinutes > 30 ? <span>{formatEventTime(event)}{location && !separateLocation ? ` · ${location}` : ""}</span> : null}
                     {durationMinutes > 30 && location && separateLocation ? <span>{location}</span> : null}
                   </button>
+                  {decoration.action ? <div className="calendar-event-action" style={{ top: startMinutes / 60 * HOUR_HEIGHT, left: `${box.left * 100}%`, width: `${box.width * 100}%` }}>{decoration.action}</div> : null}
                   {decoration.description}
                   </Fragment>
                 );

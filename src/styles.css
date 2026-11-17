@@ -3752,21 +3752,39 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .calendar-week-days, .calendar-week-all-day, .calendar-week-grid { grid-template-columns: 72px repeat(var(--calendar-day-count, 7), minmax(0, 1fr)); }
 .calendar-week-controls { flex-wrap: wrap; justify-content: flex-end; }
 .calendar-visible-range { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-meta); }
-/* Today: the plan (or a meeting's preparation) beside a day view of today, under a page header.
+/* Today: a planning inbox beside today's schedule, under a compact page header.
    Below Today's breakpoint the agenda list takes the day view's place and the columns stack. */
 .app-shell.today-open { grid-template-columns: 58px minmax(0, 1fr); }
 .today-workspace { grid-column: 2; min-width: 0; min-height: 0; overflow: auto; background: var(--background); }
-/* Wide windows center the page so the three columns stay a readable width. */
-.today-page { width: 100%; max-width: 1400px; margin-inline: auto; container: today / inline-size; }
+/* Keep the planning inbox readable and give the schedule most of the page. */
+.today-page { width: 100%; max-width: 1600px; margin-inline: auto; container: today / inline-size; }
 .today-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: var(--space-4); padding: var(--pane-header-padding); border-bottom: 1px solid var(--border); }
-.today-header h1 { margin: var(--space-1) 0 0; font-size: var(--text-page-title); }
+.today-header h1 { margin: var(--space-2) 0 0; font-size: var(--text-page-title); }
+.today-intro { margin: var(--space-2) 0 0; color: var(--secondary); font-size: var(--text-body); }
+.today-details { flex-basis: 100%; }
+.today-details[hidden] { display: none; }
+.today-panel-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-4); }
+.today-panel-heading h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--text-pane-title); }
+.today-work, .today-time { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+.today-work { padding: 0 var(--space-3) var(--space-3); }
+.today-work .today-panel-heading { padding-inline: var(--space-1); }
+.today-work .today-sources { margin-top: 0; }
+.today-work .today-source-bar { flex-wrap: wrap; margin-left: 0; }
+.today-work .today-source-tabs { flex-wrap: wrap; overflow: visible; }
+.today-work .today-source-tabs .mailbox-tab + .mailbox-tab::before { content: none; }
+.today-work .today-source-tabs .mailbox-tab { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: var(--text-meta); }
+.today-work .today-source-tabs .mailbox-tab.active { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--accent); }
+.today-work .today-inbox-card, .today-work .today-plan-card { margin-block: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); }
+.today-work .context-row-title { font-size: var(--text-body); }
+.today-work .context-row-detail, .today-work .context-row-date { font-size: var(--text-meta); }
+.today-time > .today-day-view { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 .today-day-shape { margin: var(--space-1) 0 0; color: var(--secondary); font-size: var(--text-body); }
 .today-shared-meetings { color: var(--accent); }
 .today-next { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
 .today-routines { margin-left: auto; min-width: 0; }
 .today-routines .today-plan-status { justify-content: flex-end; margin-top: 0; }
 .today-working-location, .agenda-working-location { display: inline-flex; align-items: center; gap: var(--space-1); vertical-align: bottom; }
-.today-columns { display: grid; grid-template-columns: minmax(0, 2fr) minmax(var(--today-day-view-min), 1fr); align-items: start; gap: var(--space-8); padding: var(--space-4) var(--pane-inset); }
+.today-columns { display: grid; grid-template-columns: minmax(var(--today-column-min), 1fr) minmax(var(--today-day-view-min), 2fr); align-items: stretch; gap: var(--space-6); padding: var(--space-4) var(--pane-inset); }
 .today-heading { min-width: 0; }
 /* The optional Today Backdrop sits behind the header band only, under its text. */
 .today-header { position: relative; isolation: isolate; }
@@ -3836,10 +3854,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-source-tabs { flex-wrap: nowrap; overflow: hidden; }
 .today-source-scope { margin-left: auto; overflow: hidden; color: var(--muted); font-size: var(--text-meta); text-overflow: ellipsis; white-space: nowrap; }
 .today-source-fallback { margin-top: var(--space-2); }
-/* The Plan column keeps one left content edge, the rows' checkbox edge (--context-row-inset): section
-   titles, empty states, the tab row, the lead-in, and row titles all start there. Collapse chevrons hang
-   in the gutter to its left instead of indenting the title. */
-.today-work .context-section-toggle .context-row-glyph { margin-left: calc(var(--context-glyph-column) * -1); }
+/* Keep section chevrons inside the planning panel, aligned with card glyphs. */
+.today-work .context-section-toggle .context-row-glyph { margin-left: 0; }
 .today-work .context-collapsible > div > .context-status,
 .today-work .context-collapsible > div > .context-link-button { margin-left: var(--context-row-inset); }
 .today-work .context-status { padding-inline: var(--context-row-inset); }
@@ -3868,6 +3884,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-day-view .calendar-schedule-event[data-response-status="needsAction"] { background: color-mix(in srgb, var(--calendar-color, var(--accent)) 25%, var(--raised)); border: 1px dashed var(--calendar-color, var(--accent)); }
 .today-day-view .calendar-schedule-event[data-selected="true"] { opacity: 1; box-shadow: 0 0 0 2px var(--accent); }
 .today-day-view-actions { display: flex; align-items: center; gap: var(--space-2); }
+.calendar-event-action { position: absolute; z-index: var(--z-local-event); display: flex; justify-content: flex-end; padding-inline: var(--space-1); pointer-events: none; }
+.calendar-event-action > .btn-icon { pointer-events: auto; flex-shrink: 0; color: var(--text); }
+.calendar-week-column .calendar-event-has-action { padding-right: calc(var(--control-h-xs) + var(--space-2)); }
+.calendar-all-day-entry { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.calendar-all-day-entry > .calendar-all-day-event { flex: 1; min-width: 0; }
+.calendar-all-day-action { display: inline-flex; flex-shrink: 0; }
 .calendar-event-mark { display: inline-flex; align-items: center; gap: var(--space-0-5); margin-right: var(--space-1); color: var(--accent); vertical-align: middle; }
 .calendar-event-mark-count { font-size: var(--text-micro); font-weight: var(--weight-semibold); }
 .today-agenda-fallback { display: none; }

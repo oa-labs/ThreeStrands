@@ -91,3 +91,49 @@ it("a guarded task mutation advances through its own editor flush, but not a sta
     expect(patch).toHaveBeenLastCalledWith(note.id, "marker", "stale", undefined, false);
   } finally { stop(); }
 });
+
+describe("opening a meeting note from the planning inbox", () => {
+  const event = {
+    id: "occurrence", accountId: "you@example.com", calendarId: "work", seriesId: "series", title: "Planning sync", allDay: false,
+    start: new Date(2026, 10, 12, 9).toISOString(), end: new Date(2026, 10, 12, 10).toISOString(), attendees: ["you@example.com", "pat@example.org"],
+  };
+
+  it("rechecks occurrence backlinks and opens an existing dedicated note without writing", async () => {
+    const { planningMeetingNote } = await import("./noteCapture");
+    const backlinks = vi.spyOn(mailClient, "noteBacklinks").mockResolvedValue([
+      { noteId: "daily:2026-11-12", title: "Daily", dailyDate: "2026-11-12", context: "" },
+      { noteId: "meeting", title: "Planning sync", dailyDate: null, context: "" },
+    ]);
+    const add = vi.spyOn(mailClient, "addMeetingToDailyNote");
+    const result = await planningMeetingNote(event, [event.accountId]);
+    expect(result.noteId).toBe("meeting");
+    expect(backlinks).toHaveBeenCalledExactlyOnceWith({ version: 1, kind: "event", id: "occurrence", account: "you@example.com", calendar: "work", series: "series" });
+    expect(result.href).toContain("occurrence");
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it("shares repeated activations and writes an occurrence entry on its own day with the current revision", async () => {
+    const { planningMeetingNote } = await import("./noteCapture");
+    vi.spyOn(mailClient, "noteBacklinks").mockResolvedValue([]);
+    vi.spyOn(mailClient, "getDailyNote").mockResolvedValue({ ...note, updatedAt: "current" });
+    vi.spyOn(mailClient, "resolveContactIds").mockResolvedValue({ "pat@example.org": "pat" });
+    const add = vi.spyOn(mailClient, "addMeetingToDailyNote").mockResolvedValue({ note: { ...note, id: "daily:2026-11-12" }, added: true, previousBody: "Before", meetingNote: null, createdMeetingNote: false });
+    const first = planningMeetingNote(event, [event.accountId]);
+    expect(planningMeetingNote(event, [event.accountId])).toBe(first);
+    expect((await first).noteId).toBe("daily:2026-11-12");
+    expect(add).toHaveBeenCalledExactlyOnceWith("2026-11-12", "current", expect.objectContaining({
+      event: expect.objectContaining({ id: "occurrence", series: "series" }), name: "Planning sync", linkNote: false,
+      attendees: [{ label: "pat@example.org", reference: { version: 1, kind: "contact", id: "pat@example.org", contact: "pat" } }],
+    }));
+  });
+
+  it("does not write when backlinks are unavailable and allows retrying after the failure", async () => {
+    const { planningMeetingNote } = await import("./noteCapture");
+    const backlinks = vi.spyOn(mailClient, "noteBacklinks").mockRejectedValueOnce(new Error("Unavailable"));
+    const add = vi.spyOn(mailClient, "addMeetingToDailyNote");
+    await expect(planningMeetingNote(event, [])).rejects.toThrow("Unavailable");
+    expect(add).not.toHaveBeenCalled();
+    backlinks.mockResolvedValue([{ noteId: "recovered", title: "Recovered", dailyDate: null, context: "" }]);
+    expect((await planningMeetingNote(event, [])).noteId).toBe("recovered");
+  });
+});

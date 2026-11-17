@@ -60,6 +60,8 @@ function renderToday(overrides: Partial<Parameters<typeof TodayWorkspace>[0]> = 
   };
   const page = (next: Partial<Parameters<typeof TodayWorkspace>[0]> = {}) => <TodayWorkspace accountId="you@example.com" refreshKey="" taskRefreshKey={0} calendarConnected={false} calendars={calendars} {...handlers} {...overrides} {...next} />;
   const view = render(page());
+  const details = screen.queryByRole("button", { name: "Day details" });
+  if (details) fireEvent.click(details);
   return { ...handlers, rerenderToday: (next: Partial<Parameters<typeof TodayWorkspace>[0]>) => view.rerender(page(next)) };
 }
 
@@ -522,9 +524,11 @@ describe("TodayWorkspace", () => {
       expect(screen.getByText("1 of 4 planned done", { selector: ".today-plan-progress" })).toBeInTheDocument();
     });
 
-    it("says nothing is planned and how to add, without a progress line", async () => {
+    it("keeps an empty plan out of the inbox and offers Plan Today without a progress line", async () => {
       renderToday();
-      expect(await within(screen.getByRole("region", { name: "Today's plan" })).findByText(/^Nothing is planned yet\./)).toBeInTheDocument();
+      await waitFor(() => expect(mailClient.dailyPlan).toHaveBeenCalled());
+      expect(screen.queryByRole("region", { name: "Today's plan" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Plan Today" })).toBeInTheDocument();
       expect(document.querySelector(".today-plan-progress")).toBeNull();
       expect(mailClient.dailyPlan).toHaveBeenCalledWith("2026-10-28");
     });
@@ -1009,7 +1013,7 @@ describe("TodayWorkspace", () => {
     beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(2026, 9, 28, 10, 0)); });
     afterEach(() => { vi.useRealTimers(); });
 
-    it("prepares a meeting, opens anything else in Calendar, and gives meetings a readiness hint", async () => {
+    it("opens events in Calendar and meeting notes from separate controls while keeping the planning inbox", async () => {
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [
         event("home", 0, { title: "Home", allDay: true, start: localDate(0), end: localDate(1), eventType: "workingLocation" }),
         event("next", 20, { title: "Design sync" }),
@@ -1019,32 +1023,26 @@ describe("TodayWorkspace", () => {
         reference, eventAvailable: true, hasOccurrenceNote: reference.id === "next", priorOccurrencesWithNotes: 0, seriesNotes: 0, openCommitments: 0,
         candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, followThrough: "notReviewed", unavailableSections: [], error: null })));
       const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => <p>Preparation view</p>), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
-      const { onOpenEvent, rerenderToday } = renderToday({ calendarConnected: true, preparation });
-
+      const onAddNote = vi.fn();
+      const { onOpenEvent } = renderToday({ calendarConnected: true, preparation, onAddNote });
       const day = within(await screen.findByRole("group", { name: "Day view" }));
       const sync = await day.findByRole("button", { name: /^Design sync/ });
       await waitFor(() => expect(sync).toHaveAccessibleDescription("Has notes"));
-      expect(sync.querySelector(".calendar-event-mark")).not.toBeNull();
       expect(day.getByRole("button", { name: /^Planning/ })).toHaveAccessibleDescription("No notes yet");
-      expect(day.getByRole("button", { name: /^Planning/ }).querySelector(".calendar-event-mark")).toBeNull();
-
-      // The working location is stated once in the header, not listed in the day view.
       expect(day.queryByRole("button", { name: "Home, working location" })).not.toBeInTheDocument();
       expect(screen.getByText("Home", { selector: ".today-day-shape .today-working-location" })).toBeInTheDocument();
       fireEvent.click(sync);
-      expect(preparation.onPrepare).toHaveBeenCalledWith(expect.objectContaining({ id: "next" }));
-      expect(onOpenEvent).not.toHaveBeenCalled();
+      expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "next" }));
+      fireEvent.click(day.getByRole("button", { name: "Add Note: Design sync" }));
+      expect(onAddNote).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "next" }));
+      expect(screen.getByRole("group", { name: "Plan" })).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Preparation" })).not.toBeInTheDocument();
+      expect(sync).toHaveAttribute("aria-expanded", "false");
+      expect(day.getByRole("button", { name: "Add Note: Design sync" }).closest("[data-calendar-event-trigger]")).toBeNull();
 
-      rerenderToday({ calendarConnected: true, preparation: { ...preparation, event: event("next", 20, { title: "Design sync" }) } });
-      expect(within(screen.getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Design sync/ })).toHaveAttribute("aria-expanded", "true");
-      // Preparation fills the left column in place of the plan.
-      expect(within(screen.getByRole("group", { name: "Preparation" })).getByText("Preparation view")).toBeInTheDocument();
-      expect(screen.queryByRole("group", { name: "Plan" })).not.toBeInTheDocument();
-      fireEvent.click(within(screen.getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Design sync/ }));
-      expect(preparation.onClose).toHaveBeenCalledTimes(1);
     });
 
-    it("dims finished meetings, and marks only the meeting being prepared as selected", async () => {
+    it("dims finished meetings and keeps invitations distinct without selecting a preparation panel", async () => {
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [
         event("benefits", -120, { title: "Benefits Review", responseStatus: "needsAction" }),
         event("skip", 60, { title: "Optional talk", responseStatus: "declined" }),
@@ -1052,7 +1050,7 @@ describe("TodayWorkspace", () => {
       ], errors: [] });
       vi.spyOn(mailClient, "meetingReadiness").mockResolvedValue([]);
       const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => null), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
-      const { rerenderToday } = renderToday({ calendarConnected: true, preparation });
+      renderToday({ calendarConnected: true, preparation });
       const day = within(await screen.findByRole("group", { name: "Day view" }));
       const benefits = await day.findByRole("button", { name: /^Benefits Review/ });
       expect(benefits).toHaveAttribute("data-past", "true");
@@ -1061,11 +1059,9 @@ describe("TodayWorkspace", () => {
       expect(day.getByRole("button", { name: /^Design sync/ })).not.toHaveAttribute("data-past");
       expect(day.getByRole("button", { name: /^Optional talk/ })).toHaveAttribute("data-response-status", "declined");
 
-      rerenderToday({ calendarConnected: true, preparation: { ...preparation, event: event("next", 20, { title: "Design sync" }) } });
       const sync = within(screen.getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Design sync/ });
-      expect(sync).toHaveAttribute("data-selected", "true");
-      expect(within(screen.getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Benefits Review/ })).not.toHaveAttribute("data-selected");
-
+      fireEvent.click(sync);
+      expect(sync).not.toHaveAttribute("data-selected");
       // In Today, an unanswered invitation is filled, and only data-selected rings a block.
       const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
       const rules = new Map<string, string>();
@@ -1114,7 +1110,7 @@ describe("TodayWorkspace", () => {
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [event("next", 20, { title: "Design sync" }), event("later", 120, { title: "Planning" })], errors: [] });
       vi.spyOn(mailClient, "meetingReadiness").mockResolvedValue([]);
       const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => null), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
-      renderToday({ calendarConnected: true, preparation });
+      renderToday({ calendarConnected: true, preparation, onAddNote: preparation.onPrepare });
       const planning = await within(screen.getByRole("group", { name: "Day view" })).findByRole("button", { name: /^Planning/ });
       planning.focus();
       act(() => runWorkspaceCommand("meetings.prepare"));
@@ -1307,7 +1303,7 @@ describe("TodayWorkspace", () => {
       renderToday({ calendarConnected: true, mailAccountCount: 2 });
       await screen.findByRole("group", { name: "Day view" });
       // The plan and the day view cover every account.
-      expect(document.querySelector(".today-header .eyebrow")).toHaveTextContent(/^Today$/);
+      expect(document.querySelector(".today-header .eyebrow")).toHaveTextContent(/Wednesday, October 28/);
       expect(within(screen.getByRole("group", { name: "Mail" })).getByText("· you@example.com", { selector: ".today-mail-signal-scope" })).toBeInTheDocument();
       for (const name of ["Suggested", "Also Due", "Tasks", "You Said You Would", "Starred Mail", "Goals"]) {
         chooseSource(name);
@@ -1315,7 +1311,7 @@ describe("TodayWorkspace", () => {
       }
       for (const name of ["Keep in Touch", "Notes"]) {
         chooseSource(name);
-        expect(document.querySelector(".today-source-scope"), name).toBeNull();
+        expect(document.querySelector(".today-source-scope"), name).toHaveTextContent("you@example.com");
       }
     });
 
@@ -1337,9 +1333,10 @@ describe("TodayWorkspace", () => {
       expect(next.closest(".today-heading")).toContainElement(shape);
       expect(next.closest(".today-heading")).not.toContainElement(screen.getByRole("button", { name: "Review Today" }));
       expect(screen.queryByText("Home", { selector: ".context-row-title, .calendar-working-location-name" })).not.toBeInTheDocument();
-      const tomorrow = screen.getByRole("region", { name: "Tomorrow" });
-      expect(tomorrow.querySelector(".context-section-note")).toHaveTextContent(/ · Office tomorrow$/);
-      expect(within(tomorrow).queryByRole("button", { name: /^Office tomorrow/ })).not.toBeInTheDocument();
+      expect(screen.queryByText("Office tomorrow")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Review Today" }));
+      const tomorrow = screen.getByRole("group", { name: "Tomorrow" });
+      expect(tomorrow.querySelector(".today-working-location")).toHaveTextContent("Office tomorrow");
     });
 
     it("counts a meeting on two calendars once, and skips declined ones for the count and the next meeting", async () => {
@@ -1415,7 +1412,7 @@ describe("TodayWorkspace", () => {
       expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "next" }));
     });
 
-    it("shows readiness on agenda rows, prepares from the agenda, the next meeting, and the keyboard, in place of the plan", async () => {
+    it("opens meeting notes from the agenda and keyboard without replacing the planning inbox", async () => {
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
         event("past", -60, { title: "Done already" }),
         event("home", 0, { title: "Home", allDay: true, start: localDate(0), end: localDate(1), eventType: "workingLocation" }),
@@ -1426,49 +1423,24 @@ describe("TodayWorkspace", () => {
         reference, eventAvailable: true, hasOccurrenceNote: false, priorOccurrencesWithNotes: reference.id === "later" ? 1 : 0, seriesNotes: 0, openCommitments: 0,
         candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, followThrough: "notReviewed", unavailableSections: [], error: null })));
       const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => <p>Preparation view</p>), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
-      const { rerenderToday, onOpenEvent } = renderToday({ calendarConnected: true, preparation });
-
-      expect(screen.queryByRole("region", { name: /Meeting prep/ })).not.toBeInTheDocument();
+      const onAddNote = vi.fn();
+      const { onOpenEvent } = renderToday({ calendarConnected: true, preparation, onAddNote });
       const agenda = within(await screen.findByRole("region", { name: "Today's agenda" }));
       expect(await agenda.findByText(/No notes yet · 1 earlier meeting with notes/)).toBeInTheDocument();
-      // Only meetings still ahead are checked; a finished one and a working location aren't.
       await waitFor(() => expect(readiness).toHaveBeenCalled());
       expect(readiness.mock.calls.at(-1)![0].map((reference) => reference.id)).toEqual(["next", "later"]);
       expect(agenda.queryByRole("button", { name: "Prepare for Home" })).not.toBeInTheDocument();
       expect(agenda.queryByRole("button", { name: "Add Note for Home" })).not.toBeInTheDocument();
       expect(agenda.queryByRole("button", { name: /^Home/ })).not.toBeInTheDocument();
-      expect(preparation.onPrepare).not.toHaveBeenCalled();
-
-      // On Today, choosing a meeting prepares it rather than leaving for Calendar.
       fireEvent.click(agenda.getByRole("button", { name: /^Planning/ }));
-      expect(preparation.onPrepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: "later" }));
+      expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "later" }));
       fireEvent.click(agenda.getByRole("button", { name: "Prepare for Design sync" }));
-      fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
-      expect(preparation.onPrepare).toHaveBeenCalledTimes(3);
+      expect(onAddNote).toHaveBeenLastCalledWith(expect.objectContaining({ id: "next" }));
       act(() => runWorkspaceCommand("meetings.prepare"));
-      expect(preparation.onPrepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: "next" }));
-      expect(onOpenEvent).not.toHaveBeenCalled();
-
-      const preparing = { ...preparation, event: event("next", 20, { title: "Design sync" }) };
-      rerenderToday({ calendarConnected: true, preparation: preparing });
-      expect(within(screen.getByRole("group", { name: "Preparation" })).getByText("Preparation view")).toBeInTheDocument();
-      expect(screen.getByRole("region", { name: "Today's agenda" })).toBeInTheDocument();
-      expect(screen.queryByRole("group", { name: "Unread mail" })).not.toBeInTheDocument();
-      // Preparation replaces the plan; the schedule stays beside it.
-      expect(screen.queryByRole("group", { name: "Plan" })).not.toBeInTheDocument();
+      expect(onAddNote).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("group", { name: "Plan" })).toBeInTheDocument();
       expect(screen.getByRole("group", { name: "Schedule" })).toBeInTheDocument();
-      // Preparation has the meeting's actions, so the header card is only its link.
-      expect(screen.getByRole("button", { name: /^Next: Design sync/ })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Prepare" })).not.toBeInTheDocument();
-      expect(within(screen.getByRole("region", { name: "Today's agenda" })).getByRole("button", { name: /^Design sync/ })).toHaveAttribute("aria-pressed", "true");
-
-      act(() => runWorkspaceCommand("meetings.next"));
-      expect(preparation.onPrepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: "later" }));
-      act(() => runWorkspaceCommand("meetings.closePrepare"));
-      expect(preparation.onClose).toHaveBeenCalledTimes(1);
-      // Choosing the meeting being prepared again closes it.
-      fireEvent.click(within(screen.getByRole("region", { name: "Today's agenda" })).getByRole("button", { name: /^Design sync/ }));
-      expect(preparation.onClose).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole("group", { name: "Preparation" })).not.toBeInTheDocument();
     });
   });
   describe("evening view", () => {
@@ -1482,7 +1454,6 @@ describe("TodayWorkspace", () => {
       reference, eventAvailable: true, hasOccurrenceNote: false, priorOccurrencesWithNotes: 0, seriesNotes: 0, openCommitments: 0,
       candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, followThrough: "notReviewed" as const, unavailableSections: [], error: null })));
     const evening = () => screen.findByRole("group", { name: "Today in review" });
-    const preparation = () => ({ event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => <p>Preparation view</p>), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() });
 
     it("opens by itself only once the last meeting has ended and working hours are over", async () => {
       schedule(meetingAt("sync", 17, 17, 18, { start: new Date(2026, 10, 17, 15, 0).toISOString(), end: new Date(2026, 10, 17, 17, 30).toISOString() }));
@@ -1592,22 +1563,18 @@ describe("TodayWorkspace", () => {
       expect(await screen.findByText("Day closed")).toBeInTheDocument();
     });
 
-    it("keeps preparation in the left column in place of the review, and p prepares tomorrow's first meeting when today's are over", async () => {
+    it("opens tomorrow's meeting note with p while keeping the evening review", async () => {
       clock(17, 19);
       schedule(meetingAt("done", 17, 9, 10), meetingAt("standup", 18, 9, 10, { title: "Standup" }));
       unreviewed();
-      const prep = preparation();
-      const { rerenderToday } = renderToday({ calendarConnected: true, calendars, workingHours, preparation: prep });
+      const onAddNote = vi.fn();
+      renderToday({ calendarConnected: true, calendars, workingHours, onAddNote });
       await evening();
       act(() => runWorkspaceCommand("meetings.prepare"));
-      expect(prep.onPrepare).toHaveBeenCalledWith(expect.objectContaining({ id: "standup" }));
-      rerenderToday({ calendarConnected: true, calendars, workingHours, preparation: { ...prep, event: meetingAt("standup", 18, 9, 10, { title: "Standup" }) } });
-      expect(within(screen.getByRole("group", { name: "Preparation" })).getByText("Preparation view")).toBeInTheDocument();
-      expect(screen.queryByRole("group", { name: "Today in review" })).not.toBeInTheDocument();
+      expect(onAddNote).toHaveBeenCalledWith(expect.objectContaining({ id: "standup" }));
+      expect(screen.getByRole("group", { name: "Today in review" })).toBeInTheDocument();
       expect(screen.getByRole("group", { name: "Tomorrow" })).toBeInTheDocument();
-      expect(within(screen.getByRole("group", { name: "Tomorrow's day view" })).getByRole("button", { name: /^Standup/ })).toHaveAttribute("aria-expanded", "true");
-      act(() => runWorkspaceCommand("meetings.closePrepare"));
-      expect(prep.onClose).toHaveBeenCalled();
+      expect(within(screen.getByRole("group", { name: "Tomorrow's day view" })).getByRole("button", { name: /^Standup/ })).toHaveAttribute("aria-expanded", "false");
     });
 
     it("draws the backdrop behind the header only when Today Backdrop is on, for the view shown", async () => {
@@ -1639,7 +1606,7 @@ describe("TodayWorkspace tomorrow", () => {
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
 
-  it("loads through tomorrow and lists tomorrow under today's agenda, apart from today's count", async () => {
+  it("keeps tomorrow out of the daytime view and shows it in Review Today", async () => {
     const tomorrowNoon = new Date();
     tomorrowNoon.setDate(tomorrowNoon.getDate() + 1);
     tomorrowNoon.setHours(12, 0, 0, 0);
@@ -1650,10 +1617,14 @@ describe("TodayWorkspace tomorrow", () => {
       onOpenThread={vi.fn()} onOpenEvent={vi.fn()} onEditTask={vi.fn()} onTasksChanged={vi.fn()} onOpenInbox={vi.fn()}
       onOpenTasks={vi.fn()} onOpenContact={vi.fn()} onOpenKeepInTouch={vi.fn()} onOpenCalendar={vi.fn()} />);
 
-    const tomorrow = await screen.findByRole("region", { name: "Tomorrow" });
-    expect(await within(tomorrow).findByText("Dentist")).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "Today's agenda" })).queryByText("Dentist")).not.toBeInTheDocument();
-    expect(screen.getByText(/^No meetings today$/, { selector: ".today-day-shape" })).toBeInTheDocument();
+    await screen.findByRole("group", { name: "Day view" });
+    expect(screen.queryByText("Dentist")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Planning inbox" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Day details" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("group", { name: "Mail" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review Today" }));
+    const tomorrow = await screen.findByRole("group", { name: "Tomorrow" });
+    expect((await within(tomorrow).findAllByText(/Dentist/)).length).toBeGreaterThan(0);
     const [timeMin, timeMax] = listEvents.mock.calls[0];
     expect(new Date(timeMax).getTime() - new Date(timeMin).getTime()).toBeGreaterThanOrEqual(47 * 3_600_000);
   });

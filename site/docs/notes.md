@@ -64,7 +64,9 @@ While reading a conversation in **Mail**, choose **Add to Today's Note** from th
 
 ## Meeting Notes {#meeting-notes}
 
-Click **Add Note** on a calendar event in **Calendar** or **Today**, or on the day's events beside a daily note, to write a line about the meeting under **Meetings** in that day's note, such as "3:00 pm met with Dana for Monthly Review". The line links the event and each attendee's contact. Before adding it, you can change the **Meeting name** and the **Attendees**; your own addresses are left out.
+Click **Add Note** on a calendar event in **Calendar**, or on the day's events beside a daily note, to write a line about the meeting under **Meetings** in that day's note, such as "3:00 pm met with Dana for Monthly Review". The line links the event and each attendee's contact. Before adding it, you can change the **Meeting name** and the **Attendees**; your own addresses are left out.
+
+On **Today**, each meeting’s note icon opens its existing note directly. If it has none, it adds the entry to the meeting’s daily note and opens that note at the meeting’s link. In **Links**, use **Prepare meeting** to show previous notes, related conversations, and commitments beside the editor. **Close Preparation** or <kbd>Escape</kbd> returns to note details.
 
 Check **Create backlinked note** to also link a note named after the meeting. Every later meeting with the same name links the same note, so the note collects that meeting's history. ThreeStrands says whether it will link an existing note or create a new one. Click **Add to Daily Note** to add the line; the message that follows offers **Open Note** and **Undo**.
 

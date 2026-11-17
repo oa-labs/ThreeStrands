@@ -7,7 +7,7 @@ import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./not
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, CircleCheck, FilePlus, FileUp, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, ClipboardList, ChevronLeft, ChevronRight, CircleCheck, FilePlus, FileUp, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
 import type { CalendarOption, ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSearchScope, NoteSummary, ScheduleEvent } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -93,7 +93,7 @@ export function relinkMessage({ updated, keptOldLink }: NoteRelink): string | nu
  * calendar opens any day's note, and a daily note lists that day's agenda,
  * where Add Note writes a meeting into it.
  */
-export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact, onOpenEntity, onReturn, calendars, onOpenEvent, onAddNote }: {
+export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact, onOpenEntity, onReturn, calendars, onOpenEvent, onAddNote, renderMeetingPreparation, meetingPreparation, onMeetingPreparationChange }: {
   request?: NotesRequest | null;
   onOpenEntity?(href: string): Promise<void>;
   onReturn?(): void;
@@ -107,6 +107,10 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   onOpenEvent?(event: ScheduleEvent): void;
   /** Add Note on an agenda event: records the meeting in its day's note. */
   onAddNote?(event: ScheduleEvent): void;
+  /** Preparation stays beside the note editor rather than replacing Today. */
+  renderMeetingPreparation?(event: ScheduleEvent, close: () => void, noteId: string): ReactNode;
+  meetingPreparation?: { noteId: string; event: ScheduleEvent } | null;
+  onMeetingPreparationChange?(next: { noteId: string; event: ScheduleEvent } | null): void;
 }) {
   const [target, setTarget] = useState<NoteTarget>(() => readLastNoteTarget() ?? todayTarget());
   const [initialSearch] = useState(readNotesSearchState);
@@ -135,6 +139,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const [actionError, setActionError] = useState<string | null>(null);
   const [links, setLinks] = useState<{ noteId: string; links: NoteLinks } | null>(null);
   const [entityDocument, setEntityDocument] = useState<(NoteDocument & { noteId: string; version: string }) | null>(null);
+  const [localPreparing, setLocalPreparing] = useState<{ noteId: string; event: ScheduleEvent } | null>(null);
+  const preparing = onMeetingPreparationChange ? meetingPreparation : localPreparing;
+  const setPreparing = onMeetingPreparationChange ?? setLocalPreparing;
   const [linkPicker, setLinkPicker] = useState(false);
   const [people, setPeople] = useState<ContactProfile[]>([]);
   const [relinkNotice, setRelinkNotice] = useState<string | null>(null);
@@ -433,6 +440,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const daily = target.kind === "daily";
   const readOnly = Boolean(stale) || editor.loading || inTrash || noteConflicts.length > 0;
   useWorkspaceCommands({
+    "meetings.closePrepare": () => setPreparing(null),
     "notes.next": () => moveSelection(1),
     "notes.previous": () => moveSelection(-1),
     "notes.new": () => setCreating(true),
@@ -594,6 +602,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
           </>}
       </div>
       <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow}>
+        {preparing?.noteId === noteId && !inTrash && renderMeetingPreparation ? renderMeetingPreparation(preparing.event, () => setPreparing(null), preparing.noteId) : <>
         <NotesDayCalendar selected={daily ? target.date : null} today={today.date} onSelect={selectDay} revision={searchRevision} reveal={dayChosen} />
         {daily && calendars?.length && onOpenEvent ? <CalendarAgenda key={target.date} today={parseCalendarDate(target.date) ?? new Date()} day="chosen" id="notes-agenda" showDate={false}
           calendars={calendars} onOpenEvent={onOpenEvent} onAddNote={onAddNote} /> : null}
@@ -605,6 +614,13 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
         {entityLinks.length ? <ContextSection id="note-links" title="Links" count={entityLinks.length}
           actions={!readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a contact, conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
           rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind as keyof typeof LINK_ICON]} title={link.label} detail={link.reference.account}
+            actions={link.reference.kind === "event" && renderMeetingPreparation && !inTrash ? [<button key="prepare" type="button" className="btn-icon btn-icon-sm" aria-label={`Prepare meeting: ${link.label}`} title="Prepare meeting" disabled={busy || readOnly} onClick={() => void act(async () => {
+              await editor.flush();
+              if (editor.unsaved()) throw new Error("Resolve your unsaved note first.");
+              const event = await mailClient.resolveNoteEvent(link.reference);
+              if (!event) throw new Error("Unavailable on this device");
+              setPreparing({ noteId: noteId!, event });
+            })}><ClipboardList size={ICON_SIZE.sm} /></button>] : undefined}
             onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null}
         {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <NoteChecklistSection key={noteId} items={entityDocument.items}
           disabled={readOnly || busy || !entityItemsCurrent} onChange={(item, patch) => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, patch); })} /> : null}
@@ -624,6 +640,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
           {Date.parse(editor.note.updatedAt) !== Date.parse(editor.note.createdAt) ? <div><dt>Updated</dt><dd><time dateTime={editor.note.updatedAt}>{formatTime(editor.note.updatedAt)}</time></dd></div> : null}
           {editor.note.trashedAt ? <div><dt>Trashed</dt><dd><time dateTime={editor.note.trashedAt}>{formatTime(editor.note.trashedAt)}</time></dd></div> : null}
         </dl> : <p className="context-status">{daily ? "This day's note starts when you write in it." : "Select a note to see its details."}</p>}
+        </>}
       </WorkspaceContextRail>
     </div>
     {linkPicker ? <NoteLinkPicker onClose={() => setLinkPicker(false)} onSelect={async (choice) => {

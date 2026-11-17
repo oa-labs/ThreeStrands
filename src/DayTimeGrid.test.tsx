@@ -44,6 +44,25 @@ describe("DayTimeGrid", () => {
     expect(container.querySelector(".calendar-week-all-day")).not.toBeInTheDocument();
   });
 
+  it("keeps note actions separate from event buttons for timed, overlapping, short, and all-day events", () => {
+    const action = vi.fn();
+    const short = event("Brief", "2026-09-22T09:00:00", "2026-09-22T09:15:00");
+    const { onToggleEvent } = renderGrid({ events: [offsite, standup, short], eventDecoration: (event) => ({
+      action: <button aria-label={`Note: ${event.title}`} onClick={() => action(event.id)}>Note</button>,
+    }) });
+    for (const event of [offsite, standup, short]) {
+      const note = screen.getByRole("button", { name: `Note: ${event.title}` });
+      expect(note.closest("[data-calendar-event-trigger]")).toBeNull();
+      fireEvent.click(note);
+      expect(action).toHaveBeenLastCalledWith(event.id);
+    }
+    expect(onToggleEvent).not.toHaveBeenCalled();
+    const button = screen.getByRole("button", { name: /^Brief/ });
+    const control = screen.getByRole("button", { name: "Note: Brief" }).parentElement!;
+    expect(control).toHaveStyle({ top: button.style.top, left: button.style.left, width: button.style.width });
+    expect(button).toHaveClass("calendar-event-has-action");
+  });
+
   it("writes a compact event's start time the way event times are written", () => {
     const sync = event("JBLC - Virtual", "2026-09-22T11:30:00", "2026-09-22T12:00:00", { location: "Room 4" });
     renderGrid({ events: [sync], shortTimes: true });

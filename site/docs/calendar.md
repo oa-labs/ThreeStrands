@@ -97,11 +97,11 @@ Open an event you manage to edit or delete it. Moving the start moves the end wi
 
 ## Take Meeting Notes {#take-meeting-notes}
 
-Click **Add Note** on an event in the agenda, in **Today**, or in an event's details to write a line about the meeting in that day's note, linking the event and its attendees. When the meeting already has a note, the button in its details says **Open Note** and opens it instead. An event's details list the notes about that meeting and, for a recurring meeting, the notes from the rest of the series under **Series notes**. See [Meeting Notes](notes.html#meeting-notes).
+Click **Add Note** on an event in the agenda or in an event's details to write a line about the meeting in that day's note, linking the event and its attendees. When the meeting already has a note, the button in its details says **Open Note** and opens it instead. An event's details list the notes about that meeting and, for a recurring meeting, the notes from the rest of the series under **Series notes**. See [Meeting Notes](notes.html#meeting-notes).
 
 ## Prepare for a Meeting {#prepare-for-a-meeting}
 
-Click **Prepare** in an event's details, beside an event in the agenda, or on **Today**, or press <kbd>p</kbd> (also **Prepare for Meeting** in the command palette) while an event's details are open. Press <kbd>p</kbd> or <kbd>Escape</kbd> to close it. Preparation lists:
+Click **Prepare** in an event's details or beside an event in the agenda, or press <kbd>p</kbd> (also **Prepare for Meeting** in the command palette) while an event's details are open. Press <kbd>p</kbd> or <kbd>Escape</kbd> to close it. On **Today**, the meeting’s note icon opens its notes; use **Prepare meeting** on the event link in **Notes** to prepare beside the editor. Preparation lists:
 
 - **This meeting**: the part of a note about this meeting, such as its line in a daily note and what you wrote under it, and the meeting note it links. Other entries in the same note are left out.
 - **Previous meetings**: notes from earlier meetings in the same recurring series, newest first. A different event with the same title is never counted.

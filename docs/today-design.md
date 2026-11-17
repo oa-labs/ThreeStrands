@@ -87,13 +87,15 @@ Day** button becomes an optional step inside Plan Today (for example, suggesting
 priorities), and the routine without AI takes the plain name. The Top of mind
 strip's ideas (a small budget, one focus item, cited joins) carry into that step.
 
-**As built (daily planning stage 2).** The phase 1 columns above are replaced:
-Today is two columns, the plan (or one meeting's preparation) beside a one-day
-time grid, with the mail groups reduced to a header line (invitations listed,
-counts of Needs a reply and other unread, **Open Inbox**). The "Also in your
-meeting" note on mail rows became a count of unread mail from attendees on each
-meeting in the day view. Tasks, promises, and Keep in Touch are tabs of the
-plan's source switcher. See [Today's new layout](daily-planning-design.md#todays-new-layout).
+**As built (planning inbox).** Today has a planning inbox of cards on the left
+and a larger one-day schedule on the right. Existing plan items stay above the
+source cards; an empty plan does not add another empty section. **Day details**
+reveals the mail signal and meeting summary. Tomorrow is shown in **Review Today**.
+Event titles open Calendar; each meeting’s note icon and the **Prepare for Meeting**
+shortcut open its occurrence note, or add an entry to its daily note and open it.
+Preparation lives beside the Notes editor, opened from the event’s link in **Links**,
+with **Back to Meeting** restoring the note and preparation after opening a source.
+See [Today's new layout](daily-planning-design.md#todays-new-layout).
 
 ## Phase 2: the AI layer
 

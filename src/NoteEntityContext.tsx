@@ -58,8 +58,8 @@ export function EventNoteBacklinks({ occurrence, onOpenNote }: { occurrence: Not
 }
 
 /** The event action uses occurrence links only, never another meeting in the series. */
-export function EventNoteAction({ occurrence, onActivate }: { occurrence: NoteReference; onActivate(): void }) {
+export function EventNoteAction({ occurrence, onActivate, labelSuffix }: { occurrence: NoteReference; onActivate(): void; labelSuffix?: string }) {
   const { rows } = useNoteBacklinks([occurrence]);
   const label = primaryMeetingNote(rows) ? "Open Note" : "Add Note";
-  return <button type="button" className="btn-icon btn-icon-sm" aria-label={label} title={label} onClick={onActivate}><NotebookPen size={ICON_SIZE.sm} aria-hidden="true" /></button>;
+  return <button type="button" className="btn-icon btn-icon-sm" aria-label={labelSuffix ? `${label}: ${labelSuffix}` : label} title={label} onClick={onActivate}><NotebookPen size={ICON_SIZE.sm} aria-hidden="true" /></button>;
 }

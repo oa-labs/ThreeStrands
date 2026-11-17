@@ -1,7 +1,11 @@
 import { mailClient } from "./data/client";
 import { notesChanged, prepareNoteMutation } from "./noteMutations";
 import { noteTargetKey, todayTarget } from "./noteDrafts";
+import type { ScheduleEvent } from "./domain";
+import { meetingDate, meetingEventReference, primaryMeetingNote } from "./meetingNoteEntry";
+import { noteReferenceHref } from "./noteEntities";
 import type { MeetingEntry } from "./noteMeetings";
+import { defaultMeetingEntry } from "./meetingPrep";
 
 /** Local date is captured once, before asynchronous work. */
 export async function captureConversation(threadId: string, now = new Date()) {
@@ -147,4 +151,24 @@ export async function saveFollowThrough(
     await mailClient.undoMeetingFollowThrough(operationId);
     await notesChanged(key);
   } };
+}
+
+/** Open an occurrence's existing note, or add its entry to its day's note.
+ * Concurrent activations share the guarded write; a failed lookup never creates a duplicate. */
+const openingMeetings = new Map<string, Promise<{ noteId: string; href: string; undo?: () => Promise<void> }>>();
+export function planningMeetingNote(event: ScheduleEvent, ownAddresses: readonly string[]) {
+  const reference = meetingEventReference(event);
+  if (!reference) return Promise.reject(new Error("This event can't be added to a note"));
+  const href = noteReferenceHref(reference);
+  const pending = openingMeetings.get(href);
+  if (pending) return pending;
+  const opening = (async () => {
+    const existing = primaryMeetingNote(await mailClient.noteBacklinks(reference));
+    if (existing) return { noteId: existing.noteId, href };
+    const captured = await addMeetingToDailyNote(meetingDate(event), await defaultMeetingEntry(event, ownAddresses));
+    return { noteId: captured.note.id, href, ...(captured.added ? { undo: captured.undo } : {}) };
+  })();
+  openingMeetings.set(href, opening);
+  void opening.finally(() => { openingMeetings.delete(href); }).catch(() => {});
+  return opening;
 }

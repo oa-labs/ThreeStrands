@@ -442,23 +442,14 @@ available notes.
   details' note backlinks and related mail, which it covers. **Prepare for
   Meeting** (<kbd>p</kbd>, and the palette) toggles it while an event's details
   are open; <kbd>Escape</kbd> closes it before any other Escape action.
-- On Today, each meeting still ahead in the agenda shows its readiness after its
-  time; there is no separate list, so each meeting appears once. Working locations
-  ("Home", "Office") are not meetings: they offer no Prepare or Add Note, and
-  choosing one opens it in Calendar. `MeetingReadinessList`, with Reserve Prep Time
-  and No Prep Needed per row, is kept for Plan Today's meeting step.
-  There is no separate mode: choosing a meeting in the agenda, Prepare on
-  the next-meeting card, or <kbd>p</kbd> (the meeting row in focus, else the next
-  meeting) shows its preparation in place of the unread-mail column, beside the
-  agenda, at Today's type sizes. The meeting stays highlighted and its Prepare
-  buttons pressed; the next-meeting card keeps only its link while preparing, since
-  preparation has the same actions. <kbd>↓</kbd>/<kbd>↑</kbd> move to the next or previous meeting;
-  <kbd>Escape</kbd>, <kbd>p</kbd>, or choosing the meeting again closes it and
-  returns focus to the trigger. On Today, choosing an agenda event prepares it;
-  **Open in Calendar** is among its actions. This was the interim placement; since
-  daily planning stage 2, Today has no mail column and preparation replaces the
-  plan in the left column, chosen from the day view (or the agenda list in a
-  narrow window), whose meetings carry the readiness summary.
+- Today keeps a planning inbox beside a larger calendar. Meeting titles open
+  Calendar; note icons and <kbd>p</kbd> open the occurrence’s note, creating an
+  entry in its daily note only when no existing occurrence note is found.
+  Preparation is opened from the event link’s action in Notes and stays in its
+  context rail beside the editor. **Close Preparation** or <kbd>Escape</kbd>
+  returns to note details; **Back to Meeting** restores the original note and
+  preparation after opening a source. Working locations offer no meeting-note
+  action. `MeetingReadinessList` remains in Plan Today’s meeting step.
 - Under the title, an action row offers the next steps: Add Note / Open Note,
   **Reserve Prep Time**, Join, and Open in Calendar on Today (Calendar's details
   already offer Open Note and Join). An empty **This meeting** offers Add Note.

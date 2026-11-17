@@ -1948,6 +1948,7 @@ describe("returning from a jump", () => {
   afterEach(clearScheduleCache);
 
   async function openTodayWithCalendar() {
+    localStorage.removeItem("threestrands.today.view");
     clearScheduleCache();
     vi.setSystemTime(new Date(2026, 9, 26, 9));
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
@@ -1966,6 +1967,7 @@ describe("returning from a jump", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.keyDown(window, { key: "0" });
     const today = await screen.findByRole("region", { name: "Today" });
+    fireEvent.click(within(today).getByRole("button", { name: "Day details" }));
     await within(today).findByRole("button", { name: /^Next: Project review/ });
     return today;
   }
@@ -1975,11 +1977,10 @@ describe("returning from a jump", () => {
     const title = entry === "Tomorrow" ? "Planning" : "Project review";
     if (entry === "Next meeting") fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
     else {
-      // On Today, choosing an event in the day view (or the narrow-width agenda) prepares it; Open in Calendar is the jump.
-      const where = entry === "Day view" ? within(today).getByRole("group", { name: entry }) : within(today).getByRole("region", { name: entry });
+      if (entry === "Tomorrow") fireEvent.click(within(today).getByRole("button", { name: "Review Today" }));
+      const where = entry === "Day view" ? within(today).getByRole("group", { name: entry })
+        : entry === "Tomorrow" ? within(today).getByRole("group", { name: "Tomorrow's day view" }) : within(today).getByRole("region", { name: entry });
       fireEvent.click(within(where).getByRole("button", { name: new RegExp(`^${title}`) }));
-      const preparation = await within(today).findByRole("region", { name: `Preparation for ${title}` });
-      fireEvent.click(within(preparation).getByRole("button", { name: "Open in Calendar" }));
     }
     expect(await screen.findByRole("region", { name: `${title} details` })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Calendar week" })).toBeInTheDocument();

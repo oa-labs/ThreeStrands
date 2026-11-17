@@ -82,7 +82,7 @@ it("opens a linked contact, lists its note, and returns with Escape preserving t
   expect(screen.getByRole("searchbox", { name: "Search Notes" })).toHaveValue("Meeting with Pete");
 });
 
-it("adds a meeting from Today's next-meeting card to today's note, and Undo takes it out", async () => {
+it("opens a meeting from Today in its daily note, and Undo takes the new entry out", async () => {
   localStorage.clear();
   clearScheduleCache();
   const start = new Date(Date.now() + 10 * 60_000);
@@ -93,12 +93,9 @@ it("adds a meeting from Today's next-meeting card to today's note, and Undo take
   vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [meeting], errors: [] });
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
-  await screen.findByRole("button", { name: /^Next: Wiring review/ });
-  fireEvent.click(screen.getByRole("button", { name: "Add Note" }));
-  const dialog = within(await screen.findByRole("dialog", { name: "Add Note" }));
-  expect(dialog.getByText("dana.wiring@example.com")).toBeInTheDocument();
-  fireEvent.click(dialog.getByRole("button", { name: "Add to Daily Note" }));
-  expect(await screen.findByRole("status")).toHaveTextContent(/Added to (today|tomorrow)'s note/);
+  fireEvent.click(await within(await screen.findByRole("group", { name: "Day view" })).findByRole("button", { name: "Add Note: Wiring review" }));
+  await screen.findByRole("textbox", { name: "Note text" });
+  expect(await screen.findByText(/Added to (today|tomorrow)'s note/)).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Note" })).not.toBeInTheDocument());
   const day = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
   const body = (await mailClient.getDailyNote(day))?.body ?? "";
@@ -123,8 +120,7 @@ it("opens an existing occurrence note from Today instead of showing the add dial
   vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [meeting], errors: [] });
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
-  await screen.findByRole("button", { name: /^Next: Existing review/ });
-  fireEvent.click(screen.getByRole("button", { name: "Add Note" }));
+  fireEvent.click(await within(await screen.findByRole("group", { name: "Day view" })).findByRole("button", { name: "Open Note: Existing review" }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
   expect(screen.queryByRole("dialog", { name: "Add Note" })).not.toBeInTheDocument();
   expect(add).not.toHaveBeenCalled();
@@ -178,37 +174,43 @@ function mockMeetingCalendar(meeting: ScheduleEvent) {
   vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [meeting], errors: [] });
 }
 
-it("prepares a meeting on Today, opens a source note, and comes back to the same preparation", async () => {
+it("prepares a meeting beside its note, opens a source note, and returns to the same preparation", async () => {
   localStorage.clear();
   clearScheduleCache();
   const start = new Date(Date.now() + 10 * 60_000);
   const meeting: ScheduleEvent = { id: "prep-meeting", accountId: "calendar@example.com", calendarId: "primary", title: "Prep review", allDay: false,
     start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString() };
   const source = await mailClient.createNote("Prep source", "- Agenda for the review");
+  const reference = { version: 1 as const, kind: "event" as const, id: meeting.id, account: meeting.accountId, calendar: meeting.calendarId! };
+  const meetingNote = await mailClient.createNote("Prep meeting notes", `[Prep review](${noteReferenceHref(reference)})`);
+  vi.spyOn(mailClient, "resolveNoteEvent").mockResolvedValue(meeting);
   vi.spyOn(mailClient, "meetingContext").mockImplementation(async (reference) => prepContext(reference, source.id));
   mockMeetingCalendar(meeting);
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
-  await screen.findByRole("button", { name: /^Next: Prep review/ });
-  fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+  fireEvent.click(await within(await screen.findByRole("group", { name: "Day view" })).findByRole("button", { name: "Open Note: Prep review" }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(meetingNote.title));
+  fireEvent.click(await screen.findByRole("button", { name: "Prepare meeting: Prep review" }));
   const prep = within(await screen.findByRole("region", { name: "Preparation for Prep review" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: `${meetingNote.body}\nNotes written during preparation` } });
   fireEvent.click(await prep.findByRole("button", { name: /Agenda for the review/ }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Prep source"));
+  expect((await mailClient.getNote(meetingNote.id))?.body).toContain("Notes written during preparation");
   fireEvent.click(await screen.findByRole("button", { name: "Back to Meeting" }));
   expect(await screen.findByRole("region", { name: "Preparation for Prep review" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Close Preparation" }));
   await waitFor(() => expect(screen.queryByRole("region", { name: "Preparation for Prep review" })).not.toBeInTheDocument());
-  // Closing preparation brings back today's plan in the left column.
-  expect(screen.getByRole("group", { name: "Plan" })).toBeInTheDocument();
-
-  // p prepares the next meeting and Escape closes it.
+  expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(meetingNote.title);
+  // Today’s p shortcut opens the note; preparation stays beside the editor.
+  fireEvent.click(screen.getByRole("button", { name: "Today (0)" }));
+  await screen.findByRole("group", { name: "Day view" });
   fireEvent.keyDown(window, { key: "p" });
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(meetingNote.title));
+  fireEvent.click(await screen.findByRole("button", { name: "Prepare meeting: Prep review" }));
   expect(await screen.findByRole("region", { name: "Preparation for Prep review" })).toBeInTheDocument();
-  expect(screen.getByRole("region", { name: "Today's agenda" })).toBeInTheDocument();
   fireEvent.keyDown(window, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("region", { name: "Preparation for Prep review" })).not.toBeInTheDocument());
-  // Escape closed preparation without leaving Today.
-  expect(screen.getByRole("region", { name: "Today's agenda" })).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(meetingNote.title);
 });
 
 it("reviews follow-through from preparation with Undo, and hands a follow-up to the composer", async () => {
@@ -217,7 +219,9 @@ it("reviews follow-through from preparation with Undo, and hands a follow-up to 
   const start = new Date(Date.now() + 10 * 60_000);
   const meeting: ScheduleEvent = { id: "follow-meeting", accountId: "calendar@example.com", calendarId: "primary", title: "Follow review", allDay: false,
     start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString(), attendees: ["ann@example.org"] };
-  const source = await mailClient.createNote("Follow-through source", "- Agenda for the review");
+  const reference = { version: 1 as const, kind: "event" as const, id: meeting.id, account: meeting.accountId, calendar: meeting.calendarId! };
+  const source = await mailClient.createNote("Follow-through source", `[Follow review](${noteReferenceHref(reference)})`);
+  vi.spyOn(mailClient, "resolveNoteEvent").mockResolvedValue(meeting);
   vi.spyOn(mailClient, "meetingContext").mockImplementation(async (reference) => ({ ...prepContext(reference, source.id),
     event: { title: meeting.title, start: meeting.start, end: meeting.end, allDay: false, seriesId: null, attendees: ["ann@example.org"], attendeesOmitted: 0, sourceMessageId: null, responseStatus: null } }));
   const save = vi.spyOn(mailClient, "saveMeetingFollowThrough").mockImplementation(async (_reference, _destination, _revision, operationId) => ({
@@ -232,8 +236,8 @@ it("reviews follow-through from preparation with Undo, and hands a follow-up to 
   mockMeetingCalendar(meeting);
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
-  await screen.findByRole("button", { name: /^Next: Follow review/ });
-  fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+  fireEvent.click(await within(await screen.findByRole("group", { name: "Day view" })).findByRole("button", { name: "Open Note: Follow review" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Prepare meeting: Follow review" }));
   const prep = within(await screen.findByRole("region", { name: "Preparation for Follow review" }));
   fireEvent.click(await prep.findByRole("button", { name: "Review Follow-through" }));
   const review = within(await screen.findByRole("dialog", { name: "Review Follow-through" }));
@@ -268,7 +272,7 @@ it("prepares the meeting open in Calendar from its details and from the command 
   mockMeetingCalendar(meeting);
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
-  fireEvent.click(await screen.findByRole("button", { name: /^Next: Calendar prep/ }));
+  fireEvent.click(await within(await screen.findByRole("group", { name: "Day view" })).findByRole("button", { name: /^Calendar prep/ }));
   const rail = within(await screen.findByRole("complementary", { name: "Meeting context" }));
   fireEvent.click(await rail.findByRole("button", { name: "Prepare" }));
   expect(await rail.findByRole("region", { name: "Preparation for Calendar prep" })).toBeInTheDocument();

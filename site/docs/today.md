@@ -1,7 +1,7 @@
 ---
 title: Plan Your Day with Today
 nav: Today
-summary: Plan the day beside a view of today's calendar, with tasks, promises, check-ins, and a line about mail.
+summary: Plan from an inbox of cards beside today's schedule, and prepare for meetings alongside their notes.
 reviewed: 0.179.0
 ---
 
@@ -11,18 +11,18 @@ Click **Today** in the sidebar or press <kbd>0</kbd>. To start there every time,
 
 <ts-shot scene="today" alt="Today with the day's plan and its sources on the left and a time grid of today on the right."></ts-shot>
 
-Today has two columns: your plan for the day on the left, and a view of today's calendar on the right. A line in the header sums up your mail. In the evening, Today turns into a [review of the day](#review-your-day) with tomorrow on the right.
+Today has two columns: a **Planning inbox** of cards on the left, and a larger **Today’s schedule** on the right. **Day details** reveals the mail and meeting summaries when you want them. In the evening, Today turns into a [review of the day](#review-your-day) with tomorrow on the right.
 
 ## Read Your Day {#read-your-day}
 
-A line under the date sums up the day's meetings: "2 meetings · next at 2:00 pm", the meeting you're in and when it ends, or "2 meetings, both finished · last ended 3:30 pm", along with any double-booking still ahead. Once your plan has items, the next line says how many are done, such as "3 of 5 planned done". The day view needs a [Google Calendar connection](calendar.html#connect-google-calendar).
+Open **Day details** for a summary of the day's meetings: "2 meetings · next at 2:00 pm", the meeting you're in and when it ends, or "2 meetings, both finished · last ended 3:30 pm", along with any double-booking still ahead. Once your plan has items, the next line says how many are done, such as "3 of 5 planned done". The day view needs a [Google Calendar connection](calendar.html#connect-google-calendar).
 
 - The day view shows today as a time grid with the **Now** line. It opens on your working hours (the **Default** profile in **Settings → Availability → Profiles**), starting a little before now once the working day has begun, and shades the time outside them; evening hours scroll inside it. Without working hours, it opens on now.
-- Finished and declined meetings are dimmed. A short meeting shows its start time after its title. A highlighted outline means the meeting you're preparing.
-- **Tomorrow** below it shows the first few events the next day.
-- **Join** opens your next online meeting.
-- **Add Note**, beside your next meeting, writes a line about the meeting in that day's note. See [Meeting Notes](notes.html#meeting-notes).
-- Click a meeting to [prepare for it](#get-ready-for-meetings). Click anything else, such as a working location, to open it in Calendar.
+- Finished and declined meetings are dimmed. A short meeting shows its start time after its title.
+- **Review Today** shows tomorrow’s schedule.
+- **Join**, under **Day details**, opens your next online meeting.
+- Each meeting’s note icon opens its existing note, or adds the meeting to its daily note and opens it. See [Meeting Notes](notes.html#meeting-notes).
+- Click a meeting’s title to open it in Calendar. Use its note icon to [prepare alongside its notes](#get-ready-for-meetings).
 - In a narrow window, the day view gives way to the list of today's events, which marks overlapping meetings and says when a session will be **Recorded**. Dragging onto the day isn't available there; **Book** still works.
 
 ## Review Your Day {#review-your-day}
@@ -37,7 +37,7 @@ In the evening, Today shows what the day came to and what is left over, with tom
 
 The header shows **Day closed** when every finished meeting has been reviewed or set aside and no planned item is left undecided. It follows what is saved in your notes, so it agrees on your other computers once they sync; only **No Follow-through** stays on one computer.
 
-**Tomorrow**, on the right, lists what you carried to tomorrow, then tomorrow's calendar as a day view with your working hours shaded and the same preparation marks as today's meetings. Click a meeting to [prepare for it](#get-ready-for-meetings); preparation takes the left column in place of the review, and <kbd>Escape</kbd> returns to it. **Plan Tomorrow** opens [Plan Today](#plan-today) for tomorrow with what you carried already chosen.
+**Tomorrow**, on the right, lists what you carried to tomorrow, then tomorrow's calendar as a day view with your working hours shaded. A meeting’s title opens Calendar, and its note icon opens its notes for [preparation](#get-ready-for-meetings). **Plan Tomorrow** opens [Plan Today](#plan-today) for tomorrow with what you carried already chosen.
 
 ## Plan Your Day {#plan-your-day}
 
@@ -82,18 +82,18 @@ Drag a card from the plan or a source onto the day view to book half an hour at 
 
 ## Get Ready for Meetings {#get-ready-for-meetings}
 
-Meetings still ahead in the day view say what is ready for them when you focus them: whether they have notes, earlier meetings in their series with notes, open commitments, and how many unread conversations their attendees sent you. Small marks before a meeting's title show at a glance that it has notes, how many open commitments it has, and how much unread mail its attendees sent.
+Use the note icon on a meeting in **Today’s schedule** to open its existing note, or start its entry in the daily note. Press <kbd>p</kbd> on Today for the meeting in focus, or the next meeting if none is focused. The note opens at the meeting’s link.
 
-- Click a meeting in the day view, click **Prepare** beside your next meeting, or press <kbd>p</kbd> to [prepare for it](calendar.html#prepare-for-a-meeting). Preparation replaces the plan in the left column, and the meeting stays selected in the day view. Press <kbd>↓</kbd> or <kbd>↑</kbd> for the next or previous meeting. Press <kbd>Escape</kbd> or <kbd>p</kbd>, or click the meeting again, to return to the plan.
-- Above preparation, **Add Note** (or **Open Note**), **Reserve Prep Time**, **Join**, and **Open in Calendar** offer the next steps. While you prepare, the next-meeting link in the header keeps only its link.
+- In the note’s **Links** section, the **Prepare meeting** icon opens [preparation](calendar.html#prepare-for-a-meeting) in the side panel. The editor stays visible, so you can write while reviewing previous notes, related conversations, and commitments.
+- **Close Preparation** or <kbd>Escape</kbd> returns to note details. If you open a source, **Back to Meeting** restores the original note and its preparation.
 - **Reserve Prep Time** adds a task, "Prepare for" and the meeting's name, under the meeting's line in that day's note, adding the line if the note doesn't have one. It appears in **Tasks**. Doing it again finds the task already there.
 - Working locations, such as **Home** or **Office**, aren't meetings, so they offer no **Prepare** or **Add Note**; clicking one opens it in Calendar.
 
 ## Keep an Eye on Mail {#keep-an-eye-on-mail}
 
-The **Mail** line in the header lists calendar invitations by name, since they need an answer in Calendar, and counts what **needs a reply** (messages written to you and at most two others by people you write to) and the rest of your unread mail. Click an invitation to open it, or **Open Inbox** for everything else. The arrow before **Mail** folds the line to a short summary; Today remembers that on this computer.
+Under **Day details**, the **Mail** line lists calendar invitations by name, since they need an answer in Calendar, and counts what **needs a reply** (messages written to you and at most two others by people you write to) and the rest of your unread mail. Click an invitation to open it, or **Open Inbox** for everything else. The arrow before **Mail** folds the line to a short summary; Today remembers that on this computer.
 
-The mail line and the mail and task sources (**Suggested**, **Also Due**, **Tasks**, **You Said You Would**, **Starred Mail**, and **Goals**) follow the selected mail account, which they name beside them; **Keep in Touch** and **Notes** don't. The plan and the day view cover every account: the day view includes every calendar you show in **Calendar**. If it looks wrong, check [calendar selection](troubleshooting.html#calendar-availability-looks-wrong). **Open Calendar** leads to the full workspace.
+The mail line and the mail and task sources (**Suggested**, **Also Due**, **Tasks**, **You Said You Would**, **Starred Mail**, and **Goals**) follow the selected mail account, named above the planning inbox; **Keep in Touch** and **Notes** always include all accounts. The plan and the day view cover every account: the day view includes every calendar you show in **Calendar**. If it looks wrong, check [calendar selection](troubleshooting.html#calendar-availability-looks-wrong). **Open Calendar** leads to the full workspace.
 
 ## You Said You Would {#you-said-you-would}
 

@@ -238,6 +238,7 @@ export function PlanSourceSwitcher({ sources, selected, onSelect, planned, onAdd
     return <ContextRow
       {...candidate.row}
       key={candidate.id}
+      className={[candidate.row.className, "today-inbox-card"].filter(Boolean).join(" ")}
       title={candidate.title}
       onActivate={activate ? () => { if (!drag.clickSuppressed()) activate(); } : undefined}
       onPointerDown={planned ? undefined : (event) => drag.startDrag({ id: candidate.id, title: candidate.title, kind: "candidate", candidate }, event)}

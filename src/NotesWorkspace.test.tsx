@@ -233,6 +233,38 @@ describe("Notes workspace", () => {
     expect(choose).toHaveBeenCalledTimes(1);
   });
 
+  it("opens meeting preparation beside the editor after saving typing, and closes back to note details", async () => {
+    const reference = { version: 1 as const, kind: "event" as const, id: "prep-event", account: "calendar@example.org", calendar: "work" };
+    const note = await mailClient.createNote(uniqueTitle("Meeting preparation"), markdownEntityLink("Team sync", reference));
+    const event: ScheduleEvent = { id: "prep-event", accountId: "calendar@example.org", calendarId: "work", title: "Team sync", allDay: false, start: "2026-11-17T09:00:00Z", end: "2026-11-17T10:00:00Z" };
+    const resolve = vi.spyOn(mailClient, "resolveNoteEvent").mockResolvedValue(event);
+    const preparation = vi.fn((event: ScheduleEvent, close: () => void) => <section aria-label="Meeting preparation"><p>{event.title}</p><button onClick={close}>Close preparation</button></section>);
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} renderMeetingPreparation={preparation} />);
+    const prepare = await screen.findByRole("button", { name: "Prepare meeting: Team sync" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: `${note.body}\nMy preparation notes` } });
+    fireEvent.click(prepare);
+    const panel = await screen.findByRole("region", { name: "Meeting preparation" });
+    expect(resolve).toHaveBeenCalledWith(reference);
+    expect((await mailClient.getNote(note.id))?.body).toContain("My preparation notes");
+    expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(`${note.body}\nMy preparation notes`);
+    expect(within(panel).getByText("Team sync")).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "Close preparation" }));
+    expect(screen.getByRole("heading", { name: "Note details" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Meeting preparation" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the editor visible when a meeting is unavailable", async () => {
+    const reference = { version: 1 as const, kind: "event" as const, id: "missing-event", account: "calendar@example.org", calendar: "work" };
+    const note = await mailClient.createNote(uniqueTitle("Unavailable preparation"), markdownEntityLink("Missing sync", reference));
+    vi.spyOn(mailClient, "resolveNoteEvent").mockResolvedValue(null);
+    const preparation = vi.fn(() => <p>Preparation</p>);
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} renderMeetingPreparation={preparation} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Prepare meeting: Missing sync" }));
+    await screen.findByText("Unavailable on this device");
+    expect(preparation).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(note.body);
+  });
+
   it("uses an icon in Note Details and a single action to link an empty note", async () => {
     render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });

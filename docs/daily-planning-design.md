@@ -320,26 +320,20 @@ has no text inputs; the routine and every form open as modals. Today stays one
 day: there is no multi-day board, and tomorrow is planned through **Plan
 Tomorrow**.
 
-Two columns, with work on the left and time on the right. The left column takes
-about two-thirds of the content width and the day view about one-third: the plan
-and preparation are text that needs room to read, while the day view only needs
-space for time blocks. The ratio is a layout token with a minimum day-view width,
-not a fixed split, so narrow windows fall back as described below.
+Two columns: a planning inbox on the left and today’s schedule on the right.
+The inbox takes about one-third of the width and the schedule about two-thirds,
+with minimum column widths and the responsive agenda fallback described below.
+Existing plan items remain in the inbox above the candidate source cards; an empty
+plan leaves room for those cards instead of showing a second empty state.
 
-**The left column shows the plan or one meeting's preparation.** The day view on
-the right always stays and is how a meeting is chosen. Choosing a meeting there, or
-<kbd>p</kbd> for the meeting in focus or the next one, shows that meeting's
-[preparation](meeting-preparation-design.md#prepare-from-calendar-or-today) in the
-left column in place of the plan, with the meeting highlighted in the day view.
-<kbd>↓</kbd>/<kbd>↑</kbd> move to the next or previous meeting; <kbd>Escape</kbd>,
-<kbd>p</kbd>, or choosing the meeting again returns to the plan. This is the same
-pattern as the interim three-column Today, where preparation replaces the mail
-column beside the agenda, rotated into the two-column layout. Preparation's own
-action row (Add Note / Open Note, Reserve Prep Time, Join, Open in Calendar) is the
-one place for a meeting's actions, so neither the header nor the day view repeats
-them while a meeting is being prepared.
+Meeting titles open Calendar. A separate note icon opens the occurrence’s existing
+note or adds the event to its daily note and opens it at the event reference.
+<kbd>p</kbd> does the same for the focused meeting or the next one. Preparation is
+available from the event’s link in the Notes context rail while the editor stays
+visible. Closing it returns to note details, and Back to Meeting restores the same
+note and preparation after opening a source. Today’s inbox is never replaced.
 
-- **Header:** the date, the day summary line, the mail signal, and the plan status:
+- **Header:** the date, a short planning heading, and the plan status. **Day details** reveals the day summary and mail signal:
   **Plan Today**, or "3 of 5 planned done" with **Edit Plan**, and **Shut Down**.
 - **Plan column (left):** the plan items as cards, in order, the focus item first.
   A card shows the item's title, its source (account, note, or contact), its
@@ -351,7 +345,7 @@ them while a meeting is being prepared.
   onto the day view. The selected source is a per-device convenience. Without a
   plan, the column shows the switcher with a single line offering **Plan Today**.
 - **Day view (right):** today's schedule as a time grid; see [Day view](#day-view).
-  Tomorrow's first events show below it, as the agenda shows them now.
+  Tomorrow’s events appear in **Review Today** instead of below the daytime grid.
 - **Mail signal:** the unread-mail column is removed. A one-line, collapsible
   signal in the header shows **Invitations** (listed, since they are calendar
   decisions) and counts of **Needs a reply** and other unread mail, with
