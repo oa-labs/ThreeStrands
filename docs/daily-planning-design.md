@@ -862,7 +862,13 @@ Where the stage 1 contracts differ from the text above, and why:
   `note:<noteId>:<markerId>`, as the source task. `bookedSource`,
   `bookedTaskFor`, and `bookedBlock` resolve both forms, and
   `openTasksFor(..., { includeNoteTasks: true })` offers note tasks. Calendar's
-  task list is unchanged; it does not yet include note tasks.
+  Open tasks list includes open note tasks beside account tasks, with the same
+  drag-to-book, Book, check-off with Undo, and booked-event Task section. It
+  loads `listNoteTasks` with the account tasks and reloads on note changes. Note
+  tasks belong to no account, so they show whichever accounts are shown, as in
+  Today, and they book on the default writable calendar. Checking one off goes
+  through `changeNoteItem`; a conflicted note task's checkbox is disabled. If
+  only one source fails to load, the other's tasks stay listed with Try Again.
 
 ## Compatibility
 

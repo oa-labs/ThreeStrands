@@ -11,6 +11,9 @@ import { clearScheduleCache } from "./calendarScheduleCache";
 import { CALENDAR_COLORS_KEY, resetCalendarColorsForTests } from "./calendarColors";
 import { expectSharedButtons } from "./test/sharedButtons";
 import { expectContextRows } from "./test/contextRows";
+import { NOTES_CHANGED } from "./noteMutations";
+import type { NoteTaskRecord } from "./noteEntities";
+import type { Note } from "./domain";
 import type { CalendarAccount, CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
 
 const accounts: CalendarAccount[] = [
@@ -60,6 +63,7 @@ describe("CalendarWeekView", () => {
     vi.setSystemTime(new Date(2026, 8, 22, 14, 30));
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listNoteTasks").mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -1182,6 +1186,107 @@ describe("CalendarWeekView", () => {
       fireEvent.click(within(booked).getByRole("checkbox", { name: "Mark Write proposal done" }));
       await waitFor(() => expect(setStatus).toHaveBeenCalledWith("proposal", "completed"));
       expect(onTasksChanged).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("note tasks in open tasks", () => {
+    const record = (overrides: Partial<NoteTaskRecord> = {}): NoteTaskRecord => ({
+      id: "note:n1:m1", markerId: "m1", noteId: "n1", noteTitle: "Launch plan", title: "Draft launch post", checked: false,
+      updatedAt: "2026-09-20T10:00:00Z", completedAt: null, conflicted: false, ...overrides,
+    });
+    const mailTask: ThreadTask = {
+      id: "proposal", accountId: "joel@example.com", threadId: null, subjectSnapshot: null, title: "Write proposal", kind: "action",
+      dueKind: "none", status: "open", createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z",
+    };
+    const openTasks = () => screen.getByRole("region", { name: "Open tasks" });
+
+    it("lists a note task beside account tasks, naming its note", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([mailTask]);
+      vi.mocked(mailClient.listNoteTasks).mockResolvedValue([record(), record({ id: "note:n1:m2", markerId: "m2", title: "Done already", checked: true })]);
+      renderWeek({ mailAccountIds: ["joel@example.com"] });
+      const row = (await within(openTasks()).findByRole("button", { name: /Draft launch post/ })).closest(".context-row")!;
+      expect(row).toHaveTextContent("Note · Launch plan");
+      expect(row).not.toHaveTextContent("joel@example.com");
+      expect(within(openTasks()).getByRole("button", { name: /Write proposal/ })).toBeInTheDocument();
+      expect(within(openTasks()).queryByText("Done already")).not.toBeInTheDocument();
+    });
+
+    it("checks a note task off at the note's version and Undo reopens it at the new version", async () => {
+      vi.mocked(mailClient.listNoteTasks).mockResolvedValue([record()]);
+      const patch = vi.spyOn(mailClient, "patchNoteItem").mockResolvedValueOnce({ updatedAt: "2026-09-22T14:30:01Z" } as Note)
+        .mockResolvedValueOnce({ updatedAt: "2026-09-22T14:30:02Z" } as Note);
+      const setStatus = vi.spyOn(mailClient, "setTaskStatus");
+      const onNotice = vi.fn();
+      renderWeek({ mailAccountIds: ["joel@example.com"], onNotice });
+      fireEvent.click(await within(openTasks()).findByRole("checkbox", { name: "Mark Draft launch post done" }));
+      await waitFor(() => expect(patch).toHaveBeenCalledWith("n1", "m1", "2026-09-20T10:00:00Z", true, undefined));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.objectContaining({ message: "Completed: Draft launch post" })));
+      act(() => onNotice.mock.calls[0]![0].undo());
+      await waitFor(() => expect(patch).toHaveBeenLastCalledWith("n1", "m1", "2026-09-22T14:30:01Z", false, undefined));
+      expect(setStatus).not.toHaveBeenCalled();
+    });
+
+    it("disables a conflicted note task's checkbox and says why", async () => {
+      vi.mocked(mailClient.listNoteTasks).mockResolvedValue([record({ conflicted: true })]);
+      renderWeek({ mailAccountIds: ["joel@example.com"] });
+      const box = await within(openTasks()).findByRole("checkbox", { name: "Mark Draft launch post done" });
+      expect(box).toBeDisabled();
+      expect(box).toHaveAccessibleDescription(/conflict/);
+    });
+
+    it("books a dropped note task tagged with its note and marker, on the default calendar", async () => {
+      vi.mocked(mailClient.listNoteTasks).mockResolvedValue([record()]);
+      const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ ...event("block", "2026-09-22T09:00:00", "2026-09-22T09:30:00"), calendarId: "primary" });
+      const { container } = renderWeek({ mailAccountIds: ["joel@example.com"], onNotice: vi.fn() });
+      const column = container.querySelectorAll<HTMLElement>(".calendar-week-column")[2]!;
+      vi.spyOn(column, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+      const row = (await within(openTasks()).findByRole("button", { name: /Draft launch post/ })).closest<HTMLElement>(".context-row")!;
+      document.elementFromPoint = vi.fn(() => column);
+      fireEvent.pointerDown(row, { button: 0, pointerId: 7, clientX: 900, clientY: 10 });
+      fireEvent.pointerMove(document.body, { pointerId: 7, clientX: 50, clientY: 9 * 64 });
+      fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 9 * 64 });
+      await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ accountId: "joel@example.com", calendarId: "primary", sourceTaskId: "note:n1:m1" })));
+      Reflect.deleteProperty(document, "elementFromPoint");
+    });
+
+    it("says a note task has time booked, and shows it in the booked event's details where it can be ticked off", async () => {
+      vi.mocked(mailClient.listNoteTasks).mockResolvedValue([record()]);
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+        { ...event("block", "2026-09-23T10:00:00", "2026-09-23T10:30:00", "Draft launch post"), calendarId: "primary", sourceTaskId: "note:n1:m1" },
+      ], errors: [] });
+      const patch = vi.spyOn(mailClient, "patchNoteItem").mockResolvedValue({ updatedAt: "2026-09-22T14:30:01Z" } as Note);
+      renderWeek({ mailAccountIds: ["joel@example.com"] });
+      await waitFor(() => expect(within(openTasks()).getByRole("button", { name: /Draft launch post/ })).toHaveTextContent("Booked Wed 10:00 am"));
+      fireEvent.click(await calendarGrid().findByRole("button", { name: "Draft launch post" }));
+      const booked = await screen.findByRole("region", { name: "Task" });
+      expect(booked).toHaveTextContent("Note · Launch plan");
+      fireEvent.click(within(booked).getByRole("checkbox", { name: "Mark Draft launch post done" }));
+      await waitFor(() => expect(patch).toHaveBeenCalledWith("n1", "m1", "2026-09-20T10:00:00Z", true, undefined));
+    });
+
+    it("reloads when notes change", async () => {
+      renderWeek({ mailAccountIds: ["joel@example.com"] });
+      await within(openTasks()).findByText("No open tasks.");
+      vi.mocked(mailClient.listNoteTasks).mockResolvedValue([record()]);
+      act(() => { window.dispatchEvent(new CustomEvent(NOTES_CHANGED, { detail: "n1" })); });
+      expect(await within(openTasks()).findByRole("button", { name: /Draft launch post/ })).toBeInTheDocument();
+    });
+
+    it("keeps account tasks when note tasks fail to load, and Try Again reloads both", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([mailTask]);
+      vi.mocked(mailClient.listNoteTasks).mockRejectedValueOnce(new Error("notes offline"));
+      renderWeek({ mailAccountIds: ["joel@example.com"] });
+      expect(await within(openTasks()).findByRole("button", { name: /Write proposal/ })).toBeInTheDocument();
+      vi.mocked(mailClient.listNoteTasks).mockResolvedValue([record()]);
+      fireEvent.click(await within(openTasks()).findByRole("button", { name: "Try Again" }));
+      expect(await within(openTasks()).findByRole("button", { name: /Draft launch post/ })).toBeInTheDocument();
+      expect(within(openTasks()).queryByRole("button", { name: "Try Again" })).not.toBeInTheDocument();
+    });
+
+    it("keeps note tasks listed whichever accounts are shown, as Today does", async () => {
+      vi.mocked(mailClient.listNoteTasks).mockResolvedValue([record()]);
+      renderWeek({ mailAccountIds: [] });
+      expect(await within(openTasks()).findByRole("button", { name: /Draft launch post/ })).toBeInTheDocument();
     });
   });
 

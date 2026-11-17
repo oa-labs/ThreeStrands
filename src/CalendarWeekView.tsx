@@ -393,7 +393,7 @@ export function CalendarWeekView({
   };
 
   const { tasks: accountTasks, loading: tasksLoading, error: tasksError, reload: reloadTasks } = useAccountTasks(mailAccountIds, taskRefreshKey);
-  const openTasks = openTasksFor(accountTasks, mailAccountIds);
+  const openTasks = openTasksFor(accountTasks, mailAccountIds, { includeNoteTasks: true });
   const bookedTask = selectedEvent ? bookedTaskFor(selectedEvent, accountTasks) : undefined;
   const tasksChanged = () => { reloadTasks(); onTasksChanged?.(); };
 

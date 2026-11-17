@@ -6,6 +6,8 @@ import { mailClient } from "./data/client";
 import type { ScheduleEvent, ThreadTask } from "./domain";
 import { errorMessage } from "./errors";
 import { bookedBlock, TASK_BLOCK_MINUTES } from "./taskBooking";
+import { changeNoteItem, useNoteChanges } from "./noteMutations";
+import { noteTaskAsTask } from "./noteEntities";
 import { formatDue, isOverdue } from "./taskViews";
 import type { Notice } from "./useNotice";
 
@@ -16,9 +18,24 @@ export const OPEN_TASK_ROWS = 8;
 export const DONE_TASK_LINGER_MS = 4000;
 
 /** A task checked off (or back on) here, shown as such until the reloaded list agrees. */
-type Checked = { task: ThreadTask; previous: ThreadTask["status"]; index: number; done: boolean };
+type Checked = { task: ThreadTask; previous: ThreadTask["status"]; index: number; done: boolean; /** A note task's note version after the change made here. */ version?: string };
 
-/** Every task of these accounts, reloaded whenever `refreshKey` changes. */
+const CONFLICT_REASON = "Resolve this note's conflict before changing its tasks.";
+
+/** Checks a note task off or back on in its note, guarded by the version of the note it was read at. Returns the note's new version. */
+async function setNoteTaskChecked(task: ThreadTask, checked: boolean, version = task.updatedAt): Promise<string> {
+  const source = task.noteSource;
+  if (!source) throw new Error("That task isn't in a note");
+  if (source.conflicted) throw new Error(CONFLICT_REASON);
+  return (await changeNoteItem(source.noteId, source.markerId, version, { checked })).updatedAt;
+}
+
+/**
+ * Every task of these accounts, with the open and done tasks in notes, which
+ * belong to no account and so show whichever accounts are shown (as Today's
+ * note tasks do). Reloaded whenever `refreshKey` changes or notes change. One
+ * source failing keeps what the other loaded and reports the error.
+ */
 export function useAccountTasks(accountIds: string[], refreshKey: number) {
   const [tasks, setTasks] = useState<ThreadTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,13 +47,20 @@ export function useAccountTasks(accountIds: string[], refreshKey: number) {
     const ids = scope ? scope.split("\n") : [];
     setLoading(true);
     setError(null);
-    mailClient.listTasks(ids.length === 1 ? ids[0] : undefined)
-      .then((loaded) => { if (current) setTasks(loaded.filter((task) => ids.includes(task.accountId))); })
-      .catch((reason: unknown) => { if (current) setError(errorMessage(reason)); })
-      .finally(() => { if (current) setLoading(false); });
+    void Promise.allSettled([mailClient.listTasks(ids.length === 1 ? ids[0] : undefined), mailClient.listNoteTasks()]).then(([mail, notes]) => {
+      if (!current) return;
+      setTasks([
+        ...(mail.status === "fulfilled" ? mail.value.filter((task) => ids.includes(task.accountId)) : []),
+        ...(notes.status === "fulfilled" ? notes.value.map(noteTaskAsTask) : []),
+      ]);
+      const failed = mail.status === "rejected" ? mail.reason : notes.status === "rejected" ? notes.reason : null;
+      setError(failed === null ? null : errorMessage(failed));
+      setLoading(false);
+    });
     return () => { current = false; };
   }, [scope, refreshKey, attempt]);
   const reload = useCallback(() => setAttempt((value) => value + 1), []);
+  useNoteChanges(reload);
   return { tasks, loading, error, reload };
 }
 
@@ -88,7 +112,8 @@ export function CalendarTasks({ tasks, loading, error, reload, events, now, mult
     stopLingering(entry.task.id);
     put({ ...entry, done: false });
     try {
-      await mailClient.setTaskStatus(entry.task.id, entry.previous);
+      if (entry.task.noteSource) await setNoteTaskChecked(entry.task, false, entry.version);
+      else await mailClient.setTaskStatus(entry.task.id, entry.previous);
     } catch (reason) {
       forget(entry.task.id);
       onNotice?.({ message: errorMessage(reason) });
@@ -102,12 +127,14 @@ export function CalendarTasks({ tasks, loading, error, reload, events, now, mult
     const entry: Checked = { task, previous: task.status, index, done: true };
     put(entry);
     try {
-      await mailClient.setTaskStatus(task.id, "completed");
+      if (task.noteSource) entry.version = await setNoteTaskChecked(task, true);
+      else await mailClient.setTaskStatus(task.id, "completed");
     } catch (reason) {
       forget(task.id);
       onNotice?.({ message: errorMessage(reason) });
       return;
     }
+    put({ ...entry });
     onChanged();
     stopLingering(task.id);
     lingering.current.set(task.id, window.setTimeout(() => {
@@ -127,7 +154,8 @@ export function CalendarTasks({ tasks, loading, error, reload, events, now, mult
     const done = entry?.done ?? false;
     const due = formatDue(task);
     const booked = bookedBlock(task, events, now);
-    const detail = [task.status === "in_progress" ? "In progress" : null, booked ? bookedLabel(booked) : null, multipleAccounts ? task.accountId : null]
+    const conflicted = task.noteSource?.conflicted === true;
+    const detail = [task.status === "in_progress" ? "In progress" : null, booked ? bookedLabel(booked) : null, task.noteSource ? `Note · ${task.noteSource.noteTitle}` : multipleAccounts ? task.accountId : null]
       .filter(Boolean).join(" · ");
     const classes = ["calendar-task", done ? "context-task-done" : "", draggingTaskId === task.id ? "calendar-task-dragging" : ""].filter(Boolean).join(" ");
     return <ContextRow
@@ -139,8 +167,11 @@ export function CalendarTasks({ tasks, loading, error, reload, events, now, mult
           className="context-task-checkbox"
           checked={done}
           aria-label={done ? `Mark ${task.title} not done` : `Mark ${task.title} done`}
+          aria-describedby={conflicted ? `calendar-task-conflict-${index}` : undefined}
+          disabled={conflicted}
           onChange={() => void (entry?.done ? reopen(entry) : complete(task, index))}
         />
+        {conflicted ? <span id={`calendar-task-conflict-${index}`} className="sr-only">{CONFLICT_REASON}</span> : null}
       </HoverTooltip>}
       title={task.title}
       wrapTitle
@@ -177,7 +208,8 @@ export function BookedTask({ task, onChanged }: { task: ThreadTask; onChanged():
   const toggle = async () => {
     setError(null);
     try {
-      await mailClient.setTaskStatus(task.id, done ? "open" : "completed");
+      if (task.noteSource) await setNoteTaskChecked(task, !done);
+      else await mailClient.setTaskStatus(task.id, done ? "open" : "completed");
       onChanged();
     } catch (reason) {
       setError(errorMessage(reason));
@@ -197,13 +229,19 @@ export function BookedTask({ task, onChanged }: { task: ThreadTask; onChanged():
         className="context-task-checkbox"
         checked={done}
         aria-label={done ? `Mark ${task.title} not done` : `Mark ${task.title} done`}
+        aria-describedby={task.noteSource?.conflicted ? "calendar-booked-task-conflict" : undefined}
+        disabled={task.noteSource?.conflicted}
         onChange={() => void toggle()}
       />}
       title={task.title}
       wrapTitle
       date={due ? `Due ${due}` : undefined}
       dateClassName={due && !done && isOverdue(task) ? "task-due-overdue" : undefined}
+      detail={task.noteSource ? `Note · ${task.noteSource.noteTitle}` : undefined}
     />]}
-    footer={error ? <p className="form-error" role="alert">{error}</p> : undefined}
+    footer={<>
+      {task.noteSource?.conflicted ? <p id="calendar-booked-task-conflict" className="context-status">{CONFLICT_REASON}</p> : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+    </>}
   />;
 }
