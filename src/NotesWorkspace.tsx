@@ -5,7 +5,7 @@ import { formatDateTime } from "./dateFormatting";
 import { NoteLinkPicker } from "./NoteLinkPicker";
 import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./noteEntities";
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowLeft, CalendarDays, ClipboardList, ChevronLeft, ChevronRight, CircleCheck, FilePlus, FileUp, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
 import type { CalendarOption, ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSearchScope, NoteSummary, ScheduleEvent } from "./domain";
@@ -15,6 +15,7 @@ import { formatHistoryDate } from "./contactContext";
 import { isEditableTarget } from "./commands";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
+import { escapeDismissPending } from "./useEscapeDismiss";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { PanelResizeHandle, useNoteListWidth } from "./PanelResizeHandle";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
@@ -93,7 +94,7 @@ export function relinkMessage({ updated, keptOldLink }: NoteRelink): string | nu
  * calendar opens any day's note, and a daily note lists that day's agenda,
  * where Add Note writes a meeting into it.
  */
-export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact, onOpenEntity, onReturn, calendars, onOpenEvent, onAddNote, renderMeetingPreparation, meetingPreparation, onMeetingPreparationChange }: {
+export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey = "", onOpenContact, onOpenEntity, onReturn, calendars, onOpenEvent, onAddNote, renderMeetingPreparation, meetingPreparation, onMeetingPreparationChange, onPreparationVisibilityChange }: {
   request?: NotesRequest | null;
   onOpenEntity?(href: string): Promise<void>;
   onReturn?(): void;
@@ -109,6 +110,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   onAddNote?(event: ScheduleEvent): void;
   /** Preparation stays beside the note editor rather than replacing Today. */
   renderMeetingPreparation?(event: ScheduleEvent, close: () => void, noteId: string): ReactNode;
+  onPreparationVisibilityChange?(visible: boolean): void;
   meetingPreparation?: { noteId: string; event: ScheduleEvent } | null;
   onMeetingPreparationChange?(next: { noteId: string; event: ScheduleEvent } | null): void;
 }) {
@@ -142,6 +144,10 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const [localPreparing, setLocalPreparing] = useState<{ noteId: string; event: ScheduleEvent } | null>(null);
   const preparing = onMeetingPreparationChange ? meetingPreparation : localPreparing;
   const setPreparing = onMeetingPreparationChange ?? setLocalPreparing;
+  const [railVisible, setRailVisible] = useState(false);
+  const preparationPane = useRef<HTMLDivElement>(null);
+  const preparationTrigger = useRef<string | null>(null);
+  const focusPreparation = useRef(false);
   const [linkPicker, setLinkPicker] = useState(false);
   const [people, setPeople] = useState<ContactProfile[]>([]);
   const [relinkNotice, setRelinkNotice] = useState<string | null>(null);
@@ -439,8 +445,29 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const stale = editor.saveState.kind === "stale" ? editor.saveState : null;
   const daily = target.kind === "daily";
   const readOnly = Boolean(stale) || editor.loading || inTrash || noteConflicts.length > 0;
+  const preparationVisible = Boolean(preparing?.noteId === noteId && !inTrash && renderMeetingPreparation && railVisible);
+  useLayoutEffect(() => {
+    onPreparationVisibilityChange?.(preparationVisible);
+    return () => onPreparationVisibilityChange?.(false);
+  }, [preparationVisible, onPreparationVisibilityChange]);
+  useLayoutEffect(() => {
+    if (preparationVisible && focusPreparation.current) {
+      focusPreparation.current = false;
+      preparationPane.current?.focus();
+    }
+  }, [preparationVisible]);
+  const closePreparation = () => {
+    if (!preparationVisible) return;
+    setPreparing(null);
+    requestAnimationFrame(() => {
+      const trigger = [...document.querySelectorAll<HTMLButtonElement>("[data-prepare-reference]")]
+        .find((button) => button.dataset.prepareReference === preparationTrigger.current && !button.closest("[hidden]"));
+      if (trigger) trigger.focus();
+      else focusSelectedRow();
+    });
+  };
   useWorkspaceCommands({
-    "meetings.closePrepare": () => setPreparing(null),
+    "meetings.closePrepare": closePreparation,
     "notes.next": () => moveSelection(1),
     "notes.previous": () => moveSelection(-1),
     "notes.new": () => setCreating(true),
@@ -601,12 +628,16 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             {editor.saveState.kind === "error" ? <p className="form-error" role="alert">{editor.saveState.message}</p> : null}
           </>}
       </div>
-      <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow}>
-        {preparing?.noteId === noteId && !inTrash && renderMeetingPreparation ? renderMeetingPreparation(preparing.event, () => setPreparing(null), preparing.noteId) : <>
+      <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow} onVisibilityChange={setRailVisible}>
+        {preparing?.noteId === noteId && !inTrash && renderMeetingPreparation ? <div ref={preparationPane} className="notes-meeting-preparation" tabIndex={-1} role="group" aria-label="Meeting Preparation" onKeyDown={(event) => {
+          if (event.key === "Escape" && !event.nativeEvent.isComposing && !event.defaultPrevented && event.currentTarget.contains(event.target as Node) && !escapeDismissPending()) {
+            event.preventDefault(); event.stopPropagation(); closePreparation();
+          }
+        }}>{renderMeetingPreparation(preparing.event, closePreparation, preparing.noteId)}</div> : <>
         <NotesDayCalendar selected={daily ? target.date : null} today={today.date} onSelect={selectDay} revision={searchRevision} reveal={dayChosen} />
         {daily && calendars?.length && onOpenEvent ? <CalendarAgenda key={target.date} today={parseCalendarDate(target.date) ?? new Date()} day="chosen" id="notes-agenda" showDate={false}
           calendars={calendars} onOpenEvent={onOpenEvent} onAddNote={onAddNote} /> : null}
-        <ContextSectionHeader title="Note details" icon={<NotebookText size={ICON_SIZE.xs} />} />
+        <ContextSectionHeader title="Note Details" icon={<NotebookText size={ICON_SIZE.xs} />} />
         {entityDocument?.warning ? <p role="alert" className="form-error">{entityDocument.warning}</p> : null}
         {!entityLinks.length && !readOnly ? <section className="note-links-empty" aria-label="Links">
           <button type="button" className="btn-link" onClick={() => setLinkPicker(true)}><span className="context-row-glyph" aria-hidden="true"><Plus size={ICON_SIZE.sm} /></span>Link contact or conversation</button>
@@ -614,11 +645,14 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
         {entityLinks.length ? <ContextSection id="note-links" title="Links" count={entityLinks.length}
           actions={!readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a contact, conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
           rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind as keyof typeof LINK_ICON]} title={link.label} detail={link.reference.account}
-            actions={link.reference.kind === "event" && renderMeetingPreparation && !inTrash ? [<button key="prepare" type="button" className="btn-icon btn-icon-sm" aria-label={`Prepare meeting: ${link.label}`} title="Prepare meeting" disabled={busy || readOnly} onClick={() => void act(async () => {
+            actions={link.reference.kind === "event" && renderMeetingPreparation && !inTrash ? [<button key="prepare" type="button" className="btn-icon btn-icon-sm" data-prepare-reference={link.href} aria-label={`Prepare Meeting: ${link.label}`} title="Prepare meeting" disabled={busy || readOnly} onClick={() => void act(async () => {
               await editor.flush();
               if (editor.unsaved()) throw new Error("Resolve your unsaved note first.");
               const event = await mailClient.resolveNoteEvent(link.reference);
               if (!event) throw new Error("Unavailable on this device");
+              if (openNoteId.current !== noteId) return;
+              preparationTrigger.current = link.href;
+              focusPreparation.current = true;
               setPreparing({ noteId: noteId!, event });
             })}><ClipboardList size={ICON_SIZE.sm} /></button>] : undefined}
             onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null}

@@ -190,12 +190,13 @@ it("prepares a meeting beside its note, opens a source note, and returns to the 
   fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
   fireEvent.click(await within(await screen.findByRole("group", { name: "Day view" })).findByRole("button", { name: "Open Note: Prep review" }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(meetingNote.title));
-  fireEvent.click(await screen.findByRole("button", { name: "Prepare meeting: Prep review" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Prepare Meeting: Prep review" }));
   const prep = within(await screen.findByRole("region", { name: "Preparation for Prep review" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: `${meetingNote.body}\nNotes written during preparation` } });
   fireEvent.click(await prep.findByRole("button", { name: /Agenda for the review/ }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Prep source"));
   expect((await mailClient.getNote(meetingNote.id))?.body).toContain("Notes written during preparation");
+  fireEvent.keyDown(window, { key: "Escape" });
   fireEvent.click(await screen.findByRole("button", { name: "Back to Meeting" }));
   expect(await screen.findByRole("region", { name: "Preparation for Prep review" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Close Preparation" }));
@@ -206,7 +207,7 @@ it("prepares a meeting beside its note, opens a source note, and returns to the 
   await screen.findByRole("group", { name: "Day view" });
   fireEvent.keyDown(window, { key: "p" });
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(meetingNote.title));
-  fireEvent.click(await screen.findByRole("button", { name: "Prepare meeting: Prep review" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Prepare Meeting: Prep review" }));
   expect(await screen.findByRole("region", { name: "Preparation for Prep review" })).toBeInTheDocument();
   fireEvent.keyDown(window, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("region", { name: "Preparation for Prep review" })).not.toBeInTheDocument());
@@ -237,7 +238,7 @@ it("reviews follow-through from preparation with Undo, and hands a follow-up to 
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
   fireEvent.click(await within(await screen.findByRole("group", { name: "Day view" })).findByRole("button", { name: "Open Note: Follow review" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Prepare meeting: Follow review" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Prepare Meeting: Follow review" }));
   const prep = within(await screen.findByRole("region", { name: "Preparation for Follow review" }));
   fireEvent.click(await prep.findByRole("button", { name: "Review Follow-through" }));
   const review = within(await screen.findByRole("dialog", { name: "Review Follow-through" }));

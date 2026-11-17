@@ -26,6 +26,7 @@ const MAX_SCHEDULE_EVENTS: usize = 250;
 const SOURCE_MESSAGE_PROPERTY: &str = "threestrandsSourceMessage";
 /// The private extended property naming the task an event books time for.
 const SOURCE_TASK_PROPERTY: &str = "threestrandsSourceTask";
+const SOURCE_PLAN_PROPERTY: &str = "threestrandsSourcePlan";
 /// Google's limit on an extended property value; a longer id is not stored.
 const MAX_EXTENDED_PROPERTY_VALUE_BYTES: usize = 1024;
 /// Bounds the attendee addresses kept per event; Google may list hundreds on
@@ -158,6 +159,7 @@ fn private_tags(
             request.source_message_id.as_deref(),
         ),
         (SOURCE_TASK_PROPERTY, request.source_task_id.as_deref()),
+        (SOURCE_PLAN_PROPERTY, request.source_plan_key.as_deref()),
     ]
     .into_iter()
     .filter_map(|(key, id)| {
@@ -1548,6 +1550,10 @@ fn normalize_events(
                     event.extended_properties.as_ref(),
                     SOURCE_TASK_PROPERTY,
                 ),
+                source_plan_key: private_tag(
+                    event.extended_properties.as_ref(),
+                    SOURCE_PLAN_PROPERTY,
+                ),
                 event_type: event
                     .event_type
                     .filter(|kind| !kind.is_empty() && kind != "default"),
@@ -2477,6 +2483,7 @@ mod tests {
             attendees: Vec::new(),
             source_message_id: None,
             source_task_id: None,
+            source_plan_key: None,
         }
     }
 
@@ -2603,6 +2610,47 @@ mod tests {
         )[0]
         .source_message_id
         .is_none());
+    }
+
+    #[test]
+    fn planning_source_tags_round_trip_privately_and_old_cached_events_still_load() {
+        let key = "v1:contact:pat@example.org";
+        let mut request = create_request(false, "");
+        request.source_plan_key = Some(format!(" {key} "));
+        let body = serde_json::to_value(create_body(&request)).unwrap();
+        assert_eq!(
+            body["extendedProperties"]["private"][SOURCE_PLAN_PROPERTY],
+            key
+        );
+        for (scope, expected) in [("private", Some(key)), ("shared", None)] {
+            let event: GoogleEvent = serde_json::from_value(serde_json::json!({
+                "id": "check-in", "summary": "Check in with Pat",
+                "start": {"dateTime": "2026-11-17T14:00:00Z"},
+                "end": {"dateTime": "2026-11-17T14:30:00Z"},
+                "extendedProperties": {scope: {SOURCE_PLAN_PROPERTY: key}}
+            }))
+            .unwrap();
+            let normalized =
+                normalize_events(vec![event], "work@example.com", "primary", true).remove(0);
+            assert_eq!(normalized.source_plan_key.as_deref(), expected);
+            assert!(normalized.source_task_id.is_none());
+            let mut cached = serde_json::to_value(normalized).unwrap();
+            cached.as_object_mut().unwrap().remove("sourcePlanKey");
+            let previous: ScheduleEvent = serde_json::from_value(cached).unwrap();
+            assert!(previous.source_plan_key.is_none());
+        }
+        for length in [
+            MAX_EXTENDED_PROPERTY_VALUE_BYTES - 1,
+            MAX_EXTENDED_PROPERTY_VALUE_BYTES,
+            MAX_EXTENDED_PROPERTY_VALUE_BYTES + 1,
+        ] {
+            request.source_plan_key = Some("k".repeat(length));
+            let body = serde_json::to_value(create_body(&request)).unwrap();
+            assert_eq!(
+                body.get("extendedProperties").is_some(),
+                length <= MAX_EXTENDED_PROPERTY_VALUE_BYTES
+            );
+        }
     }
 
     #[test]

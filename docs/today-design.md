@@ -88,8 +88,9 @@ priorities), and the routine without AI takes the plain name. The Top of mind
 strip's ideas (a small budget, one focus item, cited joins) carry into that step.
 
 **As built (planning inbox).** Today has a planning inbox of cards on the left
-and a larger one-day schedule on the right. Existing plan items stay above the
-source cards; an empty plan does not add another empty section. **Day details**
+and a larger one-day schedule on the right. The inbox has four filters: All, Tasks, Emails, and Contacts. Active, unscheduled
+plan items and source candidates share one list, deduplicated by durable identity;
+scheduled items live on the calendar. **Day Details**
 reveals the mail signal and meeting summary. Tomorrow is shown in **Review Today**.
 Event titles open Calendar; each meeting’s note icon and the **Prepare for Meeting**
 shortcut open its occurrence note, or add an entry to its daily note and open it.

@@ -98,6 +98,15 @@ describe("demo plan history, review, and sources", () => {
     expect((await plans.planReview("2026-11-23")).reviewed).toBeNull();
   });
 
+  it("includes tasks in today's note while keeping square checklists local and planned identities intact", async () => {
+    const { notes, plans } = setup([]);
+    await notes.saveDailyNote(DAY, "## Plan\n\n- ( ) Planned task\n\n## Meetings\n\n- ( ) Prepare discussion\n- [ ] Local checklist\n", null);
+    const page = await plans.planSources(DAY, "notes");
+    expect(page.candidates.map((candidate) => candidate.title)).toEqual(["Planned task", "Prepare discussion"]);
+    expect(page.candidates.find((candidate) => candidate.title === "Planned task")?.planned).toBe(true);
+    expect(page.candidates.find((candidate) => candidate.title === "Prepare discussion")?.planned).toBe(false);
+  });
+
   it("pages sources, marks planned candidates, and offers suggested work with reasons", async () => {
     const tasks = [
       ...Array.from({ length: PLAN_SOURCE_PAGE }, (_, n) => task(`t${n}`)),

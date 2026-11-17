@@ -239,18 +239,39 @@ describe("Notes workspace", () => {
     const event: ScheduleEvent = { id: "prep-event", accountId: "calendar@example.org", calendarId: "work", title: "Team sync", allDay: false, start: "2026-11-17T09:00:00Z", end: "2026-11-17T10:00:00Z" };
     const resolve = vi.spyOn(mailClient, "resolveNoteEvent").mockResolvedValue(event);
     const preparation = vi.fn((event: ScheduleEvent, close: () => void) => <section aria-label="Meeting preparation"><p>{event.title}</p><button onClick={close}>Close preparation</button></section>);
-    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} renderMeetingPreparation={preparation} />);
-    const prepare = await screen.findByRole("button", { name: "Prepare meeting: Team sync" });
+    const visibility = vi.fn();
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} renderMeetingPreparation={preparation} onPreparationVisibilityChange={visibility} />);
+    const prepare = await screen.findByRole("button", { name: "Prepare Meeting: Team sync" });
+    prepare.focus();
     fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: `${note.body}\nMy preparation notes` } });
     fireEvent.click(prepare);
     const panel = await screen.findByRole("region", { name: "Meeting preparation" });
+    expect(screen.getByRole("group", { name: "Meeting Preparation" })).toHaveFocus();
+    expect(visibility).toHaveBeenLastCalledWith(true);
     expect(resolve).toHaveBeenCalledWith(reference);
     expect((await mailClient.getNote(note.id))?.body).toContain("My preparation notes");
     expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(`${note.body}\nMy preparation notes`);
     expect(within(panel).getByText("Team sync")).toBeInTheDocument();
     fireEvent.click(within(panel).getByRole("button", { name: "Close preparation" }));
-    expect(screen.getByRole("heading", { name: "Note details" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Note Details" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Meeting preparation" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Prepare Meeting: Team sync" })).toHaveFocus());
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Meeting: Team sync" }));
+    fireEvent.keyDown(await screen.findByRole("group", { name: "Meeting Preparation" }), { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Meeting preparation" })).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Note context" })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Prepare Meeting: Team sync" })).toHaveFocus());
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Meeting: Team sync" }));
+    await screen.findByRole("group", { name: "Meeting Preparation" });
+    const hide = screen.getByRole("button", { name: "Hide Note context" }); hide.focus(); fireEvent.click(hide);
+    expect(visibility).toHaveBeenLastCalledWith(false);
+    // A saved session in a hidden rail must not consume Close Preparation.
+    act(() => runWorkspaceCommand("meetings.closePrepare"));
+    fireEvent.click(screen.getByRole("button", { name: "Show Note context" }));
+    expect(screen.getByRole("group", { name: "Meeting Preparation" })).toBeVisible();
+    expect(visibility).toHaveBeenLastCalledWith(true);
   });
 
   it("keeps the editor visible when a meeting is unavailable", async () => {
@@ -259,7 +280,7 @@ describe("Notes workspace", () => {
     vi.spyOn(mailClient, "resolveNoteEvent").mockResolvedValue(null);
     const preparation = vi.fn(() => <p>Preparation</p>);
     render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} renderMeetingPreparation={preparation} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Prepare meeting: Missing sync" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Prepare Meeting: Missing sync" }));
     await screen.findByText("Unavailable on this device");
     expect(preparation).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(note.body);
@@ -269,7 +290,7 @@ describe("Notes workspace", () => {
     render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });
     const rail = within(screen.getByRole("complementary", { name: "Note context" }));
-    expect(rail.getByRole("heading", { name: "Note details" }).querySelector('[aria-hidden="true"] svg')).not.toBeNull();
+    expect(rail.getByRole("heading", { name: "Note Details" }).querySelector('[aria-hidden="true"] svg')).not.toBeNull();
     const links = within(rail.getByRole("region", { name: "Links" }));
     expect(links.queryByRole("heading")).not.toBeInTheDocument();
     fireEvent.click(links.getByRole("button", { name: "Link contact or conversation" }));

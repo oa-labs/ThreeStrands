@@ -163,6 +163,18 @@ describe("component typography", () => {
     expect(sizeOf(".proposed-times-list details")).toBe("--text-meta");
   });
 
+  it("uses UI text for the planning inbox and control text for its four filters", () => {
+    expect(sizeOf(".planning-inbox")).toBe("--text-body");
+    expect(sizeOf(".planning-inbox-tab")).toBe("--text-control");
+    expect(sizeOf(".today-work .context-row-title")).toBe("--text-body");
+    expect(sizeOf(".today-work .context-row-detail")).toBe("--text-meta");
+    const titleOrder: string[] = [];
+    css.walkRules((rule) => {
+      if (rule.selectors.includes(".today-column .context-row-title") || rule.selectors.includes(".today-work .context-row-title")) titleOrder.push(rule.selector);
+    });
+    expect(titleOrder).toEqual([".today-column .context-row-title", ".today-work .context-row-title"]);
+  });
+
   it("gives new settings content a UI default and keeps hints quieter than body text", () => {
     // Missing declarations used to pass token validation and inherit the larger shell size.
     expect(sizeOf(".settings-panel")).toBe("--text-body");

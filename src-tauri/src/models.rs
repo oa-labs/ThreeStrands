@@ -54,6 +54,9 @@ pub struct CreateCalendarEventRequest {
     /// The task the event books time for, kept privately on the event the same way.
     #[serde(default)]
     pub source_task_id: Option<String>,
+    /// Stable planning source identity, including contact check-ins without a task.
+    #[serde(default)]
+    pub source_plan_key: Option<String>,
 }
 
 /// Replaces an owned event's editable fields. All-day events carry `YYYY-MM-DD`
@@ -105,6 +108,9 @@ pub struct ScheduleEvent {
     pub source_message_id: Option<String>,
     /// The task ThreeStrands booked this event for, if it did.
     pub source_task_id: Option<String>,
+    /// Stable planning source identity, including contact check-ins without a task.
+    #[serde(default)]
+    pub source_plan_key: Option<String>,
     /// The provider's kind of entry when it is not an ordinary event, such as
     /// Google's `workingLocation`, `outOfOffice`, or `focusTime`. Saved
     /// events from before this field read as ordinary ones.

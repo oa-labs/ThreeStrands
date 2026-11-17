@@ -350,7 +350,7 @@ fn goals_list_current_goals_with_open_tasks_and_planned_days_in_the_period() {
 }
 
 #[test]
-fn notes_offer_open_round_tasks_in_other_notes_newest_first() {
+fn notes_offer_open_round_tasks_including_the_current_day_newest_first() {
     let db = database();
     db.create_note("Older", "- ( ) Old chore\n- (x) Finished\n")
         .unwrap();
@@ -363,7 +363,7 @@ fn notes_offer_open_round_tasks_in_other_notes_newest_first() {
         .unwrap();
     db.create_note("Newer", "- ( ) New chore\n- ( ) Second chore\n")
         .unwrap();
-    db.save_daily_note(DAY, "## Plan\n\n- ( ) In the plan itself\n")
+    db.save_daily_note(DAY, "## Plan\n\n- ( ) In the plan itself\n\n## Meetings\n\n- ( ) Prep the discussion\n- [ ] Local checklist\n")
         .unwrap();
 
     let notes = page(&db, PlanSource::Notes, None, None);
@@ -375,15 +375,29 @@ fn notes_offer_open_round_tasks_in_other_notes_newest_first() {
     assert_eq!(
         shown,
         [
+            ("In the plan itself", DAY),
+            ("Prep the discussion", DAY),
             ("New chore", "Newer"),
             ("Second chore", "Newer"),
             ("Old chore", "Older")
         ]
     );
-    let chore = notes.candidates[0].clone();
+    let chore = notes
+        .candidates
+        .iter()
+        .find(|candidate| candidate.title == "New chore")
+        .unwrap()
+        .clone();
     assert!(chore.task_id.as_deref().unwrap().starts_with("note:"));
     assert_eq!(add(&db, &chore), chore.key);
-    assert!(page(&db, PlanSource::Notes, None, None).candidates[0].planned);
+    assert!(
+        page(&db, PlanSource::Notes, None, None)
+            .candidates
+            .iter()
+            .find(|candidate| candidate.title == "New chore")
+            .unwrap()
+            .planned
+    );
 
     // Paging past a full page.
     let body: String = (0..PLAN_SOURCE_PAGE)
@@ -393,6 +407,6 @@ fn notes_offer_open_round_tasks_in_other_notes_newest_first() {
     let first = page(&db, PlanSource::Notes, None, None);
     assert_eq!(first.candidates.len(), PLAN_SOURCE_PAGE);
     let second = page(&db, PlanSource::Notes, None, first.next.as_deref());
-    assert_eq!(second.candidates.len(), 3);
+    assert_eq!(second.candidates.len(), 5);
     assert!(second.next.is_none());
 }
