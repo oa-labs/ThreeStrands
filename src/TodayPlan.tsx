@@ -268,9 +268,11 @@ export function PlanSourceSwitcher({ sources, selected, onSelect, planned, onAdd
         limit={group.limit} rows={group.candidates.map(row)} closing={group.closing} footer={group.footer} />)
         : current.status ? null : <p className="context-status">{current.empty}</p>}
       {fallback ? <div className="today-source-fallback">
-        <p className="context-status">From <button type="button" className="btn-link" onClick={() => choose(fallback.source)}>{fallback.source.label}</button>:</p>
+        <p className="context-status today-source-lead">Meanwhile, from <button type="button" className="btn-link" onClick={() => choose(fallback.source)}>{fallback.source.label}</button>:</p>
         {fallback.groups.map((group) => <ContextSection key={group.id} id={group.id} title={group.title} count={group.candidates.length}
-          limit={SOURCE_FALLBACK_CARDS} rows={group.candidates.slice(0, SOURCE_FALLBACK_CARDS).map(row)} />)}
+          limit={SOURCE_FALLBACK_CARDS} rows={group.candidates.slice(0, SOURCE_FALLBACK_CARDS).map(row)}
+          footer={group.candidates.length > SOURCE_FALLBACK_CARDS
+            ? <button type="button" className="btn-link context-link-button" onClick={() => choose(fallback.source)}>Show all {group.candidates.length} in {fallback.source.label}</button> : undefined} />)}
       </div> : null}
       {current.footer}
     </div>
