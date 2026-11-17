@@ -995,11 +995,12 @@ describe("TodayWorkspace", () => {
       expect(day.getByRole("button", { name: /^Planning/ })).toHaveAccessibleDescription("No notes yet");
       expect(day.getByRole("button", { name: /^Planning/ }).querySelector(".calendar-event-mark")).toBeNull();
 
-      fireEvent.click(day.getByRole("button", { name: "Home, working location" }));
-      expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "home" }));
+      // The working location is stated once in the header, not listed in the day view.
+      expect(day.queryByRole("button", { name: "Home, working location" })).not.toBeInTheDocument();
+      expect(screen.getByText("Home", { selector: ".today-day-shape .today-working-location" })).toBeInTheDocument();
       fireEvent.click(sync);
       expect(preparation.onPrepare).toHaveBeenCalledWith(expect.objectContaining({ id: "next" }));
-      expect(onOpenEvent).toHaveBeenCalledTimes(1);
+      expect(onOpenEvent).not.toHaveBeenCalled();
 
       rerenderToday({ calendarConnected: true, preparation: { ...preparation, event: event("next", 20, { title: "Design sync" }) } });
       expect(within(screen.getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Design sync/ })).toHaveAttribute("aria-expanded", "true");
@@ -1285,6 +1286,29 @@ describe("TodayWorkspace", () => {
       }
     });
 
+    it("states one working location in the header, the next meeting under the summary, and keeps locations out of the day's lists", async () => {
+      const place = (id: string, title: string, accountId: string, calendarId: string, day: number) =>
+        event(id, 0, { title, accountId, calendarId, allDay: true, start: localDate(day), end: localDate(day + 1), eventType: "workingLocation", workingLocationType: "office" });
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
+        place("o", "Office", "cal@example.com", "primary", 0),
+        place("h", "Home", "other@example.com", "primary", 0),
+        place("to", "Office tomorrow", "cal@example.com", "primary", 1),
+        event("sync", 30, { title: "Sync" }),
+      ] });
+      renderToday({ calendarConnected: true, accountId: "cal@example.com", calendars: [...calendars, { id: "primary", accountId: "other@example.com", name: "Home", primary: true, selected: true, writable: true }] });
+
+      const next = await screen.findByRole("button", { name: /^Next: Sync in \d+ min$/ });
+      const shape = document.querySelector(".today-day-shape") as HTMLElement;
+      expect(shape).toHaveTextContent(/^Office · 1 meeting$/);
+      expect(shape.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+      expect(next.closest(".today-heading")).toContainElement(shape);
+      expect(next.closest(".today-heading")).not.toContainElement(screen.getByRole("button", { name: "Review Today" }));
+      expect(screen.queryByText("Home", { selector: ".context-row-title, .calendar-working-location-name" })).not.toBeInTheDocument();
+      const tomorrow = screen.getByRole("region", { name: "Tomorrow" });
+      expect(tomorrow.querySelector(".context-section-note")).toHaveTextContent(/ · Office tomorrow$/);
+      expect(within(tomorrow).queryByRole("button", { name: /^Office tomorrow/ })).not.toBeInTheDocument();
+    });
+
     it("counts a meeting on two calendars once, and skips declined ones for the count and the next meeting", async () => {
       // The copy reuses the first event's times; two Date.now() reads can land a millisecond apart.
       const sync = event("work", 30, { title: "Sync", accountId: "cal@example.com" });
@@ -1315,7 +1339,7 @@ describe("TodayWorkspace", () => {
       expect(cs).toHaveClass("agenda-event-conflict");
       expect(within(cs as HTMLElement).getByText(/Overlaps Ramp AI deep dive · Recorded/)).toBeInTheDocument();
       expect(within(agenda).getByText("Elder meeting").closest(".context-row")).not.toHaveClass("agenda-event-conflict");
-      expect(screen.getByText(/^3 meetings · next at .+ · double-booked at .+ \(CS Updates is recorded\) · last meeting ends/, { selector: ".today-day-shape" })).toBeInTheDocument();
+      expect(screen.getByText(/^3 meetings · double-booked at .+ \(CS Updates is recorded\) · last meeting ends/, { selector: ".today-day-shape" })).toBeInTheDocument();
     });
 
     it("offers Add Note on the next meeting and today's agenda when it can", async () => {
@@ -1379,8 +1403,7 @@ describe("TodayWorkspace", () => {
       expect(readiness.mock.calls.at(-1)![0].map((reference) => reference.id)).toEqual(["next", "later"]);
       expect(agenda.queryByRole("button", { name: "Prepare for Home" })).not.toBeInTheDocument();
       expect(agenda.queryByRole("button", { name: "Add Note for Home" })).not.toBeInTheDocument();
-      fireEvent.click(agenda.getByRole("button", { name: /^Home/ }));
-      expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "home" }));
+      expect(agenda.queryByRole("button", { name: /^Home/ })).not.toBeInTheDocument();
       expect(preparation.onPrepare).not.toHaveBeenCalled();
 
       // On Today, choosing a meeting prepares it rather than leaving for Calendar.
@@ -1391,7 +1414,7 @@ describe("TodayWorkspace", () => {
       expect(preparation.onPrepare).toHaveBeenCalledTimes(3);
       act(() => runWorkspaceCommand("meetings.prepare"));
       expect(preparation.onPrepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: "next" }));
-      expect(onOpenEvent).toHaveBeenCalledTimes(1);
+      expect(onOpenEvent).not.toHaveBeenCalled();
 
       const preparing = { ...preparation, event: event("next", 20, { title: "Design sync" }) };
       rerenderToday({ calendarConnected: true, preparation: preparing });

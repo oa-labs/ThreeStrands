@@ -194,3 +194,25 @@ describe("Add Note in the agenda", () => {
     expect(screen.queryByRole("button", { name: /Add Note/ })).not.toBeInTheDocument();
   });
 });
+
+describe("CalendarAgenda with a stated working location", () => {
+  const tomorrow = new Date(2026, 9, 24);
+  const at24 = (hour: number) => new Date(2026, 9, 24, hour).toISOString();
+  const place = (title: string) => event(title, 0, 0, { allDay: true, start: "2026-10-24", end: "2026-10-25", eventType: "workingLocation", workingLocationType: "office" });
+  const meetings = ["a", "b", "c"].map((id, index) => event(id, 9 + index, 10 + index, { start: at24(9 + index), end: at24(10 + index) }));
+
+  it("names it after the date, and neither lists nor counts any working location", () => {
+    const office = place("Office");
+    render(<CalendarAgenda today={tomorrow} day="tomorrow" calendars={calendars} onOpenEvent={vi.fn()} workingLocation={office}
+      schedule={{ events: [office, place("Home"), ...meetings], loading: false, error: null, reload: vi.fn() }} />);
+    const section = screen.getByRole("region", { name: "Tomorrow" });
+    expect(section.querySelector(".context-section-note")).toHaveTextContent(/^.+ · Office$/);
+    expect(agendaOrder(section)).toEqual(["a", "b", "c"]);
+    expect(screen.queryByRole("button", { name: /Show more/ })).not.toBeInTheDocument();
+  });
+
+  it("still lists working locations when the page doesn't state one", () => {
+    renderAgenda([place("Office")], { today: tomorrow, day: "tomorrow" });
+    expect(screen.getByText("Office")).toBeInTheDocument();
+  });
+});

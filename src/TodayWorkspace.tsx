@@ -7,6 +7,7 @@ import { useMeetingReadiness } from "./useMeetingPreparation";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import type { Notice } from "./useNotice";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { isWorkingLocation, workingLocationFor, WorkingLocationIcon } from "./WorkingLocation";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { ContextSection } from "./ContextSections";
 import { mailClient } from "./data/client";
@@ -263,7 +264,9 @@ function TodayLayout({
     }
   };
 
-  const todaysEvents = agendaEventsFor(schedule?.events ?? [], now, calendars);
+  const everyEventToday = agendaEventsFor(schedule?.events ?? [], now, calendars);
+  // Where the user works is stated once, in the header, so no view of the day lists it as an event.
+  const todaysEvents = everyEventToday.filter((event) => !isWorkingLocation(event));
   // Today's two faces: the evening view opens by itself once the day's meetings and working hours are over,
   // or when chosen with Review Today; the choice lasts the rest of the day on this device.
   const [choice, setChoice] = useState<TodayView | null>(() => readViewChoice(planDate));
@@ -278,7 +281,10 @@ function TodayLayout({
   const backdrop = useTodayBackdrop();
   const tomorrowDate = addDays(startOfLocalDay(now), 1);
   const tomorrowKey = todayTarget(tomorrowDate).date;
-  const tomorrowList = schedule ? agendaEventsFor(schedule.events, tomorrowDate, calendars) : [];
+  const tomorrowList = schedule ? agendaEventsFor(schedule.events, tomorrowDate, calendars).filter((event) => !isWorkingLocation(event)) : [];
+  const locationScope = { accountId, calendars, accountOrder: calendarAccounts.map((account) => account.email) };
+  const todayLocation = schedule ? workingLocationFor(schedule.events, now, locationScope) : null;
+  const tomorrowLocation = schedule ? workingLocationFor(schedule.events, tomorrowDate, locationScope) : null;
   // Preparation takes the plan's place beside the day view. Choosing the
   // meeting being prepared again closes it, and closing returns focus to
   // whatever opened it.
@@ -376,7 +382,7 @@ function TodayLayout({
   const dueToday = tasks.filter((task) => dueView(task, now) === "Today");
 
   // Plans, tasks, and mail have their own places, so the summary line speaks only to the day's meetings.
-  const dayLine = schedule ? daySummary(todaysEvents, now) : "";
+  const dayLine = schedule ? daySummary(todaysEvents, now, { omitNext: next !== null }) : "";
   const progress = planProgress(plan);
 
   // Booking: Book takes the next free half hour today; a drop takes the slot under the pointer.
@@ -707,7 +713,14 @@ function TodayLayout({
         {/* The plan and the day view cover every account, so the account in view is named beside what it scopes: the mail line and the sources. */}
         <span className="eyebrow">Today</span>
         <h1>{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h1>
-        {dayLine ? <p className="today-day-shape">{dayLine}</p> : null}
+        {dayLine || todayLocation ? <p className="today-day-shape">
+          {todayLocation ? <span className="today-working-location"><WorkingLocationIcon type={todayLocation.workingLocationType} />{todayLocation.title}</span> : null}
+          {todayLocation && dayLine ? " · " : null}{dayLine}
+        </p> : null}
+        {/* While a meeting is being prepared, its actions are in preparation, so the row is only a link. */}
+        {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} {...(selectedKey === null ? { onAddNote, onPrepare: prepare, showJoin: true } : { showJoin: false })} /> : null}
+      </div>
+      <div className="today-routines">
         <div className="today-plan-status">
           {hasPlan
             ? <>{progress ? <span className="today-plan-progress">{progress}</span> : null}<button type="button" className="btn btn-sm" onClick={() => openRoutine("today")}>Edit Plan</button></>
@@ -718,8 +731,6 @@ function TodayLayout({
           <button type="button" className="btn btn-sm" onClick={toggleView}>{evening ? "Back to Today's Plan" : "Review Today"}</button>
         </div>
       </div>
-      {/* While a meeting is being prepared, its actions are in preparation, so the card is only a link. */}
-      {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} {...(selectedKey === null ? { onAddNote, onPrepare: prepare, showJoin: true } : { showJoin: false })} /> : null}
       <TodayMailSignal mail={mail} error={mailError} scope={scope} onOpenThread={onOpenThread} onOpenInbox={onOpenInbox} />
     </header>
     <div className="today-columns">
@@ -740,7 +751,7 @@ function TodayLayout({
         <PlanSourceSwitcher sources={sources} selected={sourceId} onSelect={setSourceId} planned={planned} drag={drag} onAdd={(candidate) => void addCandidate(candidate)} />
       </div>}
       {evening ? <EveningTomorrow
-        tomorrow={tomorrowDate} now={now} events={tomorrowList} schedule={schedule} calendars={calendars} carried={carriedToTomorrow(plan, tomorrowKey)}
+        tomorrow={tomorrowDate} now={now} events={tomorrowList} schedule={schedule} calendars={calendars} workingLocation={tomorrowLocation} carried={carriedToTomorrow(plan, tomorrowKey)}
         workingHours={workingHours} selectedEvent={selectedEvent} eventDecoration={decorateEvent} gridRef={gridRef} preview={null}
         onChooseEvent={chooseEvent} onOpenPlanItem={(item) => void activatePlanItem(item)} onPlanTomorrow={() => openRoutine("tomorrow")}
         onOpenCalendar={onOpenCalendar} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} />
@@ -752,9 +763,9 @@ function TodayLayout({
           {/* Below Today's breakpoint the agenda list takes the day view's place (a container query in CSS). */}
           <div className="today-agenda-fallback">
             {/* The page heading already names today, so its agenda leaves the date out. */}
-            <CalendarAgenda pullToRefresh={false} today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={chooseEvent} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} describe={preparation ? describeReadiness : undefined} />
+            <CalendarAgenda pullToRefresh={false} today={now} now={now} showDate={false} workingLocation={null} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={chooseEvent} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} describe={preparation ? describeReadiness : undefined} />
           </div>
-          <CalendarAgenda pullToRefresh={false} today={addDays(startOfLocalDay(now), 1)} day="tomorrow" calendars={calendars} schedule={schedule} onOpenEvent={chooseEvent} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} />
+          <CalendarAgenda pullToRefresh={false} today={addDays(startOfLocalDay(now), 1)} day="tomorrow" workingLocation={tomorrowLocation} calendars={calendars} schedule={schedule} onOpenEvent={chooseEvent} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} />
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}
