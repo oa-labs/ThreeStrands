@@ -579,7 +579,7 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
   are reported in `already`; a Not today decision already recorded isn't
   repeated. The result (`added`, `removed`, `notToday`, `already`, `changed`) and
   the body it replaced are kept in a local `plan_save_receipts` row (schema
-  v109; unsynced, not exported, pruned after `PLAN_RECEIPT_DAYS` (7) and beyond
+  v110; unsynced, not exported, pruned after `PLAN_RECEIPT_DAYS` (7) and beyond
   `MAX_PLAN_RECEIPTS` (200)) in the same transaction. Repeating an
   `operationId` returns the stored result; a refused save leaves no receipt.
   `undo_daily_plan_save(date, operationId)` restores the replaced body only while
