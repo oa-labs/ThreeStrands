@@ -615,6 +615,10 @@ fn anthropic_body(
 
 /// Sends a bounded, content-free prompt so the settings screen can verify the
 /// provider, endpoint, model, and key without exposing any mail data.
+///
+/// The one-token budget keeps the test cheap, so a model that reasons or
+/// says more than one token stops at the limit. That reply still proves the
+/// provider accepted the endpoint, key, and model, so it counts as success.
 pub async fn test_connection(
     provider: AiProvider,
     model: &str,
@@ -638,6 +642,13 @@ pub async fn test_connection(
     })
     .await
     .map(|_| ())
+    .or_else(|error| {
+        if error == CUT_OFF_REPLY_ERROR {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    })
 }
 
 /// One model offered by a provider's list endpoint. `label` is a human name
@@ -1540,6 +1551,41 @@ mod tests {
             .await;
             assert_eq!(result.unwrap_err(), CUT_OFF_REPLY_ERROR);
         }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_connection_test_cut_off_at_its_one_token_budget_still_succeeds() {
+        // Reasoning models spend the single token before answering, so the
+        // provider reports a cut-off; it still accepted the endpoint, key,
+        // and model. A refusal is a real failure and stays one.
+        async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            let finish_reason = if payload["model"] == "refuses" {
+                "content_filter"
+            } else {
+                "length"
+            };
+            Json(json!({"choices": [{"message": {"content": ""}, "finish_reason": finish_reason}]}))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/chat/completions", post(handler)),
+            )
+            .await
+            .unwrap();
+        });
+        test_connection(AiProvider::Custom, "reasons", Some(&endpoint), "key")
+            .await
+            .unwrap();
+        assert_eq!(
+            test_connection(AiProvider::Custom, "refuses", Some(&endpoint), "key")
+                .await
+                .unwrap_err(),
+            "The AI provider declined the request"
+        );
         server.abort();
     }
 
