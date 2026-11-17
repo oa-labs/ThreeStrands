@@ -93,6 +93,14 @@ describe("DayTimeGrid", () => {
     expect(container.querySelector(".calendar-week-days")).toBeInTheDocument();
   });
 
+  it("omits the timezone row on request and retains it by default for Calendar", () => {
+    const { container, rerender } = renderGrid();
+    expect(container.querySelector(".calendar-week-timezone")).toBeInTheDocument();
+    rerender(<DayTimeGrid days={[today]} events={[standup]} now={now} selectedEvent={null} onToggleEvent={vi.fn()} showTimeZone={false} />);
+    expect(container.querySelector(".calendar-week-timezone")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Standup/ })).toBeInTheDocument();
+  });
+
   it("shows the Now line only on today's column", () => {
     const { container } = renderGrid({ days: [new Date(2026, 8, 23)] });
     expect(container.querySelector("[data-testid='calendar-now-indicator']")).not.toBeInTheDocument();

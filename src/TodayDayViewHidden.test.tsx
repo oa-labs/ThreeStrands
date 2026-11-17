@@ -49,6 +49,7 @@ describe("TodayDayView hidden-event indicators", () => {
 
   it("points to evening meetings below the view and scrolls to the first when activated", () => {
     const { gridRef, restore } = renderView([meeting("Standup", 9), meeting("Dinner", 19), meeting("Late call", 21)]);
+    expect(screen.getByRole("group", { name: "Day view" }).querySelector(".calendar-week-timezone")).not.toBeInTheDocument();
     const grid = gridRef.current!;
     fireEvent.scroll(grid);
     const below = screen.getByRole("button", { name: /2 more later, from 7:00/ });

@@ -153,6 +153,7 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
       shade={layout.shade}
       shortTimes
       showDayLabels={false}
+      showTimeZone={false}
       onScroll={measure}
       scrollOverlay={{ top: indicator("above"), bottom: indicator("below") }}
     />

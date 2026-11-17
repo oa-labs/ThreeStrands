@@ -91,6 +91,7 @@ export function DayTimeGrid({
   shade,
   shortTimes = false,
   showDayLabels = true,
+  showTimeZone = true,
   scrollOverlay,
 }: {
   days: Date[];
@@ -117,6 +118,8 @@ export function DayTimeGrid({
   shortTimes?: boolean;
   /** Shows the weekday-and-date label above each day. A single-day view whose page already names the date hides it; the day's column is then named instead. */
   showDayLabels?: boolean;
+  /** Shows the timezone gutter above the hours; compact Today grids omit this row. */
+  showTimeZone?: boolean;
   /** Content pinned to the top or bottom edge of the scroll area, such as pointers to events scrolled out of view. */
   scrollOverlay?: { top?: ReactNode; bottom?: ReactNode };
 }) {
@@ -219,7 +222,7 @@ export function DayTimeGrid({
           ))}
         </div>
       ) : null}
-      <div className="calendar-week-timezone"><span className="calendar-week-gutter">{timeZoneLabel(timeZoneAt)}</span></div>
+      {showTimeZone ? <div className="calendar-week-timezone"><span className="calendar-week-gutter">{timeZoneLabel(timeZoneAt)}</span></div> : null}
       <div
         className="calendar-week-scroll"
         tabIndex={-1}
