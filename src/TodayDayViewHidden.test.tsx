@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HOUR_HEIGHT } from "./calendarTime";
@@ -36,7 +36,7 @@ describe("TodayDayView hidden-event indicators", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 9, 28, 10));
   });
-  afterEach(() => { cleanup(); vi.useRealTimers(); });
+  afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
   const day = new Date(2026, 9, 28);
   const meeting = (id: string, h: number): ScheduleEvent => ({
     id, accountId: "a@example.com", calendarId: "primary", title: id,
@@ -73,6 +73,27 @@ describe("TodayDayView hidden-event indicators", () => {
     fireEvent.click(above);
     expect(grid.scrollTop).toBe(6 * HOUR_HEIGHT - HOUR_HEIGHT / 2);
     expect(screen.queryByRole("button", { name: /earlier/ })).not.toBeInTheDocument();
+    restore();
+  });
+
+  it("updates hidden-event indicators when the column grows without moving the user's scroll position", () => {
+    let notify!: () => void;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) { notify = callback; }
+      observe = observe;
+      disconnect = disconnect;
+    });
+    const { gridRef, restore } = renderView([meeting("Standup", 9), meeting("Dinner", 19), meeting("Late call", 21)]);
+    const grid = gridRef.current!;
+    expect(observe).toHaveBeenCalledWith(grid);
+    expect(screen.getByRole("button", { name: /2 more later/ })).toBeInTheDocument();
+    const before = grid.scrollTop;
+    Object.defineProperty(grid, "clientHeight", { configurable: true, value: 16 * HOUR_HEIGHT });
+    act(() => notify());
+    expect(screen.queryByRole("button", { name: /more later/ })).not.toBeInTheDocument();
+    expect(grid.scrollTop).toBe(before);
     restore();
   });
 });

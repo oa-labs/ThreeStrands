@@ -7,6 +7,45 @@ const defaults = { scope: undefined, status: () => null, loading: () => false, h
 afterEach(() => { cleanup(); localStorage.clear(); vi.clearAllMocks(); });
 
 describe("PlanningInbox", () => {
+  it("uses the keep-in-touch empty state only after Contacts finishes loading successfully", () => {
+    const view = render(<PlanningInbox {...defaults} entries={[]} loading={() => true} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Contacts" }));
+    expect(screen.queryByText("You're up to date with all keep in touch contact goals")).not.toBeInTheDocument();
+    view.rerender(<PlanningInbox {...defaults} entries={[]} />);
+    expect(screen.getByText("You're up to date with all keep in touch contact goals")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing to schedule here.")).not.toBeInTheDocument();
+    view.rerender(<PlanningInbox {...defaults} entries={[]} unavailable={() => true} />);
+    expect(screen.queryByText("You're up to date with all keep in touch contact goals")).not.toBeInTheDocument();
+  });
+
+  it("shows completed tasks separately on All and Tasks without increasing the unscheduled count", () => {
+    const done = entry("Finished"); done.row.control = <input type="checkbox" aria-label="Reopen Finished" checked onChange={vi.fn()} />;
+    render(<PlanningInbox {...defaults} entries={[entry("Active")]} completed={[done]} />);
+    expect(screen.getByLabelText("1 unscheduled item")).toHaveTextContent("1");
+    const completed = within(screen.getByRole("region", { name: "Completed" }));
+    expect(completed.getByRole("checkbox")).toBeChecked();
+    expect(completed.getByRole("button", { name: "Finished" }).closest(".context-task-done")).not.toBeNull();
+    expect(completed.queryByRole("button", { name: "Schedule: Finished" })).not.toBeInTheDocument();
+    for (const filter of ["Emails", "Contacts"]) {
+      fireEvent.click(screen.getByRole("tab", { name: filter }));
+      expect(screen.queryByRole("region", { name: "Completed" })).not.toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    expect(screen.getByRole("region", { name: "Completed" })).toBeInTheDocument();
+  });
+
+  it("keeps checkbox focus when a task moves to Completed and back to the inbox", () => {
+    const active = entry("Task"); active.row.control = <input aria-label="Complete Task" type="checkbox" checked={false} onChange={vi.fn()} />;
+    const done = { ...active, row: { ...active.row, control: <input aria-label="Reopen Task" type="checkbox" checked onChange={vi.fn()} /> } };
+    const view = render(<PlanningInbox {...defaults} entries={[active]} />);
+    const complete = screen.getByRole("checkbox", { name: "Complete Task" }); complete.focus(); fireEvent.click(complete);
+    view.rerender(<PlanningInbox {...defaults} entries={[]} completed={[done]} />);
+    const reopen = screen.getByRole("checkbox", { name: "Reopen Task" }); expect(reopen).toHaveFocus();
+    fireEvent.click(reopen);
+    view.rerender(<PlanningInbox {...defaults} entries={[active]} />);
+    expect(screen.getByRole("checkbox", { name: "Complete Task" })).toHaveFocus();
+  });
+
   it("shows All as the union of the three categories, with a count for the selected filter", () => {
     render(<PlanningInbox {...defaults} entries={[entry("Task"), entry("Email", "emails"), entry("Contact", "contacts")]} />);
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["All", "Tasks", "Emails", "Contacts"]);
@@ -105,6 +144,13 @@ describe("PlanningInbox", () => {
     view.rerender(<PlanningInbox {...defaults} entries={entries} hasMore={() => true} />);
     expect(screen.getByLabelText(`${entries.length} or more unscheduled items`)).toHaveTextContent(`${entries.length}+`);
     fireEvent.click(screen.getByRole("button", { name: "Show More" })); expect(defaults.onLoadMore).toHaveBeenCalledWith("all");
+  });
+
+  it("does not claim there is nothing to schedule when a page of settled suggestions has more pages", () => {
+    render(<PlanningInbox {...defaults} entries={[]} hasMore={() => true} />);
+    expect(screen.queryByText("Nothing to schedule here.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show More" })).toBeEnabled();
+    expect(screen.getByLabelText("0 or more unscheduled items")).toHaveTextContent("0+");
   });
 
   it("preserves the filter and expanded list when fresh entries arrive", () => {

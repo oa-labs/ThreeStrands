@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ContactProfile, Goal, ThreadTask } from "../domain";
+import { todayThread } from "../test/todayMail";
 import type { NoteReference } from "../noteEntities";
 import { planItemKey } from "../dailyPlan";
 import { createDemoNotes } from "./demoNotes";
@@ -73,6 +74,22 @@ describe("demo daily plans", () => {
 });
 
 describe("demo plan history, review, and sources", () => {
+  it("keeps a completed starred suggestion settled until a later message arrives, without changing the star", async () => {
+    const thread = todayThread("t", { subject: "Proposal", starred: true, labels: [], lastReceivedAt: "2026-11-17T10:00:00Z" });
+    const work = task("done", { threadId: "t", status: "completed", sourceMessageId: "first" });
+    let latest = "first";
+    const notes = createDemoNotes({ threads: () => [thread], tasks: () => [work], events: () => [] });
+    const plans = createDemoPlans({ tasks: () => [work], goals: () => [], contacts: () => [], notes, threads: () => [thread], latestMessageId: () => latest });
+    expect((await plans.planSources(DAY, "starredMail")).candidates).toEqual([]);
+    expect(thread.starred).toBe(true);
+    work.status = "open";
+    expect((await plans.planSources(DAY, "starredMail")).candidates[0].taskId).toBe(work.id);
+    work.status = "cancelled";
+    expect((await plans.planSources(DAY, "starredMail")).candidates[0].action.kind).toBe("taskForm");
+    work.status = "completed"; latest = "later";
+    expect((await plans.planSources(DAY, "starredMail")).candidates[0].action.kind).toBe("taskForm");
+    expect(thread.starred).toBe(true);
+  });
   it("counts carried days, reviews the last plan, and settles items later plans mention", async () => {
     const tasks = [task("a", { title: "Contract" }), task("b", { title: "Deck" }), task("c", { title: "Done", status: "completed", completedAt: new Date(2026, 10, 15, 10).toISOString() }), task("d", { title: "Also done", status: "completed", completedAt: new Date(2026, 10, 15, 16).toISOString() })];
     const events = [{ id: "standup", accountId: "me@example.com", title: "Standup", allDay: false, start: new Date(2026, 10, 15, 9).toISOString(), end: new Date(2026, 10, 15, 9, 15).toISOString() } as ScheduleEvent];

@@ -58,5 +58,8 @@ export function usePlanSourcePage(date: string, source: PlanSourceKind | null, a
   const shown = state.key === key ? state
     : retainOnRefresh && Boolean(source) && state.context === context ? { ...state, loading: true, error: null }
       : { candidates: [], next: null, loading: Boolean(source), error: null };
-  return { candidates: shown.candidates, next: shown.next, loading: shown.loading, error: shown.error, loadMore };
+  const remove = useCallback((candidateKey: string) => {
+    setState((previous) => previous.context === context ? { ...previous, candidates: previous.candidates.filter((candidate) => candidate.key !== candidateKey) } : previous);
+  }, [context]);
+  return { candidates: shown.candidates, next: shown.next, loading: shown.loading, error: shown.error, loadMore, remove };
 }

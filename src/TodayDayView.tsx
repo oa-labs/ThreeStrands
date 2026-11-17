@@ -112,8 +112,10 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
   }, [gridRef, dayKey, layout.scrollMinutes, layout.heightPx, measure]);
   useLayoutEffect(() => {
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [measure]);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    if (gridRef.current) observer?.observe(gridRef.current);
+    return () => { window.removeEventListener("resize", measure); observer?.disconnect(); };
+  }, [measure, gridRef]);
   const spans = useMemo(() => events
     .filter((event) => !event.allDay && !isWorkingLocation(event) && occursOnDay(event, days[0]))
     .map((event) => { const bounds = eventDayBounds(event, days[0]); return { startMinutes: bounds.start, endMinutes: bounds.end }; }), [events, days]);

@@ -7,6 +7,20 @@ import { usePlanSourcePage } from "./usePlanSourcePage";
 const candidate = (key: string): PlanCandidate => ({ key, title: key, reason: "starred", detail: null, accountId: "one", due: null, taskId: null, threadId: key, contactId: null, goal: null, plannedDays: [], openTasks: null, planned: false, action: { kind: "taskForm", threadId: key, accountId: "one" } });
 afterEach(() => vi.restoreAllMocks());
 describe("usePlanSourcePage refresh", () => {
+  it("removes a settled suggestion without resetting pagination or mutating a later account's list", async () => {
+    vi.spyOn(mailClient, "planSources").mockImplementation(async (_date, _source, account) => ({ candidates: [candidate(account!)], next: "next" }));
+    const view = renderHook(({ account }) => usePlanSourcePage("2026-11-17", "starredMail", account, "1", true), { initialProps: { account: "one" } });
+    await waitFor(() => expect(view.result.current.candidates[0].key).toBe("one"));
+    const removeOld = view.result.current.remove;
+    act(() => removeOld("one"));
+    expect(view.result.current.candidates).toEqual([]);
+    expect(view.result.current.next).toBe("next");
+    view.rerender({ account: "two" });
+    await waitFor(() => expect(view.result.current.candidates[0].key).toBe("two"));
+    act(() => removeOld("two"));
+    expect(view.result.current.candidates[0].key).toBe("two");
+  });
+
   it("keeps cards and every expanded page while refreshing, then replaces them with fresh results", async () => {
     const source = vi.spyOn(mailClient, "planSources").mockResolvedValueOnce({ candidates: [candidate("first")], next: "next" }).mockResolvedValueOnce({ candidates: [candidate("second")], next: null });
     const view = renderHook(({ revision }) => usePlanSourcePage("2026-11-17", "starredMail", "one", revision, true), { initialProps: { revision: "1" } });
