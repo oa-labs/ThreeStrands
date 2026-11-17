@@ -1,7 +1,7 @@
 import { Building, House, MapPin } from "lucide-react";
 import type { ButtonHTMLAttributes, CSSProperties } from "react";
-import { formatEventTime } from "./calendarTime";
-import type { ScheduleEvent } from "./domain";
+import { formatEventTime, occursOnDay } from "./calendarTime";
+import type { CalendarOption, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 
 /** A working location says where the user is that day, not something they are doing. */
@@ -20,6 +20,32 @@ export function distinctWorkingLocations(events: ScheduleEvent[]): ScheduleEvent
     seen.add(key);
     return true;
   });
+}
+
+/**
+ * The one place the user works from on `day`, for a page that states it once.
+ * Several calendars, often one per account, each carry their own. Prefers the
+ * account in view's primary calendar, then anything on that account; with no
+ * account in view or none there, the first account in `accountOrder` (else the
+ * calendar list's order) that has one on a primary calendar, then the first
+ * one found. Only selected calendars count.
+ */
+export function workingLocationFor(
+  events: readonly ScheduleEvent[],
+  day: Date,
+  { accountId, calendars, accountOrder = [] }: { accountId: string | null; calendars: readonly CalendarOption[]; accountOrder?: readonly string[] },
+): ScheduleEvent | null {
+  const selected = calendars.filter((calendar) => calendar.selected);
+  const candidates = events.filter((event) => isWorkingLocation(event) && occursOnDay(event, day)
+    && selected.some((calendar) => calendar.accountId === event.accountId && (!event.calendarId || calendar.id === event.calendarId)));
+  if (candidates.length === 0) return null;
+  const isPrimary = (event: ScheduleEvent) => selected.some((calendar) => calendar.primary && calendar.accountId === event.accountId && calendar.id === event.calendarId);
+  const inView = accountId === null ? [] : candidates.filter((event) => event.accountId === accountId);
+  if (inView.length) return inView.find(isPrimary) ?? inView[0];
+  const order = [...accountOrder, ...calendars.map((calendar) => calendar.accountId)];
+  const rank = (event: ScheduleEvent) => { const index = order.indexOf(event.accountId); return index < 0 ? order.length : index; };
+  const byAccount = [...candidates].sort((left, right) => rank(left) - rank(right));
+  return byAccount.find(isPrimary) ?? byAccount[0];
 }
 
 export function WorkingLocationIcon({ type }: { type: ScheduleEvent["workingLocationType"] }) {

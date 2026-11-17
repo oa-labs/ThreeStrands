@@ -89,6 +89,16 @@ describe("daySummary", () => {
     expect(daySummary([meeting("Skip", at(11), at(12), { responseStatus: "declined" }), meeting("Offsite", at(0), at(23, 59), { allDay: true })], now)).toBe("No meetings today");
   });
 
+  it("leaves out the next or current meeting on request, and never counts a working location as a meeting", () => {
+    expect(daySummary([benefits, ops], at(9), { omitNext: true })).toBe(`2 meetings · last meeting ends ${clock(15, 30)}`);
+    expect(daySummary([benefits, ops], at(11, 10), { omitNext: true })).toBe(`2 meetings · last meeting ends ${clock(15, 30)}`);
+    expect(daySummary([benefits, ops], at(16), { omitNext: true })).toBe(daySummary([benefits, ops], at(16)));
+    const office = meeting("Office", at(9), at(17), { eventType: "workingLocation" });
+    expect(daySummary([office, ops], at(9))).toBe(`1 meeting · next at ${clock(15)}`);
+    expect(daySummary([office], at(9))).toBe("No meetings today");
+    expect(dayShape([office], at(9))).toBe("");
+  });
+
   it("names the next meeting in the morning, and when the last ends while more than one is left", () => {
     expect(daySummary([benefits, ops], at(9))).toBe(`2 meetings · next at ${clock(11)} · last meeting ends ${clock(15, 30)}`);
     expect(daySummary([ops], at(9))).toBe(`1 meeting · next at ${clock(15)}`);

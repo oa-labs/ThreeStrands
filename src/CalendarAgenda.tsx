@@ -9,6 +9,7 @@ import { agendaConflicts, mentionsRecording } from "./todayInsights";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import type { CalendarOption, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
+import { isWorkingLocation, WorkingLocationIcon } from "./WorkingLocation";
 import { isPreparable, preparationKey } from "./meetingPrep";
 
 import { usePullToRefresh } from "./usePullToRefresh";
@@ -45,6 +46,12 @@ type AgendaProps = {
   selectedKey?: string | null;
   /** A short line about the event after its time, such as its readiness. */
   describe?(event: ScheduleEvent): string | null | undefined;
+  /**
+   * For a page that states the day's working location once: working locations
+   * are left out of the rows and the count, and this one is named in the
+   * section's note instead.
+   */
+  workingLocation?: ScheduleEvent | null;
 };
 
 type AgendaDay = "today" | "tomorrow" | "chosen";
@@ -74,13 +81,13 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, selectedKey = null, describe, now, day = "today", id, showDate = true, markConflicts = false, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, selectedKey = null, describe, now, day = "today", id, showDate = true, markConflicts = false, workingLocation, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
   const agendaRef = useRef<HTMLElement>(null);
   const refresh = useCallback(async () => { if (refreshSchedule) await refreshSchedule(); else reload(); }, [refreshSchedule, reload]);
   const pull = usePullToRefresh(agendaRef, pullToRefresh ? refresh : undefined);
   const colors = useCalendarColors();
   const selected = calendars.filter((calendar) => calendar.selected);
-  const agenda = agendaEventsFor(events, today, calendars);
+  const agenda = agendaEventsFor(events, today, calendars).filter((event) => workingLocation === undefined || !isWorkingLocation(event));
   const multipleAccounts = new Set(selected.map((calendar) => calendar.accountId)).size > 1;
   const conflicts = markConflicts ? agendaConflicts(agenda) : new Map<ScheduleEvent, ScheduleEvent[]>();
   const pastCount = now ? agenda.filter((event) => isPastEvent(event, now)).length : 0;
@@ -117,12 +124,16 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
   });
   if (now && pastCount > 0 && pastCount === agenda.length) rows.push(<NowDivider key="now" now={now} />);
   const text = AGENDA_TEXT[day];
+  const dateText = showDate ? today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : null;
+  const dateNote = dateText || workingLocation
+    ? <>{dateText}{dateText && workingLocation ? " · " : null}{workingLocation ? <span className="agenda-working-location"><WorkingLocationIcon type={workingLocation.workingLocationType} />{workingLocation.title}</span> : null}</>
+    : undefined;
   return <ContextSection
     sectionRef={agendaRef}
     busy={pull.refreshing}
     id={id ?? text.id}
     title={text.title}
-    note={showDate ? today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : undefined}
+    note={dateNote}
     count={agenda.length}
     rows={rows}
     limit={day === "tomorrow" ? TOMORROW_AGENDA_ROWS : rows.length}

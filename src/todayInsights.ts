@@ -8,9 +8,9 @@ import { TASK_BLOCK_MINUTES } from "./taskBooking";
 /** Shortest open stretch before the next meeting that Today calls free time. */
 export const FREE_STRETCH_MINUTES = 60;
 
-/** A meeting with a set time the user hasn't declined. */
+/** A meeting with a set time the user hasn't declined; a working location for part of a day is where they are, not a meeting. */
 function isAttending(event: ScheduleEvent): boolean {
-  return !event.allDay && !isDeclined(event);
+  return !event.allDay && !isDeclined(event) && event.eventType !== "workingLocation";
 }
 
 function overlaps(left: ScheduleEvent, right: ScheduleEvent): boolean {
@@ -85,9 +85,10 @@ export function dayShape(events: readonly ScheduleEvent[], now: Date): string {
  * today", "2 meetings · next at 2:00 pm", "2 meetings · in Standup until
  * 10:30 am", or "2 meetings, both finished · last ended 3:30 pm", followed
  * by any double-booking still ahead and, with more than one meeting left,
- * when the last ends. Declined and all-day events aren't meetings here.
+ * when the last ends. Declined and all-day events aren't meetings here, and
+ * `omitNext` leaves out the next/current part.
  */
-export function daySummary(events: readonly ScheduleEvent[], now: Date): string {
+export function daySummary(events: readonly ScheduleEvent[], now: Date, { omitNext = false }: { omitNext?: boolean } = {}): string {
   const meetings = events.filter(isAttending).sort((left, right) => eventDate(left).getTime() - eventDate(right).getTime());
   if (meetings.length === 0) return "No meetings today";
   const total = `${meetings.length} meeting${meetings.length === 1 ? "" : "s"}`;
@@ -98,7 +99,9 @@ export function daySummary(events: readonly ScheduleEvent[], now: Date): string 
     return `${total}, ${finished} · ${meetings.length === 1 ? "ended" : "last ended"} ${formatClockTime(lastEnd)}`;
   }
   const current = remaining.find((event) => eventDate(event).getTime() <= now.getTime());
-  const parts = [total, current ? `in ${current.title} until ${formatClockTime(new Date(current.end))}` : `next at ${formatClockTime(eventDate(remaining[0]))}`];
+  // With omitNext the page shows the next or current meeting on its own line.
+  const parts = [total];
+  if (!omitNext) parts.push(current ? `in ${current.title} until ${formatClockTime(new Date(current.end))}` : `next at ${formatClockTime(eventDate(remaining[0]))}`);
   // The rest of dayShape: double-bookings, and when the last meeting ends once there's more than one left.
   for (const part of dayShape(events, now).split(" · ")) {
     if (!part || part.startsWith("Free until")) continue;

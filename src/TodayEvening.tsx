@@ -16,6 +16,7 @@ import { useNoteChanges } from "./noteMutations";
 import { newOperationId } from "./planRoutine";
 import { ReviewDecisionRow, ReviewDone, shortPlanDate, type DecisionKind } from "./PlanReviewColumns";
 import { dayClosed, decisionChanges, decisionEntry, looseEnds, reviewsToday } from "./eveningView";
+import { WorkingLocationIcon } from "./WorkingLocation";
 import { TodayDayView } from "./TodayDayView";
 import type { DayGridEventDecoration, DayGridPreview } from "./DayTimeGrid";
 import type { WorkingHours } from "./todayInsights";
@@ -251,6 +252,8 @@ export type EveningTomorrowProps = {
   schedule: { events: ScheduleEvent[]; loading: boolean; error: string | null; reload(): void } | null;
   calendars: CalendarOption[];
   carried: DailyPlanItem[];
+  /** The one working location for tomorrow, stated beside its date. */
+  workingLocation?: ScheduleEvent | null;
   workingHours: WorkingHours | null;
   selectedEvent: ScheduleEvent | null;
   eventDecoration(event: ScheduleEvent): DayGridEventDecoration | null;
@@ -276,6 +279,7 @@ export function EveningTomorrow(props: EveningTomorrowProps) {
   const name = tomorrow.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   return <div className="today-column today-time today-tomorrow" role="group" aria-label="Tomorrow">
     <h2 className="today-evening-title">{name}</h2>
+    {props.workingLocation ? <p className="today-day-shape"><span className="today-working-location"><WorkingLocationIcon type={props.workingLocation.workingLocationType} />{props.workingLocation.title}</span></p> : null}
     <section className="today-evening-section" aria-labelledby="tomorrow-carried">
       <h3 id="tomorrow-carried">Carried to tomorrow</h3>
       {carried.length
@@ -288,7 +292,7 @@ export function EveningTomorrow(props: EveningTomorrowProps) {
         selectedEvent={props.selectedEvent} onChooseEvent={(event, trigger) => props.onChooseEvent(event, trigger)} eventDecoration={props.eventDecoration}
         gridRef={props.gridRef} preview={props.preview} dragging={false} workingHours={props.workingHours} />
       <div className="today-agenda-fallback">
-        <CalendarAgenda pullToRefresh={false} today={tomorrow} day="tomorrow" calendars={props.calendars} schedule={schedule} onOpenEvent={props.onChooseEvent} onAddNote={props.onAddNote} onPrepare={props.onPrepare} selectedKey={props.selectedKey} />
+        <CalendarAgenda pullToRefresh={false} today={tomorrow} day="tomorrow" workingLocation={props.workingLocation} calendars={props.calendars} schedule={schedule} onOpenEvent={props.onChooseEvent} onAddNote={props.onAddNote} onPrepare={props.onPrepare} selectedKey={props.selectedKey} />
       </div>
     </> : <p className="context-status">Connect a calendar in Settings to see tomorrow's day here.</p>}
     <p className="today-column-link"><button type="button" className="btn-link" onClick={props.onOpenCalendar}>Open Calendar</button></p>
