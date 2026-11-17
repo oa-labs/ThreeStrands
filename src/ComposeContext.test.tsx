@@ -360,7 +360,7 @@ describe("Find Times with AI", () => {
     expect(mailClient.findTimes).toHaveBeenCalledWith({
       sourceMessageId: "message-9", draftSubject: "Re: Planning", draftText: "Here are some times that work for me:",
       instruction: null, current: null, userTimeZone: "UTC",
-    }, "openai", "gpt-4o", null);
+    }, "openai", "gpt-4o", null, "draft-1");
     answer(search);
 
     expect(await within(section()).findByText(search.reason)).toBeInTheDocument();
@@ -515,7 +515,7 @@ describe("Find Times with AI", () => {
 
     fireEvent.click(findTimes);
     // While reading, the conversation alone is read.
-    await waitFor(() => expect(mailClient.findTimes).toHaveBeenCalledWith(expect.objectContaining({ sourceMessageId: "message-9", draftText: "" }), "openai", "gpt-4o", null));
+    await waitFor(() => expect(mailClient.findTimes).toHaveBeenCalledWith(expect.objectContaining({ sourceMessageId: "message-9", draftText: "" }), "openai", "gpt-4o", null, "message-9"));
     expect(await within(section()).findByRole("heading", { name: "Availability" })).toBeInTheDocument();
     expect(section()).not.toHaveClass("context-ai-launcher");
     fireEvent.click(await within(section()).findByRole("button", { name: "Draft Reply With 1 Time" }));

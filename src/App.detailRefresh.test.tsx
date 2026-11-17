@@ -1074,7 +1074,8 @@ describe("conversation brief", () => {
       expect(await within(availability).findByText("The welcome note suggests a call next week.")).toBeInTheDocument();
       expect(findTimes).toHaveBeenCalledWith(
         expect.objectContaining({ sourceMessageId: expect.any(String), instruction: null, current: null }),
-        "openai", expect.any(String), null,
+        // The reply's draft owns the request, so closing it cancels the read.
+        "openai", expect.any(String), null, expect.any(String),
       );
       await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({
         rangeStart, rangeEnd, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
