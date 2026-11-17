@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, eventDayBounds, formatUpcomingDate, friendlyZoneName, layOutDayEvents, occursOnDay, startOfWeek, timeZoneChoices } from "./calendarTime";
+import { SIDE_BY_SIDE_START_MINUTES, STACK_INSET, addDays, eventColumnBox, eventDayBounds, formatUpcomingDate, friendlyZoneName, layOutDayEvents, occursOnDay, startOfWeek, timeZoneChoices } from "./calendarTime";
 import type { ScheduleEvent } from "./domain";
 
 function timedEvent(id: string, start: string, end: string): ScheduleEvent {
@@ -113,6 +113,69 @@ describe("calendar time helpers", () => {
       { id: "third", lane: 2, lanes: 3, span: 1 },
       { id: "late", lane: 1, lanes: 3, span: 2 },
     ]);
+  });
+
+  describe("stacking events that start well inside another", () => {
+    const day = new Date(2026, 8, 22);
+    const shape = (events: ScheduleEvent[]) => layOutDayEvents(events, day).map(({ event, lane, lanes, span, layer }) => ({ id: event.id, lane, lanes, span, layer }));
+
+    it("keeps a long event full width and stacks two later starters side by side on top", () => {
+      expect(shape([
+        timedEvent("cs", "2026-09-22T09:30:00", "2026-09-22T11:35:00"),
+        timedEvent("jblc", "2026-09-22T11:30:00", "2026-09-22T12:00:00"),
+        timedEvent("josh", "2026-09-22T11:30:00", "2026-09-22T12:30:00"),
+      ])).toEqual([
+        { id: "cs", lane: 0, lanes: 1, span: 1, layer: 0 },
+        { id: "josh", lane: 0, lanes: 2, span: 1, layer: 1 },
+        { id: "jblc", lane: 1, lanes: 2, span: 1, layer: 1 },
+      ]);
+      expect(eventColumnBox({ lane: 0, lanes: 1, span: 1, layer: 0 })).toEqual({ left: 0, width: 1 });
+      const box = eventColumnBox({ lane: 1, lanes: 2, span: 1, layer: 1 });
+      expect(box.left).toBeCloseTo(STACK_INSET + (1 - STACK_INSET) / 2);
+      expect(box.left + box.width).toBeCloseTo(1);
+    });
+
+    it("still puts a long and a short event that start together side by side", () => {
+      expect(shape([
+        timedEvent("long", "2026-09-22T16:00:00", "2026-09-22T20:00:00"),
+        timedEvent("short", "2026-09-22T16:00:00", "2026-09-22T16:30:00"),
+      ])).toEqual([
+        { id: "long", lane: 0, lanes: 2, span: 1, layer: 0 },
+        { id: "short", lane: 1, lanes: 2, span: 1, layer: 0 },
+      ]);
+    });
+
+    it("treats a start exactly at the threshold as side by side and one minute later as stacked", () => {
+      const base = timedEvent("base", "2026-09-22T09:00:00", "2026-09-22T12:00:00");
+      const at = (minutes: number) => `2026-09-22T09:${String(minutes).padStart(2, "0")}:00`;
+      expect(SIDE_BY_SIDE_START_MINUTES).toBe(30);
+      expect(shape([base, timedEvent("e", at(30), "2026-09-22T10:00:00")]).map((entry) => entry.layer)).toEqual([0, 0]);
+      expect(shape([base, timedEvent("e", at(31), "2026-09-22T10:00:00")]).map((entry) => entry.layer)).toEqual([0, 1]);
+    });
+
+    it("places three events starting within the threshold in three lanes", () => {
+      expect(shape([
+        timedEvent("a", "2026-09-22T09:00:00", "2026-09-22T10:00:00"),
+        timedEvent("b", "2026-09-22T09:10:00", "2026-09-22T10:00:00"),
+        timedEvent("c", "2026-09-22T09:20:00", "2026-09-22T10:00:00"),
+      ]).map(({ lane, lanes, layer }) => [lane, lanes, layer])).toEqual([[0, 3, 0], [1, 3, 0], [2, 3, 0]]);
+    });
+
+    it("cascades a chain of later starters one layer at a time", () => {
+      expect(shape([
+        timedEvent("a", "2026-09-22T09:00:00", "2026-09-22T13:00:00"),
+        timedEvent("b", "2026-09-22T10:00:00", "2026-09-22T13:00:00"),
+        timedEvent("c", "2026-09-22T11:00:00", "2026-09-22T13:00:00"),
+      ]).map(({ id, lanes, layer }) => [id, lanes, layer])).toEqual([["a", 1, 0], ["b", 1, 1], ["c", 1, 2]]);
+    });
+
+    it("lays out what follows a stack from the base again", () => {
+      expect(shape([
+        timedEvent("a", "2026-09-22T09:00:00", "2026-09-22T11:00:00"),
+        timedEvent("b", "2026-09-22T10:00:00", "2026-09-22T10:30:00"),
+        timedEvent("later", "2026-09-22T11:00:00", "2026-09-22T12:00:00"),
+      ]).map(({ id, lanes, layer }) => [id, lanes, layer])).toEqual([["a", 1, 0], ["b", 1, 1], ["later", 1, 0]]);
+    });
   });
 
   it("adds days across month boundaries", () => {

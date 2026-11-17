@@ -3,6 +3,7 @@ import {
   HOUR_HEIGHT,
   HOURS,
   addDays,
+  eventColumnBox,
   formatEventTime,
   hourLabel,
   isSameDay,
@@ -56,6 +57,10 @@ export function slotAt(clientY: number, column: HTMLElement): number {
   return Math.floor(offset / HOUR_HEIGHT * 60 / SLOT_MINUTES) * SLOT_MINUTES;
 }
 
+function fullDateLabel(date: Date): string {
+  return new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" }).format(date);
+}
+
 function weekdayLabel(date: Date): string {
   const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date);
   return `${weekday} ${date.getDate()}`;
@@ -82,6 +87,8 @@ export function DayTimeGrid({
   eventDecoration,
   shade,
   shortTimes = false,
+  showDayLabels = true,
+  scrollOverlay,
 }: {
   days: Date[];
   events: ScheduleEvent[];
@@ -105,6 +112,10 @@ export function DayTimeGrid({
   shade?: DayGridShade[];
   /** A block too short for two lines still shows its start time after the title, with or without a location. */
   shortTimes?: boolean;
+  /** Shows the weekday-and-date label above each day. A single-day view whose page already names the date hides it; the day's column is then named instead. */
+  showDayLabels?: boolean;
+  /** Content pinned to the top or bottom edge of the scroll area, such as pointers to events scrolled out of view. */
+  scrollOverlay?: { top?: ReactNode; bottom?: ReactNode };
 }) {
   const calendarColors = useCalendarColors();
   const gridId = useId();
@@ -153,18 +164,20 @@ export function DayTimeGrid({
 
   return (
     <>
-      <div className="calendar-week-days" role="row" style={dayCount}>
-        <span className="calendar-week-gutter" aria-hidden="true" />
-        {days.map((day) => (
-          <span
-            key={day.toDateString()}
-            className={`calendar-week-day-label${isSameDay(day, today) ? " calendar-week-day-today" : ""}`}
-            aria-current={isSameDay(day, today) ? "date" : undefined}
-          >
-            {weekdayLabel(day)}
-          </span>
-        ))}
-      </div>
+      {showDayLabels ? (
+        <div className="calendar-week-days" role="row" style={dayCount}>
+          <span className="calendar-week-gutter" aria-hidden="true" />
+          {days.map((day) => (
+            <span
+              key={day.toDateString()}
+              className={`calendar-week-day-label${isSameDay(day, today) ? " calendar-week-day-today" : ""}`}
+              aria-current={isSameDay(day, today) ? "date" : undefined}
+            >
+              {weekdayLabel(day)}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {hasAllDay ? (
         <div className="calendar-week-all-day" aria-label="All-day events" style={dayCount}>
           <span className="calendar-week-gutter">All day</span>
@@ -208,6 +221,7 @@ export function DayTimeGrid({
         ref={scrollRef}
         onScroll={onScroll}
       >
+        {scrollOverlay?.top ? <div className="calendar-scroll-overlay calendar-scroll-overlay-top">{scrollOverlay.top}</div> : null}
         <div className="calendar-week-grid" style={dayCount}>
           <div className="calendar-hour-labels" aria-hidden="true">
             {HOURS.map((hour) => (
@@ -216,6 +230,7 @@ export function DayTimeGrid({
           </div>
           {days.map((day, dayIndex) => (
             <div
+              {...(showDayLabels ? {} : { role: "group", "aria-label": fullDateLabel(day) })}
               {...columnProps?.(day, dayIndex)}
               className={DAY_COLUMN_CLASS}
               key={day.toDateString()}
@@ -234,7 +249,8 @@ export function DayTimeGrid({
                   height: (preview.endMinutes - preview.startMinutes) / 60 * HOUR_HEIGHT,
                 }}>{preview.label ? <span>{preview.label}</span> : null}</div>
               ) : null}
-              {timedByDay[dayIndex].map(({ event, lane, lanes, span }, eventIndex) => {
+              {timedByDay[dayIndex].map(({ event, lane, lanes, span, layer }, eventIndex) => {
+                const box = eventColumnBox({ lane, lanes, span, layer });
                 const decoration = decorate(event, `timed-${dayIndex}-${eventIndex}`);
                 const start = new Date(event.start);
                 const end = new Date(event.end);
@@ -260,6 +276,7 @@ export function DayTimeGrid({
                     className={className}
                     {...decoration.attributes}
                     data-calendar-event-trigger
+                    data-layer={layer}
                     data-response-status={event.responseStatus ?? undefined}
                     aria-expanded={sameEvent(selectedEvent, event)}
                     onClick={(click) => onToggleEvent(event, click.currentTarget)}
@@ -268,8 +285,8 @@ export function DayTimeGrid({
                       ...calendarColorStyle(calendarColors, event.accountId, event.calendarId),
                       top: (startMinutes / 60) * HOUR_HEIGHT,
                       height,
-                      left: `${(lane / lanes) * 100}%`,
-                      width: `${(span / lanes) * 100}%`,
+                      left: `${box.left * 100}%`,
+                      width: `${box.width * 100}%`,
                     }}
                     title={`${event.title}, ${formatEventTime(event)}${location ? `, ${location}` : ""}${responseLabel(event) ? `, ${responseLabel(event)}` : ""}`}
                   >
@@ -293,6 +310,7 @@ export function DayTimeGrid({
           ))}
         </div>
         {loading ? <p className="calendar-grid-status">Loading schedule…</p> : null}
+        {scrollOverlay?.bottom ? <div className="calendar-scroll-overlay calendar-scroll-overlay-bottom">{scrollOverlay.bottom}</div> : null}
       </div>
     </>
   );

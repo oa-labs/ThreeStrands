@@ -44,6 +44,28 @@ describe("DayTimeGrid", () => {
     expect(container.querySelector(".calendar-week-all-day")).not.toBeInTheDocument();
   });
 
+  it("leaves all-day events and working locations out of the lanes, and stacks a late starter over a long event", () => {
+    const location = event("Home", "2026-09-22T08:00:00", "2026-09-22T17:00:00", { eventType: "workingLocation" });
+    const long = event("Long", "2026-09-22T09:30:00", "2026-09-22T11:35:00");
+    const late = event("Late", "2026-09-22T11:30:00", "2026-09-22T12:00:00");
+    renderGrid({ events: [offsite, location, long, late] });
+    expect(screen.getByRole("button", { name: /Long/ })).toHaveStyle({ left: "0%", width: "100%" });
+    expect(screen.getByRole("button", { name: /Long/ })).toHaveAttribute("data-layer", "0");
+    const stacked = screen.getByRole("button", { name: /Late/ });
+    expect(stacked).toHaveAttribute("data-layer", "1");
+    expect(parseFloat(stacked.style.left)).toBeCloseTo(14);
+    // Later in the DOM, so it paints on top and follows in focus order.
+    expect(screen.getAllByRole("button").map((button) => button.textContent?.slice(0, 4))).toEqual(["Home", "Offs", "Long", "Late"]);
+  });
+
+  it("hides the day labels on request and names the day's column instead", () => {
+    const { container, rerender } = renderGrid({ showDayLabels: false });
+    expect(container.querySelector(".calendar-week-days")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /September 22/ })).toHaveClass("calendar-week-column");
+    rerender(<DayTimeGrid days={[today]} events={[]} now={now} selectedEvent={null} onToggleEvent={vi.fn()} />);
+    expect(container.querySelector(".calendar-week-days")).toBeInTheDocument();
+  });
+
   it("shows the Now line only on today's column", () => {
     const { container } = renderGrid({ days: [new Date(2026, 8, 23)] });
     expect(container.querySelector("[data-testid='calendar-now-indicator']")).not.toBeInTheDocument();
