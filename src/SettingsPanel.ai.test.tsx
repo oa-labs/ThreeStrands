@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { readAiFastModel, readAiFeatures, readAiModel, saveAiProvider } from "./aiSettings";
+import { AI_MODEL_PLACEHOLDERS, readAiFastModel, readAiFeatures, readAiModel, saveAiProvider } from "./aiSettings";
 import { AiProviderSettings } from "./AiProviderSettings";
 import { queuePortablePreferences } from "./syncedPreferences";
 
@@ -171,28 +171,55 @@ describe("AI provider feature settings", () => {
     expect(screen.getByRole("group", { name: "Prices for example/reasoning" })).toBeInTheDocument();
   });
 
-  it("groups the page by where AI shows and keeps models under a disclosure", () => {
+  it("groups the page by where AI shows and keeps the fast model under a disclosure", () => {
     render(<AiProviderSettings />);
     for (const name of ["Connection", "Show AI In", "Automatic Briefs"]) {
       expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole("heading", { name: "Features" })).not.toBeInTheDocument();
-    expect(screen.getByText("Models and Usage").closest("details")).not.toHaveAttribute("open");
+    const advanced = screen.getByText("Fast Model and Usage").closest("details");
+    expect(advanced).not.toHaveAttribute("open");
+    expect(advanced).toContainElement(screen.getByRole("combobox", { name: "Fast model" }));
     expect(screen.getByRole("checkbox", { name: "Contacts" }))
       .toHaveAccessibleDescription();
     expect(screen.getByRole("checkbox", { name: "Writing" }))
       .toHaveAccessibleDescription();
     // No key is saved, so there is nothing to remove yet.
     expect(screen.getByRole("status")).toHaveTextContent("API key required");
+    expect(screen.getByLabelText("API Key")).toHaveAccessibleDescription();
     expect(screen.queryByRole("button", { name: "Remove Key" })).not.toBeInTheDocument();
   });
 
-  it("opens the models disclosure for a custom endpoint without a model, since it has no default", () => {
+  it("shows the reasoning model beside the connection it is tested with", () => {
     render(<AiProviderSettings />);
-    const advanced = screen.getByText("Models and Usage").closest("details");
-    expect(advanced).not.toHaveAttribute("open");
-    fireEvent.change(screen.getByRole("combobox", { name: "Provider" }), { target: { value: "custom" } });
-    expect(advanced).toHaveAttribute("open");
+    const reasoning = screen.getByRole("combobox", { name: "Reasoning model" });
+    expect(screen.getByText("Fast Model and Usage").closest("details")).not.toContainElement(reasoning);
+    // It sits before Test Connection, so the value the test sends is in view.
+    expect(reasoning.compareDocumentPosition(screen.getByRole("button", { name: "Test Connection" })))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("drops the old provider's models when the provider changes, so the new default applies", () => {
+    render(<AiProviderSettings onChange={queuePortablePreferences} />);
+    for (const [name, value] of [["Reasoning model", "gpt-4.1"], ["Fast model", "gpt-4.1-mini"]]) {
+      const field = screen.getByRole("combobox", { name });
+      fireEvent.change(field, { target: { value } });
+      fireEvent.blur(field);
+    }
+    expect(readAiModel()).toBe("gpt-4.1");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Provider" }), { target: { value: "anthropic" } });
+    expect(readAiModel()).toBe("");
+    expect(readAiFastModel()).toBe("");
+    const reasoning = screen.getByRole("combobox", { name: "Reasoning model" });
+    expect(reasoning).toHaveValue("");
+    expect(reasoning).toHaveAttribute("placeholder", AI_MODEL_PLACEHOLDERS.anthropic);
+
+    // Choosing the same provider again keeps what the user just entered.
+    fireEvent.change(reasoning, { target: { value: "claude-example" } });
+    fireEvent.blur(reasoning);
+    fireEvent.change(screen.getByRole("combobox", { name: "Provider" }), { target: { value: "anthropic" } });
+    expect(readAiModel()).toBe("claude-example");
   });
 
   it("offers every on-demand area once a provider is chosen, and keeps automatic briefs off", () => {

@@ -131,9 +131,8 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const updateArea = (area: AiArea, on: boolean) => updateFeatures((current) => withAiArea(current, area, on));
   const reading = aiAreaEnabled(features, "reading");
   const automatic = aiAutomaticBriefs(features);
-  // A custom endpoint has no default model, so its required field starts visible.
-  const [advancedOpen, setAdvancedOpen] = useState(() => provider === "custom" && !model.trim());
   const automaticHintId = useId();
+  const keyHintId = useId();
   const testDisabled = busy || testingConnection || !keyConfigured || !resolveAiModel(provider, model)
     || (provider === "custom" && !endpoint.trim());
   const hasCatalog = provider !== "none" && provider !== "custom";
@@ -155,6 +154,15 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             setProvider(next);
             setConnectionTested(false);
             saveAiProvider(next);
+            // Model names belong to one provider's catalog, so a model chosen
+            // for the old provider would make the new one fail. Clearing them
+            // falls back to the new provider's default, shown as placeholder.
+            if (next !== provider) {
+              setModel("");
+              saveAiModel("");
+              setFastModel("");
+              saveAiFastModel("");
+            }
             onChange?.();
             // The keychain key was set up for some provider, not necessarily
             // this one, so switching never sends it anywhere on its own: only
@@ -162,7 +170,6 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             // waits for Refresh model list or a newly saved key.
             if (next === "openrouter") loadModels(next, keyConfigured);
             else clearModels();
-            if (next === "custom" && !model.trim()) setAdvancedOpen(true);
           }}
         >
           {AI_PROVIDER_OPTIONS.map((option) => (
@@ -196,6 +203,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                 type="password"
                 value={keyInput}
                 placeholder={keyConfigured ? "Saved to keychain" : "Paste API key"}
+                aria-describedby={keyHintId}
                 onChange={(event) => setKeyInput(event.target.value)}
               />
             </label>
@@ -228,7 +236,6 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               {keyConfigured ? <CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> : <CircleAlert size={ICON_SIZE.xs} aria-hidden="true" />}
               {keyConfigured ? "API key configured" : "API key required"}
             </span>
-            <span className="settings-hint">Stored in your OS keychain, never in the mail database.</span>
             {keyConfigured ? (
               <button
                 type="button"
@@ -252,6 +259,50 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                 Remove Key
               </button>
             ) : null}
+          </div>
+          <p className="settings-hint settings-field-detail" id={keyHintId}>
+            Stored in your OS keychain, never in the mail database.
+          </p>
+
+          <label className="settings-field settings-field-row">
+            <span>Reasoning Model</span>
+            <ModelCombobox
+              value={model}
+              models={pickerModels}
+              ariaLabel="Reasoning model"
+              placeholder={AI_MODEL_PLACEHOLDERS[provider]}
+              onCommit={(next) => {
+                setModel(next);
+                setConnectionTested(false);
+                saveAiModel(next);
+                onChange?.();
+              }}
+            />
+          </label>
+          <div className="settings-field-detail ai-model-list-status">
+            {hasCatalog ? (
+              <button
+                type="button"
+                className="btn-link"
+                disabled={modelsLoading || !canListAiModels(provider, keyConfigured)}
+                onClick={() => loadModels(provider, keyConfigured)}
+              >
+                <RefreshCw size={ICON_SIZE.xs} aria-hidden="true" />
+                {modelsLoading ? "Loading models…" : "Refresh model list"}
+              </button>
+            ) : null}
+            {hasCatalog && provider !== "openrouter" && keyConfigured === false ? (
+              <span className="settings-hint">Save your API key to load available models.</span>
+            ) : null}
+            {modelsError ? (
+              <span className="settings-hint">
+                Couldn’t load the model list ({modelsError}). You can still type a model name.
+              </span>
+            ) : null}
+            <p className="settings-hint">
+              Used for suggestions, briefs, and conversation chat, where working through
+              dates and multi-step questions pays off.
+            </p>
           </div>
           <div className="settings-field-detail ai-connection-actions">
             <button
@@ -317,54 +368,9 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             ))}
           </div>
 
-          <details
-            className="settings-disclosure ai-advanced"
-            open={advancedOpen}
-            onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
-          >
-            <summary>Models and Usage</summary>
+          <details className="settings-disclosure ai-advanced">
+            <summary>Fast Model and Usage</summary>
             <div className="settings-disclosure-body">
-              <label className="settings-field settings-field-row">
-                <span>Reasoning Model</span>
-                <ModelCombobox
-                  value={model}
-                  models={pickerModels}
-                  ariaLabel="Reasoning model"
-                  placeholder={AI_MODEL_PLACEHOLDERS[provider]}
-                  onCommit={(next) => {
-                    setModel(next);
-                    setConnectionTested(false);
-                    saveAiModel(next);
-                    onChange?.();
-                  }}
-                />
-              </label>
-              <div className="settings-field-detail ai-model-list-status">
-                {hasCatalog ? (
-                  <button
-                    type="button"
-                    className="btn-link"
-                    disabled={modelsLoading || !canListAiModels(provider, keyConfigured)}
-                    onClick={() => loadModels(provider, keyConfigured)}
-                  >
-                    <RefreshCw size={ICON_SIZE.xs} aria-hidden="true" />
-                    {modelsLoading ? "Loading models…" : "Refresh model list"}
-                  </button>
-                ) : null}
-                {hasCatalog && provider !== "openrouter" && keyConfigured === false ? (
-                  <span className="settings-hint">Save your API key to load available models.</span>
-                ) : null}
-                {modelsError ? (
-                  <span className="settings-hint">
-                    Couldn’t load the model list ({modelsError}). You can still type a model name.
-                  </span>
-                ) : null}
-                <p className="settings-hint">
-                  Used for suggestions, briefs, and conversation chat, where working through
-                  dates and multi-step questions pays off.
-                </p>
-              </div>
-
               <label className="settings-field settings-field-row">
                 <span>Fast Model</span>
                 <ModelCombobox
