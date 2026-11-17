@@ -217,7 +217,7 @@ it("reviews follow-through from preparation with Undo, and hands a follow-up to 
   const start = new Date(Date.now() + 10 * 60_000);
   const meeting: ScheduleEvent = { id: "follow-meeting", accountId: "calendar@example.com", calendarId: "primary", title: "Follow review", allDay: false,
     start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString(), attendees: ["ann@example.org"] };
-  const source = await mailClient.createNote("Prep source", "- Agenda for the review");
+  const source = await mailClient.createNote("Follow-through source", "- Agenda for the review");
   vi.spyOn(mailClient, "meetingContext").mockImplementation(async (reference) => ({ ...prepContext(reference, source.id),
     event: { title: meeting.title, start: meeting.start, end: meeting.end, allDay: false, seriesId: null, attendees: ["ann@example.org"], attendeesOmitted: 0, sourceMessageId: null, responseStatus: null } }));
   const save = vi.spyOn(mailClient, "saveMeetingFollowThrough").mockImplementation(async (_reference, _destination, _revision, operationId) => ({
@@ -241,7 +241,7 @@ it("reviews follow-through from preparation with Undo, and hands a follow-up to 
   fireEvent.change(review.getByRole("textbox", { name: "Item 1" }), { target: { value: "Send the notes" } });
   fireEvent.click(review.getByRole("button", { name: "Save Follow-through" }));
   await waitFor(() => expect(save).toHaveBeenCalledOnce());
-  expect(await screen.findByText("Follow-through saved to Prep source")).toBeInTheDocument();
+  expect(await screen.findByText("Follow-through saved to Follow-through source")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Undo" }));
   await waitFor(() => expect(undo).toHaveBeenCalledWith(save.mock.calls[0]![3]));
 

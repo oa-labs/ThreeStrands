@@ -1836,6 +1836,10 @@ mod tests {
         "index:note_attachments_by_note",
         "table:note_attachment_data",
         "table:note_attachment_objects",
+        "table:operation_receipts",
+        "index:operation_receipts_by_time",
+        "table:draft_handoffs",
+        "index:draft_handoffs_by_time",
     ];
 
     #[test]
