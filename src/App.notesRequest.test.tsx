@@ -167,7 +167,7 @@ function prepContext(reference: NoteReference, noteId: string): MeetingContext {
   return {
     reference, event: null, mailScope: [],
     thisMeeting: section([{ noteId, title: "Prep source", dailyDate: null, revision: "r", kind: "excerpt" as const, text: "- Agenda for the review", truncated: false, start: 0, end: 10 }]),
-    previousMeetings: section([]), seriesNotes: section([]), conversations: section([]), commitments: section([]),
+    previousMeetings: section([]), seriesNotes: section([]), conversations: section([]), commitments: section([]), followThrough: section([]),
     limits: { noteSources: 20, priorOccurrences: 8, excerptBytes: 4096, linkedNotePreviewBytes: 1024, attendees: 50, conversations: 10, mailLookbackDays: 90, commitments: 25 },
   };
 }
@@ -209,6 +209,52 @@ it("prepares a meeting on Today, opens a source note, and comes back to the same
   await waitFor(() => expect(screen.queryByRole("region", { name: "Preparation for Prep review" })).not.toBeInTheDocument());
   // Escape closed preparation without leaving Today.
   expect(screen.getByRole("region", { name: "Today's agenda" })).toBeInTheDocument();
+});
+
+it("reviews follow-through from preparation with Undo, and hands a follow-up to the composer", async () => {
+  localStorage.clear();
+  clearScheduleCache();
+  const start = new Date(Date.now() + 10 * 60_000);
+  const meeting: ScheduleEvent = { id: "follow-meeting", accountId: "calendar@example.com", calendarId: "primary", title: "Follow review", allDay: false,
+    start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString(), attendees: ["ann@example.org"] };
+  const source = await mailClient.createNote("Prep source", "- Agenda for the review");
+  vi.spyOn(mailClient, "meetingContext").mockImplementation(async (reference) => ({ ...prepContext(reference, source.id),
+    event: { title: meeting.title, start: meeting.start, end: meeting.end, allDay: false, seriesId: null, attendees: ["ann@example.org"], attendeesOmitted: 0, sourceMessageId: null, responseStatus: null } }));
+  const save = vi.spyOn(mailClient, "saveMeetingFollowThrough").mockImplementation(async (_reference, _destination, _revision, operationId) => ({
+    operationId, note: source, section: "- Follow-through", start: 0, end: 1, taskIds: [], checklistIds: [], replayed: false,
+  }));
+  const undo = vi.spyOn(mailClient, "undoMeetingFollowThrough").mockResolvedValue({ note: source });
+  vi.spyOn(mailClient, "draftHandoffStatus").mockResolvedValue(null);
+  const handoff = vi.spyOn(mailClient, "draftHandoff").mockImplementation(async (request) => ({
+    handoffId: request.handoffId, draftId: "follow-up", state: "open", created: true,
+    draft: { id: "follow-up", revision: 1, account: request.account, mode: "new", sourceId: null, threadId: null, replyId: null, references: [], to: request.to, cc: "", bcc: "", subject: request.subject, body: request.body, attachments: [], updatedAt: 1 },
+  }));
+  mockMeetingCalendar(meeting);
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
+  await screen.findByRole("button", { name: /^Next: Follow review/ });
+  fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+  const prep = within(await screen.findByRole("region", { name: "Preparation for Follow review" }));
+  fireEvent.click(await prep.findByRole("button", { name: "Review Follow-through" }));
+  const review = within(await screen.findByRole("dialog", { name: "Review Follow-through" }));
+  fireEvent.click(review.getByRole("button", { name: "Add Action" }));
+  fireEvent.change(review.getByRole("textbox", { name: "Item 1" }), { target: { value: "Send the notes" } });
+  fireEvent.click(review.getByRole("button", { name: "Save Follow-through" }));
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+  expect(await screen.findByText("Follow-through saved to Prep source")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(undo).toHaveBeenCalledWith(save.mock.calls[0]![3]));
+
+  fireEvent.click(prep.getByRole("button", { name: "Draft Follow-up" }));
+  const draft = within(await screen.findByRole("dialog", { name: "Draft Follow-up" }));
+  // The calendar's account sends no mail, so the account is an explicit choice.
+  const from = draft.getByRole("combobox", { name: "From" });
+  expect(from).toHaveValue("");
+  fireEvent.change(from, { target: { value: within(from).getAllByRole("option")[1]!.getAttribute("value") } });
+  fireEvent.change(draft.getByRole("textbox", { name: "Subject" }), { target: { value: "Notes from the review" } });
+  fireEvent.click(await draft.findByRole("button", { name: "Open Draft" }));
+  await waitFor(() => expect(handoff).toHaveBeenCalledOnce());
+  expect(await screen.findByRole("textbox", { name: "Subject" })).toHaveValue("Notes from the review");
 });
 
 it("prepares the meeting open in Calendar from its details and from the command palette", async () => {

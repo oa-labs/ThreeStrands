@@ -3,13 +3,13 @@ import { defaultSignature } from "../signatures";
 import { previewScheduleChoices } from "../scheduleTimes";
 import type { CorrespondenceClient, Draft, OutboxItem, ScheduledSendReport, ScheduleSelection } from "../correspondence";
 import { plainTextToHtml } from "../richText";
-import type { SendingIdentity, ThreadDetail } from "../domain";
+import type { DraftHandoff, SendingIdentity, ThreadDetail } from "../domain";
 import { queuedMessage } from "../queuedReplies";
 import { parseAddress, splitAddressList } from "../emailAddress";
 
 const key = "threestrands.demoCorrespondence";
 const inlineImages = new Map<string, string>();
-type Store = { drafts: Draft[]; outbox: OutboxItem[]; summaries?: ScheduledSendReport[]; discarded?: Draft[] };
+type Store = { drafts: Draft[]; outbox: OutboxItem[]; summaries?: ScheduledSendReport[]; discarded?: Draft[]; handoffs?: Record<string, string> };
 const previewOwner = "00000000-0000-4000-8000-000000000001";
 function read(): Store {
   const saved = localStorage.getItem(key);
@@ -74,7 +74,39 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
       recipients: splitAddressList(item.draft.to), cc: splitAddressList(item.draft.cc),
     }] };
   }
-  return {
+  /** As natively (`draft_handoff_status`): where a handoff's one draft stands. */
+  function handoffStatus(handoffId: string): DraftHandoff | null {
+    const store = read();
+    const draftId = store.handoffs?.[handoffId];
+    if (!draftId) return null;
+    const open = store.drafts.find((d) => d.id === draftId) ?? null;
+    const queued = store.outbox.find((item) => item.draft.id === draftId);
+    const state = open ? "open" : queued ? (queued.state === "sent" ? "sent" : "outbox") : "missing";
+    return { handoffId, draftId, state, draft: open, created: false };
+  }
+  const client: CorrespondenceClient = {
+    async draftHandoffStatus(handoffId) { return handoffStatus(handoffId); },
+    async draftHandoff(request) {
+      const existing = handoffStatus(request.handoffId);
+      if (existing) return existing;
+      if (request.mode !== "new") {
+        if (!request.sourceId) throw new Error("Choose the conversation to reply to");
+        if (read().drafts.some((d) => d.account === request.account && (d.mode === "reply" || d.mode === "replyAll") && d.sourceId === request.sourceId)) {
+          throw new Error("A reply to this conversation is already in Drafts. Open it there, or choose New Message.");
+        }
+      }
+      const created = await client.createDraft(request.mode, request.sourceId ?? undefined, request.account);
+      const store = read();
+      const d = draft(store, created.id);
+      if (d.mode === "new") { d.to = request.to; d.cc = request.cc; d.subject = request.subject; }
+      d.bcc = "";
+      d.body = `${request.body}${d.body}`;
+      if (d.signature) d.signature = { ...d.signature, textOffset: request.body.length };
+      d.revision++;
+      store.handoffs = { ...store.handoffs, [request.handoffId]: d.id };
+      write(store);
+      return { ...handoffStatus(request.handoffId)!, created: true };
+    },
     async schedulingInfo() { return { deviceName: "This computer", sharing: false }; },
     async scheduleChoices(localTime,timeZone) { return previewScheduleChoices(localTime,timeZone); },
     async listScheduledSummaries() { return read().summaries ?? []; },
@@ -255,4 +287,5 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
     async removeAttachment(id, attachmentId) { const store = read(); const d = draft(store, id); d.attachments = d.attachments.filter((a) => a.id !== attachmentId); inlineImages.delete(attachmentId); d.revision++; write(store); return d; },
     async fetchAttachment() { throw new Error("Attachments are simulated in browser preview"); },
   };
+  return client;
 }

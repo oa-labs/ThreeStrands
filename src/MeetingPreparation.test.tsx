@@ -36,6 +36,7 @@ function context(overrides: Partial<MeetingContext> = {}, ref: NoteReference = r
       { id: "note:daily:2026-11-16:m1", title: "Send the deck", status: "open", noteId: "daily:2026-11-16", threadId: null, accountId: null, origin: "meetingNote", candidate: false },
       { id: "task-2", title: "Send Ann numbers", status: "open", noteId: null, threadId: "t1", accountId: ME, origin: "attendeeConversation", candidate: true },
     ]),
+    followThrough: section([]),
     limits,
     ...overrides,
   };
@@ -75,6 +76,23 @@ describe("useMeetingPreparation", () => {
 });
 
 describe("MeetingPreparation", () => {
+  it("shows the meeting's follow-through state from its notes and offers review and drafting only when wired", async () => {
+    const reviewed = { noteId: "daily:2026-11-16", title: "2026-11-16", dailyDate: "2026-11-16", revision: "r1", date: "2026-11-16", text: "- Follow-through 2026-11-16: [Sync](x) <!-- threestrands-follow-through -->\n  - Decision: Ship", truncated: false, start: 0, end: 10 };
+    const load = vi.spyOn(mailClient, "meetingContext").mockResolvedValue(context({ followThrough: section([reviewed]) }));
+    const handlers = renderPrep({ onFollowThroughSaved: vi.fn(), onOpenFollowUp: vi.fn() });
+    const region = within(await screen.findByRole("region", { name: "Follow-through" }));
+    fireEvent.click(region.getByRole("button", { name: /Reviewed Mon, Nov 16/ }));
+    expect(handlers.onOpenNote).toHaveBeenCalledWith("daily:2026-11-16", noteReferenceHref(reference()));
+    expect(region.getByRole("button", { name: "Review Follow-through" })).toBeInTheDocument();
+    expect(region.getByRole("button", { name: "Draft Follow-up" })).toBeInTheDocument();
+    cleanup();
+
+    load.mockResolvedValue(context());
+    renderPrep();
+    await screen.findByRole("region", { name: "This meeting" });
+    expect(screen.queryByRole("region", { name: "Follow-through" })).not.toBeInTheDocument();
+  });
+
   it("lists each section and opens its source, without taking focus", async () => {
     vi.spyOn(mailClient, "meetingContext").mockResolvedValue(context());
     const handlers = renderPrep();
@@ -194,7 +212,7 @@ describe("MeetingPrepActions", () => {
 describe("meeting readiness", () => {
   const readiness = (overrides: Partial<MeetingReadiness> = {}): MeetingReadiness => ({
     reference: reference(), eventAvailable: true, hasOccurrenceNote: true, priorOccurrencesWithNotes: 2, seriesNotes: 0,
-    openCommitments: 1, candidateCommitments: 0, latestCorrespondenceAt: "2026-11-14T09:00:00Z", scopeRequired: false, unavailableSections: [], error: null, ...overrides,
+    openCommitments: 1, candidateCommitments: 0, latestCorrespondenceAt: "2026-11-14T09:00:00Z", scopeRequired: false, followThrough: "notReviewed", unavailableSections: [], error: null, ...overrides,
   });
 
   it("describes readiness as facts, not a score", () => {

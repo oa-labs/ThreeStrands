@@ -1,14 +1,16 @@
-import { CheckSquare, ClipboardList, Mail, NotebookPen, NotebookText, X } from "lucide-react";
+import { CheckSquare, ClipboardCheck, ClipboardList, Mail, NotebookPen, NotebookText, X } from "lucide-react";
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Modal } from "./AppChrome";
 import { ContextRow, ContextSection, ContextSectionHeader } from "./ContextSections";
 import { formatEventTime } from "./calendarTime";
-import type { MeetingCommitment, MeetingConversation, MeetingNoteSource, MeetingOccurrence, MeetingSection, ScheduleEvent } from "./domain";
+import type { DraftHandoff, DraftHandoffRequest, FollowThroughSave, MeetingCommitment, MeetingConversation, MeetingNoteSource, MeetingOccurrence, MeetingSection, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { noteReferenceHref, type NoteReference } from "./noteEntities";
 import { notePlainText } from "./notePreview";
 import { useMeetingPreparation } from "./useMeetingPreparation";
+import { MeetingFollowThroughDialog, MeetingFollowUpDialog } from "./MeetingFollowThroughDialog";
+import { itemsFromSection, localDay } from "./meetingFollowThrough";
 
 export type MailAccountChoice = { email: string; label: string };
 
@@ -27,6 +29,14 @@ type Props = {
   actions?: ReactNode;
   /** Offered where the meeting has no notes yet. */
   onAddNote?(): void;
+  /** The user's own addresses, never a follow-up's default recipients. */
+  ownAddresses?: readonly string[];
+  /** Says a follow-through was saved, with its Undo. Review Follow-through is offered with it. */
+  onFollowThroughSaved?(saved: FollowThroughSave & { undo(): Promise<void> }): void;
+  /** Saves the open composer, then opens or resumes the follow-up's draft. Draft Follow-up is offered with it. */
+  onOpenFollowUp?(request: DraftHandoffRequest): Promise<DraftHandoff>;
+  /** The day a review is dated; today by default. */
+  today?: string;
 };
 
 const CONVERSATION_REASON: Record<MeetingConversation["reason"], string> = {
@@ -70,10 +80,12 @@ function noteTitle(source: MeetingNoteSource): string {
  * Opening it reads only local data; nothing is written, and nothing takes
  * focus on its own.
  */
-export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote, onOpenThread, onOpenTask, onClose, actions, onAddNote }: Props) {
+export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote, onOpenThread, onOpenTask, onClose, actions, onAddNote, ownAddresses = [], onFollowThroughSaved, onOpenFollowUp, today }: Props) {
   const reference = meetingEventReference(event);
   const prep = useMeetingPreparation(reference, refreshKey);
   const [choosingScope, setChoosingScope] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const context = prep.context;
   const occurrenceHref = reference ? noteReferenceHref(reference) : undefined;
   const openSource = (source: MeetingNoteSource, link?: NoteReference) =>
@@ -144,6 +156,20 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
           {onAddNote && context.thisMeeting.items.length === 0 && context.thisMeeting.status !== "unavailable"
             ? <p className="context-status"><button type="button" className="btn-link" onClick={onAddNote}>Add Note</button> to start this meeting's notes in its day's note.</p> : null}
         </>} />
+      {onFollowThroughSaved || onOpenFollowUp ? <ContextSection id="meeting-prep-follow-through" title="Follow-through" count={context.followThrough.items.length}
+        actions={<>
+          {onFollowThroughSaved ? <button type="button" className="btn-link" onClick={() => setReviewing(true)}>Review Follow-through</button> : null}
+          {onOpenFollowUp ? <button type="button" className="btn-link" onClick={() => setDrafting(true)}>Draft Follow-up</button> : null}
+        </>}
+        rows={context.followThrough.items.map((item) => <ContextRow
+          key={`${item.noteId}:${item.start}`}
+          icon={<ClipboardCheck size={ICON_SIZE.sm} />}
+          title={item.date ? `Reviewed ${dayLabel(item.date)}` : "Reviewed"}
+          detail={`${item.dailyDate ? dayLabel(item.dailyDate) : item.title} · ${notePlainText(item.text.split("\n").slice(1).join(" ").replace(/<!--[\s\S]*?-->/g, "")).replace(/\s+/g, " ").trim()}`}
+          onActivate={() => onOpenNote(item.noteId, occurrenceHref)}
+        />)}
+        footer={context.followThrough.status === "unavailable" ? <p className="context-status">{context.followThrough.message}</p>
+          : context.followThrough.items.length ? null : <p className="context-status">Not reviewed yet.</p>} /> : null}
       <ContextSection id="meeting-prep-previous" title="Previous meetings" count={context.previousMeetings.items.length}
         rows={occurrenceRows(context.previousMeetings.items)}
         footer={sectionStatus(context.previousMeetings, context.event?.seriesId ? "No notes from earlier meetings in this series." : "This meeting doesn't repeat.")} />
@@ -173,6 +199,23 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
         note="Open tasks on conversations with attendees. They may not be about this meeting."
         rows={commitmentRows(candidates)} /> : null}
     </> : null}
+    {reviewing && context && onFollowThroughSaved ? <MeetingFollowThroughDialog
+      event={event}
+      context={context}
+      today={today ?? localDay(new Date())}
+      onClose={() => setReviewing(false)}
+      onAddNote={onAddNote}
+      onSaved={(saved) => { setReviewing(false); onFollowThroughSaved(saved); }}
+    /> : null}
+    {drafting && context && onOpenFollowUp ? <MeetingFollowUpDialog
+      event={event}
+      context={context}
+      items={itemsFromSection(context.followThrough.items.at(-1)?.text ?? "")}
+      mailAccounts={mailAccounts}
+      ownAddresses={ownAddresses}
+      onClose={() => setDrafting(false)}
+      onOpen={onOpenFollowUp}
+    /> : null}
     {choosingScope ? <MeetingMailScopeDialog
       accounts={mailAccounts}
       chosen={context?.mailScope ?? []}

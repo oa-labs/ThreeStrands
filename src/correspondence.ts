@@ -4,7 +4,7 @@ import {
   type InvokePolicy,
   WAIT_FOR_NATIVE_COMPLETION,
 } from "./invoke";
-import type { SendingIdentity } from "./domain";
+import type { DraftHandoff, DraftHandoffRequest, SendingIdentity } from "./domain";
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
 export type Attachment = { id: string; name: string; size: number; mime: string; ready: boolean; messageId: string | null; providerId: string | null; inline?: boolean; contentId?: string | null };
@@ -52,6 +52,10 @@ export interface CorrespondenceClient {
   listScheduledSummaries(): Promise<ScheduledSendReport[]>;
   /** `account` is required for reply/replyAll/forward (the source thread's owning account) and optional for "new" (defaults to the most-recently-used account). */
   createDraft(mode: ComposeMode, sourceId?: string, account?: string): Promise<Draft>;
+  /** Opens the one draft of a follow-up handoff: creates it with the reviewed values the first time, and afterwards reports where it stands without making another. Never queues or sends. */
+  draftHandoff(request: DraftHandoffRequest): Promise<DraftHandoff>;
+  /** Where a handoff's draft stands, or null for a handoff this device never opened. */
+  draftHandoffStatus(handoffId: string): Promise<DraftHandoff | null>;
   /** "Edit as New": an unaddressed new message copied from one `account` sent. Refuses anyone else's message. */
   createDraftFromSent(sourceId: string, account: string): Promise<Draft>;
   /** Changes a "new" message's sending account; reply/replyAll/forward stay locked to their source thread's account. */
@@ -83,7 +87,7 @@ export interface CorrespondenceClient {
 
 type CorrespondenceOperation =
   | "schedulingInfo" | "scheduleChoices" | "schedule" | "reschedule" | "sendScheduledNow" | "listScheduledSummaries"
-  | "identity" | "create" | "createFromSent" | "setAccount" | "identities" | "setFrom" | "save" | "listDrafts"
+  | "identity" | "create" | "handoff" | "handoffStatus" | "createFromSent" | "setAccount" | "identities" | "setFrom" | "save" | "listDrafts"
   | "discard" | "restoreDraft" | "pushDraft" | "resolveConflict" | "queue" | "listOutbox" | "cancel" | "recover"
   | "reconcile" | "attach" | "attachInline" | "readInline"
   | "removeAttachment" | "fetchAttachment";
@@ -97,6 +101,8 @@ const OPERATION_POLICY: Record<CorrespondenceOperation, InvokePolicy> = {
   listScheduledSummaries: BOUNDED_LOCAL_READ,
   identity: BOUNDED_LOCAL_READ,
   create: WAIT_FOR_NATIVE_COMPLETION,
+  handoff: WAIT_FOR_NATIVE_COMPLETION,
+  handoffStatus: BOUNDED_LOCAL_READ,
   createFromSent: WAIT_FOR_NATIVE_COMPLETION,
   setAccount: WAIT_FOR_NATIVE_COMPLETION,
   identities: BOUNDED_LOCAL_READ,
@@ -134,6 +140,8 @@ export const nativeCorrespondence: CorrespondenceClient = {
   sendScheduledNow: (id,revision) => request("sendScheduledNow",{id,revision}),
   listScheduledSummaries: () => request("listScheduledSummaries"),
   createDraft: (mode, sourceId, account) => request("create", { mode, sourceId, account }),
+  draftHandoff: (handoff) => request("handoff", handoff),
+  draftHandoffStatus: (handoffId) => request("handoffStatus", { handoffId }),
   createDraftFromSent: (sourceId, account) => request("createFromSent", { sourceId, account }),
   setDraftAccount: (id, account) => request("setAccount", { id, account }),
   listIdentities: (account) => request("identities", { account }),

@@ -775,6 +775,21 @@ export function App() {
     onOpenTask={(commitment) => openFromPreparation(origin, event, () => openEntityReference(commitmentHref(commitment)))}
     onClose={close}
     onAddNote={() => { void openMeetingNote(event); }}
+    ownAddresses={meetingOwnAddresses}
+    onFollowThroughSaved={(saved) => {
+      const href = meetingEventReference(event) ? noteReferenceHref(meetingEventReference(event)!) : undefined;
+      setNotice({
+        message: `Follow-through saved to ${saved.note.dailyDate ? dailyNoteName(saved.note.dailyDate) : saved.note.title}`,
+        action: { label: "Open Note", run: () => openNote(saved.note.id, undefined, href) },
+        undo: () => void saved.undo().catch((reason) => setNotice({ message: errorMessage(reason) })),
+      });
+    }}
+    onOpenFollowUp={async (request) => {
+      const handoff = await correspondence.openDraftHandoff(request);
+      // The composer opens in the mail view, where the user sends as usual.
+      if (handoff.state === "open") setRightWorkspace(null);
+      return handoff;
+    }}
     // Calendar's details already offer Open Note / Add Note and Join beside the event.
     actions={<MeetingPrepActions
       event={event}

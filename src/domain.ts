@@ -1095,8 +1095,28 @@ export type MeetingContext = {
   seriesNotes: MeetingSection<MeetingNoteSource>;
   conversations: MeetingSection<MeetingConversation>;
   commitments: MeetingSection<MeetingCommitment>;
+  /** Follow-through sections saved for this occurrence, in any note. */
+  followThrough: MeetingSection<FollowThroughRecord>;
   limits: MeetingLimits;
 };
+/** A follow-through section saved for an occurrence (`src-tauri/src/db/meetings.rs`). */
+export type FollowThroughRecord = { noteId: string; title: string; dailyDate: string | null; revision: string; date: string | null; text: string; truncated: boolean; start: number; end: number };
+/** Whether a meeting has been reviewed, derived from saved note content; `unknown` when its notes couldn't be read. */
+export type FollowThroughState = "reviewed" | "notReviewed" | "unknown";
+/** One reviewed decision or action (`src-tauri/src/meeting_follow_through.rs`). */
+export type FollowThroughItem =
+  | { kind: "decision" | "task" | "checklist" | "action"; text: string }
+  | { kind: "link"; task: import("./noteEntities").NoteReference; title: string };
+/** What the user accepted: the review's date, the meeting's name for the section's link, and the items. */
+export type AcceptedFollowThrough = { date: string; meeting: string; items: FollowThroughItem[] };
+/** A saved follow-through as first committed; `replayed` when a retry returned it without writing. Offsets are the native note body's. */
+export type FollowThroughSave = { operationId: string; note: Note; section: string; start: number; end: number; taskIds: string[]; checklistIds: string[]; replayed: boolean };
+export type FollowThroughUndo = { note: Note };
+/** Where a follow-up handoff's one draft stands (`src-tauri/src/db/drafts.rs`). */
+export type DraftHandoffState = "open" | "outbox" | "sent" | "missing";
+export type DraftHandoff = { handoffId: string; draftId: string; state: DraftHandoffState; draft: import("./correspondence").Draft | null; created: boolean };
+/** The reviewed values a follow-up draft starts with. A reply keeps its own recipients and subject. */
+export type DraftHandoffRequest = { handoffId: string; account: string; mode: "new" | "replyAll"; sourceId: string | null; to: string; cc: string; subject: string; body: string };
 /** What Reserve Prep Time did: `added` is false when the meeting already had a prep task. */
 export type PrepReservation = { note: Note; added: boolean; addedMeetingLine: boolean; previousBody: string; taskId: string | null };
 /** One item of a day's plan with its current state (`src-tauri/src/db/daily_plan.rs`). */
@@ -1179,6 +1199,7 @@ export type MeetingReadiness = {
   candidateCommitments: number;
   latestCorrespondenceAt: string | null;
   scopeRequired: boolean;
+  followThrough: FollowThroughState;
   unavailableSections: string[];
   error: string | null;
 };

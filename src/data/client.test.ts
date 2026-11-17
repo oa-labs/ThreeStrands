@@ -105,6 +105,16 @@ describe("native account requests", () => {
     const entry = { event: reference, time: "3:00pm", attendees: [], name: "Sync", linkNote: false };
     await client.reserveMeetingPrep("2026-11-16", "v1", entry);
     expect(invoke).toHaveBeenLastCalledWith("reserve_meeting_prep", { date: "2026-11-16", expected: "v1", entry });
+    const accepted = { date: "2026-11-16", meeting: "Sync", items: [{ kind: "task" as const, text: "Send" }] };
+    await client.saveMeetingFollowThrough(reference, { noteId: "n" }, "v1", "op", accepted);
+    expect(invoke).toHaveBeenLastCalledWith("save_meeting_follow_through", { reference, destination: { noteId: "n" }, expectedRevision: "v1", operationId: "op", accepted });
+    await client.undoMeetingFollowThrough("op");
+    expect(invoke).toHaveBeenLastCalledWith("undo_meeting_follow_through", { operationId: "op" });
+    const handoff = { handoffId: "h", account: "me@example.com", mode: "new" as const, sourceId: null, to: "a@example.org", cc: "", subject: "S", body: "B" };
+    await client.draftHandoff(handoff);
+    expect(invoke).toHaveBeenLastCalledWith("correspondence_request", { request: { op: "handoff", ...handoff } });
+    await client.draftHandoffStatus("h");
+    expect(invoke).toHaveBeenLastCalledWith("correspondence_request", { request: { op: "handoffStatus", handoffId: "h" } });
     await client.dailyPlan("2026-11-16");
     expect(invoke).toHaveBeenLastCalledWith("daily_plan", { date: "2026-11-16" });
     const additions = [{ kind: "newTask" as const, title: "Draft memo" }];

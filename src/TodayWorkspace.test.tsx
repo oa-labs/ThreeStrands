@@ -934,7 +934,7 @@ describe("TodayWorkspace", () => {
       ], errors: [] });
       vi.spyOn(mailClient, "meetingReadiness").mockImplementation(async (references) => references.map((reference) => ({
         reference, eventAvailable: true, hasOccurrenceNote: reference.id === "next", priorOccurrencesWithNotes: 0, seriesNotes: 0, openCommitments: 0,
-        candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, unavailableSections: [], error: null })));
+        candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, followThrough: "notReviewed", unavailableSections: [], error: null })));
       const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => <p>Preparation view</p>), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
       const { onOpenEvent, rerenderToday } = renderToday({ calendarConnected: true, preparation });
 
@@ -995,7 +995,7 @@ describe("TodayWorkspace", () => {
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [event("ops", 30, { title: "Operations Team Meeting" })], errors: [] });
       vi.spyOn(mailClient, "meetingReadiness").mockImplementation(async (references) => references.map((reference) => ({
         reference, eventAvailable: true, hasOccurrenceNote: true, priorOccurrencesWithNotes: 0, seriesNotes: 0, openCommitments: 2,
-        candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, unavailableSections: [], error: null })));
+        candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, followThrough: "notReviewed", unavailableSections: [], error: null })));
       const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => null), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
       renderToday({ calendarConnected: true, preparation });
       const ops = await within(await screen.findByRole("group", { name: "Day view" })).findByRole("button", { name: /^Operations Team Meeting/ });
@@ -1317,7 +1317,7 @@ describe("TodayWorkspace", () => {
       ] });
       const readiness = vi.spyOn(mailClient, "meetingReadiness").mockImplementation(async (references) => references.map((reference) => ({
         reference, eventAvailable: true, hasOccurrenceNote: false, priorOccurrencesWithNotes: reference.id === "later" ? 1 : 0, seriesNotes: 0, openCommitments: 0,
-        candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, unavailableSections: [], error: null })));
+        candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, followThrough: "notReviewed", unavailableSections: [], error: null })));
       const preparation = { event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => <p>Preparation view</p>), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() };
       const { rerenderToday, onOpenEvent } = renderToday({ calendarConnected: true, preparation });
 

@@ -1,4 +1,4 @@
-import { CalendarCheck, CircleSlash, ListPlus, Undo2 } from "lucide-react";
+import { CalendarCheck, CircleSlash, ClipboardCheck, ListPlus, Undo2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { formatEventTime } from "./calendarTime";
@@ -9,7 +9,11 @@ import { reservePrepTime } from "./meetingPrepActions";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { noteReferenceKey } from "./noteEntities";
 import type { Notice } from "./useNotice";
-import { useMeetingReadiness } from "./useMeetingPreparation";
+import { useMeetingPreparation, useMeetingReadiness } from "./useMeetingPreparation";
+import { Modal } from "./AppChrome";
+import { errorMessage } from "./errors";
+import { MeetingFollowThroughDialog } from "./MeetingFollowThroughDialog";
+import { localDay, meetingsToFollowThrough, noFollowThroughKey, readNoFollowThrough, setNoFollowThrough } from "./meetingFollowThrough";
 
 type Props = {
   /** The meetings to list, such as today's still to come. */
@@ -87,4 +91,90 @@ export function MeetingReadinessList({ events, ownAddresses, refreshKey, onPrepa
       {rows.length === 0 ? <p className="context-status">No meetings left to prepare for.</p> : null}
     </>}
   />;
+}
+
+/** Review Follow-through for one meeting outside its preparation view:
+ * loads its context, then shows the review form over the current surface. */
+export function MeetingFollowThroughLauncher({ event, onClose, onNotice, onAddNote, today }: {
+  event: ScheduleEvent;
+  onClose(): void;
+  onNotice(notice: Notice): void;
+  onAddNote?(): void;
+  today?: string;
+}) {
+  const prep = useMeetingPreparation(meetingEventReference(event));
+  if (prep.error) return <Modal title="Review Follow-through" onClose={onClose}><p className="modal-form-hint" role="alert">{prep.error}</p></Modal>;
+  if (!prep.context) return <Modal title="Review Follow-through" onClose={onClose}><p className="modal-form-hint" role="status">Loading this meeting's notes…</p></Modal>;
+  return <MeetingFollowThroughDialog event={event} context={prep.context} today={today ?? localDay(new Date())} onClose={onClose} onAddNote={onAddNote}
+    onSaved={(saved) => { onClose(); onNotice({ message: `Follow-through saved for ${event.title}`, undo: () => void saved.undo().catch((reason) => onNotice({ message: errorMessage(reason) })) }); }} />;
+}
+
+/**
+ * Shut Down's meetings: the day's meetings that have ended, each with its
+ * follow-through state from saved notes, the same on every synced device.
+ * An unreviewed meeting offers Review Follow-through and No Follow-through
+ * (this device only, undoable). Choosing a meeting prepares it.
+ */
+export function MeetingFollowThroughList({ events, now, refreshKey, onPrepare, onNotice, onAddNote }: {
+  events: readonly ScheduleEvent[];
+  now: Date;
+  refreshKey?: unknown;
+  onPrepare(event: ScheduleEvent): void;
+  onNotice(notice: Notice): void;
+  onAddNote?(event: ScheduleEvent): void;
+}) {
+  const ended = useMemo(() => meetingsToFollowThrough(events, now), [events, now]);
+  const references = useMemo(() => ended.flatMap((event) => { const reference = meetingEventReference(event); return reference ? [reference] : []; }), [ended]);
+  const readiness = useMeetingReadiness(references, refreshKey);
+  const byKey = readinessByKey(readiness.rows);
+  const [setAside, setSetAside] = useState(readNoFollowThrough);
+  const [reviewing, setReviewing] = useState<ScheduleEvent | null>(null);
+  const toggle = (event: ScheduleEvent, chosen: boolean) => {
+    const key = noFollowThroughKey(event);
+    if (!key) return;
+    setSetAside(setNoFollowThrough(key, chosen));
+    if (chosen) onNotice({ message: `No follow-through for ${event.title}`, undo: () => setSetAside(setNoFollowThrough(key, false)) });
+  };
+  const outstanding = ended.filter((event) => {
+    const key = noFollowThroughKey(event);
+    const reference = meetingEventReference(event);
+    return key && reference && !setAside.includes(key) && byKey.get(noteReferenceKey(reference))?.followThrough !== "reviewed";
+  });
+  const rows = ended.flatMap((event) => {
+    const reference = meetingEventReference(event);
+    const key = noFollowThroughKey(event);
+    if (!reference || !key) return [];
+    const row = byKey.get(noteReferenceKey(reference));
+    const aside = setAside.includes(key);
+    const reviewed = row?.followThrough === "reviewed";
+    return [<ContextRow
+      key={key}
+      className={aside ? "meeting-readiness-skipped" : undefined}
+      icon={<ClipboardCheck size={ICON_SIZE.sm} />}
+      title={event.title}
+      date={formatEventTime(event)}
+      detail={reviewed ? "Reviewed" : aside ? "No follow-through" : readiness.loading && !row ? "Checking…" : row?.followThrough === "unknown" ? "Couldn't check this meeting" : "Not reviewed yet"}
+      onActivate={() => onPrepare(event)}
+      actions={reviewed ? [] : aside
+        ? [<button key="undo" type="button" className="btn-icon btn-icon-sm" aria-label={`Follow-through needed for ${event.title}`} title="Follow-through Needed" onClick={() => toggle(event, false)}><Undo2 size={ICON_SIZE.sm} aria-hidden="true" /></button>]
+        : [
+          <button key="review" type="button" className="btn-icon btn-icon-sm" aria-label={`Review follow-through for ${event.title}`} title="Review Follow-through" onClick={() => setReviewing(event)}><ClipboardCheck size={ICON_SIZE.sm} aria-hidden="true" /></button>,
+          <button key="skip" type="button" className="btn-icon btn-icon-sm" aria-label={`No follow-through for ${event.title}`} title="No Follow-through" onClick={() => toggle(event, true)}><CircleSlash size={ICON_SIZE.sm} aria-hidden="true" /></button>,
+        ]}
+    />];
+  });
+  return <>
+    <ContextSection
+      id="meeting-follow-through"
+      title="Meeting follow-through"
+      count={outstanding.length}
+      rows={rows}
+      footer={<>
+        {readiness.error ? <p className="context-status">Follow-through couldn't be checked. <button type="button" className="btn-link" onClick={readiness.reload}>Try Again</button></p> : null}
+        {rows.length === 0 ? <p className="context-status">No meetings have ended yet.</p> : null}
+      </>}
+    />
+    {reviewing ? <MeetingFollowThroughLauncher event={reviewing} onClose={() => setReviewing(null)} onNotice={onNotice}
+      onAddNote={onAddNote ? () => onAddNote(reviewing) : undefined} /> : null}
+  </>;
 }
