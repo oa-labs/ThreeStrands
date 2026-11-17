@@ -1,15 +1,16 @@
 # Daily planning and shutdown
 
-**Status:** Stage 1 (contracts) is implemented: the plan section format,
+**Status:** Stages 1 to 3 are built. Stage 1 (contracts): the plan section format,
 parser, item-level writes, and plan reading (`src-tauri/src/daily_plan.rs`,
 `src-tauri/src/db/daily_plan.rs`, `src/dailyPlan.ts`, `fixtures/daily-plan.json`);
 plan history and review (`src-tauri/src/db/plan_review.rs`); candidate sources
 (`src-tauri/src/db/plan_sources.rs`); `planCapacity` in `src/todayInsights.ts`;
 and note-task booking in `src/taskBooking.ts`. The demo client follows the same
-rules (`src/data/demoPlans.ts`). Plan saves with operation receipts and Undo
-(`save_daily_plan`) and the editor's marker handling remain. Stage 2's reshaped Today
-is built; its use of these pieces is listed under [As built](#as-built-stage-2).
-See also [As built (stage 1)](#as-built-stage-1).
+rules (`src/data/demoPlans.ts`). Stage 2's reshaped Today is listed under
+[As built (stage 2)](#as-built-stage-2), and stage 3's Plan Today routine, with
+`save_daily_plan` and its receipts and Undo, under
+[As built (stage 3)](#as-built-stage-3). Shut Down (stage 4) and the editor's
+marker handling remain. See also [As built (stage 1)](#as-built-stage-1).
 **Baseline:** 0.210.0 repository, reviewed 2026-11-16.
 **Priority:** Part of the daily loop in the [product plan](../PLAN.MD#connected-workflow-additions),
 interleaved with [meeting preparation](meeting-preparation-design.md).
@@ -503,9 +504,105 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
     is named beside the mail line and the mail-scoped sources, not in the page
     eyebrow; the mail line is text with a chevron to fold it; **Open Tasks** is at
     the foot of the Tasks tab.
-- Not yet: Plan Today / Edit Plan / Shut Down in the header, a free-time line
-  from `planCapacity`, and Open Task / Mark Done on a selected block (choosing a
-  block still prepares or opens it like any event).
+- Not yet: Shut Down in the header, a free-time line from `planCapacity` on
+  Today itself (the Fit step has one), and Open Task / Mark Done on a selected
+  block (choosing a block still prepares or opens it like any event). Plan
+  Today and Edit Plan are in the header since stage 3.
+
+### As built (stage 3)
+
+- **Entry points.** Today's header shows **Plan Today** while the plan has no
+  items, else the progress line and **Edit Plan**. **Plan Tomorrow** joins them
+  once today's last attended, timed meeting has ended or from
+  `EVENING_HINT_MINUTES` (60) before the end of today's working hours
+  (`offersPlanTomorrow` in `todayInsights.ts`). The palette commands
+  `today.plan` (**Plan Today**) and `today.planTomorrow` (**Plan Tomorrow**)
+  have no keys; they open Today through `useWorkspaces`' `planDay`, and Today
+  consumes the `PlanRequest` and opens the routine. The plan date is fixed when
+  the routine opens.
+- **Dialog.** `PlanTodayDialog` is one `Modal` (modal scope, inert background,
+  Tab trap, focus restored to the trigger) with an ordered step list whose
+  buttons jump to any step, so every step can be skipped; **Back**, **Next**,
+  **Cancel**, and **Save Plan** on the last step, `Cmd/Ctrl+Enter` saving from
+  any step. Each step focuses its first control. Review is left out of the step
+  list when the review has nothing in either column. Escape (or Cancel) closes
+  at once without choices; with choices it shows **Keep for Later**, **Discard
+  Choices**, and **Go Back** inside the dialog, and a second Escape goes back.
+- **Model and controller.** `src/planRoutine.ts` holds the routine as data
+  (items in order, plan items taken off, Review decisions, bookings made) and
+  derives the `PlanChanges` a save sends, the exact Markdown lines it adds, and
+  the plain text for **Copy Plan**. `usePlanRoutine` reads the plan, the review,
+  and the open tasks for search once, after `prepareNoteMutation`, and starts at
+  Choose when there is nothing to review.
+- **Review.** Done lists the reviewed plan's finished items, attended meetings,
+  and Also done; rows don't open their sources, since that would leave the
+  dialog. Didn't get to rows are grouped by the plan they came from, with
+  **Carry**, **Defer…** (a date input whose minimum is the day after the plan
+  date), **Drop**, **Carry All** for the undecided, carry counts, and the hint
+  from `PLAN_CARRY_HINT`. Pressing a chosen decision again clears it.
+  Unavailable rows can be dropped but not carried. Carrying adds the item to
+  the chosen list with `carried` set to the date it was planned.
+- **Choose.** Today builds the switcher's tabs with `sourcesFor(selected, page,
+  choose)` for both Today and the routine; the routine's set leaves out Also
+  Due (Suggested covers it), reads its own `usePlanSourcePage` for the plan date
+  (tomorrow's ranks by tomorrow's dates), and its cards add to the chosen list
+  through the same `resolve()` (so a promise or a starred conversation still
+  makes its task first) instead of writing. Opening a card's source is turned
+  off inside the dialog. A search over open mail, standalone, and note tasks
+  lists `PLAN_SEARCH_RESULTS` (8) matches; **New Task** adds a plan-only round
+  task. Items move with buttons or `Alt+Up/Down`; above `PLAN_ITEMS_NOTE` (5)
+  the quiet note shows.
+- **Meetings.** The plan date's timed, not-declined meetings in
+  `MeetingReadinessList`. **Prepare** shows the same preparation view App
+  renders for Today *inside the dialog*, with **Back to Meetings**: the routine
+  never unmounts, so its choices stay as they were, and nothing is handed back
+  and forth. If preparation leads elsewhere (opening a note or a conversation
+  switches workspace and closes Today), the choices are already kept for
+  recovery and return when the routine opens again.
+- **Fit.** The chosen items as cards beside `TodayDayView` for the plan date
+  (it gained `day` and `label`), with the free time, booked, and not booked
+  counts from `planCapacity`. **Book** uses `nextFreeSlot` for the plan date
+  (it gained a `day` argument) and dragging uses `useTaskBlockDrag`; both book
+  through `bookBlock` at once with Undo, as on Today, and are listed at Save. A
+  typed new task has no task id until it is saved, so its block is booked
+  unlinked, titled with the task.
+- **Save.** `save_daily_plan(date, expected, operationId, changes)` (`src-tauri/src/db/plan_save.rs`)
+  takes `items` (the new order: `existing` keys and `add` entries with an
+  optional `carried` date), `remove` (plan item keys whose lines go), and
+  `notToday` (`deferred` after the plan date, or `dropped`). It refuses stale
+  versions, conflicts, Trash, an unclosed fence, unknown items, carried dates on
+  or after the plan date, more than `MAX_PLAN_ADDITIONS` new lines, and note size
+  limits, all before writing. Rearranging is item level
+  (`arrange_plan_items` in `daily_plan.rs`, mirrored by `arrangePlanItems` and
+  held to the `arrange` fixtures): named items fill the places those items held,
+  so text between items and unnamed items stay put; links already in the plan
+  are reported in `already`; a Not today decision already recorded isn't
+  repeated. The result (`added`, `removed`, `notToday`, `already`, `changed`) and
+  the body it replaced are kept in a local `plan_save_receipts` row (schema
+  v109; unsynced, not exported, pruned after `PLAN_RECEIPT_DAYS` (7) and beyond
+  `MAX_PLAN_RECEIPTS` (200)) in the same transaction. Repeating an
+  `operationId` returns the stored result; a refused save leaves no receipt.
+  `undo_daily_plan_save(date, operationId)` restores the replaced body only while
+  the note is still at the version the save left, else refuses with Open Note.
+  The routine keeps one operation id, so retrying after a lost response doesn't
+  repeat the save.
+- **Re-basing.** Reserve Prep Time in the Meetings step writes the same note,
+  so `saveDailyPlan` in `noteCapture.ts` saves on the note's current version
+  when every plan item the changes name is still there and none is free text;
+  otherwise the save refuses as stale and the dialog keeps the choices with
+  **Open Note**.
+- **Keys.** Plan item keys are the canonical target as natively
+  (`planItemKey` in `dailyPlan.ts`: the link's href without contact or series).
+  Today's local cards had used `noteReferenceKey`, which never matched native
+  keys, so "In plan" and Also Due's hiding only worked in the demo; they and the
+  demo now use `planItemKey`.
+- **Recovery.** `writeRecovery` keeps the routine in `localStorage`
+  (`threestrands.planRoutine`) as choices change: one per date, at most
+  `MAX_RECOVERED_ROUTINES` (2), none older than `ROUTINE_RECOVERY_DAYS` (7). It
+  holds keys, link labels, titles, and dates, never note or task bodies.
+  Reopening the routine for that date restores it, re-based on the plan as it
+  is now (plan items gone since, and added tasks no longer open, are marked and
+  not saved), with **Discard**. Saving or discarding forgets it.
 
 ## Shut Down
 

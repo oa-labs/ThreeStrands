@@ -343,7 +343,7 @@ export function App() {
     keepInTouchDueCount, refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openContactsView, contactCardActions,
     scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen, mailPanel,
-    contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView, notesRequest, consumeNotesRequest, openNote,
+    contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView, notesRequest, consumeNotesRequest, planRequest, consumePlanRequest, openNote,
   } = workspaces;
   const agents = useAgentTasks();
   const openAgent = (id: string) => { agents.select(id); setRightWorkspace("agents"); };
@@ -1870,6 +1870,8 @@ export function App() {
         onNotice={setNotice}
         workingHours={availabilityPreferences}
         onCreateTask={createTaskInEditor}
+        planRequest={planRequest}
+        onPlanRequestConsumed={consumePlanRequest}
         onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
         onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         onOpenInbox={() => executeById("view.mail")}

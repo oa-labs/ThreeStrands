@@ -1,6 +1,6 @@
-import type { ContactProfile, DailyPlan, DailyPlanItem, Goal, OpenPromise, PlanCandidate, PlanCandidateReason, PlanCompletedTask, PlanHistory, PlanReview, PlanReviewItem, PlanSourcePage, ScheduleEvent, Thread, ThreadTask } from "../domain";
-import { insertPlanLines, parsePlan, planLine, removePlanLine, type PlanLine, type PlanSection } from "../dailyPlan";
-import { normalizeContactAddress, noteReferenceKey, type NoteReference } from "../noteEntities";
+import type { ContactProfile, DailyPlan, Note, PlanSaveResult, DailyPlanItem, Goal, OpenPromise, PlanCandidate, PlanCandidateReason, PlanCompletedTask, PlanHistory, PlanReview, PlanReviewItem, PlanSourcePage, ScheduleEvent, Thread, ThreadTask } from "../domain";
+import { arrangePlanItems, planItemKey, insertPlanLines, parsePlan, planLine, removePlanLine, type Arranged, type PlanLine, type PlanSection } from "../dailyPlan";
+import { extractNoteEntityLinks, normalizeContactAddress, type NoteReference } from "../noteEntities";
 import { periodFor } from "../goals";
 import { compareTasksForDisplay, isActiveTaskStatus } from "../taskViews";
 import type { MailClient } from "./client";
@@ -18,7 +18,7 @@ export const MAX_PLAN_HISTORY_TARGETS = 200;
 /** As natively: most unplanned completed tasks the review lists. */
 export const MAX_ALSO_DONE = 50;
 /** Carries from which a review row hints at deferring or dropping. */
-export const PLAN_CARRY_HINT = 3;
+export { PLAN_CARRY_HINT } from "../planRoutine";
 
 type Sources = {
   tasks(): ThreadTask[];
@@ -46,11 +46,11 @@ type DayPlan = { date: string; noteId: string; section: PlanSection };
 const tracked = (line: PlanLine) => line.kind !== "text";
 const mentions = (plan: DayPlan, key: string) => [...plan.section.items, ...plan.section.notToday].some((line) => tracked(line) && keyOf(line) === key);
 
-const keyOf = (line: PlanLine) => (line.reference ? noteReferenceKey(line.reference) : `line:${line.start}`);
+const keyOf = (line: PlanLine) => (line.reference ? planItemKey(line.reference) : `line:${line.start}`);
 const taskState = (status: ThreadTask["status"]): DailyPlanItem["state"] => status === "in_progress" ? "inProgress" : status === "completed" ? "done" : status === "cancelled" ? "cancelled" : "open";
 
 /** The day's plan for the browser demo, following the native store's rules. */
-export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" | "addToDailyPlan" | "removeFromDailyPlan" | "planHistory" | "planReview" | "planSources"> {
+export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" | "addToDailyPlan" | "removeFromDailyPlan" | "saveDailyPlan" | "undoDailyPlanSave" | "planHistory" | "planReview" | "planSources"> {
   const now = () => sources.now?.() ?? new Date();
   /** The plans of `from..=to`, oldest first. */
   const plansBetween = async (from: string, to: string): Promise<DayPlan[]> => {
@@ -117,6 +117,16 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
     if (!saved.saved || !saved.note) throw new Error("That day's note changed. Open it before changing the plan.");
     return saved.note;
   };
+  const checkLink = async (reference: NoteReference) => {
+    if (reference.kind === "task" && !reference.note && !sources.tasks().some((task) => task.id === reference.id)) throw new Error("That item isn't on this device");
+    if (reference.kind === "task" && reference.note) {
+      const owner = await sources.notes.getNote(reference.note);
+      if (!owner || owner.trashed) throw new Error("That item isn't on this device");
+      if (!owner.body.includes(`<!-- threestrands-task:${reference.id} -->`)) throw new Error("Open that note and save it before planning its task");
+    }
+  };
+  /** As natively, local receipts of plan saves: the result, the body it replaced, and the version it left. */
+  const receipts = new Map<string, { date: string; result: PlanSaveResult; previousBody: string; undone: boolean }>();
   return {
     async dailyPlan(date): Promise<DailyPlan> {
       const noteId = `daily:${date}`;
@@ -179,9 +189,9 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
         const onDay = (at: string | null | undefined) => !!at && localDay(new Date(at)) === reviewed.date;
         const alsoDone: PlanCompletedTask[] = [
           ...sources.tasks().filter((task) => task.status === "completed" && onDay(task.completedAt))
-            .map((task) => ({ key: noteReferenceKey(taskRef(task.id)), taskId: task.id, title: task.title, accountId: task.accountId, noteId: null, noteTitle: null, completedAt: task.completedAt! })),
+            .map((task) => ({ key: planItemKey(taskRef(task.id)), taskId: task.id, title: task.title, accountId: task.accountId, noteId: null, noteTitle: null, completedAt: task.completedAt! })),
           ...(await sources.notes.listNoteTasks()).filter((task) => task.checked && onDay(task.completedAt))
-            .map((task) => ({ key: noteReferenceKey({ ...taskRef(task.markerId), note: task.noteId }), taskId: task.id, title: task.title, accountId: null, noteId: task.noteId, noteTitle: task.noteTitle, completedAt: task.completedAt! })),
+            .map((task) => ({ key: planItemKey({ ...taskRef(task.markerId), note: task.noteId }), taskId: task.id, title: task.title, accountId: null, noteId: task.noteId, noteTitle: task.noteTitle, completedAt: task.completedAt! })),
         ];
         review.alsoDone = alsoDone.filter((task) => !planned.has(task.key))
           .sort((a, b) => Date.parse(a.completedAt) - Date.parse(b.completedAt) || a.taskId.localeCompare(b.taskId)).slice(0, MAX_ALSO_DONE);
@@ -207,7 +217,7 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
       const link = (reference: NoteReference, label: string): PlanCandidate["action"] => ({ kind: "link", addition: { kind: "link", reference, label } });
       const forTask = (task: ThreadTask, reason: PlanCandidateReason): PlanCandidate => {
         const goal = task.goalId ? goals.find((candidate) => candidate.id === task.goalId) : undefined;
-        return { ...base(noteReferenceKey(taskRef(task.id)), task.title, reason, link(taskRef(task.id), task.title)), accountId: task.accountId, due: task.dueValue ?? null, taskId: task.id, threadId: task.threadId, goal: goal ? { id: goal.id, title: goal.title } : null };
+        return { ...base(planItemKey(taskRef(task.id)), task.title, reason, link(taskRef(task.id), task.title)), accountId: task.accountId, due: task.dueValue ?? null, taskId: task.id, threadId: task.threadId, goal: goal ? { id: goal.id, title: goal.title } : null };
       };
       const dueReason = (task: ThreadTask): PlanCandidateReason | null => {
         if (!task.dueValue || task.dueKind === "none") return null;
@@ -218,7 +228,7 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
       const open = sources.tasks().filter((task) => isActiveTaskStatus(task.status) && task.source !== "note" && inScope(task.accountId)).sort(compareTasksForDisplay);
       const conversation = (thread: Thread): NoteReference => ({ version: 1, kind: "conversation", id: thread.providerThreadId, account: thread.accountId });
       const promises = async () => (await sources.promises?.(accountId ?? undefined) ?? []).map((promise) => ({
-        ...base(noteReferenceKey(conversation(promise.thread)), promise.excerpt, "promise", { kind: "makeTask", threadId: promise.thread.id, messageId: promise.messageId }),
+        ...base(planItemKey(conversation(promise.thread)), promise.excerpt, "promise", { kind: "makeTask", threadId: promise.thread.id, messageId: promise.messageId }),
         detail: promise.recipients.join(", "), accountId: promise.thread.accountId, threadId: promise.thread.id,
       }));
       const checkIns = async () => (await sources.contacts()).filter((profile) => !profile.id.startsWith("derived:") && profile.keepInTouchDueAt && profile.addresses.length && localDay(new Date(profile.keepInTouchDueAt)) <= date)
@@ -226,7 +236,7 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
         .map((profile) => {
           const reference: NoteReference = { version: 1, kind: "contact", id: normalizeContactAddress(profile.addresses[0]), contact: profile.id };
           const title = profile.displayName?.trim() || profile.addresses[0];
-          return { ...base(noteReferenceKey(reference), title, "keepInTouch", link(reference, title)), due: profile.keepInTouchDueAt, contactId: profile.id };
+          return { ...base(planItemKey(reference), title, "keepInTouch", link(reference, title)), due: profile.keepInTouchDueAt, contactId: profile.id };
         });
       const rank: PlanCandidateReason[] = ["overdue", "dueToday", "inProgress", "waiting"];
       let all: PlanCandidate[];
@@ -245,7 +255,7 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
           .map((thread) => {
             const task = open.find((candidate) => candidate.threadId === thread.id);
             const candidate = task ? { ...forTask(task, "starred"), detail: thread.subject }
-              : { ...base(noteReferenceKey(conversation(thread)), thread.subject, "starred", { kind: "taskForm", threadId: thread.id, accountId: thread.accountId }), detail: thread.participants[0] ?? null };
+              : { ...base(planItemKey(conversation(thread)), thread.subject, "starred", { kind: "taskForm", threadId: thread.id, accountId: thread.accountId }), detail: thread.participants[0] ?? null };
             return { ...candidate, accountId: thread.accountId, threadId: thread.id };
           });
       } else if (source === "promises") {
@@ -277,7 +287,7 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
         all = notes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || order.indexOf(a.noteId) - order.indexOf(b.noteId))
           .map((task) => {
             const reference: NoteReference = { ...taskRef(task.markerId), note: task.noteId };
-            return { ...base(noteReferenceKey(reference), task.title, "noteTask", link(reference, task.title)), detail: task.noteTitle, taskId: task.id };
+            return { ...base(planItemKey(reference), task.title, "noteTask", link(reference, task.title)), detail: task.noteTitle, taskId: task.id };
           });
       }
       const note = await sources.notes.getDailyNote(date);
@@ -295,13 +305,8 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
       for (const addition of additions) {
         if (addition.kind === "link") {
           const reference = addition.reference;
-          if (reference.kind === "task" && !reference.note && !sources.tasks().some((task) => task.id === reference.id)) throw new Error("That item isn't on this device");
-          if (reference.kind === "task" && reference.note) {
-            const owner = await sources.notes.getNote(reference.note);
-            if (!owner || owner.trashed) throw new Error("That item isn't on this device");
-            if (!owner.body.includes(`<!-- threestrands-task:${reference.id} -->`)) throw new Error("Open that note and save it before planning its task");
-          }
-          const key = noteReferenceKey(reference);
+          await checkLink(reference);
+          const key = planItemKey(reference);
           if (present.includes(key)) { already.push(key); continue; }
           present.push(key);
           changed.push(key);
@@ -323,6 +328,64 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
       if (!note || !line) throw new Error("That item is no longer in the plan");
       const saved = await save(date, expected, removePlanLine(note.body, line.start, line.end));
       return { note: saved, changed: [key], already: [], previousBody: note.body };
+    },
+    async saveDailyPlan(date, expected, operationId, changes) {
+      if (!isDay(date)) throw new Error("Invalid date");
+      if (!operationId.trim() || operationId.length > 100) throw new Error("Invalid operation id");
+      const receipt = receipts.get(operationId);
+      if (receipt) { if (receipt.date !== date) throw new Error("That operation saved another day's plan"); return receipt.result; }
+      if (changes.items.filter((entry) => entry.kind === "add").length + changes.notToday.length > MAX_PLAN_ADDITIONS) throw new Error(`Save at most ${MAX_PLAN_ADDITIONS} new plan lines at once`);
+      const noteId = `daily:${date}`;
+      const note = await current(date, expected);
+      const previousBody = note?.body ?? "";
+      if (extractNoteEntityLinks(previousBody).unclosedFence) throw new Error("That day's note has a code block that never closes. Open it before saving the plan.");
+      const section = parsePlan(noteId, previousBody);
+      const existing = (section?.items ?? []).map(keyOf);
+      const indexOf = (key: string) => { const at = existing.indexOf(key); if (at < 0) throw new Error("That item is no longer in the plan"); return at; };
+      const remove = changes.remove.map(indexOf);
+      const present = existing.filter((key) => !changes.remove.includes(key));
+      const order: Arranged[] = [], added: string[] = [], already: string[] = [];
+      for (const entry of changes.items) {
+        if (entry.kind === "existing") { order.push({ existing: indexOf(entry.key) }); continue; }
+        if (entry.carried && (!isDay(entry.carried) || entry.carried >= date)) throw new Error("An item can be carried only from an earlier plan");
+        if (entry.addition.kind === "link") {
+          await checkLink(entry.addition.reference);
+          const key = planItemKey(entry.addition.reference);
+          if (present.includes(key)) { already.push(key); continue; }
+          present.push(key);
+          added.push(key);
+        }
+        order.push({ new: planLine(entry.addition, entry.carried ? { kind: "carried", date: entry.carried } : null) });
+      }
+      let body = arrangePlanItems(noteId, previousBody, section, order, remove);
+      const recorded = (section?.notToday ?? []).map((line) => `${keyOf(line)} ${JSON.stringify(line.marker)}`);
+      const notToday: string[] = [], lines: string[] = [];
+      for (const entry of changes.notToday) {
+        if (entry.decision.kind === "deferred" && (!isDay(entry.decision.date) || entry.decision.date <= date)) throw new Error("Defer to a date after the plan's day");
+        const key = planItemKey(entry.reference);
+        if (recorded.includes(`${key} ${JSON.stringify(entry.decision)}`) || notToday.includes(key)) continue;
+        lines.push(planLine({ kind: "link", reference: entry.reference, label: entry.label }, entry.decision));
+        notToday.push(key);
+      }
+      if (lines.length) body = insertPlanLines(noteId, body, lines, true);
+      const changed = body !== previousBody;
+      if (!changed && !note) throw new Error("Nothing to save");
+      const saved: Note = changed ? await save(date, expected, body) : note!;
+      for (const line of parsePlan(noteId, saved.body)?.items ?? []) if (line.kind === "newTask" && !existing.includes(keyOf(line)) && !added.includes(keyOf(line))) added.push(keyOf(line));
+      const result: PlanSaveResult = { operationId, note: saved, added, removed: [...changes.remove], notToday, already, changed };
+      receipts.set(operationId, { date, result, previousBody, undone: false });
+      return result;
+    },
+    async undoDailyPlanSave(date, operationId) {
+      const receipt = receipts.get(operationId);
+      if (!receipt) throw new Error("That plan save can no longer be undone");
+      if (receipt.date !== date) throw new Error("That operation saved another day's plan");
+      const note = await sources.notes.getDailyNote(date);
+      if (receipt.undone) { if (!note) throw new Error("That day's note isn't on this device"); return note; }
+      if (!note || note.trashed || note.updatedAt !== receipt.result.note.updatedAt) throw new Error("That day's note changed after the plan was saved. Open Note to change it.");
+      const restored = receipt.previousBody === note.body ? note : await save(date, note.updatedAt, receipt.previousBody);
+      receipt.undone = true;
+      return restored;
     },
   };
 }

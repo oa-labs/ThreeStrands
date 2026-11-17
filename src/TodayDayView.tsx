@@ -39,7 +39,7 @@ export function dayViewLayout(workingHours: WorkingHours | null, now: Date): { s
  * working day (see `dayViewLayout`). Choosing an event is the caller's
  * business (prepare a meeting, or open anything else in Calendar).
  */
-export function TodayDayView({ events, now, loading, error, onRetry, selectedEvent, onChooseEvent, eventDecoration, gridRef, preview, dragging, workingHours = null }: {
+export function TodayDayView({ events, now, loading, error, onRetry, selectedEvent, onChooseEvent, eventDecoration, gridRef, preview, dragging, workingHours = null, day: shown, label = "Day view" }: {
   events: ScheduleEvent[];
   now: Date;
   loading: boolean;
@@ -52,8 +52,11 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
   preview: DayGridPreview | null;
   dragging: boolean;
   workingHours?: WorkingHours | null;
+  /** The day shown, such as tomorrow while planning it; today by default. */
+  day?: Date;
+  label?: string;
 }) {
-  const day = startOfLocalDay(now);
+  const day = startOfLocalDay(shown ?? now);
   const dayKey = day.getTime();
   // One stable array per day, so the grid's layouts aren't recomputed every minute.
   const days = useMemo(() => [new Date(dayKey)], [dayKey]);
@@ -67,9 +70,9 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
     grid.scrollTop = Math.max(0, minutes / 60 * HOUR_HEIGHT - grid.clientHeight / 3);
   }, [gridRef, dayKey, layout.scrollMinutes]);
   const style = layout.heightPx === null ? undefined : { "--today-day-view-grid-h": `${layout.heightPx}px` } as CSSProperties;
-  return <div className={`today-day-view calendar-week-main${layout.heightPx === null ? "" : " today-day-view-working"}${dragging ? " calendar-week-task-drag" : ""}`} role="group" aria-label="Day view" style={style}>
+  return <div className={`today-day-view calendar-week-main${layout.heightPx === null ? "" : " today-day-view-working"}${dragging ? " calendar-week-task-drag" : ""}`} role="group" aria-label={label} style={style}>
     {error ? <div className="calendar-error-notice" role="alert">
-      <p>Today's calendar couldn't be loaded, so free time is unknown.</p>
+      <p>{shown ? "The calendar" : "Today's calendar"} couldn't be loaded, so free time is unknown.</p>
       <div className="today-day-view-actions"><button type="button" className="btn btn-sm" onClick={onRetry}>Try Again</button></div>
     </div> : null}
     <DayTimeGrid

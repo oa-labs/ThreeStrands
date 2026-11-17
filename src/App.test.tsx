@@ -1158,6 +1158,16 @@ describe("keyboard-first task and action workspaces", () => {
     await waitFor(() => expect(within(reopened).getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true"));
   });
 
+  it.each([["Plan Today", "Plan Today"], ["Plan Tomorrow", "Plan Tomorrow"]])("opens Today and the routine from the palette's %s", async (command, title) => {
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: command } });
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^Application${command}$`) }));
+    expect(await screen.findByRole("dialog", { name: title })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Today", hidden: true })).toBeInTheDocument();
+  });
+
   it("sends the navbar Calendar button to the week calendar view", async () => {
     const { container } = render(<App />);
     await screen.findByRole("region", { name: "Inbox" });

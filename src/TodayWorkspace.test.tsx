@@ -1,3 +1,4 @@
+import { planItemKey } from "./dailyPlan";
 import { refreshSyncedData } from "./refreshSyncedData";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -70,7 +71,8 @@ const emptyPlan = (date = localDate(0)): DailyPlan => ({ date, noteId: `daily:${
 
 function planItem(key: string, overrides: Partial<DailyPlanItem> = {}): DailyPlanItem {
   return {
-    key: JSON.stringify(["task", null, null, null, key]), kind: "task", reference: { version: 1, kind: "task", id: key }, title: `Task ${key}`,
+    // Keyed as natively: the canonical target.
+    key: planItemKey({ version: 1, kind: "task", id: key }), kind: "task", reference: { version: 1, kind: "task", id: key }, title: `Task ${key}`,
     state: "open", marker: null, carryCount: 0, taskId: key, accountId: "you@example.com", goal: null, contactId: null, start: 0, end: 0, ...overrides,
   };
 }
@@ -581,6 +583,51 @@ describe("TodayWorkspace", () => {
       await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.objectContaining({ message: "That day's note changed. Open it before changing the plan." })));
       onNotice.mock.calls.at(-1)![0].action.run();
       expect(onOpenNote).toHaveBeenCalledWith("daily:2026-10-28");
+    });
+  });
+
+  describe("Plan Today entry points", () => {
+    beforeEach(() => {
+      vi.spyOn(mailClient, "planReview").mockImplementation(async (date) => ({ date, reviewed: null, done: [], alsoDone: [], meetings: null, didntGetTo: [] }));
+      vi.spyOn(mailClient, "listNoteTasks").mockResolvedValue([]);
+    });
+
+    it("offers Plan Today while the plan is empty, and the plan's progress with Edit Plan once it has items", async () => {
+      renderToday();
+      fireEvent.click(await screen.findByRole("button", { name: "Plan Today" }));
+      expect(await screen.findByRole("dialog", { name: "Plan Today" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Edit Plan" })).not.toBeInTheDocument();
+      cleanup();
+
+      vi.mocked(mailClient.dailyPlan).mockImplementation(async (date) => ({ ...emptyPlan(date), revision: "r1", items: [planItem("a", { title: "Send the deck" })] }));
+      renderToday();
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Plan" }));
+      const dialog = await screen.findByRole("dialog", { name: "Plan Today" });
+      // Edit Plan starts from the saved plan.
+      expect(await within(dialog).findByRole("button", { name: "Remove: Send the deck" })).toBeInTheDocument();
+      expect(mailClient.dailyPlan).toHaveBeenCalledWith(localDate(0));
+    });
+
+    it("also offers Plan Tomorrow in the last hour of working hours, for tomorrow's date", async () => {
+      const now = new Date();
+      const end = Math.min(24 * 60, now.getHours() * 60 + now.getMinutes() + 30);
+      const clock = `${String(Math.floor(end / 60)).padStart(2, "0")}:${String(end % 60).padStart(2, "0")}`;
+      const evening: WorkingHours = { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, workingWindows: [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, start: "00:00", end: clock })) };
+      renderToday({ workingHours: evening });
+      fireEvent.click(await screen.findByRole("button", { name: "Plan Tomorrow" }));
+      expect(await screen.findByRole("dialog", { name: "Plan Tomorrow" })).toBeInTheDocument();
+      await waitFor(() => expect(mailClient.planReview).toHaveBeenCalledWith(localDate(1)));
+      cleanup();
+      renderToday({ workingHours: null });
+      await screen.findByRole("button", { name: "Plan Today" });
+      expect(screen.queryByRole("button", { name: "Plan Tomorrow" })).not.toBeInTheDocument();
+    });
+
+    it("opens the routine a palette request asks for, once", async () => {
+      const onPlanRequestConsumed = vi.fn();
+      renderToday({ planRequest: { day: "tomorrow", id: 7 }, onPlanRequestConsumed });
+      expect(await screen.findByRole("dialog", { name: "Plan Tomorrow" })).toBeInTheDocument();
+      expect(onPlanRequestConsumed).toHaveBeenCalledWith(7);
     });
   });
 

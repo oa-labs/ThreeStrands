@@ -5,7 +5,9 @@ use tauri::State;
 use crate::daily_plan::PlanAddition;
 use crate::db::daily_plan::{DailyPlan, PlanSave};
 use crate::db::plan_review::{PlanHistory, PlanReview};
+use crate::db::plan_save::{PlanChanges, PlanSaveResult};
 use crate::db::plan_sources::{PlanSource, PlanSourcePage};
+use crate::models::Note;
 use crate::{run_database_task, AppResult, AppState};
 
 #[tauri::command]
@@ -36,6 +38,34 @@ pub(crate) async fn remove_from_daily_plan(
     let database = state.database.clone();
     run_database_task(move || database.remove_from_daily_plan(&date, expected.as_deref(), &key))
         .await
+}
+
+/// Plan Today's save: every change to `date`'s plan in one guarded
+/// transaction, with a local receipt under `operation_id`.
+#[tauri::command]
+pub(crate) async fn save_daily_plan(
+    date: String,
+    expected: Option<String>,
+    operation_id: String,
+    changes: PlanChanges,
+    state: State<'_, AppState>,
+) -> AppResult<PlanSaveResult> {
+    let database = state.database.clone();
+    run_database_task(move || {
+        database.save_daily_plan(&date, expected.as_deref(), &operation_id, &changes)
+    })
+    .await
+}
+
+/// Undoes a plan save while the note is still as that save left it.
+#[tauri::command]
+pub(crate) async fn undo_daily_plan_save(
+    date: String,
+    operation_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<Note> {
+    let database = state.database.clone();
+    run_database_task(move || database.undo_daily_plan_save(&date, &operation_id)).await
 }
 
 /// Carry counts and planned days for plan item keys over `from..=to`.

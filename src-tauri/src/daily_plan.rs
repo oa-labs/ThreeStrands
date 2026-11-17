@@ -416,6 +416,118 @@ pub fn insert_plan_lines(
     ))
 }
 
+/// One place in a rearranged plan: an existing item, by its index in
+/// `PlanSection::items`, or a new line.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Arranged {
+    Existing(usize),
+    New(String),
+}
+
+/// `body` with its plan items rearranged, item by item. The existing items
+/// named in `order` fill, in that order, the places those same items held, so
+/// text between items and items not named stay where they were; each item
+/// moves with its nested content. A new line follows the item before it in
+/// `order` (new lines first in `order` precede the first named item). Items
+/// in `remove` are taken out with their nested content. Without a named item
+/// left, new lines go after the remaining items, as `insert_plan_lines` puts
+/// them.
+pub fn arrange_plan_items(
+    note: &str,
+    body: &str,
+    section: Option<&PlanSection>,
+    order: &[Arranged],
+    remove: &[usize],
+) -> Result<String, String> {
+    let empty = PlanSection {
+        start: 0,
+        end: 0,
+        items: Vec::new(),
+        not_today: Vec::new(),
+    };
+    let section = section.unwrap_or(&empty);
+    let mut named: Vec<usize> = Vec::new();
+    let mut leading: Vec<String> = Vec::new();
+    let mut trailing: Vec<Vec<String>> = Vec::new();
+    for entry in order {
+        match entry {
+            Arranged::Existing(index) => {
+                if *index >= section.items.len() || named.contains(index) || remove.contains(index)
+                {
+                    return Err("That item is no longer in the plan".into());
+                }
+                named.push(*index);
+                trailing.push(Vec::new());
+            }
+            Arranged::New(line) => match trailing.last_mut() {
+                Some(after) => after.push(line.clone()),
+                None => leading.push(line.clone()),
+            },
+        }
+    }
+    if remove.iter().any(|index| *index >= section.items.len()) {
+        return Err("That item is no longer in the plan".into());
+    }
+    if named.is_empty() {
+        let mut out = body.to_string();
+        let mut gone: Vec<usize> = remove.to_vec();
+        gone.sort_unstable();
+        gone.dedup();
+        // New lines take the first removed item's place, else follow the items left.
+        let first = gone.first().copied().filter(|_| !leading.is_empty());
+        for index in gone.into_iter().rev() {
+            let item = &section.items[index];
+            out = if Some(index) == first {
+                format!(
+                    "{}{}{}",
+                    &out[..item.start],
+                    leading.join("\n"),
+                    &out[item.end..]
+                )
+            } else {
+                remove_plan_line(&out, item.start, item.end)
+            };
+        }
+        return if first.is_some() {
+            Ok(out)
+        } else {
+            insert_plan_lines(note, &out, &leading, false)
+        };
+    }
+    let mut slots: Vec<usize> = named.clone();
+    slots.sort_unstable();
+    // (start, end, replacement); `None` removes the item and its line break.
+    let mut edits: Vec<(usize, usize, Option<String>)> = Vec::new();
+    for (place, slot) in slots.iter().enumerate() {
+        let moved = &section.items[named[place]];
+        let mut parts: Vec<&str> = Vec::new();
+        if place == 0 {
+            parts.extend(leading.iter().map(String::as_str));
+        }
+        parts.push(&body[moved.start..moved.end]);
+        parts.extend(trailing[place].iter().map(String::as_str));
+        let item = &section.items[*slot];
+        edits.push((item.start, item.end, Some(parts.join("\n"))));
+    }
+    let mut gone: Vec<usize> = remove.to_vec();
+    gone.sort_unstable();
+    gone.dedup();
+    for index in gone {
+        let item = &section.items[index];
+        edits.push((item.start, item.end, None));
+    }
+    edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
+    let mut out = body.to_string();
+    for (start, end, replacement) in edits {
+        out = match replacement {
+            Some(text) => format!("{}{text}{}", &out[..start], &out[end..]),
+            None => remove_plan_line(&out, start, end),
+        };
+    }
+    Ok(out)
+}
+
 /// `body` without the item at `start..end` and its line break.
 pub fn remove_plan_line(body: &str, start: usize, end: usize) -> String {
     let after = if body[end..].starts_with('\n') {
@@ -441,6 +553,21 @@ mod tests {
         references: BTreeMap<String, NoteReference>,
         parse: Vec<ParseCase>,
         insert: Vec<InsertCase>,
+        arrange: Vec<ArrangeCase>,
+    }
+    #[derive(Deserialize)]
+    struct ArrangeCase {
+        name: String,
+        body: String,
+        order: Vec<ArrangeEntry>,
+        remove: Vec<usize>,
+        expected: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum ArrangeEntry {
+        Existing(usize),
+        New(String),
     }
     #[derive(Deserialize)]
     struct ParseCase {
@@ -543,6 +670,37 @@ mod tests {
                 .collect();
             let actual = insert_plan_lines("daily:2026-11-16", &body, &lines, case.not_today)
                 .unwrap_or_else(|error| format!("ERROR: {error}"));
+            assert_eq!(
+                actual,
+                fill(&case.expected, &fixtures.references),
+                "{}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn shared_fixtures_arrange_plan_items_item_by_item() {
+        let fixtures = fixtures();
+        for case in fixtures.arrange {
+            let body = fill(&case.body, &fixtures.references);
+            let section = parse_plan("daily:2026-11-16", &body).unwrap();
+            let order: Vec<Arranged> = case
+                .order
+                .into_iter()
+                .map(|entry| match entry {
+                    ArrangeEntry::Existing(at) => Arranged::Existing(at),
+                    ArrangeEntry::New(line) => Arranged::New(fill(&line, &fixtures.references)),
+                })
+                .collect();
+            let actual = arrange_plan_items(
+                "daily:2026-11-16",
+                &body,
+                section.as_ref(),
+                &order,
+                &case.remove,
+            )
+            .map_or_else(|_| "ERROR".to_string(), |body| body);
             assert_eq!(
                 actual,
                 fill(&case.expected, &fixtures.references),

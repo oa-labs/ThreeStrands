@@ -96,3 +96,32 @@ export async function removeFromDailyPlan(date: string, key: string) {
     await notesChanged(id);
   } };
 }
+
+/**
+ * Plan Today's save: every change in one guarded write to `date`'s note,
+ * after saving any open typing there. The routine read the plan at `base`;
+ * when that day's note has moved on only in ways the changes don't depend on
+ * (every item they name is still in the plan, none of it free text), the save
+ * goes ahead on the current version, so writes the routine made itself, such
+ * as Reserve Prep Time, don't refuse it. Otherwise it refuses as stale. Undo
+ * restores the body the save replaced while the note is as it left it.
+ */
+export async function saveDailyPlan(date: string, base: string | null, operationId: string, changes: import("./domain").PlanChanges) {
+  const id = noteTargetKey({ kind: "daily", date });
+  await prepareNoteMutation(id);
+  let expected = base;
+  const current = await mailClient.dailyPlan(date);
+  if (current.revision !== base) {
+    const keys = new Set(current.items.map((item) => item.key));
+    const named = [...changes.items.flatMap((entry) => entry.kind === "existing" ? [entry.key] : []), ...changes.remove];
+    if (named.every((key) => keys.has(key) && !key.startsWith("line:"))) expected = current.revision;
+  }
+  const saved = await mailClient.saveDailyPlan(date, expected, operationId, changes);
+  if (saved.changed) await notesChanged(id);
+  return { ...saved, async undo() {
+    if (!saved.changed) return;
+    await prepareNoteMutation(id);
+    await mailClient.undoDailyPlanSave(date, operationId);
+    await notesChanged(id);
+  } };
+}

@@ -112,6 +112,11 @@ describe("native account requests", () => {
     expect(invoke).toHaveBeenLastCalledWith("add_to_daily_plan", { date: "2026-11-16", expected: null, additions });
     await client.removeFromDailyPlan("2026-11-16", "v2", "key");
     expect(invoke).toHaveBeenLastCalledWith("remove_from_daily_plan", { date: "2026-11-16", expected: "v2", key: "key" });
+    const changes = { items: [{ kind: "add" as const, addition: additions[0], carried: "2026-11-13" }], remove: ["task:t1"], notToday: [] };
+    await client.saveDailyPlan("2026-11-16", "v3", "op-1", changes);
+    expect(invoke).toHaveBeenLastCalledWith("save_daily_plan", { date: "2026-11-16", expected: "v3", operationId: "op-1", changes });
+    await client.undoDailyPlanSave("2026-11-16", "op-1");
+    expect(invoke).toHaveBeenLastCalledWith("undo_daily_plan_save", { date: "2026-11-16", operationId: "op-1" });
     await client.planHistory(["k1"], "2026-08-19", "2026-11-16");
     expect(invoke).toHaveBeenLastCalledWith("plan_history", { targets: ["k1"], from: "2026-08-19", to: "2026-11-16" });
     await client.planReview("2026-11-16");

@@ -95,7 +95,7 @@ export function useAppCommandContext({
   const { messageStackRef, setMessageExpansionOverrides, activeMessageIdRef } = reader;
   const {
     rightWorkspace, setRightWorkspace, setContactsView, toggleSchedule, showMailContext, openTasks, openTasksView,
-    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openNotesView, openTodaysNote, openTodayView,
+    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openNotesView, openTodaysNote, openTodayView, planDay,
     canReturnFromCalendar, returnFromCalendar, canReturnFromContacts, returnFromContacts,
   } = workspaces;
   const {
@@ -325,6 +325,7 @@ export function useAppCommandContext({
     openNotesView,
     openTodaysNote,
     openTodayView,
+    planDay,
     openContactsView,
     openKeepInTouchView,
     openContactGroupsView,
@@ -351,7 +352,7 @@ export function useAppCommandContext({
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread, selectedTaskIsNote,
     aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, correspondence.activeDraft?.mode, refreshMail, toggleSchedule, showMailContext, openTasks, openMailView, openTasksView,
-    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openNotesView, openTodaysNote, openTodayView, getSuggestions,
+    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openNotesView, openTodaysNote, openTodayView, planDay, getSuggestions,
     openThreadChat, newTask, canUndoAction, canUndoArchive, switchAccount, toggleMessageFilter, setRightWorkspace,
     mutateIds, openFolder, selectedIndex, visibleThreads, setSelectedId, selectAdjacentMessage,
     taskWorkspaceRef, setContactsView, latestMessage, setUnsubscribeMessageId, labelTargetIds,

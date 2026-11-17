@@ -39,6 +39,9 @@ type Options = {
 };
 
 /** Owns the selected workspace and calendar/contact entry points. */
+/** A request to start Plan Today for today's or tomorrow's date. */
+export type PlanRequest = { day: "today" | "tomorrow"; id: number };
+
 export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice, scheduleDay = null }: Options) {
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(readLaunchWorkspace);
   useEffect(() => { writeLastWorkspace(rightWorkspace); }, [rightWorkspace]);
@@ -192,6 +195,16 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     setRightWorkspace("notes");
   }, []);
   const openTodayView = useCallback(() => setRightWorkspace("today"), []);
+  // Plan Today / Plan Tomorrow from the palette: open Today, which starts the routine and consumes the request.
+  const [planRequest, setPlanRequest] = useState<PlanRequest | null>(null);
+  const planRequestId = useRef(0);
+  const planDay = useCallback((day: PlanRequest["day"]) => {
+    setPlanRequest({ day, id: ++planRequestId.current });
+    setRightWorkspace("today");
+  }, []);
+  const consumePlanRequest = useCallback((id: number) => {
+    setPlanRequest((current) => current?.id === id ? null : current);
+  }, []);
 
   const openTasksView = useCallback(() => {
     setRightWorkspace("tasks");
@@ -242,7 +255,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     calendarConnected, calendarSidebarStart, openCalendarAt, toggleSchedule, openTasks,
     sideColumn, setSideColumn, scheduleShown, showMailContext, openTasksView,
     narrowLayout, sideDrawerOpen, setSideDrawerOpen: setDrawerRequested, mailPanel,
-    openAgentsView, openFilesView, openNotesView, openTodaysNote, openNote, notesRequest, consumeNotesRequest, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
+    openAgentsView, openFilesView, openNotesView, openTodaysNote, openNote, notesRequest, consumeNotesRequest, openTodayView, planRequest, planDay, consumePlanRequest, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
     contextPersonEmail, openCalendarView, canReturnFromCalendar, returnFromCalendar, canReturnFromContacts, returnFromContacts,
   };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatClockTime } from "./agendaEvents";
 import type { ScheduleEvent } from "./domain";
-import { agendaConflicts, dayShape, daySummary, FREE_STRETCH_MINUTES, meetingsWith, mentionsRecording, planCapacity, sharedMeetingsNote, type WorkingHours } from "./todayInsights";
+import { agendaConflicts, dayShape, daySummary, EVENING_HINT_MINUTES, FREE_STRETCH_MINUTES, meetingsWith, mentionsRecording, offersPlanTomorrow, planCapacity, sharedMeetingsNote, type WorkingHours } from "./todayInsights";
 import { TASK_BLOCK_MINUTES } from "./taskBooking";
 
 const now = new Date(2026, 9, 26, 10, 0);
@@ -195,5 +195,31 @@ describe("planCapacity", () => {
     const capacity = planCapacity([], newYork, new Date("2026-11-16T12:00:00Z"));
     expect(capacity?.stretches[0].start).toEqual(new Date("2026-11-16T14:00:00Z"));
     expect(capacity?.freeMinutes).toBe(480);
+  });
+});
+
+describe("offersPlanTomorrow", () => {
+  // Monday 16 November 2026, in UTC: working hours end at 17:00.
+  const hours: WorkingHours = { timeZone: "UTC", workingWindows: [{ weekday: 1, start: "09:00", end: "17:00" }] };
+  const utc = (clock: string) => new Date(`2026-11-16T${clock}:00Z`);
+
+  it("offers Plan Tomorrow from the last hour of working hours on, not before", () => {
+    expect(EVENING_HINT_MINUTES).toBe(60);
+    expect(offersPlanTomorrow([], hours, utc("15:59"))).toBe(false);
+    expect(offersPlanTomorrow([], hours, utc("16:00"))).toBe(true);
+    expect(offersPlanTomorrow([], hours, utc("18:30"))).toBe(true);
+    expect(offersPlanTomorrow([], null, utc("18:30"))).toBe(false);
+    // A day without working hours has no evening of its own.
+    expect(offersPlanTomorrow([], { ...hours, workingWindows: [] }, utc("18:30"))).toBe(false);
+  });
+
+  it("offers it once today's last attended meeting has ended, ignoring declined and all-day ones", () => {
+    const sync = meeting("sync", utc("10:00"), utc("11:00"));
+    const later = meeting("later", utc("14:00"), utc("15:00"), { responseStatus: "declined" });
+    const allDay = meeting("offsite", utc("00:00"), utc("23:59"), { allDay: true });
+    expect(offersPlanTomorrow([sync], hours, utc("10:59"))).toBe(false);
+    expect(offersPlanTomorrow([sync], hours, utc("11:00"))).toBe(true);
+    expect(offersPlanTomorrow([sync, later, allDay], hours, utc("11:30"))).toBe(true);
+    expect(offersPlanTomorrow([later], hours, utc("15:30"))).toBe(false);
   });
 });

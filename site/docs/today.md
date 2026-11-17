@@ -35,6 +35,20 @@ A line under the date sums up the day's meetings: "2 meetings · next at 2:00 pm
 
 The plan is the **Plan** section of today's daily note in [Notes](notes.html), so you can also read and edit it there. Planning something never changes its due date.
 
+### Plan Today {#plan-today}
+
+**Plan Today** in Today's header (or in the [command palette](keyboard-shortcuts.html), <kbd>⌘/Ctrl + k</kbd>) walks you through the day. Once your plan has items, the header shows its progress and **Edit Plan**, which starts from the saved plan. Late in the day, after your last meeting or in the last hour of your working hours, the header also offers **Plan Tomorrow**, which plans tomorrow's note the same way; the palette has **Plan Tomorrow** at any time.
+
+Move between the steps with **Next** and **Back**, or jump to one in the step list; every step can be skipped. Nothing is written to your note until you save.
+
+1. **Review**: what you got done from your last plan (finished items, the meetings you attended, and other tasks you finished that day), and what you **Didn't Get To**. For each, choose **Carry** (into this plan), **Defer…** (until a later date), or **Drop**, or **Carry All**. Items you leave undecided come back next time. An item carried three times or more asks whether to defer or drop it, but nothing is decided for you. Without anything to review, the step is skipped.
+2. **Choose**: the same sources as Today, a search of every open task, and **New Task** to type a task that lives in the plan. Your choices form an ordered list; move items with the arrows or <kbd>Option/Alt + ↑</kbd> and <kbd>Option/Alt + ↓</kbd>. Removing an item that was already in the plan takes its line out of the note. Past five items, Today notes that most people finish three to five.
+3. **Meetings**: the day's meetings with what is ready for them, **Reserve Prep Time**, and **No Prep Needed**. **Prepare** opens the meeting's preparation inside Plan Today; **Back to Meetings** returns with your choices as they were.
+4. **Fit**: your choices beside the day's calendar, with the free time left in your working hours. **Book** or drag a card onto the day to reserve half an hour. Booking happens right away, with **Undo**, and stays even if you don't save the plan.
+5. **Save**: exactly what will be written to the note, and any time already booked. **Save Plan** (or <kbd>⌘/Ctrl + Enter</kbd> from any step) writes it all at once; **Undo** in the notice reverses it if the note hasn't changed since. **Copy Plan** copies the plan as plain text.
+
+Carried items are marked with the day they came from, and deferred or dropped ones are listed under **Not today** in the note, so the next review knows they are settled. Press <kbd>Escape</kbd> to close: Plan Today asks whether to keep your choices for later or discard them. Kept choices, and choices left when the app closes, stay on this computer for a week and return the next time you plan that day, with **Discard** to start over.
+
 ### Add to the Plan {#add-to-the-plan}
 
 Below the plan, choose a source. Today opens on **Suggested**; **Starred Mail**, **Goals**, and **Notes** are under **More Sources** (⋯).

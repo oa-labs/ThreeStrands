@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { insertPlanLines, parsePlan, planLine, removePlanLine, type PlanItemKind, type PlanMarker } from "./dailyPlan";
+import { arrangePlanItems, insertPlanLines, parsePlan, planLine, removePlanLine, type PlanItemKind, type PlanMarker } from "./dailyPlan";
 import { noteReferenceHref, type NoteReference } from "./noteEntities";
 
 type Expected = { kind: PlanItemKind; text: string; marker?: PlanMarker; checked?: boolean };
@@ -8,6 +8,7 @@ const fixtures = JSON.parse(readFileSync("fixtures/daily-plan.json", "utf8")) as
   references: Record<string, NoteReference>;
   parse: { name: string; body: string; expected: Expected[] | null; notToday?: Expected[] }[];
   insert: { name: string; body: string; lines: string[]; notToday?: boolean; expected: string }[];
+  arrange: { name: string; body: string; order: ({ existing: number } | { new: string })[]; remove: number[]; expected: string }[];
 };
 const fill = (text: string) => Object.keys(fixtures.references).sort((a, b) => b.length - a.length)
   .reduce((out, name) => out.replaceAll(`{${name}}`, noteReferenceHref(fixtures.references[name])), text);
@@ -25,6 +26,13 @@ describe("daily plan", () => {
   it.each(fixtures.insert)("inserts: $name", ({ body, lines, notToday, expected }) => {
     let actual: string;
     try { actual = insertPlanLines("daily:2026-11-16", fill(body), lines.map(fill), notToday ?? false); } catch (error) { actual = `ERROR: ${(error as Error).message}`; }
+    expect(actual).toBe(fill(expected));
+  });
+
+  it.each(fixtures.arrange)("arranges: $name", ({ body, order, remove, expected }) => {
+    const filled = fill(body);
+    let actual: string;
+    try { actual = arrangePlanItems("daily:2026-11-16", filled, parsePlan("daily:2026-11-16", filled), order.map((entry) => "new" in entry ? { new: fill(entry.new) } : entry), remove); } catch { actual = "ERROR"; }
     expect(actual).toBe(fill(expected));
   });
 

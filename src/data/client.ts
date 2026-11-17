@@ -6,7 +6,7 @@ import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, 
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
-import type { DailyPlan, MeetingContext, MeetingReadiness, PlanHistory, PlanReview, PlanSave, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
+import type { DailyPlan, MeetingContext, MeetingReadiness, PlanChanges, PlanHistory, PlanReview, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
 import type { PlanAddition } from "../dailyPlan";
 import {
   BOUNDED_LOCAL_READ,
@@ -439,6 +439,10 @@ export interface MailClient extends CorrespondenceClient {
   /** Adds items after the plan's existing ones; links already there are reported in `already`. */
   addToDailyPlan(date: string, expected: string | null, additions: PlanAddition[]): Promise<PlanSave>;
   removeFromDailyPlan(date: string, expected: string | null, key: string): Promise<PlanSave>;
+  /** Plan Today's save: every change in one guarded write, with a local receipt under `operationId` so a retry returns the first result. */
+  saveDailyPlan(date: string, expected: string | null, operationId: string, changes: PlanChanges): Promise<PlanSaveResult>;
+  /** Restores the body a plan save replaced, while the note is still as that save left it. */
+  undoDailyPlanSave(date: string, operationId: string): Promise<Note>;
   /** Carry counts and planned days of plan item keys over `from..=to` (at most `PLAN_HISTORY_DAYS`). */
   planHistory(targets: string[], from: string, to: string): Promise<PlanHistory[]>;
   /** The Done and Didn't get to columns for planning `date`. */
@@ -720,6 +724,8 @@ const tauriClient: MailClient = {
   dailyPlan: (date) => read("daily_plan", { date }),
   addToDailyPlan: (date, expected, additions) => complete("add_to_daily_plan", { date, expected, additions }),
   removeFromDailyPlan: (date, expected, key) => complete("remove_from_daily_plan", { date, expected, key }),
+  saveDailyPlan: (date, expected, operationId, changes) => complete("save_daily_plan", { date, expected, operationId, changes }),
+  undoDailyPlanSave: (date, operationId) => complete("undo_daily_plan_save", { date, operationId }),
   planHistory: (targets, from, to) => read("plan_history", { targets, from, to }),
   planReview: (date) => read("plan_review", { date }),
   planSources: (date, source, accountId = null, cursor = null) => read("plan_sources", { date, source, accountId, cursor }),

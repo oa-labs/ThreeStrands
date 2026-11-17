@@ -20,11 +20,12 @@ import { describeDue, isKeepInTouchDue } from "./keepInTouch";
 import { meetingPlace } from "./ThreadAssist";
 import { dismissPromise, promiseRecipients, readDismissedPromises } from "./openPromises";
 import { compareTasksForDisplay, dueView, formatDue, isActiveTaskStatus, isOverdue } from "./taskViews";
-import { daySummary, meetingsWith } from "./todayInsights";
+import { daySummary, meetingsWith, offersPlanTomorrow } from "./todayInsights";
 import { parseAddress } from "./emailAddress";
 import { useCalendarSchedule } from "./useCalendarSchedule";
-import { normalizeContactAddress, noteReferenceKey, type NoteReference } from "./noteEntities";
+import { normalizeContactAddress, type NoteReference } from "./noteEntities";
 import { addToDailyPlan, removeFromDailyPlan } from "./noteCapture";
+import { planItemKey } from "./dailyPlan";
 import { changeNoteItem } from "./noteMutations";
 import { todayTarget } from "./noteDrafts";
 import { TASK_BLOCK_MINUTES } from "./taskBooking";
@@ -39,6 +40,8 @@ import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { isFinished, itemBlock, linkKey, PlanCards, planProgress, PlanSourceSwitcher, type PlanCandidate, type PlanDragSource, type PlanSource } from "./TodayPlan";
 import { TodayDayView } from "./TodayDayView";
 import { TodayMailSignal } from "./TodayMailSignal";
+import { PlanTodayDialog } from "./PlanTodayDialog";
+import type { PlanRequest } from "./useWorkspaces";
 
 import { refreshSyncedData } from "./refreshSyncedData";
 import { usePullToRefresh } from "./usePullToRefresh";
@@ -78,6 +81,9 @@ export type TodayWorkspaceProps = {
   /** Meeting preparation on Today: the meeting being prepared, if any, and
    * what the readiness list needs to act. */
   preparation?: TodayPreparation;
+  /** Plan Today or Plan Tomorrow asked for from the palette; consumed once the routine opens. */
+  planRequest?: PlanRequest | null;
+  onPlanRequestConsumed?(id: number): void;
 };
 
 export type TodayPreparation = {
@@ -139,7 +145,7 @@ function ScheduledToday(props: TodayWorkspaceProps) {
 function TodayLayout({
   accountId, refreshKey, taskRefreshKey, calendars, calendarAccounts = [], schedule,
   onOpenThread, onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenInbox, onOpenCalendar, onOpenTasks, onOpenContact, onOpenKeepInTouch,
-  onOpenNote, onNotice, workingHours = null, onCreateTask, preparation,
+  onOpenNote, onNotice, workingHours = null, onCreateTask, preparation, planRequest = null, onPlanRequestConsumed,
 }: TodayWorkspaceProps & { schedule: Schedule | null }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -465,7 +471,7 @@ function TodayLayout({
     return {
       id: `task:${task.id}`,
       title: task.title,
-      planKey: noteReferenceKey(taskReference(task.id)),
+      planKey: planItemKey(taskReference(task.id)),
       resolve: async () => resolved,
       row: {
         as: "article",
@@ -516,7 +522,7 @@ function TodayLayout({
     return {
       id: `contact:${profile.id}`,
       title: name,
-      planKey: reference ? noteReferenceKey(reference) : null,
+      planKey: reference ? planItemKey(reference) : null,
       resolve: async () => reference ? { addition: { kind: "link", reference, label: name }, block: { title: `Check in with ${name}`, sourceTaskId: null, accountId: null }, title: name } : null,
       row: {
         icon: <ContactRound size={ICON_SIZE.sm} />,
@@ -546,7 +552,7 @@ function TodayLayout({
       setAnnouncement(errorMessage(reason));
     }
   };
-  const remoteCandidate = (candidate: SourceCandidate): PlanCandidate => {
+  const remoteCandidate = (remoteKind: PlanSourceKind | null) => (candidate: SourceCandidate): PlanCandidate => {
     const action = candidate.action;
     const resolve = async () => {
       if (action.kind === "link") {
@@ -593,46 +599,71 @@ function TodayLayout({
     };
   };
   // Promises dismissed on this device stay out of Suggested too.
-  const remoteCandidates = remote.candidates.filter((candidate) => candidate.action.kind !== "makeTask" || !dismissed.includes(candidate.action.messageId)).map(remoteCandidate);
+  const pageCandidates = (page: typeof remote, kind: PlanSourceKind | null) => page.candidates
+    .filter((candidate) => candidate.action.kind !== "makeTask" || !dismissed.includes(candidate.action.messageId)).map(remoteCandidate(kind));
   // The plan and the day view cover every account; these sources follow the account in view, and say so beside the tabs.
   const scope = accountId ?? "All accounts";
-  const remoteSource = (id: string, label: string, title: string, empty: string, extra: Partial<PlanSource> = {}): PlanSource => ({
-    id, label, empty, ...extra,
-    status: id !== sourceId ? undefined
-      : remote.error ? <p className="form-error" role="alert">{remote.error}</p>
-        : remote.loading && remote.candidates.length === 0 ? <p className="context-status">Reading…</p> : undefined,
-    groups: id === sourceId ? [{
-      id: `today-source-${id}`, title, candidates: remoteCandidates, limit: remoteCandidates.length,
-      footer: remote.next ? <button type="button" className="btn-link" disabled={remote.loading} onClick={() => void remote.loadMore()}>Show More</button> : undefined,
-    }] : [],
-  });
-  const sources: PlanSource[] = [
-    remoteSource("suggested", "Suggested", "Suggested", "Nothing to suggest right now.", { scope }),
-    {
-      id: "also-due", label: "Also Due", hidePlanned: true, scope, empty: loadedTasks ? "Nothing else is overdue or due today." : "",
-      groups: [
-        { id: "today-tasks-overdue", title: "Overdue", candidates: overdue.map(taskCandidate) },
-        { id: "today-tasks-due", title: "Due today", candidates: dueToday.map(taskCandidate) },
-      ],
-    },
-    {
-      id: "tasks", label: "Tasks", empty: loadedTasks ? "No open tasks." : "", scope,
-      footer: <p className="today-column-link"><button type="button" className="btn-link" onClick={onOpenTasks}>Open Tasks</button></p>,
-      groups: [{ id: "today-tasks-open", title: "Open tasks", limit: 8, candidates: tasks.map(taskCandidate) }],
-    },
-    {
-      id: "promises", label: "You Said You Would", scope, empty: "Nothing you said you would do is waiting.",
-      groups: [{ id: "today-promises", title: "You said you would", limit: 5, candidates: openPromises.map(promiseCandidate) }],
-    },
-    {
-      id: "keep-in-touch", label: "Keep in Touch", empty: "No one is due for a check-in.",
-      groups: [{ id: "today-keep-in-touch", title: "Keep in touch", candidates: reconnect.map(contactCandidate),
-        closing: reconnect.length ? <button type="button" className="btn-link" onClick={onOpenKeepInTouch}>Open Keep in Touch</button> : undefined }],
-    },
-    remoteSource("starred-mail", "Starred Mail", "Starred mail", "No starred conversations.", { overflow: true, scope }),
-    remoteSource("goals", "Goals", "Goals", "No goals for this period.", { overflow: true, scope }),
-    remoteSource("notes", "Notes", "Open note tasks", "No open tasks in other notes.", { overflow: true }),
-  ];
+  /** The switcher's tabs with `selected` showing, its remote cards from `page`. Choose leaves out Also Due, which Suggested covers. */
+  const sourcesFor = (selected: string, page: typeof remote, choose: boolean): PlanSource[] => {
+    const cards = pageCandidates(page, REMOTE_SOURCES[selected] ?? null);
+    const remoteSource = (id: string, label: string, title: string, empty: string, extra: Partial<PlanSource> = {}): PlanSource => ({
+      id, label, empty, ...extra,
+      status: id !== selected ? undefined
+        : page.error ? <p className="form-error" role="alert">{page.error}</p>
+          : page.loading && page.candidates.length === 0 ? <p className="context-status">Reading…</p> : undefined,
+      groups: id === selected ? [{
+        id: `today-source-${id}`, title, candidates: cards, limit: cards.length,
+        footer: page.next ? <button type="button" className="btn-link" disabled={page.loading} onClick={() => void page.loadMore()}>Show More</button> : undefined,
+      }] : [],
+    });
+    return [
+      remoteSource("suggested", "Suggested", "Suggested", "Nothing to suggest right now.", { scope }),
+      ...(choose ? [] : [{
+        id: "also-due", label: "Also Due", hidePlanned: true, scope, empty: loadedTasks ? "Nothing else is overdue or due today." : "",
+        groups: [
+          { id: "today-tasks-overdue", title: "Overdue", candidates: overdue.map(taskCandidate) },
+          { id: "today-tasks-due", title: "Due today", candidates: dueToday.map(taskCandidate) },
+        ],
+      }]),
+      {
+        id: "tasks", label: "Tasks", empty: loadedTasks ? "No open tasks." : "", scope,
+        footer: choose ? undefined : <p className="today-column-link"><button type="button" className="btn-link" onClick={onOpenTasks}>Open Tasks</button></p>,
+        groups: [{ id: "today-tasks-open", title: "Open tasks", limit: 8, candidates: tasks.map(taskCandidate) }],
+      },
+      {
+        id: "promises", label: "You Said You Would", scope, empty: "Nothing you said you would do is waiting.",
+        groups: [{ id: "today-promises", title: "You said you would", limit: 5, candidates: openPromises.map(promiseCandidate) }],
+      },
+      {
+        id: "keep-in-touch", label: "Keep in Touch", empty: "No one is due for a check-in.",
+        groups: [{ id: "today-keep-in-touch", title: "Keep in touch", candidates: reconnect.map(contactCandidate),
+          closing: reconnect.length && !choose ? <button type="button" className="btn-link" onClick={onOpenKeepInTouch}>Open Keep in Touch</button> : undefined }],
+      },
+      remoteSource("starred-mail", "Starred Mail", "Starred mail", "No starred conversations.", { overflow: true, scope }),
+      remoteSource("goals", "Goals", "Goals", "No goals for this period.", { overflow: true, scope }),
+      remoteSource("notes", "Notes", "Open note tasks", "No open tasks in other notes.", { overflow: true }),
+    ];
+  };
+  const sources = sourcesFor(sourceId, remote, false);
+
+  // Plan Today: the routine for today or tomorrow, its date fixed when it opens.
+  const [routine, setRoutine] = useState<{ date: string; dayName: "Today" | "Tomorrow" } | null>(null);
+  const openRoutine = useCallback((which: "today" | "tomorrow") => {
+    const at = new Date();
+    setRoutine({ date: todayTarget(which === "today" ? at : addDays(startOfLocalDay(at), 1)).date, dayName: which === "today" ? "Today" : "Tomorrow" });
+  }, []);
+  useEffect(() => {
+    if (!planRequest) return;
+    onPlanRequestConsumed?.(planRequest.id);
+    openRoutine(planRequest.day);
+  }, [planRequest, onPlanRequestConsumed, openRoutine]);
+  const [routineSourceId, setRoutineSourceId] = useState("suggested");
+  const routineKind = routine ? REMOTE_SOURCES[routineSourceId] ?? null : null;
+  const routinePage = usePlanSourcePage(routine?.date ?? planDate, routineKind, routineKind === "notes" ? null : accountId, `${refreshKey}:${taskRefreshKey}`);
+  const routineEvents = schedule && routine ? agendaEventsFor(schedule.events ?? [], new Date(`${routine.date}T12:00:00`), calendars) : null;
+  const eveningOffer = schedule && !schedule.loading && !schedule.error ? offersPlanTomorrow(todaysEvents, workingHours, now) : offersPlanTomorrow([], workingHours, now);
+  const hasPlan = (plan?.items.length ?? 0) > 0;
+
   const selectedEvent = todaysEvents.find((event) => selectedKey !== null && preparationKey(event) === selectedKey) ?? null;
 
   return <section ref={pageRef} className="today-workspace" aria-label="Today" aria-busy={pull.refreshing}>
@@ -645,7 +676,12 @@ function TodayLayout({
         <span className="eyebrow">Today</span>
         <h1>{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h1>
         {dayLine ? <p className="today-day-shape">{dayLine}</p> : null}
-        {progress ? <p className="today-plan-progress">{progress}</p> : null}
+        <div className="today-plan-status">
+          {hasPlan
+            ? <>{progress ? <span className="today-plan-progress">{progress}</span> : null}<button type="button" className="btn btn-sm" onClick={() => openRoutine("today")}>Edit Plan</button></>
+            : <button type="button" className="btn btn-sm" onClick={() => openRoutine("today")}>Plan Today</button>}
+          {eveningOffer ? <button type="button" className="btn btn-sm" onClick={() => openRoutine("tomorrow")}>Plan Tomorrow</button> : null}
+        </div>
       </div>
       {/* While a meeting is being prepared, its actions are in preparation, so the card is only a link. */}
       {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} {...(selectedKey === null ? { onAddNote, onPrepare: prepare, showJoin: true } : { showJoin: false })} /> : null}
@@ -679,6 +715,25 @@ function TodayLayout({
     </div>
     </div>
     <p className="sr-only" aria-live="polite">{announcement}</p>
+    {routine ? <PlanTodayDialog
+      key={routine.date}
+      date={routine.date}
+      dayName={routine.dayName}
+      sources={sourcesFor(routineSourceId, routinePage, true)}
+      sourceId={routineSourceId}
+      onSelectSource={setRoutineSourceId}
+      events={routineEvents}
+      scheduleLoading={schedule?.loading ?? false}
+      scheduleError={schedule?.error ?? null}
+      onRetrySchedule={() => schedule?.reload()}
+      workingHours={workingHours}
+      booking={booking}
+      preparation={preparation ? { render: preparation.render, ownAddresses: preparation.ownAddresses } : undefined}
+      onNotice={notice}
+      onOpenNote={(noteId, href) => (preparation ? preparation.onOpenNote(noteId, href) : onOpenNote?.(noteId))}
+      onSaved={() => { void reloadPlan(); onTasksChanged(); }}
+      onClose={() => setRoutine(null)}
+    /> : null}
   </section>;
 }
 

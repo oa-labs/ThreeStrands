@@ -1328,14 +1328,14 @@ pub struct UpdateSnippetRequest {
 
 /// A Markdown note. Daily notes have a `daily_date`, which is also their
 /// title. `updated_at` and `trashed_at` are when this device saw the
-/// change; they aren't synchronized.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// change; they aren't synchronized. Deserialized only from local receipts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {
     pub id: String,
     pub title: String,
     /// Authored title when the displayed name is disambiguated locally.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authored_title: Option<String>,
     pub body: String,
     pub daily_date: Option<String>,

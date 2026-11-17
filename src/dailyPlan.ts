@@ -14,6 +14,15 @@ export type PlanLine = { kind: PlanItemKind; reference: NoteReference | null; la
 export type PlanSection = { start: number; end: number; items: PlanLine[]; notToday: PlanLine[] };
 export type PlanAddition = { kind: "link"; reference: NoteReference; label: string } | { kind: "newTask"; title: string };
 
+/**
+ * The key a plan item and a plan candidate are compared by: the canonical
+ * target as natively (`NoteReference::target`), the link without its
+ * contact id or series, so the same target always has one key.
+ */
+export function planItemKey(reference: NoteReference): string {
+  return noteReferenceHref({ ...reference, contact: undefined, series: undefined });
+}
+
 const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 
 function heading(text: string): { level: number; key: string } | null {
@@ -156,4 +165,50 @@ export function removePlanLine(body: string, start: number, end: number): string
   const after = body.startsWith("\n", end) ? end + 1 : end;
   const before = after === end && start > 0 && body[start - 1] === "\n" ? start - 1 : start;
   return body.slice(0, before) + body.slice(after);
+}
+
+/** One place in a rearranged plan: an existing item by its index in `PlanSection.items`, or a new line. */
+export type Arranged = { existing: number } | { new: string };
+
+/**
+ * `body` with its plan items rearranged item by item, as natively
+ * (`arrange_plan_items`): the existing items named in `order` fill, in that
+ * order, the places those items held, so other text and unnamed items stay;
+ * a new line follows the item before it in `order`, or leads the first named
+ * item; `remove` takes items out with their nested content.
+ */
+export function arrangePlanItems(noteId: string, body: string, section: PlanSection | null, order: Arranged[], remove: number[]): string {
+  const items = section?.items ?? [];
+  const named: number[] = [];
+  const leading: string[] = [];
+  const trailing: string[][] = [];
+  for (const entry of order) {
+    if ("existing" in entry) {
+      if (entry.existing >= items.length || named.includes(entry.existing) || remove.includes(entry.existing)) throw new Error("That item is no longer in the plan");
+      named.push(entry.existing);
+      trailing.push([]);
+    } else (trailing.at(-1) ?? leading).push(entry.new);
+  }
+  if (remove.some((index) => index >= items.length)) throw new Error("That item is no longer in the plan");
+  const gone = [...new Set(remove)].sort((a, b) => a - b);
+  if (!named.length) {
+    let out = body;
+    const first = leading.length ? gone[0] : undefined;
+    for (const index of [...gone].reverse()) {
+      const item = items[index];
+      out = index === first ? `${out.slice(0, item.start)}${leading.join("\n")}${out.slice(item.end)}` : removePlanLine(out, item.start, item.end);
+    }
+    return first !== undefined ? out : insertPlanLines(noteId, out, leading);
+  }
+  const slots = [...named].sort((a, b) => a - b);
+  const edits: { start: number; end: number; text: string | null }[] = slots.map((slot, place) => {
+    const moved = items[named[place]];
+    const parts = [...(place === 0 ? leading : []), body.slice(moved.start, moved.end), ...trailing[place]];
+    return { start: items[slot].start, end: items[slot].end, text: parts.join("\n") };
+  });
+  for (const index of gone) edits.push({ start: items[index].start, end: items[index].end, text: null });
+  edits.sort((a, b) => b.start - a.start);
+  let out = body;
+  for (const edit of edits) out = edit.text === null ? removePlanLine(out, edit.start, edit.end) : `${out.slice(0, edit.start)}${edit.text}${out.slice(edit.end)}`;
+  return out;
 }

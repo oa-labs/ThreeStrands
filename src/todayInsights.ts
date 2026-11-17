@@ -206,3 +206,21 @@ export function planCapacity(events: readonly ScheduleEvent[] | null, workingHou
     bookedBlocks: events.filter((event) => !!event.sourceTaskId && isAttending(event) && inHours(event)).length,
   };
 }
+
+/** How long before the end of working hours Today also offers Plan Tomorrow. */
+export const EVENING_HINT_MINUTES = 60;
+
+/**
+ * Whether Today's header also offers Plan Tomorrow: once today's last
+ * attended, timed meeting has ended, or within the last
+ * `EVENING_HINT_MINUTES` of today's working hours (and after them). A quiet
+ * offer, never a prompt; false on a day with neither.
+ */
+export function offersPlanTomorrow(events: readonly ScheduleEvent[], workingHours: WorkingHours | null, now: Date): boolean {
+  const meetings = events.filter((event) => isAttending(event) && event.eventType !== "workingLocation");
+  if (meetings.length && Math.max(...meetings.map((event) => new Date(event.end).getTime())) <= now.getTime()) return true;
+  if (!workingHours) return false;
+  const day = planCapacity([], workingHours, new Date(0), schedulingDay(now.getTime(), workingHours.timeZone));
+  const end = day?.stretches.at(-1)?.end.getTime();
+  return end !== undefined && now.getTime() >= end - EVENING_HINT_MINUTES * 60_000;
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ContactProfile, Goal, ThreadTask } from "../domain";
-import { noteReferenceKey, type NoteReference } from "../noteEntities";
+import type { NoteReference } from "../noteEntities";
+import { planItemKey } from "../dailyPlan";
 import { createDemoNotes } from "./demoNotes";
 import { createDemoPlans, MAX_PLAN_ADDITIONS, MAX_PLAN_HISTORY_TARGETS, PLAN_SOURCE_PAGE } from "./demoPlans";
 import type { ScheduleEvent } from "../domain";
@@ -23,7 +24,7 @@ describe("demo daily plans", () => {
     expect(first.note.body).toMatch(/^## Plan\n\n- \[Old\]\(threestrands:task\/.+\)\n- \( \) Draft memo/);
     expect(first.changed).toHaveLength(2);
     const again = await plans.addToDailyPlan(DAY, first.note.updatedAt, [{ kind: "link", reference: taskRef("t1"), label: "Old" }]);
-    expect(again.already).toEqual([noteReferenceKey(taskRef("t1"))]);
+    expect(again.already).toEqual([planItemKey(taskRef("t1"))]);
     expect(again.note.body).toBe(first.note.body);
 
     const plan = await plans.dailyPlan(DAY);
@@ -44,6 +45,31 @@ describe("demo daily plans", () => {
     await expect(plans.addToDailyPlan(DAY, null, Array.from({ length: MAX_PLAN_ADDITIONS + 1 }, (_, n) => ({ kind: "newTask" as const, title: `t${n}` })))).rejects.toThrow();
     expect((await plans.dailyPlan(DAY)).revision).toBeNull();
   });
+
+  it("saves a routine's changes once per operation, with Not today decisions, and undoes them only while unchanged", async () => {
+    const { notes, plans } = setup([task("t1"), task("t2"), task("t3")]);
+    const changes = {
+      items: [{ kind: "add" as const, addition: { kind: "link" as const, reference: taskRef("t1"), label: "One" }, carried: "2026-11-13" }, { kind: "add" as const, addition: { kind: "newTask" as const, title: "Draft memo" } }],
+      remove: [],
+      notToday: [{ reference: taskRef("t2"), label: "Two", decision: { kind: "deferred" as const, date: "2026-11-20" } }, { reference: taskRef("t3"), label: "Three", decision: { kind: "dropped" as const } }],
+    };
+    const saved = await plans.saveDailyPlan(DAY, null, "op-1", changes);
+    expect(saved.note.body).toContain("<!-- threestrands-plan:carried 2026-11-13 -->\n- ( ) Draft memo");
+    expect(saved.note.body).toContain("### Not today");
+    expect(saved.added).toHaveLength(2);
+    expect(await plans.saveDailyPlan(DAY, null, "op-1", changes)).toEqual(saved);
+    await expect(plans.saveDailyPlan(DAY, "stale", "op-2", changes)).rejects.toThrow();
+    await expect(plans.saveDailyPlan(DAY, saved.note.updatedAt, "op-3", { items: [], remove: [], notToday: [{ reference: taskRef("t2"), label: "x", decision: { kind: "deferred", date: DAY } }] })).rejects.toThrow();
+
+    const plan = await plans.dailyPlan(DAY);
+    const reordered = await plans.saveDailyPlan(DAY, plan.revision, "op-4", { items: [{ kind: "existing", key: plan.items[1].key }, { kind: "existing", key: plan.items[0].key }], remove: [], notToday: [] });
+    expect(reordered.note.body.indexOf("Draft memo")).toBeLessThan(reordered.note.body.indexOf("[One]"));
+    expect((await plans.undoDailyPlanSave(DAY, "op-4")).body).toBe(saved.note.body);
+    // After later writing, Undo refuses rather than overwrite it.
+    const now = (await notes.getDailyNote(DAY))!;
+    await notes.saveDailyNote(DAY, `${now.body}More\n`, now.updatedAt);
+    await expect(plans.undoDailyPlanSave(DAY, "op-1")).rejects.toThrow(/changed/);
+  });
 });
 
 describe("demo plan history, review, and sources", () => {
@@ -55,8 +81,8 @@ describe("demo plan history, review, and sources", () => {
     await notes.saveDailyNote("2026-11-14", `## Plan\n\n- [A](${href("a")}) <!-- threestrands-plan:carried 2026-11-13 -->\n\n### Not today\n\n- [B](${href("b")}) <!-- threestrands-plan:deferred 2026-11-16 -->\n`, null);
     await notes.saveDailyNote("2026-11-15", `## Plan\n\n- [A](${href("a")}) <!-- threestrands-plan:carried 2026-11-14 -->\n- [C](${href("c")})\n`, null);
 
-    const [a] = await plans.planHistory([noteReferenceKey(taskRef("a"))], "2026-11-01", "2026-11-16");
-    expect(a).toEqual({ target: noteReferenceKey(taskRef("a")), carryCount: 2, plannedDays: ["2026-11-13", "2026-11-14", "2026-11-15"] });
+    const [a] = await plans.planHistory([planItemKey(taskRef("a"))], "2026-11-01", "2026-11-16");
+    expect(a).toEqual({ target: planItemKey(taskRef("a")), carryCount: 2, plannedDays: ["2026-11-13", "2026-11-14", "2026-11-15"] });
     expect((await plans.dailyPlan("2026-11-15")).items[0].carryCount).toBe(2);
     await expect(plans.planHistory([], "2026-08-18", "2026-11-16")).rejects.toThrow();
     expect(await plans.planHistory([], "2026-08-19", "2026-11-16")).toEqual([]);

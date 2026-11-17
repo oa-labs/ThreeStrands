@@ -53,6 +53,7 @@ const MIGRATIONS: &[Migration] = &[
     (106, to_v106),
     (107, to_v107),
     (108, to_v108),
+    (109, to_v109),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1445,6 +1446,25 @@ fn to_v108(tx: &rusqlite::Transaction) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
+/// Local receipts for plan saves, so a save whose response was lost can be
+/// retried with the same operation id and return what it did, and Undo can
+/// restore exactly the body that save replaced. Device-local: never synced
+/// or exported.
+fn to_v109(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS plan_save_receipts (
+             operation_id TEXT PRIMARY KEY,
+             date TEXT NOT NULL,
+             saved_revision TEXT NOT NULL,
+             result_json TEXT NOT NULL,
+             created_at TEXT NOT NULL,
+             undone_at TEXT
+         );
+         CREATE INDEX IF NOT EXISTS plan_save_receipts_created ON plan_save_receipts(created_at);",
+    )
+    .map_err(error)
+}
+
 /// A `[[link]]`'s backlink context is the line as text rather than its
 /// Markdown, so rows written before then are rebuilt.
 fn to_v107(tx: &rusqlite::Transaction) -> Result<(), String> {
@@ -1784,6 +1804,8 @@ mod tests {
         "table:discarded_drafts",
         "table:ai_activity",
         "table:ai_result_provenance",
+        "table:plan_save_receipts",
+        "index:plan_save_receipts_created",
         "table:sender_delivery_patterns",
         "index:sender_delivery_requester",
         "table:conversation_snoozes",
@@ -1978,6 +2000,37 @@ mod tests {
                 .unwrap(),
             "[\"Project\"]"
         );
+        super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v109_adds_an_empty_plan_receipt_table_and_keeps_earlier_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE plan_save_receipts; PRAGMA user_version=108;
+                 INSERT INTO snippets(id, name, body, created_at) VALUES('s','Hi','Hello','2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM plan_save_receipts", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        let snippet: String = connection
+            .query_row("SELECT body FROM snippets WHERE id='s'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(snippet, "Hello");
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 109);
         super::migrate(&mut connection).unwrap();
     }
 

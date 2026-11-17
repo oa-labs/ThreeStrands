@@ -191,5 +191,92 @@
       ],
       "expected": "ERROR: unclosed fence"
     }
+  ],
+  "arrange": [
+    {
+      "name": "reordering moves items with their nested content and keeps text between them",
+      "body": "## Plan\n\n- [Send deck]({T})\n  - with the appendix\n\nA thought\n\n- Think about Q4\n- [Check in with Ann]({C})\n\n## Meetings\n",
+      "order": [
+        {
+          "existing": 2
+        },
+        {
+          "existing": 0
+        }
+      ],
+      "remove": [],
+      "expected": "## Plan\n\n- [Check in with Ann]({C})\n\nA thought\n\n- Think about Q4\n- [Send deck]({T})\n  - with the appendix\n\n## Meetings\n"
+    },
+    {
+      "name": "new lines follow the item before them, or lead the first",
+      "body": "## Plan\n\n- [Send deck]({T})\n- Think about Q4\n",
+      "order": [
+        {
+          "new": "- ( ) First"
+        },
+        {
+          "existing": 1
+        },
+        {
+          "new": "- ( ) Second"
+        },
+        {
+          "existing": 0
+        }
+      ],
+      "remove": [],
+      "expected": "## Plan\n\n- ( ) First\n- Think about Q4\n- ( ) Second\n- [Send deck]({T})\n"
+    },
+    {
+      "name": "removing an item takes its nested lines and leaves the rest",
+      "body": "## Plan\n\n- [Send deck]({T})\n  - with the appendix\n- Think about Q4\n\nJournal\n",
+      "order": [
+        {
+          "existing": 1
+        }
+      ],
+      "remove": [
+        0
+      ],
+      "expected": "## Plan\n\n- Think about Q4\n\nJournal\n"
+    },
+    {
+      "name": "removing every item and adding new ones",
+      "body": "## Plan\n\n- [Send deck]({T})\n\n## Meetings\n",
+      "order": [
+        {
+          "new": "- ( ) Fresh"
+        }
+      ],
+      "remove": [
+        0
+      ],
+      "expected": "## Plan\n\n- ( ) Fresh\n\n## Meetings\n"
+    },
+    {
+      "name": "a new plan is written before Meetings",
+      "body": "# Monday\n\n## Meetings\n\n- 9am Sync\n",
+      "order": [
+        {
+          "new": "- ( ) Fresh"
+        }
+      ],
+      "remove": [],
+      "expected": "# Monday\n\n## Plan\n\n- ( ) Fresh\n\n## Meetings\n\n- 9am Sync\n"
+    },
+    {
+      "name": "an item named twice is refused",
+      "body": "## Plan\n\n- [Send deck]({T})\n",
+      "order": [
+        {
+          "existing": 0
+        },
+        {
+          "existing": 0
+        }
+      ],
+      "remove": [],
+      "expected": "ERROR"
+    }
   ]
 }

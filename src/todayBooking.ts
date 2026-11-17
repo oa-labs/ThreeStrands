@@ -40,14 +40,14 @@ export function blockRequest(target: BlockTarget, calendar: CalendarOption, star
 }
 
 /**
- * Where **Book** puts a block today: the first `SLOT_MINUTES` step, at or
+ * Where **Book** puts a block today (or on `day`, such as tomorrow when planning it): the first `SLOT_MINUTES` step, at or
  * after now, inside a free stretch of today's working hours (`planCapacity`)
  * that still holds `blockMinutes`. `null` when no such stretch is left, and
  * "unknown" when the schedule or the working hours are, since unknown time
  * is never offered as free.
  */
-export function nextFreeSlot(events: readonly ScheduleEvent[] | null, workingHours: WorkingHours | null, now: Date, blockMinutes = TASK_BLOCK_MINUTES): Date | null | "unknown" {
-  const capacity = planCapacity(events, workingHours, now);
+export function nextFreeSlot(events: readonly ScheduleEvent[] | null, workingHours: WorkingHours | null, now: Date, blockMinutes = TASK_BLOCK_MINUTES, day?: string): Date | null | "unknown" {
+  const capacity = planCapacity(events, workingHours, now, day);
   if (!capacity) return "unknown";
   const step = SLOT_MINUTES * 60_000;
   for (const stretch of capacity.stretches) {

@@ -225,7 +225,7 @@ pub(super) fn resolve(
 /// Checks a link before it goes into a plan: the task, note task, or contact
 /// must be on this device, and a note task's marker must be saved in its note
 /// so the link keeps naming the same item.
-fn check_link(c: &Connection, reference: &NoteReference) -> DbResult<()> {
+pub(super) fn check_link(c: &Connection, reference: &NoteReference) -> DbResult<()> {
     if !reference.validate() {
         return Err(DatabaseError::invalid("Invalid plan item"));
     }
