@@ -33,6 +33,7 @@ mod launch_args;
 mod limits;
 mod mail_links;
 mod meeting_excerpt;
+mod meeting_follow_through;
 mod meeting_policy;
 mod models;
 mod proposed_times;
@@ -1809,6 +1810,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::meetings::meeting_context,
         commands::meetings::meeting_readiness,
         commands::meetings::reserve_meeting_prep,
+        commands::meetings::save_meeting_follow_through,
+        commands::meetings::undo_meeting_follow_through,
         commands::plans::daily_plan,
         commands::plans::add_to_daily_plan,
         commands::plans::remove_from_daily_plan,

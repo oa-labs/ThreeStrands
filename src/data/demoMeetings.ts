@@ -1,7 +1,8 @@
-import type { MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingReadiness, MeetingSection, PrepReservation, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
+import type { FollowThroughRecord, FollowThroughSave, MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingReadiness, MeetingSection, PrepReservation, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
 import { boundedText, insertPrepTask, meetingBlocks, occurrenceBlocks, PREP_TASK_PREFIX, type MeetingBlock } from "../meetingExcerpt";
 import { insertMeetingLine, meetingLine } from "../noteMeetings";
 import { MAX_READINESS_EVENTS } from "../meetingPrep";
+import { followThroughSections, insertFollowThrough } from "../meetingFollowThrough";
 import { extractNoteEntityLinks, normalizeContactAddress, noteReferenceKey, type NoteReference } from "../noteEntities";
 import { extractWikiLinks } from "../noteWikiLinks";
 import type { MailClient } from "./client";
@@ -17,7 +18,7 @@ type Sources = {
   ownAddresses(): string[];
   threadForMessage(id: string): string | null;
   now?(): Date;
-  notes: Pick<MailClient, "noteBacklinks" | "getNote" | "noteDocument" | "findNoteByTitle" | "getDailyNote" | "saveDailyNote">;
+  notes: Pick<MailClient, "noteBacklinks" | "getNote" | "noteDocument" | "findNoteByTitle" | "getDailyNote" | "saveDailyNote" | "updateNote">;
 };
 
 function bounded<T>(items: T[], limit: number): MeetingSection<T> {
@@ -34,7 +35,9 @@ const instant = (start: string) => /^\d{4}-\d{2}-\d{2}$/.test(start) ? new Date(
 const localDate = (time: number) => { const d = new Date(time); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 /** Meeting preparation for the browser demo: the native rules over in-memory data. */
-export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingContext" | "meetingReadiness" | "reserveMeetingPrep"> {
+export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingContext" | "meetingReadiness" | "reserveMeetingPrep" | "saveMeetingFollowThrough" | "undoMeetingFollowThrough"> {
+  /** Receipts, as natively: a retry with the same operation returns its first result. */
+  const receipts = new Map<string, { scope: string; result: FollowThroughSave; undone: boolean }>();
   const cached = (reference: NoteReference) => sources.events().find((event) => event.accountId === reference.account && event.calendarId === reference.calendar && event.id === reference.id) ?? null;
   const notesLinking = async (reference: NoteReference) => {
     const notes: Note[] = [];
@@ -167,6 +170,11 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       const candidate = conversation.reason === "attendees";
       commitments.push({ id: task.id, title: task.title, status: task.status, noteId: null, threadId: task.threadId, accountId: task.accountId, origin: candidate ? "attendeeConversation" : conversation.reason === "title" ? "titleConversation" : "originConversation", candidate });
     }
+    const followThrough: FollowThroughRecord[] = [];
+    for (const note of await notesLinking(reference)) for (const section of followThroughSections(note.body, reference)) {
+      const { text, truncated } = boundedText(note.body.slice(section.start, section.end), DEMO_MEETING_LIMITS.excerptBytes);
+      followThrough.push({ noteId: note.id, title: note.title, dailyDate: note.dailyDate, revision: note.updatedAt, date: section.date, text, truncated, start: section.start, end: section.end });
+    }
     const unique = commitments.filter((item, index) => commitments.findIndex((other) => other.id === item.id) === index);
     unique.sort((a, b) => Number(a.candidate) - Number(b.candidate));
 
@@ -179,6 +187,7 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       seriesNotes: bounded(seriesSources, DEMO_MEETING_LIMITS.noteSources),
       conversations,
       commitments: { ...bounded(unique, DEMO_MEETING_LIMITS.commitments), message: event ? null : "Only commitments in this meeting's notes are shown." },
+      followThrough: bounded(followThrough, DEMO_MEETING_LIMITS.noteSources),
       limits: DEMO_MEETING_LIMITS,
     };
   }
@@ -213,6 +222,60 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       return { note: saved.note, added: true, addedMeetingLine, previousBody, taskId: await prepTaskId(saved.note, entry.event) };
     },
     meetingContext: (reference, mailScope = null) => context(reference, mailScope),
+    async saveMeetingFollowThrough(reference, destination, expectedRevision, operationId, accepted) {
+      const scope = noteReferenceKey(reference);
+      const receipt = receipts.get(operationId);
+      if (receipt) {
+        if (receipt.scope !== scope) throw new Error("This change was already used for something else. Try again.");
+        return { ...receipt.result, replayed: true };
+      }
+      const note = await sources.notes.getNote(destination.noteId);
+      if (!note) throw new Error("Note not found");
+      if (note.trashed) throw new Error("That note is in Trash. Restore it or choose another note.");
+      if (note.updatedAt !== expectedRevision) throw new Error("That note changed since you started this review. Check the destination and save again.");
+      const full = await context(reference);
+      if (!full.thisMeeting.items.some((source) => source.noteId === note.id)) throw new Error("That note isn't about this meeting. Choose one of its notes, or add a note first.");
+      const items = accepted.items.map((item) => {
+        if (item.kind !== "link" || item.task.note) return item;
+        const task = sources.tasks().find((candidate) => candidate.id === item.task.id);
+        if (!task) throw new Error("A linked task no longer exists. Remove it and try again.");
+        return { ...item, title: task.title };
+      });
+      const inserted = insertFollowThrough(note.body, reference, accepted.meeting, accepted.date, items);
+      const saved = note.dailyDate
+        ? await sources.notes.saveDailyNote(note.dailyDate, inserted.body, expectedRevision)
+        : await sources.notes.updateNote(note.id, note.authoredTitle ?? note.title, inserted.body, expectedRevision);
+      if (!saved.saved || !saved.note) throw new Error("That note changed since you started this review. Check the destination and save again.");
+      const end = saved.note.body.length - (inserted.body.length - inserted.end);
+      const document = await sources.notes.noteDocument(saved.note.id);
+      const inside = document.items.filter((item) => inserted.start <= item.start && item.start < end);
+      const result: FollowThroughSave = {
+        operationId, note: saved.note, section: saved.note.body.slice(inserted.start, end), start: inserted.start, end,
+        taskIds: inside.filter((item) => item.task).map((item) => `note:${saved.note!.id}:${item.id}`),
+        checklistIds: inside.filter((item) => !item.task).map((item) => `note:${saved.note!.id}:${item.id}`),
+        replayed: false,
+      };
+      receipts.set(operationId, { scope, result, undone: false });
+      return result;
+    },
+    async undoMeetingFollowThrough(operationId) {
+      const receipt = receipts.get(operationId);
+      if (!receipt) throw new Error("This follow-through can no longer be undone here.");
+      const note = await sources.notes.getNote(receipt.result.note.id);
+      if (!note) throw new Error("Note not found");
+      if (receipt.undone) return { note };
+      const { result } = receipt;
+      if (note.trashed || note.updatedAt !== result.note.updatedAt || note.body.slice(result.start, result.end) !== result.section) {
+        throw new Error("That note changed after the follow-through was saved. Open it to change the follow-through.");
+      }
+      const body = note.body.slice(0, result.start) + note.body.slice(result.end);
+      const saved = note.dailyDate
+        ? await sources.notes.saveDailyNote(note.dailyDate, body, note.updatedAt)
+        : await sources.notes.updateNote(note.id, note.authoredTitle ?? note.title, body, note.updatedAt);
+      if (!saved.saved || !saved.note) throw new Error("That note changed after the follow-through was saved. Open it to change the follow-through.");
+      receipt.undone = true;
+      return { note: saved.note };
+    },
     async meetingReadiness(references, mailScope = null) {
       if (references.length > MAX_READINESS_EVENTS) throw new Error(`At most ${MAX_READINESS_EVENTS} meetings can be checked at once`);
       return Promise.all(references.map(async (reference): Promise<MeetingReadiness> => {
@@ -228,6 +291,7 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
           candidateCommitments: full.commitments.items.filter((item) => item.candidate).length,
           latestCorrespondenceAt: full.conversations.items.map((item) => item.lastMessageAt).sort().at(-1) ?? null,
           scopeRequired: full.conversations.status === "scopeRequired",
+          followThrough: full.followThrough.items.length ? "reviewed" : "notReviewed",
           unavailableSections: Object.entries(sections).filter(([, section]) => section.status === "unavailable").map(([name]) => name),
           error: null,
         };

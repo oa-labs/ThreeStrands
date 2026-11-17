@@ -654,6 +654,7 @@ fn every_table_keyed_by_account_is_purged_on_removal_or_deliberately_kept() {
         "co_recipient_addresses",
         "contact_interactions",
         "conversation_snoozes",
+        "draft_handoffs",
         "draft_server_deletions",
         "draft_server_links",
         "gmail_sending_identities",

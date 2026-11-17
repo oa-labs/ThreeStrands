@@ -487,6 +487,7 @@ fn purge_outgoing_mail(transaction: &rusqlite::Transaction<'_>, account: &str) -
         ("outbox_messages", "account"),
         ("draft_server_links", "account"),
         ("draft_server_deletions", "account"),
+        ("draft_handoffs", "account"),
     ] {
         transaction.execute(
             &format!("DELETE FROM {table} WHERE lower({column}) = lower(?1)"),

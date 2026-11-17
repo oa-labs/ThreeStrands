@@ -335,6 +335,7 @@ fn remove(tx: &Transaction<'_>, id: &str) -> DbResult<()> {
         "DELETE FROM note_tasks WHERE note_id=?1",
         "DELETE FROM note_entity_links WHERE note_id=?1",
         "DELETE FROM note_index_warnings WHERE note_id=?1",
+        "DELETE FROM operation_receipts WHERE note_id=?1",
     ] {
         tx.execute(statement, [id])?;
     }

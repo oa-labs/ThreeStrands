@@ -1,7 +1,9 @@
 # Meeting preparation and follow-through
 
-**Status:** Stages 1 (contracts and extraction) and 2 (local preparation)
-implemented. Later stages remain proposed.
+**Status:** Stages 1 (contracts and extraction), 2 (local preparation), and 3
+(manual follow-through and durable drafts) implemented. Stage 3's Shut Down
+list is built for the routine, which isn't wired into Today yet. Later stages
+remain proposed.
 **Baseline:** 0.210.0 repository, reviewed 2026-11-15; daily-loop entry points
 added 2026-11-16.
 **Priority:** Next feature in the [product plan](../PLAN.MD#recommended-sequence-and-next-feature),
@@ -500,6 +502,91 @@ Shutdown. Gate: a user can record decisions, track actions, and open/resume a
 follow-up draft without AI; retries and restart preserve work without replaying
 it; Shutdown lists the same unreviewed meetings on every synced device. This is
 the first complete local preparation-to-follow-up workflow.
+
+**As built.** `MeetingFollowThroughDialog` and `MeetingFollowUpDialog`
+(`src/MeetingFollowThroughDialog.tsx`) open from a **Follow-through** section in
+the preparation view, which lists the reviews saved for the occurrence and says
+"Not reviewed yet" otherwise. `MeetingFollowThroughList` (in
+`src/MeetingReadinessList.tsx`) is the Shut Down meeting step: the day's ended,
+not-declined, timed meetings with their follow-through state, **Review
+Follow-through**, and **No Follow-through**. Shut Down itself (daily planning
+design) is not built yet, so the list has no entry point in Today.
+
+- **Section format** (`src-tauri/src/meeting_follow_through.rs`, mirrored by
+  `src/meetingFollowThrough.ts`, both passing `fixtures/meeting-follow-through.json`):
+  a top-level list item
+  `- Follow-through <YYYY-MM-DD>: [<meeting>](<occurrence href>) <!-- threestrands-follow-through -->`
+  with one item per entry one level in: `Decision: …`, `( ) …` (round task),
+  `[ ] …` (checklist), `Action: …` (kept as information, not tracked), or
+  `[<task title>](<task href>)` (a link to an existing mail, standalone, or note
+  task). Typed text is escaped as other inserted lines are, so it can't become
+  a marker, link, or another item. A meeting is **reviewed** when one of its
+  occurrence meeting blocks (an unquoted list item linking exactly this
+  occurrence) contains a list item ending with the marker outside code; the
+  section's own link makes it such a block, and a section the user moves under
+  the meeting's line still counts. `meeting_context` returns the sections as
+  `followThrough` and `meeting_readiness` as `followThrough: reviewed |
+  notReviewed | unknown`.
+- **Placement.** The section goes after the last top-level meeting block of the
+  occurrence (its daily-note line or an earlier section), else after the
+  top-level item holding a nested meeting line, else at the end of the note
+  after a blank line. It is never nested two levels deep: the shared note
+  parser reads a list item indented four or more columns after a sibling at
+  that depth as code, so deeper items would lose their task projection and
+  links. That parser rule is unchanged here because changing it would change
+  task projection for existing notes.
+- **Destinations** are the notes **This meeting** lists (occurrence blocks,
+  linked reusable notes, and notes that only mention the meeting); natively,
+  `save_meeting_follow_through` refuses any other note. Without one, the dialog
+  offers Add Note and keeps the review.
+- **`save_meeting_follow_through(reference, destination: { noteId },
+  expectedRevision, operationId, accepted: { date, meeting, items })`** runs one
+  transaction: receipt lookup first (a receipt for the same operation and
+  occurrence returns the stored result with `replayed: true`; one for anything
+  else is refused), then Trash, revision, conflict, destination, linked-task
+  existence (titles are taken from the task as it is now), item count and length
+  limits, Markdown structure, and the note body and notes sync budgets. The
+  existing body is normalized first so only new tasks get anchors, and the
+  write must differ from the old body by exactly the inserted range. It returns
+  the saved note, the inserted text and byte range, and new task and checklist
+  ids. The client runs `prepareNoteMutation` first and accepts only a version
+  advance from that editor's own flush, then broadcasts `notesChanged`.
+- **`undo_meeting_follow_through(operationId)`** removes exactly the inserted
+  range, and only while the note is still at the revision the save produced, so
+  any later edit, including completing one of its tasks, refuses Undo. A repeated
+  undo is a no-op, and the receipt stays so a retried save still replays.
+- **Receipts** are the local `operation_receipts` table (schema v109, generic
+  `kind` and `scope` so plan saves can share it), written in the save
+  transaction, removed with their note, kept at most 30 days and 500 rows. They
+  never sync and aren't in a settings export.
+- **Recovery** is device-local storage keyed by the occurrence and a review id,
+  holding the typed items, chosen destination, and the operation id chosen
+  before the first save attempt, so a retry after a restart reuses it and
+  replays rather than writing twice. At most 50 reviews for 14 days after their
+  last edit; **Discard** removes one, and closing an empty review keeps nothing.
+  Source excerpts are not copied; they are read again from the context.
+- **Draft handoff.** The correspondence request `handoff` creates a draft with
+  the reviewed values and its `draft_handoffs` row (schema v109) in one
+  transaction, the draft's id claimed by the handoff id, so a duplicate click or
+  retry finds the row and creates nothing; `handoffStatus` reports `open`,
+  `outbox`, `sent`, or `missing` (discarded, or sent or deleted elsewhere)
+  without creating anything. The dialog queries that before offering to open,
+  stores the handoff id per occurrence on this device before asking, and offers
+  **New Draft** (a new handoff id) for a sent or missing one. A new message takes
+  the reviewed recipients (badges, defaulting to the event's attendees without
+  the user's mail identities and calendar addresses), subject, and body; a reply
+  needs a conversation chosen under **Reply To** from the related conversations
+  and goes to that conversation's latest cached message as reply-all from its
+  account, keeping the reply's own recipients, subject, headers, identity, and
+  signature, with the reviewed text above the quote. An existing reply draft to
+  that conversation is refused rather than written into. Nothing is queued.
+  `useCorrespondence.openDraftHandoff(request)` flushes the open composer first
+  and rejects without changing anything if that fails, then opens the draft;
+  App switches to the mail view to show it. Removing a mail account removes its
+  handoffs. Without a mail account the dialog offers only **Copy Text**.
+- Limits (`src-tauri/src/meeting_policy.rs`): 50 items per section, 500
+  characters per item, follow-up subject 998 characters on one line, body
+  64 KiB, 100 recipients; handoffs are kept 90 days, at most 500.
 
 ### 4. Ship privacy and compatibility prerequisites
 

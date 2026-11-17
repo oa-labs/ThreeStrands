@@ -70,6 +70,8 @@ Check **Create backlinked note** to also link a note named after the meeting. Ev
 
 When a meeting already has a note, its details offer **Open Note** instead of **Add Note**, and the calendar's note actions open that note rather than adding the meeting again. An event's details in **Calendar** list the notes about that meeting, and, for a recurring meeting, the notes from every other meeting in the series under **Series notes**, newest first.
 
+After a meeting, **Review Follow-through** adds its decisions and actions to its note as one dated "Follow-through" item linking the meeting. Its tasks are ordinary note tasks that appear in **Tasks**. See [Follow Through After a Meeting](calendar.html#follow-through).
+
 ## Note Details {#note-details}
 
 The side panel beside a note shows what it's connected to:

@@ -247,6 +247,53 @@ describe("useCorrespondence", () => {
     }
   });
 
+  it("opens a follow-up handoff only after saving the open draft, and keeps everything if that save fails", async () => {
+    const written = { ...draft, subject: "Plans", body: "Started here" };
+    const followUp: Draft = { ...draft, id: "follow-up", to: "ann@example.org", subject: "Follow-up: Sync", body: "Decisions:\n- Ship" };
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([written]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([]);
+    const queue = vi.spyOn(mailClient, "queueDraft");
+    const save = vi.spyOn(mailClient, "saveDraft").mockRejectedValue(new Error("Storage unavailable"));
+    const handoff = vi.spyOn(mailClient, "draftHandoff").mockResolvedValue({ handoffId: "h", draftId: followUp.id, state: "open", draft: followUp, created: true });
+    const request = { handoffId: "h", account: "me@example.com", mode: "new" as const, sourceId: null, to: "ann@example.org", cc: "", subject: "Follow-up: Sync", body: "Decisions:\n- Ship" };
+    let state: ReturnType<typeof useCorrespondence>;
+    function Harness() {
+      state = useCorrespondence([], undefined, undefined, ...snippetArgs, null);
+      return <>
+        <button onClick={() => state.openDraft(written)}>Open</button>
+        {state.renderComposer()}
+      </>;
+    }
+    try {
+      render(<Harness />);
+      await waitFor(() => expect(state.drafts).toEqual([written]));
+      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Updated plans" } });
+      await act(async () => { await expect(state.openDraftHandoff(request)).rejects.toThrow("Storage unavailable"); });
+      expect(handoff).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue("Updated plans");
+
+      save.mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+      let result: Awaited<ReturnType<typeof state.openDraftHandoff>> | undefined;
+      await act(async () => { result = await state.openDraftHandoff(request); });
+      expect(result?.state).toBe("open");
+      expect(handoff).toHaveBeenCalledWith(request);
+      expect(state!.activeDraft?.id).toBe("follow-up");
+      expect(state!.drafts).toEqual(expect.arrayContaining([expect.objectContaining({ id: written.id, subject: "Updated plans" })]));
+      expect(queue).not.toHaveBeenCalled();
+
+      // A sent handoff reports its state and opens nothing.
+      handoff.mockResolvedValue({ handoffId: "h", draftId: followUp.id, state: "sent", draft: null, created: false });
+      await act(async () => { result = await state.openDraftHandoff(request); });
+      expect(result?.state).toBe("sent");
+      expect(state!.activeDraft?.id).toBe("follow-up");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("never offers back a draft its composer discarded", async () => {
     const written = { ...draft, subject: "Throwaway", body: "Not needed" };
     const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([written]);

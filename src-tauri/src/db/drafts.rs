@@ -6,6 +6,32 @@ use super::{serialization_error, Database, DatabaseError, DbResult};
 use crate::clock::unix_millis;
 use crate::correspondence::{Draft, DISCARDED_DRAFT_RETENTION_MS, DISCARD_SERVER_DELAY_MS};
 use rusqlite::{params, OptionalExtension};
+use serde::Serialize;
+
+/// Where a follow-up draft handoff's one draft stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DraftHandoffState {
+    /// In Drafts, to open or keep editing.
+    Open,
+    /// Queued or scheduled in Outbox, or failed there.
+    Outbox,
+    Sent,
+    /// No longer on this device: discarded, or sent or deleted elsewhere.
+    Missing,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftHandoff {
+    pub handoff_id: String,
+    pub draft_id: String,
+    pub state: DraftHandoffState,
+    /// The draft while it is in Drafts.
+    pub draft: Option<Draft>,
+    /// Whether this request created the draft.
+    pub created: bool,
+}
 
 impl Database {
     pub fn drafts(&self) -> DbResult<Vec<Draft>> {
@@ -109,6 +135,85 @@ impl Database {
             )
         })?;
         Ok(())
+    }
+    /// Stores a follow-up draft as the one draft of `handoff_id`, in one
+    /// transaction with the handoff's record, so a handoff never has two
+    /// drafts. False, storing nothing, when the handoff already has its draft.
+    /// The draft starts with content, so its server copy is due like an edit.
+    pub(crate) fn insert_handoff_draft(&self, handoff_id: &str, d: &mut Draft) -> DbResult<bool> {
+        let now = chrono::Utc::now();
+        let changed = self.write_draft(d, true, |tx, d, payload| {
+            let claimed = tx.execute(
+                "INSERT OR IGNORE INTO draft_handoffs(handoff_id, draft_id, account, created_at) VALUES (?1,?2,?3,?4)",
+                params![handoff_id, d.id, d.account, now.to_rfc3339()],
+            )?;
+            if claimed == 0 {
+                return Ok(0);
+            }
+            let cutoff = now - chrono::Duration::days(crate::meeting_policy::DRAFT_HANDOFF_RETENTION_DAYS);
+            tx.execute("DELETE FROM draft_handoffs WHERE created_at < ?1", [cutoff.to_rfc3339()])?;
+            tx.execute(
+                "DELETE FROM draft_handoffs WHERE handoff_id NOT IN
+                   (SELECT handoff_id FROM draft_handoffs ORDER BY created_at DESC, rowid DESC LIMIT ?1)",
+                [crate::meeting_policy::MAX_DRAFT_HANDOFFS as i64],
+            )?;
+            tx.execute(
+                "INSERT INTO drafts VALUES (?1,?2,?3)",
+                params![d.id, d.revision, payload],
+            )
+        })?;
+        Ok(changed == 1)
+    }
+    /// Where the draft of `handoff_id` stands, or `None` for a handoff this
+    /// device never opened (or has forgotten).
+    pub fn draft_handoff_status(&self, handoff_id: &str) -> DbResult<Option<DraftHandoff>> {
+        let found: Option<String> = self.with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT draft_id FROM draft_handoffs WHERE handoff_id=?1",
+                [handoff_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+        })?;
+        let Some(draft_id) = found else {
+            return Ok(None);
+        };
+        let draft = self
+            .with_connection(|c| {
+                Ok(
+                    c.query_row("SELECT payload FROM drafts WHERE id=?1", [&draft_id], |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .optional()?,
+                )
+            })?
+            .map(|payload| serde_json::from_str::<Draft>(&payload).map_err(serialization_error))
+            .transpose()?;
+        let state = match &draft {
+            Some(_) => DraftHandoffState::Open,
+            None => {
+                let outbox: Option<String> = self.with_connection(|c| {
+                    Ok(c.query_row(
+                        "SELECT state FROM outbox_messages WHERE draft_id=?1 ORDER BY rowid DESC LIMIT 1",
+                        [&draft_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?)
+                })?;
+                match outbox.as_deref() {
+                    Some("sent") => DraftHandoffState::Sent,
+                    Some(_) => DraftHandoffState::Outbox,
+                    None => DraftHandoffState::Missing,
+                }
+            }
+        };
+        Ok(Some(DraftHandoff {
+            handoff_id: handoff_id.to_string(),
+            draft_id,
+            state,
+            draft,
+            created: false,
+        }))
     }
     /// Writes one draft row. `push` marks an edit that the account's server
     /// drafts need, in the same transaction. Returns the rows `write` changed.

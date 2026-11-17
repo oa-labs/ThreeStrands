@@ -6,7 +6,7 @@ import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, 
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
-import type { DailyPlan, MeetingContext, MeetingReadiness, PlanChanges, PlanHistory, PlanReview, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
+import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingContext, MeetingReadiness, PlanChanges, PlanHistory, PlanReview, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
 import type { PlanAddition } from "../dailyPlan";
 import {
   BOUNDED_LOCAL_READ,
@@ -434,6 +434,10 @@ export interface MailClient extends CorrespondenceClient {
   meetingReadiness(references: NoteReference[], mailScope?: string[] | null): Promise<MeetingReadiness[]>;
   /** Reserve Prep Time: a prep task under the meeting's line in `date`'s note, adding the line when needed. */
   reserveMeetingPrep(date: string, expected: string | null, entry: MeetingEntry): Promise<PrepReservation>;
+  /** Review Follow-through: appends the accepted items to one of the occurrence's notes, if it is still at `expectedRevision`. Retrying with the same `operationId` returns the first result without writing again. */
+  saveMeetingFollowThrough(reference: NoteReference, destination: { noteId: string }, expectedRevision: string, operationId: string, accepted: AcceptedFollowThrough): Promise<FollowThroughSave>;
+  /** Removes exactly the section `operationId` saved, while its note is unchanged since. */
+  undoMeetingFollowThrough(operationId: string): Promise<FollowThroughUndo>;
   /** The plan in `date`'s daily note with each item's state. */
   dailyPlan(date: string): Promise<DailyPlan>;
   /** Adds items after the plan's existing ones; links already there are reported in `already`. */
@@ -721,6 +725,8 @@ const tauriClient: MailClient = {
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
   meetingReadiness: (references, mailScope = null) => read("meeting_readiness", { references, mailScope }),
   reserveMeetingPrep: (date, expected, entry) => complete("reserve_meeting_prep", { date, expected, entry }),
+  saveMeetingFollowThrough: (reference, destination, expectedRevision, operationId, accepted) => complete("save_meeting_follow_through", { reference, destination, expectedRevision, operationId, accepted }),
+  undoMeetingFollowThrough: (operationId) => complete("undo_meeting_follow_through", { operationId }),
   dailyPlan: (date) => read("daily_plan", { date }),
   addToDailyPlan: (date, expected, additions) => complete("add_to_daily_plan", { date, expected, additions }),
   removeFromDailyPlan: (date, expected, key) => complete("remove_from_daily_plan", { date, expected, key }),

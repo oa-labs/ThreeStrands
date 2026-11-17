@@ -8,6 +8,8 @@ mod tests;
 
 pub use mime::{addresses, stored_addresses};
 pub(crate) use mime::{build_draft_mime, build_mime};
+#[cfg(test)]
+pub(crate) use model::BuiltDraft;
 pub use model::{Attachment, Draft, OutboxItem, Request, SentCopyStatus};
 pub use service::Correspondence;
 

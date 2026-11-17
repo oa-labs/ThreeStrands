@@ -604,40 +604,87 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
   is now (plan items gone since, and added tasks no longer open, are marked and
   not saved), with **Discard**. Saving or discarding forgets it.
 
-## Shut Down
+### Day and evening backdrop (optional)
 
-### Entry points
+An optional, purely decorative backdrop behind Today's header: a daytime scene
+during working hours and an evening scene in the evening view, so the two faces of
+Today are recognizable at a glance. It is off by default and turned on under
+**Settings → Appearance → Today Backdrop**, stored on this device only (not synced
+or exported).
 
-**Shut Down** in Today's header, available at any time, and the palette command
-**Shut Down**. It is never started automatically, and nothing reminds the user.
+- The art is original and drawn in code (SVG and CSS gradients), not photographs
+  or stock images: small to ship, crisp at any size, and free of licensing
+  questions. Day: a soft sky with the sun's height following the time of day.
+  Evening: a dusk-to-night sky with a moon and a few stars.
+- It sits only behind the header band, never behind lists, cards, or the day
+  view, and keeps text contrast within the style-token rules in both light and
+  dark themes. It is hidden from assistive technology and has no motion beyond an
+  optional slow change when the view switches; reduced-motion turns that off.
 
-### The routine
+## Shut Down: Today's evening view
 
-The same modal form pattern as Plan Today, for the current date:
+**Decision (2026-11-17, after review of the installed app):** Shut Down is not a
+modal routine. In the evening the user's questions are what they accomplished,
+what loose ends remain, and how to get ready for tomorrow, and they expect Today
+to answer them when it opens. So Shut Down is the **evening view** of Today: the
+same two columns, showing the day in review on the left and tomorrow on the right.
+Its decisions, note format, and derived "Day closed" state are unchanged from the
+earlier design; only the presentation moved from a dialog into Today. Plan Today
+stays a routine; **Plan Tomorrow** is how the evening view hands off to it.
 
-1. **Meetings.** Today's meetings that have ended, from the meeting design's
-   [follow-through state](meeting-preparation-design.md#review-after-the-meeting):
-   unreviewed meetings offer **Review Follow-through** and **No Follow-through**.
-   Reviewing opens the follow-through dialog over the routine and returns to this
-   step.
-2. **Plan.** The same two columns as Plan Today's Review, for today. **Done** lists
-   finished planned items, the meetings attended, and **Also done** (unplanned
-   tasks completed today), read-only. **Didn't get to** lists unfinished planned
-   items with their carry counts and the same hint; each offers **Carry to
-   Tomorrow**, **Defer…**, or **Drop**, or can be left undecided for the next
-   morning's review.
-3. **Close.** An optional **Notes on the day** text field, a summary of choices,
-   and **Finish**. **Plan Tomorrow** finishes and opens Plan Today for tomorrow's
-   date with the carried items already selected.
+### When Today shows it
 
-Shut Down writes to today's note only: decisions in step 2 become `### Not today`
-lines with markers (a carry to tomorrow is recorded as a deferral to tomorrow's
-date, which tomorrow's review pre-selects as **Carry**), and the optional text
-becomes a `### Shutdown` paragraph at the end of the Plan section. It uses the same
-guarded write, receipt, and Undo rules. Shutdown is complete for the day when all
-ended meetings are reviewed or set aside and no planned item is undecided; the
-header then shows "Day closed". That state is derived from note content and
-meeting follow-through, so it is the same on every synced device.
+- Automatically once the day's last attending timed meeting has ended **and** now
+  is past the end of the default profile's working hours (or, without working
+  hours, after 6 pm local time). Before that, **Review Today** in the header shows
+  it on demand; **Back to Today's Plan** returns to the daytime view. The choice
+  lasts for the rest of the day on this device.
+- The palette command **Review Today** toggles it. Nothing reminds the user, and
+  skipping it is a quiet state.
+- Meeting preparation (`p`) still works: preparing a meeting shows it in the left
+  column in place of the review, as in the daytime view.
+
+### Left column: Today in review
+
+From `plan_review(today)` and today's plan, read only from local data:
+
+- **Done today:** finished planned items, tasks completed today outside the plan
+  ("Also done"), meetings attended (ended, not declined), and check-ins marked
+  today. Read-only rows that open their source. No time totals or charts.
+- **Loose ends**, each row with its own decision:
+  - Unfinished planned items, with carry counts and the carry hint:
+    **Carry to Tomorrow**, **Defer…** (date in a small modal), or **Drop**.
+    Leaving one undecided keeps it for tomorrow morning's review.
+  - Today's ended meetings without follow-through:
+    **Review Follow-through** (the meeting design's dialog) or **No
+    Follow-through** (this device). Until follow-through ships, these rows offer
+    **Prepare** and **Open Note / Add Note** instead.
+  - Promises made in today's sent mail (**You said you would**, today only):
+    **Make a Task** or **Dismiss**.
+  - Mail that needs a reply: one summary row with the count, opening Inbox.
+- **Notes on the day:** **Add Notes on the Day…** opens a small modal form (Today
+  has no inline inputs); saving appends a `### Shutdown` paragraph to the Plan
+  section of today's note through the guarded write.
+
+Decisions write to today's note only, as before: a carry to tomorrow is a
+`### Not today` line deferred to tomorrow's date, which tomorrow's review and
+Plan Tomorrow pre-select as **Carry**; defer and drop use their markers. Each
+decision is one guarded item-level write with Undo.
+
+### Right column: tomorrow
+
+Tomorrow's day view (the same shared grid, working hours shaded, readiness marks
+on meetings, **Prepare** on choosing a meeting), with the items carried to
+tomorrow listed above it as the start of tomorrow's plan, and **Plan Tomorrow**,
+which opens the Plan Today routine for tomorrow with those items selected. The
+"Tomorrow" agenda list below the daytime view is not repeated.
+
+### Day closed
+
+The header shows **Day closed** when every ended meeting is reviewed or set aside
+and no planned item is undecided. It is derived from note content and meeting
+follow-through, so it agrees on every synced device; No Follow-through is the one
+device-local input.
 
 ## Local state
 
@@ -753,9 +800,11 @@ Where the stage 1 contracts differ from the text above, and why:
    the source switcher, Edit Plan, and Plan Tomorrow. Gate: a user can review,
    choose from every source, prepare, fit, and save a plan with the calendar
    available or not, and restart mid-routine without losing choices.
-4. **Shut Down**, shipped with meeting preparation stage 3. Gate: meetings and
-   unfinished items can be closed out, decisions appear in the next morning's
-   review, and the day's closed state agrees across synced devices.
+4. **Shut Down as Today's evening view** (see [Shut Down](#shut-down-todays-evening-view)),
+   with meeting rows completed once meeting preparation stage 3 lands. Gate: the
+   day's done items and loose ends show without a routine, decisions appear in the
+   next morning's review, Plan Tomorrow starts from the carried items, and the
+   day's closed state agrees across synced devices.
 5. **Document and validate.** Update the Today, Tasks and Goals, Notes, and Calendar
    help pages, add `changes/<branch>.md` entries for each shipped increment, and
    keep PLAN.MD and this document's status aligned.

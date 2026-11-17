@@ -10,7 +10,7 @@ import { Composer, type ComposerHandle } from "./Composer";
 import type { DraftReviewAvailability } from "./DraftReviewSection";
 import { mailClient } from "./data/client";
 import type { ComposeMode, Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
-import type { Account, Snippet } from "./domain";
+import type { Account, DraftHandoff, DraftHandoffRequest, Snippet } from "./domain";
 import { logBackgroundFailure } from "./errors";
 import { draftWithSelectedQuote } from "./selectedMessageQuote";
 import { sanitizeComposeHtml } from "./richText";
@@ -383,6 +383,31 @@ export function useCorrespondence(
     setActiveThreadId(null);
     setActive(draft);
   }, []);
+  /**
+   * Opens or resumes the one draft of a follow-up handoff with the reviewed
+   * values, for an explicit account and, for a reply, an explicit message.
+   * Saves the open composer first; if that fails, nothing changes and the
+   * promise rejects, so the caller keeps its review. A handoff whose draft
+   * was sent or discarded reports that state and opens nothing. Never sends.
+   */
+  const openDraftHandoff = useCallback(async (request: DraftHandoffRequest): Promise<DraftHandoff> => {
+    const saved = await editor.current?.flush();
+    if (saved) setDrafts((current) => [saved, ...current.filter((draft) => draft.id !== saved.id)]);
+    const handoff = await mailClient.draftHandoff(request);
+    if (handoff.state === "open" && handoff.draft) {
+      const opened = handoff.draft;
+      if (activeRef.current && activeRef.current.id !== opened.id) setParkedId(activeRef.current.id);
+      setDrafts((current) => [opened, ...current.filter((draft) => draft.id !== opened.id)]);
+      setSelectedQuoteDraftId(null);
+      setActiveAvailabilityText(null);
+      setActiveReplyAssistInstruction(null);
+      setActiveFollowUpTaskId(opened.followUpTaskId ?? null);
+      setActiveThreadId(null);
+      setActive(opened);
+      setError("");
+    }
+    return handoff;
+  }, [setDrafts]);
   const undoSendItem = useCallback((id: string) => { void undo(id); }, [undo]);
   // Discards a draft from the Drafts list. The open draft goes through the
   // composer so pending edits are flushed before it is removed.
@@ -475,6 +500,7 @@ export function useCorrespondence(
     draftCount: drafts.length,
     outboxCount: outbox.filter((o) => !["sent", "canceled"].includes(o.state)).length + summaries.filter((s) => !["sent", "canceled"].includes(s.state) && !outbox.some((o) => o.id === s.operationId && o.schedule?.report.ownerInstallationId === s.ownerInstallationId)).length,
     openDraft,
+    openDraftHandoff,
     parkedDraft: active ? null : drafts.find((draft) => draft.id === parkedId) ?? null,
     discardListedDraft,
     discardListedDrafts,

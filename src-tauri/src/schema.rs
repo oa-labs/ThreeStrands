@@ -54,6 +54,7 @@ const MIGRATIONS: &[Migration] = &[
     (107, to_v107),
     (108, to_v108),
     (109, to_v109),
+    (110, to_v110),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1446,11 +1447,38 @@ fn to_v108(tx: &rusqlite::Transaction) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
+/// Local receipts for guarded writes, so retrying an operation whose
+/// response was lost returns its first result instead of writing twice, and
+/// the one draft each follow-up handoff opened. Both belong to this device:
+/// neither syncs nor goes into a settings export.
+fn to_v109(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS operation_receipts (
+             operation_id TEXT PRIMARY KEY,
+             kind TEXT NOT NULL,
+             scope TEXT NOT NULL,
+             note_id TEXT,
+             result TEXT NOT NULL,
+             created_at TEXT NOT NULL,
+             undone_at TEXT
+         );
+         CREATE INDEX IF NOT EXISTS operation_receipts_by_time ON operation_receipts(created_at);
+         CREATE TABLE IF NOT EXISTS draft_handoffs (
+             handoff_id TEXT PRIMARY KEY,
+             draft_id TEXT NOT NULL,
+             account TEXT NOT NULL,
+             created_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS draft_handoffs_by_time ON draft_handoffs(created_at);",
+    )
+    .map_err(error)
+}
+
 /// Local receipts for plan saves, so a save whose response was lost can be
 /// retried with the same operation id and return what it did, and Undo can
 /// restore exactly the body that save replaced. Device-local: never synced
 /// or exported.
-fn to_v109(tx: &rusqlite::Transaction) -> Result<(), String> {
+fn to_v110(tx: &rusqlite::Transaction) -> Result<(), String> {
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS plan_save_receipts (
              operation_id TEXT PRIMARY KEY,
@@ -1830,6 +1858,10 @@ mod tests {
         "index:note_attachments_by_note",
         "table:note_attachment_data",
         "table:note_attachment_objects",
+        "table:operation_receipts",
+        "index:operation_receipts_by_time",
+        "table:draft_handoffs",
+        "index:draft_handoffs_by_time",
     ];
 
     #[test]
@@ -2004,13 +2036,50 @@ mod tests {
     }
 
     #[test]
-    fn v109_adds_an_empty_plan_receipt_table_and_keeps_earlier_data() {
+    fn v109_adds_empty_local_receipt_and_handoff_tables_and_keeps_earlier_data() {
         let mut connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
         super::migrate(&mut connection).unwrap();
         connection
             .execute_batch(
-                "DROP TABLE plan_save_receipts; PRAGMA user_version=108;
+                "DROP TABLE operation_receipts; DROP TABLE draft_handoffs; PRAGMA user_version=108;
+                 INSERT INTO snippets(id, name, body, created_at) VALUES('s','Hi','Hello','2026-01-01T00:00:00Z');
+                 INSERT INTO drafts VALUES('d1', 1, '{}');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        for table in ["operation_receipts", "draft_handoffs"] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
+        let kept: (String, i64) = connection
+            .query_row(
+                "SELECT (SELECT body FROM snippets WHERE id='s'), (SELECT COUNT(*) FROM drafts)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, ("Hello".to_string(), 1));
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
+        // Running it again changes nothing.
+        super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v110_adds_an_empty_plan_receipt_table_and_keeps_earlier_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE plan_save_receipts; PRAGMA user_version=109;
                  INSERT INTO snippets(id, name, body, created_at) VALUES('s','Hi','Hello','2026-01-01T00:00:00Z');",
             )
             .unwrap();
@@ -2030,8 +2099,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 109);
-        super::migrate(&mut connection).unwrap();
+        assert_eq!(version, 110);
     }
 
     #[test]

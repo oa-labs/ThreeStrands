@@ -125,3 +125,26 @@ export async function saveDailyPlan(date: string, base: string | null, operation
     await notesChanged(id);
   } };
 }
+
+/** Review Follow-through: appends the accepted items to `destination` after
+ * saving any open typing there. Only a version advance caused by that
+ * editor's own flush is taken as current; anything else is checked natively
+ * against the version the review started from. Undo removes exactly that
+ * section while the note is unchanged since. */
+export async function saveFollowThrough(
+  reference: import("./noteEntities").NoteReference,
+  destination: { noteId: string; dailyDate: string | null; revision: string },
+  operationId: string,
+  accepted: import("./domain").AcceptedFollowThrough,
+) {
+  const key = destination.dailyDate ? noteTargetKey({ kind: "daily", date: destination.dailyDate }) : destination.noteId;
+  const prepared = await prepareNoteMutation(key);
+  const expected = prepared.before === destination.revision ? prepared.after ?? destination.revision : destination.revision;
+  const saved = await mailClient.saveMeetingFollowThrough(reference, { noteId: destination.noteId }, expected, operationId, accepted);
+  await notesChanged(key);
+  return { ...saved, async undo() {
+    await prepareNoteMutation(key);
+    await mailClient.undoMeetingFollowThrough(operationId);
+    await notesChanged(key);
+  } };
+}

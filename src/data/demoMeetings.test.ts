@@ -91,6 +91,24 @@ describe("demo meeting preparation", () => {
     await expect(meetings.reserveMeetingPrep("2026-11-16", "stale", entry)).rejects.toThrow();
   });
 
+  it("saves a follow-through once per operation, marks the meeting reviewed, and undoes it while unchanged", async () => {
+    const meetings = setup([event("evt", "2026-11-16T15:00:00Z")], [{ dailyDate: "2026-11-16", body: `- [3pm](${href("evt")}) for Weekly\n- [4pm](${href("other")})\n` }]);
+    const before = await meetings.meetingContext(occurrence("evt"));
+    expect((await meetings.meetingReadiness([occurrence("evt")]))[0].followThrough).toBe("notReviewed");
+    const destination = before.thisMeeting.items[0];
+    const accepted = { date: "2026-11-16", meeting: "Weekly", items: [{ kind: "decision" as const, text: "Ship" }, { kind: "task" as const, text: "Send" }] };
+    const saved = await meetings.saveMeetingFollowThrough(occurrence("evt"), { noteId: destination.noteId }, destination.revision, "op-1", accepted);
+    expect(saved.note.body).toMatch(/^- \[3pm\]\(.+\) for Weekly\n- Follow-through 2026-11-16: \[Weekly\]\(.+\) <!-- threestrands-follow-through -->\n {2}- Decision: Ship\n {2}- \( \) Send.*\n- \[4pm\]/);
+    expect(saved.taskIds).toHaveLength(1);
+    const again = await meetings.saveMeetingFollowThrough(occurrence("evt"), { noteId: destination.noteId }, destination.revision, "op-1", accepted);
+    expect(again).toMatchObject({ replayed: true, section: saved.section });
+    expect((await meetings.meetingReadiness([occurrence("evt")]))[0].followThrough).toBe("reviewed");
+    expect((await meetings.meetingReadiness([occurrence("other")]))[0].followThrough).toBe("notReviewed");
+    await expect(meetings.saveMeetingFollowThrough(occurrence("evt"), { noteId: destination.noteId }, destination.revision, "op-2", accepted)).rejects.toThrow("changed");
+    const undone = await meetings.undoMeetingFollowThrough("op-1");
+    expect(undone.note.body).toBe(`- [3pm](${href("evt")}) for Weekly\n- [4pm](${href("other")})\n`);
+  });
+
   it("bounds readiness requests", async () => {
     const meetings = setup([], []);
     const atLimit = Array.from({ length: MAX_READINESS_EVENTS }, (_, n) => occurrence(`e${n}`));
