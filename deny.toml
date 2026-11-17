@@ -15,9 +15,9 @@ all-features = true
 unmaintained = "workspace"
 unsound = "workspace"
 yanked = "deny"
-# Accepted maintenance risk: chrono-tz has no patched release, and calcard
-# also depends on it. Keep this exception scoped to the unmaintained notice.
-ignore = ["RUSTSEC-2026-0555"]
+# Accepted maintenance risk: chrono and chrono-tz have no patched releases,
+# and upstream dependencies also use them. Scope exceptions to these notices.
+ignore = ["RUSTSEC-2026-0543", "RUSTSEC-2026-0555"]
 
 [sources]
 unknown-registry = "deny"
