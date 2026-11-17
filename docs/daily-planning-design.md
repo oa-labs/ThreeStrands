@@ -1,16 +1,17 @@
 # Daily planning and shutdown
 
-**Status:** Stages 1 to 3 are built. Stage 1 (contracts): the plan section format,
+**Status:** Stages 1 to 4 are built. Stage 1 (contracts): the plan section format,
 parser, item-level writes, and plan reading (`src-tauri/src/daily_plan.rs`,
 `src-tauri/src/db/daily_plan.rs`, `src/dailyPlan.ts`, `fixtures/daily-plan.json`);
 plan history and review (`src-tauri/src/db/plan_review.rs`); candidate sources
 (`src-tauri/src/db/plan_sources.rs`); `planCapacity` in `src/todayInsights.ts`;
 and note-task booking in `src/taskBooking.ts`. The demo client follows the same
 rules (`src/data/demoPlans.ts`). Stage 2's reshaped Today is listed under
-[As built (stage 2)](#as-built-stage-2), and stage 3's Plan Today routine, with
+[As built (stage 2)](#as-built-stage-2), stage 3's Plan Today routine, with
 `save_daily_plan` and its receipts and Undo, under
-[As built (stage 3)](#as-built-stage-3). Shut Down (stage 4) and the editor's
-marker handling remain. See also [As built (stage 1)](#as-built-stage-1).
+[As built (stage 3)](#as-built-stage-3), and stage 4's evening view and optional
+backdrop under [As built (stage 4)](#as-built-stage-4). The editor's marker
+handling remains. See also [As built (stage 1)](#as-built-stage-1).
 **Baseline:** 0.210.0 repository, reviewed 2026-11-16.
 **Priority:** Part of the daily loop in the [product plan](../PLAN.MD#connected-workflow-additions),
 interleaved with [meeting preparation](meeting-preparation-design.md).
@@ -504,8 +505,9 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
     is named beside the mail line and the mail-scoped sources, not in the page
     eyebrow; the mail line is text with a chevron to fold it; **Open Tasks** is at
     the foot of the Tasks tab.
-- Not yet: Shut Down in the header, a free-time line from `planCapacity` on
-  Today itself (the Fit step has one), and Open Task / Mark Done on a selected
+- Not yet: a free-time line from `planCapacity` on
+  Today itself (the Fit step has one; Shut Down's header entry is stage 4's
+  **Review Today**), and Open Task / Mark Done on a selected
   block (choosing a block still prepares or opens it like any event). Plan
   Today and Edit Plan are in the header since stage 3.
 
@@ -685,6 +687,101 @@ The header shows **Day closed** when every ended meeting is reviewed or set asid
 and no planned item is undecided. It is derived from note content and meeting
 follow-through, so it agrees on every synced device; No Follow-through is the one
 device-local input.
+
+### As built (stage 4)
+
+- **Switching.** `TodayWorkspace` shows one of two views, `day` or `evening`
+  (`src/eveningView.ts`). `eveningOpens` (`todayInsights.ts`) opens the evening
+  view by itself once every attending, timed, non-working-location meeting has
+  ended and now is at or past `workingDayEnd` (the last working window's end
+  today, in the default profile's zone), else, when the profile has no window
+  today or there is no profile, from `EVENING_FALLBACK_HOUR` (18) local. A
+  calendar that is connected but still loading, or failed, never opens it, since
+  a meeting may still be ahead; without a connected calendar there are no
+  meetings to wait for. **Review Today** and **Back to Today's Plan** in the
+  header write the choice to `threestrands.today.view` as `{ day, view }` and
+  win over the clock for that local date only (a new date reads as no choice).
+  The palette's **Review Today** (`today.review`) toggles through the same
+  `planDay` request that Plan Today uses (`PlanRequest.day` gained `review`).
+  The header's **Plan Tomorrow** moves to the tomorrow column in the evening
+  view.
+- **Left column (`EveningReview`, `src/TodayEvening.tsx`).** It reads
+  `planReview(tomorrow)`, which reviews the most recent plan before tomorrow:
+  today's, when today has one. Its Done and Also done are used only when
+  `reviewed` is today; otherwise Also done comes from the tasks completed today
+  that Today already lists, and meetings come from the schedule (declined,
+  all-day, and working-location events left out), falling back to the review's
+  cached meetings. The review is read again on any note change. Done rows open
+  their source. The loose ends are the review's Didn't get to rows less
+  the keys under today's own `### Not today`: the review reads a carry to
+  tomorrow back as a deferral that is due tomorrow, and today's own line says it
+  is decided. Rows use `ReviewDecisionRow`, and the Done list `ReviewDone`
+  (`src/PlanReviewColumns.tsx`), both extracted from Plan Today's Review step,
+  which now uses them too. **Carry to Tomorrow**, **Defer…**, and **Drop** each
+  save one `saveDailyPlan` change (`decisionChanges`: no items, no removals, one
+  `notToday` entry, a fresh operation id), a carry being a deferral to tomorrow's
+  date and Defer… asking for a date from tomorrow on in `DeferDialog`. The
+  notice carries Undo (`undoDailyPlanSave`) and, on a refusal, **Open Note**.
+  Meetings use `MeetingFollowThroughList` (it gained `onOutstanding`), promises
+  are today's `OpenPromise` rows with **Make a Task** (Today's existing flow) and
+  **Dismiss** (the existing per-device dismissal), and mail that needs a reply is
+  one row from `groupTodayMail` that opens Inbox.
+- **Notes on the day.** `PlanChanges` gained `shutdown`, and `PlanSaveResult`
+  `shutdown`: `append_shutdown_note` (`src-tauri/src/daily_plan.rs`, mirrored by
+  `appendShutdownNote` and held to the `shutdown` cases of
+  `fixtures/daily-plan.json`) appends one paragraph under `### Shutdown` at the
+  end of the Plan section, or under an existing `### Shutdown` subsection, and
+  creates the section when the note has none. The text has its whitespace
+  collapsed, its inline syntax escaped as other inserted text is, and a leading
+  list, quote, or ordered-list marker escaped so it can't become a plan item; it
+  is limited to `MAX_SHUTDOWN_NOTE_CHARS` (2000, in both languages) and refused,
+  like any plan write, on a stale version, conflict, Trash, or unclosed fence.
+  It is written in the same transaction as the other changes and covered by the
+  same receipt and Undo. A request without the field behaves as before, and a
+  receipt saved before it existed reads as `shutdown: false`.
+  `ShutdownNotesDialog` is the small modal (**Add Notes on the Day…**); a refused
+  save keeps the text and offers **Open Note**.
+- **Day closed.** `dayClosed(outstandingMeetings, undecidedItems)` is true only
+  when both counts are known and zero: the ended meetings that are neither
+  reviewed (`meeting_readiness.followThrough`, from the notes, so it agrees on
+  every synced device) nor set aside with the device-local **No Follow-through**,
+  and the loose-end planned items. A count still loading, or a follow-through
+  state that couldn't be checked, is unknown, never closed. Without a connected
+  calendar the meeting count is zero. The header shows it only in the evening
+  view.
+- **Right column (`EveningTomorrow`).** The items carried to tomorrow
+  (`carriedToTomorrow`: today's Not today lines deferred to tomorrow's date),
+  **Plan Tomorrow**, and tomorrow's day view (`TodayDayView` with `day`), with
+  working hours shaded and readiness marks, since the readiness read and the
+  unread-from-attendees counts include tomorrow's meetings in the evening view.
+  Choosing a meeting prepares it in the left column in place of the review, and
+  `p` with no meeting in focus prepares tomorrow's first when today's are over.
+  There is no drag (the grid has no plan card to drop), and tomorrow's agenda
+  list appears only where the day view gives way to it in a narrow window.
+- **Plan Tomorrow's pre-selection.** `usePlanRoutine` starts a fresh routine
+  with each Review row whose deferral falls on the routine's own date chosen as
+  **Carry**, unless it is unavailable; routines restored from this device keep
+  their own choices. This is also what the next morning's Plan Today does for
+  what was carried to it, and as it chooses before anything is clicked, closing
+  such a routine with Escape asks whether to keep or discard those choices.
+- **Backdrop.** `TodayBackdrop` (`src/TodayBackdrop.tsx`) is drawn in SVG from
+  `--backdrop-*` tokens, behind `.today-header` only (`z-index: 0`, the header's
+  own children positioned above it), `aria-hidden`, with no pointer events. Day:
+  gradient sky, clouds, and a sun whose height is `sunHeight(now)`, a half sine
+  from 6 am to 6 pm. Evening: dusk gradient, a crescent moon, and seven fixed
+  stars. Every token is a flat color checked in `styleTokens.test.ts` for 4.5:1
+  against `--text`, `--secondary`, `--muted`, and `--link` in both themes. The
+  one motion is a `--duration-slow` fade when it mounts, which the global
+  reduced-motion rule collapses. **Settings → Appearance → Today Backdrop**
+  (`TodayBackdropSettings`) stores `on` or `off` in
+  `threestrands.today.backdrop`, like Start With: it is not part of
+  `ExportablePreferences`, and `src-tauri/src/transfer.rs` is unchanged.
+- Differences from the design above: Today's evening view keeps **Edit Plan**
+  and the progress line in the header; the carried list is read from today's
+  `dailyPlan` rather than from the review; no "Planned" breakdown by earlier plan
+  day appears in the evening Loose ends (the Review step keeps it); and the
+  reviewed day's meetings come from the live schedule rather than only from the
+  review's cache.
 
 ## Local state
 

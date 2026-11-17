@@ -11,7 +11,7 @@ Click **Today** in the sidebar or press <kbd>0</kbd>. To start there every time,
 
 <ts-shot scene="today" alt="Today with the day's plan and its sources on the left and a time grid of today on the right."></ts-shot>
 
-Today has two columns: your plan for the day on the left, and a view of today's calendar on the right. A line in the header sums up your mail.
+Today has two columns: your plan for the day on the left, and a view of today's calendar on the right. A line in the header sums up your mail. In the evening, Today turns into a [review of the day](#review-your-day) with tomorrow on the right.
 
 ## Read Your Day {#read-your-day}
 
@@ -25,6 +25,20 @@ A line under the date sums up the day's meetings: "2 meetings · next at 2:00 pm
 - Click a meeting to [prepare for it](#get-ready-for-meetings). Click anything else, such as a working location, to open it in Calendar.
 - In a narrow window, the day view gives way to the list of today's events, which marks overlapping meetings and says when a session will be **Recorded**. Dragging onto the day isn't available there; **Book** still works.
 
+## Review Your Day {#review-your-day}
+
+In the evening, Today shows what the day came to and what is left over, with tomorrow beside it. It opens by itself once your last meeting has ended and your working hours are over (the **Default** profile in **Settings → Availability → Profiles**, or 6 pm without working hours). Earlier, click **Review Today** in the header, or choose **Review Today** in the [command palette](keyboard-shortcuts.html), <kbd>⌘/Ctrl + k</kbd>, which switches between the two. **Back to Today's Plan** returns to the day. The view you choose lasts for the rest of the day on this computer. Nothing reminds you to use it.
+
+**Today in review**, on the left:
+
+- **Done today**: the plan items you finished, the meetings you attended, and other tasks you finished today. Click one to open it.
+- **Loose ends**: **Unfinished planned items**, each with **Carry to Tomorrow**, **Defer…** (pick a date from tomorrow on in a small window), and **Drop**. Each choice is saved to today's note at once, and **Undo** in the notice takes it back. Anything you leave alone comes back in tomorrow morning's review. Below them, the day's finished meetings show whether you reviewed their follow-through (**Review Follow-through**, or **No Follow-through** to set one aside on this computer), the promises you made in today's sent mail offer **Make a Task** or **Dismiss**, and one line counts the mail that needs a reply and opens your inbox.
+- **Notes on the day**: **Add Notes on the Day…** opens a small window; what you write is added as a paragraph under **Shutdown** at the end of the Plan section of today's note, with **Undo**.
+
+The header shows **Day closed** when every finished meeting has been reviewed or set aside and no planned item is left undecided. It follows what is saved in your notes, so it agrees on your other computers once they sync; only **No Follow-through** stays on one computer.
+
+**Tomorrow**, on the right, lists what you carried to tomorrow, then tomorrow's calendar as a day view with your working hours shaded and the same preparation marks as today's meetings. Click a meeting to [prepare for it](#get-ready-for-meetings); preparation takes the left column in place of the review, and <kbd>Escape</kbd> returns to it. **Plan Tomorrow** opens [Plan Today](#plan-today) for tomorrow with what you carried already chosen.
+
 ## Plan Your Day {#plan-your-day}
 
 **Today's plan** lists what you chose to do today, in order. The first item not yet done is your focus and is highlighted. Each card shows where it comes from (a mail account, a note, or **Keep in Touch**), its goal when it has one, the time you booked for it, and how many times it has been carried over from an earlier day ("Carried 3 times"). Pointing at or focusing a card highlights its booked time in the day view, and the other way around.
@@ -37,7 +51,7 @@ The plan is the **Plan** section of today's daily note in [Notes](notes.html), s
 
 ### Plan Today {#plan-today}
 
-**Plan Today** in Today's header (or in the [command palette](keyboard-shortcuts.html), <kbd>⌘/Ctrl + k</kbd>) walks you through the day. Once your plan has items, the header shows its progress and **Edit Plan**, which starts from the saved plan. Late in the day, after your last meeting or in the last hour of your working hours, the header also offers **Plan Tomorrow**, which plans tomorrow's note the same way; the palette has **Plan Tomorrow** at any time.
+**Plan Today** in Today's header (or in the [command palette](keyboard-shortcuts.html), <kbd>⌘/Ctrl + k</kbd>) walks you through the day. Once your plan has items, the header shows its progress and **Edit Plan**, which starts from the saved plan. Late in the day, after your last meeting or in the last hour of your working hours, the header also offers **Plan Tomorrow**, which plans tomorrow's note the same way (the [evening view](#review-your-day) has it beside tomorrow); the palette has **Plan Tomorrow** at any time. Items you carried to tomorrow start out chosen as **Carry** in tomorrow's review.
 
 Move between the steps with **Next** and **Back**, or jump to one in the step list; every step can be skipped. Nothing is written to your note until you save.
 

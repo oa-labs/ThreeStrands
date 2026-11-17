@@ -8,16 +8,17 @@ import { ICON_SIZE } from "./iconSizes";
 import { formatShortcut } from "./shortcutLabels";
 import { isPreparable } from "./meetingPrep";
 import { MeetingReadinessList } from "./MeetingReadinessList";
-import { addItem, addNewTask, carryAll, decide, hasChoices, isDirty, moveItem, PLAN_CARRY_HINT, PLAN_ITEMS_NOTE, PLAN_STEP_LABELS, PLAN_STEPS, planText, previewLines, removeItem, type PlanStep, type RoutineItem, type RoutineState } from "./planRoutine";
+import { addItem, addNewTask, carryAll, decide, hasChoices, isDirty, moveItem, PLAN_ITEMS_NOTE, PLAN_STEP_LABELS, PLAN_STEPS, planText, previewLines, removeItem, type PlanStep, type RoutineItem, type RoutineState } from "./planRoutine";
 import { TASK_BLOCK_MINUTES } from "./taskBooking";
 import { bookBlock, nextFreeSlot, type BlockTarget, type BookingContext } from "./todayBooking";
 import { TodayDayView } from "./TodayDayView";
 import { planCapacity, type WorkingHours } from "./todayInsights";
-import { carriedLabel, PlanSourceSwitcher, type PlanCandidate, type PlanSource } from "./TodayPlan";
+import { PlanSourceSwitcher, type PlanCandidate, type PlanSource } from "./TodayPlan";
 import type { Notice } from "./useNotice";
 import { reviewHasContent, usePlanRoutine, type SearchableTask } from "./usePlanRoutine";
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
 import { errorMessage } from "./errors";
+import { ReviewDecisionRow, ReviewDone } from "./PlanReviewColumns";
 
 /** Most search results the Choose step lists at once. */
 export const PLAN_SEARCH_RESULTS = 8;
@@ -173,42 +174,21 @@ function ReviewStep({ state, review, error, date, update }: { state: RoutineStat
   const earliestDefer = nextDay(date);
   const row = (item: PlanReviewItem) => {
     const decision = state.decisions[item.key];
-    const carries = item.carryCount ?? 0;
-    const unavailable = item.state === "unavailable";
-    const detail = [unavailable ? "Unavailable on this device" : null, carriedLabel(carries)].filter(Boolean).join(" · ");
     const choose = (next: Parameters<typeof decide>[2]) => update((current) => decide(current, item, decision?.kind === next?.kind && next?.kind !== "defer" ? null : next));
-    return <li key={item.key} className="plan-review-row">
-      <div className="plan-review-text">
-        <strong>{item.title}</strong>
-        {detail ? <small>{detail}</small> : null}
-        {carries >= PLAN_CARRY_HINT ? <small className="plan-review-hint">Carried {carries} times. Defer or drop it?</small> : null}
-        {decision?.kind === "defer" ? <small>Deferred to {shortDate(decision.date)}</small> : null}
-      </div>
-      <div className="plan-review-actions" role="group" aria-label={`Decide: ${item.title}`}>
-        <button type="button" className="btn btn-sm" aria-pressed={decision?.kind === "carry"} disabled={unavailable} onClick={() => choose({ kind: "carry" })}>Carry</button>
-        <button type="button" className="btn btn-sm" aria-pressed={decision?.kind === "defer"} aria-expanded={deferring === item.key} onClick={() => setDeferring(deferring === item.key ? null : item.key)}>Defer…</button>
-        <button type="button" className="btn btn-sm" aria-pressed={decision?.kind === "drop"} onClick={() => choose({ kind: "drop" })}>Drop</button>
-      </div>
+    return <ReviewDecisionRow key={item.key} item={item} decision={decision?.kind ?? null} deferredTo={decision?.kind === "defer" ? decision.date : null} deferExpanded={deferring === item.key}
+      onDecide={(kind) => { if (kind === "defer") setDeferring(deferring === item.key ? null : item.key); else choose({ kind }); }}>
       {deferring === item.key ? <label className="plan-review-defer">Defer Until
         <input type="date" min={earliestDefer} defaultValue={decision?.kind === "defer" ? decision.date : earliestDefer}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); const value = event.currentTarget.value; if (value >= earliestDefer) { choose({ kind: "defer", date: value }); setDeferring(null); } } }}
           onChange={(event) => { const value = event.currentTarget.value; if (value >= earliestDefer) choose({ kind: "defer", date: value }); }} />
       </label> : null}
-    </li>;
+    </ReviewDecisionRow>;
   };
   return <div className="plan-review-columns">
     <section className="plan-review-column" aria-labelledby="plan-review-done">
       <h3 id="plan-review-done">Done</h3>
       {name ? <p className="context-status">{name}'s plan</p> : null}
-      <ul className="plan-review-list">
-        {review.done.map((item) => <li key={item.key}>{item.title}</li>)}
-        {(review.meetings ?? []).map((event) => <li key={`${event.id}:${event.start}`}>{event.title} <small>{formatClockTime(new Date(event.start))}</small></li>)}
-      </ul>
-      {review.alsoDone.length ? <>
-        <h4>Also done</h4>
-        <ul className="plan-review-list">{review.alsoDone.map((task) => <li key={task.key}>{task.title}</li>)}</ul>
-      </> : null}
-      {!review.done.length && !review.alsoDone.length && !review.meetings?.length ? <p className="context-status">Nothing finished from the last plan.</p> : null}
+      <ReviewDone done={review.done} meetings={review.meetings ?? []} alsoDone={review.alsoDone} empty="Nothing finished from the last plan." />
     </section>
     <section className="plan-review-column" aria-labelledby="plan-review-left">
       <h3 id="plan-review-left">Didn't Get To</h3>

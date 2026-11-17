@@ -96,6 +96,9 @@ const chooseSource = (name: string) => {
 
 describe("TodayWorkspace", () => {
   beforeEach(() => {
+    // Mid-morning, so the evening view (which opens by itself after hours) never depends on when the suite runs.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 17, 10, 0));
     clearScheduleCache();
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
@@ -106,7 +109,7 @@ describe("TodayWorkspace", () => {
     vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [] });
     mockMail([]);
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); openUrl.mockReset(); localStorage.clear(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); openUrl.mockReset(); localStorage.clear(); });
 
   it.each(["you@example.com", null])("pulls fresh sources for the current account (%s) without changing agenda choices", async (accountId) => {
     let finish!: (status: Awaited<ReturnType<typeof mailClient.sync>>) => void;
@@ -1412,6 +1415,162 @@ describe("TodayWorkspace", () => {
       expect(preparation.onClose).toHaveBeenCalledTimes(2);
     });
   });
+  describe("evening view", () => {
+    const clock = (day: number, hours: number, minutes = 0) => vi.setSystemTime(new Date(2026, 10, day, hours, minutes));
+    const meetingAt = (id: string, day: number, start: number, end: number, overrides: Partial<ScheduleEvent> = {}): ScheduleEvent => ({
+      id, accountId: "cal@example.com", calendarId: "primary", title: `Event ${id}`, allDay: false,
+      start: new Date(2026, 10, day, start).toISOString(), end: new Date(2026, 10, day, end).toISOString(), ...overrides,
+    });
+    const schedule = (...events: ScheduleEvent[]) => vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events, errors: [] });
+    const unreviewed = () => vi.spyOn(mailClient, "meetingReadiness").mockImplementation(async (references) => references.map((reference) => ({
+      reference, eventAvailable: true, hasOccurrenceNote: false, priorOccurrencesWithNotes: 0, seriesNotes: 0, openCommitments: 0,
+      candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, followThrough: "notReviewed" as const, unavailableSections: [], error: null })));
+    const evening = () => screen.findByRole("group", { name: "Today in review" });
+    const preparation = () => ({ event: null as ScheduleEvent | null, onPrepare: vi.fn(), onClose: vi.fn(), render: vi.fn(() => <p>Preparation view</p>), ownAddresses: [], onOpenNote: vi.fn(), onNotice: vi.fn() });
+
+    it("opens by itself only once the last meeting has ended and working hours are over", async () => {
+      schedule(meetingAt("sync", 17, 17, 18, { start: new Date(2026, 10, 17, 15, 0).toISOString(), end: new Date(2026, 10, 17, 17, 30).toISOString() }));
+      // Hours over (17:00) but the meeting runs to 17:30: still the day.
+      clock(17, 17, 10);
+      renderToday({ calendarConnected: true, calendars, workingHours });
+      expect(await screen.findByRole("group", { name: "Plan" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Review Today" })).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Today in review" })).not.toBeInTheDocument();
+      cleanup();
+      clock(17, 17, 31);
+      renderToday({ calendarConnected: true, calendars, workingHours });
+      expect(await evening()).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Tomorrow" })).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Plan" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Back to Today's Plan" })).toBeInTheDocument();
+      // Before working hours end, an idle day stays the day.
+      cleanup();
+      schedule();
+      clock(17, 16, 30);
+      renderToday({ calendarConnected: true, calendars, workingHours });
+      expect(await screen.findByRole("group", { name: "Plan" })).toBeInTheDocument();
+    });
+
+    it("waits for 6 pm without working hours, with or without a calendar, and never opens while the schedule is unknown", async () => {
+      clock(17, 17, 59);
+      renderToday();
+      expect(await screen.findByRole("group", { name: "Plan" })).toBeInTheDocument();
+      cleanup();
+      clock(17, 18, 1);
+      renderToday();
+      expect(await evening()).toBeInTheDocument();
+      cleanup();
+      vi.spyOn(mailClient, "listScheduleEvents").mockRejectedValue(new Error("offline"));
+      renderToday({ calendarConnected: true, calendars });
+      expect(await screen.findByRole("group", { name: "Plan" })).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Today in review" })).not.toBeInTheDocument();
+    });
+
+    it("lets Review Today and Back to Today's Plan choose the view for the rest of the day on this device", async () => {
+      clock(17, 10);
+      renderToday();
+      fireEvent.click(await screen.findByRole("button", { name: "Review Today" }));
+      expect(await evening()).toBeInTheDocument();
+      cleanup();
+      // Remembered across a restart the same day.
+      renderToday();
+      expect(await evening()).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Back to Today's Plan" }));
+      expect(await screen.findByRole("group", { name: "Plan" })).toBeInTheDocument();
+      cleanup();
+      // After hours, the choice to go back still holds, until the day turns over.
+      clock(17, 20);
+      renderToday();
+      expect(await screen.findByRole("group", { name: "Plan" })).toBeInTheDocument();
+      cleanup();
+      clock(18, 20);
+      renderToday();
+      expect(await evening()).toBeInTheDocument();
+    });
+
+    it("toggles the evening view from the palette's Review Today, once per request", async () => {
+      const onPlanRequestConsumed = vi.fn();
+      clock(17, 10);
+      const { rerenderToday } = renderToday({ planRequest: { day: "review", id: 3 }, onPlanRequestConsumed });
+      expect(await evening()).toBeInTheDocument();
+      expect(onPlanRequestConsumed).toHaveBeenCalledWith(3);
+      rerenderToday({ planRequest: { day: "review", id: 4 }, onPlanRequestConsumed });
+      expect(await screen.findByRole("group", { name: "Plan" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("shows tomorrow's carried items and tomorrow's day view, and Plan Tomorrow opens the routine for tomorrow with them chosen", async () => {
+      clock(17, 19);
+      const carried = planItem("memo", { title: "Draft the memo", marker: { kind: "deferred", date: localDate(1) } });
+      vi.mocked(mailClient.dailyPlan).mockImplementation(async (date) => ({ ...emptyPlan(date), revision: "r1", notToday: date === localDate(0) ? [carried] : [] }));
+      vi.spyOn(mailClient, "planReview").mockImplementation(async (date) => ({ date, reviewed: localDate(0), done: [], alsoDone: [], meetings: null,
+        didntGetTo: date === localDate(1) ? [{ ...carried, plannedOn: localDate(0) }] : [] }));
+      schedule(meetingAt("standup", 18, 9, 10, { title: "Standup" }));
+      unreviewed();
+      renderToday({ calendarConnected: true, calendars, workingHours });
+      const tomorrow = within(await screen.findByRole("group", { name: "Tomorrow" }));
+      expect(await tomorrow.findByRole("button", { name: "Draft the memo" })).toBeInTheDocument();
+      expect(await within(tomorrow.getByRole("group", { name: "Tomorrow's day view" })).findByRole("button", { name: /^Standup/ })).toBeInTheDocument();
+      // Today's decided carry isn't a loose end, and the header leaves Plan Tomorrow to this column.
+      expect(within(await evening()).queryByRole("button", { name: "Carry to Tomorrow" })).not.toBeInTheDocument();
+      const header = within(document.querySelector(".today-header") as HTMLElement);
+      expect(header.queryByRole("button", { name: "Plan Tomorrow" })).not.toBeInTheDocument();
+      fireEvent.click(tomorrow.getByRole("button", { name: "Plan Tomorrow" }));
+      const dialog = await screen.findByRole("dialog", { name: "Plan Tomorrow" });
+      await waitFor(() => expect(mailClient.planReview).toHaveBeenCalledWith(localDate(1)));
+      expect(await within(dialog).findByRole("button", { name: "Carry" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("decides a loose end from the left column with the app's notice and Undo, and shows Day closed once everything is decided", async () => {
+      clock(17, 19);
+      const row = { ...planItem("memo", { title: "Draft the memo" }), plannedOn: localDate(0) };
+      const read = vi.spyOn(mailClient, "planReview").mockResolvedValue({ date: localDate(1), reviewed: localDate(0), done: [], alsoDone: [], meetings: null, didntGetTo: [row] });
+      vi.spyOn(mailClient, "saveDailyPlan").mockResolvedValue({ operationId: "op", note: note("daily:x", "r2"), added: [], removed: [], notToday: [row.key], already: [], changed: true, shutdown: false });
+      const onNotice = vi.fn();
+      renderToday({ onNotice });
+      const review = within(await evening());
+      expect(screen.queryByText("Day closed")).not.toBeInTheDocument();
+      read.mockResolvedValue({ date: localDate(1), reviewed: localDate(0), done: [], alsoDone: [], meetings: null, didntGetTo: [] });
+      fireEvent.click(await review.findByRole("button", { name: "Carry to Tomorrow" }));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.objectContaining({ message: "Carried “Draft the memo” to tomorrow", undo: expect.any(Function) })));
+      expect(await screen.findByText("Day closed")).toBeInTheDocument();
+    });
+
+    it("keeps preparation in the left column in place of the review, and p prepares tomorrow's first meeting when today's are over", async () => {
+      clock(17, 19);
+      schedule(meetingAt("done", 17, 9, 10), meetingAt("standup", 18, 9, 10, { title: "Standup" }));
+      unreviewed();
+      const prep = preparation();
+      const { rerenderToday } = renderToday({ calendarConnected: true, calendars, workingHours, preparation: prep });
+      await evening();
+      act(() => runWorkspaceCommand("meetings.prepare"));
+      expect(prep.onPrepare).toHaveBeenCalledWith(expect.objectContaining({ id: "standup" }));
+      rerenderToday({ calendarConnected: true, calendars, workingHours, preparation: { ...prep, event: meetingAt("standup", 18, 9, 10, { title: "Standup" }) } });
+      expect(within(screen.getByRole("group", { name: "Preparation" })).getByText("Preparation view")).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Today in review" })).not.toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Tomorrow" })).toBeInTheDocument();
+      expect(within(screen.getByRole("group", { name: "Tomorrow's day view" })).getByRole("button", { name: /^Standup/ })).toHaveAttribute("aria-expanded", "true");
+      act(() => runWorkspaceCommand("meetings.closePrepare"));
+      expect(prep.onClose).toHaveBeenCalled();
+    });
+
+    it("draws the backdrop behind the header only when Today Backdrop is on, for the view shown", async () => {
+      clock(17, 10);
+      renderToday();
+      await screen.findByRole("group", { name: "Plan" });
+      expect(document.querySelector(".today-backdrop")).toBeNull();
+      cleanup();
+      localStorage.setItem("threestrands.today.backdrop", "on");
+      renderToday();
+      await screen.findByRole("group", { name: "Plan" });
+      const backdrop = document.querySelector(".today-header > .today-backdrop");
+      expect(backdrop).toHaveAttribute("data-view", "day");
+      expect(backdrop).toHaveAttribute("aria-hidden", "true");
+      fireEvent.click(screen.getByRole("button", { name: "Review Today" }));
+      await evening();
+      expect(document.querySelector(".today-header > .today-backdrop")).toHaveAttribute("data-view", "evening");
+    });
+  });
 });
 
 describe("TodayWorkspace tomorrow", () => {
@@ -1442,6 +1601,7 @@ describe("TodayWorkspace tomorrow", () => {
     const [timeMin, timeMax] = listEvents.mock.calls[0];
     expect(new Date(timeMax).getTime() - new Date(timeMin).getTime()).toBeGreaterThanOrEqual(47 * 3_600_000);
   });
+
 });
 
 describe("nextMeeting", () => {

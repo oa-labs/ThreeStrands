@@ -6,6 +6,10 @@ import { noteInlineText } from "./notePreview";
  * `fixtures/daily-plan.json`. */
 export const PLAN_HEADING = "Plan";
 export const NOT_TODAY_HEADING = "Not today";
+/** The plan subsection where Today's evening view appends notes on the day. */
+export const SHUTDOWN_HEADING = "Shutdown";
+/** Longest note on the day one save appends, in characters; mirrors `MAX_SHUTDOWN_NOTE_CHARS` in `src-tauri/src/daily_plan.rs`. */
+export const MAX_SHUTDOWN_NOTE_CHARS = 2000;
 const MARKER = "<!-- threestrands-plan:";
 
 export type PlanItemKind = "task" | "noteTask" | "newTask" | "contact" | "text";
@@ -158,6 +162,60 @@ export function insertPlanLines(noteId: string, body: string, newLines: string[]
     at = last.end;
   }
   return `${body.slice(0, at)}${notToday && section.notToday.length === 0 ? "\n\n" : "\n"}${joined}${body.slice(at)}`;
+}
+
+const lastTextEnd = (all: Line[], from: number, to: number, fallback: number): number => {
+  const last = all.slice(from, to).reverse().find((line) => line.text.trim());
+  return last ? lineEnd(last) : fallback;
+};
+
+/**
+ * A note on the day as one Markdown paragraph: whitespace collapsed to single
+ * spaces, inline syntax escaped as other inserted text is, and a leading
+ * list, quote, or ordered-list marker escaped so it stays text. Mirrors
+ * `shutdown_paragraph` natively.
+ */
+export function shutdownParagraph(text: string): string {
+  const collapsed = text.split(/\s+/).filter(Boolean).join(" ");
+  if (!collapsed) throw new Error("Write something to add to the day's notes.");
+  if ([...collapsed].length > MAX_SHUTDOWN_NOTE_CHARS) throw new Error(`Shorten the notes to ${MAX_SHUTDOWN_NOTE_CHARS} characters or fewer.`);
+  const escaped = escapeMarkdownText(collapsed);
+  const ordered = /^(\d+)([.)])/.exec(escaped);
+  if (ordered) return `${ordered[1]}\\${escaped.slice(ordered[1].length)}`;
+  return /^[-+>]/.test(escaped) ? `\\${escaped}` : escaped;
+}
+
+/**
+ * `body` with a `### Shutdown` paragraph at the end of the Plan section: under
+ * an existing `### Shutdown` subsection when there is one, else under a new
+ * one after everything else in the section. A note without a `## Plan`
+ * section gets one, placed as `insertPlanLines` places it. Mirrors
+ * `append_shutdown_note` natively and is held to the `shutdown` fixtures.
+ */
+export function appendShutdownNote(noteId: string, body: string, text: string): string {
+  const paragraph = shutdownParagraph(text);
+  if (extractNoteEntityLinks(body).unclosedFence) throw new Error("unclosed fence");
+  const all = splitLines(body);
+  const scanned = scan(all);
+  const section = parsePlan(noteId, body);
+  if (!section) {
+    const block = `## ${PLAN_HEADING}\n\n### ${SHUTDOWN_HEADING}\n\n${paragraph}\n`;
+    const meetings = scanned.findIndex((line) => line.heading?.level === 2 && line.heading.key === "meetings");
+    if (meetings >= 0) return `${body.slice(0, all[meetings].start)}${block}\n${body.slice(all[meetings].start)}`;
+    const separator = !body || body.endsWith("\n\n") ? "" : body.endsWith("\n") ? "\n" : "\n\n";
+    return `${body}${separator}${block}`;
+  }
+  const head = all.findIndex((line) => line.start === section.start);
+  const closeAt = all.findIndex((line) => line.start > section.end);
+  const close = closeAt < 0 ? all.length : closeAt;
+  const shutdown = scanned.findIndex((line, at) => at > head && at < close && line.heading?.level === 3 && line.heading.key === SHUTDOWN_HEADING.toLowerCase());
+  if (shutdown >= 0) {
+    const subClose = scanned.findIndex((line, at) => at > shutdown && at < close && Boolean(line.heading) && line.heading!.level <= 3);
+    const point = lastTextEnd(all, shutdown, subClose < 0 ? close : subClose, lineEnd(all[shutdown]));
+    return `${body.slice(0, point)}\n\n${paragraph}${body.slice(point)}`;
+  }
+  const point = lastTextEnd(all, head, close, lineEnd(all[head]));
+  return `${body.slice(0, point)}\n\n### ${SHUTDOWN_HEADING}\n\n${paragraph}${body.slice(point)}`;
 }
 
 /** `body` without the item at `start..end` and its line break. */

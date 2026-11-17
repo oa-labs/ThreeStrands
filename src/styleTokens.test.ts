@@ -395,6 +395,49 @@ describe("colors", () => {
   });
 });
 
+describe("Today backdrop", () => {
+  it("keeps every backdrop color legible under the header's text, secondary text, and links in the dark and light themes", () => {
+    const luminance = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16) / 255)
+        .map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (left: string, right: string) => {
+      const [light, dark] = [luminance(left), luminance(right)].sort((a, b) => b - a);
+      return (light + 0.05) / (dark + 0.05);
+    };
+    const themes: Record<string, Map<string, string>> = { dark: new Map(rootTokens), light: new Map(rootTokens) };
+    css.walkRules(":root[data-theme=\"light\"]", (rule) => rule.walkDecls(/^--/, (declaration) => { themes.light.set(declaration.prop, declaration.value); }));
+    const failures: string[] = [];
+    let checked = 0;
+    for (const [theme, tokens] of Object.entries(themes)) {
+      const art = [...tokens].filter(([name]) => name.startsWith("--backdrop-"));
+      // The sky, sun, clouds, dusk, moon, and stars; each defined in both themes.
+      expect(art.map(([name]) => name).sort()).toEqual([
+        "--backdrop-cloud", "--backdrop-dusk-bottom", "--backdrop-dusk-top", "--backdrop-moon", "--backdrop-moon-shade", "--backdrop-sky-bottom", "--backdrop-sky-top", "--backdrop-star", "--backdrop-sun",
+      ]);
+      for (const [name, color] of art) {
+        for (const text of ["--text", "--secondary", "--muted", "--link"]) {
+          checked += 1;
+          const ratio = contrast(color, tokens.get(text)!);
+          if (ratio < 4.5) failures.push(`${theme} ${name} under ${text}: ${ratio.toFixed(2)}`);
+        }
+      }
+    }
+    expect(checked).toBe(72);
+    expect(failures).toEqual([]);
+  });
+
+  it("draws the art only from those tokens, never from a literal color", () => {
+    const literal = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i;
+    const raw: string[] = [];
+    css.walkRules(/^\.today-backdrop/, (rule) => rule.walkDecls((declaration) => { if (literal.test(declaration.value)) raw.push(describeDeclaration(declaration)); }));
+    expect(raw).toEqual([]);
+    const source = readFileSync(resolve(process.cwd(), "src/TodayBackdrop.tsx"), "utf8");
+    expect(source).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|fill="/i);
+  });
+});
+
 describe("icon sizes", () => {
   it("draws file icons only through AttachmentIcon, so every file shows its kind", () => {
     const dir = resolve(process.cwd(), "src");

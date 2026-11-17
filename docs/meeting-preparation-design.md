@@ -2,8 +2,7 @@
 
 **Status:** Stages 1 (contracts and extraction), 2 (local preparation), and 3
 (manual follow-through and durable drafts) implemented. Stage 3's Shut Down
-list is built for the routine, which isn't wired into Today yet. Later stages
-remain proposed.
+list appears in Today's evening view. Later stages remain proposed.
 **Baseline:** 0.210.0 repository, reviewed 2026-11-15; daily-loop entry points
 added 2026-11-16.
 **Priority:** Next feature in the [product plan](../PLAN.MD#recommended-sequence-and-next-feature),
@@ -509,8 +508,8 @@ the preparation view, which lists the reviews saved for the occurrence and says
 "Not reviewed yet" otherwise. `MeetingFollowThroughList` (in
 `src/MeetingReadinessList.tsx`) is the Shut Down meeting step: the day's ended,
 not-declined, timed meetings with their follow-through state, **Review
-Follow-through**, and **No Follow-through**. Shut Down itself (daily planning
-design) is not built yet, so the list has no entry point in Today.
+Follow-through**, and **No Follow-through**. Shut Down is Today's evening view
+(daily planning design, stage 4), which shows the list in its **Loose ends**.
 
 - **Section format** (`src-tauri/src/meeting_follow_through.rs`, mirrored by
   `src/meetingFollowThrough.ts`, both passing `fixtures/meeting-follow-through.json`):

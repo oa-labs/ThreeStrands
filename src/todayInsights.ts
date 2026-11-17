@@ -219,8 +219,32 @@ export const EVENING_HINT_MINUTES = 60;
 export function offersPlanTomorrow(events: readonly ScheduleEvent[], workingHours: WorkingHours | null, now: Date): boolean {
   const meetings = events.filter((event) => isAttending(event) && event.eventType !== "workingLocation");
   if (meetings.length && Math.max(...meetings.map((event) => new Date(event.end).getTime())) <= now.getTime()) return true;
-  if (!workingHours) return false;
+  const end = workingDayEnd(workingHours, now);
+  return end !== null && now.getTime() >= end - EVENING_HINT_MINUTES * 60_000;
+}
+
+/** When the default profile's working hours end today (the last window's end), or null without working hours or a window today. */
+export function workingDayEnd(workingHours: WorkingHours | null, now: Date): number | null {
+  if (!workingHours) return null;
   const day = planCapacity([], workingHours, new Date(0), schedulingDay(now.getTime(), workingHours.timeZone));
-  const end = day?.stretches.at(-1)?.end.getTime();
-  return end !== undefined && now.getTime() >= end - EVENING_HINT_MINUTES * 60_000;
+  return day?.stretches.at(-1)?.end.getTime() ?? null;
+}
+
+/** Without working hours, Today's evening view opens after this local hour (6 pm). */
+export const EVENING_FALLBACK_HOUR = 18;
+
+/**
+ * Whether Today's evening view opens by itself: today's last attending, timed
+ * meeting has ended (a day without one counts) and now is past the end of
+ * the default profile's working hours, or past 6 pm local time without any.
+ * `events` is null while the schedule is unknown (loading or failed), which
+ * never opens it, since a meeting may still be ahead.
+ */
+export function eveningOpens(events: readonly ScheduleEvent[] | null, workingHours: WorkingHours | null, now: Date): boolean {
+  if (!events) return false;
+  const meetings = events.filter((event) => isAttending(event) && event.eventType !== "workingLocation");
+  if (meetings.some((event) => new Date(event.end).getTime() > now.getTime())) return false;
+  const end = workingDayEnd(workingHours, now);
+  if (end !== null) return now.getTime() >= end;
+  return now.getHours() >= EVENING_FALLBACK_HOUR;
 }

@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 
 pub const PLAN_HEADING: &str = "Plan";
 pub const NOT_TODAY_HEADING: &str = "Not today";
+/// The subsection of the plan where Today's evening view appends notes on the day.
+pub const SHUTDOWN_HEADING: &str = "Shutdown";
+/// Longest note on the day one save appends, in characters; `MAX_SHUTDOWN_NOTE_CHARS` in `src/dailyPlan.ts`.
+pub const MAX_SHUTDOWN_NOTE_CHARS: usize = 2000;
 const MARKER: &str = "<!-- threestrands-plan:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,6 +330,36 @@ fn last_text(lines: &[Line<'_>], from: usize, to: usize, fallback: usize) -> usi
         .map_or(fallback, |line| line.end())
 }
 
+/// `body` with a whole `## Plan` section (`block`, ending in a line break)
+/// added before `## Meetings` when that exists, else at the end of the note.
+fn add_plan_section(
+    body: &str,
+    lines: &[Line<'_>],
+    scanned: &[(bool, Option<(usize, String)>)],
+    block: &str,
+) -> String {
+    let meetings = scanned
+        .iter()
+        .position(|(_, h)| matches!(h, Some((2, key)) if key == "meetings"));
+    match meetings {
+        Some(at) => format!(
+            "{}{block}\n{}",
+            &body[..lines[at].start],
+            &body[lines[at].start..]
+        ),
+        None => {
+            let separator = if body.is_empty() || body.ends_with("\n\n") {
+                ""
+            } else if body.ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            format!("{body}{separator}{block}")
+        }
+    }
+}
+
 /// `body` with `new_lines` added as plan items (or under `### Not today`),
 /// after the existing ones. Without a `## Plan` section, the section is added
 /// before `## Meetings` when that exists, else at the end of the note.
@@ -351,26 +385,7 @@ pub fn insert_plan_lines(
         }
         block.push_str(&joined);
         block.push('\n');
-        let meetings = scanned
-            .iter()
-            .position(|(_, h)| matches!(h, Some((2, key)) if key == "meetings"));
-        return Ok(match meetings {
-            Some(at) => format!(
-                "{}{block}\n{}",
-                &body[..lines[at].start],
-                &body[lines[at].start..]
-            ),
-            None => {
-                let separator = if body.is_empty() || body.ends_with("\n\n") {
-                    ""
-                } else if body.ends_with('\n') {
-                    "\n"
-                } else {
-                    "\n\n"
-                };
-                format!("{body}{separator}{block}")
-            }
-        });
+        return Ok(add_plan_section(body, &lines, &scanned, &block));
     };
     let head = lines
         .iter()
@@ -414,6 +429,77 @@ pub fn insert_plan_lines(
         if blank_first { "\n\n" } else { "\n" },
         &body[at..]
     ))
+}
+
+/// A note on the day as one Markdown paragraph: whitespace collapsed to
+/// single spaces, inline syntax escaped as other inserted text is, and a
+/// leading list, quote, or ordered-list marker escaped so it stays text.
+/// Mirrored by `shutdownParagraph` in `src/dailyPlan.ts`.
+pub fn shutdown_paragraph(text: &str) -> Result<String, String> {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return Err("Write something to add to the day's notes.".into());
+    }
+    if collapsed.chars().count() > MAX_SHUTDOWN_NOTE_CHARS {
+        return Err(format!(
+            "Shorten the notes to {MAX_SHUTDOWN_NOTE_CHARS} characters or fewer."
+        ));
+    }
+    let escaped = escape_inline(&collapsed);
+    let digits = escaped.chars().take_while(char::is_ascii_digit).count();
+    if digits > 0 && escaped[digits..].starts_with(['.', ')']) {
+        return Ok(format!("{}\\{}", &escaped[..digits], &escaped[digits..]));
+    }
+    Ok(if escaped.starts_with(['-', '+', '>']) {
+        format!("\\{escaped}")
+    } else {
+        escaped
+    })
+}
+
+/// `body` with a `### Shutdown` paragraph at the end of the Plan section: under
+/// an existing `### Shutdown` subsection when there is one, else under a new
+/// one after everything else in the section. A note without a `## Plan`
+/// section gets one, placed as `insert_plan_lines` places it.
+pub fn append_shutdown_note(note: &str, body: &str, text: &str) -> Result<String, String> {
+    let paragraph = shutdown_paragraph(text)?;
+    if note_entities::parse(note, body)?.unclosed_fence {
+        return Err("unclosed fence".into());
+    }
+    let lines = meeting_excerpt::lines(body);
+    let scanned = scan(&lines);
+    let Some(section) = parse_plan(note, body)? else {
+        let block = format!("## {PLAN_HEADING}\n\n### {SHUTDOWN_HEADING}\n\n{paragraph}\n");
+        return Ok(add_plan_section(body, &lines, &scanned, &block));
+    };
+    let head = lines
+        .iter()
+        .position(|line| line.start == section.start)
+        .unwrap_or(0);
+    let close = lines
+        .iter()
+        .position(|line| line.start > section.end)
+        .unwrap_or(lines.len());
+    let shutdown = (head + 1..close).find(
+        |at| matches!(&scanned[*at].1, Some((3, key)) if key == &SHUTDOWN_HEADING.to_lowercase()),
+    );
+    Ok(match shutdown {
+        Some(at) => {
+            let sub_close = (at + 1..close)
+                .find(|next| matches!(&scanned[*next].1, Some((level, _)) if *level <= 3))
+                .unwrap_or(close);
+            let point = last_text(&lines, at, sub_close, lines[at].end());
+            format!("{}\n\n{paragraph}{}", &body[..point], &body[point..])
+        }
+        None => {
+            let point = last_text(&lines, head, close, lines[head].end());
+            format!(
+                "{}\n\n### {SHUTDOWN_HEADING}\n\n{paragraph}{}",
+                &body[..point],
+                &body[point..]
+            )
+        }
+    })
 }
 
 /// One place in a rearranged plan: an existing item, by its index in
@@ -554,6 +640,14 @@ mod tests {
         parse: Vec<ParseCase>,
         insert: Vec<InsertCase>,
         arrange: Vec<ArrangeCase>,
+        shutdown: Vec<ShutdownCase>,
+    }
+    #[derive(Deserialize)]
+    struct ShutdownCase {
+        name: String,
+        body: String,
+        text: String,
+        expected: String,
     }
     #[derive(Deserialize)]
     struct ArrangeCase {
@@ -708,6 +802,35 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn notes_on_the_day_match_the_shared_fixtures() {
+        for case in fixtures().shutdown {
+            let actual = append_shutdown_note("daily:2026-11-16", &case.body, &case.text)
+                .unwrap_or_else(|_| "ERROR".to_string());
+            assert_eq!(actual, case.expected, "{}", case.name);
+        }
+    }
+
+    #[test]
+    fn a_note_on_the_day_is_bounded_and_never_starts_a_list() {
+        let longest = "x".repeat(MAX_SHUTDOWN_NOTE_CHARS);
+        assert_eq!(shutdown_paragraph(&longest).unwrap(), longest);
+        assert!(shutdown_paragraph(&format!("{longest}x")).is_err());
+        assert_eq!(shutdown_paragraph("+ plus").unwrap(), "\\+ plus");
+        assert_eq!(shutdown_paragraph("> quoted").unwrap(), "\\> quoted");
+        assert_eq!(shutdown_paragraph("12) twelve").unwrap(), "12\\) twelve");
+        assert_eq!(
+            shutdown_paragraph("2026 was fine").unwrap(),
+            "2026 was fine"
+        );
+        // Appending twice leaves the plan's own items alone.
+        let once = append_shutdown_note("n", "## Plan\n\n- a\n", "One.").unwrap();
+        let twice = append_shutdown_note("n", &once, "Two.").unwrap();
+        let section = parse_plan("n", &twice).unwrap().unwrap();
+        assert_eq!(section.items.len(), 1);
+        assert!(section.not_today.is_empty());
     }
 
     #[test]

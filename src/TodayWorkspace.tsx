@@ -10,7 +10,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { ContextSection } from "./ContextSections";
 import { mailClient } from "./data/client";
-import type { CalendarAccount, CalendarOption, ContactProfile, DailyPlanItem, OpenPromise, PlanCandidate as SourceCandidate, PlanSourceKind, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
+import type { CalendarAccount, CalendarOption, ContactProfile, DailyPlanItem, OpenPromise, PlanCompletedTask, PlanCandidate as SourceCandidate, PlanSourceKind, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { agendaEventsFor, formatClockTime, isDeclined, isPastEvent } from "./agendaEvents";
 import { addDays, eventDate, startOfLocalDay } from "./calendarTime";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -20,7 +20,12 @@ import { describeDue, isKeepInTouchDue } from "./keepInTouch";
 import { meetingPlace } from "./ThreadAssist";
 import { dismissPromise, promiseRecipients, readDismissedPromises } from "./openPromises";
 import { compareTasksForDisplay, dueView, formatDue, isActiveTaskStatus, isOverdue } from "./taskViews";
-import { daySummary, meetingsWith, offersPlanTomorrow } from "./todayInsights";
+import { daySummary, eveningOpens, meetingsWith, offersPlanTomorrow } from "./todayInsights";
+import { groupTodayMail } from "./todayMail";
+import { carriedToTomorrow, readViewChoice, resolveView, writeViewChoice, type TodayView } from "./eveningView";
+import { EveningReview, EveningTomorrow } from "./TodayEvening";
+import { TodayBackdrop } from "./TodayBackdrop";
+import { useTodayBackdrop } from "./backdropPreference";
 import { parseAddress } from "./emailAddress";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import { normalizeContactAddress, type NoteReference } from "./noteEntities";
@@ -164,6 +169,9 @@ function TodayLayout({
   const [announcement, setAnnouncement] = useState("");
   const [reconnect, setReconnect] = useState<ContactProfile[]>([]);
   const [promises, setPromises] = useState<OpenPromise[]>([]);
+  // Tasks completed today, for the evening view's Done when today has no plan to review.
+  const [completedToday, setCompletedToday] = useState<ThreadTask[]>([]);
+  const [dayClosedState, setDayClosed] = useState(false);
   const [dismissed, setDismissed] = useState(readDismissedPromises);
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
@@ -177,7 +185,11 @@ function TodayLayout({
     const [mailResult, taskResult, contactResult, promiseResult] = results;
     if (mailResult.status === "fulfilled") { setMail(mailResult.value); setMailError(null); }
     else setMailError(errorMessage(mailResult.reason));
-    if (taskResult.status === "fulfilled") setTasks(taskResult.value.filter((task) => isActiveTaskStatus(task.status)).sort(compareTasksForDisplay));
+    if (taskResult.status === "fulfilled") {
+      setTasks(taskResult.value.filter((task) => isActiveTaskStatus(task.status)).sort(compareTasksForDisplay));
+      const today = startOfLocalDay(new Date()).getTime();
+      setCompletedToday(taskResult.value.filter((task) => task.status === "completed" && task.completedAt && startOfLocalDay(new Date(task.completedAt)).getTime() === today));
+    }
     if (contactResult.status === "fulfilled") setReconnect(contactResult.value.filter((profile) => isKeepInTouchDue(profile))
       .sort((left, right) => (left.keepInTouchDueAt ?? "").localeCompare(right.keepInTouchDueAt ?? "")));
     if (promiseResult.status === "fulfilled") setPromises(promiseResult.value);
@@ -252,6 +264,21 @@ function TodayLayout({
   };
 
   const todaysEvents = agendaEventsFor(schedule?.events ?? [], now, calendars);
+  // Today's two faces: the evening view opens by itself once the day's meetings and working hours are over,
+  // or when chosen with Review Today; the choice lasts the rest of the day on this device.
+  const [choice, setChoice] = useState<TodayView | null>(() => readViewChoice(planDate));
+  useEffect(() => { setChoice(readViewChoice(planDate)); }, [planDate]);
+  const scheduleKnown = !schedule ? [] : schedule.error || (schedule.loading && schedule.events.length === 0) ? null : todaysEvents;
+  const view = resolveView(choice, eveningOpens(scheduleKnown, workingHours, now));
+  const evening = view === "evening";
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const switchView = useCallback((next: TodayView) => { writeViewChoice(planDate, next); setChoice(next); }, [planDate]);
+  const toggleView = useCallback(() => switchView(viewRef.current === "evening" ? "day" : "evening"), [switchView]);
+  const backdrop = useTodayBackdrop();
+  const tomorrowDate = addDays(startOfLocalDay(now), 1);
+  const tomorrowKey = todayTarget(tomorrowDate).date;
+  const tomorrowList = schedule ? agendaEventsFor(schedule.events, tomorrowDate, calendars) : [];
   // Preparation takes the plan's place beside the day view. Choosing the
   // meeting being prepared again closes it, and closing returns focus to
   // whatever opened it.
@@ -269,12 +296,12 @@ function TodayLayout({
   } : undefined;
   const next = nextMeeting(todaysEvents, now);
   // The meetings arrow keys move between while preparing, in agenda order.
-  const meetings = todaysEvents.filter((event) => isPreparable(event) && !isDeclined(event));
+  const meetings = [...todaysEvents, ...(evening ? tomorrowList : [])].filter((event) => isPreparable(event) && !isDeclined(event));
   // Choosing an event prepares it; one that can't be prepared, such as a
   // working location, opens in Calendar as before.
   const chooseEvent = (event: ScheduleEvent, trigger?: HTMLElement) => (prepare && isPreparable(event) ? prepare(event, trigger) : onOpenEvent(event));
   // What is ready for each meeting still ahead, shown on the day view and the agenda.
-  const ahead = meetingsToPrepare(todaysEvents, now);
+  const ahead = [...meetingsToPrepare(todaysEvents, now), ...(evening ? meetingsToPrepare(tomorrowList, now) : [])];
   // The hook keys its request by the references' content, so a new array each render doesn't reload.
   const readiness = useMeetingReadiness(ahead.flatMap((event) => { const reference = meetingEventReference(event); return reference ? [reference] : []; }), `${refreshKey}:${taskRefreshKey}`);
   const readinessRows = readinessByKey(readiness.rows);
@@ -291,7 +318,7 @@ function TodayLayout({
   const unreadFromAttendees = new Map<ScheduleEvent, number>();
   for (const item of mail?.threads ?? []) {
     if (!item.sender) continue;
-    for (const event of meetingsWith(parseAddress(item.sender).email, todaysEvents, now)) unreadFromAttendees.set(event, (unreadFromAttendees.get(event) ?? 0) + 1);
+    for (const event of meetingsWith(parseAddress(item.sender).email, evening ? [...todaysEvents, ...tomorrowList] : todaysEvents, now)) unreadFromAttendees.set(event, (unreadFromAttendees.get(event) ?? 0) + 1);
   }
   // A plan card and the block booked for its task highlight each other on hover or focus.
   const [linked, setLinked] = useState<string | null>(null);
@@ -338,7 +365,7 @@ function TodayLayout({
       if (!preparation || !prepare) return;
       if (preparation.event) { closePreparation(); return; }
       const focused = document.activeElement instanceof HTMLElement ? document.activeElement.closest("[data-row-key]")?.getAttribute("data-row-key") : null;
-      const target = meetings.find((event) => focused === `meeting:${preparationKey(event)}`) ?? next ?? meetingsToPrepare(todaysEvents, now)[0] ?? meetings[0];
+      const target = meetings.find((event) => focused === `meeting:${preparationKey(event)}`) ?? next ?? ahead[0] ?? meetings[0];
       if (target) prepare(target);
     },
     "meetings.closePrepare": closePreparation,
@@ -655,8 +682,9 @@ function TodayLayout({
   useEffect(() => {
     if (!planRequest) return;
     onPlanRequestConsumed?.(planRequest.id);
-    openRoutine(planRequest.day);
-  }, [planRequest, onPlanRequestConsumed, openRoutine]);
+    if (planRequest.day === "review") toggleView();
+    else openRoutine(planRequest.day);
+  }, [planRequest, onPlanRequestConsumed, openRoutine, toggleView]);
   const [routineSourceId, setRoutineSourceId] = useState("suggested");
   const routineKind = routine ? REMOTE_SOURCES[routineSourceId] ?? null : null;
   const routinePage = usePlanSourcePage(routine?.date ?? planDate, routineKind, routineKind === "notes" ? null : accountId, `${refreshKey}:${taskRefreshKey}`);
@@ -664,12 +692,16 @@ function TodayLayout({
   const eveningOffer = schedule && !schedule.loading && !schedule.error ? offersPlanTomorrow(todaysEvents, workingHours, now) : offersPlanTomorrow([], workingHours, now);
   const hasPlan = (plan?.items.length ?? 0) > 0;
 
-  const selectedEvent = todaysEvents.find((event) => selectedKey !== null && preparationKey(event) === selectedKey) ?? null;
+  const selectedEvent = [...todaysEvents, ...tomorrowList].find((event) => selectedKey !== null && preparationKey(event) === selectedKey) ?? null;
+
+  const needsReply = mail ? groupTodayMail(mail.threads).reply.length : null;
+  const openCompletedTask = (task: PlanCompletedTask) => { if (task.noteId) onOpenNote?.(task.noteId); else void openCandidateTask(task.taskId); };
 
   return <section ref={pageRef} className="today-workspace" aria-label="Today" aria-busy={pull.refreshing}>
     <div className="today-page">
     <PullToRefreshStatus {...pull} />
     <header className="today-header">
+      {backdrop ? <TodayBackdrop view={view} now={now} /> : null}
       <div className="today-heading">
         {/* Mail and tasks follow the account in view; the day view shows every selected calendar, as Calendar does. */}
         {/* The plan and the day view cover every account, so the account in view is named beside what it scopes: the mail line and the sources. */}
@@ -679,8 +711,11 @@ function TodayLayout({
         <div className="today-plan-status">
           {hasPlan
             ? <>{progress ? <span className="today-plan-progress">{progress}</span> : null}<button type="button" className="btn btn-sm" onClick={() => openRoutine("today")}>Edit Plan</button></>
-            : <button type="button" className="btn btn-sm" onClick={() => openRoutine("today")}>Plan Today</button>}
-          {eveningOffer ? <button type="button" className="btn btn-sm" onClick={() => openRoutine("tomorrow")}>Plan Tomorrow</button> : null}
+            : evening ? null : <button type="button" className="btn btn-sm" onClick={() => openRoutine("today")}>Plan Today</button>}
+          {/* In the evening view, Plan Tomorrow sits in the tomorrow column. */}
+          {eveningOffer && !evening ? <button type="button" className="btn btn-sm" onClick={() => openRoutine("tomorrow")}>Plan Tomorrow</button> : null}
+          {evening && dayClosedState ? <span className="today-day-closed" role="status">Day closed</span> : null}
+          <button type="button" className="btn btn-sm" onClick={toggleView}>{evening ? "Back to Today's Plan" : "Review Today"}</button>
         </div>
       </div>
       {/* While a meeting is being prepared, its actions are in preparation, so the card is only a link. */}
@@ -690,13 +725,26 @@ function TodayLayout({
     <div className="today-columns">
       {preparation?.event ? <div className="today-column today-preparation" role="group" aria-label="Preparation">
         {preparation.render(preparation.event, closePreparation)}
-      </div> : <div className="today-column today-work" role="group" aria-label="Plan">
+      </div> : evening ? <EveningReview
+        today={planDate} tomorrow={tomorrowKey} now={now} plan={plan} reloadPlan={reloadPlan} refreshKey={`${refreshKey}:${taskRefreshKey}`}
+        events={schedule ? todaysEvents : null} completedToday={completedToday} promises={openPromises} needsReply={needsReply}
+        onNotice={notice} onOpenNote={(noteId) => onOpenNote?.(noteId)} onOpenInbox={onOpenInbox} onOpenThread={onOpenThread}
+        onOpenPlanItem={(item) => void activatePlanItem(item)} onOpenCompletedTask={openCompletedTask} onOpenEvent={onOpenEvent}
+        onPrepareMeeting={(event) => chooseEvent(event)} onAddMeetingNote={onAddNote}
+        onMakeTask={(promise) => void trackPromise(promise)} onDismissPromise={(promise) => setDismissed(dismissPromise(promise.messageId))}
+        onClosedChange={setDayClosed} />
+      : <div className="today-column today-work" role="group" aria-label="Plan">
         <PlanCards plan={plan} error={planError} events={todaysEvents} now={now} drag={drag} linked={linked} onLink={setLinked}
           onToggle={(item) => void togglePlanItem(item)} onActivate={(item) => void activatePlanItem(item)}
           onBook={(item) => void bookNext(itemBlock(item))} onRemove={(item) => void removeItem(item)} />
         <PlanSourceSwitcher sources={sources} selected={sourceId} onSelect={setSourceId} planned={planned} drag={drag} onAdd={(candidate) => void addCandidate(candidate)} />
       </div>}
-      <div className="today-column today-time" role="group" aria-label="Schedule">
+      {evening ? <EveningTomorrow
+        tomorrow={tomorrowDate} now={now} events={tomorrowList} schedule={schedule} calendars={calendars} carried={carriedToTomorrow(plan, tomorrowKey)}
+        workingHours={workingHours} selectedEvent={selectedEvent} eventDecoration={decorateEvent} gridRef={gridRef} preview={null}
+        onChooseEvent={chooseEvent} onOpenPlanItem={(item) => void activatePlanItem(item)} onPlanTomorrow={() => openRoutine("tomorrow")}
+        onOpenCalendar={onOpenCalendar} onAddNote={onAddNote} onPrepare={prepare} selectedKey={selectedKey} />
+      : <div className="today-column today-time" role="group" aria-label="Schedule">
         {schedule ? <>
           <TodayDayView events={todaysEvents} now={now} loading={schedule.loading} error={schedule.error} onRetry={schedule.reload}
             selectedEvent={selectedEvent} onChooseEvent={(event, trigger) => chooseEvent(event, trigger)} eventDecoration={decorateEvent}
@@ -711,7 +759,7 @@ function TodayLayout({
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}
         <p className="today-column-link"><button type="button" className="btn-link" onClick={onOpenCalendar}>Open Calendar</button></p>
-      </div>
+      </div>}
     </div>
     </div>
     <p className="sr-only" aria-live="polite">{announcement}</p>

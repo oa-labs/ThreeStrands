@@ -38,6 +38,31 @@ describe("usePlanRoutine", () => {
     await waitFor(() => expect(next.result.current.state?.step).toBe("review"));
   });
 
+  it("starts with the items deferred to this very day, such as those carried to tomorrow in the evening, chosen as Carry", async () => {
+    vi.spyOn(mailClient, "dailyPlan").mockResolvedValue(plan([]));
+    const due = (id: string, until: string, overrides: Partial<DailyPlanItem> = {}) => ({ ...item(id), marker: { kind: "deferred" as const, date: until }, plannedOn: "2026-11-16", ...overrides });
+    vi.spyOn(mailClient, "planReview").mockResolvedValue({
+      ...emptyReview, reviewed: "2026-11-16",
+      didntGetTo: [due("a", DAY), due("early", "2026-11-10"), { ...item("b"), plannedOn: "2026-11-16" }, due("gone", DAY, { state: "unavailable" })],
+    });
+    const { result } = renderHook(() => usePlanRoutine(DAY));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    // Only the deferral that falls on this day, and only when it can be carried.
+    expect(Object.keys(result.current.state!.decisions)).toEqual([item("a").key]);
+    expect(result.current.state!.decisions[item("a").key]).toMatchObject({ kind: "carry", plannedOn: "2026-11-16" });
+    expect(result.current.state!.items.map((entry) => [entry.title, entry.carried])).toEqual([["Task a", "2026-11-16"]]);
+  });
+
+  it("does not choose them again over a routine restored from this device", async () => {
+    vi.spyOn(mailClient, "dailyPlan").mockResolvedValue(plan([]));
+    vi.spyOn(mailClient, "planReview").mockResolvedValue({ ...emptyReview, reviewed: "2026-11-16", didntGetTo: [{ ...item("a"), marker: { kind: "deferred", date: DAY }, plannedOn: "2026-11-16" }] });
+    writeRecovery(addNewTask(startRoutine(DAY, plan([])), "Draft memo"));
+    const { result } = renderHook(() => usePlanRoutine(DAY));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    expect(result.current.restored).not.toBeNull();
+    expect(result.current.state!.decisions).toEqual({});
+  });
+
   it("keeps choices on this device as they change and restores them, re-based, with Discard", async () => {
     vi.spyOn(mailClient, "dailyPlan").mockResolvedValue(plan([item("a")], "r2"));
     vi.spyOn(mailClient, "planReview").mockResolvedValue(emptyReview);
@@ -63,7 +88,7 @@ describe("usePlanRoutine", () => {
     vi.spyOn(mailClient, "dailyPlan").mockResolvedValue(plan([item("a")]));
     vi.spyOn(mailClient, "planReview").mockResolvedValue(emptyReview);
     const save = vi.spyOn(mailClient, "saveDailyPlan").mockRejectedValueOnce(new Error("That day's note changed. Open it before saving the plan."))
-      .mockResolvedValue({ operationId: "x", note: note("r3"), added: [], removed: [], notToday: [], already: [], changed: true });
+      .mockResolvedValue({ operationId: "x", note: note("r3"), added: [], removed: [], notToday: [], already: [], changed: true, shutdown: false });
     const { result } = renderHook(() => usePlanRoutine(DAY));
     await waitFor(() => expect(result.current.state).not.toBeNull());
     act(() => result.current.update((state) => addNewTask(state, "Draft memo")));

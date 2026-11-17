@@ -278,5 +278,85 @@
       "remove": [],
       "expected": "ERROR"
     }
+  ],
+  "shutdown": [
+    {
+      "name": "into an empty note",
+      "body": "",
+      "text": "Good day.",
+      "expected": "## Plan\n\n### Shutdown\n\nGood day.\n"
+    },
+    {
+      "name": "before the Meetings section of a note without a plan",
+      "body": "# Monday\n\n## Meetings\n\n- 9am Sync\n",
+      "text": "Good day.",
+      "expected": "# Monday\n\n## Plan\n\n### Shutdown\n\nGood day.\n\n## Meetings\n\n- 9am Sync\n"
+    },
+    {
+      "name": "after the plan items, before the next section",
+      "body": "## Plan\n\n- a\n\n## Meetings\n\n- 9am Sync\n",
+      "text": "Shipped the deck.",
+      "expected": "## Plan\n\n- a\n\n### Shutdown\n\nShipped the deck.\n\n## Meetings\n\n- 9am Sync\n"
+    },
+    {
+      "name": "after Not today, at the end of the section",
+      "body": "## Plan\n\n- a\n\n### Not today\n\n- b <!-- threestrands-plan:dropped -->\n",
+      "text": "Shipped the deck.",
+      "expected": "## Plan\n\n- a\n\n### Not today\n\n- b <!-- threestrands-plan:dropped -->\n\n### Shutdown\n\nShipped the deck.\n"
+    },
+    {
+      "name": "under an existing Shutdown that ends the section",
+      "body": "## Plan\n\n- a\n\n### Shutdown\n\nFirst.\n",
+      "text": "Second.",
+      "expected": "## Plan\n\n- a\n\n### Shutdown\n\nFirst.\n\nSecond.\n"
+    },
+    {
+      "name": "under an existing Shutdown that another subsection follows",
+      "body": "## Plan\n\n- a\n\n### Shutdown\n\nFirst.\n\n### Not today\n\n- b <!-- threestrands-plan:dropped -->\n",
+      "text": "Second.",
+      "expected": "## Plan\n\n- a\n\n### Shutdown\n\nFirst.\n\nSecond.\n\n### Not today\n\n- b <!-- threestrands-plan:dropped -->\n"
+    },
+    {
+      "name": "an empty Shutdown heading gets its paragraph beneath it",
+      "body": "## Plan\n\n- a\n\n### Shutdown\n",
+      "text": "First.",
+      "expected": "## Plan\n\n- a\n\n### Shutdown\n\nFirst.\n"
+    },
+    {
+      "name": "whitespace collapses into one paragraph and inline syntax is escaped",
+      "body": "## Plan\n\n- a\n",
+      "text": "Met  Sam\n  about *the* [deck] <b>",
+      "expected": "## Plan\n\n- a\n\n### Shutdown\n\nMet Sam about \\*the\\* \\[deck\\] \\<b>\n"
+    },
+    {
+      "name": "a leading list marker stays text so it can't become a plan item",
+      "body": "## Plan\n\n- a\n",
+      "text": "- call Sam",
+      "expected": "## Plan\n\n- a\n\n### Shutdown\n\n\\- call Sam\n"
+    },
+    {
+      "name": "a leading ordered-list marker stays text",
+      "body": "## Plan\n\n- a\n",
+      "text": "1. call Sam",
+      "expected": "## Plan\n\n- a\n\n### Shutdown\n\n1\\. call Sam\n"
+    },
+    {
+      "name": "a plan heading inside code is not the plan",
+      "body": "```\n## Plan\n```\n",
+      "text": "Done.",
+      "expected": "```\n## Plan\n```\n\n## Plan\n\n### Shutdown\n\nDone.\n"
+    },
+    {
+      "name": "an unclosed code fence is refused",
+      "body": "## Plan\n\n- a\n\n```\ncode\n",
+      "text": "Done.",
+      "expected": "ERROR"
+    },
+    {
+      "name": "empty text is refused",
+      "body": "## Plan\n\n- a\n",
+      "text": "  \n ",
+      "expected": "ERROR"
+    }
   ]
 }

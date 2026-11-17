@@ -23,6 +23,10 @@ For when conversations are marked read, see [Reading & Triage](triage.html#mark-
 
 Use <kbd>⌘/Ctrl + k</kbd> for commands and <kbd>?</kbd> for shortcuts. Single-letter shortcuts apply outside editing fields. <kbd>F6</kbd> moves between the composer and its side panel. Standard editing shortcuts keep their text-editing behavior inside fields.
 
+## Add a Backdrop to Today {#today-backdrop}
+
+**Today Backdrop**, under **Settings → Appearance**, is off until you turn it on. It draws a soft sky behind the top of [Today](today.html): a daytime scene with the sun higher toward noon while you work, and a dusk scene with a moon and a few stars in the [evening view](today.html#review-your-day). It is decoration only: it never sits behind your lists, text stays readable in light and dark themes, and with reduced motion on the scene doesn't fade in. It stays on this computer and isn't part of exported settings.
+
 ## Choose Your Starting View {#choose-your-starting-view}
 
 **Start With** can open Today when the app starts. Otherwise ThreeStrands remembers the workspace you last used. Today needs a connected calendar only for its agenda; mail and tasks work without one.

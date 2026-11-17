@@ -6,7 +6,7 @@ import { saveDailyPlan } from "./noteCapture";
 import { prepareNoteMutation } from "./noteMutations";
 import { noteTargetKey } from "./noteDrafts";
 import { isActiveTaskStatus } from "./taskViews";
-import { discardRecovery, hasChoices, markMissing, planChanges, readRecovery, rebase, startRoutine, writeRecovery, type RoutineItem, type RoutineState } from "./planRoutine";
+import { decide, discardRecovery, hasChoices, markMissing, planChanges, readRecovery, rebase, startRoutine, writeRecovery, type RoutineItem, type RoutineState } from "./planRoutine";
 import { planItemKey, type PlanAddition } from "./dailyPlan";
 import type { BlockTarget } from "./todayBooking";
 
@@ -68,7 +68,13 @@ export function usePlanRoutine(date: string) {
         const present = (item: RoutineItem) => !listed || item.existing || item.carried !== null || item.addition?.kind !== "link"
           || item.addition.reference.kind !== "task" || known.has(item.key ?? "");
         const recovered = readRecovery(date);
-        const next = recovered ? rebase(markMissing(recovered, present), loaded) : startRoutine(date, loaded);
+        let next = recovered ? rebase(markMissing(recovered, present), loaded) : startRoutine(date, loaded);
+        // A fresh routine starts with what was set aside for this very day, such as items carried to tomorrow in the evening, chosen as Carry.
+        if (!recovered && reviewResult.status === "fulfilled") {
+          for (const row of reviewResult.value.didntGetTo) {
+            if (row.marker?.kind === "deferred" && row.marker.date === date && row.state !== "unavailable") next = decide(next, row, { kind: "carry" });
+          }
+        }
         setPlan(loaded);
         setTasks(searchable);
         if (reviewResult.status === "fulfilled") setReview(reviewResult.value);

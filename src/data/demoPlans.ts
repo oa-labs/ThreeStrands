@@ -1,5 +1,5 @@
 import type { ContactProfile, DailyPlan, Note, PlanSaveResult, DailyPlanItem, Goal, OpenPromise, PlanCandidate, PlanCandidateReason, PlanCompletedTask, PlanHistory, PlanReview, PlanReviewItem, PlanSourcePage, ScheduleEvent, Thread, ThreadTask } from "../domain";
-import { arrangePlanItems, planItemKey, insertPlanLines, parsePlan, planLine, removePlanLine, type Arranged, type PlanLine, type PlanSection } from "../dailyPlan";
+import { appendShutdownNote, arrangePlanItems, planItemKey, insertPlanLines, parsePlan, planLine, removePlanLine, type Arranged, type PlanLine, type PlanSection } from "../dailyPlan";
 import { extractNoteEntityLinks, normalizeContactAddress, type NoteReference } from "../noteEntities";
 import { periodFor } from "../goals";
 import { compareTasksForDisplay, isActiveTaskStatus } from "../taskViews";
@@ -368,11 +368,12 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
         notToday.push(key);
       }
       if (lines.length) body = insertPlanLines(noteId, body, lines, true);
+      if (changes.shutdown !== undefined && changes.shutdown !== null) body = appendShutdownNote(noteId, body, changes.shutdown);
       const changed = body !== previousBody;
       if (!changed && !note) throw new Error("Nothing to save");
       const saved: Note = changed ? await save(date, expected, body) : note!;
       for (const line of parsePlan(noteId, saved.body)?.items ?? []) if (line.kind === "newTask" && !existing.includes(keyOf(line)) && !added.includes(keyOf(line))) added.push(keyOf(line));
-      const result: PlanSaveResult = { operationId, note: saved, added, removed: [...changes.remove], notToday, already, changed };
+      const result: PlanSaveResult = { operationId, note: saved, added, removed: [...changes.remove], notToday, already, changed, shutdown: changes.shutdown !== undefined && changes.shutdown !== null };
       receipts.set(operationId, { date, result, previousBody, undone: false });
       return result;
     },

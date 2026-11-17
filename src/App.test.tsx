@@ -1168,6 +1168,24 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.getByRole("region", { name: "Today", hidden: true })).toBeInTheDocument();
   });
 
+  it("opens Today's evening view from the palette's Review Today, and the header returns to the plan", async () => {
+    vi.setSystemTime(new Date(2026, 10, 17, 10, 0));
+    try {
+      render(<App />);
+      await screen.findByRole("region", { name: "Inbox" });
+      fireEvent.keyDown(window, { key: "k", metaKey: true });
+      fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Review Today" } });
+      fireEvent.click(await screen.findByRole("button", { name: /^ApplicationReview Today$/ }));
+      expect(await screen.findByRole("group", { name: "Today in review" })).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Tomorrow" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Back to Today's Plan" }));
+      expect(await screen.findByRole("group", { name: "Plan" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Review Today" })).toBeInTheDocument();
+    } finally {
+      localStorage.removeItem("threestrands.today.view");
+    }
+  });
+
   it("sends the navbar Calendar button to the week calendar view", async () => {
     const { container } = render(<App />);
     await screen.findByRole("region", { name: "Inbox" });

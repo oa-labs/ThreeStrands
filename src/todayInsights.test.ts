@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatClockTime } from "./agendaEvents";
 import type { ScheduleEvent } from "./domain";
-import { agendaConflicts, dayShape, daySummary, EVENING_HINT_MINUTES, FREE_STRETCH_MINUTES, meetingsWith, mentionsRecording, offersPlanTomorrow, planCapacity, sharedMeetingsNote, type WorkingHours } from "./todayInsights";
+import { agendaConflicts, dayShape, daySummary, EVENING_HINT_MINUTES, FREE_STRETCH_MINUTES, meetingsWith, mentionsRecording, eveningOpens, EVENING_FALLBACK_HOUR, offersPlanTomorrow, planCapacity, sharedMeetingsNote, type WorkingHours } from "./todayInsights";
 import { TASK_BLOCK_MINUTES } from "./taskBooking";
 
 const now = new Date(2026, 9, 26, 10, 0);
@@ -221,5 +221,45 @@ describe("offersPlanTomorrow", () => {
     expect(offersPlanTomorrow([sync], hours, utc("11:00"))).toBe(true);
     expect(offersPlanTomorrow([sync, later, allDay], hours, utc("11:30"))).toBe(true);
     expect(offersPlanTomorrow([later], hours, utc("15:30"))).toBe(false);
+  });
+});
+
+describe("eveningOpens", () => {
+  const hours: WorkingHours = { timeZone: "UTC", workingWindows: [{ weekday: 1, start: "09:00", end: "17:00" }] };
+  const utc = (clock: string) => new Date(`2026-11-16T${clock}:00Z`);
+
+  it("opens once the last attending timed meeting has ended and working hours are over, not before either", () => {
+    const sync = meeting("sync", utc("10:00"), utc("11:00"));
+    const late = meeting("late", utc("16:00"), utc("17:30"));
+    expect(eveningOpens([sync], hours, utc("16:59"))).toBe(false);
+    expect(eveningOpens([sync], hours, utc("17:00"))).toBe(true);
+    // A meeting that runs past the end of working hours keeps the day view until it ends.
+    expect(eveningOpens([sync, late], hours, utc("17:15"))).toBe(false);
+    expect(eveningOpens([sync, late], hours, utc("17:30"))).toBe(true);
+    // Hours over but a meeting still ahead stays in the day.
+    expect(eveningOpens([meeting("dinner", utc("18:00"), utc("19:00"))], hours, utc("17:30"))).toBe(false);
+  });
+
+  it("ignores declined, all-day, and working-location events, and counts a day without meetings", () => {
+    const declined = meeting("declined", utc("18:00"), utc("19:00"), { responseStatus: "declined" });
+    const allDay = meeting("offsite", utc("00:00"), utc("23:59"), { allDay: true });
+    const location = meeting("Office", utc("09:00"), utc("19:00"), { eventType: "workingLocation" });
+    expect(eveningOpens([declined, allDay, location], hours, utc("17:30"))).toBe(true);
+    expect(eveningOpens([], hours, utc("17:30"))).toBe(true);
+  });
+
+  it("never opens while the schedule is unknown", () => {
+    expect(eveningOpens(null, hours, utc("20:00"))).toBe(false);
+  });
+
+  it("falls back to 6 pm local time without working hours, or on a day they don't cover", () => {
+    expect(EVENING_FALLBACK_HOUR).toBe(18);
+    const local = (hour: number, minute = 0) => new Date(2026, 10, 16, hour, minute);
+    expect(eveningOpens([], null, local(17, 59))).toBe(false);
+    expect(eveningOpens([], null, local(18))).toBe(true);
+    // Working hours that cover no window today (a weekend) have no end to wait for.
+    const noWindows: WorkingHours = { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, workingWindows: [] };
+    expect(eveningOpens([], noWindows, local(17, 59))).toBe(false);
+    expect(eveningOpens([], noWindows, local(18, 30))).toBe(true);
   });
 });

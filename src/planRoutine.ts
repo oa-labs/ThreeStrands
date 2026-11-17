@@ -68,7 +68,7 @@ export type RoutineState = {
   savedAt: string;
 };
 
-const newOperationId = () => (globalThis.crypto?.randomUUID?.() ?? `plan-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+export const newOperationId = () => (globalThis.crypto?.randomUUID?.() ?? `plan-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 /** What booking a plan item books: its task, or a check-in with no task. */
 export function blockForItem(item: Pick<DailyPlanItem, "kind" | "title" | "taskId" | "accountId">): BlockTarget | null {

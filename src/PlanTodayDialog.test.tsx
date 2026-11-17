@@ -42,7 +42,7 @@ function setup({ current = plan(), review = emptyReview }: { current?: DailyPlan
   vi.spyOn(mailClient, "listTasks").mockResolvedValue([task("c1"), task("c2"), task("search-me")]);
   vi.spyOn(mailClient, "listNoteTasks").mockResolvedValue([]);
   vi.spyOn(mailClient, "meetingReadiness").mockResolvedValue([]);
-  const save = vi.spyOn(mailClient, "saveDailyPlan").mockResolvedValue({ operationId: "op", note: note("r9"), added: ["k"], removed: [], notToday: [], already: [], changed: true });
+  const save = vi.spyOn(mailClient, "saveDailyPlan").mockResolvedValue({ operationId: "op", note: note("r9"), added: ["k"], removed: [], notToday: [], already: [], changed: true, shutdown: false });
   const undo = vi.spyOn(mailClient, "undoDailyPlanSave").mockResolvedValue(note("r10"));
   return { save, undo };
 }

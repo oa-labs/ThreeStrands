@@ -58,6 +58,10 @@ pub struct PlanChanges {
     pub remove: Vec<String>,
     #[serde(default)]
     pub not_today: Vec<NotTodayEntry>,
+    /// A note on the day, appended as a paragraph under `### Shutdown` at the
+    /// end of the plan section (`daily_plan::append_shutdown_note`).
+    #[serde(default)]
+    pub shutdown: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +79,9 @@ pub struct PlanSaveResult {
     pub already: Vec<String>,
     /// Whether the body changed at all.
     pub changed: bool,
+    /// Whether a note on the day was appended. Receipts saved before it existed read as false.
+    #[serde(default)]
+    pub shutdown: bool,
 }
 
 const MESSAGES: DailyInsertMessages = DailyInsertMessages {
@@ -286,6 +293,19 @@ impl Database {
                     .map_err(|_| DatabaseError::invalid(MESSAGES.fence))?;
             }
 
+            let shutdown = changes.shutdown.is_some();
+            if let Some(text) = &changes.shutdown {
+                next = daily_plan::append_shutdown_note(&note_id, &next, text).map_err(
+                    |error| {
+                        DatabaseError::invalid(if error == "unclosed fence" {
+                            MESSAGES.fence.to_string()
+                        } else {
+                            error
+                        })
+                    },
+                )?;
+            }
+
             let changed = next != *body;
             let note = if changed {
                 super::notes::save_daily_in(tx, date, &next)?
@@ -318,6 +338,7 @@ impl Database {
                 not_today,
                 already,
                 changed,
+                shutdown,
             };
             prune(tx)?;
             tx.execute(

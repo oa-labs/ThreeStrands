@@ -164,6 +164,16 @@
   --swatch-size: 22px;      /* color swatches */
   --today-day-view-min: 300px; /* narrowest day view beside Today's plan */
   --today-column-min: 280px;   /* narrowest Today column once they stack */
+  /* Today Backdrop art. Each is a flat color kept legible under the header's text, secondary text, and links; styleTokens.test.ts checks every one. */
+  --backdrop-sky-top: #142238;
+  --backdrop-sky-bottom: #182a46;
+  --backdrop-sun: #302c1d;
+  --backdrop-cloud: #1b2c49;
+  --backdrop-dusk-top: #1b1830;
+  --backdrop-dusk-bottom: #2a2246;
+  --backdrop-moon: #2a2650;
+  --backdrop-moon-shade: #2a2246;
+  --backdrop-star: #2c2750;
   /* Entrance animations; motion.test.ts keeps one-shot entrances at 200ms or less. */
   --duration-entrance: 160ms;
   --duration-spin: 1s;
@@ -205,6 +215,15 @@
   --accent-contrast: #fff;
   --overlay: #20203855;
   --shadow: #20203826;
+  --backdrop-sky-top: #dcebf8;
+  --backdrop-sky-bottom: #f3f8fd;
+  --backdrop-sun: #fbe9b3;
+  --backdrop-cloud: #ffffff;
+  --backdrop-dusk-top: #e6def5;
+  --backdrop-dusk-bottom: #fbece4;
+  --backdrop-moon: #fff7d6;
+  --backdrop-moon-shade: #eee6f8;
+  --backdrop-star: #ffffff;
 }
 
 /* Accent color themes. Each accent re-tints the purple-hued tokens from the
@@ -3737,6 +3756,19 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-next { display: flex; align-items: center; gap: var(--space-2); }
 .today-columns { display: grid; grid-template-columns: minmax(0, 2fr) minmax(var(--today-day-view-min), 1fr); align-items: start; gap: var(--space-8); padding: var(--space-4) var(--pane-inset); }
 .today-heading { min-width: 0; }
+/* The optional Today Backdrop sits behind the header band only, under its text. */
+.today-header { position: relative; isolation: isolate; }
+.today-backdrop { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: linear-gradient(to bottom, var(--backdrop-sky-top), var(--backdrop-sky-bottom)); animation: today-backdrop-in var(--duration-slow) ease; }
+/* The header's own content paints above the art, which comes first in the header. */
+.today-header > :not(.today-backdrop) { position: relative; }
+.today-backdrop[data-view="evening"] { background: linear-gradient(to bottom, var(--backdrop-dusk-top), var(--backdrop-dusk-bottom)); }
+.today-backdrop svg { display: block; width: 100%; height: 100%; }
+.today-backdrop-sun { fill: var(--backdrop-sun); }
+.today-backdrop-cloud { fill: var(--backdrop-cloud); }
+.today-backdrop-moon { fill: var(--backdrop-moon); }
+.today-backdrop-moon-shade { fill: var(--backdrop-moon-shade); }
+.today-backdrop-star { fill: var(--backdrop-star); }
+@keyframes today-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 .today-plan-progress { margin: var(--space-1) 0 0; color: var(--secondary); font-size: var(--text-body); }
 .today-plan-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-1); }
 .today-plan-status .today-plan-progress { margin: 0; }
@@ -3814,6 +3846,14 @@ input::placeholder { color: var(--muted); opacity: 1; }
   .today-agenda-fallback { display: block; }
 }
 .today-column { min-width: 0; }
+/* The evening view: Today in review on the left, tomorrow on the right. */
+.today-evening, .today-tomorrow { display: grid; gap: var(--space-4); align-content: start; }
+.today-evening-title { margin: 0; font-size: var(--text-pane-title); }
+.today-evening-section { display: grid; gap: var(--space-2); min-width: 0; }
+.today-evening-section h3 { margin: 0; font-size: var(--text-card-title); }
+.today-evening-section h4 { margin: var(--space-2) 0 0; font-size: var(--text-body); }
+.today-evening small { color: var(--secondary); font-size: var(--text-meta); }
+.today-day-closed { color: var(--success); font-size: var(--text-body); font-weight: var(--weight-semibold); }
 /* Today is the home screen, read at a glance many times a day, so its rows sit
    a step above the email list: card-title titles over body-size details. */
 .today-column .context-row-title { font-size: var(--text-card-title); }

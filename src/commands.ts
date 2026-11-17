@@ -136,8 +136,8 @@ export type CommandContext = {
   openAgentsView?(): void;
   delegateSelected?(): void;
   openTodayView?(): void;
-  /** Opens Today and starts Plan Today for today's or tomorrow's date. */
-  planDay?(day: "today" | "tomorrow"): void;
+  /** Opens Today and starts Plan Today for today's or tomorrow's date, or toggles its evening view (`review`). */
+  planDay?(day: "today" | "tomorrow" | "review"): void;
   openContactsView(): void;
   openKeepInTouchView(): void;
   openContactGroupsView(): void;
@@ -669,6 +669,10 @@ export const commands: Command[] = [
   {
     id: "today.plan", title: "Plan Today", keywords: ["daily plan", "planning", "review", "carry", "today"], keys: [], group: "Application",
     enabled: (c) => !c.composerActive && Boolean(c.planDay), run: (c) => complete(() => c.planDay?.("today")),
+  },
+  {
+    id: "today.review", title: "Review Today", keywords: ["shut down", "shutdown", "evening", "loose ends", "end of day", "close the day"], keys: [], group: "Application",
+    enabled: (c) => !c.composerActive && Boolean(c.planDay), run: (c) => complete(() => c.planDay?.("review")),
   },
   {
     id: "today.planTomorrow", title: "Plan Tomorrow", keywords: ["daily plan", "planning", "evening", "tomorrow"], keys: [], group: "Application",

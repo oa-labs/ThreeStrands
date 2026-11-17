@@ -9,6 +9,7 @@ import {
   type FontFamily,
 } from "./settings";
 import { readLaunchView, writeLaunchView, type LaunchView } from "./lastWorkspace";
+import { readTodayBackdrop, writeTodayBackdrop } from "./backdropPreference";
 import { EMAIL_MINIMUM_FONT_SIZE, EMAIL_ZOOM, parseEmailTextColors, type EmailTextColors } from "./emailRenderingPolicy";
 import { listSystemFontFamilies } from "./systemFonts";
 import { ICON_SIZE } from "./iconSizes";
@@ -300,6 +301,26 @@ export function StartupSettings() {
         ))}
       </div>
       <p className="settings-hint">Today shows your agenda, unread mail, and tasks due. Press 0 to open it any time.</p>
+    </section>
+  );
+}
+
+/** Device-only, like Start With: nothing here syncs or goes into a settings export. */
+export function TodayBackdropSettings() {
+  const [on, setOn] = useState(readTodayBackdrop);
+  return (
+    <section className="settings-section" aria-label="Today Backdrop">
+      <h3>Today Backdrop</h3>
+      <label>
+        <input
+          type="checkbox"
+          checked={on}
+          aria-describedby="today-backdrop-hint"
+          onChange={(event) => { setOn(event.target.checked); writeTodayBackdrop(event.target.checked); }}
+        />
+        Show a Day and Evening Backdrop
+      </label>
+      <p className="settings-hint" id="today-backdrop-hint">A soft sky behind the top of Today: a daytime scene while you work, and a dusk scene with a moon in the evening view. It is decoration only, and it stays on this device.</p>
     </section>
   );
 }

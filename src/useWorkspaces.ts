@@ -40,7 +40,8 @@ type Options = {
 
 /** Owns the selected workspace and calendar/contact entry points. */
 /** A request to start Plan Today for today's or tomorrow's date. */
-export type PlanRequest = { day: "today" | "tomorrow"; id: number };
+/** `review` toggles Today's evening view instead of opening the routine. */
+export type PlanRequest = { day: "today" | "tomorrow" | "review"; id: number };
 
 export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice, scheduleDay = null }: Options) {
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(readLaunchWorkspace);

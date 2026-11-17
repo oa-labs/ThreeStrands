@@ -1,5 +1,5 @@
 import { CalendarCheck, CircleSlash, ClipboardCheck, ListPlus, Undo2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { formatEventTime } from "./calendarTime";
 import type { ScheduleEvent } from "./domain";
@@ -115,13 +115,15 @@ export function MeetingFollowThroughLauncher({ event, onClose, onNotice, onAddNo
  * An unreviewed meeting offers Review Follow-through and No Follow-through
  * (this device only, undoable). Choosing a meeting prepares it.
  */
-export function MeetingFollowThroughList({ events, now, refreshKey, onPrepare, onNotice, onAddNote }: {
+export function MeetingFollowThroughList({ events, now, refreshKey, onPrepare, onNotice, onAddNote, onOutstanding }: {
   events: readonly ScheduleEvent[];
   now: Date;
   refreshKey?: unknown;
   onPrepare(event: ScheduleEvent): void;
   onNotice(notice: Notice): void;
   onAddNote?(event: ScheduleEvent): void;
+  /** Reports how many ended meetings are neither reviewed nor set aside, or null while that isn't known (loading, or couldn't be checked). */
+  onOutstanding?(count: number | null): void;
 }) {
   const ended = useMemo(() => meetingsToFollowThrough(events, now), [events, now]);
   const references = useMemo(() => ended.flatMap((event) => { const reference = meetingEventReference(event); return reference ? [reference] : []; }), [ended]);
@@ -140,6 +142,8 @@ export function MeetingFollowThroughList({ events, now, refreshKey, onPrepare, o
     const reference = meetingEventReference(event);
     return key && reference && !setAside.includes(key) && byKey.get(noteReferenceKey(reference))?.followThrough !== "reviewed";
   });
+  const known = readiness.loading || readiness.error ? null : outstanding.length;
+  useEffect(() => { onOutstanding?.(known); }, [known, onOutstanding]);
   const rows = ended.flatMap((event) => {
     const reference = meetingEventReference(event);
     const key = noFollowThroughKey(event);

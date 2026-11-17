@@ -1146,9 +1146,15 @@ export type PlanEntry = { kind: "existing"; key: string } | { kind: "add"; addit
 /** A decision about earlier unfinished work, written under `### Not today`. */
 export type NotTodayEntry = { reference: import("./noteEntities").NoteReference; label: string; decision: { kind: "deferred"; date: string } | { kind: "dropped" } };
 /** Everything Plan Today saves at once (`src-tauri/src/db/plan_save.rs`). Unnamed existing items stay where they are. */
-export type PlanChanges = { items: PlanEntry[]; remove: string[]; notToday: NotTodayEntry[] };
+export type PlanChanges = {
+  items: PlanEntry[];
+  remove: string[];
+  notToday: NotTodayEntry[];
+  /** A note on the day, appended as a paragraph under `### Shutdown` at the end of the plan section. */
+  shutdown?: string | null;
+};
 /** What a plan save did; retrying its `operationId` returns the same result. */
-export type PlanSaveResult = { operationId: string; note: Note; added: string[]; removed: string[]; notToday: string[]; already: string[]; changed: boolean };
+export type PlanSaveResult = { operationId: string; note: Note; added: string[]; removed: string[]; notToday: string[]; already: string[]; changed: boolean; shutdown: boolean };
 /** Carry count and planned days (oldest first) of one plan item key over a range. */
 export type PlanHistory = { target: string; carryCount: number; plannedDays: string[] };
 /** An item Review offers to carry, defer, or drop, with the plan it came from. */

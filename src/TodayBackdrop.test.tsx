@@ -1,0 +1,132 @@
+import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import postcss from "postcss";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { readTodayBackdrop, sunHeight, TODAY_BACKDROP_KEY, useTodayBackdrop, writeTodayBackdrop } from "./backdropPreference";
+import { TodayBackdropSettings } from "./AppearanceSettings";
+import { readExportablePreferences } from "./userPreferences";
+import { TodayBackdrop } from "./TodayBackdrop";
+import { SettingsHarness } from "./test/settingsHarness";
+
+vi.mock("./systemFonts", () => ({ listSystemFontFamilies: vi.fn().mockResolvedValue([]) }));
+
+afterEach(() => { cleanup(); localStorage.clear(); vi.restoreAllMocks(); });
+
+const at = (hours: number, minutes = 0) => new Date(2026, 10, 17, hours, minutes);
+
+describe("Today Backdrop preference", () => {
+  it("is off by default, persists on this device, and reads as off when storage fails", () => {
+    expect(readTodayBackdrop()).toBe(false);
+    writeTodayBackdrop(true);
+    expect(localStorage.getItem(TODAY_BACKDROP_KEY)).toBe("on");
+    expect(readTodayBackdrop()).toBe(true);
+    writeTodayBackdrop(false);
+    expect(readTodayBackdrop()).toBe(false);
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    expect(readTodayBackdrop()).toBe(false);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+    expect(() => writeTodayBackdrop(true)).not.toThrow();
+  });
+
+  it("updates every reader when Settings changes it", () => {
+    const { result } = renderHook(() => useTodayBackdrop());
+    expect(result.current).toBe(false);
+    act(() => writeTodayBackdrop(true));
+    expect(result.current).toBe(true);
+  });
+
+  it("is not a synced or exported preference: the settings export neither reads nor carries it, and the transfer code never names it", () => {
+    const before = JSON.stringify(readExportablePreferences());
+    writeTodayBackdrop(true);
+    expect(JSON.stringify(readExportablePreferences())).toBe(before);
+    expect(Object.keys(readExportablePreferences()).filter((key) => /backdrop/i.test(key))).toEqual([]);
+    for (const file of ["src-tauri/src/transfer.rs", "src/userPreferences.ts", "src/DataTransferSettings.tsx"]) {
+      expect(readFileSync(file, "utf8").toLowerCase()).not.toContain("backdrop");
+    }
+  });
+
+  it("is chosen under Settings → Appearance → Today Backdrop, with its help attached", () => {
+    render(<SettingsHarness initialSection="appearance" />);
+    const box = screen.getByRole("checkbox", { name: "Show a Day and Evening Backdrop" });
+    expect(box).not.toBeChecked();
+    expect(box).toHaveAccessibleDescription();
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+    expect(localStorage.getItem(TODAY_BACKDROP_KEY)).toBe("on");
+    cleanup();
+    render(<TodayBackdropSettings />);
+    expect(screen.getByRole("checkbox", { name: "Show a Day and Evening Backdrop" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show a Day and Evening Backdrop" }));
+    expect(readTodayBackdrop()).toBe(false);
+  });
+});
+
+describe("sunHeight", () => {
+  it("rises from the horizon at 6 am to its peak at noon and sets at 6 pm, staying down at night", () => {
+    expect(sunHeight(at(3))).toBe(0);
+    expect(sunHeight(at(6))).toBe(0);
+    expect(sunHeight(at(12))).toBeCloseTo(1, 5);
+    expect(sunHeight(at(18))).toBe(0);
+    expect(sunHeight(at(23, 59))).toBe(0);
+    expect(sunHeight(at(9))).toBeGreaterThan(sunHeight(at(7)));
+    expect(sunHeight(at(9))).toBeLessThan(sunHeight(at(11)));
+    expect(sunHeight(at(15))).toBeCloseTo(sunHeight(at(9)), 5);
+  });
+});
+
+describe("TodayBackdrop", () => {
+  const scene = () => document.querySelector(".today-backdrop") as HTMLElement;
+
+  it("draws a day sky whose sun is higher at noon than in the morning, hidden from assistive technology", () => {
+    const { rerender } = render(<TodayBackdrop view="day" now={at(8)} />);
+    expect(scene()).toHaveAttribute("aria-hidden", "true");
+    expect(scene()).toHaveAttribute("data-view", "day");
+    const sunY = () => Number(scene().querySelector(".today-backdrop-sun")!.getAttribute("cy"));
+    const morning = sunY();
+    rerender(<TodayBackdrop view="day" now={at(12)} />);
+    // Smaller y is higher in the picture.
+    expect(sunY()).toBeLessThan(morning);
+    expect(scene().querySelector(".today-backdrop-moon")).toBeNull();
+    expect(scene().querySelectorAll(".today-backdrop-star")).toHaveLength(0);
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("draws a dusk sky with a moon and a few stars for the evening view", () => {
+    render(<TodayBackdrop view="evening" now={at(20)} />);
+    expect(scene()).toHaveAttribute("data-view", "evening");
+    expect(scene()).toHaveAttribute("aria-hidden", "true");
+    expect(scene().querySelector(".today-backdrop-moon")).not.toBeNull();
+    expect(scene().querySelectorAll(".today-backdrop-star").length).toBeGreaterThanOrEqual(3);
+    expect(scene().querySelector(".today-backdrop-sun")).toBeNull();
+    expect(scene().querySelector("[focusable='true'], a, button, input")).toBeNull();
+  });
+
+  it("sits behind the header band only, ignores the pointer, and has no motion when reduced motion is set", () => {
+    const css = postcss.parse(readFileSync("src/styles.css", "utf8"));
+    const rule = (selector: string, atRule?: string) => {
+      let found: postcss.Rule | undefined;
+      css.walkRules(selector, (candidate) => {
+        const parent = candidate.parent;
+        if (atRule ? parent?.type === "atrule" && (parent as postcss.AtRule).params.includes(atRule) : parent?.type === "root") found = candidate;
+      });
+      return found;
+    };
+    const value = (candidate: postcss.Rule | undefined, prop: string) => candidate?.nodes.find((node): node is postcss.Declaration => node.type === "decl" && node.prop === prop)?.value;
+    const base = rule(".today-backdrop");
+    expect(value(base, "position")).toBe("absolute");
+    expect(value(base, "pointer-events")).toBe("none");
+    expect(value(base, "z-index")).toBe("0");
+    // The header's own content paints above the art.
+    expect(value(rule(".today-header > :not(.today-backdrop)"), "position")).toBe("relative");
+    expect(value(rule(".today-header"), "position")).toBe("relative");
+    expect(value(rule(".today-header"), "isolation")).toBe("isolate");
+    expect(value(base, "animation")).toMatch(/today-backdrop-in var\(--duration-slow\)/);
+    // The one motion is that fade, which the global reduced-motion override collapses (and motion.test.ts holds in place).
+    let reduced: postcss.AtRule | undefined;
+    css.walkAtRules("media", (at) => { if (at.params.includes("prefers-reduced-motion: reduce")) reduced = at; });
+    const overridden = new Map<string, postcss.Declaration>();
+    reduced!.walkDecls((declaration) => { overridden.set(declaration.prop, declaration); });
+    expect(overridden.get("animation-duration")).toMatchObject({ value: "0.01ms", important: true });
+    expect(overridden.get("animation-iteration-count")).toMatchObject({ value: "1", important: true });
+  });
+});
