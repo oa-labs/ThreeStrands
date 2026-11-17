@@ -202,13 +202,36 @@ export function occursOnDay(event: ScheduleEvent, day: Date): boolean {
   return new Date(event.start) < dayEnd && new Date(event.end) > dayStart;
 }
 
-export type LaidOutEvent = { event: ScheduleEvent; lane: number; lanes: number; span: number };
+export type LaidOutEvent = {
+  event: ScheduleEvent;
+  lane: number;
+  lanes: number;
+  span: number;
+  /** 0 for the base layer; an event that starts well inside another's span is drawn on top, one layer up. */
+  layer: number;
+};
+
+/** Events starting within this many minutes of each other sit side by side. */
+export const SIDE_BY_SIDE_START_MINUTES = 30;
+/** How far each stacking layer is inset from the left, as a fraction of the column. */
+export const STACK_INSET = 0.14;
+/** The deepest stacking layer; further events share it side by side. */
+export const MAX_STACK_LAYER = 3;
+
+/** The left edge and width of a laid-out event, as fractions of its day column. */
+export function eventColumnBox({ lane, lanes, span, layer }: Pick<LaidOutEvent, "lane" | "lanes" | "span" | "layer">): { left: number; width: number } {
+  const inset = layer * STACK_INSET;
+  const room = 1 - inset;
+  return { left: inset + (lane / lanes) * room, width: (span / lanes) * room };
+}
 
 /**
- * Side-by-side placement for events that overlap in time. Events are grouped
- * into clusters of mutual overlap; every event in a cluster shares the same
- * lane count so the columns line up. An event fills adjacent lanes to its right
- * when no event in those lanes overlaps its own time range.
+ * Placement for events that overlap in time. Events whose starts are within
+ * `SIDE_BY_SIDE_START_MINUTES` of an overlapping event's start sit beside it
+ * in lanes (and fill free lanes to their right). An event that starts later
+ * inside another's span, with no lane free for it, does not narrow the earlier
+ * one: it is drawn on top in the next layer, inset from the left. Lane counts
+ * are per layer, so each layer's columns line up among themselves.
  */
 export function layOutDayEvents(events: ScheduleEvent[], day: Date): LaidOutEvent[] {
   const ordered = [...events].sort((left, right) => {
@@ -216,37 +239,61 @@ export function layOutDayEvents(events: ScheduleEvent[], day: Date): LaidOutEven
     const rightBounds = eventDayBounds(right, day);
     return leftBounds.start - rightBounds.start || rightBounds.end - leftBounds.end;
   });
-  const placed: LaidOutEvent[] = [];
-  let cluster: { entry: LaidOutEvent; start: number; end: number }[] = [];
-  let clusterEnd = -1;
-
-  const closeCluster = () => {
-    const lanes = cluster.reduce((max, item) => Math.max(max, item.entry.lane + 1), 0);
-    for (const item of cluster) {
-      item.entry.lanes = lanes;
-      for (let lane = item.entry.lane + 1; lane < lanes; lane += 1) {
-        const occupied = cluster.some((other) => other.entry.lane === lane
-          && other.start < item.end && other.end > item.start);
-        if (occupied) break;
-        item.entry.span += 1;
-      }
-    }
-    cluster = [];
-    clusterEnd = -1;
-  };
+  type Item = { entry: LaidOutEvent; start: number; end: number };
+  const items: Item[] = [];
+  /** Per layer: lanes used by its current cluster of mutual overlap. */
+  const lanesInUse: number[] = [];
 
   for (const event of ordered) {
     const bounds = eventDayBounds(event, day);
     const end = Math.max(bounds.end, bounds.start + 15);
-    if (cluster.length > 0 && bounds.start >= clusterEnd) closeCluster();
-    const taken = new Set(cluster.filter((item) => item.end > bounds.start).map((item) => item.entry.lane));
+    const active = items.filter((item) => item.end > bounds.start);
+    const takenIn = (layer: number) => new Set(active.filter((item) => item.entry.layer === layer).map((item) => item.entry.lane));
+    let layer = 0;
+    if (active.length > 0) {
+      const activeLayers = [...new Set(active.map((item) => item.entry.layer))].sort((a, b) => b - a);
+      const near = activeLayers.find((candidate) => active.some((item) => item.entry.layer === candidate
+        && bounds.start - item.start <= SIDE_BY_SIDE_START_MINUTES));
+      const roomy = activeLayers.find((candidate) => {
+        const taken = takenIn(candidate);
+        return Array.from({ length: lanesInUse[candidate] ?? 0 }, (_, lane) => lane).some((lane) => !taken.has(lane));
+      });
+      layer = near ?? roomy ?? Math.min(activeLayers[0] + 1, MAX_STACK_LAYER);
+    }
+    const taken = takenIn(layer);
     let lane = 0;
     while (taken.has(lane)) lane += 1;
-    const entry: LaidOutEvent = { event, lane, lanes: lane + 1, span: 1 };
-    cluster.push({ entry, start: bounds.start, end });
-    clusterEnd = Math.max(clusterEnd, end);
-    placed.push(entry);
+    const clusterOpen = active.some((item) => item.entry.layer === layer);
+    lanesInUse[layer] = Math.max(clusterOpen ? lanesInUse[layer] ?? 0 : 0, lane + 1);
+    items.push({ entry: { event, lane, lanes: lane + 1, span: 1, layer }, start: bounds.start, end });
   }
-  closeCluster();
-  return placed;
+
+  // Close each layer's clusters: every event in one shares its lane count, and
+  // spans into lanes to its right that nothing overlapping it occupies.
+  const layers = new Set(items.map((item) => item.entry.layer));
+  for (const layer of layers) {
+    let cluster: Item[] = [];
+    let clusterEnd = -1;
+    const close = () => {
+      const lanes = cluster.reduce((max, item) => Math.max(max, item.entry.lane + 1), 0);
+      for (const item of cluster) {
+        item.entry.lanes = lanes;
+        for (let lane = item.entry.lane + 1; lane < lanes; lane += 1) {
+          const occupied = cluster.some((other) => other.entry.lane === lane && other.start < item.end && other.end > item.start);
+          if (occupied) break;
+          item.entry.span += 1;
+        }
+      }
+      cluster = [];
+      clusterEnd = -1;
+    };
+    for (const item of items) {
+      if (item.entry.layer !== layer) continue;
+      if (cluster.length > 0 && item.start >= clusterEnd) close();
+      cluster.push(item);
+      clusterEnd = Math.max(clusterEnd, item.end);
+    }
+    close();
+  }
+  return items.map((item) => item.entry);
 }
