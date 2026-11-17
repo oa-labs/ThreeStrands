@@ -13,11 +13,17 @@ export function parseEventTime(text: string): string | null {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+/** Show a canonical HH:MM value as a 12-hour time, such as 2:30 PM. */
+export function formatEventTime(value: string): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return value;
+  const hour = Number(match[1]);
+  return `${hour % 12 || 12}:${match[2]} ${hour < 12 ? "AM" : "PM"}`;
+}
+
 const times = Array.from({ length: 96 }, (_, index) => {
-  const hour = Math.floor(index / 4);
-  const minute = (index % 4) * 15;
-  return { value: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
-    label: `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}` };
+  const value = `${String(Math.floor(index / 4)).padStart(2, "0")}:${String((index % 4) * 15).padStart(2, "0")}`;
+  return { value, label: formatEventTime(value) };
 });
 
 export function TimePickerField({ label, value, onChange }: { label: string; value: string; onChange(value: string): void }) {
@@ -27,7 +33,7 @@ export function TimePickerField({ label, value, onChange }: { label: string; val
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [draft, setDraft] = useState<{ text: string; value: string } | null>(null);
-  const text = draft?.value === value ? draft.text : value;
+  const text = draft?.value === value ? draft.text : formatEventTime(value);
   useEscapeDismiss(() => setOpen(false), open);
   useLayoutEffect(() => {
     const [hour, minute] = (parseEventTime(text) ?? "09:00").split(":").map(Number);
@@ -52,7 +58,7 @@ export function TimePickerField({ label, value, onChange }: { label: string; val
   return <div className="time-picker-field">
     <input ref={input} aria-label={label} role="combobox" aria-autocomplete="list" aria-expanded={open}
       aria-controls={open ? id : undefined} aria-activedescendant={open && active >= 0 ? `${id}-${active}` : undefined}
-      type="text" autoComplete="off" placeholder="HH:MM" required value={text}
+      type="text" autoComplete="off" placeholder="9:00 AM" required value={text}
       onFocus={(event) => { event.currentTarget.select(); show(); }} onClick={() => { if (!open) show(); }}
       onChange={(event) => {
         const next = event.target.value;
