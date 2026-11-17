@@ -154,8 +154,12 @@ particular platform package, or always-on service behavior.
   palette: its own notes, earlier meetings in its series, recent mail with its
   attendees, and open commitments, read from local data only. Today lists the
   meetings still ahead with what is ready for each, with **Reserve Prep Time** and
-  **No Prep Needed**. Reviewed follow-through and optional AI assistance remain
-  planned below.
+  **No Prep Needed**.
+- **Review Follow-through** after a meeting: record its decisions and actions,
+  as tasks, checklist items, or links to existing tasks, in one of its notes,
+  with Undo; the meeting then counts as reviewed on every synced device.
+  **Draft Follow-up** opens or resumes one durable draft to the attendees in
+  the normal composer. Optional AI assistance remains planned below.
 
 ### Stay in control of local data
 
