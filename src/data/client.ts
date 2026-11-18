@@ -460,6 +460,8 @@ export interface MailClient extends CorrespondenceClient {
   /** Writes a meeting's line into `date`'s daily note, if that note is still at `expected`. */
   addMeetingToDailyNote(date: string, expected: string | null, entry: MeetingEntry): Promise<MeetingCapture>;
   listRecentNotes(limit: number): Promise<NoteSummary[]>;
+  listStarredNotes(limit: number): Promise<NoteSummary[]>;
+  setNoteStarred(id: string, starred: boolean): Promise<Note>;
   /** Notes created from `start` (inclusive) to `end` (exclusive), ISO times, newest first; daily notes and notes in Trash are left out. */
   listNotesCreatedBetween(start: string, end: string, limit: number): Promise<CreatedNote[]>;
   getNote(id: string): Promise<Note | null>;
@@ -742,6 +744,8 @@ const tauriClient: MailClient = {
   captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),
   addMeetingToDailyNote: (date, expected, entry) => complete("add_meeting_to_daily_note", { date, expected, entry }),
   listRecentNotes: (limit) => read("list_recent_notes", { limit }),
+  listStarredNotes: (limit) => read("list_starred_notes", { limit }),
+  setNoteStarred: (id, starred) => complete("set_note_starred", { id, starred }),
   listNotesCreatedBetween: (start, end, limit) => read("list_notes_created_between", { start, end, limit }),
   getNote: (id) => read("get_note", { id }),
   getDailyNote: (date) => read("get_daily_note", { date }),

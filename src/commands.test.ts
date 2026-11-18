@@ -259,7 +259,7 @@ describe("command registry", () => {
       o: ["files.open", "tasks.openSelected", "thread.toggleOlderMessages"],
       // Previous Message in Mail; Prepare for Meeting on Today and in Calendar.
       p: ["message.previous", "meetings.prepare"],
-      s: ["files.star", "thread.star"],
+      s: ["notes.star", "files.star", "thread.star"],
       "shift+n": ["calendar.new", "contacts.new", "agents.new", "notes.new"],
       "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
       "mod+enter": ["contacts.save", "draft.send"],
@@ -270,8 +270,8 @@ describe("command registry", () => {
       arrowright: ["tasks.nextColumn", "message.next"],
       arrowleft: ["tasks.previousColumn", "message.previous"],
       "mod+j": ["draft.replyAssist", "chat.open"],
-      tab: ["mailbox.nextSplit", "tasks.nextView", "contacts.nextView"],
-      "shift+tab": ["mailbox.previousSplit", "contacts.previousView", "tasks.previousView"],
+      tab: ["notes.nextView", "mailbox.nextSplit", "tasks.nextView", "contacts.nextView"],
+      "shift+tab": ["notes.previousView", "mailbox.previousSplit", "contacts.previousView", "tasks.previousView"],
       // Close Search stands aside while Back is available; closing meeting
       // preparation comes first while it is open.
       escape: ["meetings.closePrepare", "navigation.back", "search.close"],
@@ -399,7 +399,7 @@ describe("command registry", () => {
     expect(today.enabled({ ...context, composerActive: true })).toBe(false);
   });
 
-  it.each([["notes.next", ["j", "ArrowDown"]], ["notes.previous", ["k", "ArrowUp"]], ["notes.new", ["Shift+n"]], ["notes.trash", ["#"]], ["notes.link", []], ["notes.pageDown", ["Space"]], ["notes.pageUp", ["Shift+Space"]], ["notes.write", ["Enter"]]])("offers %s only in Notes, outside text fields", (id, keys) => {
+  it.each([["notes.star", ["s"]], ["notes.next", ["j", "ArrowDown"]], ["notes.previous", ["k", "ArrowUp"]], ["notes.new", ["Shift+n"]], ["notes.trash", ["#"]], ["notes.link", []], ["notes.pageDown", ["Space"]], ["notes.pageUp", ["Shift+Space"]], ["notes.write", ["Enter"]]])("offers %s only in Notes, outside text fields", (id, keys) => {
     const command = commands.find((item) => item.id === id)!;
     expect(command.keys).toEqual(keys);
     expect(command.allowInEditable).toBe(false);

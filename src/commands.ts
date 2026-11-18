@@ -1,5 +1,5 @@
 import { openDocs } from "./helpDocs";
-import { runWorkspaceCommand, type WorkspaceCommandId } from "./workspaceCommands";
+import { runWorkspaceCommand, workspaceCommandAvailable, type WorkspaceCommandId } from "./workspaceCommands";
 import type { MessageFilterKind } from "./messageFilters";
 import type { SplitInbox, TaskStatus } from "./domain";
 import { adjacentTaskStatus, isActiveTaskStatus } from "./taskViews";
@@ -229,6 +229,9 @@ export const commands: Command[] = [
   { ...workspaceCommand("notes.next", "Next Note", ["j", "ArrowDown"], "notes"), group: "Navigation", repeatable: true },
   { ...workspaceCommand("notes.previous", "Previous Note", ["k", "ArrowUp"], "notes"), group: "Navigation", repeatable: true },
   workspaceCommand("notes.new", "New Note", ["Shift+n"], "notes"),
+  workspaceCommand("notes.star", "Star or Unstar Note", ["s"], "notes"),
+  { ...workspaceCommand("notes.nextView", "Next Notes View", ["Tab"], "notes"), group: "Navigation", enabled: (c) => c.focusedPane === "notes" && !c.composerActive && workspaceCommandAvailable("notes.nextView") },
+  { ...workspaceCommand("notes.previousView", "Previous Notes View", ["Shift+Tab"], "notes"), group: "Navigation", enabled: (c) => c.focusedPane === "notes" && !c.composerActive && workspaceCommandAvailable("notes.previousView") },
   workspaceCommand("notes.trash", "Move Note to Trash", ["#"], "notes"),
   workspaceCommand("notes.link", "Link to Conversation, Task, or Event…", [], "notes"),
   // Reading a note works as reading a message: Space pages it, and Enter starts writing in it.

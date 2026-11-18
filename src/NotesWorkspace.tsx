@@ -7,7 +7,7 @@ import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./not
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowLeft, CalendarDays, ClipboardList, ChevronLeft, ChevronRight, CircleCheck, FilePlus, FileUp, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, ClipboardList, ChevronLeft, ChevronRight, CircleCheck, FilePlus, FileUp, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Star, Trash2, UserRound, X } from "lucide-react";
 import type { CalendarOption, ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSearchScope, NoteSummary, ScheduleEvent } from "./domain";
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -63,7 +63,7 @@ const formatTime = (value: string) => formatDateTime(new Date(value));
 /** Each linked kind's glyph in the Links section. */
 const LINK_ICON = { conversation: <Mail size={ICON_SIZE.sm} />, task: <CircleCheck size={ICON_SIZE.sm} />, event: <CalendarDays size={ICON_SIZE.sm} /> } as const;
 
-type Row = { key: string; target: NoteTarget; title: string; detail: ReactNode; date?: string; trashed?: boolean };
+type Row = { key: string; target: NoteTarget; title: string; detail: ReactNode; date?: string; trashed?: boolean; starred?: boolean };
 
 /** A `[[link]]` that names a day opens that day's note. */
 const linkedDay = (title: string) => {
@@ -118,12 +118,15 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const [initialSearch] = useState(readNotesSearchState);
   const [listView, setListView] = useState<NotesListView>(initialSearch.listView);
   const [includeTrash, setIncludeTrash] = useState(initialSearch.includeTrash);
-  const [searchFocused, setSearchFocused] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(Boolean(initialSearch.query.trim()));
   const [recent, setRecent] = useState<NoteSummary[]>([]);
+  const [starred, setStarred] = useState<NoteSummary[]>([]);
+  const starredIds = useMemo(() => new Set(starred.map((note) => note.id)), [starred]);
+  const showStarred = starred.length > 0 || listView === "starred";
   const [trashed, setTrashed] = useState<NoteSummary[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [query, setQuery] = useState(initialSearch.query);
-  const scope: NoteSearchScope = listView === "trash" ? "trash" : includeTrash ? "all" : "active";
+  const scope: NoteSearchScope = listView === "trash" ? "trash" : listView === "starred" ? "starred" : includeTrash ? "all" : "active";
   const [result, setResult] = useState<{ query: string; scope: NoteSearchScope; hits: NoteSearchHit[] } | null>(null);
   const searchCurrent = result?.query === query && result.scope === scope;
   const hits = query.trim() ? searchCurrent ? result.hits : [] : null;
@@ -178,6 +181,14 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const loadRecent = useCallback(() => {
     return mailClient.listRecentNotes(RECENT_LIMIT).then((notes) => { setRecent(notes); setListError(null); return true; }, (reason) => { setListError(errorMessage(reason)); return false; });
   }, []);
+  const starLoadVersion = useRef(0);
+  const loadStarred = useCallback(() => {
+    const version = ++starLoadVersion.current;
+    return mailClient.listStarredNotes(RECENT_LIMIT).then((notes) => {
+      if (version === starLoadVersion.current) setStarred(notes);
+      return true;
+    }, (reason) => { setListError(errorMessage(reason)); return false; });
+  }, []);
   const loadTrash = useCallback(() => {
     return mailClient.listTrashedNotes(TRASH_LIMIT).then((notes) => { setTrashed(notes); setListError(null); return true; }, (reason) => { setListError(errorMessage(reason)); return false; });
   }, []);
@@ -192,7 +203,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const showSaved = useCallback((note: Note) => {
     setRecent((current) => {
       const summary = current.find((item) => item.id === note.id);
-      const updated: NoteSummary = { id: note.id, title: note.title, dailyDate: note.dailyDate, preview: notePreview(note.body), updatedAt: note.updatedAt, visitedAt: summary?.visitedAt ?? null, trashedAt: note.trashedAt };
+      const updated: NoteSummary = { id: note.id, title: note.title, dailyDate: note.dailyDate, preview: notePreview(note.body), updatedAt: note.updatedAt, visitedAt: summary?.visitedAt ?? null, trashedAt: note.trashedAt, starred: note.starred };
       // A note keeps its place while it's being written in, so the list doesn't jump under the cursor.
       return summary ? current.map((item) => item.id === note.id ? updated : item) : [updated, ...current];
     });
@@ -207,6 +218,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const openNoteId = useRef<string | null>(null);
   const onSaved = useCallback((note: Note, relink?: NoteRelink) => {
     showSaved(note);
+    void loadStarred();
     setSearchRevision((value) => value + 1);
     setLastSave({ noteId: note.id });
     loadLinks(openNoteId.current);
@@ -214,15 +226,15 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     setRelinkNotice(relinkMessage(relink));
     // Notes whose links followed the rename changed too.
     if (relink.updated) void mailClient.listRecentNotes(RECENT_LIMIT).then(setRecent, logBackgroundFailure("Recent notes"));
-  }, [showSaved, loadLinks]);
+  }, [showSaved, loadLinks, loadStarred]);
   const editor = useNoteEditor(target, { onSaved, onReplaced: (note) => select({ kind: "note", id: note.id }), onRestored: () => loadTrash() });
   useEffect(() => { openNoteId.current = editor.note?.id ?? null; });
   const { refresh } = editor;
   const reloadAll = useCallback(() => {
     setSearchRevision((value) => value + 1);
     files.retry();
-    return Promise.all([loadRecent(), loadTrash(), loadConflicts(), loadLinks(openNoteId.current), refresh().catch(logBackgroundFailure("Note refresh"))]);
-  }, [loadRecent, loadTrash, loadConflicts, loadLinks, refresh, files]);
+    return Promise.all([loadRecent(), loadStarred(), loadTrash(), loadConflicts(), loadLinks(openNoteId.current), refresh().catch(logBackgroundFailure("Note refresh"))]);
+  }, [loadRecent, loadStarred, loadTrash, loadConflicts, loadLinks, refresh, files]);
   const refreshNotes = useCallback(async () => {
     const [synced] = await Promise.allSettled([refreshSyncedData()]);
     const results = await reloadAll();
@@ -324,9 +336,11 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const noteConflicts = editor.note ? conflicts.get(editor.note.id) ?? [] : [];
 
   const list: Row[] = hits
-    ? hits.map((hit) => ({ key: hit.id, target: summaryTarget(hit), title: noteLabel(hit), detail: <NoteMatchSnippet text={hit.matchSnippet} />, trashed: hit.trashed }))
+    ? hits.map((hit) => ({ key: hit.id, target: summaryTarget(hit), title: noteLabel(hit), detail: <NoteMatchSnippet text={hit.matchSnippet} />, trashed: hit.trashed, starred: hit.starred }))
     : listView === "trash"
       ? trashed.map((note): Row => ({ key: note.id, target: summaryTarget(note), title: noteLabel(note), detail: note.preview || "No text", date: note.trashedAt ?? note.updatedAt }))
+      : listView === "starred"
+        ? starred.map((note): Row => ({ key: note.id, target: summaryTarget(note), title: noteLabel(note), detail: note.preview || "No text yet", date: note.updatedAt, starred: true }))
       : [
         { key: todayKey, target: today, title: "Today", detail: formatNoteDate(today.date) },
         ...recent.filter((note) => note.id !== todayKey).map((note): Row => ({
@@ -364,6 +378,20 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     setActionError(null);
     try { await action(); } catch (reason) { setActionError(errorMessage(reason)); } finally { setBusy(false); }
   };
+  const toggleStar = (id: string) => act(async () => {
+    // The native mutation changes only the star, so unfinished titles and text stay put.
+    await mailClient.setNoteStarred(id, !starredIds.has(id));
+    setSearchRevision((value) => value + 1);
+    await Promise.all([loadStarred(), loadRecent()]);
+  });
+  const switchList = (next: NotesListView) => {
+    setListView(next);
+    requestAnimationFrame(focusSelectedRow);
+  };
+  const cycleList = () => {
+    if (listView !== "trash" && showStarred) switchList(listView === "starred" ? "notes" : "starred");
+  };
+  const closeSearch = () => { setQuery(""); setSearchOpen(false); requestAnimationFrame(focusSelectedRow); };
   const importNote = () => act(async () => {
     await editor.flush();
     if (editor.unsaved()) throw new Error("This note has changes that weren't saved. Resolve them before importing a note.");
@@ -416,8 +444,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     setSearchRevision((value) => value + 1);
     setRecent((current) => current.filter((item) => item.id !== note.id));
     loadTrash();
+    void loadStarred();
     // Today stays at the top of the list, so its note stays open, now in Trash.
-    if (listView === "notes" && note.id !== todayKey) selectNeighbor(note.id);
+    if (listView !== "trash" && note.id !== todayKey) selectNeighbor(note.id);
     else await refresh();
   });
   const restore = () => act(async () => {
@@ -427,6 +456,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     setSearchRevision((value) => value + 1);
     setTrashed((current) => current.filter((item) => item.id !== note.id));
     showSaved(restored);
+    void loadStarred();
     await refresh();
   });
   const deletePermanently = () => act(async () => {
@@ -471,7 +501,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     "notes.next": () => moveSelection(1),
     "notes.previous": () => moveSelection(-1),
     "notes.new": () => setCreating(true),
-    "notes.search": () => requestAnimationFrame(() => search.current?.focus()),
+    "notes.search": () => { setSearchOpen(true); requestAnimationFrame(() => search.current?.focus()); },
+    "notes.star": () => { if (editor.note && !inTrash && !readOnly) void toggleStar(editor.note.id); },
+    ...(showStarred && listView !== "trash" ? { "notes.nextView": cycleList, "notes.previousView": cycleList } : {}),
     "notes.trash": () => void moveToTrash(),
     "notes.link": () => { if (!readOnly) setLinkPicker(true); },
     "notes.pageDown": () => pageNote(1),
@@ -491,6 +523,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
 
   return <section className="notes-workspace" aria-label="Notes" onKeyDown={(event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
+    if (event.key === "Escape" && searchOpen) { event.preventDefault(); event.stopPropagation(); closeSearch(); return; }
     if (event.key === "Escape" && onReturn) { event.preventDefault(); onReturn(); return; }
     if (!(event.target instanceof HTMLElement) || !event.target.closest(".notes-list")) return;
     // Space pages the open note from the list, rather than choosing the row again.
@@ -511,19 +544,23 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
       <PanelResizeHandle {...listSize} label="Resize note list" controlsId="notes-list-pane" title="Drag to resize the note list. Use arrow keys to adjust; double-click to reset." />
       <div ref={listPane} id="notes-list-pane" className="notes-list-pane" aria-busy={pull.refreshing}>
         <PullToRefreshStatus {...pull} />
-        <div className="notes-search">
-          <label className={`search-box${!searchFocused && !query.trim() ? " idle" : ""}`}>
+        {listView !== "trash" && showStarred ? <div className="mailbox-tabs notes-tabs">
+          <div className="mailbox-tab-list" role="tablist" aria-label="Note views">
+            <button type="button" role="tab" data-mailbox-tab-shortcut aria-selected={listView === "notes"} className={`mailbox-tab${listView === "notes" ? " active" : ""}`} onClick={() => switchList("notes")}>All Notes</button>
+            <button type="button" role="tab" data-mailbox-tab-shortcut aria-selected={listView === "starred"} className={`mailbox-tab${listView === "starred" ? " active" : ""}`} onClick={() => switchList("starred")}>Starred</button>
+          </div>
+        </div> : null}
+        {searchOpen ? <div className="notes-search">
+          <label className="search-box">
             <Search size={ICON_SIZE.md} aria-hidden="true" />
             <input ref={search} type="search" {...SEARCH_INPUT_ATTRIBUTES} aria-label="Search Notes" value={query} placeholder={listView === "trash" ? "Search Trash" : "Search notes"}
-              data-shortcut-scope="search"
-              onFocus={() => setSearchFocused(true)} onBlur={() => setSearchFocused(false)}
+              data-shortcut-scope="search" data-mailbox-tab-shortcut
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") { event.preventDefault(); search.current?.blur(); focusSelectedRow(); return; }
                 if (event.key !== "Escape") return;
                 event.preventDefault(); event.stopPropagation();
-                if (query) setQuery("");
-                requestAnimationFrame(() => { focusSelectedRow(); search.current?.blur(); });
+                closeSearch();
               }} />
             <span className="search-input-actions">
               {listView === "notes" && query.trim() ? <button type="button"
@@ -534,16 +571,15 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
                 onClick={() => setIncludeTrash((current) => !current)}><Trash2 size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
               <button type="button" className="btn-icon btn-icon-sm search-close" aria-label="Close Search" title="Close Search (Esc)"
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => { setQuery(""); requestAnimationFrame(focusSelectedRow); }}><X size={ICON_SIZE.sm} /></button>
-              {!searchFocused && !query.trim() ? <kbd>/</kbd> : null}
+                onClick={closeSearch}><X size={ICON_SIZE.sm} /></button>
             </span>
           </label>
-        </div>
+        </div> : null}
         {listError ? <p className="form-error" role="alert">{listError}</p> : null}
         {listView === "trash" && !hits ? <h2 className="eyebrow notes-list-heading">Trash</h2> : null}
-        <div className="notes-list" role="list" aria-label={hits ? "Matching notes" : listView === "trash" ? "Trash" : "Notes"}>
+        <div className="notes-list" role="list" aria-label={hits ? "Matching notes" : listView === "trash" ? "Trash" : listView === "starred" ? "Starred notes" : "Notes"}>
           {list.map((row) => <div key={row.key} role="listitem" className={`notes-list-item${row.key === selectedKey ? " selected" : ""}`}>
-            <button type="button" className="notes-list-select" aria-current={row.key === selectedKey ? "true" : undefined}
+            <button type="button" data-mailbox-tab-shortcut className="notes-list-select" aria-current={row.key === selectedKey ? "true" : undefined}
               ref={(node) => { if (node) rows.current.set(row.key, node); else rows.current.delete(row.key); }}
               onClick={() => select(row.target)}
               onKeyDown={(event) => {
@@ -561,12 +597,17 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
               </span>
               <span className="notes-list-detail">{row.detail}</span>
             </button>
+            {!row.trashed ? <button type="button" data-mailbox-tab-shortcut className={`btn-icon btn-icon-sm notes-list-star${starredIds.has(row.key) ? " starred" : ""}`}
+              aria-label={starredIds.has(row.key) ? "Unstar" : "Star"} title={`${starredIds.has(row.key) ? "Unstar" : "Star"} ${row.title}`} aria-pressed={starredIds.has(row.key)}
+              disabled={busy || (row.key === todayKey && !recent.some((note) => note.id === row.key))}
+              onClick={() => void toggleStar(row.key)}><Star size={ICON_SIZE.sm} fill={starredIds.has(row.key) ? "currentColor" : "none"} aria-hidden="true" /></button> : null}
           </div>)}
         </div>
         {hits && searchCurrent && !hits.length ? <p className="context-status">No notes match “{query.trim()}”.</p> : null}
         {!hits && listView === "trash" && !trashed.length ? <p className="context-status">Trash is empty.</p> : null}
+        {!hits && listView === "starred" && !starred.length ? <p className="context-status">No starred notes.</p> : null}
         <div className="notes-list-footer">
-          {listView === "notes"
+          {listView !== "trash"
             ? <button type="button" className="btn btn-sm" onClick={() => { setListView("trash"); loadTrash(); }}>
               <Trash2 size={ICON_SIZE.sm} aria-hidden="true" />Trash{trashed.length ? <span className="notes-trash-count">{trashed.length}</span> : null}
             </button>
@@ -622,6 +663,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
                     if (event.key === "Enter") { event.preventDefault(); body.current?.focus(); }
                   }} />}
               {editor.saveState.kind === "error" ? null : <p className="notes-save-status" role="status">{status}</p>}
+              {editor.note && !inTrash ? <button type="button" className={`btn btn-icon${starredIds.has(editor.note.id) ? " starred" : ""}`}
+                aria-label={starredIds.has(editor.note.id) ? "Unstar Note" : "Star Note"} aria-pressed={starredIds.has(editor.note.id)}
+                title="Star note (s)" aria-keyshortcuts="s" disabled={busy || readOnly} onClick={() => void toggleStar(editor.note!.id)}><Star size={ICON_SIZE.lg} fill={starredIds.has(editor.note.id) ? "currentColor" : "none"} aria-hidden="true" /></button> : null}
               {editor.note && !inTrash ? <button type="button" className="btn btn-icon" title="Move to Trash (#)" aria-label="Move to Trash" aria-keyshortcuts="#" disabled={busy || Boolean(stale)} onClick={() => void moveToTrash()}><Trash2 size={ICON_SIZE.lg} aria-hidden="true" /></button> : null}
             </div>
             {relinkNotice ? <p className="notes-relink-notice" role="status">{relinkNotice}</p> : null}

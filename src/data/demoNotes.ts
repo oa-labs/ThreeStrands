@@ -7,7 +7,7 @@ import { meetingBlocks } from "../meetingExcerpt";
 import type { MailClient } from "./client";
 import type { DemoNoteSeed } from "./demoDataset";
 
-type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "listNotesCreatedBetween" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
+type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "listStarredNotes" | "setNoteStarred" | "listNotesCreatedBetween" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = collapseWhitespace;
@@ -67,7 +67,7 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
     notes.set(next.id, next);
     return next;
   };
-  const summary = (note: Note): NoteSummary => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, preview: preview(note.body), updatedAt: note.updatedAt, visitedAt: visits.get(note.id) ?? null, trashedAt: note.trashedAt });
+  const summary = (note: Note): NoteSummary => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, preview: preview(note.body), updatedAt: note.updatedAt, visitedAt: visits.get(note.id) ?? null, starred: Boolean(note.starred), trashedAt: note.trashedAt });
   const existing = (id: string) => {
     const note = notes.get(id);
     if (!note) throw new Error("Note not found");
@@ -195,6 +195,17 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
         .sort((a, b) => recent(b).localeCompare(recent(a)) || a.id.localeCompare(b.id))
         .slice(0, limit)
         .map(summary);
+    },
+    async listStarredNotes(limit) {
+      return [...notes.values()].filter((note) => note.starred && !note.trashed)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))
+        .slice(0, limit).map(summary);
+    },
+    async setNoteStarred(id, starred) {
+      const note = existing(id);
+      if (note.trashed) throw new Error("Restore this note before starring it");
+      note.starred = starred;
+      return structuredClone(note);
     },
     async listTrashedNotes(limit) {
       return [...notes.values()].filter((note) => note.trashed)
@@ -344,9 +355,9 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
       const words = collapseWhitespace(query.toLowerCase()).split(" ").filter(Boolean);
       if (!words.length) return [];
       return [...notes.values()]
-        .filter((note) => (scope === "all" || note.trashed === (scope === "trash")) && words.every((word) => `${note.title} ${note.body}`.toLowerCase().includes(word)))
+        .filter((note) => (scope === "all" || note.trashed === (scope === "trash")) && (scope !== "starred" || note.starred) && words.every((word) => `${note.title} ${note.body}`.toLowerCase().includes(word)))
         .slice(0, limit)
-        .map((note): NoteSearchHit => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, matchSnippet: preview(note.body), trashed: note.trashed }));
+        .map((note): NoteSearchHit => ({ id: note.id, title: note.title, dailyDate: note.dailyDate, matchSnippet: preview(note.body), trashed: note.trashed, starred: Boolean(note.starred) }));
     },
   };
 }

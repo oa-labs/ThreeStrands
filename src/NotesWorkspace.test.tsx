@@ -34,10 +34,96 @@ function shortcuts(overrides = {}) {
   return installTestShortcuts({ focusedPane: "notes", focusSearch: () => runWorkspaceCommand("notes.search"), ...overrides });
 }
 
+function searchInput() {
+  if (!screen.queryByRole("searchbox", { name: "Search Notes" })) act(() => runWorkspaceCommand("notes.search"));
+  return screen.getByRole("searchbox", { name: "Search Notes" });
+}
+
 const noteList = () => within(screen.getByRole("list", { name: "Notes" }));
 
 describe("Notes workspace", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.mocked(replicatedSyncConflicts).mockResolvedValue([]); localStorage.clear(); });
+
+  it("stars the open note without saving an unfinished title, and cycles its split with Tab", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Star target"), "Keep this body");
+    vi.spyOn(mailClient, "listStarredNotes").mockImplementation(async () => {
+      const current = await mailClient.getNote(note.id);
+      return current?.starred && !current.trashed ? [{ ...current, preview: current.body, visitedAt: null }] : [];
+    });
+    shortcuts();
+    const view = render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    const title = await screen.findByRole("textbox", { name: "Title" });
+    await waitFor(() => expect(title).toHaveValue(note.title));
+    expect(screen.queryByRole("tab", { name: "Starred" })).not.toBeInTheDocument();
+    expect(fireEvent.keyDown(document.body, { key: "Tab" })).toBe(true);
+    fireEvent.change(title, { target: { value: "Unfinished title" } });
+    const save = vi.spyOn(mailClient, "updateNote");
+    fireEvent.click(screen.getByRole("button", { name: "Star Note" }));
+    const starred = await screen.findByRole("tab", { name: "Starred" });
+    expect(screen.getByRole("tab", { name: "All Notes" })).toHaveAttribute("aria-selected", "true");
+    expect(title).toHaveValue("Unfinished title");
+    expect(save).not.toHaveBeenCalled();
+    expect((await mailClient.getNote(note.id))?.title).toBe(note.title);
+    const selectedRow = noteList().getByRole("button", { name: new RegExp(`^${note.title}`) });
+    selectedRow.focus();
+    fireEvent.keyDown(selectedRow, { key: "Tab" });
+    expect(starred).toHaveAttribute("aria-selected", "true");
+    expect(within(screen.getByRole("list", { name: "Starred notes" })).getByRole("button", { name: new RegExp(`^${note.title}`) })).toHaveAttribute("aria-current", "true");
+    fireEvent.keyDown(starred, { key: "Tab", shiftKey: true });
+    expect(screen.getByRole("tab", { name: "All Notes" })).toHaveAttribute("aria-selected", "true");
+    title.focus();
+    fireEvent.keyDown(title, { key: "Tab" });
+    expect(screen.getByRole("tab", { name: "All Notes" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(starred);
+    fireEvent.click(screen.getByRole("button", { name: "Unstar Note" }));
+    await screen.findByText("No starred notes.");
+    expect(starred).toBeInTheDocument();
+    expect(title).toHaveValue("Unfinished title");
+    fireEvent.keyDown(document.body, { key: "Tab" });
+    expect(screen.queryByRole("tab", { name: "Starred" })).not.toBeInTheDocument();
+    view.unmount();
+  });
+
+  it("stars a list note without changing the open note and supports the focused-note shortcut", async () => {
+    const open = await mailClient.createNote(uniqueTitle("Open while starring"), "Current text");
+    const other = await mailClient.createNote(uniqueTitle("Star from list"), "Other text");
+    shortcuts();
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: open.id }} />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(open.title));
+    const row = await noteList().findByRole("button", { name: new RegExp(`^${other.title}`) });
+    const actions = within(row.closest('[role="listitem"]')! as HTMLElement);
+    fireEvent.click(actions.getByRole("button", { name: "Star", pressed: false }));
+    await actions.findByRole("button", { name: "Unstar", pressed: true });
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(open.title);
+    expect(await screen.findByRole("tab", { name: "All Notes" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(document.body, { key: "s" });
+    await screen.findByRole("button", { name: "Unstar Note", pressed: true });
+    expect((await mailClient.getNote(open.id))?.starred).toBe(true);
+    await mailClient.setNoteStarred(open.id, false);
+    await mailClient.setNoteStarred(other.id, false);
+  });
+
+  it("searches within Starred and restores that tab without focusing search", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Star search"), "starneedle");
+    const other = await mailClient.createNote(uniqueTitle("Other star search"), "starneedle");
+    await mailClient.setNoteStarred(note.id, true);
+    const first = render(<NotesWorkspace />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Starred" }));
+    fireEvent.change(searchInput(), { target: { value: "starneedle" } });
+    const results = within(await screen.findByRole("list", { name: "Matching notes" }));
+    await results.findByRole("button", { name: new RegExp(`^${note.title}`) });
+    expect(results.queryByRole("button", { name: new RegExp(`^${other.title}`) })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Include Trash" })).not.toBeInTheDocument();
+    first.unmount();
+    render(<NotesWorkspace />);
+    expect(screen.getByRole("tab", { name: "Starred" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("searchbox", { name: "Search Notes" })).toHaveValue("starneedle");
+    expect(screen.getByRole("searchbox", { name: "Search Notes" })).not.toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Close Search" }));
+    expect(screen.queryByRole("searchbox", { name: "Search Notes" })).not.toBeInTheDocument();
+    await screen.findByRole("list", { name: "Starred notes" });
+    await mailClient.setNoteStarred(note.id, false);
+  });
 
   it("pulls peer notes without replacing an unfinished title or body, selection, or search scope", async () => {
     let finish!: () => void;
@@ -47,7 +133,7 @@ describe("Notes workspace", () => {
     const searchNotes = vi.spyOn(mailClient, "searchNotes");
     const view = render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: note.title } });
+    fireEvent.change(searchInput(), { target: { value: note.title } });
     fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));
     await screen.findByRole("list", { name: "Matching notes" });
     fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Unfinished rename" } });
@@ -56,7 +142,7 @@ describe("Notes workspace", () => {
     expect(screen.getByText("Refreshing…")).toBeInTheDocument();
     await act(async () => { finish(); });
     await waitFor(() => expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument());
-    expect(screen.getByRole("searchbox", { name: "Search Notes" })).toHaveValue(note.title);
+    expect(searchInput()).toHaveValue(note.title);
     expect(screen.getByRole("button", { name: "Include Trash" })).toHaveAttribute("aria-pressed", "true");
     expect(searchNotes).toHaveBeenLastCalledWith(note.title, expect.any(Number), "all");
     expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Unfinished rename");
@@ -72,9 +158,9 @@ describe("Notes workspace", () => {
     const search = vi.spyOn(mailClient, "searchNotes");
     const view = render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "old search" } });
+    fireEvent.change(searchInput(), { target: { value: "old search" } });
     fireEvent.wheel(view.container.querySelector(".notes-list-pane")!, { deltaY: -100 });
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: note.title } });
+    fireEvent.change(searchInput(), { target: { value: note.title } });
     await act(async () => { finish(); });
     await waitFor(() => expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument());
     expect(search).toHaveBeenLastCalledWith(note.title, expect.any(Number), "active");
@@ -173,13 +259,13 @@ describe("Notes workspace", () => {
     const text = await screen.findByRole("textbox", { name: "Note text" });
     await waitFor(() => expect(text).toHaveValue("Original"));
     fireEvent.change(text, { target: { value: "Keep these edits" } });
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "No matching imported title" } });
+    fireEvent.change(searchInput(), { target: { value: "No matching imported title" } });
     const button = screen.getByRole("button", { name: "Import Note" });
     expect(screen.getByRole("button", { name: "New Note" }).nextElementSibling).toBe(button);
     fireEvent.click(button);
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(imported.title));
     expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue(imported.body);
-    expect(screen.getByRole("searchbox", { name: "Search Notes" })).toHaveValue("");
+    expect(searchInput()).toHaveValue("");
     expect(noteList().getByRole("button", { name: new RegExp(imported.title) })).toHaveAttribute("aria-current", "true");
     expect(choose).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveFocus());
@@ -379,7 +465,7 @@ describe("Notes workspace", () => {
     render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
     const row = await noteList().findByRole("button", { name: new RegExp(note.title) });
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
-    for (const control of [screen.getByRole("textbox", { name: "Note text" }), screen.getByRole("textbox", { name: "Title" }), screen.getByRole("searchbox", { name: "Search Notes" })]) {
+    for (const control of [screen.getByRole("textbox", { name: "Note text" }), screen.getByRole("textbox", { name: "Title" }), searchInput()]) {
       control.focus();
       for (const key of ["ArrowUp", "ArrowDown"]) {
         expect(fireEvent.keyDown(control, { key })).toBe(true);
@@ -404,7 +490,7 @@ describe("Notes workspace", () => {
     shortcuts();
     render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });
-    if (view === "search") fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "Visible" } });
+    if (view === "search") fireEvent.change(searchInput(), { target: { value: "Visible" } });
     else fireEvent.click(screen.getByRole("button", { name: /^Trash/ }));
     const list = within(await screen.findByRole("list", { name: view === "search" ? "Matching notes" : "Trash" }));
     const firstRow = await list.findByRole("button", { name: new RegExp(first.title) });
@@ -508,6 +594,7 @@ describe("Notes workspace", () => {
     shortcuts();
     render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });
+    expect(screen.queryByRole("searchbox", { name: "Search Notes" })).not.toBeInTheDocument();
     fireEvent.keyDown(document.body, { key: "/" });
     const search = screen.getByRole("searchbox", { name: "Search Notes" });
     expect(search.closest("label")).toHaveClass("search-box");
@@ -517,8 +604,23 @@ describe("Notes workspace", () => {
     expect(await results.findByRole("button", { name: new RegExp(note.title) })).toBeInTheDocument();
     expect(results.queryByRole("button", { name: /^Today/ })).not.toBeInTheDocument();
     fireEvent.keyDown(search, { key: "Escape" });
-    expect(search).toHaveValue("");
+    expect(screen.queryByRole("searchbox", { name: "Search Notes" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: /^Today/ })).toHaveFocus());
+  });
+
+  it("closes search with Escape from its results before returning to Mail", async () => {
+    const onReturn = vi.fn();
+    const note = await mailClient.createNote(uniqueTitle("Result escape"), "escapeneedle");
+    render(<NotesWorkspace onReturn={onReturn} />);
+    const search = searchInput();
+    fireEvent.change(search, { target: { value: "escapeneedle" } });
+    await within(await screen.findByRole("list", { name: "Matching notes" })).findByRole("button", { name: new RegExp(`^${note.title}`) });
+    fireEvent.keyDown(search, { key: "Enter" });
+    const result = screen.getByRole("button", { name: new RegExp(`^${note.title}`) });
+    await waitFor(() => expect(result).toHaveFocus());
+    fireEvent.keyDown(result, { key: "Escape" });
+    expect(screen.queryByRole("searchbox", { name: "Search Notes" })).not.toBeInTheDocument();
+    expect(onReturn).not.toHaveBeenCalled();
   });
 
   it("retains the search, scope and selected note across unmounts without focusing search", async () => {
@@ -527,7 +629,7 @@ describe("Notes workspace", () => {
     await mailClient.trashNote(trashed.id);
     const first = render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "sessionneedle" } });
+    fireEvent.change(searchInput(), { target: { value: "sessionneedle" } });
     fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));
     const results = within(await screen.findByRole("list", { name: "Matching notes" }));
     fireEvent.click(await results.findByRole("button", { name: new RegExp(active.title) }));
@@ -564,8 +666,8 @@ describe("Notes workspace", () => {
     shortcuts();
     render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });
-    const search = screen.getByRole("searchbox", { name: "Search Notes" });
-    expect(search.closest("label")).toHaveClass("idle");
+    const search = searchInput();
+    expect(search.closest("label")).toHaveClass("search-box");
     expect(search.closest("label")?.querySelector("svg")).not.toBeNull();
     expect(screen.queryByRole("checkbox", { name: "Include Trash" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Include Trash" })).not.toBeInTheDocument();
@@ -598,7 +700,7 @@ describe("Notes workspace", () => {
     await waitFor(() => expect(results.queryByRole("button", { name: new RegExp(trashed.title) })).not.toBeInTheDocument());
     await results.findByRole("button", { name: new RegExp(active.title) });
     fireEvent.click(screen.getByRole("button", { name: "Close Search" }));
-    expect(search).toHaveValue("");
+    expect(screen.queryByRole("searchbox", { name: "Search Notes" })).not.toBeInTheDocument();
     await screen.findByRole("list", { name: "Notes" });
     expect(screen.queryByRole("button", { name: "Include Trash" })).not.toBeInTheDocument();
   });
@@ -612,7 +714,7 @@ describe("Notes workspace", () => {
     });
     render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "delayedneedle" } });
+    fireEvent.change(searchInput(), { target: { value: "delayedneedle" } });
     fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));
     await waitFor(() => expect(lookup).toHaveBeenCalledWith("delayedneedle", expect.any(Number), "all"));
     fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));

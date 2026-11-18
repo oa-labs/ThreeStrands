@@ -560,3 +560,23 @@ fn a_note_starting_with_a_horizontal_rule_keeps_all_its_text() {
         "---\naliases:\n  - Other name\n\n- Second\n---\n\nBody\n"
     );
 }
+
+#[test]
+fn starred_notes_round_trip_through_markdown_and_old_files_default_unstarred() {
+    let folder = TestFolder::new();
+    folder.write(
+        "focus.md",
+        "---\ntitle: Focus\nstarred: true\n---\n\nKeep this\n",
+    );
+    let plan = plan_file(&folder.0.join("focus.md"), &nothing()).unwrap();
+    let note = &plan.notes[0].note;
+    assert!(note.starred);
+    assert_eq!(note.body, "Keep this\n");
+    folder.write("roundtrip.md", crate::notes_export::file_text(note));
+    let imported = plan_file(&folder.0.join("roundtrip.md"), &nothing()).unwrap();
+    assert!(imported.notes[0].note.starred);
+    assert_eq!(imported.notes[0].note.body, note.body);
+    folder.write("old.md", "---\ntitle: Old\n---\n\nText");
+    let old = plan_file(&folder.0.join("old.md"), &nothing()).unwrap();
+    assert!(!old.notes[0].note.starred);
+}

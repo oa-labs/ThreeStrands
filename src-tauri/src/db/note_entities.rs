@@ -467,6 +467,7 @@ impl Database {
                                 created_at: now.clone(),
                                 updated_at: now,
                                 trashed: false,
+                                starred: false,
                                 trashed_at: None,
                                 authored_title: None,
                             };

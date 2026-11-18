@@ -57,6 +57,7 @@ it("opens a linked contact, lists its note, and returns with Escape preserving t
   lastEditorProps.current!.onOpenEntity!(noteReferenceHref({ version: 1, kind: "contact", id: "nobody.saved@example.com" }));
   expect(await screen.findByText("No contact for nobody.saved@example.com on this device")).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title);
+  fireEvent.keyDown(document.body, { key: "/" });
   fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "Meeting with Pete" } });
   const editedBody = `${note.body}\nFollow up on the agenda.`;
   fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: editedBody } });

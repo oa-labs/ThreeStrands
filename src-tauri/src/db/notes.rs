@@ -29,7 +29,7 @@ use crate::notes::{
 };
 
 const NOTE_COLUMNS: &str =
-    "id, title, body, daily_date, created_at, updated_at, trashed, trashed_at, authored_title";
+    "id, title, body, daily_date, created_at, updated_at, trashed, trashed_at, authored_title, starred";
 /// Most characters of a note's body shown under its title in the list.
 const PREVIEW_CHARS: usize = 140;
 /// Most rows one list or search returns.
@@ -53,6 +53,7 @@ fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         created_at: row.get(4)?,
         updated_at: row.get(5)?,
         trashed: row.get(6)?,
+        starred: row.get(9)?,
         trashed_at: row.get(7)?,
     })
 }
@@ -76,6 +77,7 @@ fn sync_payload(note: &Note) -> Value {
         "title": note.title,
         "body": note.body,
         "trashed": note.trashed,
+        "starred": note.starred,
     });
     match &note.daily_date {
         Some(date) => payload["dailyDate"] = json!(date),
@@ -265,13 +267,13 @@ fn store(
     }
     let note = &projected;
     tx.execute(
-        "INSERT INTO notes(id, title, title_key, body, daily_date, created_at, updated_at, trashed, trashed_at, sync_bytes, replica_dirty_fields, authored_title)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
+        "INSERT INTO notes(id, title, title_key, body, daily_date, created_at, updated_at, trashed, trashed_at, sync_bytes, replica_dirty_fields, authored_title, starred)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
          ON CONFLICT(id) DO UPDATE SET title=excluded.title, title_key=excluded.title_key,
             body=excluded.body, daily_date=excluded.daily_date, created_at=excluded.created_at,
             updated_at=excluded.updated_at, trashed=excluded.trashed, trashed_at=excluded.trashed_at,
             sync_bytes=excluded.sync_bytes, replica_dirty_fields=excluded.replica_dirty_fields,
-            authored_title=excluded.authored_title",
+            authored_title=excluded.authored_title, starred=excluded.starred",
         params![
             note.id,
             note.title,
@@ -285,6 +287,7 @@ fn store(
             sync_bytes,
             stored_pending,
             authored_payload["title"].as_str().unwrap_or_default(),
+            note.starred,
         ],
     )?;
     index(tx, note)?;
@@ -541,6 +544,7 @@ pub(super) fn save_daily_in(
                     created_at: now.clone(),
                     updated_at: now,
                     trashed: false,
+                    starred: false,
                     trashed_at: None,
                     authored_title: None,
                 },
@@ -585,6 +589,7 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteSummary> {
         preview: preview(&row.get::<_, String>(3)?),
         updated_at: row.get(4)?,
         visited_at: row.get(5)?,
+        starred: row.get(7)?,
         trashed_at: row.get(6)?,
     })
 }
@@ -617,6 +622,7 @@ impl Database {
             created_at: now.clone(),
             updated_at: now,
             trashed: false,
+            starred: false,
             trashed_at: None,
             authored_title: None,
         };
@@ -819,7 +825,7 @@ impl Database {
     pub fn list_recent_notes(&self, limit: usize) -> DbResult<Vec<NoteSummary>> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT n.id, n.title, n.daily_date, substr(n.body, 1, 1000), n.updated_at, v.visited_at, n.trashed_at
+                "SELECT n.id, n.title, n.daily_date, substr(n.body, 1, 1000), n.updated_at, v.visited_at, n.trashed_at, n.starred
                  FROM notes n LEFT JOIN note_visits v ON v.note_id=n.id
                  WHERE n.trashed=0
                  ORDER BY max(COALESCE(v.visited_at, ''), n.updated_at) DESC, n.id
@@ -827,6 +833,43 @@ impl Database {
             )?;
             let rows = statement.query_map([limit.min(MAX_LIST_ROWS) as i64], summary_from_row)?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// Starred notes outside Trash, independently of the recent-list limit.
+    pub fn list_starred_notes(&self, limit: usize) -> DbResult<Vec<NoteSummary>> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT n.id, n.title, n.daily_date, substr(n.body, 1, 1000), n.updated_at, v.visited_at, n.trashed_at, n.starred
+                 FROM notes n LEFT JOIN note_visits v ON v.note_id=n.id
+                 WHERE n.trashed=0 AND n.starred=1
+                 ORDER BY max(COALESCE(v.visited_at, ''), n.updated_at) DESC, n.id LIMIT ?1",
+            )?;
+            let rows = statement.query_map([limit.min(MAX_LIST_ROWS) as i64], summary_from_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// Star changes never rewrite text or advance its edit version.
+    pub fn set_note_starred(&self, id: &str, starred: bool) -> DbResult<Note> {
+        self.with_transaction(|tx| {
+            let mut note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
+            if note.trashed {
+                return Err(DatabaseError::invalid(
+                    "Restore this note before starring it",
+                ));
+            }
+            if note.starred == starred {
+                return Ok(note);
+            }
+            if field_in_conflict(tx, id, "starred")? {
+                return Err(DatabaseError::invalid(CONFLICTED));
+            }
+            note.starred = starred;
+            let changed = BTreeSet::from(["starred".to_string()]);
+            let bytes = check_sync_limits(tx, &note, &write_payload(tx, &note, &changed)?)?;
+            store(tx, &note, bytes, Some(&changed))?;
+            get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))
         })
     }
 
@@ -865,7 +908,7 @@ impl Database {
     pub fn list_trashed_notes(&self, limit: usize) -> DbResult<Vec<NoteSummary>> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT n.id, n.title, n.daily_date, substr(n.body, 1, 1000), n.updated_at, v.visited_at, n.trashed_at
+                "SELECT n.id, n.title, n.daily_date, substr(n.body, 1, 1000), n.updated_at, v.visited_at, n.trashed_at, n.starred
                  FROM notes n LEFT JOIN note_visits v ON v.note_id=n.id
                  WHERE n.trashed=1
                  ORDER BY n.trashed_at DESC, n.id
@@ -964,9 +1007,9 @@ impl Database {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT n.id, n.title, n.daily_date,
-                        snippet(note_search, -1, '\u{1}', '\u{2}', '…', 12), n.trashed
+                        snippet(note_search, -1, '\u{1}', '\u{2}', '…', 12), n.trashed, n.starred
                  FROM note_search s JOIN notes n ON n.id=s.note_id
-                 WHERE note_search MATCH ?1 AND (?3 IS NULL OR n.trashed=?3)
+                 WHERE note_search MATCH ?1 AND (?3 IS NULL OR n.trashed=?3) AND (?4=0 OR n.starred=1)
                  ORDER BY rank
                  LIMIT ?2",
             )?;
@@ -975,10 +1018,11 @@ impl Database {
                     query,
                     limit.min(MAX_LIST_ROWS) as i64,
                     match scope {
-                        NoteSearchScope::Active => Some(false),
+                        NoteSearchScope::Active | NoteSearchScope::Starred => Some(false),
                         NoteSearchScope::Trash => Some(true),
                         NoteSearchScope::All => None,
-                    }
+                    },
+                    matches!(scope, NoteSearchScope::Starred)
                 ],
                 |row| {
                     Ok(NoteSearchHit {
@@ -987,6 +1031,7 @@ impl Database {
                         daily_date: row.get(2)?,
                         match_snippet: row.get(3)?,
                         trashed: row.get(4)?,
+                        starred: row.get(5)?,
                     })
                 },
             )?;
@@ -1142,6 +1187,10 @@ impl Database {
                 },
                 daily_date,
                 created_at,
+                starred: payload
+                    .get("starred")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 trashed,
             };
             if authored_existing.as_ref() == Some(&note) {

@@ -738,6 +738,12 @@ fn validate_note(object: &Map<String, Value>) -> Result<(), String> {
     ) {
         return Err("trashed is invalid".into());
     }
+    if !matches!(
+        object.get("starred"),
+        None | Some(Value::Null) | Some(Value::Bool(_))
+    ) {
+        return Err("starred is invalid".into());
+    }
     Ok(())
 }
 
@@ -1530,6 +1536,20 @@ mod note_tests {
 
     fn daily(date: &str, id: &str, title: &str) -> Value {
         json!({"id": id, "title": title, "body": "", "dailyDate": date})
+    }
+
+    #[test]
+    fn note_star_is_optional_and_accepts_only_booleans() {
+        let mut payload = note("Text");
+        assert!(EntityType::Note.validate_payload(&payload).is_ok());
+        for value in [json!(true), json!(false), Value::Null] {
+            payload["starred"] = value;
+            assert!(EntityType::Note.validate_payload(&payload).is_ok());
+        }
+        for value in [json!("yes"), json!(1), json!({})] {
+            payload["starred"] = value;
+            assert!(EntityType::Note.validate_payload(&payload).is_err());
+        }
     }
 
     #[test]

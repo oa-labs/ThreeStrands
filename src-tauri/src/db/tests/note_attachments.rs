@@ -296,6 +296,7 @@ fn the_same_file_sealed_on_two_devices_settles_without_asking() {
             created_at: "2026-09-01T10:00:00Z".into(),
             updated_at: "2026-09-01T10:00:00Z".into(),
             trashed: false,
+            starred: false,
             trashed_at: None,
         };
         db.import_note(

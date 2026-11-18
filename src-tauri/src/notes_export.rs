@@ -199,11 +199,12 @@ pub(crate) fn file_stem(title: &str) -> String {
 pub(crate) fn file_text(note: &Note) -> String {
     let quote = |value: &str| serde_json::to_string(value).unwrap_or_default();
     format!(
-        "---\nid: {}\ntitle: {}\ncreated: {}\nupdated: {}\n---\n\n{}",
+        "---\nid: {}\ntitle: {}\ncreated: {}\nupdated: {}\n{}---\n\n{}",
         quote(&note.id),
         quote(&note.title),
         quote(&note.created_at),
         quote(&note.updated_at),
+        if note.starred { "starred: true\n" } else { "" },
         note.body
     )
 }
@@ -471,6 +472,7 @@ mod tests {
             created_at: "2026-11-01T09:00:00Z".to_string(),
             updated_at: "2026-11-02T10:00:00Z".to_string(),
             trashed: false,
+            starred: false,
             trashed_at: None,
             authored_title: None,
         }

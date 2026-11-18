@@ -55,6 +55,7 @@ const MIGRATIONS: &[Migration] = &[
     (108, to_v108),
     (109, to_v109),
     (110, to_v110),
+    (111, to_v111),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1314,6 +1315,7 @@ fn to_v103(tx: &rusqlite::Transaction) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    ensure_note_starred_column(tx)?;
     crate::db::reconcile_titles(tx).map_err(error)
 }
 
@@ -1493,9 +1495,33 @@ fn to_v110(tx: &rusqlite::Transaction) -> Result<(), String> {
     .map_err(error)
 }
 
+/// Earlier migrations use the current note reader while rebuilding indexes.
+/// Ensure its new column exists before they read pre-star note rows.
+fn ensure_note_starred_column(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('notes') WHERE name='starred')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !exists {
+        tx.execute_batch("ALTER TABLE notes ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;")
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn to_v111(tx: &rusqlite::Transaction) -> Result<(), String> {
+    ensure_note_starred_column(tx)?;
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS notes_starred ON notes(starred, trashed);")
+        .map_err(error)
+}
+
 /// A `[[link]]`'s backlink context is the line as text rather than its
 /// Markdown, so rows written before then are rebuilt.
 fn to_v107(tx: &rusqlite::Transaction) -> Result<(), String> {
+    ensure_note_starred_column(tx)?;
     let ids = {
         let mut q = tx.prepare("SELECT id FROM notes").map_err(error)?;
         let rows = q
@@ -1515,6 +1541,7 @@ fn to_v107(tx: &rusqlite::Transaction) -> Result<(), String> {
 /// Rebuilds every note's derived task and link rows from its stored text,
 /// without editing a note or publishing a change.
 fn reindex_notes(tx: &rusqlite::Transaction) -> Result<(), String> {
+    ensure_note_starred_column(tx)?;
     let ids = {
         let mut q = tx.prepare("SELECT id FROM notes").map_err(error)?;
         let rows = q
@@ -1845,6 +1872,7 @@ mod tests {
         "index:conversation_snoozes_account",
         "table:notes",
         "index:notes_by_title_key",
+        "index:notes_starred",
         "table:note_links",
         "index:note_links_by_target",
         "table:note_search",
@@ -2099,7 +2127,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 110);
+        assert_eq!(version, super::LATEST_VERSION);
     }
 
     #[test]

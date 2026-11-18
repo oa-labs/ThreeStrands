@@ -67,7 +67,15 @@ fn creating_and_editing_records_only_changed_fields_and_saving_unchanged_text_wr
     let fields: Vec<&str> = created.iter().map(|(field, _)| field.as_str()).collect();
     assert_eq!(
         fields,
-        ["_entity", "body", "createdAt", "id", "title", "trashed"]
+        [
+            "_entity",
+            "body",
+            "createdAt",
+            "id",
+            "starred",
+            "title",
+            "trashed"
+        ]
     );
 
     let same = db
@@ -83,7 +91,7 @@ fn creating_and_editing_records_only_changed_fields_and_saving_unchanged_text_wr
         rows.iter().find(|(name, _)| name == field).unwrap().1
     };
     assert!(counter(&after, "body") > counter(&created, "body"));
-    for field in ["_entity", "createdAt", "id", "title", "trashed"] {
+    for field in ["_entity", "createdAt", "id", "starred", "title", "trashed"] {
         assert_eq!(counter(&after, field), counter(&created, field), "{field}");
     }
     assert_eq!(db.get_note(&note.id).unwrap().unwrap().body, "Second draft");
@@ -373,7 +381,7 @@ fn edits_made_while_sync_is_off_stay_local_until_it_is_on() {
     db.set_beta_features_enabled(true).unwrap();
     db.reconcile_replicated_sync_backlog().unwrap();
     let recorded = replica_fields(&db, &note.id);
-    assert_eq!(recorded.len(), 6);
+    assert_eq!(recorded.len(), 7);
     let peer = synced();
     sync_into(&peer, &db);
     assert_eq!(peer.get_note(&note.id).unwrap().unwrap().body, "v2");
@@ -1084,6 +1092,7 @@ fn two_devices_importing_one_note_agree_except_on_text_that_differs() {
         created_at: created_at.into(),
         updated_at: created_at.into(),
         trashed: false,
+        starred: false,
         trashed_at: None,
     };
     // Each device read the file with its own modification time.
@@ -2240,6 +2249,7 @@ fn note_created(id: &str, title: &str, created_at: &str, daily: Option<&str>) ->
         created_at: created_at.into(),
         updated_at: created_at.into(),
         trashed: false,
+        starred: false,
         trashed_at: None,
     }
 }
@@ -2311,4 +2321,114 @@ fn notes_created_between_keeps_the_day_and_skips_daily_and_trashed_notes() {
         .unwrap()[0];
     assert_eq!(first.created_at, "2026-11-10T23:59:59Z");
     assert_eq!(first.preview, "About Before end");
+}
+
+#[test]
+fn starring_preserves_unsaved_edit_versions_and_survives_trash_and_restore() {
+    let db = database();
+    let note = db.create_note("Focus", "Original text").unwrap();
+    let starred = db.set_note_starred(&note.id, true).unwrap();
+    assert!(starred.starred);
+    assert_eq!(starred.updated_at, note.updated_at);
+    assert_eq!(starred.body, note.body);
+    let save = db
+        .save_note(&note.id, "Renamed", "Local edit", &note.updated_at)
+        .unwrap();
+    assert!(save.saved);
+    assert!(save.note.unwrap().starred);
+    assert_eq!(db.list_starred_notes(20).unwrap()[0].id, note.id);
+    db.trash_note(&note.id).unwrap();
+    assert!(db.list_starred_notes(20).unwrap().is_empty());
+    assert!(db.set_note_starred(&note.id, false).is_err());
+    assert!(db.restore_note(&note.id).unwrap().starred);
+    db.set_note_starred(&note.id, false).unwrap();
+    assert!(db.list_starred_notes(20).unwrap().is_empty());
+}
+
+#[test]
+fn starred_list_and_search_filter_before_limiting_and_include_daily_notes() {
+    let db = database();
+    let ordinary = db.create_note("Focus", "needle").unwrap();
+    let star = db.create_note("Older focus", "needle").unwrap();
+    db.set_note_starred(&star.id, true).unwrap();
+    db.save_daily_note(DAY, "needle").unwrap();
+    db.set_note_starred(&daily_note_id(DAY), true).unwrap();
+    db.record_note_visit(&ordinary.id).unwrap();
+    let listed = db.list_starred_notes(10).unwrap();
+    assert_eq!(listed.len(), 2);
+    assert!(listed.iter().all(|note| note.starred));
+    assert_eq!(db.list_recent_notes(1).unwrap()[0].id, ordinary.id);
+    assert_eq!(db.list_starred_notes(1).unwrap().len(), 1);
+    let matches = db
+        .search_notes_in_scope("needle", 10, NoteSearchScope::Starred)
+        .unwrap();
+    assert_eq!(matches.len(), 2);
+    assert!(matches.iter().all(|note| note.starred && !note.trashed));
+    db.trash_note(&star.id).unwrap();
+    assert_eq!(
+        db.search_notes_in_scope("needle", 1, NoteSearchScope::Starred)
+            .unwrap()[0]
+            .id,
+        daily_note_id(DAY)
+    );
+}
+
+#[test]
+fn stars_sync_independently_of_concurrent_text_edits() {
+    let (a, b) = (synced(), synced());
+    let note = a.create_note("Focus", "Original").unwrap();
+    sync_both(&a, &b);
+    a.set_note_starred(&note.id, true).unwrap();
+    b.update_note(&note.id, "Focus", "Peer edit").unwrap();
+    sync_both(&a, &b);
+    for db in [&a, &b] {
+        let loaded = db.get_note(&note.id).unwrap().unwrap();
+        assert!(loaded.starred);
+        assert_eq!(loaded.body, "Peer edit");
+        assert_eq!(db.list_starred_notes(10).unwrap().len(), 1);
+    }
+    b.set_note_starred(&note.id, false).unwrap();
+    sync_both(&a, &b);
+    assert!(!a.get_note(&note.id).unwrap().unwrap().starred);
+}
+
+#[test]
+fn stars_default_false_for_older_databases_and_sync_payloads() {
+    let db = database();
+    let note = db.create_note("Focus", "Keep this").unwrap();
+    {
+        let mut connection = db.test_connection().unwrap();
+        connection.execute_batch("DROP INDEX notes_starred; ALTER TABLE notes DROP COLUMN starred; PRAGMA user_version=110;").unwrap();
+        crate::schema::migrate(&mut connection).unwrap();
+    }
+    assert!(!db.get_note(&note.id).unwrap().unwrap().starred);
+    let payload = serde_json::json!({"id":"old-note", "title":"Old note", "body":"Old text", "createdAt":"2026-11-09T00:00:00Z"});
+    db.upsert_synced_note("old-note", &payload).unwrap();
+    assert!(!db.get_note("old-note").unwrap().unwrap().starred);
+}
+
+#[test]
+fn upgrades_of_pre_star_notes_can_rebuild_their_derived_indexes() {
+    for version in [102, 103, 104, 105, 106, 107, 110] {
+        let db = database();
+        let note = db
+            .create_note("Legacy focus", "- ( ) Keep this task\n")
+            .unwrap();
+        {
+            let mut connection = db.test_connection().unwrap();
+            connection
+                .execute_batch("DROP INDEX notes_starred; ALTER TABLE notes DROP COLUMN starred;")
+                .unwrap();
+            connection
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+            crate::schema::migrate(&mut connection).unwrap();
+        }
+        let loaded = db.get_note(&note.id).unwrap().unwrap();
+        assert!(!loaded.starred, "version {version}");
+        assert_eq!(loaded.body, note.body, "version {version}");
+        assert_eq!(db.search_notes("legacy", 10).unwrap().len(), 1);
+        db.set_note_starred(&note.id, true).unwrap();
+        assert_eq!(db.list_starred_notes(10).unwrap()[0].id, note.id);
+    }
 }

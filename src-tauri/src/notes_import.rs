@@ -62,7 +62,7 @@ const MAX_DEPTH: usize = 12;
 /// read.
 const MAX_NOTE_FILE_BYTES: u64 = 4 * MAX_NOTE_BODY_BYTES as u64;
 /// Front matter keys Reflect and ThreeStrands keep for themselves.
-const DROPPED_KEYS: [&str; 8] = [
+const DROPPED_KEYS: [&str; 9] = [
     "id",
     "title",
     "created",
@@ -71,6 +71,7 @@ const DROPPED_KEYS: [&str; 8] = [
     "snippet",
     "summary_source_hash",
     "pinned",
+    "starred",
 ];
 
 /// Something in the folder that won't be imported, and why.
@@ -847,6 +848,7 @@ fn plan_paths(
                 created_at: created,
                 updated_at: updated,
                 trashed: false,
+                starred: value(&parsed, "starred") == Some("true"),
                 trashed_at: None,
                 authored_title: None,
             },

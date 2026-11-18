@@ -1372,6 +1372,8 @@ pub struct Note {
     pub created_at: String,
     pub updated_at: String,
     pub trashed: bool,
+    #[serde(default)]
+    pub starred: bool,
     pub trashed_at: Option<String>,
 }
 
@@ -1420,6 +1422,7 @@ pub struct NoteSummary {
     pub updated_at: String,
     /// When this device last opened the note.
     pub visited_at: Option<String>,
+    pub starred: bool,
     pub trashed_at: Option<String>,
 }
 
@@ -1431,6 +1434,7 @@ pub enum NoteSearchScope {
     Active,
     All,
     Trash,
+    Starred,
 }
 
 /// A note matching a search, with the matching text marked by U+0001 and
@@ -1439,6 +1443,7 @@ pub enum NoteSearchScope {
 #[serde(rename_all = "camelCase")]
 pub struct NoteSearchHit {
     pub trashed: bool,
+    pub starred: bool,
     pub id: String,
     pub title: String,
     pub daily_date: Option<String>,

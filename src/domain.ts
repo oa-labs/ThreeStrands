@@ -1054,6 +1054,7 @@ export type Note = {
   createdAt: string;
   updatedAt: string;
   trashed: boolean;
+  starred?: boolean;
   trashedAt: string | null;
 };
 
@@ -1073,6 +1074,7 @@ export type NoteSummary = {
   preview: string;
   updatedAt: string;
   visitedAt: string | null;
+  starred?: boolean;
   trashedAt: string | null;
 };
 
@@ -1253,9 +1255,9 @@ export type NotesImportOutcome = { notes: number; files: number; problems: Notes
 export type NotesExportOutcome = { path: string; notes: number; attachments: number; missingAttachments: number };
 
 /** The lifecycle states included in a note search; omitted scopes mean active notes. */
-export type NoteSearchScope = "active" | "all" | "trash";
+export type NoteSearchScope = "active" | "all" | "trash" | "starred";
 /** A note matching a search; U+0001 and U+0002 mark the matching text. */
-export type NoteSearchHit = { id: string; title: string; dailyDate: string | null; matchSnippet: string; trashed: boolean };
+export type NoteSearchHit = { id: string; title: string; dailyDate: string | null; matchSnippet: string; trashed: boolean; starred?: boolean };
 
 export type SyncStatus = {
   state: "idle" | "syncing" | "offline" | "error";

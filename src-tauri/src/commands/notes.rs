@@ -21,6 +21,26 @@ pub(crate) async fn list_recent_notes(
     run_database_task(move || database.list_recent_notes(limit)).await
 }
 
+#[tauri::command]
+pub(crate) async fn list_starred_notes(
+    limit: usize,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<NoteSummary>> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_starred_notes(limit)).await
+}
+
+#[tauri::command(async)]
+pub(crate) fn set_note_starred(
+    id: String,
+    starred: bool,
+    state: State<'_, AppState>,
+) -> AppResult<Note> {
+    let note = state.database.set_note_starred(&id, starred)?;
+    kick_replicated_sync(&state);
+    Ok(note)
+}
+
 /// Notes created during `[start, end)`, for the Today view's Done card.
 #[tauri::command]
 pub(crate) async fn list_notes_created_between(
