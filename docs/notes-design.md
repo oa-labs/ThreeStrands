@@ -1251,7 +1251,12 @@ links the same running note, whose backlinks list each day's line.
   keeps the title, the other gets a number, and `[[Title]]` links resolve to
   the one keeping it.
 - The meeting note holds no event link of its own; the event is reached from
-  the daily line, and the event's **Notes** backlinks list the daily note.
+  the daily line. The event's **Notes** list includes both the daily note and
+  the meeting note named by the single wiki link on that meeting's list-item
+  line. This is resolved when reading, so existing notes work without a
+  migration or rewritten content. Nested tasks, neighboring entries, ambiguous
+  lines with multiple wiki links, missing notes, and notes in Trash do not
+  supply a meeting-note destination.
 
 ### Contact references
 
@@ -1461,6 +1466,9 @@ existing note instead. A dedicated meeting note takes precedence over a daily
 note; existing additional links stay available in **Notes**. Notes about other
 occurrences stay in **Series notes** and do not prevent adding this occurrence.
 Neither section searches for notes merely mentioning an attendee.
+The dedicated note may link the event directly or be reached through the
+daily meeting line's wiki link. The **Open Note** action after adding a meeting
+also opens the dedicated note when **Create backlinked note** was selected.
 
 ### Open questions
 

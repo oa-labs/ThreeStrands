@@ -1950,6 +1950,11 @@ fn a_linked_meeting_note_is_created_once_and_shared_by_later_occurrences() {
         .unwrap();
     assert!(first.created_meeting_note);
     let created = first.meeting_note.unwrap();
+    assert!(db
+        .note_backlinks(&meeting("evt-1", true).event)
+        .unwrap()
+        .iter()
+        .any(|row| row.note_id == created.id));
     assert_eq!(created.title, "CS Leadership -Sync-");
     assert_eq!(created.body, "");
     assert!(first.note.body.contains(" for [[CS Leadership -Sync-]]\n"));
@@ -1970,6 +1975,92 @@ fn a_linked_meeting_note_is_created_once_and_shared_by_later_occurrences() {
         .unwrap();
     assert!(after_trash.created_meeting_note);
     assert_ne!(after_trash.meeting_note.unwrap().id, created.id);
+}
+
+#[test]
+fn existing_daily_meeting_links_resolve_the_meeting_note_without_rewriting_notes() {
+    let db = database();
+    let event = standup("occurrence", Some("series"));
+    let meeting = db
+        .create_note(
+            "My EO Software Consultancy Forum - November 18th, 2026",
+            "Meeting notes",
+        )
+        .unwrap();
+    let body = format!(
+        "## Meetings\n\n- [10:00 am]({}) met with chris@pagepro.co, hector@codehesion.co.za, Ciapka, Mark, Nils Löwe, Miguel Muñoz, harley@coderpush.com, Hector Beyers, MEng for [[{}|Forum]]\n",
+        event.href().unwrap(),
+        meeting.title
+    );
+    let day = db.save_daily_note(DAY, &body).unwrap().unwrap();
+    let ids = |reference: &crate::note_entities::NoteReference| {
+        db.note_backlinks(reference)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.note_id)
+            .collect::<HashSet<_>>()
+    };
+    assert_eq!(
+        ids(&event),
+        HashSet::from([day.id.clone(), meeting.id.clone()])
+    );
+    assert_eq!(ids(&standup("series", None)), ids(&event));
+    assert!(ids(&standup("another-occurrence", Some("series"))).is_empty());
+    for other in [
+        crate::note_entities::NoteReference {
+            account: Some("other".into()),
+            ..event.clone()
+        },
+        crate::note_entities::NoteReference {
+            calendar: Some("other".into()),
+            ..event.clone()
+        },
+    ] {
+        assert!(ids(&other).is_empty());
+    }
+    assert_eq!(
+        db.get_note(&day.id).unwrap().unwrap().updated_at,
+        day.updated_at
+    );
+    assert_eq!(
+        db.get_note(&meeting.id).unwrap().unwrap().updated_at,
+        meeting.updated_at
+    );
+    db.update_note(&meeting.id, "Renamed forum", &meeting.body)
+        .unwrap();
+    assert!(ids(&event).contains(&meeting.id));
+    db.trash_note(&meeting.id).unwrap();
+    assert_eq!(ids(&event), HashSet::from([day.id.clone()]));
+    db.restore_note(&meeting.id).unwrap();
+    db.trash_note(&day.id).unwrap();
+    assert!(ids(&event).is_empty());
+}
+
+#[test]
+fn unrelated_or_ambiguous_wiki_links_are_not_meeting_note_destinations() {
+    for body in [
+        "- [Meeting](EVENT) for plain title\n- [[Target]]",
+        "- [Meeting](EVENT) for plain title\n  - Read [[Target]]",
+        "- [Meeting](EVENT) for `[[Target]]`",
+        "- [Meeting](EVENT) for \\[[Target]]",
+        "- [Meeting](EVENT) for [[Target]] and [[Other]]",
+        "> [Meeting](EVENT) for [[Target]]",
+        "```\n- [Meeting](EVENT) for [[Target]]\n```",
+    ] {
+        let db = database();
+        let event = standup("occurrence", None);
+        let target = db.create_note("Target", "").unwrap();
+        db.create_note("Other", "").unwrap();
+        db.save_daily_note(DAY, &body.replace("EVENT", &event.href().unwrap()))
+            .unwrap();
+        assert!(
+            !db.note_backlinks(&event)
+                .unwrap()
+                .iter()
+                .any(|row| row.note_id == target.id),
+            "{body}"
+        );
+    }
 }
 
 #[test]

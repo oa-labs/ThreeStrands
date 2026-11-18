@@ -263,6 +263,31 @@ impl Database {
                     let row=row?;rows.entry(row.note_id.clone()).or_insert(row);
                 }
             }
+            // Create backlinked note stores event -> daily meeting line ->
+            // [[Meeting note]], not an event link in the meeting note itself.
+            // Resolve that existing path at read time, including older notes.
+            if reference.kind == "event" {
+                let target = reference.target().map_err(DatabaseError::invalid)?;
+                let daily_ids: Vec<_> = rows.values().filter(|row| row.daily_date.is_some()).map(|row| row.note_id.clone()).collect();
+                for id in daily_ids {
+                    let body: String = c.query_row("SELECT body FROM notes WHERE id=?1", [&id], |r| r.get(0))?;
+                    let blocks = meeting_excerpt::meeting_blocks(&id, &body, |link| {
+                        link.kind == "event" && (link.target().ok().as_ref() == Some(&target) || link.series_target().ok().flatten().as_ref() == Some(&target))
+                    }).map_err(DatabaseError::invalid)?;
+                    for block in blocks.into_iter().filter(|block| block.kind == meeting_excerpt::MeetingBlockKind::Excerpt) {
+                        // Only the meeting's own line, never a nested task or
+                        // a neighboring meeting. Ambiguous lines stay daily.
+                        let line = body[block.start..block.end].lines().next().unwrap_or_default();
+                        let links = crate::notes::extract_links(line);
+                        if links.len() != 1 { continue; }
+                        let linked = c.query_row(
+                            "SELECT id,title FROM notes WHERE title_key=?1 AND trashed=0 AND daily_date IS NULL ORDER BY id LIMIT 1",
+                            [&links[0].key], |r| Ok(NoteBacklink { note_id: r.get(0)?, title: r.get(1)?, daily_date: None, context: crate::notes::line_context(line), reference: None }),
+                        ).optional()?;
+                        if let Some(linked) = linked { rows.entry(linked.note_id.clone()).or_insert(linked); }
+                    }
+                }
+            }
             Ok(rows.into_values().collect())
         })
     }

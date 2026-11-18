@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDemoNotes } from "./demoNotes";
 import { noteReferenceHref } from "../noteEntities";
+import { primaryMeetingNote } from "../meetingNoteEntry";
 import type { ContactProfile, Thread } from "../domain";
 
 describe("demo notes", () => {
@@ -118,11 +119,48 @@ describe("demo notes", () => {
     const first = await notes.addMeetingToDailyNote("2026-11-12", null, entry("a"));
     expect(first.note.body).toMatch(/^## Meetings\n\n- \[9:30am\]\(threestrands:event\/.+\) for \[\[Weekly -sync-\]\]\n$/);
     expect(first.createdMeetingNote).toBe(true);
+    expect(primaryMeetingNote(await notes.noteBacklinks(event("a")))?.noteId).toBe(first.meetingNote?.id);
     expect((await notes.addMeetingToDailyNote("2026-11-12", first.note.updatedAt, entry("a"))).added).toBe(false);
     const next = await notes.addMeetingToDailyNote("2026-11-19", null, entry("b"));
     expect(next.createdMeetingNote).toBe(false);
     expect(next.meetingNote?.id).toBe(first.meetingNote?.id);
     await expect(notes.addMeetingToDailyNote("2026-11-12", null, entry("c"))).rejects.toThrow("changed");
+  });
+  it("resolves existing daily meeting links without changing either note, across rename and Trash", async () => {
+    const reference = { version: 1 as const, kind: "event" as const, id: "occurrence", account: "you@example.com", calendar: "work", series: "series" };
+    const notes = createDemoNotes();
+    const meeting = await notes.createNote("My EO Software Consultancy Forum - November 18th, 2026", "Meeting notes");
+    const day = (await notes.saveDailyNote("2026-11-18", `## Meetings\n\n- [10:00 am](${noteReferenceHref(reference)}) met with chris@pagepro.co, hector@codehesion.co.za, Ciapka, Mark, Nils Löwe, Miguel Muñoz, harley@coderpush.com, Hector Beyers, MEng for [[${meeting.title}|Forum]]\n`, null)).note!;
+    const rows = await notes.noteBacklinks(reference);
+    expect(rows.map((row) => row.noteId).sort()).toEqual([day.id, meeting.id].sort());
+    expect(primaryMeetingNote(rows)?.noteId).toBe(meeting.id);
+    expect(await notes.getNote(day.id)).toEqual(day);
+    expect(await notes.getNote(meeting.id)).toEqual(meeting);
+    expect(primaryMeetingNote(await notes.noteBacklinks({ ...reference, id: "series", series: undefined }))?.noteId).toBe(meeting.id);
+    for (const other of [{ ...reference, id: "another-occurrence" }, { ...reference, account: "other" }, { ...reference, calendar: "other" }]) expect(await notes.noteBacklinks(other)).toEqual([]);
+    const renamed = (await notes.updateNote(meeting.id, "Renamed forum", meeting.body, meeting.updatedAt)).note!;
+    expect(primaryMeetingNote(await notes.noteBacklinks(reference))?.noteId).toBe(meeting.id);
+    await notes.trashNote(renamed.id);
+    expect(primaryMeetingNote(await notes.noteBacklinks(reference))?.noteId).toBe(day.id);
+    await notes.restoreNote(renamed.id);
+    await notes.trashNote(day.id);
+    expect(await notes.noteBacklinks(reference)).toEqual([]);
+  });
+  it.each([
+    "- [Meeting](EVENT) for plain title\n- [[Target]]",
+    "- [Meeting](EVENT) for plain title\n  - Read [[Target]]",
+    "- [Meeting](EVENT) for `[[Target]]`",
+    "- [Meeting](EVENT) for \\[[Target]]",
+    "- [Meeting](EVENT) for [[Target]] and [[Other]]",
+    "> [Meeting](EVENT) for [[Target]]",
+    "```\n- [Meeting](EVENT) for [[Target]]\n```",
+  ])("does not promote unrelated or ambiguous wiki links: %s", async (body) => {
+    const notes = createDemoNotes();
+    const reference = { version: 1 as const, kind: "event" as const, id: "occurrence", account: "you@example.com", calendar: "work" };
+    const target = await notes.createNote("Target", "");
+    await notes.createNote("Other", "");
+    await notes.saveDailyNote("2026-11-18", body.replace("EVENT", noteReferenceHref(reference)), null);
+    expect((await notes.noteBacklinks(reference)).some((row) => row.noteId === target.id)).toBe(false);
   });
   it("lists a series' notes from every occurrence, and an occurrence's own only", async () => {
     const notes = createDemoNotes();

@@ -717,7 +717,7 @@ export function App() {
   const addMeeting = async (date: string, entry: MeetingEntry) => {
     const added = await addMeetingToDailyNote(date, entry);
     setMeetingNoteEvent(null);
-    const action = { label: "Open Note", run: () => openNote(added.note.id, undefined, noteReferenceHref(entry.event)) };
+    const action = { label: "Open Note", run: () => openNote(added.meetingNote?.id ?? added.note.id, undefined, added.meetingNote ? undefined : noteReferenceHref(entry.event)) };
     if (!added.added) { setNotice({ message: "Already in the note", action }); return; }
     setNotice({
       message: `Added to ${dailyNoteName(date)}`, action,

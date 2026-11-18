@@ -126,7 +126,35 @@ it("opens an existing occurrence note from Today instead of showing the add dial
   expect(add).not.toHaveBeenCalled();
 });
 
-it("adds a meeting from a daily note's agenda in Notes, and the open note shows it", async () => {
+it.each(["Today", "Calendar"])("opens the backlinked meeting note from the %s agenda", async (workspace) => {
+  clearScheduleCache();
+  const start = new Date(Date.now() + 10 * 60_000);
+  const meeting = { id: `backlinked-${workspace}`, accountId: "calendar@example.com", calendarId: "primary", title: `Forum from ${workspace}`, allDay: false,
+    start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString() };
+  const day = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+  const daily = await mailClient.getDailyNote(day);
+  const capture = await mailClient.addMeetingToDailyNote(day, daily?.updatedAt ?? null, {
+    event: { version: 1, kind: "event", id: meeting.id, account: meeting.accountId, calendar: meeting.calendarId },
+    time: "10:00 am", attendees: [], name: meeting.title, linkNote: true,
+  });
+  mockMeetingCalendar(meeting);
+  const add = vi.spyOn(mailClient, "addMeetingToDailyNote");
+  try {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: workspace === "Today" ? "Today (0)" : "Calendar (2)" }));
+    const agenda = workspace === "Today" ? await screen.findByRole("group", { name: "Day view" }) : await screen.findByRole("region", { name: "Today's agenda" });
+    fireEvent.click(await within(agenda).findByRole("button", { name: workspace === "Today" ? `Open Note: ${meeting.title}` : `Add Note for ${meeting.title}` }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(capture.meetingNote!.title));
+    expect(add).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    const current = await mailClient.getDailyNote(day);
+    await mailClient.saveDailyNote(day, daily?.body ?? "", current!.updatedAt);
+    await mailClient.trashNote(capture.meetingNote!.id);
+  }
+});
+
+it("adds a backlinked meeting from the Notes agenda and opens its dedicated note from the confirmation", async () => {
   localStorage.clear();
   clearScheduleCache();
   const now = new Date();
@@ -141,9 +169,12 @@ it("adds a meeting from a daily note's agenda in Notes, and the open note shows 
   const agenda = within(await screen.findByRole("region", { name: "Agenda" }));
   fireEvent.click(await agenda.findByRole("button", { name: "Add Note for Rail sync" }));
   const dialog = within(await screen.findByRole("dialog", { name: "Add Note" }));
+  fireEvent.click(dialog.getByRole("checkbox", { name: "Create backlinked note" }));
   fireEvent.click(dialog.getByRole("button", { name: "Add to Daily Note" }));
   expect(await screen.findByText("Added to today's note")).toBeInTheDocument();
-  await waitFor(() => expect((screen.getByRole("textbox", { name: "Note text" }) as HTMLTextAreaElement).value).toMatch(/^## Meetings\n\n- \[.+\) for Rail sync\n$/));
+  await waitFor(() => expect((screen.getByRole("textbox", { name: "Note text" }) as HTMLTextAreaElement).value).toMatch(/^## Meetings\n\n- \[.+\) for \[\[Rail sync\]\]\n$/));
+  fireEvent.click(screen.getByRole("button", { name: "Open Note" }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Rail sync"));
 });
 
 it("hides and shows the Notes side panel with a backslash", async () => {

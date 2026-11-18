@@ -367,9 +367,10 @@ describe("showcase dataset", () => {
     }
     expect([...kinds].sort()).toEqual(["contact", "conversation", "event", "task"]);
     expect(await client.listDailyNoteDates("2026-09-14", "2026-09-27")).toEqual(["2026-09-18", "2026-09-21", "2026-09-22"]);
-    // This week's 1:1 lists last week's under Series notes; Marcus's contact lists the note that mentions him.
+    // Series links include the daily entry and its dedicated meeting note;
+    // Marcus's contact lists the note that mentions him.
     const series = await client.noteBacklinks({ version: 1, kind: "event", id: "series-one-on-one", account: SHOWCASE_WORK_ACCOUNT, calendar: SHOWCASE_WORK_ACCOUNT });
-    expect(series.map((row) => row.title)).toEqual(["2026-09-18"]);
+    expect(series.map((row) => row.title).sort()).toEqual(["1:1 Daniel / Maya", "2026-09-18"]);
     const marcus = await client.noteBacklinks({ version: 1, kind: "contact", id: "marcus@brightwater.example" });
     expect(marcus.map((row) => row.title)).toEqual(["2026-09-21"]);
     expect((await client.listNoteTasks()).map((task) => task.title).sort()).toEqual(["Draft the onboarding v3 release notes", expect.stringMatching(/^Share the EU rollout plan with Daniel Kim/)]);
