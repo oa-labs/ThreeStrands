@@ -6,7 +6,7 @@ import { insertMeetingLine, meetingLine, meetingNoteTitle } from "../noteMeeting
 import type { MailClient } from "./client";
 import type { DemoNoteSeed } from "./demoDataset";
 
-type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
+type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "listNotesCreatedBetween" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = collapseWhitespace;
@@ -167,6 +167,14 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
       const next = note ? edit(note, note.title, body) : { id, title: date, body: normalize(id, body), dailyDate: date, createdAt: now(), updatedAt: now(), trashed: false, trashedAt: null };
       notes.set(id, next);
       return { note: structuredClone(next), added: true, previousBody, meetingNote: meetingNote && structuredClone(meetingNote), createdMeetingNote };
+    },
+    /** Mirrors `list_notes_created_between` in `src-tauri/src/db/notes.rs`. */
+    async listNotesCreatedBetween(start, end, limit) {
+      const from = Date.parse(start), to = Date.parse(end);
+      return [...notes.values()].filter((note) => !note.trashed && note.dailyDate === null && Date.parse(note.createdAt) >= from && Date.parse(note.createdAt) < to)
+        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id))
+        .slice(0, limit)
+        .map((note) => ({ id: note.id, title: note.title, preview: preview(note.body), createdAt: note.createdAt }));
     },
     async listRecentNotes(limit) {
       const recent = (note: Note) => [visits.get(note.id) ?? "", note.updatedAt].sort().at(-1)!;

@@ -12,7 +12,7 @@ import { ContextSection } from "./ContextSections";
 import { mailClient } from "./data/client";
 import type { Account, CalendarAccount, CalendarOption, ContactProfile, DailyPlanItem, OpenPromise, PlanCandidate as SourceCandidate, PlanSourceKind, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { agendaEventsFor, formatClockTime, isDeclined, isPastEvent } from "./agendaEvents";
-import { addDays, eventDate, isSameDay, startOfLocalDay } from "./calendarTime";
+import { addDays, dateInputValue, eventDate, isSameDay, startOfLocalDay } from "./calendarTime";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
@@ -37,6 +37,9 @@ import { usePlanSourcePage } from "./usePlanSourcePage";
 import type { TaskFormRequest } from "./useTaskActions";
 import { useDailyPlan } from "./useDailyPlan";
 import { useTodayCompletedNotes } from "./useTodayCompletedNotes";
+import { useDoneOnDay } from "./useDoneOnDay";
+import { DoneCard, uniqueDoneEntries, type DoneEntry } from "./DoneCard";
+import { activeDayChoice, clearDayChoice, localDay, readDayChoice, writeDayChoice, type DayChoice } from "./todayDayChoice";
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
 import { isFinished, itemBlock, carriedLabel, linkKey, type PlanCandidate, type PlanDragSource } from "./TodayPlan";
 import { PlanningInbox, uniqueInboxEntries, interleaveInboxCategories, type InboxCategory, type InboxEntry, type InboxFilter } from "./PlanningInbox";
@@ -102,14 +105,27 @@ export function TodayWorkspace(props: TodayWorkspaceProps) {
 }
 
 function ScheduledToday({ now, ...props }: TodayWorkspaceProps & { now: Date }) {
-  const [chosenDay, setChosenDay] = useState<Date | null>(null);
   const start = startOfLocalDay(now);
+  const today = dateInputValue(start);
+  // The picked day outlives leaving Today for another workspace, but not the day it was picked on.
+  const [choice, setChoice] = useState<DayChoice | null>(() => readDayChoice(today));
+  const active = activeDayChoice(choice, today);
+  useEffect(() => {
+    if (choice && !active && choice.chosenOn !== today) { clearDayChoice(); setChoice(null); }
+  }, [choice, active, today]);
+  const chosenDay = active ? localDay(active.day) : null;
+  const changeDay = useCallback((next: Date | null) => {
+    const picked = next && dateInputValue(next) !== today ? dateInputValue(next) : null;
+    if (!picked) { clearDayChoice(); setChoice(null); return; }
+    const stored = { chosenOn: today, day: picked };
+    writeDayChoice(stored); setChoice(stored);
+  }, [today]);
   const day = chosenDay ?? start;
   const showingToday = isSameDay(day, start);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const schedule = useCalendarSchedule({ timeMin: start.toISOString(), timeMax: addDays(start, 1).toISOString(), timeZone });
   const otherDay = useCalendarSchedule({ timeMin: day.toISOString(), timeMax: addDays(day, 1).toISOString(), timeZone }, false, !showingToday);
-  return <TodayLayout {...props} now={now} schedule={schedule} displaySchedule={showingToday ? schedule : otherDay} scheduleDay={day} onChangeDay={setChosenDay} />;
+  return <TodayLayout {...props} now={now} schedule={schedule} displaySchedule={showingToday ? schedule : otherDay} scheduleDay={day} onChangeDay={changeDay} />;
 }
 
 function TodayLayout({
@@ -141,7 +157,8 @@ function TodayLayout({
   const [announcement, setAnnouncement] = useState("");
   const [reconnect, setReconnect] = useState<ContactProfile[]>([]);
   const [promises, setPromises] = useState<OpenPromise[]>([]);
-  const [completedToday, setCompletedToday] = useState<ThreadTask[]>([]);
+  /** Every completed task with a completion time; the Done card keeps the ones finished on the shown day. */
+  const [completedTasks, setCompletedTasks] = useState<ThreadTask[]>([]);
   const [dismissed, setDismissed] = useState(readDismissedPromises);
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
@@ -163,14 +180,14 @@ function TodayLayout({
     if (mailResult.status === "fulfilled") setMail(mailResult.value);
     if (taskResult.status === "fulfilled") {
       setTasks(taskResult.value.filter((task) => isActiveTaskStatus(task.status)).sort(compareTasksForDisplay));
-      setCompletedToday(taskResult.value.filter((task) => task.status === "completed" && task.completedAt && todayTarget(new Date(task.completedAt)).date === planDate));
+      setCompletedTasks(taskResult.value.filter((task) => task.status === "completed" && task.completedAt));
     }
     if (contactResult.status === "fulfilled") setReconnect(contactResult.value.filter((profile) => isKeepInTouchDue(profile))
       .sort((left, right) => (left.keepInTouchDueAt ?? "").localeCompare(right.keepInTouchDueAt ?? "")));
     if (promiseResult.status === "fulfilled") setPromises(promiseResult.value);
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
-  }, [accountId, planDate]);
+  }, [accountId]);
   const cancelLoads = useCallback(() => { loadVersion.current++; }, []);
   useEffect(() => {
     void load().catch(logBackgroundFailure("Today refresh"));
@@ -231,7 +248,7 @@ function TodayLayout({
 
   const applyTaskUpdate = (updated: ThreadTask) => {
     setTasks((current) => [...(current ?? []).filter((candidate) => candidate.id !== updated.id), updated].sort(compareTasksForDisplay));
-    setCompletedToday((current) => [...current.filter((candidate) => candidate.id !== updated.id), ...(updated.status === "completed" ? [updated] : [])]);
+    setCompletedTasks((current) => [...current.filter((candidate) => candidate.id !== updated.id), ...(updated.status === "completed" ? [updated] : [])]);
   };
   // Successful completion moves the task to Completed, where it can be reopened.
   const toggleDone = async (task: ThreadTask) => {
@@ -499,7 +516,10 @@ function TodayLayout({
   const inboxRefreshKey = `${refreshKey}:${taskRefreshKey}:${plan?.revision ?? ""}:${inboxRevision}`;
   const starredPage = usePlanSourcePage(planDate, "starredMail", accountId, inboxRefreshKey, true);
   const notesPage = usePlanSourcePage(planDate, "notes", null, inboxRefreshKey, true);
-  const completedNotes = useTodayCompletedNotes(planDate, inboxRefreshKey);
+  const shownDate = dateInputValue(shownDay);
+  const doneShown = startOfLocalDay(shownDay).getTime() <= startOfLocalDay(now).getTime();
+  const completedNotes = useTodayCompletedNotes(shownDate, inboxRefreshKey);
+  const doneOnDay = useDoneOnDay(shownDay, accountId, inboxRefreshKey, doneShown);
   const createForPlan = async (request: TaskFormRequest) => {
     if (!onCreateTask) return null;
     const created = await onCreateTask(request);
@@ -585,14 +605,14 @@ function TodayLayout({
   const scheduled = (key: string | null, taskId?: string | null) => todaysEvents.some((event) => !isDeclined(event) && (
     (key !== null && event.sourcePlanKey === key) || (taskId && linkKey(event.sourceTaskId) === linkKey(taskId))
   ));
-  const completedIds = new Set([...completedToday.map((task) => task.id), ...completedNotes.tasks.map((task) => task.id)]);
+  const completedIds = new Set([...completedTasks.map((task) => task.id), ...completedNotes.tasks.map((task) => task.id)]);
   const planEntry = (item: DailyPlanItem): InboxEntry => {
     const done = item.state === "done";
     const checkable = item.taskId && ["task", "noteTask", "newTask"].includes(item.kind) && item.state !== "unavailable";
     const usable = item.state !== "unavailable" && item.kind !== "text";
     const source = { id: `plan:${item.key}`, title: item.title, kind: "item" as const, item };
     return {
-      id: source.id, identities: identities(item.key, item.taskId), category: item.kind === "contact" ? "contacts" : done && completedToday.some((task) => task.id === item.taskId && task.threadId) ? "emails" : "tasks", title: item.title,
+      id: source.id, identities: identities(item.key, item.taskId), category: item.kind === "contact" ? "contacts" : "tasks", title: item.title,
       source: usable && !done ? source : null, schedule: usable && !done ? () => bookNext(itemBlock(item)) : undefined,
       actions: [{ label: "Remove from Today's Plan", onSelect: () => void removeItem(item) }],
       row: {
@@ -660,19 +680,35 @@ function TodayLayout({
     ...reconnect.map((profile) => candidateEntry(contactCandidate(profile), "contacts")),
   ];
   const inboxEntries = uniqueInboxEntries([...plannedEntries, ...interleaveInboxCategories(candidates.filter((entry): entry is InboxEntry => entry !== null))]);
-  const completedEntries = uniqueInboxEntries([
-    ...(plan?.items ?? []).filter((item) => item.state === "done").map(planEntry),
-    ...completedToday.filter((task) => accountId === null || task.accountId === accountId).map((task): InboxEntry => ({
-      id: `task:${task.id}`, identities: identities(planItemKey(taskReference(task.id)), task.id), category: task.threadId ? "emails" : "tasks", title: task.title, source: null, actions: [],
+  const finishedOnShownDay = (at: string | null | undefined) => Boolean(at) && dateInputValue(new Date(at as string)) === shownDate;
+  const doneEntries: DoneEntry[] = doneShown ? uniqueDoneEntries([
+    ...completedTasks.filter((task) => finishedOnShownDay(task.completedAt) && (accountId === null || task.accountId === accountId)).map((task): DoneEntry => ({
+      id: `task:${task.id}`, identities: identities(planItemKey(taskReference(task.id)), task.id), category: "tasks", title: task.title, at: task.completedAt ?? null,
       row: { wrapTitle: true, onActivate: () => onEditTask(task), detail: accountId === null ? task.accountId : undefined,
         control: <input type="checkbox" className="context-task-checkbox" checked aria-label={`Mark ${task.title} Not Done`} onChange={() => void toggleDone(task)} /> },
     })),
-    ...completedNotes.tasks.map((task): InboxEntry => ({
-      id: task.id, identities: identities(planItemKey({ version: 1, kind: "task", id: task.markerId, note: task.noteId }), task.id), category: "tasks", title: task.title, source: null, actions: [],
+    ...completedNotes.tasks.map((task): DoneEntry => ({
+      id: task.id, identities: identities(planItemKey({ version: 1, kind: "task", id: task.markerId, note: task.noteId }), task.id), category: "tasks", title: task.title, at: task.completedAt ?? null,
       row: { wrapTitle: true, detail: task.noteTitle, onActivate: () => onOpenNote?.(task.noteId),
         control: <input type="checkbox" className="context-task-checkbox" checked aria-label={`Mark ${task.title} Not Done`} onChange={() => void setNoteTaskDone(task.id, task.title, false)} /> },
     })),
-  ]);
+    // Plan items marked done carry no completion time; they come after the timed rows, and only for today.
+    ...(showingToday ? (plan?.items ?? []).filter((item) => item.state === "done" && item.kind !== "contact").map((item): DoneEntry => {
+      const { identities: keys, title, row } = planEntry(item);
+      return { id: `plan:${item.key}`, identities: keys, category: "tasks", title, at: null, row };
+    }) : []),
+    ...doneOnDay.sent.map((sent): DoneEntry => ({
+      id: `mail:${sent.thread.id}`, identities: [`mail:${sent.thread.id}`], category: "emails", title: sent.thread.subject || "(no subject)", at: sent.lastSentAt,
+      row: { wrapTitle: true, icon: <Send size={ICON_SIZE.sm} />, onActivate: () => onOpenThread(sent.thread.id),
+        detail: [sent.recipients.map((recipient) => parseAddress(recipient).name || parseAddress(recipient).email).join(", "), accountId === null && mailAccountCount > 1 ? sent.thread.accountId : null].filter(Boolean).join(" · ") || undefined },
+    })),
+    ...doneOnDay.notes.map((note): DoneEntry => ({
+      id: `note:${note.id}`, identities: [`note:${note.id}`], category: "notes", title: note.title, at: note.createdAt,
+      row: { wrapTitle: true, icon: <NotebookPen size={ICON_SIZE.sm} />, onActivate: () => onOpenNote?.(note.id), detail: note.preview || undefined },
+    })),
+  ]) : [];
+  const doneErrors = { tasks: sourceErrors.tasks, noteTasks: completedNotes.error, ...doneOnDay.errors };
+  const doneTitle = showingToday ? "Done Today" : "Done";
   const inboxPages = (filter: InboxFilter) => filter === "contacts" ? [] : filter === "emails" ? [starredPage] : filter === "tasks" ? [notesPage, starredPage] : [notesPage, starredPage];
   const inboxUnavailable = (filter: InboxFilter) => Boolean(planError
     || ((filter === "all" || filter === "tasks") && sourceErrors.tasks)
@@ -718,15 +754,21 @@ function TodayLayout({
       </div>
     </header>
     <div className="today-columns">
-      <div className="today-column today-work">
+      <div className="today-column today-stack">
+      <div className="today-work">
         <PlanningInbox onAddTask={taskAccounts.length ? async (title) => {
           if (!defaultTaskAccount) { setAddingTask(title); return; }
           await createStandaloneTask({ title, kind: "action", dueKind: "none", dueValue: null }, defaultTaskAccount);
           setAnnouncement(`Task added: ${title}`);
-        } : undefined} entries={inboxEntries} completed={completedEntries} completedError={completedNotes.error} scope={scope} status={inboxStatus} unavailable={inboxUnavailable}
+        } : undefined} entries={inboxEntries} scope={scope} status={inboxStatus} unavailable={inboxUnavailable}
           loading={(filter) => loadingSources || inboxPages(filter).some((page) => page.loading)}
           hasMore={(filter) => inboxPages(filter).some((page) => Boolean(page.next))}
           onLoadMore={(filter) => { for (const page of inboxPages(filter)) if (page.next) void page.loadMore(); }} drag={showingToday ? drag : { ...drag, startDrag: () => {} }} />
+      </div>
+      {doneShown ? <div className="today-work today-done-card">
+        <DoneCard title={doneTitle} today={showingToday} dayLabel={showingToday ? undefined : shownDay.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+          entries={doneEntries} errors={doneErrors} loading={doneOnDay.loading || (loadingSources && loadedTasks === null)} />
+      </div> : null}
       </div>
       <div className="today-column today-time" role="group" aria-label="Schedule">
         <div className="today-panel-heading"><h2><CalendarDays size={ICON_SIZE.md} />{showingToday ? "Today’s Schedule" : "Schedule"}</h2><div className="today-schedule-actions">

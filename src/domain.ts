@@ -719,6 +719,17 @@ export type OpenPromise = {
   excerpt: string;
 };
 
+/** A conversation the user sent mail in during a range; see `listSentBetween`. */
+export type SentInRange = {
+  thread: Thread;
+  /** When the user's newest own message in the range was sent. */
+  lastSentAt: string;
+  /** How many messages the user sent in the conversation within the range. */
+  sentCount: number;
+  /** Its To line, minus the user's own addresses. */
+  recipients: string[];
+};
+
 export type TodayMailPage = {
   threads: TodayMail[];
   /** Every unread conversation in scope, including any past the listed ones. */
@@ -1047,6 +1058,14 @@ export type Note = {
 };
 
 /** A note as the note list shows it. */
+/** A note created within a range, for the Today Done card. */
+export type CreatedNote = {
+  id: string;
+  title: string;
+  preview: string;
+  createdAt: string;
+};
+
 export type NoteSummary = {
   id: string;
   title: string;

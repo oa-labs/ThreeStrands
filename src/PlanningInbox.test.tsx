@@ -18,32 +18,31 @@ describe("PlanningInbox", () => {
     expect(screen.queryByText("You're up to date with all keep in touch contact goals")).not.toBeInTheDocument();
   });
 
-  it("shows completed tasks separately on All and Tasks without increasing the unscheduled count", () => {
-    const done = entry("Finished"); done.row.control = <input type="checkbox" aria-label="Reopen Finished" checked onChange={vi.fn()} />;
-    render(<PlanningInbox {...defaults} entries={[entry("Active")]} completed={[done]} />);
+  it("holds only unscheduled work: finished items live in the Done card, not under the inbox", () => {
+    render(<PlanningInbox {...defaults} entries={[entry("Active")]} />);
     expect(screen.getByLabelText("1 unscheduled item")).toHaveTextContent("1");
-    const completed = within(screen.getByRole("region", { name: "Completed" }));
-    expect(completed.getByRole("checkbox")).toBeChecked();
-    expect(completed.getByRole("button", { name: "Finished" }).closest(".context-task-done")).not.toBeNull();
-    expect(completed.queryByRole("button", { name: "Schedule: Finished" })).not.toBeInTheDocument();
-    for (const filter of ["Emails", "Contacts"]) {
+    for (const filter of ["All", "Tasks", "Emails", "Contacts"]) {
       fireEvent.click(screen.getByRole("tab", { name: filter }));
       expect(screen.queryByRole("region", { name: "Completed" })).not.toBeInTheDocument();
     }
-    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
-    expect(screen.getByRole("region", { name: "Completed" })).toBeInTheDocument();
   });
 
-  it("keeps checkbox focus when a task moves to Completed and back to the inbox", () => {
+  it("moves focus to the selected filter when completing a task removes the last inbox row", () => {
     const active = entry("Task"); active.row.control = <input aria-label="Complete Task" type="checkbox" checked={false} onChange={vi.fn()} />;
-    const done = { ...active, row: { ...active.row, control: <input aria-label="Reopen Task" type="checkbox" checked onChange={vi.fn()} /> } };
     const view = render(<PlanningInbox {...defaults} entries={[active]} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
     const complete = screen.getByRole("checkbox", { name: "Complete Task" }); complete.focus(); fireEvent.click(complete);
-    view.rerender(<PlanningInbox {...defaults} entries={[]} completed={[done]} />);
-    const reopen = screen.getByRole("checkbox", { name: "Reopen Task" }); expect(reopen).toHaveFocus();
-    fireEvent.click(reopen);
-    view.rerender(<PlanningInbox {...defaults} entries={[active]} />);
-    expect(screen.getByRole("checkbox", { name: "Complete Task" })).toHaveFocus();
+    view.rerender(<PlanningInbox {...defaults} entries={[]} />);
+    expect(screen.getByRole("tab", { name: "Tasks" })).toHaveFocus();
+  });
+
+  it("keeps checkbox focus on the next row when completing a task leaves others behind", () => {
+    const first = entry("First"); first.row.control = <input aria-label="Complete First" type="checkbox" checked={false} onChange={vi.fn()} />;
+    const second = entry("Second"); second.row.control = <input aria-label="Complete Second" type="checkbox" checked={false} onChange={vi.fn()} />;
+    const view = render(<PlanningInbox {...defaults} entries={[first, second]} />);
+    const complete = screen.getByRole("checkbox", { name: "Complete First" }); complete.focus(); fireEvent.click(complete);
+    view.rerender(<PlanningInbox {...defaults} entries={[second]} />);
+    expect(document.activeElement).not.toBe(document.body);
   });
 
   it("shows All as the union of the three categories, with a count for the selected filter", () => {
@@ -166,12 +165,10 @@ describe("PlanningInbox", () => {
     const field = () => screen.getByRole("textbox", { name: "Add a task" });
     const type = (value: string) => fireEvent.change(field(), { target: { value } });
 
-    it("is the last row before Completed, on All and Tasks only, and only when tasks can be created", () => {
-      const done = entry("Finished");
-      const view = render(<PlanningInbox {...defaults} entries={[entry("Task")]} completed={[done]} onAddTask={vi.fn()} />);
+    it("is the last row, on All and Tasks only, and only when tasks can be created", () => {
+      const view = render(<PlanningInbox {...defaults} entries={[entry("Task")]} onAddTask={vi.fn()} />);
       const after = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
       expect(after(screen.getByText("Task"), field())).toBe(true);
-      expect(after(field(), screen.getByRole("region", { name: "Completed" }))).toBe(true);
       expect(screen.queryByRole("button", { name: "New Task" })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
       expect(field()).toBeInTheDocument();

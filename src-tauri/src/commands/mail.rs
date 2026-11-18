@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    CreateLabelRequest, Label, MailboxUnreadCounts, OpenPromise, SearchThreadsRequest, Thread,
-    ThreadDetail, ThreadMutation, ThreadPage, TodayMailPage, TriageEvent, TriageSenderStats,
-    UpdateLabelRequest,
+    CreateLabelRequest, Label, MailboxUnreadCounts, OpenPromise, SearchThreadsRequest, SentInRange,
+    Thread, ThreadDetail, ThreadMutation, ThreadPage, TodayMailPage, TriageEvent,
+    TriageSenderStats, UpdateLabelRequest,
 };
 use crate::sync::SyncService;
 use tauri::State;
@@ -201,6 +201,18 @@ pub(crate) async fn list_open_promises(
     let since = (chrono::Utc::now() - chrono::Duration::days(crate::db::PROMISE_LOOKBACK_DAYS))
         .to_rfc3339();
     run_database_task(move || database.list_open_promises(account_id.as_deref(), &since)).await
+}
+
+/// Conversations the user sent in during `[start, end)`, for the Today view's Done card.
+#[tauri::command]
+pub(crate) async fn list_sent_between(
+    account_id: Option<String>,
+    start: String,
+    end: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<SentInRange>> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_sent_between(account_id.as_deref(), &start, &end)).await
 }
 
 #[tauri::command]

@@ -4,8 +4,8 @@
 use tauri::State;
 
 use crate::models::{
-    CreateNoteRequest, Note, NoteAttachment, NoteLinks, NoteSave, NoteSearchHit, NoteSearchScope,
-    NoteSummary, NoteTitle, NotesStorage, UpdateNoteRequest,
+    CreateNoteRequest, CreatedNote, Note, NoteAttachment, NoteLinks, NoteSave, NoteSearchHit,
+    NoteSearchScope, NoteSummary, NoteTitle, NotesStorage, UpdateNoteRequest,
 };
 use crate::{
     attachment_security, file_preview, image_format, kick_replicated_sync, notes_export,
@@ -19,6 +19,18 @@ pub(crate) async fn list_recent_notes(
 ) -> AppResult<Vec<NoteSummary>> {
     let database = state.database.clone();
     run_database_task(move || database.list_recent_notes(limit)).await
+}
+
+/// Notes created during `[start, end)`, for the Today view's Done card.
+#[tauri::command]
+pub(crate) async fn list_notes_created_between(
+    start: String,
+    end: String,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<CreatedNote>> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_notes_created_between(&start, &end, limit)).await
 }
 
 #[tauri::command]
