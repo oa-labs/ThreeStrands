@@ -46,6 +46,8 @@ describe("Superhuman formatting shortcuts", () => {
       ["Bulleted List", "Mod+Shift+8"],
       ["Quote", "Mod+Shift+9"],
       ["Code Block", "Mod+Shift+0"],
+      ["Normal Text", "Mod+0"],
+      ["Clear Formatting", "Mod+\\"],
       ["Indent List", "Tab"],
       ["Outdent List", "Shift+Tab"],
       ["Increase Indent", "Mod+]"],
@@ -98,12 +100,36 @@ describe("selection formatting hints", () => {
     expect(selectionFormattingHints.map(({ title, key }) => [title, formatShortcutStep(key, "mac")])).toEqual([
       ["Bold", "⌘B"],
       ["Italics", "⌘I"],
+      ["Clear Formatting", "⌘\\"],
       ["Hyperlink", "⌘K"],
-      ["Strikethrough", "⇧⌘X"],
+      ["Normal Text", "⌘0"],
       ["Code Block", "⇧⌘0"],
+      ["Strikethrough", "⇧⌘X"],
       ["Bulleted List", "⇧⌘8"],
       ["Numbered List", "⇧⌘7"],
     ]);
+  });
+});
+
+describe("clearing formatting", () => {
+  it("removes inline formatting and links through the browser editor", () => {
+    const execute = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execute });
+    const editor = document.createElement("div"); document.body.append(editor);
+    applyFormattingShortcut(editor, formattingShortcuts.find((shortcut) => shortcut.id === "format.clear")!);
+    expect(execute.mock.calls).toEqual([["removeFormat"], ["unlink"]]);
+  });
+
+  it("returns selected headings and code blocks to normal text without losing the selection", () => {
+    const execute = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execute });
+    const editor = document.createElement("div");
+    editor.innerHTML = "<h1>Heading</h1><pre>Code</pre>"; document.body.append(editor);
+    const range = document.createRange(); range.selectNodeContents(editor);
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    applyFormattingShortcut(editor, formattingShortcuts.find((shortcut) => shortcut.id === "format.normal")!);
+    expect(window.getSelection()!.toString()).toBe("HeadingCode");
+    expect(execute).toHaveBeenCalledWith("formatBlock", false, "p");
   });
 });
 

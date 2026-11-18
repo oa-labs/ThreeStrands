@@ -3646,10 +3646,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .save-status { font-size: var(--text-meta); color: var(--muted); }
 .compose-note { flex-shrink: 0; margin: 0; padding: 0 var(--pane-inset) var(--space-4); color: var(--muted); font-size: var(--text-meta); container-type: inline-size; }
 .compose-format-hints { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
-/* With macOS key labels, all seven hints need about 734px on one line and six
-   about 599px; the optional list hints drop out before the row would wrap. */
-@container (max-width: 760px) { .compose-format-hint-optional-2 { display: none; } }
-@container (max-width: 620px) { .compose-format-hint-optional-1 { display: none; } }
+/* Clear Formatting and Normal Text stay visible as lower-priority hints
+   drop out. The remaining hints can wrap in a narrow editor. */
+@container (max-width: 920px) { .compose-format-hint-optional-4 { display: none; } }
+@container (max-width: 780px) { .compose-format-hint-optional-3 { display: none; } }
+@container (max-width: 680px) { .compose-format-hint-optional-2 { display: none; } }
+@container (max-width: 560px) { .compose-format-hint-optional-1 { display: none; } }
 .compose-error { margin: var(--space-2) 0 var(--space-3); }
 .compose-error .btn { flex-shrink: 0; }
 .attachment-list { margin: 0; padding: var(--space-1) var(--pane-inset) var(--space-3); list-style: none; flex-shrink: 0; max-height: 180px; overflow-y: auto; }
@@ -4060,7 +4062,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .notes-list-detail mark { color: var(--text); background: color-mix(in srgb, var(--accent) 30%, transparent); border-radius: var(--radius-xs); }
 .notes-list-pane > .context-status { padding: var(--space-3) var(--list-row-inset); }
 /* The note body keeps the editor's gutter for its block handles; the heading lines up with the text inside it. */
-.notes-editor-pane { --note-gutter: 3.5rem; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) var(--pane-inset) var(--pane-end-padding); overflow: auto; }
+.notes-editor-column { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.notes-editor-pane { --note-gutter: 3.5rem; min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) var(--pane-inset) var(--pane-end-padding); overflow: auto; }
+.notes-format-note { flex-shrink: 0; padding: var(--space-3) var(--pane-inset); border-top: 1px solid var(--border); color: var(--muted); font-size: var(--text-meta); container-type: inline-size; }
 .notes-editor-title { margin: 0; font-size: var(--text-pane-title); font-weight: var(--weight-semibold); line-height: var(--leading-tight); }
 input.notes-editor-title { box-sizing: border-box; width: 100%; height: auto; padding: 0; border: 0; background: transparent; color: var(--text); font-family: inherit; }
 input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-xs); }

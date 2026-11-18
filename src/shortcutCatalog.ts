@@ -14,6 +14,7 @@ export type ShortcutGroup = { group: ShortcutGroupName; entries: ShortcutEntry[]
 
 /** Bindings owned by editors, calendar views, and the selection Escape handler. */
 export const localShortcuts = [
+  { id: "editor.pastePlainText", title: "Paste Without Formatting", keys: ["Mod+Shift+v"], group: "Compose" },
   { id: "compose.snippets", title: "Insert Snippet", keys: ["Mod+;"], group: "Compose" },
   { id: "compose.to", title: "Focus To", keys: ["Mod+Shift+o"], group: "Compose" },
   { id: "compose.cc", title: "Focus Cc", keys: ["Mod+Shift+c"], group: "Compose" },

@@ -38,6 +38,7 @@ import { useNoteEditor } from "./useNoteEditor";
 import { replicatedSyncConflicts, replicatedSyncDeviceRoster, type DeviceRosterEntry, type FrontierConflict } from "./replicatedSync";
 import type { NotesRequest } from "./useWorkspaces";
 import { formatShortcut } from "./shortcutLabels";
+import { FormattingHints } from "./FormattingHints";
 import { scrollBehavior } from "./useReaderActions";
 import { NotesDayCalendar } from "./NotesDayCalendar";
 import { CalendarAgenda } from "./CalendarAgenda";
@@ -142,6 +143,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const [roster, setRoster] = useState<DeviceRosterEntry[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [textSelected, setTextSelected] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [links, setLinks] = useState<{ noteId: string; links: NoteLinks } | null>(null);
   const [entityDocument, setEntityDocument] = useState<(NoteDocument & { noteId: string; version: string }) | null>(null);
@@ -618,6 +620,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             </button>}
         </div>
       </div>
+      <div className="notes-editor-column">
       <div ref={editorPane} className="notes-editor-pane" data-shortcut-scope="compose" onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void editor.flush();
       }}>
@@ -672,12 +675,15 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             </div>
             {relinkNotice ? <p className="notes-relink-notice" role="status">{relinkNotice}</p> : null}
             <NoteEditor ref={body} noteKey={selectedKey} value={editor.text.body} label="Note text" readOnly={readOnly} mode={syntaxMode} files={files}
+              onSelectionChange={setTextSelected}
               placeholder={daily ? "Write about the day" : "Write in Markdown"}
               onChange={(value) => editor.edit({ body: value })} onLeave={returnToList}
               onOpenEntity={(href) => void act(async () => { if (!parseNoteReference(href)) throw new Error("Invalid note reference"); await editor.flush(); if (editor.unsaved()) throw new Error("Save or resolve this note before opening its link."); await onOpenEntity?.(href); })}
               onSearchLinks={searchLinks} onSearchEntities={searchEntities} onOpenLink={(title) => void openLink(title)} />
             {editor.saveState.kind === "error" ? <p className="form-error" role="alert">{editor.saveState.message}</p> : null}
           </>}
+      </div>
+      {textSelected && !readOnly && !editor.loading ? <div className="notes-format-note"><FormattingHints /></div> : null}
       </div>
       <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow} onVisibilityChange={setRailVisible}>
         {preparing?.noteId === noteId && !inTrash && renderMeetingPreparation ? <div ref={preparationPane} className="notes-meeting-preparation" tabIndex={-1} role="group" aria-label="Meeting Preparation" onKeyDown={(event) => {

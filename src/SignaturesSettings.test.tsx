@@ -15,7 +15,7 @@ import * as signatureImport from "./signatureImport";
 import { loadSignatureEditorImages } from "./signatureEditorImages";
 import { EMAIL_IMAGE_LIMITS, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const signature: Signature = { id: "work", name: "Work", html: "<p>Alex</p>", text: "Alex" };
 const account = { email: "me@example.com", nickname: "Work" } as Account;
 function library(overrides: Partial<SignatureState> = {}): SignatureState {
@@ -375,6 +375,24 @@ describe("signature import", () => {
     fireEvent.paste(editor, { clipboardData: { files: [], getData: (type: string) => type === "text/html" ? html : "" } });
     return editor;
   }
+
+  it("pastes literal text into a signature with Cmd-Shift-V and saves it without links or markup", async () => {
+    const readText = vi.fn().mockResolvedValue('<b>Plain</b>\nhttps://example.com');
+    vi.stubGlobal("navigator", new Proxy(navigator, { get: (target, key) => key === "clipboard" ? { readText } : Reflect.get(target, key, target) }));
+    const save = vi.fn().mockResolvedValue(undefined);
+    render(<SignatureEditor signature={signature} onSave={save} onClose={vi.fn()} />);
+    const editor = screen.getByRole("textbox", { name: "Signature Content" });
+    editor.focus();
+    const range = document.createRange(); range.selectNodeContents(editor);
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    fireEvent.keyDown(editor, { key: "V", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(editor).toHaveTextContent("<b>Plain</b>https://example.com"));
+    expect(editor.querySelector("a, b, img")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
+      html: '&lt;b&gt;Plain&lt;/b&gt;<br>https://example.com', text: '<b>Plain</b>\nhttps://example.com',
+    })));
+  });
   /** A PNG data URI whose decoded payload is exactly `bytes` long. */
   const pngOfBytes = (bytes: number) => `data:image/png;base64,${Buffer.alloc(bytes).toString("base64")}`;
 

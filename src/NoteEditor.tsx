@@ -13,6 +13,8 @@ import type { NoteSyntaxMode } from "./noteSyntaxMode";
 import { NoteLinkAutocomplete } from "./NoteLinkAutocomplete";
 import type { NoteLinkChoice } from "./noteLinkChoices";
 import { formattingShortcutFor } from "./richText";
+import { pasteWithoutFormatting } from "./plainTextPaste";
+import { clearNoteFormatting } from "./noteFormatting";
 
 export type NoteEditorHandle = {
   focus(): void;
@@ -93,7 +95,7 @@ function EscapeLeaves({ onLeave }: { onLeave(): void }) {
  * rewrites it. Escape hands focus back to the note list once the editor has
  * nothing of its own to close.
  */
-export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, files, onChange, onLeave, onSearchLinks, onSearchEntities, onOpenLink, onOpenEntity }: {
+export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly = false, mode, files, onChange, onLeave, onSelectionChange, onSearchLinks, onSearchEntities, onOpenLink, onOpenEntity }: {
   ref?: Ref<NoteEditorHandle>;
   /** Changes when another note opens, which starts a fresh editor. */
   noteKey: string;
@@ -106,6 +108,7 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   files?: NoteFiles;
   onChange(value: string): void;
   onLeave(): void;
+  onSelectionChange?(selected: boolean): void;
   /** Notes the `[[` picker offers for what has been typed. */
   onSearchLinks?(query: string): Promise<NoteLinkSuggestion[]>;
   /** Contacts and conversations the @ picker offers. */
@@ -123,6 +126,19 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
   const shown = useRef(value);
   // Shift held for the paste: plain-text paste, which the editor handles.
   const plainPaste = useRef(false);
+  const [pasteError, setPasteError] = useState("");
+  useEffect(() => {
+    const update = () => {
+      const selection = document.getSelection();
+      const root = editor.current?.getEditor()?.view.dom;
+      onSelectionChange?.(Boolean(!readOnly && root && root.contains(document.activeElement) && selection && !selection.isCollapsed
+        && root.contains(selection.anchorNode) && root.contains(selection.focusNode)));
+    };
+    document.addEventListener("selectionchange", update);
+    document.addEventListener("focusin", update);
+    update();
+    return () => { document.removeEventListener("selectionchange", update); document.removeEventListener("focusin", update); onSelectionChange?.(false); };
+  }, [noteKey, readOnly, onSelectionChange]);
   const [generation, setGeneration] = useState(0);
   const refocus = useRef(false);
   const latestChange = useRef(onChange);
@@ -228,6 +244,19 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
     view.pasteHTML(cleaned, event.nativeEvent);
   }} onKeyUpCapture={(event) => { plainPaste.current = event.shiftKey; }} onKeyDownCapture={(event) => {
     plainPaste.current = event.shiftKey;
+    if (!readOnly && pasteWithoutFormatting(event, (text) => {
+      const view = editor.current?.getEditor()?.view;
+      if (!view) return;
+      setPasteError("");
+      if (view.state.selection.$from.parent.type.spec.code) {
+        view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+        return;
+      }
+      // Keep the same Markdown interpretation as typing, without clipboard
+      // HTML, image attachments, or the paste-over-selection link shortcut.
+      const slice = view.someProp("clipboardTextParser", (parse) => parse(text, view.state.selection.$from, true, view));
+      if (slice) view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView().setMeta("paste", true).setMeta("uiEvent", "paste"));
+    }, setPasteError)) return;
     // Use Mail's bindings where Meowdown differs. Keep edits in the editor's
     // commands so Markdown serialization, selection and undo stay together.
     const view = editor.current?.getEditor();
@@ -235,6 +264,8 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
       && event.target instanceof Element && !event.target.closest("input, button, textarea, select")) {
       const shortcut = formattingShortcutFor(event.nativeEvent);
       const apply = shortcut?.id === "format.fixedWidth" ? () => view.commands.toggleCode()
+        : shortcut?.id === "format.normal" ? () => view.commands.setParagraph()
+        : shortcut?.id === "format.clear" ? () => clearNoteFormatting(editor.current!)
         : shortcut?.id === "format.quote" ? () => view.commands.toggleBlockquote()
         : shortcut?.id === "format.codeBlock" ? () => view.commands.toggleCodeBlock()
         : undefined;
@@ -290,5 +321,6 @@ export function NoteEditor({ ref, noteKey, value, label, placeholder, readOnly =
       {!readOnly && (onSearchLinks || onSearchEntities) ? <NoteLinkAutocomplete onSearchNotes={onSearchLinks ? searchLinks : undefined} onSearchEntities={onSearchEntities ? searchEntities : undefined} /> : null}
       <EscapeLeaves onLeave={onLeave} />
     </MarkdownEditor>
+    {pasteError ? <p role="alert" className="form-error">{pasteError}</p> : null}
   </div>;
 }

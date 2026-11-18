@@ -19,6 +19,12 @@ export default defineConfig({
   },
   projects: [
     {
+      name: "webkit-editor-shortcuts",
+      testMatch: /(?:compose|notes)\.spec\.ts/,
+      grep: /selection formatting shortcuts/,
+      use: { browserName: "webkit" },
+    },
+    {
       name: "webkit-email-layout",
       testMatch: "email-rendering.spec.ts",
       grep: /fits the reader/,

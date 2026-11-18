@@ -45,6 +45,20 @@ const noteList = () => within(screen.getByRole("list", { name: "Notes" }));
 describe("Notes workspace", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.mocked(replicatedSyncConflicts).mockResolvedValue([]); localStorage.clear(); });
 
+  it("shows the shared formatting hints for selected note text", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Formatting hints"), "Select this");
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    await screen.findByRole("textbox", { name: "Note text" });
+    expect(screen.queryByLabelText("Formatting shortcuts")).toBeNull();
+    act(() => lastEditorProps.current!.onSelectionChange!(true));
+    const hints = screen.getByLabelText("Formatting shortcuts");
+    expect(hints).toHaveTextContent("Clear Formatting");
+    expect(hints).toHaveTextContent("Normal Text");
+    expect(hints.textContent!.indexOf("Clear Formatting")).toBeLessThan(hints.textContent!.indexOf("Strikethrough"));
+    act(() => lastEditorProps.current!.onSelectionChange!(false));
+    expect(screen.queryByLabelText("Formatting shortcuts")).toBeNull();
+  });
+
   it("stars the open note without saving an unfinished title, and cycles its split with Tab", async () => {
     const note = await mailClient.createNote(uniqueTitle("Star target"), "Keep this body");
     vi.spyOn(mailClient, "listStarredNotes").mockImplementation(async () => {

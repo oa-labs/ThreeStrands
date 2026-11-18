@@ -19,6 +19,7 @@ import { firstNameFromRecipient, renderSnippetBody } from "./snippets";
 import { recordSnippetUsed } from "./settings";
 import { errorMessage } from "./errors";
 import { closestFrom } from "./domTargets";
+import { pasteWithoutFormatting } from "./plainTextPaste";
 
 const IMAGE_MIN_WIDTH = 80;
 const IMAGE_MAX_WIDTH = 2000;
@@ -379,6 +380,10 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
       window.addEventListener("pointerup", finish, { once: true });
     },
     onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (pasteWithoutFormatting(event, (text) => {
+        if (!document.execCommand("insertHTML", false, plainTextToHtml(text))) throw new Error("The editor could not apply the paste.");
+        editBody();
+      }, onError)) return;
       if ((event.metaKey || event.ctrlKey) && event.key === ";") {
         event.preventDefault();
         const selection = window.getSelection();

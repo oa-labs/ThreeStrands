@@ -1,5 +1,68 @@
 import { expect, test } from "@playwright/test";
 
+test("Notes keeps formatting with ordinary paste and uses plain text with Shift-paste", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Notes (4)", exact: true }).click();
+  const notes = page.getByRole("region", { name: "Notes" });
+  await notes.getByRole("button", { name: "New Note" }).click();
+  const dialog = page.getByRole("dialog", { name: "New Note" });
+  await dialog.getByRole("textbox", { name: "Title" }).fill("Clipboard formatting");
+  await dialog.getByRole("textbox", { name: "Title" }).press("Enter");
+  const body = notes.getByRole("textbox", { name: "Note text" });
+  await expect(body).toBeFocused();
+  await page.evaluate(async () => {
+    await navigator.clipboard.write([new ClipboardItem({
+      "text/plain": new Blob(["Clipboard words"], { type: "text/plain" }),
+      "text/html": new Blob(["<strong>Clipboard words</strong>"], { type: "text/html" }),
+    })]);
+  });
+  await body.press("ControlOrMeta+v");
+  await expect(body.locator("strong")).toHaveCount(1);
+  await expect.poll(() => page.evaluate('import("/src/data/client.ts").then(async ({ mailClient }) => { const note = (await mailClient.listRecentNotes(20)).find((note) => note.title === "Clipboard formatting"); return note ? (await mailClient.getNote(note.id))?.body : null; })')).toBe("**Clipboard words**\n");
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+Shift+v");
+  await expect(body).toHaveText("Clipboard words");
+  await expect(body.locator("strong")).toHaveCount(0);
+  await body.press("ControlOrMeta+z");
+  await expect(body.locator("strong")).toHaveCount(1);
+});
+
+test("selection formatting shortcuts stay at the bottom of Notes and clear selected styles", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+  await page.evaluate('import("/src/data/client.ts").then(({ mailClient }) => mailClient.createNote("Selection formatting", "# Heading\\n\\n**Bold** and *italic*\\n\\n```js\\nCode\\n```\\n\\n" + "A long note paragraph.\\n\\n".repeat(80)))');
+  await page.getByRole("button", { name: "Notes (4)", exact: true }).click();
+  const notes = page.getByRole("region", { name: "Notes" });
+  await notes.getByRole("button", { name: /^Selection formatting/ }).click();
+  const body = notes.getByRole("textbox", { name: "Note text" });
+  await body.focus();
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+a");
+  const hints = notes.getByLabel("Formatting shortcuts");
+  await expect(hints).toBeVisible();
+  await expect(hints.getByText(/^Clear Formatting/)).toBeVisible();
+  await expect(hints.getByText(/^Strikethrough/)).toBeHidden();
+  await expect(hints).toBeInViewport({ ratio: 1 });
+  const bottomGap = await hints.evaluate((element) => {
+    const footer = element.parentElement!.getBoundingClientRect();
+    const column = element.closest(".notes-editor-column")!.getBoundingClientRect();
+    return column.bottom - footer.bottom;
+  });
+  expect(Math.abs(bottomGap)).toBeLessThanOrEqual(1);
+  await body.press("ControlOrMeta+Backslash");
+  await expect(body.locator("strong, em")).toHaveCount(0);
+  await expect(body.locator("h1")).toHaveCount(1);
+  await body.press("ControlOrMeta+0");
+  await expect(body.locator("h1, pre")).toHaveCount(0);
+  await body.press("ControlOrMeta+z");
+  await expect(body.locator("h1")).toHaveCount(1);
+  await body.press("ControlOrMeta+z");
+  await expect(body.locator("strong")).toHaveCount(1);
+  await body.press("ArrowRight");
+  await expect(hints).toHaveCount(0);
+});
+
 test("4 opens Notes, Enter writes in a new note, and Escape returns to the list", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();

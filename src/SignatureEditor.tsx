@@ -6,7 +6,8 @@ import { Modal } from "./AppChrome";
 import { SignaturePlainTextField } from "./SignaturePlainTextField";
 import { SignaturePreview } from "./SignaturePreview";
 import { FormattingPromptDialog } from "./FormattingPromptDialog";
-import { applyFormattingShortcut, formattingShortcutFor, formattingShortcuts, insertHtmlAtRange, linkifyPlainText } from "./richText";
+import { applyFormattingShortcut, formattingShortcutFor, formattingShortcuts, insertHtmlAtRange, linkifyPlainText, plainTextToHtml } from "./richText";
+import { pasteWithoutFormatting } from "./plainTextPaste";
 import { readSignatureEditor, readSignatureHtml, signatureEditorHtml, setSignatureEditorImageSource, validateSignature, type Signature } from "./signatures";
 import { embeddedRasterImageSrc, hostedSignatureImageSrc, sanitizeHtmlDimension, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
 import { errorMessage } from "./errors";
@@ -120,6 +121,12 @@ export function SignatureEditor({ signature, onSave, onClose }: {
         onBlur={() => { rememberRange(); refreshPlainText(); }} onKeyUp={rememberRange} onMouseUp={rememberRange}
         onClick={(event) => { const image = (event.target as Element).closest("img"); if (image) { event.preventDefault(); setImageTarget(image); } if ((event.target as Element).closest("a")) event.preventDefault(); }}
         onKeyDown={(event) => {
+          if (pasteWithoutFormatting(event, (text) => {
+            rememberRange();
+            insertHtmlAtRange(editor.current!, restoreRange(), plainTextToHtml(text));
+            refreshPlainText();
+            rememberRange();
+          }, setError)) return;
           const shortcut = formattingShortcutFor(event.nativeEvent);
           if (!shortcut) return;
           if (shortcut.prompt) { event.preventDefault(); event.stopPropagation(); rememberRange(); setPrompt(shortcut.prompt); }

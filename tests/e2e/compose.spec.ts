@@ -1,5 +1,42 @@
 import { expect, test } from "@playwright/test";
 
+test("selection formatting shortcuts prioritize clearing styles and return code to normal text", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  const body = composer.getByRole("textbox", { name: "Message Body" });
+  await composer.getByRole("textbox", { name: "Subject" }).fill("Formatting shortcuts");
+  await body.fill("Selected words");
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+b");
+  await expect(body.locator("b, strong")).toHaveCount(1);
+  const hints = composer.getByLabel("Formatting shortcuts");
+  await expect(hints.getByText(/^Clear Formatting/)).toBeVisible();
+  await expect(hints.getByText(/^Strikethrough/)).toBeHidden();
+  await body.press("ControlOrMeta+Backslash");
+  await expect(body.locator("b, strong")).toHaveCount(0);
+  await expect(body).toHaveText("Selected words");
+  await body.press("ControlOrMeta+Shift+0");
+  await expect(body.locator("pre")).toHaveCount(1);
+  await expect(composer.getByRole("status")).toHaveText("Draft saved");
+  // Reopen the saved code block so the Normal Text undo is independent of
+  // WebKit's grouping of consecutive formatBlock commands.
+  await composer.getByRole("button", { name: "Save and Close Draft" }).click();
+  await expect(composer).not.toBeVisible();
+  await (await openFolders(page)).getByRole("button", { name: "Drafts" }).click();
+  await page.getByRole("option", { name: /Formatting shortcuts/ }).click();
+  await body.focus();
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+0");
+  await expect(body.locator("pre")).toHaveCount(0);
+  await expect(body).toHaveText("Selected words");
+  await body.press("ControlOrMeta+z");
+  await expect(body.locator("pre")).toHaveCount(1);
+  await body.press("ControlOrMeta+Shift+z");
+  await expect(body.locator("pre")).toHaveCount(0);
+  await expect(composer.getByRole("status")).toHaveText("Draft saved");
+});
+
 test("C opens a focused composer and autosave and polling preserve the body caret", async ({ page }) => {
   await page.clock.install();
   await page.goto("/");
@@ -261,6 +298,41 @@ for (const paste of [
     await expect(body.locator("img, script")).toHaveCount(0);
   });
 }
+
+test("paste without formatting replaces text, supports undo and redo, and survives reopening", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  const body = composer.getByRole("textbox", { name: "Message Body" });
+  await composer.getByRole("textbox", { name: "Subject" }).fill("Plain clipboard paste");
+  await body.fill("Replace this selection");
+  await body.press("ControlOrMeta+a");
+  const text = '<b>Literal text</b>\nhttps://example.com';
+  await page.evaluate(async (text) => {
+    await navigator.clipboard.write([new ClipboardItem({
+      "text/plain": new Blob([text], { type: "text/plain" }),
+      "text/html": new Blob(['<b>Formatted clipboard</b><a href="https://example.com">Link</a>'], { type: "text/html" }),
+    })]);
+  }, text);
+  await body.press("ControlOrMeta+Shift+v");
+  await expect(body).toHaveText(text.replace("\n", ""));
+  await expect(body.locator("b, a, img, script")).toHaveCount(0);
+  await expect(body.locator("br")).toHaveCount(1);
+  await expect(composer.getByRole("status")).toHaveText("Draft saved");
+  await body.press("ControlOrMeta+z");
+  await expect(body).toHaveText("Replace this selection");
+  await body.press("ControlOrMeta+Shift+z");
+  await expect(body).toHaveText(text.replace("\n", ""));
+  await expect(composer.getByRole("status")).toHaveText("Draft saved");
+  await composer.getByRole("button", { name: "Save and Close Draft" }).click();
+  await expect(composer).not.toBeVisible();
+  await page.reload();
+  await (await openFolders(page)).getByRole("button", { name: "Drafts" }).click();
+  await page.getByRole("option", { name: /Plain clipboard paste/ }).click();
+  await expect(body).toHaveText(text.replace("\n", ""));
+  await expect(body.locator("b, a, img, script")).toHaveCount(0);
+});
 
 test("reply shortcuts keep inbox actions out of the composer and forwarding starts unaddressed", async ({ page }) => {
   await page.goto("/");
@@ -623,10 +695,10 @@ test("Superhuman formatting shortcuts edit rich compose content and appear in he
   await expect(help.getByText("Code Block", { exact: true })).toBeVisible();
 });
 
-for (const { width, lists } of [
-  { width: 1920, lists: ["Bulleted List", "Numbered List"] },
-  { width: 1600, lists: ["Bulleted List"] },
-  { width: 1500, lists: [] },
+for (const { width, lists, codeBlock } of [
+  { width: 1920, lists: ["Bulleted List", "Numbered List"], codeBlock: true },
+  { width: 1600, lists: [], codeBlock: true },
+  { width: 1500, lists: [], codeBlock: false },
 ]) {
   test(`selection hints show ${lists.join(" and ") || "no list formats"} to stay on one line at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
@@ -636,7 +708,9 @@ for (const { width, lists } of [
     await body.fill("Some text");
     await body.press("ControlOrMeta+a");
     const hints = page.getByLabel("Formatting shortcuts");
-    for (const title of ["Bold", "Italics", "Hyperlink", "Strikethrough", "Code Block"]) await expect(hints.getByText(title)).toBeVisible();
+    for (const title of ["Bold", "Italics", "Clear Formatting", "Hyperlink", "Normal Text"]) await expect(hints.getByText(title)).toBeVisible();
+    await expect(hints.getByText("Code Block")).toBeVisible({ visible: codeBlock });
+    await expect(hints.getByText("Strikethrough")).toBeHidden();
     for (const title of ["Bulleted List", "Numbered List"]) await expect(hints.getByText(title)).toBeVisible({ visible: lists.includes(title) });
     const rows = await hints.evaluate((element) => new Set(Array.from(element.children)
       .filter((hint) => getComputedStyle(hint).display !== "none")

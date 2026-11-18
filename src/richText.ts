@@ -25,6 +25,8 @@ export const formattingShortcuts: FormattingShortcut[] = [
   { id: "format.bullets", title: "Bulleted List", key: "Mod+Shift+8", command: "insertUnorderedList" },
   { id: "format.quote", title: "Quote", key: "Mod+Shift+9", command: "formatBlock", value: "blockquote" },
   { id: "format.codeBlock", title: "Code Block", key: "Mod+Shift+0", command: "formatBlock", value: "pre" },
+  { id: "format.normal", title: "Normal Text", key: "Mod+0", command: "formatBlock", value: "p" },
+  { id: "format.clear", title: "Clear Formatting", key: "Mod+\\", command: "removeFormat" },
   { id: "format.indentList", title: "Indent List", key: "Tab", command: "indent", listOnly: true },
   { id: "format.outdentList", title: "Outdent List", key: "Shift+Tab", command: "outdent", listOnly: true },
   { id: "format.indent", title: "Increase Indent", key: "Mod+]", command: "indent" },
@@ -32,14 +34,14 @@ export const formattingShortcuts: FormattingShortcut[] = [
 ];
 
 /** The everyday formats offered as hints while body text is selected. */
-export const selectionFormattingHints = ["format.bold", "format.italic", "format.link", "format.strike", "format.codeBlock", "format.bullets", "format.numbers"]
+export const selectionFormattingHints = ["format.bold", "format.italic", "format.clear", "format.link", "format.normal", "format.codeBlock", "format.strike", "format.bullets", "format.numbers"]
   .map((id) => formattingShortcuts.find((shortcut) => shortcut.id === id)!);
 
 /**
  * Hints shown only while the composer has room for them on one line, keyed to
- * the order they drop out: 2 goes first, then 1.
+ * the order they drop out: 4 goes first, then 3, then 2, then 1.
  */
-export const optionalFormattingHints: Record<string, 1 | 2> = { "format.bullets": 1, "format.numbers": 2 };
+export const optionalFormattingHints: Record<string, 1 | 2 | 3 | 4> = { "format.codeBlock": 1, "format.bullets": 2, "format.numbers": 3, "format.strike": 4 };
 
 export function formattingShortcutFor(event: KeyboardEvent): FormattingShortcut | undefined {
   return formattingShortcuts.find((shortcut) => matchesShortcut(event, shortcut.key));
@@ -306,6 +308,11 @@ export function applyFormattingShortcut(
   }
 
   editor.focus();
+  if (shortcut.command === "removeFormat") {
+    document.execCommand("removeFormat");
+    document.execCommand("unlink");
+    return true;
+  }
   if (shortcut.command === "fontName" && selectionIsFixedWidth(editor)) {
     stripFixedWidth(editor);
     return true;

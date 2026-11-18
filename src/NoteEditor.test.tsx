@@ -12,9 +12,10 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resol
 function renderEditor(value: string, { mode = "hide", readOnly = false, files }: { mode?: NoteSyntaxMode; readOnly?: boolean; files?: NoteFiles } = {}) {
   const onChange = vi.fn();
   const onLeave = vi.fn();
+  const onSelectionChange = vi.fn();
   const ref = createRef<NoteEditorHandle>();
-  const view = render(<NoteEditor ref={ref} noteKey="note-1" value={value} label="Note text" mode={mode} readOnly={readOnly} files={files} onChange={onChange} onLeave={onLeave} />);
-  return { ...view, ref, onChange, onLeave };
+  const view = render(<NoteEditor ref={ref} noteKey="note-1" value={value} label="Note text" mode={mode} readOnly={readOnly} files={files} onChange={onChange} onLeave={onLeave} onSelectionChange={onSelectionChange} />);
+  return { ...view, ref, onChange, onLeave, onSelectionChange };
 }
 
 async function editorFor(value: string, options?: Parameters<typeof renderEditor>[1]) {
@@ -200,6 +201,68 @@ describe("NoteEditor", () => {
       expect(ref.current!.markdown()).toBe("Hello\n");
     });
 
+    it.each(["# Heading\n", "```js\nCode\n```\n"])("returns %s to normal text with Mod-0", async (source) => {
+      const { box, ref } = await editorFor(source);
+      act(() => ref.current!.focus());
+      fireEvent.keyDown(box, { key: "a", ctrlKey: true });
+      fireEvent.keyDown(box, { key: "0", metaKey: true });
+      expect(ref.current!.markdown()).toBe(source.includes("Heading") ? "Heading\n" : "Code\n");
+      expect(box.querySelector("h1, pre")).toBeNull();
+      fireEvent.keyDown(box, { key: "z", ctrlKey: true });
+      expect(ref.current!.markdown()).toBe(source);
+    });
+
+    it.each([
+      ["**Bold** and *italic* and ~~strike~~ and `code` and [link](https://example.com)\n", "Bold and italic and strike and code and link\n"],
+      ["***Nested*** and ==highlight==\n", "Nested and highlight\n"],
+      ["**First**\n\n*Second*\n", "First\n\nSecond\n"],
+      ["- [ ] **Checklist**\n- ( ) *Task*\n", "- [ ] Checklist\n- ( ) Task\n"],
+    ])("clears inline formatting from %s with one undoable shortcut", async (source, plain) => {
+      const { box, ref } = await editorFor(source);
+      act(() => ref.current!.focus());
+      fireEvent.keyDown(box, { key: "a", ctrlKey: true });
+      fireEvent.keyDown(box, { key: "a", ctrlKey: true });
+      fireEvent.keyDown(box, { key: "\\", metaKey: true });
+      expect(ref.current!.markdown()).toBe(plain);
+      expect(box.querySelector("strong, em, del, code, a.md-link, mark")).toBeNull();
+      fireEvent.keyDown(box, { key: "z", ctrlKey: true });
+      expect(ref.current!.markdown()).toBe(source);
+    });
+
+    it("clears only the selected part of bold text and keeps the selection", async () => {
+      const { box, ref } = await editorFor("**Hello world**\n");
+      act(() => ref.current!.focus());
+      const node = box.querySelector("strong")!.childNodes[1];
+      const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 5);
+      window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+      // Let ProseMirror read the browser selection before applying the command.
+      fireEvent(document, new Event("selectionchange"));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+      fireEvent.keyDown(box, { key: "\\", ctrlKey: true });
+      expect(ref.current!.markdown()).toBe("Hello **world**\n");
+      expect(window.getSelection()!.toString()).toBe("Hello");
+    });
+
+    it("reports text selection only in the editable note and clears it on blur, read-only mode, and unmount", async () => {
+      const { box, ref, onSelectionChange, rerender, unmount } = await editorFor("Hello\n");
+      act(() => ref.current!.focus());
+      const range = document.createRange(); range.selectNodeContents(box);
+      window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+      act(() => document.dispatchEvent(new Event("selectionchange")));
+      expect(onSelectionChange).toHaveBeenLastCalledWith(true);
+      const other = document.createElement("input"); document.body.append(other);
+      act(() => other.focus());
+      expect(onSelectionChange).toHaveBeenLastCalledWith(false);
+      act(() => ref.current!.focus());
+      window.getSelection()!.collapseToEnd();
+      act(() => document.dispatchEvent(new Event("selectionchange")));
+      expect(onSelectionChange).toHaveBeenLastCalledWith(false);
+      rerender(<NoteEditor ref={ref} noteKey="note-1" value="Hello\n" label="Note text" mode="hide" readOnly onChange={vi.fn()} onLeave={vi.fn()} onSelectionChange={onSelectionChange} />);
+      expect(onSelectionChange).toHaveBeenLastCalledWith(false);
+      unmount();
+      expect(onSelectionChange).toHaveBeenLastCalledWith(false);
+    });
+
     it.each(["m", "9", "0"])("does not apply %s while composing or reading a note", async (key) => {
       const { box, ref, onChange } = await editorFor("Hello\n");
       fireEvent.keyDown(box, { key, ctrlKey: true, shiftKey: true, isComposing: true });
@@ -254,6 +317,7 @@ describe("NoteEditor", () => {
   });
 
   describe("pasting", () => {
+    afterEach(() => vi.unstubAllGlobals());
     beforeEach(() => {
       // jsdom has no text-range geometry; a paste scrolls the selection into view.
       Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => [] });
@@ -268,6 +332,20 @@ describe("NoteEditor", () => {
       const markdown = ref.current!.markdown()!;
       expect(markdown).not.toMatch(/&#x?[0-9a-f]+;/i);
       expect(markdown).toContain("**Complimentary Parking:** [*1250 Bedford Ave.*](https://maps.example/x)");
+    });
+
+    it.each(["Plain <b>text</b>\nSecond line", "Plain clipboard text"])("pastes %s as plain text with Cmd-Shift-V and supports undo", async (text) => {
+      const readText = vi.fn().mockResolvedValue(text);
+      vi.stubGlobal("navigator", new Proxy(navigator, { get: (target, key) => key === "clipboard" ? { readText } : Reflect.get(target, key, target) }));
+      const { box, ref, onChange } = await editorFor("Replace me\n");
+      act(() => ref.current!.focus());
+      fireEvent.keyDown(box, { key: "a", ctrlKey: true });
+      fireEvent.keyDown(box, { key: "V", metaKey: true, shiftKey: true });
+      await waitFor(() => expect(onChange).toHaveBeenCalled());
+      expect(box).toHaveTextContent(text.replace("\n", ""));
+      expect(box.querySelector("strong, b, a, img")).toBeNull();
+      fireEvent.keyDown(box, { key: "z", ctrlKey: true });
+      expect(ref.current!.markdown()).toBe("Replace me\n");
     });
   });
 

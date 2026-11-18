@@ -478,6 +478,7 @@ describe("Composer pasted links", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -526,6 +527,20 @@ describe("Composer pasted links", () => {
       body: "Read the docs",
       bodyHtml: 'Read the <a href="https://example.com/docs">docs</a>',
     }));
+  });
+
+  it.each([false, true])("pastes literal text over the selection without links or images (quoted: %s)", async (quoted) => {
+    const text = '<b>Plain</b>\nhttps://example.com/docs';
+    const readText = vi.fn().mockResolvedValue(text);
+    vi.stubGlobal("navigator", new Proxy(navigator, { get: (target, key) => key === "clipboard" ? { readText } : Reflect.get(target, key, target) }));
+    const { editor, execute } = renderWithSelection(false, quoted);
+    editor.focus();
+    fireEvent.keyDown(editor, { key: "V", metaKey: true, shiftKey: true });
+    await act(async () => {});
+    expect(execute).toHaveBeenCalledWith("insertHTML", false, '&lt;b&gt;Plain&lt;/b&gt;<br>https://example.com/docs');
+    expect(editor.querySelector("a, img, b")).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(mailClient.saveDraft).toHaveBeenCalledWith(expect.objectContaining({ bodyHtml: expect.stringContaining('&lt;b&gt;Plain&lt;/b&gt;<br>https://example.com/docs') }));
   });
 
   it("inserts and saves a pasted URL as a link when nothing is selected", async () => {
