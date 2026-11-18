@@ -4143,7 +4143,7 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .notes-workspace .workspace-context-rail { font-size: var(--text-body); line-height: var(--leading-normal); }
 .notes-workspace .workspace-context-rail > .context-section-header:first-child { margin-bottom: var(--space-1); }
 .notes-workspace .workspace-context-rail > .context-section { padding-block: var(--space-2); border-bottom: 0; }
-.note-links-empty { padding: var(--space-2) var(--context-row-inset); }
+.note-links-empty { padding: var(--space-1) var(--context-row-inset); }
 .note-links-empty > .btn-link { display: flex; align-items: baseline; text-align: left; font-size: var(--text-secondary); }
 .note-links-empty .context-row-glyph { align-self: center; }
 .note-item .context-row-main { padding-block: var(--space-2); }
@@ -4155,7 +4155,7 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .note-completed-toggle { display: flex; align-items: center; padding-inline: var(--context-row-inset); color: var(--muted); font-size: var(--text-meta); }
 /* The glyph column already includes the icon-to-text spacing used by checklist rows. */
 .note-links-empty > .btn-link, .note-completed-toggle { gap: 0; }
-.notes-details { display: grid; gap: var(--space-1); margin: var(--space-3) 0 0; padding: var(--space-2) 0 0 calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); }
+.notes-details { display: grid; gap: var(--space-1); margin: 0; padding: var(--space-2) 0 0 calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); }
 .notes-details > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); align-items: baseline; gap: var(--space-2); }
 .notes-details dt { color: var(--muted); font-size: var(--text-meta); }
 .notes-details dd { min-width: 0; margin: 0; }
@@ -4397,11 +4397,12 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .month-grid-day:hover { background: var(--hover); }
 /* Days of the neighbouring months recede well behind the month's own. */
 .month-grid-day.month-grid-outside-month { color: var(--muted); opacity: var(--opacity-dimmed); }
-/* Today is told by its number alone, so it never looks chosen or focused; only the chosen day is filled. */
-.month-grid-day[aria-current="date"] { color: var(--accent); font-weight: var(--weight-semibold); }
+/* Today is a quiet ring around its number, so it never looks chosen; only the chosen day is filled. */
+.month-grid-day[aria-current="date"] { font-weight: var(--weight-semibold); box-shadow: inset 0 0 0 1px var(--border); }
 .month-grid-day.month-grid-day-selected { background: var(--primary); color: var(--primary-text); }
 /* A marked day, such as one with a written daily note, gets a dot under its number. */
-.month-grid-day.month-grid-day-marked::after { content: ""; position: absolute; bottom: 3px; left: 0; right: 0; width: 4px; height: 4px; margin-inline: auto; border-radius: var(--radius-pill); background: currentColor; opacity: var(--opacity-dimmed); }
+.month-grid-day.month-grid-day-marked::after { content: ""; position: absolute; bottom: 3px; left: 0; right: 0; width: 4px; height: 4px; margin-inline: auto; border-radius: var(--radius-pill); background: var(--muted); opacity: var(--opacity-dimmed); }
+.month-grid-day.month-grid-day-selected.month-grid-day-marked::after { background: var(--primary-text); }
 .date-picker-today { width: 100%; margin-top: var(--space-2); }
 
 .notes-import-problems { margin-top: var(--space-2); font-size: var(--text-meta); color: var(--muted); }

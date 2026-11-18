@@ -1,11 +1,11 @@
 import { refreshSyncedData } from "./refreshSyncedData";
 import { usePullToRefresh } from "./usePullToRefresh";
 import { PullToRefreshStatus } from "./PullToRefreshStatus";
-import { formatDateTime } from "./dateFormatting";
+import { formatDateTime, formatRelativeDateTime } from "./dateFormatting";
 import { NoteLinkPicker } from "./NoteLinkPicker";
 import { markdownEntityLink, parseNoteReference, type NoteDocument } from "./noteEntities";
 import { changeNoteItem, NOTES_CHANGED, prepareNoteMutation } from "./noteMutations";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowLeft, CalendarDays, ClipboardList, ChevronLeft, ChevronRight, CircleCheck, FilePlus, FileUp, GitCompareArrows, Mail, NotebookText, Plus, RotateCcw, Search, Star, Trash2, UserRound, X } from "lucide-react";
 import type { CalendarOption, ContactProfile, Note, NoteLinks, NoteRelink, NoteSearchHit, NoteSearchScope, NoteSummary, ScheduleEvent } from "./domain";
@@ -58,7 +58,8 @@ const SEARCH_DELAY_MS = 150;
 /** How long "Saved" stays after a save before it clears. */
 const SAVED_SHOWN_MS = 2000;
 const summaryTarget = (note: { id: string; dailyDate: string | null }): NoteTarget => note.dailyDate ? { kind: "daily", date: note.dailyDate } : { kind: "note", id: note.id };
-const formatTime = (value: string) => formatDateTime(new Date(value));
+const formatTime = (value: string) => formatRelativeDateTime(new Date(value));
+const exactTime = (value: string) => formatDateTime(new Date(value));
 
 /** Each linked kind's glyph in the Links section. */
 const LINK_ICON = { conversation: <Mail size={ICON_SIZE.sm} />, task: <CircleCheck size={ICON_SIZE.sm} />, event: <CalendarDays size={ICON_SIZE.sm} /> } as const;
@@ -332,6 +333,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     requestAnimationFrame(() => body.current?.focus());
   }, [focusEditor, editorReady]);
 
+  const linkHintId = useId();
   const inTrash = Boolean(editor.note?.trashed);
   const noteConflicts = editor.note ? conflicts.get(editor.note.id) ?? [] : [];
 
@@ -688,11 +690,12 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
           calendars={calendars} onOpenEvent={onOpenEvent} onAddNote={onAddNote} /> : null}
         <ContextSectionHeader title="Note Details" icon={<NotebookText size={ICON_SIZE.xs} />} />
         {entityDocument?.warning ? <p role="alert" className="form-error">{entityDocument.warning}</p> : null}
-        {!entityLinks.length && !readOnly ? <section className="note-links-empty" aria-label="Links">
-          <button type="button" className="btn-link" onClick={() => setLinkPicker(true)}><span className="context-row-glyph" aria-hidden="true"><Plus size={ICON_SIZE.sm} /></span>Link contact or conversation</button>
-        </section> : null}
-        {entityLinks.length ? <ContextSection id="note-links" title="Links" count={entityLinks.length}
-          actions={!readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a contact, conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
+        {entityLinks.length || !readOnly ? <ContextSection id="note-links" title="Links" count={entityLinks.length || undefined}
+          closing={!entityLinks.length ? <div className="note-links-empty">
+            <button type="button" className="btn-link" aria-describedby={linkHintId} onClick={() => setLinkPicker(true)}><span className="context-row-glyph" aria-hidden="true"><Plus size={ICON_SIZE.sm} /></span>Add link</button>
+            <span id={linkHintId} hidden>Link to a contact, conversation, task, or event</span>
+          </div> : undefined}
+          actions={entityLinks.length && !readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a contact, conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
           rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind as keyof typeof LINK_ICON]} title={link.label} detail={link.reference.account}
             actions={link.reference.kind === "event" && renderMeetingPreparation && !inTrash ? [<button key="prepare" type="button" className="btn-icon btn-icon-sm" data-prepare-reference={link.href} aria-label={`Prepare Meeting: ${link.label}`} title="Prepare meeting" disabled={busy || readOnly} onClick={() => void act(async () => {
               await editor.flush();
@@ -719,9 +722,9 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
               title={contact.displayName ?? contact.addresses[0]} detail={contact.company ?? contact.addresses[0]} onActivate={() => onOpenContact(contact.id)} />)} /> : null}
         </> : null}
         {editor.note ? <dl className="notes-details">
-          <div><dt>Created</dt><dd><time dateTime={editor.note.createdAt}>{formatTime(editor.note.createdAt)}</time></dd></div>
-          {Date.parse(editor.note.updatedAt) !== Date.parse(editor.note.createdAt) ? <div><dt>Updated</dt><dd><time dateTime={editor.note.updatedAt}>{formatTime(editor.note.updatedAt)}</time></dd></div> : null}
-          {editor.note.trashedAt ? <div><dt>Trashed</dt><dd><time dateTime={editor.note.trashedAt}>{formatTime(editor.note.trashedAt)}</time></dd></div> : null}
+          <div><dt>Created</dt><dd><time dateTime={editor.note.createdAt} title={exactTime(editor.note.createdAt)}>{formatTime(editor.note.createdAt)}</time></dd></div>
+          {Date.parse(editor.note.updatedAt) !== Date.parse(editor.note.createdAt) ? <div><dt>Updated</dt><dd><time dateTime={editor.note.updatedAt} title={exactTime(editor.note.updatedAt)}>{formatTime(editor.note.updatedAt)}</time></dd></div> : null}
+          {editor.note.trashedAt ? <div><dt>Trashed</dt><dd><time dateTime={editor.note.trashedAt} title={exactTime(editor.note.trashedAt)}>{formatTime(editor.note.trashedAt)}</time></dd></div> : null}
         </dl> : <p className="context-status">{daily ? "This day's note starts when you write in it." : "Select a note to see its details."}</p>}
         </>}
       </WorkspaceContextRail>

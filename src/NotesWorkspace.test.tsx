@@ -8,6 +8,7 @@ import { runWorkspaceCommand } from "./workspaceCommands";
 import { mailClient } from "./data/client";
 import { NotesWorkspace, relinkMessage } from "./NotesWorkspace";
 import { lastEditorProps } from "./test/NoteEditorStub";
+import { formatDateTime } from "./dateFormatting";
 import { formatNoteDate } from "./noteDates";
 import { noteTitleKey as noteTitleKeyOf } from "./noteWikiLinks";
 import type { CalendarOption, ContactProfile, Note, ScheduleEvent } from "./domain";
@@ -378,9 +379,21 @@ describe("Notes workspace", () => {
     const rail = within(screen.getByRole("complementary", { name: "Note context" }));
     expect(rail.getByRole("heading", { name: "Note Details" }).querySelector('[aria-hidden="true"] svg')).not.toBeNull();
     const links = within(rail.getByRole("region", { name: "Links" }));
-    expect(links.queryByRole("heading")).not.toBeInTheDocument();
-    fireEvent.click(links.getByRole("button", { name: "Link contact or conversation" }));
+    expect(links.getByRole("heading", { name: "Links" })).toBeInTheDocument();
+    const add = links.getByRole("button", { name: "Add link" });
+    expect(add).toHaveAccessibleDescription("Link to a contact, conversation, task, or event");
+    fireEvent.click(add);
     expect(await screen.findByRole("dialog", { name: "Link to…" })).toBeInTheDocument();
+  });
+
+  it("shows no link controls for a read-only note without links", async () => {
+    const note = await mailClient.createNote(uniqueTitle("Trashed links"), "Some text");
+    vi.spyOn(mailClient, "getNote").mockResolvedValue({ ...note, trashed: true, trashedAt: "2026-11-01T20:33:00Z" });
+    render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+    const rail = within(screen.getByRole("complementary", { name: "Note context" }));
+    expect(rail.queryByRole("region", { name: "Links" })).not.toBeInTheDocument();
+    expect(rail.queryByRole("button", { name: "Add link" })).not.toBeInTheDocument();
   });
 
   it.each([false, true])("keeps timestamps in the footer and shows Updated only for a changed note (%s)", async (changed) => {
@@ -394,6 +407,7 @@ describe("Notes workspace", () => {
     const footer = rail.querySelector(".notes-details")!;
     expect(rail.lastElementChild).toBe(footer);
     expect(footer.querySelector("time")).toHaveAttribute("datetime", createdAt);
+    expect(footer.querySelector("time")).toHaveAttribute("title", formatDateTime(new Date(createdAt)));
     expect(within(footer as HTMLElement).queryByText("Updated") !== null).toBe(changed);
     if (changed) expect(footer.querySelectorAll("time")[1]).toHaveAttribute("datetime", updatedAt);
   });
@@ -1086,7 +1100,7 @@ describe("Notes workspace", () => {
       vi.spyOn(mailClient, "resolveNoteContact").mockResolvedValue("ada-picker");
       vi.spyOn(mailClient, "getContactProfile").mockResolvedValue({ id: "ada-picker", displayName: "Ada Picker", addresses: [reference.id] } as ContactProfile);
       await openNote(note.id, { onOpenContact: vi.fn() });
-      fireEvent.click(rail().getByRole("button", { name: "Link contact or conversation" }));
+      fireEvent.click(rail().getByRole("button", { name: "Add link" }));
       const picker = within(await screen.findByRole("dialog", { name: "Link to…" }));
       fireEvent.change(picker.getByRole("combobox", { name: "Kind" }), { target: { value: "contact" } });
       fireEvent.click(await picker.findByRole("button", { name: /Ada Picker/ }));

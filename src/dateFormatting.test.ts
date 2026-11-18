@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCompactDate, formatDateTime, formatDiagnosticDateTime, formatFullDate, formatMonthYear } from "./dateFormatting";
+import { formatCompactDate, formatDateTime, formatDiagnosticDateTime, formatFullDate, formatMonthYear, formatRelativeDateTime } from "./dateFormatting";
 import { formatHistoryDate } from "./contactContext";
 import { formatMailTimestamp } from "./threadPresentation";
 
@@ -39,5 +39,24 @@ describe("date display policy", () => {
     expect(formatDateTime(first)).toBe(formatDateTime(second));
     expect(formatDateTime(first)).toBe(new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(first));
     expect(formatDiagnosticDateTime(first)).not.toBe(formatDiagnosticDateTime(second));
+  });
+
+  it("names today and yesterday in metadata timestamps and keeps the absolute format otherwise", () => {
+    const now = new Date(2026, 10, 18, 12, 0);
+    const time = (date: Date) => new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(date);
+    const today = new Date(2026, 10, 18, 11, 5);
+    const yesterday = new Date(2026, 10, 17, 9, 12);
+    expect(formatRelativeDateTime(today, now)).toBe(`Today at ${time(today)}`);
+    expect(formatRelativeDateTime(yesterday, now)).toBe(`Yesterday at ${time(yesterday)}`);
+    const older = new Date(2026, 10, 16, 23, 59);
+    expect(formatRelativeDateTime(older, now)).toBe(formatDateTime(older));
+  });
+
+  it("switches day at local midnight", () => {
+    const justAfter = new Date(2026, 10, 19, 0, 1);
+    const lastMinute = new Date(2026, 10, 18, 23, 59);
+    expect(formatRelativeDateTime(lastMinute, justAfter)).toMatch(/^Yesterday at /);
+    expect(formatRelativeDateTime(justAfter, justAfter)).toMatch(/^Today at /);
+    expect(formatRelativeDateTime(new Date(2026, 10, 17, 23, 59), justAfter)).toBe(formatDateTime(new Date(2026, 10, 17, 23, 59)));
   });
 });
