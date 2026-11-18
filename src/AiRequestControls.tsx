@@ -39,26 +39,30 @@ export function AiRequestControls() {
     const timer = setInterval(() => void refresh(), 1000);
     return () => { active = false; clearInterval(timer); };
   }, [historyOpen]);
-  return <section aria-label="AI request controls">
+  return <section className="settings-section ai-request-controls" aria-label="AI request controls">
     <h3>Request Controls</h3>
     <p id={hint} className="settings-hint">A daily estimated spending limit for this device. Enter model prices under Usage first. Each request reserves its full output allowance; failed or cancelled requests keep their reservation when billing is unknown. Your provider’s bill can differ. Web Research has separate limits.</p>
     {error ? <p role="alert" className="form-error">{error}</p> : null}
     {!snapshot && error ? <details><summary>Recover AI Controls</summary><p>Recovery preserves the unreadable file and resets the budget and history. Today's unknown spending reservations will be lost.</p><button type="button" className="btn" onClick={() => void recoverAiRequests().then(() => aiRequestSnapshot(historyOpen)).then((next) => {setSnapshot(next);setError("");setBudget("");}).catch((reason: unknown) => setError(errorMessage(reason)))}>Reset Controls and Unknown Reservations</button></details> : null}
-    <label className="settings-field">Daily AI Budget (USD)
-      <input type="number" min="0.01" step="0.01" aria-describedby={hint} value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="No limit" />
-    </label>
-    <button type="button" className="btn btn-sm" disabled={!snapshot} onClick={() => {
-      const dailyBudgetUsd = budget.trim() === "" ? null : Number(budget);
-      if (dailyBudgetUsd !== null && (!Number.isFinite(dailyBudgetUsd) || dailyBudgetUsd <= 0)) { setError("Enter a positive daily AI budget, or leave it blank."); return; }
-      setError("");
-      void setAiRequestPolicy({ dailyBudgetUsd }).then(() => aiRequestSnapshot(historyOpen)).then(setSnapshot).catch((reason: unknown) => setError(errorMessage(reason)));
-    }}>Save Budget</button>
+    <div className="ai-budget-row">
+      <label className="settings-field">Daily AI Budget (USD)
+        <input type="number" min="0.01" step="0.01" aria-describedby={hint} value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="No limit" />
+      </label>
+      <button type="button" className="btn" disabled={!snapshot} onClick={() => {
+        const dailyBudgetUsd = budget.trim() === "" ? null : Number(budget);
+        if (dailyBudgetUsd !== null && (!Number.isFinite(dailyBudgetUsd) || dailyBudgetUsd <= 0)) { setError("Enter a positive daily AI budget, or leave it blank."); return; }
+        setError("");
+        void setAiRequestPolicy({ dailyBudgetUsd }).then(() => aiRequestSnapshot(historyOpen)).then(setSnapshot).catch((reason: unknown) => setError(errorMessage(reason)));
+      }}>Save Budget</button>
+    </div>
     {snapshot ? <>
       <p className="settings-hint">{formatUsd(snapshot.chargedUsd)} charged or reserved today; unpriced requests are not included. Up to {snapshot.maxConcurrent} requests run at once; at most {snapshot.maxPending} can be running or waiting.</p>
       {snapshot.active.map((request) => <p key={request.requestId}>{aiActivityFeatureLabel(request.feature)} <button type="button" className="btn btn-sm" onClick={() => void cancelAiRequest(request.requestId).catch((reason: unknown) => setError(errorMessage(reason)))}>Cancel Request</button></p>)}
-      <details onToggle={(event) => setHistoryOpen(event.currentTarget.open)}><summary>Request Provenance</summary>
-        <p className="settings-hint">Kept on this device for 30 days, up to 500 attempts and 8 MB. Source references and fingerprints are retained; email text, instructions, profiles, and provider replies are not.</p>
-        {historyOpen ? snapshot.records.length ? <ul>{snapshot.records.slice(0, 20).map((record) => <ProvenanceEntry key={record.attemptId} record={record} />)}</ul> : <p className="settings-hint">No requests recorded yet.</p> : null}
+      <details className="settings-disclosure ai-request-history" onToggle={(event) => setHistoryOpen(event.currentTarget.open)}><summary>Request Provenance</summary>
+        <div className="settings-disclosure-body">
+          <p className="settings-hint">Kept on this device for 30 days, up to 500 attempts and 8 MB. Source references and fingerprints are retained; email text, instructions, profiles, and provider replies are not.</p>
+          {historyOpen ? snapshot.records.length ? <ul>{snapshot.records.slice(0, 20).map((record) => <ProvenanceEntry key={record.attemptId} record={record} />)}</ul> : <p className="settings-hint">No requests recorded yet.</p> : null}
+        </div>
       </details>
     </> : null}
   </section>;
