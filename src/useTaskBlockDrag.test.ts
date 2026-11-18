@@ -12,7 +12,7 @@ const monday = new Date(2026, 8, 21);
 const tuesday = new Date(2026, 8, 22);
 
 function press(x = 500, y = 10, pointerId = 1) {
-  return { button: 0, pointerId, clientX: x, clientY: y } as ReactPointerEvent<HTMLElement>;
+  return { button: 0, pointerId, clientX: x, clientY: y, target: document.body, preventDefault: vi.fn() } as unknown as ReactPointerEvent<HTMLElement>;
 }
 
 describe("useTaskBlockDrag", () => {
@@ -184,5 +184,37 @@ describe("useTaskBlockDrag", () => {
     fireEvent.keyDown(document.body, { key: "Escape" });
     window.removeEventListener("keydown", keydown);
     expect(keydown).toHaveBeenCalled();
+  });
+
+  describe("pointer handling", () => {
+    it("prevents the press's default so WebKit doesn't start a selection or native drag, but leaves controls alone", () => {
+      const { result } = renderDrag();
+      const row = press();
+      act(() => result.current.startDrag(card, row));
+      expect(row.preventDefault).toHaveBeenCalled();
+      fireEvent.pointerUp(document.body, { pointerId: 1 });
+
+      const checkbox = document.createElement("input");
+      const control = { ...press(), target: checkbox } as unknown as ReactPointerEvent<HTMLElement>;
+      act(() => result.current.startDrag(card, control));
+      expect(control.preventDefault).not.toHaveBeenCalled();
+      pointAt(columns[0]);
+      fireEvent.pointerMove(document.body, { pointerId: 1, clientX: 100, clientY: 200 });
+      expect(result.current.draggingId).toBeNull();
+    });
+
+    it("names the dragged source, tracks the pointer, marks the body, and clears all three when it ends", () => {
+      const { result } = renderDrag();
+      pointAt(columns[0]);
+      act(() => result.current.startDrag(card, press()));
+      fireEvent.pointerMove(document.body, { pointerId: 1, clientX: 120, clientY: 80 });
+      expect(result.current.draggingTitle).toBe("Plan launch");
+      expect(result.current.pointerRef.current).toEqual({ x: 120, y: 80 });
+      expect(document.body).toHaveClass("task-block-dragging");
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(result.current.draggingTitle).toBeNull();
+      expect(result.current.pointerRef.current).toBeNull();
+      expect(document.body).not.toHaveClass("task-block-dragging");
+    });
   });
 });

@@ -71,3 +71,35 @@ test("completes a starred suggestion through the task form, preserves the email,
   await today.getByRole("tab", { name: "Tasks", exact: true }).click();
   await expect(today.getByRole("checkbox", { name: "Mark Review the roadmap Done" })).not.toBeChecked();
 });
+
+test("drags a Planning Inbox item onto the schedule to book a block at the dropped time", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const today = await openToday(page, true);
+  const grid = today.getByRole("group", { name: "Day view" });
+  await expect(grid).toBeVisible();
+  const row = today.getByRole("region", { name: "Planning Inbox" }).locator(".today-inbox-card").first();
+  await expect(row).toBeVisible();
+  const title = (await row.locator(".context-row-title").innerText()).trim();
+  const column = grid.locator(".calendar-week-column").first();
+  const view = (await grid.locator(".calendar-week-scroll").boundingBox())!;
+  const box = (await column.boundingBox())!;
+  const from = (await row.locator(".context-row-main").boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = view.y + view.height / 2;
+  await page.mouse.move(from.x + 30, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 60, from.y + from.height / 2 + 10, { steps: 3 });
+  await page.mouse.move(x, y, { steps: 12 });
+  await expect(grid.locator(".calendar-create-selection")).toBeVisible();
+  const dropped = await grid.locator(".calendar-create-selection").boundingBox();
+  await page.mouse.up();
+  // An email suggestion becomes a task first, so its drop opens the task form and books once it is saved.
+  const form = page.getByRole("dialog", { name: "Add Task", exact: true });
+  await expect(form).toBeVisible();
+  await form.getByRole("button", { name: "Add Task", exact: true }).click();
+  await expect(page.getByText(new RegExp(`Booked .* for “${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}”`))).toBeVisible();
+  const booked = grid.locator(".calendar-schedule-event", { hasText: title });
+  await expect(booked).toBeVisible();
+  const placed = (await booked.boundingBox())!;
+  expect(Math.abs(placed.y - dropped!.y)).toBeLessThan(2);
+});

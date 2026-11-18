@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlanningInbox, uniqueInboxEntries, interleaveInboxCategories, INBOX_FILTER_KEY, INBOX_PAGE_SIZE, type InboxEntry } from "./PlanningInbox";
 
 const entry = (id: string, category: InboxEntry["category"] = "tasks", identities = [id]): InboxEntry => ({ id, identities, category, title: id, source: null, row: { onActivate: vi.fn() }, schedule: vi.fn(), actions: [{ label: "Add to Today's Plan", onSelect: vi.fn() }] });
-const defaults = { scope: undefined, status: () => null, loading: () => false, hasMore: () => false, onLoadMore: vi.fn(), drag: { startDrag: vi.fn(), clickSuppressed: () => false } };
+const defaults = { scope: undefined, status: () => null, loading: () => false, hasMore: () => false, onLoadMore: vi.fn(), drag: { startDrag: vi.fn(), clickSuppressed: () => false, draggingId: null as string | null, enabled: true } };
 afterEach(() => { cleanup(); localStorage.clear(); vi.clearAllMocks(); });
 
 describe("PlanningInbox", () => {

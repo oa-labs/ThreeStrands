@@ -1273,6 +1273,105 @@ describe("TodayWorkspace", () => {
       await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/^Booked 3:00\s?pm for “Late task” and added it to today's plan$/) })));
     });
 
+    describe("dragging onto the schedule", () => {
+      const chip = () => document.querySelector<HTMLElement>(".task-drag-chip");
+      const move = (x: number, y: number) => fireEvent.pointerMove(document.body, { pointerId: 3, clientX: x, clientY: y });
+      const cardFor = async (title: string) => (await screen.findByText(title)).closest("article")!;
+      const columnPoint = () => { const column = screen.getByRole("group", { name: "Day view" }).querySelector<HTMLElement>(".calendar-week-column")!; document.elementFromPoint = vi.fn(() => column); };
+
+      it("keeps the press from selecting text or dragging natively, except on a row's own controls", async () => {
+        withPlan();
+        renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice: vi.fn() });
+        const card = await cardFor("Review the contract");
+        expect(card).toHaveClass("today-inbox-card-draggable");
+        // fireEvent returns false when the event's default was prevented.
+        expect(fireEvent.pointerDown(card.querySelector(".context-row-main")!, { button: 0, pointerId: 3 })).toBe(false);
+        fireEvent.pointerUp(document.body, { pointerId: 3 });
+        const schedule = within(card).getByRole("button", { name: "Schedule: Review the contract" });
+        expect(fireEvent.pointerDown(schedule, { button: 0, pointerId: 4, clientX: 900, clientY: 10 })).toBe(true);
+        move(900, 300);
+        expect(chip()).toBeNull();
+      });
+
+      it("shows a chip with the item's title that follows the pointer, dims the row, and goes away on drop", async () => {
+        withPlan();
+        vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => created(request));
+        renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice: vi.fn() });
+        const card = await cardFor("Review the contract");
+        columnPoint();
+        fireEvent.pointerDown(card, { button: 0, pointerId: 3, clientX: 900, clientY: 10 });
+        expect(chip()).toBeNull();
+        move(900, 200);
+        expect(chip()).toHaveTextContent("Review the contract");
+        expect(chip()!.style.transform).toBe("translate(900px, 200px)");
+        expect(card).toHaveClass("today-inbox-card-dragging");
+        expect(document.body).toHaveClass("task-block-dragging");
+        move(950, 260);
+        expect(chip()!.style.transform).toBe("translate(950px, 260px)");
+        fireEvent.pointerUp(document.body, { pointerId: 3, clientX: 950, clientY: 260 });
+        expect(chip()).toBeNull();
+        expect(card).not.toHaveClass("today-inbox-card-dragging");
+        expect(document.body).not.toHaveClass("task-block-dragging");
+      });
+
+      it("cancels with Escape: nothing is booked and the chip goes away", async () => {
+        withPlan();
+        const create = vi.spyOn(mailClient, "createCalendarEvent");
+        renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice: vi.fn() });
+        const card = await cardFor("Review the contract");
+        columnPoint();
+        fireEvent.pointerDown(card, { button: 0, pointerId: 3, clientX: 900, clientY: 10 });
+        move(900, 200);
+        expect(chip()).not.toBeNull();
+        fireEvent.keyDown(document.body, { key: "Escape" });
+        expect(chip()).toBeNull();
+        fireEvent.pointerUp(document.body, { pointerId: 3, clientX: 900, clientY: 200 });
+        expect(create).not.toHaveBeenCalled();
+      });
+
+      it("books on a future day the schedule shows, naming the day, without adding to today's plan", async () => {
+        vi.mocked(mailClient.listTasks).mockResolvedValue([task("late", { title: "Late task", dueKind: "date", dueValue: localDate(-1) })]);
+        const create = vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => created(request));
+        vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null);
+        const add = vi.spyOn(mailClient, "addToDailyPlan");
+        const onNotice = vi.fn();
+        renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice });
+        fireEvent.click(await screen.findByRole("button", { name: "Next Day" }));
+        const card = await cardFor("Late task");
+        expect(card).toHaveClass("today-inbox-card-draggable");
+        await dragOnto(card as HTMLElement, 15);
+        await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: "Late task", start: new Date(2026, 9, 29, 15).toISOString(), sourceTaskId: "late" })));
+        await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/^Booked 3:00\s?pm on Thu, Oct 29 for “Late task”$/) })));
+        expect(add).not.toHaveBeenCalled();
+      });
+
+      it("books a plan item on a future day with the day named", async () => {
+        withPlan();
+        const create = vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => created(request));
+        const onNotice = vi.fn();
+        renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice });
+        fireEvent.click(await screen.findByRole("button", { name: "Next Day" }));
+        await dragOnto(await cardFor("Review the contract") as HTMLElement, 9);
+        await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ start: new Date(2026, 9, 29, 9).toISOString() })));
+        await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/^Booked 9:00\s?am on Thu, Oct 29 for “Review the contract”$/) })));
+      });
+
+      it("does not drag while the schedule shows a past day, and shows no grab cursor there", async () => {
+        withPlan();
+        const create = vi.spyOn(mailClient, "createCalendarEvent");
+        renderToday({ calendarConnected: true, calendarAccounts, workingHours, onNotice: vi.fn() });
+        fireEvent.click(await screen.findByRole("button", { name: "Previous Day" }));
+        const card = await cardFor("Review the contract");
+        expect(card).not.toHaveClass("today-inbox-card-draggable");
+        columnPoint();
+        expect(fireEvent.pointerDown(card.querySelector(".context-row-main")!, { button: 0, pointerId: 3, clientX: 900, clientY: 10 })).toBe(true);
+        move(900, 300);
+        expect(chip()).toBeNull();
+        fireEvent.pointerUp(document.body, { pointerId: 3, clientX: 900, clientY: 300 });
+        expect(create).not.toHaveBeenCalled();
+      });
+    });
+
     it("keeps the booking and says so with Open Note when the plan refuses the item", async () => {
       vi.mocked(mailClient.listTasks).mockResolvedValue([task("late", { title: "Late task", dueKind: "date", dueValue: localDate(-1) })]);
       vi.spyOn(mailClient, "createCalendarEvent").mockImplementation(async (request) => created(request));
