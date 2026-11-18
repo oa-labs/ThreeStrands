@@ -299,9 +299,8 @@ export function useMailNavigation({
     contextOpenedThreadRef, setRightWorkspace, correspondence.context, setQuery, setSearchOpen,
     setMailbox, activeAccountId, setSelectedId, setDetail,
   ]);
-  // Picking an account always lands on its mail, even from Calendar, Today or another workspace.
+  // Change account scope without navigating away from the current workspace.
   const switchAccount = useCallback((accountId: string | null) => {
-    setRightWorkspace(null);
     if (accountId === activeAccountId) return;
     contextOpenedThreadRef.current = null;
     const currentMailbox = mailbox === "split" ? "inbox" : mailbox;
@@ -326,7 +325,7 @@ export function useMailNavigation({
     setActiveAccountId(accountId);
   }, [
     activeAccountId, contextOpenedThreadRef, correspondence.context, mailbox, setActiveAccountId,
-    setActiveSplitInboxId, setDetail, setMailbox, setQuery, setRightWorkspace, setSearchOpen, setSelectedId,
+    setActiveSplitInboxId, setDetail, setMailbox, setQuery, setSearchOpen, setSelectedId,
   ]);
   const goToPreviousSplitTab = useCallback(() => goToRelativeSplitTab(-1), [goToRelativeSplitTab]);
   return {

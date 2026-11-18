@@ -299,6 +299,45 @@ describe("split inbox search shortcuts", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Choose folder, current folder All Mail" })).toBeInTheDocument());
   });
 
+  it("keeps Today and the selected calendar week open when switching accounts", async () => {
+    const [primary] = await mailClient.listAccounts();
+    vi.spyOn(mailClient, "listAccounts").mockResolvedValue([
+      primary!,
+      { ...primary!, email: "work@example.com", displayName: "Work", sortOrder: 1 },
+      { ...primary!, email: "other@example.com", displayName: "Other", sortOrder: 2 },
+    ]);
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    fireEvent.keyDown(window, { key: "0" });
+    const today = await screen.findByRole("region", { name: "Today" });
+    for (const [key, name] of [["2", "Work"], ["2", "Work"], ["3", "Other"]]) {
+      fireEvent.keyDown(window, { key, metaKey: true });
+      await waitFor(() => expect(screen.getByRole("radio", { name })).toHaveAttribute("aria-checked", "true"));
+      expect(screen.getByRole("region", { name: "Today" })).toBe(today);
+      expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("radio", { name: "Work" }));
+    expect(screen.getByRole("region", { name: "Today" })).toBe(today);
+    expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.keyDown(window, { key: "2" });
+    const week = await screen.findByRole("region", { name: "Calendar week" });
+    fireEvent.click(within(week).getByRole("button", { name: "Next Week (=)" }));
+    const selectedDay = week.querySelector(".calendar-week-day-label")?.textContent;
+    expect(selectedDay).toBeTruthy();
+    fireEvent.keyDown(window, { key: "1", ctrlKey: true });
+    await waitFor(() => expect(screen.getByRole("radio", { name: /^demo@example\.com/ })).toHaveAttribute("aria-checked", "true"));
+    expect(screen.getByRole("region", { name: "Calendar week" })).toBe(week);
+    expect(week.querySelector(".calendar-week-day-label")).toHaveTextContent(selectedDay!);
+
+    fireEvent.keyDown(window, { key: "0", metaKey: true });
+    await waitFor(() => expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("all"));
+    expect(screen.getByRole("region", { name: "Calendar week" })).toBe(week);
+    expect(week.querySelector(".calendar-week-day-label")).toHaveTextContent(selectedDay!);
+  });
+
   it("closes the search box when switching accounts", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     const [primary] = await mailClient.listAccounts();

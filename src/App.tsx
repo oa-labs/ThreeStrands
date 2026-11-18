@@ -998,8 +998,8 @@ export function App() {
           accounts={accounts}
           unreadCounts={unreadCounts}
           activeAccountId={activeAccountId}
-          onSwitch={(email) => { context.switchAccount(email); if (rightWorkspace === "tasks") setRightWorkspace("tasks"); }}
-          onShowAll={() => { context.showAllAccounts(); if (rightWorkspace === "tasks") setRightWorkspace("tasks"); }}
+          onSwitch={context.switchAccount}
+          onShowAll={context.showAllAccounts}
           onReorder={reorderNavbarAccounts}
         />
         <div className="sidebar-spacer" />

@@ -4,15 +4,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MailboxKind } from "./commands";
 import { useMailNavigation } from "./useMailNavigation";
 import { STARRED_INBOX_ID } from "./starredInbox";
+import type { RightWorkspace } from "./useWorkspaces";
 
 const custom = { id: "work", name: "Work", accountId: "me@example.com", matchKind: "domain" as const, matchValue: "example.org", sortOrder: 0, createdAt: "2026-11-05" };
 const noop = vi.fn();
 
 afterEach(() => localStorage.clear());
 
-function setup(initial = { count: 0, enabled: true, account: "me@example.com" as string | null }) {
-  return renderHook(({ count, enabled, account }) => {
+function setup(initial: { count: number; enabled: boolean; account: string | null; workspace?: RightWorkspace } = { count: 0, enabled: true, account: "me@example.com" }) {
+  return renderHook(({ count, enabled, account, workspace = null }) => {
     const [mailbox, setMailbox] = useState<MailboxKind>("inbox");
+    const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(workspace);
+    const [setActiveAccountId] = useState(() => vi.fn());
     const [activeSplitInboxId, setActiveSplitInboxId] = useState<string | null>(null);
     const contextOpenedThreadRef = useRef<string | null>(null);
     const messageStackRef = useRef<HTMLDivElement | null>(null);
@@ -22,14 +25,14 @@ function setup(initial = { count: 0, enabled: true, account: "me@example.com" as
       mailboxThreads: { threads: [], query: "", setQuery: noop, searchOpen: false, setSearchOpen: noop, contextOpenedThreadRef },
       threadDetail: { visibleDetail: null, setDetail: noop, setDetailLoading: noop },
       reader: { messageExpansionOverrides: new Map(), setMessageExpansionOverrides: noop, messageStackRef, messageRefs },
-      workspaces: { rightWorkspace: null, setRightWorkspace: noop },
+      workspaces: { rightWorkspace, setRightWorkspace },
       correspondence: { context: { openInbox: noop, openDrafts: noop, openOutbox: noop } },
       splitInboxCatalog: { splitInboxes: [custom], loaded: true },
       mailbox, setMailbox, activeSplitInboxId, setActiveSplitInboxId,
-      activeAccountId: account, setActiveAccountId: noop, selectedId: null, setSelectedId: noop,
+      activeAccountId: account, setActiveAccountId, selectedId: null, setSelectedId: noop,
       selectedThreadRowRef, setNotice: noop, starredCount: count, showStarredInbox: enabled,
     });
-    return { ...navigation, mailbox, activeSplitInboxId };
+    return { ...navigation, mailbox, activeSplitInboxId, rightWorkspace, setActiveAccountId };
   }, { initialProps: initial });
 }
 
@@ -70,5 +73,27 @@ describe("automatic Starred tab navigation", () => {
     rerender({ count: 3, enabled: false, account: null });
     expect(result.current.mailbox).toBe("inbox");
     expect(result.current.accountSplitInboxes).toEqual([]);
+  });
+});
+
+describe("account switching", () => {
+  it.each<RightWorkspace>([null, "today", "week", "contacts", "tasks", "notes", "files", "agents"])("preserves the %s workspace for account changes and reselecting the current account", (workspace) => {
+    const { result, rerender } = setup({ count: 0, enabled: true, account: "me@example.com", workspace });
+
+    act(() => result.current.switchAccount("me@example.com"));
+    expect(result.current.rightWorkspace).toBe(workspace);
+    expect(result.current.setActiveAccountId).not.toHaveBeenCalled();
+
+    act(() => result.current.switchAccount("work@example.com"));
+    expect(result.current.setActiveAccountId).toHaveBeenLastCalledWith("work@example.com");
+    expect(result.current.rightWorkspace).toBe(workspace);
+    rerender({ count: 0, enabled: true, account: "work@example.com", workspace });
+    expect(result.current.rightWorkspace).toBe(workspace);
+
+    act(() => result.current.switchAccount(null));
+    expect(result.current.setActiveAccountId).toHaveBeenLastCalledWith(null);
+    expect(result.current.rightWorkspace).toBe(workspace);
+    rerender({ count: 0, enabled: true, account: null, workspace });
+    expect(result.current.rightWorkspace).toBe(workspace);
   });
 });
