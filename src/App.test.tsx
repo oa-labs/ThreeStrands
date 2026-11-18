@@ -1525,6 +1525,24 @@ describe("Escape dismissal", () => {
 
   afterEach(cleanup);
 
+  it("leaves a task search intact on Escape and restores workspace shortcuts", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const tasks = screen.getByRole("button", { name: "Tasks (3)" });
+    fireEvent.click(tasks);
+    const search = await screen.findByRole("searchbox", { name: "Search tasks" });
+    fireEvent.change(search, { target: { value: "Unfinished" } });
+    search.focus();
+    fireEvent.keyDown(search, { key: "1" });
+    expect(tasks).toHaveClass("active");
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(search).not.toHaveFocus();
+    expect(search).toHaveValue("Unfinished");
+    expect(tasks).toHaveClass("active");
+    fireEvent.keyDown(document.activeElement!, { key: "1" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Inbox (1)" })).toHaveClass("active"));
+  });
+
   it.each(["Inbox (1)", "Today (0)", "Calendar (2)", "Tasks (3)", "Notes (4)", "Contacts (5)", "Files (6)", "Agents (7)"])("saves a new message before sidebar navigation to %s", async (destination) => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

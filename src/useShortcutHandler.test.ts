@@ -12,6 +12,109 @@ afterEach(() => {
 });
 
 describe("useShortcutHandler", () => {
+  it.each(["input", "textarea", "select"] as const)("blurs a focused %s on unhandled Escape, keeping its value and consuming the key", (tag) => {
+    const execute = vi.fn();
+    renderHook(() => useShortcutHandler(context({ canGoBack: true }), execute));
+    const field = document.createElement(tag);
+    if (tag === "select") field.innerHTML = '<option value="draft">Draft</option>';
+    field.value = "draft";
+    document.body.append(field);
+    field.focus();
+    const escaped = vi.fn();
+    window.addEventListener("keydown", escaped);
+    try {
+      const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      field.dispatchEvent(escape);
+      expect(document.body).toHaveFocus();
+      expect(field.value).toBe("draft");
+      expect(escape.defaultPrevented).toBe(true);
+      expect(execute).not.toHaveBeenCalled();
+      expect(escaped).not.toHaveBeenCalled();
+    } finally { window.removeEventListener("keydown", escaped); }
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true }));
+    expect(execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "draft.new" }));
+  });
+
+  it("leaves a rich text editor when Escape bubbles from its content", () => {
+    renderHook(() => useShortcutHandler(context(), vi.fn()));
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "true");
+    editor.tabIndex = 0;
+    // jsdom does not implement isContentEditable.
+    Object.defineProperty(editor, "isContentEditable", { value: true });
+    editor.innerHTML = "<p>Unfinished draft</p>";
+    document.body.append(editor);
+    editor.focus();
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    editor.firstElementChild!.dispatchEvent(escape);
+    expect(document.body).toHaveFocus();
+    expect(editor).toHaveTextContent("Unfinished draft");
+    expect(escape.defaultPrevented).toBe(true);
+  });
+
+  it.each(["read", "search", "compose", "modal", "palette"] as const)("applies the focus fallback in %s scope", (interactionScope) => {
+    renderHook(() => useShortcutHandler(context({ interactionScope }), vi.fn()));
+    const field = document.createElement("input");
+    field.dataset.shortcutScope = interactionScope;
+    document.body.append(field);
+    field.focus();
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(document.body).toHaveFocus();
+  });
+
+  it.each([true, false])("gives overlay dismissal priority regardless of listener order (overlay first: %s)", (overlayFirst) => {
+    const dismiss = vi.fn();
+    const execute = vi.fn();
+    const overlay = () => renderHook(() => useEscapeDismiss(dismiss));
+    if (overlayFirst) overlay();
+    renderHook(() => useShortcutHandler(context({ canGoBack: true }), execute));
+    if (!overlayFirst) overlay();
+    const field = document.createElement("input");
+    document.body.append(field);
+    field.focus();
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(dismiss).toHaveBeenCalledOnce();
+    expect(field).toHaveFocus();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each(["preventDefault", "stopPropagation"] as const)("leaves locally handled Escape alone (%s)", (method) => {
+    renderHook(() => useShortcutHandler(context(), vi.fn()));
+    const field = document.createElement("input");
+    field.addEventListener("keydown", (event) => event[method]());
+    document.body.append(field);
+    field.focus();
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(field).toHaveFocus();
+  });
+
+  it("leaves composition, modified keys, and events outside the focused input alone", () => {
+    renderHook(() => useShortcutHandler(context(), vi.fn()));
+    const field = document.createElement("input");
+    document.body.append(field);
+    field.focus();
+    for (const extra of [{ isComposing: true }, { metaKey: true }, { ctrlKey: true }, { altKey: true }, { shiftKey: true }]) {
+      const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, ...extra });
+      field.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(false);
+      expect(field).toHaveFocus();
+    }
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(field).toHaveFocus();
+  });
+
+  it("clears pending shortcut sequences when Escape leaves an input", () => {
+    const execute = vi.fn();
+    renderHook(() => useShortcutHandler(context(), execute));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "g", cancelable: true }));
+    const field = document.createElement("input");
+    document.body.append(field);
+    field.focus();
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "i", bubbles: true }));
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it.each([["-", "today.previousDay"], ["=", "today.nextDay"]])("pages Today's agenda with %s, respecting editing and workspace scopes", (key, id) => {
     const execute = vi.fn();
     const hook = renderHook(({ current }) => useShortcutHandler(current, execute), { initialProps: { current: context({ focusedPane: "today" }) } });

@@ -52,6 +52,17 @@ export function useShortcutHandler(
       if (currentContext.closing || event.isComposing || event.defaultPrevented) return;
       // An open overlay closes on Escape; its listener may run after this one.
       if (event.key === "Escape" && escapeDismissPending()) return;
+      // Local controls have already had a chance to handle Escape. Leave text
+      // entry before interpreting it as navigation, without changing its value.
+      const active = document.activeElement;
+      if (matchesShortcut(event, "Escape") && active instanceof HTMLElement && isEditableTarget(active)
+        && event.target instanceof Node && active.contains(event.target)) {
+        clearPendingStep();
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        active.blur();
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         clearPendingStep();
         event.preventDefault();
