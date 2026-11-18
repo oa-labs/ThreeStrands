@@ -37,6 +37,12 @@ export function useTodayBackdrop(): boolean {
 export const SUNRISE_HOUR = 6;
 export const SUNSET_HOUR = 18;
 
+/** Whether `now` falls between sunrise and sunset, so the backdrop draws the day sky rather than the night one. */
+export function isDaytime(now: Date): boolean {
+  const hour = now.getHours() + now.getMinutes() / 60;
+  return hour >= SUNRISE_HOUR && hour < SUNSET_HOUR;
+}
+
 /**
  * How high the sun stands at `now`, from 0 (on the horizon, or below it
  * before sunrise and after sunset) to 1 (noon): a half sine over the day.

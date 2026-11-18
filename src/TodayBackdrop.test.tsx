@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-li
 import { readFileSync } from "node:fs";
 import postcss from "postcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readTodayBackdrop, sunHeight, TODAY_BACKDROP_KEY, useTodayBackdrop, writeTodayBackdrop } from "./backdropPreference";
+import { isDaytime, readTodayBackdrop, sunHeight, TODAY_BACKDROP_KEY, useTodayBackdrop, writeTodayBackdrop } from "./backdropPreference";
 import { TodayBackdropSettings } from "./AppearanceSettings";
 import { readExportablePreferences } from "./userPreferences";
 import { TodayBackdrop } from "./TodayBackdrop";
@@ -74,16 +74,28 @@ describe("sunHeight", () => {
   });
 });
 
+describe("isDaytime", () => {
+  it("is day from sunrise up to sunset and night otherwise", () => {
+    expect(isDaytime(at(5, 59))).toBe(false);
+    expect(isDaytime(at(6))).toBe(true);
+    expect(isDaytime(at(12))).toBe(true);
+    expect(isDaytime(at(17, 59))).toBe(true);
+    expect(isDaytime(at(18))).toBe(false);
+    expect(isDaytime(at(22, 30))).toBe(false);
+    expect(isDaytime(at(0))).toBe(false);
+  });
+});
+
 describe("TodayBackdrop", () => {
   const scene = () => document.querySelector(".today-backdrop") as HTMLElement;
 
   it("draws a day sky whose sun is higher at noon than in the morning, hidden from assistive technology", () => {
-    const { rerender } = render(<TodayBackdrop view="day" now={at(8)} />);
+    const { rerender } = render(<TodayBackdrop now={at(8)} />);
     expect(scene()).toHaveAttribute("aria-hidden", "true");
     expect(scene()).toHaveAttribute("data-view", "day");
     const sunY = () => Number(scene().querySelector(".today-backdrop-sun")!.getAttribute("cy"));
     const morning = sunY();
-    rerender(<TodayBackdrop view="day" now={at(12)} />);
+    rerender(<TodayBackdrop now={at(12)} />);
     // Smaller y is higher in the picture.
     expect(sunY()).toBeLessThan(morning);
     expect(scene().querySelector(".today-backdrop-moon")).toBeNull();
@@ -91,14 +103,24 @@ describe("TodayBackdrop", () => {
     expect(screen.queryByRole("img")).toBeNull();
   });
 
-  it("draws a dusk sky with a moon and a few stars for the evening view", () => {
-    render(<TodayBackdrop view="evening" now={at(20)} />);
+  it("draws a dusk sky with a moon and a few stars after sunset", () => {
+    render(<TodayBackdrop now={at(22, 30)} />);
     expect(scene()).toHaveAttribute("data-view", "evening");
     expect(scene()).toHaveAttribute("aria-hidden", "true");
     expect(scene().querySelector(".today-backdrop-moon")).not.toBeNull();
     expect(scene().querySelectorAll(".today-backdrop-star").length).toBeGreaterThanOrEqual(3);
     expect(scene().querySelector(".today-backdrop-sun")).toBeNull();
     expect(scene().querySelector("[focusable='true'], a, button, input")).toBeNull();
+  });
+
+  it("follows the clock: night before sunrise, day after it, night again at sunset", () => {
+    const { rerender } = render(<TodayBackdrop now={at(5, 30)} />);
+    expect(scene()).toHaveAttribute("data-view", "evening");
+    rerender(<TodayBackdrop now={at(6)} />);
+    expect(scene()).toHaveAttribute("data-view", "day");
+    rerender(<TodayBackdrop now={at(18)} />);
+    expect(scene()).toHaveAttribute("data-view", "evening");
+    expect(scene().querySelector(".today-backdrop-sun")).toBeNull();
   });
 
   it("sits behind the header band only, ignores the pointer, and has no motion when reduced motion is set", () => {
