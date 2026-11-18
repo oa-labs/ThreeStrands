@@ -1,5 +1,4 @@
-import { sunHeight } from "./backdropPreference";
-import type { TodayView } from "./eveningView";
+import { isDaytime, sunHeight } from "./backdropPreference";
 
 /** The scene's own coordinate space, scaled to the header's width and height. */
 const WIDTH = 1200;
@@ -14,13 +13,15 @@ const MOON = { x: WIDTH * 0.86, y: HEIGHT * 0.34, radius: 24 };
 const STARS = [[0.52, 0.2], [0.6, 0.55], [0.68, 0.28], [0.73, 0.7], [0.79, 0.16], [0.93, 0.62], [0.97, 0.22]] as const;
 
 /**
- * Today's optional backdrop, behind the header band only: a daytime sky whose
- * sun stands higher toward noon, or a dusk sky with a moon and a few stars.
+ * Today's optional backdrop, behind the header band only: between sunrise and
+ * sunset a daytime sky whose sun stands higher toward noon, otherwise a dusk
+ * sky with a moon and a few stars.
  * Original art drawn in code from theme tokens, hidden from assistive
  * technology, with no motion beyond a soft fade when the view switches that
  * reduced motion turns off.
  */
-export function TodayBackdrop({ view, now }: { view: TodayView; now: Date }) {
+export function TodayBackdrop({ now }: { now: Date }) {
+  const view = isDaytime(now) ? "day" : "evening";
   return <div className="today-backdrop" data-view={view} aria-hidden="true">
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="xMaxYMid slice" focusable="false">
       {view === "day" ? <>

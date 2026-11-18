@@ -711,7 +711,7 @@ function TodayLayout({
     <div className="today-page today-page-planning">
     <PullToRefreshStatus {...pull} />
     <header className="today-header">
-      {backdrop ? <TodayBackdrop view="day" now={now} /> : null}
+      {backdrop ? <TodayBackdrop now={now} /> : null}
       <div className="today-heading">
         <span className="eyebrow">{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</span>
         <h1>Plan Your Day</h1>
