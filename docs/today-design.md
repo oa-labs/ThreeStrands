@@ -90,8 +90,8 @@ strip's ideas (a small budget, one focus item, cited joins) carry into that step
 **As built (planning inbox).** Today has a planning inbox of cards on the left
 and a larger one-day schedule on the right. The inbox has four filters: All, Tasks, Emails, and Contacts. Active, unscheduled
 plan items and source candidates share one list, deduplicated by durable identity;
-scheduled items live on the calendar. **Day Details**
-reveals the mail signal and meeting summary. Tomorrow is shown in **Review Today**.
+scheduled items live on the calendar. New Task and New Event open the standard
+forms. The schedule arrows browse other dates independently of the inbox.
 Event titles open Calendar; each meeting’s note icon and the **Prepare for Meeting**
 shortcut open its occurrence note, or add an entry to its daily note and open it.
 Preparation lives beside the Notes editor, opened from the event’s link in **Links**,

@@ -3789,6 +3789,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-work .today-source-tabs .mailbox-tab { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: var(--text-control); }
 .today-work .today-source-tabs .mailbox-tab.active { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--accent); }
 .today-work .today-inbox-card, .today-work .today-plan-card { margin-block: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); }
+.today-schedule-navigation { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: 0 var(--space-4) var(--space-3); color: var(--secondary); font-size: var(--text-meta); }
+.today-schedule-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
 .today-time > .today-day-view { border: 0; border-top: 1px solid var(--border); border-radius: 0; flex: 1; height: auto; min-height: 0; }
 .today-time .calendar-week-scroll, .today-time .today-day-view-working .calendar-week-scroll { flex: 1; height: 0; min-height: 0; }
 .today-day-shape { margin: var(--space-1) 0 0; color: var(--secondary); font-size: var(--text-body); }
@@ -3910,7 +3912,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 @container today (width < 820px) {
   .today-columns { grid-template-columns: repeat(auto-fit, minmax(var(--today-column-min), 1fr)); }
   .today-day-view { display: none; }
-  .today-agenda-fallback { display: block; }
+  .today-agenda-fallback { display: block; min-height: 0; overflow: auto; }
 }
 .today-column { min-width: 0; }
 /* The evening view: Today in review on the left, tomorrow on the right. */

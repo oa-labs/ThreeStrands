@@ -1,4 +1,4 @@
-import { CalendarClock } from "lucide-react";
+import { CalendarClock, Plus } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
@@ -56,11 +56,12 @@ function initialFilter(): InboxFilter {
   return readLocalStorage(INBOX_FILTER_KEY, (raw) => FILTERS.some((filter) => filter.id === raw) ? raw as InboxFilter : fallback, fallback);
 }
 
-export function PlanningInbox({ entries, completed = [], completedError, scope, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
+export function PlanningInbox({ entries, completed = [], completedError, scope, onNewTask, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
   entries: InboxEntry[];
   completed?: InboxEntry[];
   completedError?: string | null;
   scope?: string;
+  onNewTask?(): void;
   status(filter: InboxFilter): ReactNode;
   unavailable?(filter: InboxFilter): boolean;
   loading(filter: InboxFilter): boolean;
@@ -131,6 +132,7 @@ export function PlanningInbox({ entries, completed = [], completedError, scope, 
   return <section aria-label="Planning Inbox" className="planning-inbox">
     <header className="today-panel-heading">
       <h2>Planning Inbox <span className="context-count" aria-label={`${items.length}${more ? " or more" : ""} unscheduled ${noun}`}>{items.length}{more ? "+" : ""}</span></h2>
+      {onNewTask ? <button type="button" className="btn btn-sm" onClick={onNewTask}><Plus size={ICON_SIZE.sm} aria-hidden="true" />New Task</button> : null}
       {scope && filter !== "contacts" ? <span className="today-source-scope">Mail · {scope}</span> : null}
     </header>
     <div ref={tabs} className="planning-inbox-tabs" role="tablist" aria-label="Planning Inbox Filters" onKeyDown={move}>

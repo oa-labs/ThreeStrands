@@ -94,7 +94,7 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
   // One stable array per day, so the grid's layouts aren't recomputed every minute.
   const days = useMemo(() => [new Date(dayKey)], [dayKey]);
   // Laid out from the time Today opened (or the day turned), not every minute.
-  const layout = useMemo(() => dayViewLayout(workingHours, new Date(Math.max(Date.now(), dayKey))), [workingHours, dayKey]);
+  const layout = useMemo(() => dayViewLayout(workingHours, dayKey === startOfLocalDay(new Date()).getTime() ? new Date() : new Date(dayKey)), [workingHours, dayKey]);
   const [metrics, setMetrics] = useState({ scrollTop: 0, height: 0 });
   const measure = useCallback(() => {
     const grid = gridRef.current;
@@ -105,7 +105,8 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
     if (!grid) return;
     if (layout.scrollMinutes !== null) grid.scrollTop = layout.scrollMinutes / 60 * HOUR_HEIGHT;
     else {
-      const minutes = new Date().getHours() * 60 + new Date().getMinutes();
+      const current = new Date();
+      const minutes = dayKey === startOfLocalDay(current).getTime() ? current.getHours() * 60 + current.getMinutes() : 9 * 60;
       grid.scrollTop = Math.max(0, minutes / 60 * HOUR_HEIGHT - grid.clientHeight / 3);
     }
     measure();

@@ -344,7 +344,7 @@ export function App() {
     keepInTouchDueCount, refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openContactsView, contactCardActions,
     scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen, mailPanel,
-    contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView, notesRequest, consumeNotesRequest, planRequest, consumePlanRequest, openNote,
+    contextPersonEmail, openCalendarView, notesRequest, consumeNotesRequest, openNote,
   } = workspaces;
   const agents = useAgentTasks();
   const openAgent = (id: string) => { agents.select(id); setRightWorkspace("agents"); };
@@ -1901,19 +1901,12 @@ export function App() {
         onNotice={setNotice}
         workingHours={availabilityPreferences}
         onCreateTask={createTaskInEditor}
-        planRequest={planRequest}
-        onPlanRequestConsumed={consumePlanRequest}
+        mailAccounts={accounts}
         onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
         onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
-        onOpenInbox={() => executeById("view.mail")}
-        onOpenCalendar={() => executeById("view.calendar")}
-        onOpenTasks={openTasksView}
+        onOpenCalendar={(day) => openCalendarView(day)}
+        onEventCreated={() => void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"))}
         onOpenContact={contactCardActions.onOpenContact}
-        onOpenKeepInTouch={openKeepInTouchView}
-        preparation={{
-          render: renderPreparation("today"),
-          ownAddresses: meetingOwnAddresses, onOpenNote: (noteId, href) => openNote(noteId, undefined, href), onNotice: setNotice,
-        }}
       /></Suspense></ErrorBoundary> : null}
       {agents.activity ? <aside className="agent-activity" role="status"><button className="btn-link agent-activity-action" onClick={() => { const id = agents.activity!.id; agents.patchView(id, { version: null, tab: agents.activity!.label.startsWith("Answer needed") ? "conversation" : "result" }); openAgent(id); }}>{agents.activity.label}</button><button className="btn-icon btn-icon-sm" aria-label="Dismiss Agent Notification" onClick={agents.dismissActivity}><X size={ICON_SIZE.sm} /></button></aside> : null}
       {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Agents…</p>}><AgentsWorkspace controller={agents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAgentPersonalTask} onOpenResearchSettings={() => openSettingsAt("research")} settingsOpen={settingsOpen} /></Suspense></ErrorBoundary> : null}

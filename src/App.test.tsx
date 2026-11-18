@@ -1158,33 +1158,6 @@ describe("keyboard-first task and action workspaces", () => {
     await waitFor(() => expect(within(reopened).getByRole("button", { name: /^Today/ })).toHaveAttribute("aria-current", "true"));
   });
 
-  it.each([["Plan Today", "Plan Today"], ["Plan Tomorrow", "Plan Tomorrow"]])("opens Today and the routine from the palette's %s", async (command, title) => {
-    render(<App />);
-    await screen.findByRole("region", { name: "Inbox" });
-    fireEvent.keyDown(window, { key: "k", metaKey: true });
-    fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: command } });
-    fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^Application${command}$`) }));
-    expect(await screen.findByRole("dialog", { name: title })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Today", hidden: true })).toBeInTheDocument();
-  });
-
-  it("opens Today's evening view from the palette's Review Today, and the header returns to the plan", async () => {
-    vi.setSystemTime(new Date(2026, 10, 17, 10, 0));
-    try {
-      render(<App />);
-      await screen.findByRole("region", { name: "Inbox" });
-      fireEvent.keyDown(window, { key: "k", metaKey: true });
-      fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Review Today" } });
-      fireEvent.click(await screen.findByRole("button", { name: /^ApplicationReview Today$/ }));
-      expect(await screen.findByRole("group", { name: "Today in review" })).toBeInTheDocument();
-      expect(screen.getByRole("group", { name: "Tomorrow" })).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Back to Today's Plan" }));
-      expect(await screen.findByRole("region", { name: "Planning Inbox" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Review Today" })).toBeInTheDocument();
-    } finally {
-      localStorage.removeItem("threestrands.today.view");
-    }
-  });
 
   it("sends the navbar Calendar button to the week calendar view", async () => {
     const { container } = render(<App />);
@@ -1967,21 +1940,15 @@ describe("returning from a jump", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.keyDown(window, { key: "0" });
     const today = await screen.findByRole("region", { name: "Today" });
-    fireEvent.click(within(today).getByRole("button", { name: "Day Details" }));
-    await within(today).findByRole("button", { name: /^Next: Project review/ });
+    await within(today).findAllByRole("button", { name: /^Project review/ });
     return today;
   }
 
-  it.each(["Day view", "Today's agenda", "Tomorrow", "Next meeting"])("returns to Today with Escape after opening %s", async (entry) => {
+  it.each(["Day view", "Today's agenda"])("returns to Today with Escape after opening %s", async (entry) => {
     const today = await openTodayWithCalendar();
-    const title = entry === "Tomorrow" ? "Planning" : "Project review";
-    if (entry === "Next meeting") fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
-    else {
-      if (entry === "Tomorrow") fireEvent.click(within(today).getByRole("button", { name: "Review Today" }));
-      const where = entry === "Day view" ? within(today).getByRole("group", { name: entry })
-        : entry === "Tomorrow" ? within(today).getByRole("group", { name: "Tomorrow's day view" }) : within(today).getByRole("region", { name: entry });
-      fireEvent.click(within(where).getByRole("button", { name: new RegExp(`^${title}`) }));
-    }
+    const title = "Project review";
+    const where = within(today).getByRole(entry === "Day view" ? "group" : "region", { name: entry });
+    fireEvent.click(within(where).getByRole("button", { name: /^Project review/ }));
     expect(await screen.findByRole("region", { name: `${title} details` })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Calendar week" })).toBeInTheDocument();
 
@@ -2013,51 +1980,9 @@ describe("returning from a jump", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("opens the task editor from Today's Goals source, adds the task to the plan after it saves, and adds nothing on Cancel", async () => {
-    vi.spyOn(mailClient, "planSources").mockImplementation(async (_date, source) => source !== "goals" ? { next: null, candidates: [] } : { next: null, candidates: [{
-      key: "goal:g1", title: "Close Q4 deals", reason: "goal", detail: null, accountId: "you@example.com", due: null, taskId: null, threadId: null,
-      contactId: null, goal: { id: "g1", title: "Close Q4 deals" }, plannedDays: [], openTasks: 0, planned: false,
-      action: { kind: "newTaskForGoal", goalId: "g1", accountId: "you@example.com" },
-    }] });
-    const add = vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue({ note: { id: "daily", title: "", body: "", dailyDate: null, createdAt: "r", updatedAt: "r", trashed: false, trashedAt: null }, changed: ["k"], already: [], previousBody: "" });
-    const savePlan = vi.spyOn(mailClient, "saveDailyPlan").mockImplementation(async (_date, _expected, operationId) => ({ operationId, note: { id: "daily:2026-10-26", title: "2026-10-26", body: "## Plan", dailyDate: "2026-10-26", createdAt: "r2", updatedAt: "r2", trashed: false, trashedAt: null }, added: ["goal-task"], removed: [], notToday: [], already: [], changed: true, shutdown: false }));
-    const createTask = vi.spyOn(mailClient, "createTask").mockImplementation(async (request) => ({
-      id: "goal-task", accountId: request.accountId, threadId: null, subjectSnapshot: null, title: request.title, kind: "action", dueKind: "none",
-      status: "open", createdAt: "2026-10-26T09:00:00Z", updatedAt: "2026-10-26T09:00:00Z", goalId: request.goalId ?? null,
-    }));
-    vi.spyOn(mailClient, "listGoals").mockResolvedValue([{ id: "g1", accountId: "you@example.com", title: "Close Q4 deals", notes: null, horizon: "quarter", period: "2026-Q4",
-      status: "active", parentGoalId: null, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", closedAt: null }]);
-    const today = await openTodayWithCalendar();
-    fireEvent.click(within(today).getByRole("button", { name: "Plan Today" }));
-    const planner = within(await screen.findByRole("dialog", { name: "Plan Today" }));
-    await planner.findByRole("tab", { name: "Suggested" });
-    fireEvent.click(planner.getByRole("button", { name: "More Sources" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Goals" }));
-    fireEvent.click(await planner.findByRole("button", { name: "New Task for Goal: Close Q4 deals" }));
-    let dialog = await screen.findByRole("dialog", { name: "Add Task" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument());
-    expect(createTask).not.toHaveBeenCalled();
-    expect(add).not.toHaveBeenCalled();
-
-    fireEvent.click(planner.getByRole("button", { name: "New Task for Goal: Close Q4 deals" }));
-    dialog = await screen.findByRole("dialog", { name: "Add Task" });
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "Task" }), { target: { value: "Call Acme" } });
-    // The goal is already chosen.
-    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: /^Goal/ })).toHaveValue("g1"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Add Task" }));
-    await waitFor(() => expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ accountId: "you@example.com", threadId: null, title: "Call Acme", goalId: "g1" })));
-    expect(await planner.findByText("Call Acme")).toBeInTheDocument();
-    expect(add).not.toHaveBeenCalled();
-    fireEvent.click(planner.getByRole("button", { name: /^\d+\. Save$/ }));
-    fireEvent.click(planner.getByRole("button", { name: "Save Plan" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Plan Today" })).not.toBeInTheDocument());
-    expect(savePlan).toHaveBeenCalledWith("2026-10-26", null, expect.any(String), expect.objectContaining({ items: [expect.objectContaining({ kind: "add", addition: { kind: "link", reference: { version: 1, kind: "task", id: "goal-task" }, label: "Call Acme" } })] }));
-  });
-
   it("dismisses a calendar dialog before Escape returns to Today", async () => {
     const today = await openTodayWithCalendar();
-    fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
+    fireEvent.click(within(within(today).getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Project review/ }));
     const week = await screen.findByRole("region", { name: "Calendar week" });
     fireEvent.click(within(week).getByRole("button", { name: "New Event…" }));
     const dialog = await screen.findByRole("dialog", { name: "New Event" });
@@ -2074,7 +1999,7 @@ describe("returning from a jump", () => {
     if (navigation === "Open Calendar") {
       fireEvent.click(within(today).getByRole("button", { name: "Open Calendar" }));
     } else {
-      fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
+      fireEvent.click(within(within(today).getByRole("group", { name: "Day view" })).getByRole("button", { name: /^Project review/ }));
       await screen.findByRole("region", { name: "Calendar week" });
       fireEvent.keyDown(window, { key: "1" });
       await screen.findByRole("region", { name: "Inbox" });

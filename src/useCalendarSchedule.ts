@@ -13,7 +13,7 @@ export const CALENDAR_REFRESH_COOLDOWN_MS = 5_000;
 const fetchSchedule = (request: ScheduleRequest, cooldownMs = 0) => refreshScheduleCache(request, () =>
   mailClient.listScheduleEvents(request.timeMin, request.timeMax, request.timeZone), cooldownMs);
 
-export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequest, prefetchWeeks: boolean | number = false) {
+export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequest, prefetchWeeks: boolean | number = false, enabled = true) {
   const generation = useSyncExternalStore(subscribeScheduleCache, scheduleCacheGeneration);
   const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const [retry, setRetry] = useState(0);
@@ -24,6 +24,7 @@ export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequ
   const cached = readScheduleCache({ timeMin, timeMax, timeZone });
 
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     const request = { timeMin, timeMax, timeZone };
     const previous = readScheduleCache(request);
@@ -98,7 +99,7 @@ export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequ
       window.removeEventListener("blur", pause);
       document.removeEventListener("visibilitychange", visibilityChanged);
     };
-  }, [timeMin, timeMax, timeZone, generation, retry, key, prefetchWeeks]);
+  }, [timeMin, timeMax, timeZone, generation, retry, key, prefetchWeeks, enabled]);
 
   // Never render the preceding range while the effect for a new range is pending.
   const current = state.key === key ? state : { result: cached, loading: !cached, error: null };

@@ -42,6 +42,7 @@ export function TaskEditorDialog({
   submitLabel = "Add Task",
   goals,
   accountId,
+  accountOptions,
   goalSuggested = false,
   onClose,
   onSubmit,
@@ -50,14 +51,16 @@ export function TaskEditorDialog({
   /** The task account's goals; the Goal field shows once they are loaded. */
   goals?: readonly Goal[] | null;
   accountId?: string;
+  accountOptions?: readonly string[];
   /** Marks the initial goal as the assistant's suggestion for the user to confirm. */
   goalSuggested?: boolean;
   sourceSubject?: string | null;
   evidence?: string | null;
   submitLabel?: string;
   onClose(): void;
-  onSubmit(values: TaskEditorValues): Promise<void> | void;
+  onSubmit(values: TaskEditorValues, selectedAccount?: string): Promise<void> | void;
 }) {
+  const [selectedAccount, setSelectedAccount] = useState("");
   const [title, setTitle] = useState(initial.title);
   const [notes, setNotes] = useState(initial.notes ?? "");
   const [kind, setKind] = useState<TaskKind>(initial.kind ?? "action");
@@ -89,12 +92,12 @@ export function TaskEditorDialog({
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!title.trim() || busy) return;
+    if (!title.trim() || busy || (accountOptions && !selectedAccount)) return;
     if (dueKind !== "none" && !validateTimeZone(timeZone)) return;
     setBusy(true);
     setError(null);
     try {
-      await onSubmit({
+      const values: TaskEditorValues = {
         title: title.trim(),
         notes: notes.trim() || null,
         kind,
@@ -103,7 +106,9 @@ export function TaskEditorDialog({
         timeZone: dueKind === "none" ? null : timeZone.trim() || null,
         repeatIntervalDays: repeatIntervalDays ? Number(repeatIntervalDays) : null,
         ...(goals ? { goalId: offeredGoalId || null } : {}),
-      });
+      };
+      if (accountOptions) await onSubmit(values, selectedAccount);
+      else await onSubmit(values);
     } catch (reason) {
       setError(errorMessage(reason));
       setBusy(false);
@@ -111,7 +116,7 @@ export function TaskEditorDialog({
   };
 
   return (
-    <Modal title={submitLabel === "Save Proposal" ? "Edit Task Proposal" : submitLabel === "Save Task" ? "Edit Task" : "Add Task"} className="task-editor-modal" onClose={onClose} initialFocusRef={titleRef}>
+    <Modal title={submitLabel === "Save Proposal" ? "Edit Task Proposal" : submitLabel === "Save Task" ? "Edit Task" : "Add Task"} className="task-editor-modal" dismissible={!busy} onClose={onClose} initialFocusRef={titleRef}>
       <form className="modal-form" onSubmit={(event) => void submit(event)} onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           event.preventDefault();
@@ -120,6 +125,9 @@ export function TaskEditorDialog({
       }}>
         {sourceSubject ? <p className="modal-form-context">From: {sourceSubject}</p> : null}
         <label><span>Task</span><input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs doing?" /></label>
+        {accountOptions ? <label><span>Account</span><select required value={selectedAccount} onChange={(event) => setSelectedAccount(event.target.value)}>
+          <option value="">Choose an account</option>{accountOptions.map((email) => <option key={email} value={email}>{email}</option>)}
+        </select></label> : null}
         <label><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as TaskKind)}><option value="action">Action</option><option value="follow_up">Follow Up</option><option value="waiting_for">Waiting for Reply</option></select></label>
         <label><span>Due</span><select value={dueKind} onChange={(event) => {
           const nextKind = event.target.value as TaskDueKind;
@@ -158,7 +166,7 @@ export function TaskEditorDialog({
         <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional details" /></label>
         {evidence ? <div className="modal-form-evidence"><span>Evidence</span><blockquote>{evidence}</blockquote></div> : null}
         {error ? <p className="form-error" role="alert">{error}</p> : null}
-        <div className="modal-form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || !title.trim()}>{busy ? "Saving…" : submitLabel}</button></div>
+        <div className="modal-form-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || !title.trim() || Boolean(accountOptions && !selectedAccount)}>{busy ? "Saving…" : submitLabel}</button></div>
       </form>
     </Modal>
   );
