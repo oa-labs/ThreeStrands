@@ -12,6 +12,27 @@ afterEach(() => {
 });
 
 describe("useShortcutHandler", () => {
+  it.each([["-", "today.previousDay"], ["=", "today.nextDay"]])("pages Today's agenda with %s, respecting editing and workspace scopes", (key, id) => {
+    const execute = vi.fn();
+    const hook = renderHook(({ current }) => useShortcutHandler(current, execute), { initialProps: { current: context({ focusedPane: "today" }) } });
+    const button = document.createElement("button");
+    const field = document.createElement("input");
+    const modal = document.createElement("div");
+    modal.dataset.shortcutScope = "modal";
+    document.body.append(button, field, modal);
+    for (const target of [document.body, button]) target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, repeat: true }));
+    expect(execute.mock.calls.map(([command]) => command.id)).toEqual([id, id, id]);
+    execute.mockClear();
+    for (const target of [field, modal]) target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, isComposing: true }));
+    for (const current of [context({ focusedPane: "today", composerActive: true }), context({ focusedPane: "today", interactionScope: "modal" }), context({ focusedPane: "mail" })]) {
+      hook.rerender({ current });
+      window.dispatchEvent(new KeyboardEvent("keydown", { key }));
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("attaches files from compose fields with either modifier, suppressing overlays, IME, and held keys", () => {
     const execute = vi.fn();
     renderHook(() => useShortcutHandler(context({ composerActive: true, interactionScope: "compose" }), execute));

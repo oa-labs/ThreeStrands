@@ -321,6 +321,8 @@ function TodayLayout({
     };
   };
   useWorkspaceCommands({
+    "today.previousDay": () => onChangeDay?.(addDays(shownDay, -1)),
+    "today.nextDay": () => onChangeDay?.(addDays(shownDay, 1)),
     "meetings.prepare": () => {
       const focused = document.activeElement instanceof HTMLElement ? document.activeElement.closest("[data-row-key]")?.getAttribute("data-row-key") : null;
       const target = meetings.find((event) => focused === `meeting:${preparationKey(event)}`) ?? next ?? ahead[0] ?? meetings[0];
@@ -771,19 +773,19 @@ function TodayLayout({
       </div> : null}
       </div>
       <div className="today-column today-time" role="group" aria-label="Schedule">
-        <div className="today-panel-heading"><h2><CalendarDays size={ICON_SIZE.md} />{showingToday ? "Today’s Schedule" : "Schedule"}</h2><div className="today-schedule-actions">
+        <div className="today-panel-heading"><h2><CalendarDays size={ICON_SIZE.md} />Agenda</h2><div className="today-schedule-actions">
           <button type="button" className="btn-link" onClick={() => onOpenCalendar(shownDay)}>Open Calendar</button>
         </div></div>
         {displaySchedule ? <>
           <div className="today-schedule-navigation">
-            {/* The page heading names today, so the date is written out only for another day; screen readers hear either. */}
-            <span className={showingToday ? "sr-only" : undefined} aria-live="polite">{shownDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
             <div className="today-schedule-actions" role="group" aria-label="Schedule Date">
-              <button type="button" className="btn btn-sm" aria-label="Previous Day" onClick={() => onChangeDay?.(addDays(shownDay, -1))}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" /></button>
+              <button type="button" className="btn btn-sm" aria-label="Previous Day" aria-keyshortcuts="-" onClick={() => onChangeDay?.(addDays(shownDay, -1))}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" /></button>
               <button type="button" className="btn btn-sm" onClick={() => onChangeDay?.(null)}>Today</button>
-              <button type="button" className="btn btn-sm" aria-label="Next Day" onClick={() => onChangeDay?.(addDays(shownDay, 1))}><ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button>
+              <button type="button" className="btn btn-sm" aria-label="Next Day" aria-keyshortcuts="=" onClick={() => onChangeDay?.(addDays(shownDay, 1))}><ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button>
               {canCreateEvents ? <button type="button" className="btn btn-sm" aria-label="New Event" title="New Event" onClick={startNewEvent}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
             </div>
+            {/* Keep controls on the left for every day. The page heading already names today. */}
+            <span className={showingToday ? "sr-only" : undefined} aria-live="polite">{shownDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
           </div>
           <TodayDayView events={shownEvents} day={showingToday ? undefined : shownDay} now={now} loading={displaySchedule.loading} error={displaySchedule.error} onRetry={displaySchedule.reload}
             selectedEvent={null} onChooseEvent={chooseEvent} eventDecoration={decorateEvent}

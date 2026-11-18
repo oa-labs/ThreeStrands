@@ -247,6 +247,8 @@ describe("command registry", () => {
       }
     }
     expect(Object.fromEntries([...owners].filter(([, ids]) => ids.length > 1))).toEqual({
+      "-": ["today.previousDay", "notes.previousDay"],
+      "=": ["today.nextDay", "notes.nextDay"],
       j: ["notes.next", "thread.next", "tasks.next"],
       // Meeting preparation moves between meetings only on Today, while preparing.
       arrowdown: ["notes.next", "meetings.next", "thread.next", "tasks.next"],
@@ -275,7 +277,7 @@ describe("command registry", () => {
       escape: ["meetings.closePrepare", "navigation.back", "search.close"],
     });
 
-    for (const focusedPane of ["mail", "tasks", "notes", "contacts", "files", "calendar", "agents"] as const) {
+    for (const focusedPane of ["mail", "tasks", "notes", "contacts", "files", "calendar", "agents", "today"] as const) {
       for (const selectedTaskStatus of ["open", "in_progress", "completed", "cancelled"] as const) {
         for (const [selectedArchived, taskBoardActive] of [[false, false], [true, false], [false, true], [true, true]] as const) {
           for (const mailbox of ["inbox", "drafts"] as const) {

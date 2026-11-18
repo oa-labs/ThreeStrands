@@ -1375,7 +1375,7 @@ describe("TodayWorkspace", () => {
       expect(await screen.findByRole("region", { name: "Done Today" })).toBeInTheDocument();
       expect(screen.getByRole("checkbox", { name: "Mark Task today Not Done" })).toBeChecked();
       fireEvent.click(screen.getByRole("button", { name: "Next Day" }));
-      await screen.findByRole("heading", { name: "Schedule" });
+      await screen.findByRole("heading", { name: "Agenda", level: 2 });
       expect(screen.queryByRole("region", { name: /^Done/ })).not.toBeInTheDocument();
       const calls = vi.mocked(mailClient.listSentBetween).mock.calls.length;
       expect(vi.mocked(mailClient.listSentBetween).mock.calls.some(([, start]) => start === local(18, 0))).toBe(false);
@@ -1452,27 +1452,54 @@ describe("TodayWorkspace", () => {
   });
 
   describe("remembered day", () => {
+    it("keeps the Agenda heading and navigation controls in place on every day", async () => {
+      renderToday({ calendarConnected: true, calendarAccounts });
+      const heading = screen.getByRole("heading", { name: "Agenda", level: 2 });
+      const controls = screen.getByRole("group", { name: "Schedule Date" });
+      const navigation = controls.parentElement!;
+      const buttons = within(controls).getAllByRole("button");
+      expect(buttons.map((button) => button.getAttribute("aria-label") ?? button.textContent)).toEqual(["Previous Day", "Today", "Next Day", "New Event"]);
+      for (const [action, date, isToday] of [
+        [null, "Tuesday, November 17, 2026", true],
+        ["Next Day", "Wednesday, November 18, 2026", false],
+        ["Today", "Tuesday, November 17, 2026", true],
+        ["Previous Day", "Monday, November 16, 2026", false],
+      ] as const) {
+        if (action) fireEvent.click(within(controls).getByRole("button", { name: action }));
+        expect(screen.getByRole("heading", { name: "Agenda", level: 2 })).toBe(heading);
+        expect(navigation.firstElementChild).toBe(controls);
+        expect(within(controls).getAllByRole("button")).toEqual(buttons);
+        const dateLabel = screen.getByText(date);
+        expect(navigation.lastElementChild).toBe(dateLabel);
+        expect(dateLabel.classList.contains("sr-only")).toBe(isToday);
+      }
+      await waitFor(() => expect(mailClient.listScheduleEvents).toHaveBeenCalled());
+    });
+
     it("stores the picked day on this device, restores it when Today reopens, and forgets it when Today is chosen", async () => {
       renderToday({ calendarConnected: true });
       fireEvent.click(await screen.findByRole("button", { name: "Next Day" }));
-      expect(await screen.findByRole("heading", { name: "Schedule" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
       expect(readDayChoice("2026-11-17")).toEqual({ chosenOn: "2026-11-17", day: "2026-11-18" });
       cleanup(); renderToday({ calendarConnected: true });
-      expect(await screen.findByRole("heading", { name: "Schedule" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
       expect(screen.getByText("Wednesday, November 18, 2026")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Today" }));
-      expect(await screen.findByRole("heading", { name: "Today’s Schedule" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(screen.getByText("Tuesday, November 17, 2026")).toHaveClass("sr-only");
       expect(localStorage.getItem(TODAY_DAY_KEY)).toBeNull();
     });
 
     it("ignores a choice made on an earlier day and a choice that cannot be read", async () => {
       localStorage.setItem(TODAY_DAY_KEY, JSON.stringify({ chosenOn: "2026-11-16", day: "2026-11-20" }));
       renderToday({ calendarConnected: true });
-      expect(await screen.findByRole("heading", { name: "Today’s Schedule" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(screen.getByText("Tuesday, November 17, 2026")).toHaveClass("sr-only");
       cleanup();
       localStorage.setItem(TODAY_DAY_KEY, "{broken");
       renderToday({ calendarConnected: true });
-      expect(await screen.findByRole("heading", { name: "Today’s Schedule" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(screen.getByText("Tuesday, November 17, 2026")).toHaveClass("sr-only");
     });
 
     it("shows the new today when the app stays open past midnight", async () => {
@@ -1480,10 +1507,11 @@ describe("TodayWorkspace", () => {
       vi.setSystemTime(new Date(2026, 10, 17, 23, 59));
       renderToday({ calendarConnected: true });
       fireEvent.click(await screen.findByRole("button", { name: "Previous Day" }));
-      expect(await screen.findByRole("heading", { name: "Schedule" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
       expect(screen.getByText("Monday, November 16, 2026")).toBeInTheDocument();
       await act(async () => { vi.setSystemTime(new Date(2026, 10, 18, 0, 1)); vi.advanceTimersByTime(60_000); });
-      expect(await screen.findByRole("heading", { name: "Today’s Schedule" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(screen.getByText("Wednesday, November 18, 2026")).toHaveClass("sr-only");
       expect(localStorage.getItem(TODAY_DAY_KEY)).toBeNull();
     });
   });

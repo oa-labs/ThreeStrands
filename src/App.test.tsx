@@ -1986,22 +1986,26 @@ describe("returning from a jump", () => {
 
   it("keeps the day picked in Today when another workspace is opened and Today is reopened", async () => {
     await openTodayWithCalendar();
-    fireEvent.click(screen.getByRole("button", { name: "Next Day" }));
-    expect(await screen.findByRole("heading", { name: "Schedule" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "=" });
+    expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
     expect(screen.getByText("Tuesday, October 27, 2026")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "1" });
     expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Today" })).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "0" });
     await screen.findByRole("region", { name: "Today" });
-    expect(await screen.findByRole("heading", { name: "Schedule" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
     expect(screen.getByText("Tuesday, October 27, 2026")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /^Done/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "-" });
+    expect(screen.getByText("Monday, October 26, 2026")).toHaveClass("sr-only");
+    fireEvent.keyDown(window, { key: "=" });
+    expect(screen.getByText("Tuesday, October 27, 2026")).not.toHaveClass("sr-only");
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
-    expect(await screen.findByRole("heading", { name: "Today’s Schedule" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "1" });
     fireEvent.keyDown(window, { key: "0" });
-    expect(await screen.findByRole("heading", { name: "Today’s Schedule" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
   });
 
   it("books a plan item from Today on a connected calendar and offers Undo in the app's notice", async () => {
