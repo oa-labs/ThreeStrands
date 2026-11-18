@@ -1,10 +1,10 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
+import { saveCalendarColors } from "./calendarColors";
 import { mailClient } from "./data/client";
 import type { CalendarEventPreview, ScheduleEvent } from "./domain";
 import { InvitationDay } from "./InvitationDay";
-import { expectContextRows } from "./test/contextRows";
 
 const day = new Date(2027, 0, 5);
 const at = (hour: number, minute = 0) => new Date(2027, 0, 5, hour, minute).toISOString();
@@ -28,9 +28,9 @@ const titles = (section: HTMLElement) => within(section).getAllByRole("button", 
 
 describe("InvitationDay", () => {
   beforeEach(clearScheduleCache);
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  afterEach(() => { cleanup(); saveCalendarColors({}); vi.restoreAllMocks(); });
 
-  it("lists the day's other events, all-day first, and marks the ones the invitation overlaps", async () => {
+  it("shows the invitation among nearby event cards, marks conflicts, and expands to the full day with all-day events first", async () => {
     const { listScheduleEvents, onOpenEvent } = renderDay([
       scheduled("afternoon", at(14, 30), at(15, 30)),
       scheduled("morning", at(9), at(10)),
@@ -41,18 +41,53 @@ describe("InvitationDay", () => {
     ]);
 
     const section = await screen.findByRole("region", { name: "Your calendar that day" });
-    expectContextRows(section);
     expect(listScheduleEvents).toHaveBeenCalledWith(day.toISOString(), new Date(2027, 0, 6).toISOString(), "UTC");
+    expect(listScheduleEvents).toHaveBeenCalledTimes(1);
+    expect(titles(section)).toEqual(["Event before", "Event afternoon"]);
+    const previewRows = within(section).getAllByRole("listitem");
+    expect(previewRows[0]).toHaveTextContent("Event before");
+    expect(previewRows[1]).toHaveClass("slot-day-proposed");
+    expect(previewRows[1]).toHaveTextContent("This time");
+    expect(previewRows[1].querySelector(".slot-day-meta")?.textContent).toBe(new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).formatRange(new Date(at(14)), new Date(at(15))));
+    expect(previewRows[2]).toHaveTextContent("Event afternoon");
+    fireEvent.click(within(section).getByRole("button", { name: "Show Full Day" }));
     expect(titles(section)).toEqual(["Event holiday", "Event morning", "Event before", "Event afternoon"]);
     expect(within(section).getByText("Overlaps 1 event")).toBeInTheDocument();
     const overlapping = within(section).getByRole("button", { name: /Event afternoon/ });
-    expect(overlapping.closest(".context-row")).toHaveClass("context-meeting-conflict");
-    expect(overlapping).toHaveTextContent("Overlaps");
+    expect(overlapping.closest("li")).toHaveClass("slot-day-event");
+    expect(within(overlapping).getByText("Conflicts with this time")).toHaveClass("slot-day-detail-conflict");
     for (const name of [/Event morning/, /Event before/, /Event holiday/]) {
-      expect(within(section).getByRole("button", { name }).closest(".context-row")).not.toHaveClass("context-meeting-conflict");
+      const card = within(section).getByRole("button", { name });
+      expect(card.closest("li")).toHaveClass("slot-day-event");
+      expect(within(card).queryByText("Conflicts with this time")).not.toBeInTheDocument();
     }
     fireEvent.click(overlapping);
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "afternoon" }));
+    fireEvent.click(within(section).getByRole("button", { name: "Show Less" }));
+    expect(titles(section)).toEqual(["Event before", "Event afternoon"]);
+    expect(listScheduleEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses calendar colors and keeps locations and response status on the event cards", async () => {
+    saveCalendarColors({ "you@example.com": { work: "sky", home: "green" } });
+    const location = "Room 210 Wexford, a long location that stays available in full on hover";
+    const events = [
+      scheduled("before", at(12), at(13), { calendarId: "home", responseStatus: "accepted", location }),
+      scheduled("during", at(14), at(15), { calendarId: "work", responseStatus: "needsAction" }),
+      scheduled("after", at(16), at(17), { responseStatus: "tentative" }),
+    ];
+    const { onOpenEvent } = renderDay(events);
+    const section = await screen.findByRole("region", { name: "Your calendar that day" });
+    const before = within(section).getByRole("button", { name: /Event before/ });
+    expect(before.closest("li")).toHaveStyle({ "--calendar-color": "#3a9d5d" });
+    expect(before).toHaveTextContent("Going");
+    expect(within(before).getByTitle(location)).toHaveClass("slot-day-meta");
+    const during = within(section).getByRole("button", { name: /Event during/ });
+    expect(during.closest("li")).toHaveStyle({ "--calendar-color": "#4a9be8" });
+    expect(during).toHaveTextContent("Awaiting response");
+    expect(within(section).getByRole("button", { name: /Event after/ })).toHaveTextContent("Maybe");
+    fireEvent.click(before);
+    expect(onOpenEvent).toHaveBeenCalledWith(events[0]);
   });
 
   it("leaves out the invitation's own copy on the calendar and events the user declined", async () => {
@@ -66,7 +101,9 @@ describe("InvitationDay", () => {
     expect(titles(section)).toEqual(["Event kept"]);
     expect(within(section).getByRole("button", { name: /Event kept/ })).toHaveTextContent("Going");
     // Neither left-out event counts against the invitation's time.
-    expect(within(section).getByText(/^Free /)).toBeInTheDocument();
+    const shownTime = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).formatRange(new Date(at(14)), new Date(at(15)));
+    expect(within(section).getByText(/^Free /).textContent).toBe(`Free ${shownTime}`);
+    expect(within(section).getByText("This time").nextElementSibling?.textContent).toBe(shownTime);
   });
 
   it("names the day's working locations once on the date line instead of listing them as events", async () => {
@@ -98,6 +135,23 @@ describe("InvitationDay", () => {
     const section = await screen.findByRole("region", { name: "Your calendar that day" });
     expect(within(section).getByText("Nothing else on your calendar")).toBeInTheDocument();
     expect(within(section).queryByText(/^Free /)).not.toBeInTheDocument();
+    expect(within(section).queryByText("This time")).not.toBeInTheDocument();
+  });
+
+  it("uses the same event cards for an all-day invitation, without inventing a timed slot", async () => {
+    const { onOpenEvent } = renderDay([
+      scheduled("afternoon", at(14), at(15), { location: "Room 4B", responseStatus: "needsAction" }),
+      scheduled("holiday", "2027-01-05", "2027-01-06", { allDay: true }),
+    ], invitation({ allDay: true, start: "2027-01-05", end: "2027-01-06" }));
+    const section = await screen.findByRole("region", { name: "Your calendar that day" });
+    expect(titles(section)).toEqual(["Event holiday", "Event afternoon"]);
+    expect(within(section).getByRole("button", { name: /Event holiday/ })).toHaveTextContent("All day");
+    const afternoon = within(section).getByRole("button", { name: /Event afternoon/ });
+    expect(afternoon.closest("li")).toHaveClass("slot-day-event");
+    expect(afternoon).toHaveTextContent("Room 4B · Awaiting response");
+    expect(within(section).queryByText(/This time|Conflicts with this time|^Free /)).not.toBeInTheDocument();
+    fireEvent.click(afternoon);
+    expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "afternoon" }));
   });
 
   it("does not judge overlaps for times in a zone that could not be resolved", async () => {
@@ -106,6 +160,8 @@ describe("InvitationDay", () => {
     const section = await screen.findByRole("region", { name: "Your calendar that day" });
     expect(titles(section)).toEqual(["Event afternoon"]);
     expect(within(section).queryByText(/Overlaps|^Free /)).not.toBeInTheDocument();
+    expect(within(section).queryByText("This time")).not.toBeInTheDocument();
+    expect(within(section).getByRole("button", { name: /Event afternoon/ }).closest("li")).toHaveClass("slot-day-event");
   });
 
   it("shows the whole day in the schedule", async () => {

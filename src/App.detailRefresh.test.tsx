@@ -333,7 +333,7 @@ it("shows what else is on an invitation's day in the context, and opens the sche
   const panel = screen.getByRole("complementary", { name: "Conversation context" });
 
   const thatDay = await within(panel).findByRole("region", { name: "Your calendar that day" });
-  expect(await within(thatDay).findByRole("button", { name: /Board meeting/ })).toHaveTextContent("Overlaps");
+  expect(await within(thatDay).findByRole("button", { name: /Board meeting/ })).toHaveTextContent("Conflicts with this time");
 
   fireEvent.keyDown(window, { key: "t" });
   const schedule = await screen.findByRole("complementary", { name: "Schedule" });

@@ -8,7 +8,7 @@ import { isDeclined, mergeCalendarCopies } from "./agendaEvents";
 import { occursOnDay } from "./calendarTime";
 import { readScheduleCache, refreshScheduleCache } from "./calendarScheduleCache";
 import { scheduleRequestFor } from "./CalendarSidebar";
-import { calendarColorStyle, useCalendarColors } from "./calendarColors";
+import { DayAgendaEvent, formatAgendaSpan } from "./DayAgendaEvent";
 import { errorMessage } from "./errors";
 import { TIGHT_BREAK_MINUTES } from "./scheduling";
 
@@ -132,10 +132,6 @@ export function slotNeighborhood(events: readonly ScheduleEvent[], slot: Slot, f
   return { rows, hidden: full ? 0 : allDay.length + timed.length - shown.length };
 }
 
-function formatSpan(start: string, end: string, timeZone: string): string {
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone }).formatRange(new Date(start), new Date(end));
-}
-
 type LoadState = { phase: "loading" } | { phase: "ready"; events: readonly ScheduleEvent[] } | { phase: "error"; message: string };
 
 const OVERLAP_TEXT: Record<Exclude<Overlap, "none">, string> = {
@@ -150,14 +146,15 @@ const OVERLAP_TEXT: Record<Exclude<Overlap, "none">, string> = {
  * AI provider never sees it. A caller that has just read the day passes
  * `events` so it is not read twice.
  */
-export function SlotDayPreview({ id, slot, timeZone, events: given, context }: {
+export function SlotDayPreview({ id, slot, timeZone, events: given, context, onOpenEvent, showResponses = false }: {
   id: string;
   slot: Slot;
   timeZone: string;
   events?: readonly ScheduleEvent[] | null;
   context?: SlotContext;
+  onOpenEvent?(event: ScheduleEvent): void;
+  showResponses?: boolean;
 }) {
-  const colors = useCalendarColors();
   const [loaded, setState] = useState<LoadState>(() => {
     const cached = given ? null : cachedEventsOnDay(new Date(slot.start));
     return cached ? { phase: "ready", events: cached } : { phase: "loading" };
@@ -192,21 +189,16 @@ export function SlotDayPreview({ id, slot, timeZone, events: given, context }: {
           if (row.kind === "proposed") {
             return <li key="proposed" className="slot-day-row slot-day-proposed">
               <span className="slot-day-title">This time</span>
-              <span className="slot-day-meta">{formatSpan(slot.start, slot.end, timeZone)}</span>
+              <span className="slot-day-meta">{formatAgendaSpan(slot.start, slot.end, timeZone)}</span>
             </li>;
           }
           if (row.kind === "break") {
             return <li key={`break-${index}`} className={`slot-day-break${row.minutes < TIGHT_BREAK_MINUTES ? " slot-day-break-tight" : ""}`}>{row.text}</li>;
           }
           const { event } = row;
-          // Each meeting is a card like the week's; a long place fits one line, in full on hover.
-          return <li key={`${event.accountId}:${event.calendarId ?? ""}:${event.id}`} className="slot-day-row slot-day-event" style={calendarColorStyle(colors, event.accountId, event.calendarId)}>
-            <span className="slot-day-title">{event.title}</span>
-            <span className="slot-day-meta" title={event.location ?? undefined}>
-              {[event.allDay ? "All day" : formatSpan(event.start, event.end, timeZone), event.location].filter(Boolean).join(" · ")}
-            </span>
-            {row.overlap !== "none" ? <span className={`slot-day-detail${row.overlap === "conflict" ? " slot-day-detail-conflict" : ""}`}>{OVERLAP_TEXT[row.overlap]}</span> : null}
-          </li>;
+          return <DayAgendaEvent key={`${event.accountId}:${event.calendarId ?? ""}:${event.id}`}
+            event={event} timeZone={timeZone} onOpenEvent={onOpenEvent} showResponse={showResponses}
+            detail={row.overlap !== "none" ? OVERLAP_TEXT[row.overlap] : undefined} conflict={row.overlap === "conflict"} />;
         })}
       </ol>
       {alone ? <p className="context-status">Nothing else on your calendar that day.</p> : null}
