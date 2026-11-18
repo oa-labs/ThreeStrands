@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { AiUsageDay } from "./domain";
 import { mailClient } from "./data/client";
-import { aiPriceKey, readAiPrices, saveAiPrice, type AiModelPrice, type AiProvider } from "./aiSettings";
+import { aiPriceKey, catalogAiPrice, effectiveAiPrices, readAiPrices, saveAiPrice, type AiModelPrice, type AiProvider } from "./aiSettings";
 import { aiUsageTotals, formatTokens, formatUsd, localDay } from "./aiUsage";
 import { errorMessage } from "./errors";
 import { plural } from "./plural";
@@ -16,13 +16,13 @@ function priceInputValue(value: number | undefined): string {
 /**
  * Today's and the last week's provider usage, with an estimated cost so the
  * user can judge features such as proactive suggestions. Prices for each
- * configured model (the main model and, when set, the fast model) are entered
- * here unless the provider reports its own cost.
+ * configured model (the main model and, when set, the fast model) come from
+ * the provider's model list when it gives them, and can be entered here.
  */
 export function AiUsageSummary({ provider, model, fastModel = "" }: { provider: AiProvider; model: string; fastModel?: string }) {
   const [rows, setRows] = useState<AiUsageDay[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [prices, setPrices] = useState(readAiPrices);
+  const [prices, setPrices] = useState(effectiveAiPrices);
   const models = [...new Set([model, fastModel.trim()].filter(Boolean))];
 
   useEffect(() => {
@@ -49,23 +49,28 @@ export function AiUsageSummary({ provider, model, fastModel = "" }: { provider: 
     {weekTotals && weekTotals.unpricedRequests > 0 ? <p className="settings-hint">
       {plural(weekTotals.unpricedRequests, "request has", "requests have")} no price yet, so the cost shown is a lower bound. Enter your model&rsquo;s prices to estimate it.
     </p> : null}
-    {provider === "openrouter" ? <p className="settings-hint">OpenRouter reports the exact cost of each request.</p> : provider !== "none" ? models.map((name) =>
-      <ModelPrices key={name} provider={provider} model={name} onSaved={() => setPrices(readAiPrices())} />) : null}
+    {provider === "openrouter" ? <p className="settings-hint">OpenRouter reports the exact cost of each request. The prices below only hold room under your daily limit.</p> : null}
+    {provider !== "none" ? models.map((name) =>
+      <ModelPrices key={name} provider={provider} model={name} onSaved={() => setPrices(effectiveAiPrices())} />) : null}
   </section>;
 }
 
 /** Per-million-token price inputs for one model, saved as they are typed. */
 function ModelPrices({ provider, model, onSaved }: { provider: AiProvider; model: string; onSaved: () => void }) {
   const key = aiPriceKey(provider, model);
-  const saved: AiModelPrice | undefined = readAiPrices()[key];
-  const [inputPrice, setInputPrice] = useState(priceInputValue(saved?.inputPerMillion));
-  const [outputPrice, setOutputPrice] = useState(priceInputValue(saved?.outputPerMillion));
+  const hintId = useId();
+  // The fields show the user's own price, else the catalog's; clearing both
+  // removes the override and the catalog price applies again.
+  const shown = (): AiModelPrice | undefined => readAiPrices()[key] ?? catalogAiPrice(provider, model);
+  const [inputPrice, setInputPrice] = useState(() => priceInputValue(shown()?.inputPerMillion));
+  const [outputPrice, setOutputPrice] = useState(() => priceInputValue(shown()?.outputPerMillion));
+  const fromCatalog = catalogAiPrice(provider, model) !== undefined;
 
   useEffect(() => {
-    const current = readAiPrices()[key];
+    const current = readAiPrices()[key] ?? catalogAiPrice(provider, model);
     setInputPrice(priceInputValue(current?.inputPerMillion));
     setOutputPrice(priceInputValue(current?.outputPerMillion));
-  }, [key]);
+  }, [key, provider, model]);
 
   const commitPrice = (nextInput: string, nextOutput: string) => {
     const parse = (value: string) => value.trim() === "" ? null : Number(value);
@@ -77,8 +82,10 @@ function ModelPrices({ provider, model, onSaved }: { provider: AiProvider; model
     onSaved();
   };
 
-  return <div role="group" aria-label={`Prices for ${model}`}>
-    <p className="settings-hint">Prices for {model}, in US dollars per million tokens. Check your provider&rsquo;s pricing page; they stay on this device.</p>
+  return <div role="group" aria-label={`Prices for ${model}`} aria-describedby={hintId}>
+    <p id={hintId} className="settings-hint">{fromCatalog
+      ? <>Prices for {model}, in US dollars per million tokens, come from the provider&rsquo;s model list. You can change them; changes stay on this device.</>
+      : <>Prices for {model}, in US dollars per million tokens. Check your provider&rsquo;s pricing page; they stay on this device.</>}</p>
     <div className="ai-usage-prices">
       <label>Input Price
         <input type="number" inputMode="decimal" min={0} step="any" value={inputPrice} onChange={(event) => { setInputPrice(event.target.value); commitPrice(event.target.value, outputPrice); }} />

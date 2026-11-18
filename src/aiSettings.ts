@@ -7,13 +7,14 @@ export const AI_PROVIDERS = [
   { id: "anthropic", label: "Anthropic", modelPlaceholder: "claude-sonnet-5", modelSuggestions: ["claude-sonnet-5", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"] },
   { id: "openrouter", label: "OpenRouter", modelPlaceholder: "openai/gpt-4o", modelSuggestions: ["openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-2.0-flash-001"] },
   { id: "fireworks", label: "Fireworks", modelPlaceholder: "accounts/fireworks/models/llama-v3p1-70b-instructh", modelSuggestions: ["accounts/fireworks/models/glm-5p3-flash", "accounts/fireworks/models/deepseek-v4p1-flash"] },
+  { id: "straitly", label: "Straitly", modelPlaceholder: "claude-sonnet-5", modelSuggestions: ["claude-sonnet-5", "gpt-5.6-terra", "deepseek/deepseek-v4-flash"] },
   { id: "custom", label: "Custom Endpoint", modelPlaceholder: "model name", modelSuggestions: [] },
 ] as const;
 
 export type AiProvider = (typeof AI_PROVIDERS)[number]["id"];
 
 /** A model offered by a provider's catalog, from the `ai_list_models` command. */
-export type AiModelInfo = { id: string; label: string | null };
+export type AiModelInfo = { id: string; label: string | null; price?: AiModelPrice | null };
 
 export type AiFeatureFlags = {
   draftAssist: boolean;
@@ -291,6 +292,14 @@ export type AiModelPrice = { inputPerMillion: number; outputPerMillion: number }
 
 export const aiPriceKey = (provider: AiProvider, model: string) => `${provider}:${model}`;
 
+function validPrices(saved: Record<string, Partial<AiModelPrice>>): Record<string, AiModelPrice> {
+  const valid = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  return Object.fromEntries(Object.entries(saved).flatMap(([key, price]) =>
+    price && valid(price.inputPerMillion) && valid(price.outputPerMillion)
+      ? [[key, { inputPerMillion: price.inputPerMillion, outputPerMillion: price.outputPerMillion }]]
+      : []));
+}
+
 /**
  * User-entered prices keyed by `aiPriceKey`. They stay on this device: they
  * are an estimate aid, not part of the portable preference allowlist.
@@ -299,14 +308,59 @@ export function readAiPrices(): Record<string, AiModelPrice> {
   try {
     const saved = JSON.parse(localStorage.getItem(PRICES_KEY) ?? "null") as Record<string, Partial<AiModelPrice>> | null;
     if (!saved || typeof saved !== "object") return {};
-    const valid = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
-    return Object.fromEntries(Object.entries(saved).flatMap(([key, price]) =>
-      price && valid(price.inputPerMillion) && valid(price.outputPerMillion)
-        ? [[key, { inputPerMillion: price.inputPerMillion, outputPerMillion: price.outputPerMillion }]]
-        : []));
+    return validPrices(saved);
   } catch {
     return {};
   }
+}
+
+/** Providers whose model list needs no API key. Mirrors `catalog_is_public` natively. */
+const PUBLIC_CATALOG_PROVIDERS: readonly AiProvider[] = ["openrouter", "straitly"];
+
+const CATALOG_PRICES_KEY = "threestrands.settings.ai.catalogPrices";
+
+/**
+ * Prices listed by providers' model lists, keyed by `aiPriceKey`. Refreshed
+ * whenever a list loads and kept on this device only: they are not part of
+ * the settings export, which carries nothing a provider can re-supply.
+ */
+export function readAiCatalogPrices(): Record<string, AiModelPrice> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CATALOG_PRICES_KEY) ?? "null") as Record<string, Partial<AiModelPrice>> | null;
+    return saved && typeof saved === "object" ? validPrices(saved) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Replaces one provider's cached catalog prices with those of a fresh list. */
+export function saveAiCatalogPrices(provider: AiProvider, models: AiModelInfo[]): void {
+  const prefix = `${provider}:`;
+  const kept = Object.fromEntries(Object.entries(readAiCatalogPrices()).filter(([key]) => !key.startsWith(prefix)));
+  const fresh = validPrices(Object.fromEntries(models.flatMap((entry) =>
+    entry.price ? [[aiPriceKey(provider, entry.id), entry.price]] : [])));
+  try {
+    localStorage.setItem(CATALOG_PRICES_KEY, JSON.stringify({ ...kept, ...fresh }));
+  } catch {
+    // Ignored; see readAiFeatures.
+  }
+}
+
+/** The catalog's price for a model, if its provider's list gave one. */
+export function catalogAiPrice(provider: AiProvider, model: string): AiModelPrice | undefined {
+  return readAiCatalogPrices()[aiPriceKey(provider, model)];
+}
+
+/**
+ * Prices in force: the user's own where entered, otherwise the catalog's.
+ * Requests and usage estimates use this and nothing else.
+ */
+export function effectiveAiPrices(): Record<string, AiModelPrice> {
+  return { ...readAiCatalogPrices(), ...readAiPrices() };
+}
+
+export function resolveAiPrice(provider: AiProvider, model: string): AiModelPrice | undefined {
+  return effectiveAiPrices()[aiPriceKey(provider, model)];
 }
 
 /** Saves or, with `null`, clears the price for one provider and model. */
@@ -389,12 +443,12 @@ export async function listAiModels(provider: AiProvider): Promise<AiModelInfo[]>
 }
 
 /**
- * Whether the settings panel may fetch a provider's catalog. OpenRouter's is
- * public and fetched without the key; the other listed providers need a saved
+ * Whether the settings panel may fetch a provider's catalog. OpenRouter's and
+ * Straitly's are public and fetched without the key; the other listed providers need a saved
  * key; `none` and `custom` have no catalog. `hasKey` is `null` while the
  * keychain check is still pending, which never permits a keyed fetch.
  */
 export function canListAiModels(provider: AiProvider, hasKey: boolean | null): boolean {
   if (provider === "none" || provider === "custom") return false;
-  return provider === "openrouter" || hasKey === true;
+  return PUBLIC_CATALOG_PROVIDERS.includes(provider) || hasKey === true;
 }

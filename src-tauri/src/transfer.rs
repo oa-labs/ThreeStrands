@@ -1629,6 +1629,39 @@ mod tests {
     }
 
     #[test]
+    fn straitly_provider_round_trips_and_preceding_providers_still_import() {
+        let mut current = payload();
+        current.preferences.ai_provider = AiProvider::Straitly;
+        let decoded = decrypt(
+            &encrypt(&current, "correct horse").unwrap(),
+            "correct horse",
+        )
+        .unwrap();
+        assert!(matches!(
+            decoded.preferences.ai_provider,
+            AiProvider::Straitly
+        ));
+        // Every provider the preceding schema could export keeps importing.
+        for id in [
+            "none",
+            "openai",
+            "anthropic",
+            "openrouter",
+            "fireworks",
+            "custom",
+        ] {
+            let mut object = serde_json::to_value(&payload().preferences)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone();
+            object.insert("aiProvider".into(), serde_json::Value::String(id.into()));
+            let preferences: TransferPreferences = serde_json::from_value(object.into()).unwrap();
+            assert_eq!(preferences.ai_provider.id(), id);
+        }
+    }
+
+    #[test]
     fn several_working_windows_per_day_round_trip_through_an_encrypted_export() {
         let mut current = payload();
         let window = |weekday, start: &str, end: &str| crate::models::AvailabilityWindow {

@@ -8,6 +8,12 @@ import {
   withAiAutomaticBriefs,
   AI_MODEL_SUGGESTIONS,
   canListAiModels,
+  catalogAiPrice,
+  readAiCatalogPrices,
+  readAiPrices,
+  resolveAiPrice,
+  saveAiCatalogPrices,
+  saveAiPrice,
   isAiApiKeyConfigured,
   listAiModels,
   readAiFeatures,
@@ -90,9 +96,11 @@ describe("AI provider preferences", () => {
     await expect(listAiModels("openai")).resolves.toEqual([]);
   });
 
-  it("lists OpenRouter's public catalog without a key and keyed providers only with one", () => {
-    expect(canListAiModels("openrouter", null)).toBe(true);
-    expect(canListAiModels("openrouter", false)).toBe(true);
+  it("lists the public catalogs of OpenRouter and Straitly without a key and keyed providers only with one", () => {
+    for (const provider of ["openrouter", "straitly"] as const) {
+      expect(canListAiModels(provider, null)).toBe(true);
+      expect(canListAiModels(provider, false)).toBe(true);
+    }
     for (const provider of ["openai", "anthropic", "fireworks"] as const) {
       // `null` is the pending keychain check, which must not trigger a fetch.
       expect(canListAiModels(provider, null)).toBe(false);
@@ -236,5 +244,44 @@ describe("AI API key storage (non-Tauri fallback)", () => {
 
   it("keeps connection testing a no-op in the browser preview", async () => {
     await expect(testAiConnection("openai", "gpt-4o", "")).resolves.toBeUndefined();
+  });
+
+  describe("catalog prices", () => {
+    const model = (id: string, price?: { inputPerMillion: number; outputPerMillion: number } | null) => ({ id, label: null, price });
+
+    it("resolves the user's price over the catalog's, and falls back when it is cleared", () => {
+      saveAiCatalogPrices("straitly", [model("a", { inputPerMillion: 3, outputPerMillion: 15 })]);
+      expect(resolveAiPrice("straitly", "a")).toEqual({ inputPerMillion: 3, outputPerMillion: 15 });
+      saveAiPrice("straitly", "a", { inputPerMillion: 1, outputPerMillion: 2 });
+      expect(resolveAiPrice("straitly", "a")).toEqual({ inputPerMillion: 1, outputPerMillion: 2 });
+      expect(catalogAiPrice("straitly", "a")).toEqual({ inputPerMillion: 3, outputPerMillion: 15 });
+      saveAiPrice("straitly", "a", null);
+      expect(resolveAiPrice("straitly", "a")).toEqual({ inputPerMillion: 3, outputPerMillion: 15 });
+    });
+
+    it("has no price for an unknown model or one the catalog lists without a price", () => {
+      saveAiCatalogPrices("openrouter", [model("priced", { inputPerMillion: 1, outputPerMillion: 2 }), model("router", null), model("bare")]);
+      expect(resolveAiPrice("openrouter", "router")).toBeUndefined();
+      expect(resolveAiPrice("openrouter", "bare")).toBeUndefined();
+      expect(resolveAiPrice("openrouter", "missing")).toBeUndefined();
+      expect(resolveAiPrice("straitly", "priced")).toBeUndefined();
+    });
+
+    it("replaces only the loaded provider's entries when a fresh list arrives", () => {
+      saveAiCatalogPrices("openrouter", [model("old", { inputPerMillion: 1, outputPerMillion: 2 })]);
+      saveAiCatalogPrices("straitly", [model("keep", { inputPerMillion: 3, outputPerMillion: 4 })]);
+      saveAiCatalogPrices("openrouter", [model("new", { inputPerMillion: 5, outputPerMillion: 6 })]);
+      expect(readAiCatalogPrices()).toEqual({
+        "straitly:keep": { inputPerMillion: 3, outputPerMillion: 4 },
+        "openrouter:new": { inputPerMillion: 5, outputPerMillion: 6 },
+      });
+    });
+
+    it("ignores invalid cached prices and never mixes them into the user's own", () => {
+      saveAiCatalogPrices("straitly", [model("bad", { inputPerMillion: -1, outputPerMillion: 2 })]);
+      expect(readAiCatalogPrices()).toEqual({});
+      saveAiCatalogPrices("straitly", [model("ok", { inputPerMillion: 1, outputPerMillion: 2 })]);
+      expect(readAiPrices()).toEqual({});
+    });
   });
 });

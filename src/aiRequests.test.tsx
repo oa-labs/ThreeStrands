@@ -4,7 +4,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { invoke } from "@tauri-apps/api/core";
 import { AiCancelButton, AiRequestControls, AiCachedProvenance } from "./AiRequestControls";
 import { invokeAi } from "./aiRequests";
-import { saveAiPrice } from "./aiSettings";
+import { saveAiCatalogPrices, saveAiPrice } from "./aiSettings";
 
 describe("native AI request controls", () => {
   beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockReset(); Object.defineProperty(window,"__TAURI_INTERNALS__",{value:{},configurable:true}); });
@@ -24,6 +24,18 @@ describe("native AI request controls", () => {
     expect(screen.getByRole("button",{name:"Cancel AI Request"})).toBeInTheDocument();
     await act(async () => { rejectRequest(new Error("AI request cancelled")); await result; });
     expect(screen.queryByRole("button",{name:"Cancel AI Request"})).not.toBeInTheDocument();
+  });
+  it("sends the catalog price when the user entered none, and the user's price over it", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    saveAiCatalogPrices("straitly", [{ id: "m", label: null, price: { inputPerMillion: 3, outputPerMillion: 15 } }]);
+    const priceOf = () => (vi.mocked(invoke).mock.calls.at(-1)![1] as { control: { price: unknown } }).control.price;
+    await invokeAi("ai_generate_reply", { provider: "straitly", model: "m" });
+    expect(priceOf()).toEqual({ inputPerMillion: 3, outputPerMillion: 15 });
+    saveAiPrice("straitly", "m", { inputPerMillion: 1, outputPerMillion: 2 });
+    await invokeAi("ai_generate_reply", { provider: "straitly", model: "m" });
+    expect(priceOf()).toEqual({ inputPerMillion: 1, outputPerMillion: 2 });
+    await invokeAi("ai_generate_reply", { provider: "straitly", model: "unlisted" });
+    expect(priceOf()).toBeNull();
   });
   it.each([
     ["ai_brief_thread", {threadId:"A"}],
