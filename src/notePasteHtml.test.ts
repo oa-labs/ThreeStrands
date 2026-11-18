@@ -24,6 +24,39 @@ describe("cleanPastedHtml", () => {
       .toBe('<p> <a href="https://example.com"><img src="x.png" alt=""></a></p>');
   });
 
+  it.each([
+    ['<b style="font-weight:normal"><h2>Heading</h2><p>Body</p></b>', '<h2>Heading</h2><p>Body</p>'],
+    ['<strong style="font-weight:400">Plain <b>bold</b></strong>', 'Plain <b>bold</b>'],
+    ['<i style="font-style:normal">Plain <em>italic</em></i>', 'Plain <em>italic</em>'],
+  ])("honors normal font styles on semantic wrappers: %s", (html, expected) => {
+    expect(cleanPastedHtml(html)).toBe(expected);
+  });
+
+  it.each(["600", "700", "bold"])("converts CSS weight %s to Markdown-compatible bold", (weight) => {
+    expect(cleanPastedHtml(`<p><span style="font-weight:${weight}">Bold</span></p>`))
+      .toBe(`<p><span style="font-weight:${weight}"><strong>Bold</strong></span></p>`);
+  });
+
+  it("applies CSS emphasis to inline runs within blocks, including table cells", () => {
+    const html = '<div style="font-style:italic"><h2>Heading</h2><p>Body</p><table><tr><td>Cell</td></tr></table></div>';
+    expect(cleanPastedHtml(html)).toBe('<div style="font-style:italic"><h2><em>Heading</em></h2><p><em>Body</em></p><table><tbody><tr><td><em>Cell</em></td></tr></tbody></table></div>');
+  });
+
+  it("keeps edge spaces outside CSS emphasis", () => {
+    expect(cleanPastedHtml('<span style="font-weight:700;font-style:italic"> Important </span>'))
+      .toBe(' <span style="font-weight:700;font-style:italic"><em><strong>Important</strong></em></span> ');
+  });
+
+  it("does not duplicate existing emphasis when distributing a wrapper over blocks", () => {
+    expect(cleanPastedHtml('<b><h2><span><strong>Heading</strong></span></h2><p><b>Bold</b> and text</p></b>'))
+      .toBe('<h2><span><strong>Heading</strong></span></h2><p><b>Bold</b> <strong>and text</strong></p>');
+  });
+
+  it("keeps code untouched inside a formatting wrapper", () => {
+    expect(cleanPastedHtml('<strong><p>Bold <code> x </code></p><pre><code> y </code></pre></strong>'))
+      .toBe('<p><strong>Bold</strong> <code> x&nbsp;</code></p><pre><code> y&nbsp;</code></pre>');
+  });
+
   it("leaves spacing in code as written", () => {
     expect(cleanPastedHtml("<pre>a  <b> b </b></pre><p><code> x </code></p>")).toBeNull();
   });

@@ -323,6 +323,48 @@ describe("NoteEditor", () => {
       Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => [] });
       Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect() });
     });
+    it("keeps document blocks and inline formatting from Google Docs clipboard HTML", async () => {
+      const { box, ref, onChange } = await editorFor("Replace me\n");
+      act(() => ref.current!.focus());
+      fireEvent.keyDown(box, { key: "a", ctrlKey: true });
+      // Docs wraps a copied selection in a non-bold <b>; its individual
+      // text runs carry the actual formatting in inline styles.
+      const html = '<b id="docs-internal-guid-copy" style="font-weight:normal"><h2><span style="font-weight:700">1. Plan a community picnic</span></h2><p><span style="font-weight:400">Choose a sunny afternoon.</span></p><ul><li><p><span style="font-weight:400">Reserve a park shelter.</span></p></li><li><p><span style="font-style:italic">Bring board games.</span></p></li></ul><h2><span style="font-weight:700">2. Prepare the activities</span></h2><p><span style="font-weight:400">Pick games for all ages.</span> <span style="font-weight:700">Share the schedule.</span></p></b>';
+      fireEvent.paste(box, { clipboardData: { files: [], types: ["text/html", "text/plain"], getData: (type: string) => type === "text/html" ? html : "Unformatted fallback" } });
+      expect(box.querySelectorAll("h2")).toHaveLength(2);
+      expect(box.querySelectorAll('[data-list-kind="bullet"]')).toHaveLength(2);
+      expect(box.querySelector("em")).toHaveTextContent("Bring board games.");
+      expect(box.querySelector("p strong")).toHaveTextContent("Share the schedule.");
+      const markdown = ref.current!.markdown();
+      expect(markdown).toContain("\n\nChoose a sunny afternoon.\n\n");
+      expect(markdown).not.toContain("\\**");
+      expect(onChange).toHaveBeenLastCalledWith(markdown);
+      fireEvent.keyDown(box, { key: "z", ctrlKey: true });
+      expect(ref.current!.markdown()).toBe("Replace me\n");
+    });
+    it("keeps block boundaries when inline emphasis wraps a whole document", async () => {
+      const { box, ref } = await editorFor("");
+      act(() => ref.current!.focus());
+      const html = '<strong><div><h3>Priorities</h3><p>First paragraph.</p><ol><li>First item<ul><li>Nested item</li></ul></li><li>Second item</li></ol><p><span style="font-style:italic;text-decoration:line-through">Last paragraph.</span></p></div></strong>';
+      fireEvent.paste(box, { clipboardData: { files: [], types: ["text/html"], getData: () => html } });
+      expect(box.querySelector("h3")).toHaveTextContent("Priorities");
+      expect(box.querySelectorAll(".list-content")).toHaveLength(3);
+      expect(box.querySelector("p em")).toHaveTextContent("Last paragraph.");
+      expect([...box.querySelectorAll("p del")].map((node) => node.textContent)).toContainEqual(expect.stringContaining("Last paragraph."));
+      expect(ref.current!.markdown()).toContain("\n\n**First paragraph.**\n\n");
+      expect(ref.current!.markdown()).toContain("**Nested item**");
+    });
+
+    it("keeps active HTML and CSS capabilities out of formatted pasted content", async () => {
+      const { box, ref } = await editorFor("");
+      act(() => ref.current!.focus());
+      const html = '<b style="font-weight:normal"><h2>Safe heading</h2><p><span style="font-weight:700;background-image:url(https://example.com/track);position:fixed" onclick="alert(1)">Keep text</span><img src="https://example.com/remote.png" onerror="alert(1)"></p><script>alert(1)</script><iframe src="https://example.com/embed"></iframe></b>';
+      fireEvent.paste(box, { clipboardData: { files: [], types: ["text/html"], getData: () => html } });
+      expect(box.querySelector("h2")).toHaveTextContent("Safe heading");
+      expect(box.querySelector("strong")).toHaveTextContent("Keep text");
+      expect(box.querySelector("script, iframe, img, [onclick], [onerror], [style]")).toBeNull();
+      expect(ref.current!.markdown()).not.toContain("background-image");
+    });
     it("pastes mail HTML without writing spacing as character references", async () => {
       const { box, ref } = await editorFor("");
       act(() => ref.current!.focus());
