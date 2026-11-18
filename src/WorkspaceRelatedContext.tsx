@@ -35,7 +35,7 @@ export function WorkspaceRelatedContext({ target, accountIds, onOpenThread }: { 
   const [revision, setRevision] = useState(0);
   const requestKey = JSON.stringify(contextQuery(target, accountIds));
   const sourceMessage = target.kind === "task" ? target.task.sourceMessageId : undefined;
-  const meetingTitle = target.kind === "meeting" ? target.event.title : null;
+  const meeting = target.kind === "meeting";
   useEffect(() => {
     const changed = () => setRevision((value) => value + 1);
     window.addEventListener(FILES_CHANGED, changed);
@@ -52,14 +52,14 @@ export function WorkspaceRelatedContext({ target, accountIds, onOpenThread }: { 
         setConversations(related);
         try {
           const page = await mailClient.listFiles({ accountIds: query.accountIds, threadIds: related.map((item) => item.threadId), priorityMessageId: sourceMessage ?? undefined, prioritizeStarred: true, limit: CONTEXT_POLICY.files });
-          const pageFiles = meetingTitle === null ? page.files : meetingFiles(page.files, meetingTitle);
+          const pageFiles = meeting ? meetingFiles(page.files) : page.files;
           if (active) setFiles(pageFiles.map((file) => ({ ...file, reason: related.find((item) => item.threadId===file.threadId)?.reason }))
             .sort((a,b) => Number(b.messageId===sourceMessage)-Number(a.messageId===sourceMessage) || Number(b.starred)-Number(a.starred) || b.sentAt.localeCompare(a.sentAt)));
         } catch (reason) { if (active) setFileError(errorMessage(reason)); }
       }).catch((reason) => { if (active) setError(errorMessage(reason)); }).finally(() => { if (active) setLoading(false); });
     }, CONTEXT_POLICY.debounceMs);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [requestKey, revision, sourceMessage, meetingTitle]);
+  }, [requestKey, revision, sourceMessage, meeting]);
   const fileReason = sharedReason(files);
   const conversationReason = sharedReason(conversations);
   return <>

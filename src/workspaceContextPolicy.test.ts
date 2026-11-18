@@ -21,7 +21,7 @@ describe("workspace context relevance", () => {
     expect(rankContext([candidate,source],query).map((item)=>item.threadId)).toEqual(["source","budget"]);
     expect(contextTerms("Atlas Atlas review <script>alert</script>")).toContain("atlas");
   });
-  it("keeps one invitation for a meeting: the one titled like it, or else the newest", () => {
+  it("leaves a meeting's invitations out of its files, except starred ones", () => {
     const file=(id:string,subject:string,sentAt:string,attachment:Partial<WorkspaceFile["attachment"]>={},starred=false):WorkspaceFile=>({accountId:"work@example.com",messageId:id,threadId:id,subject,sentAt,sender:"alice@example.com",direction:"received",attachment:{id:"part:0.1",filename:"invite.ics",mimeType:"text/calendar",size:10,...attachment},starred,availability:"unknown"});
     const week10=file("w10","Invitation: Atlas sync - Week 10 @ Mon Oct 19, 2026","2026-10-12T10:00:00Z");
     const week11=file("w11","Updated invitation: Atlas sync - Week 11","2026-10-05T10:00:00Z");
@@ -30,11 +30,10 @@ describe("workspace context relevance", () => {
     const deck=file("deck","Atlas sync deck","2026-10-01T10:00:00Z",{filename:"atlas.pdf",mimeType:"application/pdf"});
     const starred=file("starred","Invitation: Atlas sync - Week 9","2026-09-28T10:00:00Z",{},true);
     const all=[week10,week11,week12,deck,starred];
-    expect(meetingFiles(all,"Atlas sync - Week 11 ").map((item)=>item.messageId)).toEqual(["w11","deck","starred"]);
-    expect(meetingFiles(all,"Atlas review").map((item)=>item.messageId)).toEqual(["w12","deck","starred"]);
-    // A single invitation, and files with none, are left alone.
-    expect(meetingFiles([week10,deck],"Atlas review")).toEqual([week10,deck]);
-    expect(meetingFiles([deck],"Atlas review")).toEqual([deck]);
+    expect(meetingFiles(all).map((item)=>item.messageId)).toEqual(["deck","starred"]);
+    // The meeting's only invitation goes too; files with none are left alone.
+    expect(meetingFiles([week11,deck])).toEqual([deck]);
+    expect(meetingFiles([deck])).toEqual([deck]);
   });
   it("names a reason once only when every row shares it", () => {
     expect(sharedReason([{reason:"Matching topic"},{reason:"Matching topic"}])).toBe("Matching topic");

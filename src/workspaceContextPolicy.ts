@@ -1,6 +1,5 @@
 import { parseAddress } from "./emailAddress";
 import { isCalendarAttachment } from "./calendarInvitations";
-import { attachmentMeetingTitle } from "./invitationTitle";
 import type { ContextQuery, WorkspaceContextTarget, WorkspaceConversation, WorkspaceFile } from "./domain";
 
 export const CONTEXT_POLICY = { rows: 6, files: 30, daysBefore: 90, daysAfter: 14, debounceMs: 150, sourceScore: 100, topicScore: 10, attendeeScore: 5, maxTerms: 12 } as const;
@@ -31,17 +30,12 @@ export function rankContext(candidates: WorkspaceConversation[], query: ContextQ
   return ranked.slice(0, CONTEXT_POLICY.rows);
 }
 /**
- * A meeting's files keep one invitation: the one titled like the meeting, or
- * else the newest. A series sends a new invitation for every occurrence, and
- * the earlier ones stay reachable from their conversations. Starred files stay.
+ * A meeting's files leave out its calendar invitations. The meeting is already
+ * open, so its invitation file repeats it, and a series' earlier invitations
+ * stay reachable from their conversations. Starred files stay.
  */
-export function meetingFiles(files: WorkspaceFile[], title: string): WorkspaceFile[] {
-  const invitations = files.filter((file) => !file.starred && isCalendarAttachment(file.attachment));
-  if (invitations.length < 2) return files;
-  const wanted = title.trim().toLocaleLowerCase();
-  const kept = invitations.find((file) => attachmentMeetingTitle(file)?.toLocaleLowerCase() === wanted)
-    ?? invitations.reduce((newest, file) => file.sentAt > newest.sentAt ? file : newest);
-  return files.filter((file) => file === kept || !invitations.includes(file));
+export function meetingFiles(files: WorkspaceFile[]): WorkspaceFile[] {
+  return files.filter((file) => file.starred || !isCalendarAttachment(file.attachment));
 }
 /** The reason every row shares, said once for the section rather than on each row. */
 export function sharedReason(items: { reason?: string }[]): string | null {
