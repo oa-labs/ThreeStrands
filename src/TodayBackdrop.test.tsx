@@ -169,8 +169,9 @@ describe("TodayBackdrop", () => {
         : `.today-workspace[data-backdrop="${phase}"], .today-backdrop[data-phase="${phase}"]`;
       expect(value(rule(selector), "--today-sky-top")).toBe(`var(--backdrop-${token}-top)`);
       expect(value(rule(selector), "--today-sky-bottom")).toBe(`var(--backdrop-${token}-bottom)`);
+      expect(value(rule(selector), "--today-gutter-tint")).toBe(phase === "day" ? "65%" : "25%");
     }
-    expect(value(rule(".today-workspace[data-backdrop]"), "background")).toBe("linear-gradient(to bottom, color-mix(in srgb, var(--today-sky-top) 12%, var(--background)), var(--background) 70%)");
+    expect(value(rule(".today-workspace[data-backdrop]"), "background")).toBe("linear-gradient(to bottom, color-mix(in srgb, var(--today-sky-top) var(--today-gutter-tint), var(--background)), var(--background) 70%)");
     expect(value(rule(".today-workspace"), "background")).toBe("var(--background)");
     expect(value(rule(".today-work, .today-time"), "background")).toBe("var(--surface)");
     // The header's own content paints above the art.

@@ -3821,7 +3821,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-page-planning { height: 100%; min-height: 100%; display: flex; flex-direction: column; }
 .today-page-planning .today-header { flex-shrink: 0; }
 .today-page-planning .today-columns { flex: 1; min-height: 0; }
-.today-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: var(--space-4); margin-inline: var(--pane-inset); padding: var(--pane-header-padding); padding-inline: 0; border-bottom: 1px solid var(--border); }
+.today-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: var(--space-4); margin-inline: var(--pane-inset); padding: var(--pane-header-padding); padding-inline: var(--space-4); border-bottom: 1px solid var(--border); }
 .today-header h1 { margin: var(--space-2) 0 0; font-size: var(--text-page-title); }
 .planning-inbox { font-size: var(--text-body); }
 .planning-inbox-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); margin-bottom: var(--space-3); }
@@ -3868,11 +3868,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-columns { display: grid; grid-template-columns: minmax(var(--today-column-min), 1fr) minmax(var(--today-day-view-min), 1.25fr); align-items: stretch; gap: var(--space-6); padding: var(--space-4) var(--pane-inset); }
 .today-heading { min-width: 0; }
 /* The optional sky art stays inside the aligned header. Its phase also supplies
-   a faint tint around the opaque panels, fading into the workspace background. */
-.today-workspace[data-backdrop], .today-backdrop { --today-sky-top: var(--backdrop-sky-top); --today-sky-bottom: var(--backdrop-sky-bottom); }
-.today-workspace[data-backdrop="dusk"], .today-backdrop[data-phase="dusk"] { --today-sky-top: var(--backdrop-dusk-top); --today-sky-bottom: var(--backdrop-dusk-bottom); }
-.today-workspace[data-backdrop="night"], .today-backdrop[data-phase="night"] { --today-sky-top: var(--backdrop-night-top); --today-sky-bottom: var(--backdrop-night-bottom); }
-.today-workspace[data-backdrop] { background: linear-gradient(to bottom, color-mix(in srgb, var(--today-sky-top) 12%, var(--background)), var(--background) 70%); }
+   a visible tint around the opaque panels, fading into the workspace background.
+   The pale daytime sky needs more color than the saturated dusk and night skies. */
+.today-workspace[data-backdrop], .today-backdrop { --today-sky-top: var(--backdrop-sky-top); --today-sky-bottom: var(--backdrop-sky-bottom); --today-gutter-tint: 65%; }
+.today-workspace[data-backdrop="dusk"], .today-backdrop[data-phase="dusk"] { --today-sky-top: var(--backdrop-dusk-top); --today-sky-bottom: var(--backdrop-dusk-bottom); --today-gutter-tint: 25%; }
+.today-workspace[data-backdrop="night"], .today-backdrop[data-phase="night"] { --today-sky-top: var(--backdrop-night-top); --today-sky-bottom: var(--backdrop-night-bottom); --today-gutter-tint: 25%; }
+.today-workspace[data-backdrop] { background: linear-gradient(to bottom, color-mix(in srgb, var(--today-sky-top) var(--today-gutter-tint), var(--background)), var(--background) 70%); }
 .today-header { position: relative; isolation: isolate; }
 .today-backdrop { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: linear-gradient(to bottom, var(--today-sky-top), var(--today-sky-bottom)); animation: today-backdrop-in var(--duration-slow) ease; }
 /* The header's own content paints above the art, which comes first in the header. */
