@@ -1677,8 +1677,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .slot-day-rows { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
 .slot-day-row { display: grid; gap: var(--space-0-5); min-width: 0; padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); line-height: var(--leading-snug); }
 .slot-day-event { border: 1px solid color-mix(in srgb, var(--calendar-color, var(--accent)) 25%, transparent); border-inline-start: 3px solid var(--calendar-color, var(--border-strong)); color: var(--text); background: color-mix(in srgb, var(--calendar-color, var(--accent)) 18%, var(--raised)); }
+.slot-day-event-interactive { padding: 0; }
+.slot-day-event-button { display: grid; gap: var(--space-0-5); min-width: 0; width: 100%; padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-xs); color: inherit; background: transparent; font: inherit; text-align: start; cursor: pointer; }
+.slot-day-event-button:hover { background: var(--hover); }
 .slot-day-title { font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
 .slot-day-meta { overflow: hidden; color: var(--secondary); text-overflow: ellipsis; white-space: nowrap; }
+.slot-day-meta-with-response { display: flex; }
+.slot-day-meta-content { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.slot-day-response { flex: 0 0 auto; color: var(--accent); font-weight: var(--weight-semibold); white-space: pre; }
 .slot-day-detail { color: var(--secondary); overflow-wrap: anywhere; }
 .slot-day-detail-conflict { color: var(--error); }
 .slot-day-proposed { border: 1px dashed var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
@@ -2556,9 +2562,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-meeting-details { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .context-meeting-response { flex:0 0 auto; color:var(--accent); font-weight:var(--weight-semibold); white-space:pre; }
 .context-meeting-response[data-response-status="declined"] { color:var(--muted); }
-/* What else is on the calendar the day of an invitation; overlaps take the warning color. */
+/* Invitation agendas share the event preview's cards, aligned to the panel edge. */
+.context-invitation-day .slot-day-preview { margin-inline-start: 0; }
 .context-invitation-day-conflict { color:var(--warning); font-weight:var(--weight-semibold); }
-.context-meeting-conflict .context-row-icon { color:var(--warning); }
 .context-file .context-row-title { display:flex; }
 /* A file's actions show on hover or focus, so a list of files reads as names, dates, and sizes. A starred file keeps its star. */
 .context-file .context-row-action > * { opacity:0; transition:opacity var(--duration-fast) ease; }
