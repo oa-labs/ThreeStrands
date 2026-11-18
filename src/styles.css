@@ -2481,8 +2481,16 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .thread-assist-summary li { display:grid; grid-template-columns:var(--context-glyph-column) minmax(0,1fr); margin:var(--space-1) 0; overflow-wrap:anywhere; }
 /* The marker and chevron share an icon width inside the same glyph column. */
 .thread-assist-summary-marker { height:calc(var(--text-body) * var(--leading-normal)); }
-.thread-assist-summary .thread-assist-summary-earlier { color:var(--muted); }
+.thread-assist-summary-lead { color:var(--text); font-weight:var(--weight-medium); }
 .thread-assist-summary-label { color:var(--text); font-weight:var(--weight-medium); }
+.thread-assist-earlier { margin:0 0 var(--space-1-5); padding-inline:calc(var(--context-row-inset) + var(--context-glyph-column)) var(--context-row-inset); color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); overflow-wrap:anywhere; }
+.thread-assist-earlier > summary { cursor:pointer; }
+.thread-assist-earlier p { margin:var(--space-1) 0 0; }
+.thread-assist-meta { display:grid; gap:var(--space-1); }
+.thread-assist-meta .ai-cached-provenance { margin-top:0; }
+.thread-assist > .context-section-header .context-section-header-actions { flex:0 1 auto; min-width:0; flex-wrap:wrap; justify-content:flex-end; }
+.thread-assist-progress { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:var(--space-1) var(--space-2); min-width:0; }
+.thread-assist-cancel { font-size:var(--text-meta); white-space:nowrap; }
 .context-invitation-response { display:grid; min-width:0; gap:var(--space-2); }
 .context-invitation-response > .btn-link { justify-self:start; text-align:left; }
 .context-invitation-response > .btn { justify-self:start; }

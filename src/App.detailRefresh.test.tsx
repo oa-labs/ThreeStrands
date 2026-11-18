@@ -404,7 +404,7 @@ describe("conversation brief", () => {
     } else if (mode === "suggestions") {
       fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
       await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(within(panel).queryByText("Reading the conversation…")).not.toBeInTheDocument());
+      await waitFor(() => expect(within(panel).queryByText("Looking for suggestions…")).not.toBeInTheDocument());
     } else if (mode === "chat") {
       fireEvent.click(within(panel).getByRole("button", { name: /Ask about this conversation/ }));
       const input = within(panel).getByRole("textbox", { name: "Ask About This Conversation" });
