@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
 import { Check, Copy, Star, Users, X } from "lucide-react";
 import { matchingGroups, memberCountLabel } from "./contactGroups";
@@ -321,6 +321,8 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
     commit(`${draft} ${text}`);
   };
 
+  const placeholder = values.length ? `Add another ${itemName}` : isParticipant ? "Name or email address" : isEmail ? "name@example.com" : "https://example.com";
+
   return (
     <div className={`contact-multi-value-field${suggestContacts ? " has-suggestions" : ""}`}>
       <span id={labelId}>{label}</span>
@@ -356,7 +358,10 @@ function ContactMultiValueField({ kind, label, inputLabel, primary = false, sugg
           type="text"
           inputMode={isParticipant ? "text" : isEmail ? "email" : "url"}
           {...SEARCH_INPUT_ATTRIBUTES}
-          placeholder={values.length ? `Add another ${itemName}` : isParticipant ? "Name or email address" : isEmail ? "name@example.com" : "https://example.com"}
+          placeholder={placeholder}
+          // Size the field to its placeholder so it wraps onto its own line
+          // instead of cutting the prompt off beside a long address.
+          style={{ "--placeholder-length": placeholder.length } as CSSProperties}
           disabled={disabled}
           value={draft}
           onChange={(event) => changeDraft(event.target.value)}
