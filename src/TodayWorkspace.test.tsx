@@ -122,6 +122,27 @@ describe("TodayWorkspace", () => {
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); openUrl.mockReset(); localStorage.clear(); });
 
+  it("switches the header to light text only while the backdrop shows dusk or night", () => {
+    const header = () => document.querySelector(".today-header")!;
+    renderToday();
+    expect(header()).not.toHaveAttribute("data-sky");
+    cleanup();
+    localStorage.setItem("threestrands.today.backdrop", "on");
+    renderToday();
+    expect(header()).not.toHaveAttribute("data-sky");
+    cleanup();
+    for (const [hours, dark] of [[2, true], [19, true], [5, true], [12, false]] as const) {
+      vi.setSystemTime(new Date(2026, 10, 17, hours, 0));
+      renderToday();
+      if (dark) expect(header()).toHaveAttribute("data-sky", "dark"); else expect(header()).not.toHaveAttribute("data-sky");
+      cleanup();
+    }
+    localStorage.clear();
+    vi.setSystemTime(new Date(2026, 10, 17, 2, 0));
+    renderToday();
+    expect(header()).not.toHaveAttribute("data-sky");
+  });
+
   it.each(["you@example.com", null])("pulls fresh sources for the current account (%s) without changing agenda choices", async (accountId) => {
     let finish!: (status: Awaited<ReturnType<typeof mailClient.sync>>) => void;
     const status = await mailClient.syncStatus();

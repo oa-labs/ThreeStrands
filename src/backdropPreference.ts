@@ -33,14 +33,27 @@ export function useTodayBackdrop(): boolean {
   return useSyncExternalStore(subscribe, readTodayBackdrop, () => false);
 }
 
+/** The hours the sky turns to twilight before sunrise, and to full night after sunset. */
+export const DAWN_HOUR = 5;
+export const NIGHT_HOUR = 21;
+
+export type SkyPhase = "day" | "dusk" | "night";
+
+/** The sky at `now`: day from sunrise to sunset, dusk in the hour before sunrise and the three after sunset, night otherwise. */
+export function skyPhase(now: Date): SkyPhase {
+  const hour = now.getHours() + now.getMinutes() / 60;
+  if (hour >= SUNRISE_HOUR && hour < SUNSET_HOUR) return "day";
+  if ((hour >= DAWN_HOUR && hour < SUNRISE_HOUR) || (hour >= SUNSET_HOUR && hour < NIGHT_HOUR)) return "dusk";
+  return "night";
+}
+
 /** The hour the sun rises and sets in the daytime scene. */
 export const SUNRISE_HOUR = 6;
 export const SUNSET_HOUR = 18;
 
-/** Whether `now` falls between sunrise and sunset, so the backdrop draws the day sky rather than the night one. */
+/** Whether `now` falls between sunrise and sunset, so the backdrop draws the day sky. */
 export function isDaytime(now: Date): boolean {
-  const hour = now.getHours() + now.getMinutes() / 60;
-  return hour >= SUNRISE_HOUR && hour < SUNSET_HOUR;
+  return skyPhase(now) === "day";
 }
 
 /**

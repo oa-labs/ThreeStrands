@@ -164,16 +164,23 @@
   --swatch-size: 22px;      /* color swatches */
   --today-day-view-min: 300px; /* narrowest day view beside Today's plan */
   --today-column-min: 280px;   /* narrowest Today column once they stack */
-  /* Today Backdrop art. Each is a flat color kept legible under the header's text, secondary text, and links; styleTokens.test.ts checks every one. */
+  /* Today Backdrop art. Day colors stay legible under the header's normal text; dusk and night are dark skies in both themes, under the light --backdrop-ink text the header switches to. styleTokens.test.ts checks every one. */
   --backdrop-sky-top: #142238;
   --backdrop-sky-bottom: #182a46;
   --backdrop-sun: #302c1d;
   --backdrop-cloud: #1b2c49;
-  --backdrop-dusk-top: #1b1830;
-  --backdrop-dusk-bottom: #2a2246;
-  --backdrop-moon: #2a2650;
-  --backdrop-moon-shade: #2a2246;
-  --backdrop-star: #2c2750;
+  --backdrop-dusk-top: #1f1b4d;
+  --backdrop-dusk-bottom: #7f424e;
+  --backdrop-dusk-moon: #efe6c8;
+  --backdrop-dusk-moon-shade: #44294f;
+  --backdrop-dusk-star: #d8d4f0;
+  --backdrop-night-top: #05070f;
+  --backdrop-night-bottom: #101c36;
+  --backdrop-night-moon: #f3efd2;
+  --backdrop-night-moon-shade: #090e1c;
+  --backdrop-night-star: #f4f6ff;
+  --backdrop-ink: #f4f2fb;
+  --backdrop-ink-soft: #d6d2ea;
   /* Entrance animations; motion.test.ts keeps one-shot entrances at 200ms or less. */
   --duration-entrance: 160ms;
   --duration-spin: 1s;
@@ -219,11 +226,18 @@
   --backdrop-sky-bottom: #f3f8fd;
   --backdrop-sun: #fbe9b3;
   --backdrop-cloud: #ffffff;
-  --backdrop-dusk-top: #e6def5;
-  --backdrop-dusk-bottom: #fbece4;
-  --backdrop-moon: #fff7d6;
-  --backdrop-moon-shade: #eee6f8;
-  --backdrop-star: #ffffff;
+  --backdrop-dusk-top: #1f1b4d;
+  --backdrop-dusk-bottom: #7f424e;
+  --backdrop-dusk-moon: #efe6c8;
+  --backdrop-dusk-moon-shade: #44294f;
+  --backdrop-dusk-star: #d8d4f0;
+  --backdrop-night-top: #05070f;
+  --backdrop-night-bottom: #101c36;
+  --backdrop-night-moon: #f3efd2;
+  --backdrop-night-moon-shade: #090e1c;
+  --backdrop-night-star: #f4f6ff;
+  --backdrop-ink: #f4f2fb;
+  --backdrop-ink-soft: #d6d2ea;
 }
 
 /* Accent color themes. Each accent re-tints the purple-hued tokens from the
@@ -3827,13 +3841,21 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-backdrop { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: linear-gradient(to bottom, var(--backdrop-sky-top), var(--backdrop-sky-bottom)); animation: today-backdrop-in var(--duration-slow) ease; }
 /* The header's own content paints above the art, which comes first in the header. */
 .today-header > :not(.today-backdrop) { position: relative; }
-.today-backdrop[data-view="evening"] { background: linear-gradient(to bottom, var(--backdrop-dusk-top), var(--backdrop-dusk-bottom)); }
+.today-backdrop[data-phase="dusk"] { background: linear-gradient(to bottom, var(--backdrop-dusk-top), var(--backdrop-dusk-bottom)); }
+.today-backdrop[data-phase="night"] { background: linear-gradient(to bottom, var(--backdrop-night-top), var(--backdrop-night-bottom)); }
+/* Over a dusk or night sky the header's text turns light, in either theme; with the backdrop off the attribute is absent. */
+.today-header[data-sky="dark"] { color: var(--backdrop-ink); }
+.today-header[data-sky="dark"] h1 { color: var(--backdrop-ink); }
+.today-header[data-sky="dark"] .eyebrow { color: var(--backdrop-ink-soft); }
 .today-backdrop svg { display: block; width: 100%; height: 100%; }
 .today-backdrop-sun { fill: var(--backdrop-sun); }
 .today-backdrop-cloud { fill: var(--backdrop-cloud); }
-.today-backdrop-moon { fill: var(--backdrop-moon); }
-.today-backdrop-moon-shade { fill: var(--backdrop-moon-shade); }
-.today-backdrop-star { fill: var(--backdrop-star); }
+.today-backdrop[data-phase="dusk"] .today-backdrop-moon { fill: var(--backdrop-dusk-moon); }
+.today-backdrop[data-phase="dusk"] .today-backdrop-moon-shade { fill: var(--backdrop-dusk-moon-shade); }
+.today-backdrop[data-phase="dusk"] .today-backdrop-star { fill: var(--backdrop-dusk-star); }
+.today-backdrop[data-phase="night"] .today-backdrop-moon { fill: var(--backdrop-night-moon); }
+.today-backdrop[data-phase="night"] .today-backdrop-moon-shade { fill: var(--backdrop-night-moon-shade); }
+.today-backdrop[data-phase="night"] .today-backdrop-star { fill: var(--backdrop-night-star); }
 @keyframes today-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* Plan Today: one modal form with a step list. */

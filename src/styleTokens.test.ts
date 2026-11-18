@@ -429,22 +429,43 @@ describe("Today backdrop", () => {
     const themes: Record<string, Map<string, string>> = { dark: new Map(rootTokens), light: new Map(rootTokens) };
     css.walkRules(":root[data-theme=\"light\"]", (rule) => rule.walkDecls(/^--/, (declaration) => { themes.light.set(declaration.prop, declaration.value); }));
     const failures: string[] = [];
+    const ratios: string[] = [];
     let checked = 0;
     for (const [theme, tokens] of Object.entries(themes)) {
       const art = [...tokens].filter(([name]) => name.startsWith("--backdrop-"));
-      // The sky, sun, clouds, dusk, moon, and stars; each defined in both themes.
       expect(art.map(([name]) => name).sort()).toEqual([
-        "--backdrop-cloud", "--backdrop-dusk-bottom", "--backdrop-dusk-top", "--backdrop-moon", "--backdrop-moon-shade", "--backdrop-sky-bottom", "--backdrop-sky-top", "--backdrop-star", "--backdrop-sun",
+        "--backdrop-cloud", "--backdrop-dusk-bottom", "--backdrop-dusk-moon", "--backdrop-dusk-moon-shade", "--backdrop-dusk-star", "--backdrop-dusk-top",
+        "--backdrop-ink", "--backdrop-ink-soft",
+        "--backdrop-night-bottom", "--backdrop-night-moon", "--backdrop-night-moon-shade", "--backdrop-night-star", "--backdrop-night-top",
+        "--backdrop-sky-bottom", "--backdrop-sky-top", "--backdrop-sun",
       ]);
-      for (const [name, color] of art) {
+      // The day sky keeps the theme's normal text legible.
+      for (const name of ["--backdrop-sky-top", "--backdrop-sky-bottom", "--backdrop-sun", "--backdrop-cloud"]) {
         for (const text of ["--text", "--secondary", "--muted", "--link"]) {
           checked += 1;
-          const ratio = contrast(color, tokens.get(text)!);
+          const ratio = contrast(tokens.get(name)!, tokens.get(text)!);
           if (ratio < 4.5) failures.push(`${theme} ${name} under ${text}: ${ratio.toFixed(2)}`);
         }
       }
+      // Dusk and night are dark in both themes; the header's light text must meet AA at both ends of each gradient.
+      for (const phase of ["dusk", "night"]) {
+        for (const end of ["top", "bottom"]) {
+          for (const ink of ["--backdrop-ink", "--backdrop-ink-soft"]) {
+            checked += 1;
+            const ratio = contrast(tokens.get(`--backdrop-${phase}-${end}`)!, tokens.get(ink)!);
+            ratios.push(`${theme} ${phase} ${end} ${ink}: ${ratio.toFixed(2)}`);
+            if (ratio < 4.5) failures.push(`${theme} ${phase} ${end} under ${ink}: ${ratio.toFixed(2)}`);
+          }
+        }
+      }
+      // Night is a dark sky: both ends are near-black navy, and the stars and moon stand out from it.
+      expect(luminance(tokens.get("--backdrop-night-top")!)).toBeLessThan(0.01);
+      expect(luminance(tokens.get("--backdrop-night-bottom")!)).toBeLessThan(0.02);
+      for (const lit of ["--backdrop-night-star", "--backdrop-night-moon"]) expect(contrast(tokens.get(lit)!, tokens.get("--backdrop-night-bottom")!)).toBeGreaterThan(10);
     }
-    expect(checked).toBe(72);
+    expect(ratios).toHaveLength(16);
+    if (process.env.SHOW_RATIOS) console.log(ratios.join("\n"));
+    expect(checked).toBe(48);
     expect(failures).toEqual([]);
   });
 

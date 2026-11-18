@@ -625,22 +625,29 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
   is now (plan items gone since, and added tasks no longer open, are marked and
   not saved), with **Discard**. Saving or discarding forgets it.
 
-### Day and evening backdrop (optional)
+### Day, dusk, and night backdrop (optional)
 
-An optional, purely decorative backdrop behind Today's header: a daytime scene
-from 6 am and an evening scene from 6 pm, following the clock. (It first followed
-the evening view; since that view was removed it follows the time of day.) It is off by default and turned on under
-**Settings → Appearance → Today Backdrop**, stored on this device only (not synced
-or exported).
+An optional, purely decorative backdrop behind Today's header that follows the
+clock in three phases: day from 6 am to 5:59 pm, dusk from 6 pm to 8:59 pm and
+from 5 am to 5:59 am, and night from 9 pm to 4:59 am. It is off by default and
+turned on under **Settings → Appearance → Today Backdrop**, stored on this device
+only (not synced or exported).
 
 - The art is original and drawn in code (SVG and CSS gradients), not photographs
   or stock images: small to ship, crisp at any size, and free of licensing
   questions. Day: a soft sky with the sun's height following the time of day.
-  Evening: a dusk-to-night sky with a moon and a few stars.
+  Dusk: a deep blue-violet sky fading to a warm horizon, with the moon and a few
+  faint stars. Night: a late-night sky from near-black navy to deep navy, with
+  more and brighter stars (fixed positions, no twinkle) and a clearly lit moon.
+  Dusk and night are dark in both themes.
 - It sits only behind the header band, never behind lists, cards, or the day
-  view, and keeps text contrast within the style-token rules in both light and
-  dark themes. It is hidden from assistive technology and has no motion beyond an
-  optional slow change when the view switches; reduced-motion turns that off.
+  view. Over dusk or night the header's date and title switch to light text
+  (`data-sky="dark"` on the header, from `--backdrop-ink` tokens) in either theme;
+  `styleTokens.test.ts` holds WCAG AA (4.5:1) for that text against both ends of
+  each gradient in both themes, and the day sky against the theme's normal text.
+  With the backdrop off nothing changes. It is hidden from assistive technology
+  and has no motion beyond an optional slow fade when it appears; reduced-motion
+  turns that off.
 
 ## Shut Down: Today's evening view
 

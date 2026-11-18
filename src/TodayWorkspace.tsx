@@ -21,7 +21,7 @@ import { dismissPromise, promiseRecipients, readDismissedPromises } from "./open
 import { compareTasksForDisplay, formatDue, isActiveTaskStatus, isOverdue } from "./taskViews";
 import { meetingsWith } from "./todayInsights";
 import { TodayBackdrop } from "./TodayBackdrop";
-import { useTodayBackdrop } from "./backdropPreference";
+import { skyPhase, useTodayBackdrop } from "./backdropPreference";
 import { parseAddress } from "./emailAddress";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import { normalizeContactAddress, type NoteReference } from "./noteEntities";
@@ -748,7 +748,7 @@ function TodayLayout({
   return <section ref={pageRef} className="today-workspace" aria-label="Today" aria-busy={pull.refreshing}>
     <div className="today-page today-page-planning">
     <PullToRefreshStatus {...pull} />
-    <header className="today-header">
+    <header className="today-header" data-sky={backdrop && skyPhase(now) !== "day" ? "dark" : undefined}>
       {backdrop ? <TodayBackdrop now={now} /> : null}
       <div className="today-heading">
         <span className="eyebrow">{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</span>
