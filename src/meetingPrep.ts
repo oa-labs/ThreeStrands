@@ -3,7 +3,7 @@ import { mailClient } from "./data/client";
 import type { MeetingReadiness, ScheduleEvent } from "./domain";
 import { isDeclined } from "./agendaEvents";
 import { isWorkingLocation } from "./WorkingLocation";
-import { meetingAttendees, meetingDate, meetingEntry, meetingEventReference } from "./meetingNoteEntry";
+import { meetingAttendees, meetingEntry, meetingEventReference } from "./meetingNoteEntry";
 import { MAX_MEETING_ATTENDEES, type MeetingEntry } from "./noteMeetings";
 import { normalizeContactAddress, noteReferenceKey } from "./noteEntities";
 
@@ -37,31 +37,6 @@ export function meetingsToPrepare(events: readonly ScheduleEvent[], now: Date): 
     && (event.allDay || new Date(event.end).getTime() > now.getTime()));
 }
 
-const NO_PREP_KEY = "threestrands.meetings.noPrepNeeded";
-/** Most "No prep needed" choices kept on this device; the oldest go first. */
-export const MAX_NO_PREP_CHOICES = 200;
-
-/** The choice's key: the occurrence and the day it was made for. */
-export function noPrepKey(event: ScheduleEvent): string | null {
-  const reference = meetingEventReference(event);
-  return reference ? `${meetingDate(event)}|${noteReferenceKey(reference)}` : null;
-}
-
-export function readNoPrepNeeded(): string[] {
-  try {
-    const stored: unknown = JSON.parse(localStorage.getItem(NO_PREP_KEY) ?? "[]");
-    return Array.isArray(stored) ? stored.filter((value): value is string => typeof value === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Marks or clears "No prep needed" for one occurrence on its day, on this device only. */
-export function setNoPrepNeeded(key: string, chosen: boolean): string[] {
-  const next = [...readNoPrepNeeded().filter((value) => value !== key), ...(chosen ? [key] : [])].slice(-MAX_NO_PREP_CHOICES);
-  try { localStorage.setItem(NO_PREP_KEY, JSON.stringify(next)); } catch { /* Still applies until reload. */ }
-  return next;
-}
 
 const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 

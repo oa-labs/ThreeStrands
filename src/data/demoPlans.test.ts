@@ -4,7 +4,7 @@ import { todayThread } from "../test/todayMail";
 import type { NoteReference } from "../noteEntities";
 import { planItemKey } from "../dailyPlan";
 import { createDemoNotes } from "./demoNotes";
-import { createDemoPlans, MAX_PLAN_ADDITIONS, MAX_PLAN_HISTORY_TARGETS, PLAN_SOURCE_PAGE } from "./demoPlans";
+import { createDemoPlans, MAX_PLAN_ADDITIONS, PLAN_SOURCE_PAGE } from "./demoPlans";
 import type { ScheduleEvent } from "../domain";
 
 const DAY = "2026-11-16";
@@ -90,7 +90,7 @@ describe("demo plan history, review, and sources", () => {
     expect((await plans.planSources(DAY, "starredMail")).candidates[0].action.kind).toBe("taskForm");
     expect(thread.starred).toBe(true);
   });
-  it("counts carried days, reviews the last plan, and settles items later plans mention", async () => {
+  it("counts the days a plan item was carried", async () => {
     const tasks = [task("a", { title: "Contract" }), task("b", { title: "Deck" }), task("c", { title: "Done", status: "completed", completedAt: new Date(2026, 10, 15, 10).toISOString() }), task("d", { title: "Also done", status: "completed", completedAt: new Date(2026, 10, 15, 16).toISOString() })];
     const events = [{ id: "standup", accountId: "me@example.com", title: "Standup", allDay: false, start: new Date(2026, 10, 15, 9).toISOString(), end: new Date(2026, 10, 15, 9, 15).toISOString() } as ScheduleEvent];
     const { notes, plans } = setup(tasks, [], events);
@@ -98,21 +98,7 @@ describe("demo plan history, review, and sources", () => {
     await notes.saveDailyNote("2026-11-14", `## Plan\n\n- [A](${href("a")}) <!-- threestrands-plan:carried 2026-11-13 -->\n\n### Not today\n\n- [B](${href("b")}) <!-- threestrands-plan:deferred 2026-11-16 -->\n`, null);
     await notes.saveDailyNote("2026-11-15", `## Plan\n\n- [A](${href("a")}) <!-- threestrands-plan:carried 2026-11-14 -->\n- [C](${href("c")})\n`, null);
 
-    const [a] = await plans.planHistory([planItemKey(taskRef("a"))], "2026-11-01", "2026-11-16");
-    expect(a).toEqual({ target: planItemKey(taskRef("a")), carryCount: 2, plannedDays: ["2026-11-13", "2026-11-14", "2026-11-15"] });
     expect((await plans.dailyPlan("2026-11-15")).items[0].carryCount).toBe(2);
-    await expect(plans.planHistory([], "2026-08-18", "2026-11-16")).rejects.toThrow();
-    expect(await plans.planHistory([], "2026-08-19", "2026-11-16")).toEqual([]);
-    await expect(plans.planHistory(Array.from({ length: MAX_PLAN_HISTORY_TARGETS + 1 }, (_, n) => `k${n}`), DAY, DAY)).rejects.toThrow();
-
-    const review = await plans.planReview(DAY);
-    expect(review.reviewed).toBe("2026-11-15");
-    expect(review.done.map((item) => item.title)).toEqual(["Done"]);
-    expect(review.alsoDone.map((item) => item.title)).toEqual(["Also done"]);
-    expect(review.meetings?.map((event) => event.id)).toEqual(["standup"]);
-    expect(review.didntGetTo.map((item) => [item.title, item.plannedOn, item.carryCount])).toEqual([["Contract", "2026-11-15", 2], ["Deck", "2026-11-14", 0]]);
-    // Nothing within seven days: nothing to review.
-    expect((await plans.planReview("2026-11-23")).reviewed).toBeNull();
   });
 
   it("includes tasks in today's note while keeping square checklists local and planned identities intact", async () => {

@@ -3,8 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
 import type { DraftHandoff, FollowThroughSave, MeetingContext, MeetingSection, ScheduleEvent } from "./domain";
 import { MeetingFollowThroughDialog, MeetingFollowUpDialog } from "./MeetingFollowThroughDialog";
-import { MeetingFollowThroughList } from "./MeetingReadinessList";
-import { readFollowThroughRecovery, readFollowUpHandoff, readNoFollowThrough, rememberFollowUpHandoff, saveFollowThroughRecovery } from "./meetingFollowThrough";
+import { readFollowThroughRecovery, readFollowUpHandoff, rememberFollowUpHandoff, saveFollowThroughRecovery } from "./meetingFollowThrough";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { expectPrimaryActionLast } from "./test/sharedButtons";
 
@@ -197,37 +196,5 @@ describe("MeetingFollowUpDialog", () => {
     await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Copy Text" })); });
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Decisions:\n- Ship"));
     expect(onOpen).not.toHaveBeenCalled();
-  });
-});
-
-describe("MeetingFollowThroughList", () => {
-  const ended = (id: string): ScheduleEvent => ({ ...event, id, title: `Meeting ${id}` });
-  const readiness = (id: string, followThrough: "reviewed" | "notReviewed") => ({
-    reference: meetingEventReference(ended(id))!, eventAvailable: true, hasOccurrenceNote: true, priorOccurrencesWithNotes: 0, seriesNotes: 0,
-    openCommitments: 0, candidateCommitments: 0, latestCorrespondenceAt: null, scopeRequired: false, followThrough, unavailableSections: [], error: null,
-  });
-
-  it("lists ended meetings by their saved follow-through state, with No Follow-through and its undo", async () => {
-    vi.spyOn(mailClient, "meetingReadiness").mockResolvedValue([readiness("a", "reviewed"), readiness("b", "notReviewed")]);
-    const onNotice = vi.fn();
-    render(<MeetingFollowThroughList events={[ended("a"), ended("b"), { ...ended("later"), end: "2026-11-16T23:00:00" }]} now={new Date("2026-11-16T12:00:00")} onPrepare={vi.fn()} onNotice={onNotice} />);
-    const list = within(screen.getByRole("region", { name: "Meeting follow-through" }));
-    expect(await list.findByText("Reviewed")).toBeInTheDocument();
-    expect(list.queryByText("Meeting later")).not.toBeInTheDocument();
-    expect(list.queryByRole("button", { name: "Review follow-through for Meeting a" })).not.toBeInTheDocument();
-    fireEvent.click(list.getByRole("button", { name: "No follow-through for Meeting b" }));
-    expect(list.getByText("No follow-through")).toBeInTheDocument();
-    expect(readNoFollowThrough()).toHaveLength(1);
-    act(() => onNotice.mock.calls[0]![0].undo());
-    expect(readNoFollowThrough()).toEqual([]);
-    expect(list.getByRole("button", { name: "Review follow-through for Meeting b" })).toBeInTheDocument();
-  });
-
-  it("opens the review over the list", async () => {
-    vi.spyOn(mailClient, "meetingReadiness").mockResolvedValue([readiness("b", "notReviewed")]);
-    vi.spyOn(mailClient, "meetingContext").mockResolvedValue(context());
-    render(<MeetingFollowThroughList events={[ended("b")]} now={new Date("2026-11-16T12:00:00")} onPrepare={vi.fn()} onNotice={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Review follow-through for Meeting b" }));
-    expect(await screen.findByRole("button", { name: "Save Follow-through" })).toBeInTheDocument();
   });
 });

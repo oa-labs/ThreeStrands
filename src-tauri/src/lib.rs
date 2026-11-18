@@ -1819,8 +1819,6 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::plans::remove_from_daily_plan,
         commands::plans::save_daily_plan,
         commands::plans::undo_daily_plan_save,
-        commands::plans::plan_history,
-        commands::plans::plan_review,
         commands::plans::plan_sources,
         commands::notes::resolve_note_conversation,
         commands::notes::resolve_note_contact,

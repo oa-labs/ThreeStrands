@@ -1,4 +1,4 @@
-import type { ContactProfile, DailyPlan, Note, PlanSaveResult, DailyPlanItem, Goal, OpenPromise, PlanCandidate, PlanCandidateReason, PlanCompletedTask, PlanHistory, PlanReview, PlanReviewItem, PlanSourcePage, ScheduleEvent, Thread, ThreadTask } from "../domain";
+import type { ContactProfile, DailyPlan, Note, PlanSaveResult, DailyPlanItem, Goal, OpenPromise, PlanCandidate, PlanCandidateReason, PlanHistory, PlanSourcePage, ScheduleEvent, Thread, ThreadTask } from "../domain";
 import { appendShutdownNote, arrangePlanItems, planItemKey, insertPlanLines, parsePlan, planLine, removePlanLine, type Arranged, type PlanLine, type PlanSection } from "../dailyPlan";
 import { extractNoteEntityLinks, normalizeContactAddress, type NoteReference } from "../noteEntities";
 import { periodFor } from "../goals";
@@ -9,16 +9,9 @@ import type { MailClient } from "./client";
 export const MAX_PLAN_ADDITIONS = 50;
 /** As natively: plan days a carry count and planned days look back over, including the last. */
 export const PLAN_HISTORY_DAYS = 90;
-/** As natively: days before the plan date the review looks for earlier plans. */
-export const PLAN_LOOKBACK_DAYS = 7;
 /** As natively: candidates in one page of a plan source. */
 export const PLAN_SOURCE_PAGE = 50;
-/** As natively: most plan item keys one history request names. */
-export const MAX_PLAN_HISTORY_TARGETS = 200;
-/** As natively: most unplanned completed tasks the review lists. */
-export const MAX_ALSO_DONE = 50;
 /** Carries from which a review row hints at deferring or dropping. */
-export { PLAN_CARRY_HINT } from "../planRoutine";
 
 type Sources = {
   tasks(): ThreadTask[];
@@ -39,19 +32,17 @@ export function shiftDay(day: string, count: number): string {
   return at.toISOString().slice(0, 10);
 }
 const localDay = (at: Date) => `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
-const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86_400_000);
 const isDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 const taskRef = (id: string): NoteReference => ({ version: 1, kind: "task", id });
 
 type DayPlan = { date: string; noteId: string; section: PlanSection };
 const tracked = (line: PlanLine) => line.kind !== "text";
-const mentions = (plan: DayPlan, key: string) => [...plan.section.items, ...plan.section.notToday].some((line) => tracked(line) && keyOf(line) === key);
 
 const keyOf = (line: PlanLine) => (line.reference ? planItemKey(line.reference) : `line:${line.start}`);
 const taskState = (status: ThreadTask["status"]): DailyPlanItem["state"] => status === "in_progress" ? "inProgress" : status === "completed" ? "done" : status === "cancelled" ? "cancelled" : "open";
 
 /** The day's plan for the browser demo, following the native store's rules. */
-export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" | "addToDailyPlan" | "removeFromDailyPlan" | "saveDailyPlan" | "undoDailyPlanSave" | "planHistory" | "planReview" | "planSources"> {
+export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" | "addToDailyPlan" | "removeFromDailyPlan" | "saveDailyPlan" | "undoDailyPlanSave" | "planSources"> {
   const now = () => sources.now?.() ?? new Date();
   /** The plans of `from..=to`, oldest first. */
   const plansBetween = async (from: string, to: string): Promise<DayPlan[]> => {
@@ -139,73 +130,6 @@ export function createDemoPlans(sources: Sources): Pick<MailClient, "dailyPlan" 
       const notToday = section ? await Promise.all(section.notToday.map((line) => resolve(date, noteId, line))) : [];
       await fillCarryCounts(date, [...items, ...notToday]);
       return { ...plan, revision: note.updatedAt, items, notToday };
-    },
-    async planHistory(targets, from, to) {
-      if (targets.length > MAX_PLAN_HISTORY_TARGETS) throw new Error(`Ask for at most ${MAX_PLAN_HISTORY_TARGETS} plan items' history at once`);
-      if (!isDay(from) || !isDay(to)) throw new Error("Invalid date");
-      const span = daysBetween(from, to);
-      if (span < 0 || span >= PLAN_HISTORY_DAYS) throw new Error(`Plan history covers 1 to ${PLAN_HISTORY_DAYS} days`);
-      const unique = [...new Set(targets)];
-      const found = await history(unique, from, to);
-      return unique.map((target) => found.get(target)!);
-    },
-    async planReview(date): Promise<PlanReview> {
-      if (!isDay(date)) throw new Error("Invalid date");
-      const windowStart = shiftDay(date, -PLAN_LOOKBACK_DAYS);
-      const plans = await plansBetween(windowStart, date);
-      const settled = (key: string, plan: DayPlan) => plan.section.notToday.some((line) => tracked(line) && keyOf(line) === key)
-        || plans.some((later) => later.date > plan.date && mentions(later, key));
-      const earlier = plans.filter((plan) => plan.date < date && plan.section.items.length > 0).reverse();
-      const reviewed = earlier[0] ?? null;
-      const review: PlanReview = { date, reviewed: reviewed?.date ?? null, done: [], alsoDone: [], meetings: null, didntGetTo: [] };
-      const unfinished = (item: DailyPlanItem) => item.state === "open" || item.state === "inProgress" || item.state === "unavailable";
-      const listed = new Set<string>();
-      for (const plan of earlier) {
-        for (const line of plan.section.items.filter(tracked)) {
-          const item = await resolve(plan.date, plan.noteId, line);
-          if (plan === reviewed && item.state === "done") { review.done.push(item); continue; }
-          if (!unfinished(item) || settled(item.key, plan) || listed.has(item.key)) continue;
-          listed.add(item.key);
-          review.didntGetTo.push({ ...item, plannedOn: plan.date });
-        }
-      }
-      const due: [string, PlanReviewItem][] = [];
-      const deferring = await plansBetween(shiftDay(date, -(PLAN_HISTORY_DAYS - 1)), shiftDay(date, -1));
-      for (const plan of deferring) {
-        for (const line of plan.section.notToday.filter(tracked)) {
-          if (line.marker?.kind !== "deferred" || line.marker.date > date) continue;
-          const key = keyOf(line);
-          if (listed.has(key) || deferring.concat(plans).some((later) => later.date > plan.date && later.date <= date && mentions(later, key))) continue;
-          const item = await resolve(plan.date, plan.noteId, line);
-          if (!unfinished(item)) continue;
-          listed.add(key);
-          due.push([line.marker.date, { ...item, plannedOn: plan.date }]);
-        }
-      }
-      due.sort((a, b) => a[0].localeCompare(b[0]) || a[1].plannedOn.localeCompare(b[1].plannedOn));
-      review.didntGetTo.push(...due.map(([, item]) => item));
-      await fillCarryCounts(date, [...review.done, ...review.didntGetTo]);
-      if (reviewed) {
-        const planned = new Set(reviewed.section.items.map(keyOf));
-        const onDay = (at: string | null | undefined) => !!at && localDay(new Date(at)) === reviewed.date;
-        const alsoDone: PlanCompletedTask[] = [
-          ...sources.tasks().filter((task) => task.status === "completed" && onDay(task.completedAt))
-            .map((task) => ({ key: planItemKey(taskRef(task.id)), taskId: task.id, title: task.title, accountId: task.accountId, noteId: null, noteTitle: null, completedAt: task.completedAt! })),
-          ...(await sources.notes.listNoteTasks()).filter((task) => task.checked && onDay(task.completedAt))
-            .map((task) => ({ key: planItemKey({ ...taskRef(task.markerId), note: task.noteId }), taskId: task.id, title: task.title, accountId: null, noteId: task.noteId, noteTitle: task.noteTitle, completedAt: task.completedAt! })),
-        ];
-        review.alsoDone = alsoDone.filter((task) => !planned.has(task.key))
-          .sort((a, b) => Date.parse(a.completedAt) - Date.parse(b.completedAt) || a.taskId.localeCompare(b.taskId)).slice(0, MAX_ALSO_DONE);
-        if (sources.events) {
-          const start = new Date(`${reviewed.date}T00:00:00`).getTime(), end = new Date(`${shiftDay(reviewed.date, 1)}T00:00:00`).getTime();
-          const day = sources.events().filter((event) => Date.parse(event.start) < end && Date.parse(event.end) > start);
-          const seen = new Set<string>();
-          review.meetings = day.length ? day.filter((event) => !event.allDay && event.responseStatus !== "declined" && event.eventType !== "workingLocation" && Date.parse(event.end) <= now().getTime())
-            .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
-            .filter((event) => { const identity = `${event.uid ?? event.id}\n${event.start}`; if (seen.has(identity)) return false; seen.add(identity); return true; }) : null;
-        }
-      }
-      return review;
     },
     async planSources(date, source, accountId = null, cursor = null): Promise<PlanSourcePage> {
       if (!isDay(date)) throw new Error("Invalid date");

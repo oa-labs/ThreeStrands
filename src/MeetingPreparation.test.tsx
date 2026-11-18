@@ -3,8 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
 import type { MeetingContext, MeetingReadiness, MeetingSection, ScheduleEvent } from "./domain";
 import { MeetingPreparation } from "./MeetingPreparation";
-import { MeetingReadinessList } from "./MeetingReadinessList";
-import { MAX_NO_PREP_CHOICES, meetingsToPrepare, readinessSummary, readNoPrepNeeded, setNoPrepNeeded } from "./meetingPrep";
+import {  meetingsToPrepare, readinessSummary } from "./meetingPrep";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { NOTES_CHANGED } from "./noteMutations";
 import { noteReferenceHref, type NoteReference } from "./noteEntities";
@@ -230,41 +229,4 @@ describe("meeting readiness", () => {
     expect(meetingsToPrepare([meeting("a"), ended, declined, location, noCalendar], now).map((event) => event.id)).toEqual(["a"]);
   });
 
-  it("keeps No Prep Needed choices on this device up to the limit", () => {
-    for (let n = 0; n <= MAX_NO_PREP_CHOICES; n++) setNoPrepNeeded(`key-${n}`, true);
-    const kept = readNoPrepNeeded();
-    expect(kept).toHaveLength(MAX_NO_PREP_CHOICES);
-    expect(kept).not.toContain("key-0");
-    expect(setNoPrepNeeded(`key-${MAX_NO_PREP_CHOICES}`, false)).not.toContain(`key-${MAX_NO_PREP_CHOICES}`);
-  });
-
-  it("shows each meeting's readiness, prepares, skips with undo, and reserves prep time", async () => {
-    vi.spyOn(mailClient, "meetingReadiness").mockResolvedValue([readiness()]);
-    vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([]);
-    const reserve = vi.spyOn(mailClient, "reserveMeetingPrep");
-    const handlers = { onPrepare: vi.fn(), onOpenNote: vi.fn(), onNotice: vi.fn() };
-    render(<MeetingReadinessList events={[meeting()]} ownAddresses={[ME]} {...handlers} />);
-    const list = within(screen.getByRole("region", { name: /Meeting prep/ }));
-    expect(await list.findByText(/Has notes · 2 earlier meetings with notes/)).toBeInTheDocument();
-
-    fireEvent.click(list.getByRole("button", { name: /^Meeting evt/ }));
-    expect(handlers.onPrepare).toHaveBeenCalledWith(meeting());
-
-    fireEvent.click(list.getByRole("button", { name: "No prep needed for Meeting evt" }));
-    expect(list.getByText("No prep needed")).toBeInTheDocument();
-    expect(readNoPrepNeeded()).toHaveLength(1);
-    act(() => handlers.onNotice.mock.calls.at(-1)![0].undo());
-    expect(list.queryByText("No prep needed")).not.toBeInTheDocument();
-    expect(readNoPrepNeeded()).toHaveLength(0);
-
-    fireEvent.click(list.getByRole("button", { name: "Reserve prep time for Meeting evt" }));
-    await waitFor(() => expect(reserve).toHaveBeenCalled());
-    const [, , entry] = reserve.mock.calls[0]!;
-    expect(entry).toMatchObject({ name: "Meeting evt", linkNote: false, event: reference() });
-    expect(entry.attendees.map((attendee) => attendee.reference.id)).toEqual(["ann@example.org"]);
-    await waitFor(() => expect(handlers.onNotice).toHaveBeenLastCalledWith(expect.objectContaining({ message: expect.stringMatching(/^Prep task added to /) })));
-    fireEvent.click(list.getByRole("button", { name: "Reserve prep time for Meeting evt" }));
-    await waitFor(() => expect(handlers.onNotice).toHaveBeenLastCalledWith(expect.objectContaining({ message: "This meeting already has a prep task" })));
-    expect(reserve).toHaveBeenCalledTimes(2);
-  });
 });

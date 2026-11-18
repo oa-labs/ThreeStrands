@@ -127,10 +127,6 @@ describe("native account requests", () => {
     expect(invoke).toHaveBeenLastCalledWith("save_daily_plan", { date: "2026-11-16", expected: "v3", operationId: "op-1", changes });
     await client.undoDailyPlanSave("2026-11-16", "op-1");
     expect(invoke).toHaveBeenLastCalledWith("undo_daily_plan_save", { date: "2026-11-16", operationId: "op-1" });
-    await client.planHistory(["k1"], "2026-08-19", "2026-11-16");
-    expect(invoke).toHaveBeenLastCalledWith("plan_history", { targets: ["k1"], from: "2026-08-19", to: "2026-11-16" });
-    await client.planReview("2026-11-16");
-    expect(invoke).toHaveBeenLastCalledWith("plan_review", { date: "2026-11-16" });
     await client.planSources("2026-11-16", "starredMail");
     expect(invoke).toHaveBeenLastCalledWith("plan_sources", { date: "2026-11-16", source: "starredMail", accountId: null, cursor: null });
     await client.planSources("2026-11-16", "tasks", "me@example.com", "50");

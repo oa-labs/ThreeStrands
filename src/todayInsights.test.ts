@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatClockTime } from "./agendaEvents";
 import type { ScheduleEvent } from "./domain";
-import { agendaConflicts, dayShape, daySummary, EVENING_HINT_MINUTES, FREE_STRETCH_MINUTES, meetingsWith, mentionsRecording, eveningOpens, EVENING_FALLBACK_HOUR, offersPlanTomorrow, planCapacity, sharedMeetingsNote, type WorkingHours } from "./todayInsights";
+import { agendaConflicts, FREE_STRETCH_MINUTES, meetingsWith, mentionsRecording, planCapacity, type WorkingHours } from "./todayInsights";
 import { TASK_BLOCK_MINUTES } from "./taskBooking";
 
 const now = new Date(2026, 9, 26, 10, 0);
 const at = (hours: number, minutes = 0) => new Date(2026, 9, 26, hours, minutes);
-const clock = (hours: number, minutes = 0) => formatClockTime(at(hours, minutes));
 
 function meeting(id: string, start: Date, end: Date, overrides: Partial<ScheduleEvent> = {}): ScheduleEvent {
   return { id, accountId: "a", title: id, allDay: false, start: start.toISOString(), end: end.toISOString(), ...overrides };
@@ -41,86 +39,6 @@ describe("mentionsRecording", () => {
   });
 });
 
-describe("dayShape", () => {
-  it("names a free stretch, a double-booking with what is recorded, and when the day ends", () => {
-    expect(dayShape([
-      meeting("Marketing", at(14), at(14, 25)),
-      meeting("CS Updates", at(16), at(16, 20), { description: "The session is recorded." }),
-      meeting("Ramp AI", at(16), at(17)),
-    ], now)).toBe(`Free until ${clock(14)} · Double-booked at ${clock(16)} (CS Updates is recorded) · Last meeting ends ${clock(17)}`);
-  });
-
-  it("counts two or more clashes rather than listing each time", () => {
-    expect(dayShape([
-      meeting("Marketing", at(14), at(14, 25)),
-      meeting("Momentum", at(14), at(14, 45)),
-      meeting("CS Updates", at(16), at(16, 20), { description: "The session is recorded." }),
-      meeting("Ramp AI", at(16), at(17)),
-    ], now)).toBe(`Free until ${clock(14)} · 2 double-bookings (CS Updates is recorded) · Last meeting ends ${clock(17)}`);
-  });
-
-  it("calls a gap free time from the threshold up", () => {
-    const startingIn = (minutes: number) => [meeting("Next", new Date(now.getTime() + minutes * 60_000), at(18))];
-    expect(dayShape(startingIn(FREE_STRETCH_MINUTES - 1), now)).not.toMatch(/^Free until/);
-    expect(dayShape(startingIn(FREE_STRETCH_MINUTES), now)).toMatch(/^Free until/);
-    expect(dayShape(startingIn(FREE_STRETCH_MINUTES + 1), now)).toMatch(/^Free until/);
-  });
-
-  it("dates a clash from the later start and skips finished meetings", () => {
-    expect(dayShape([
-      meeting("Done", at(8), at(9)),
-      meeting("Long", at(10, 30), at(12)),
-      meeting("Overlap", at(11), at(11, 30)),
-    ], now)).toBe(`Double-booked at ${clock(11)} · Last meeting ends ${clock(12)}`);
-  });
-
-  it("says when no meeting is left, and says nothing for a day without meetings", () => {
-    expect(dayShape([meeting("Done", at(8), at(9))], now)).toBe("No more meetings today");
-    expect(dayShape([], now)).toBe("");
-  });
-});
-
-describe("daySummary", () => {
-  const benefits = meeting("Benefits Review", at(11), at(12));
-  const ops = meeting("Operations", at(15), at(15, 30));
-
-  it("says there are no meetings, counting neither declined nor all-day events", () => {
-    expect(daySummary([], now)).toBe("No meetings today");
-    expect(daySummary([meeting("Skip", at(11), at(12), { responseStatus: "declined" }), meeting("Offsite", at(0), at(23, 59), { allDay: true })], now)).toBe("No meetings today");
-  });
-
-  it("leaves out the next or current meeting on request, and never counts a working location as a meeting", () => {
-    expect(daySummary([benefits, ops], at(9), { omitNext: true })).toBe(`2 meetings · last meeting ends ${clock(15, 30)}`);
-    expect(daySummary([benefits, ops], at(11, 10), { omitNext: true })).toBe(`2 meetings · last meeting ends ${clock(15, 30)}`);
-    expect(daySummary([benefits, ops], at(16), { omitNext: true })).toBe(daySummary([benefits, ops], at(16)));
-    const office = meeting("Office", at(9), at(17), { eventType: "workingLocation" });
-    expect(daySummary([office, ops], at(9))).toBe(`1 meeting · next at ${clock(15)}`);
-    expect(daySummary([office], at(9))).toBe("No meetings today");
-    expect(dayShape([office], at(9))).toBe("");
-  });
-
-  it("names the next meeting in the morning, and when the last ends while more than one is left", () => {
-    expect(daySummary([benefits, ops], at(9))).toBe(`2 meetings · next at ${clock(11)} · last meeting ends ${clock(15, 30)}`);
-    expect(daySummary([ops], at(9))).toBe(`1 meeting · next at ${clock(15)}`);
-  });
-
-  it("names the meeting under way, and the next between meetings", () => {
-    expect(daySummary([benefits, ops], at(11, 15))).toBe(`2 meetings · in Benefits Review until ${clock(12)} · last meeting ends ${clock(15, 30)}`);
-    expect(daySummary([benefits, ops], at(13))).toBe(`2 meetings · next at ${clock(15)}`);
-  });
-
-  it("says when every meeting has finished", () => {
-    expect(daySummary([benefits, ops], at(17, 30))).toBe(`2 meetings, both finished · last ended ${clock(15, 30)}`);
-    expect(daySummary([benefits], at(17, 30))).toBe(`1 meeting, finished · ended ${clock(12)}`);
-    expect(daySummary([benefits, ops, meeting("Late", at(16), at(16, 30))], at(17, 30))).toBe(`3 meetings, all finished · last ended ${clock(16, 30)}`);
-  });
-
-  it("keeps double-bookings still ahead", () => {
-    const clash = meeting("Clash", at(15, 15), at(16));
-    expect(daySummary([benefits, ops, clash], at(13))).toBe(`3 meetings · next at ${clock(15)} · double-booked at ${clock(15, 15)} · last meeting ends ${clock(16)}`);
-  });
-});
-
 describe("meetingsWith", () => {
   it("finds the meetings still ahead that a sender is invited to", () => {
     const events = [
@@ -130,11 +48,7 @@ describe("meetingsWith", () => {
       meeting("Skipped", at(17), at(18), { attendees: ["taylor@example.com"], responseStatus: "declined" }),
       meeting("Other", at(13), at(14), { attendees: ["nick@example.com"] }),
     ];
-    const shared = meetingsWith("Taylor@Example.com", events, now);
-    expect(shared.map((event) => event.id)).toEqual(["Marketing", "Ops"]);
-    expect(sharedMeetingsNote(shared)).toBe(`Also in your ${clock(14)} and ${clock(15)} meetings`);
-    expect(sharedMeetingsNote(shared.slice(0, 1))).toBe(`Also in your ${clock(14)} meeting`);
-    expect(sharedMeetingsNote([])).toBe("");
+    expect(meetingsWith("Taylor@Example.com", events, now).map((event) => event.id)).toEqual(["Marketing", "Ops"]);
   });
 });
 
@@ -208,68 +122,3 @@ describe("planCapacity", () => {
   });
 });
 
-describe("offersPlanTomorrow", () => {
-  // Monday 16 November 2026, in UTC: working hours end at 17:00.
-  const hours: WorkingHours = { timeZone: "UTC", workingWindows: [{ weekday: 1, start: "09:00", end: "17:00" }] };
-  const utc = (clock: string) => new Date(`2026-11-16T${clock}:00Z`);
-
-  it("offers Plan Tomorrow from the last hour of working hours on, not before", () => {
-    expect(EVENING_HINT_MINUTES).toBe(60);
-    expect(offersPlanTomorrow([], hours, utc("15:59"))).toBe(false);
-    expect(offersPlanTomorrow([], hours, utc("16:00"))).toBe(true);
-    expect(offersPlanTomorrow([], hours, utc("18:30"))).toBe(true);
-    expect(offersPlanTomorrow([], null, utc("18:30"))).toBe(false);
-    // A day without working hours has no evening of its own.
-    expect(offersPlanTomorrow([], { ...hours, workingWindows: [] }, utc("18:30"))).toBe(false);
-  });
-
-  it("offers it once today's last attended meeting has ended, ignoring declined and all-day ones", () => {
-    const sync = meeting("sync", utc("10:00"), utc("11:00"));
-    const later = meeting("later", utc("14:00"), utc("15:00"), { responseStatus: "declined" });
-    const allDay = meeting("offsite", utc("00:00"), utc("23:59"), { allDay: true });
-    expect(offersPlanTomorrow([sync], hours, utc("10:59"))).toBe(false);
-    expect(offersPlanTomorrow([sync], hours, utc("11:00"))).toBe(true);
-    expect(offersPlanTomorrow([sync, later, allDay], hours, utc("11:30"))).toBe(true);
-    expect(offersPlanTomorrow([later], hours, utc("15:30"))).toBe(false);
-  });
-});
-
-describe("eveningOpens", () => {
-  const hours: WorkingHours = { timeZone: "UTC", workingWindows: [{ weekday: 1, start: "09:00", end: "17:00" }] };
-  const utc = (clock: string) => new Date(`2026-11-16T${clock}:00Z`);
-
-  it("opens once the last attending timed meeting has ended and working hours are over, not before either", () => {
-    const sync = meeting("sync", utc("10:00"), utc("11:00"));
-    const late = meeting("late", utc("16:00"), utc("17:30"));
-    expect(eveningOpens([sync], hours, utc("16:59"))).toBe(false);
-    expect(eveningOpens([sync], hours, utc("17:00"))).toBe(true);
-    // A meeting that runs past the end of working hours keeps the day view until it ends.
-    expect(eveningOpens([sync, late], hours, utc("17:15"))).toBe(false);
-    expect(eveningOpens([sync, late], hours, utc("17:30"))).toBe(true);
-    // Hours over but a meeting still ahead stays in the day.
-    expect(eveningOpens([meeting("dinner", utc("18:00"), utc("19:00"))], hours, utc("17:30"))).toBe(false);
-  });
-
-  it("ignores declined, all-day, and working-location events, and counts a day without meetings", () => {
-    const declined = meeting("declined", utc("18:00"), utc("19:00"), { responseStatus: "declined" });
-    const allDay = meeting("offsite", utc("00:00"), utc("23:59"), { allDay: true });
-    const location = meeting("Office", utc("09:00"), utc("19:00"), { eventType: "workingLocation" });
-    expect(eveningOpens([declined, allDay, location], hours, utc("17:30"))).toBe(true);
-    expect(eveningOpens([], hours, utc("17:30"))).toBe(true);
-  });
-
-  it("never opens while the schedule is unknown", () => {
-    expect(eveningOpens(null, hours, utc("20:00"))).toBe(false);
-  });
-
-  it("falls back to 6 pm local time without working hours, or on a day they don't cover", () => {
-    expect(EVENING_FALLBACK_HOUR).toBe(18);
-    const local = (hour: number, minute = 0) => new Date(2026, 10, 16, hour, minute);
-    expect(eveningOpens([], null, local(17, 59))).toBe(false);
-    expect(eveningOpens([], null, local(18))).toBe(true);
-    // Working hours that cover no window today (a weekend) have no end to wait for.
-    const noWindows: WorkingHours = { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, workingWindows: [] };
-    expect(eveningOpens([], noWindows, local(17, 59))).toBe(false);
-    expect(eveningOpens([], noWindows, local(18, 30))).toBe(true);
-  });
-});

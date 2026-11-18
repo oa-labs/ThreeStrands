@@ -4,7 +4,7 @@ import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption, CreateCalendarEventRequest, ScheduleEvent } from "./domain";
 import { SLOT_MINUTES } from "./DayTimeGrid";
 import { errorMessage } from "./errors";
-import { bookedSource, defaultEventCalendar, showCalendar, sourceTaskId, TASK_BLOCK_MINUTES, writableCalendars, type BookedSource } from "./taskBooking";
+import { bookedSource, defaultEventCalendar, showCalendar, sourceTaskId, TASK_BLOCK_MINUTES, writableCalendars } from "./taskBooking";
 import { planCapacity, type WorkingHours } from "./todayInsights";
 import { schedulingDay } from "./meetingAvailability";
 import type { Notice } from "./useNotice";
@@ -96,18 +96,6 @@ export async function bookBlock(target: BlockTarget, start: Date, context: Booki
     context.onNotice({ message: errorMessage(reason) });
     return null;
   }
-}
-
-/** The block booked for a task among today's events, resolving replicated and note-task sources as Calendar does: the next one still to end, else the latest. */
-export function bookedFor(taskId: string | null, events: readonly ScheduleEvent[], now: Date): ScheduleEvent | null {
-  const source = bookedSource(taskId);
-  if (!source) return null;
-  const blocks = events.filter((event) => sameSource(bookedSource(event.sourceTaskId), source)).sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
-  return blocks.find((event) => Date.parse(event.end) > now.getTime()) ?? blocks.at(-1) ?? null;
-}
-
-function sameSource(left: BookedSource | null, right: BookedSource): boolean {
-  return left !== null && sourceTaskId(left) === sourceTaskId(right);
 }
 
 /**
