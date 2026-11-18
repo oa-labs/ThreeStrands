@@ -205,6 +205,21 @@ describe("PlanningInbox", () => {
       fireEvent.keyDown(field(), { key: "Escape" });
       expect(field()).toHaveValue("");
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(field()).not.toHaveFocus();
+    });
+
+    it.each(["", "Draft"])("releases focus on Escape with title %j without passing Escape to navigation", (title) => {
+      const onAddTask = vi.fn();
+      const navigate = vi.fn();
+      render(<div onKeyDown={navigate}><PlanningInbox {...defaults} entries={[]} onAddTask={onAddTask} /></div>);
+      type(title);
+      field().focus();
+      expect(field()).toHaveFocus();
+      fireEvent.keyDown(field(), { key: "Escape" });
+      expect(document.body).toHaveFocus();
+      expect(field()).toHaveValue("");
+      expect(onAddTask).not.toHaveBeenCalled();
+      expect(navigate).not.toHaveBeenCalled();
     });
   });
 });

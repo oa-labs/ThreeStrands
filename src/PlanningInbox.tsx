@@ -181,7 +181,7 @@ export function PlanningInbox({ entries, scope, onAddTask, status, unavailable =
           onChange={(event) => { setDraftTitle(event.target.value); setDraftError(null); }}
           onKeyDown={(event) => {
             if (event.key === "Enter") { event.preventDefault(); void submitDraft(); }
-            else if (event.key === "Escape" && draftTitle) { event.preventDefault(); event.stopPropagation(); setDraftTitle(""); setDraftError(null); }
+            else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setDraftTitle(""); setDraftError(null); event.currentTarget.blur(); }
           }} />
         {draftError ? <p className="form-error" role="alert">{draftError}</p> : null}
       </div> : null}
