@@ -526,6 +526,12 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
                 requestAnimationFrame(() => { focusSelectedRow(); search.current?.blur(); });
               }} />
             <span className="search-input-actions">
+              {listView === "notes" && query.trim() ? <button type="button"
+                className={`btn-icon btn-icon-sm search-toggle${includeTrash ? " active" : ""}`}
+                aria-label="Include Trash" aria-pressed={includeTrash}
+                title={includeTrash ? "Searching notes and Trash. Click to exclude Trash." : "Searching notes only. Click to include Trash."}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => setIncludeTrash((current) => !current)}><Trash2 size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
               <button type="button" className="btn-icon btn-icon-sm search-close" aria-label="Close Search" title="Close Search (Esc)"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => { setQuery(""); requestAnimationFrame(focusSelectedRow); }}><X size={ICON_SIZE.sm} /></button>
@@ -533,7 +539,6 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             </span>
           </label>
         </div>
-        {listView === "notes" ? <label className="notes-search-scope"><input type="checkbox" checked={includeTrash} onChange={(event) => setIncludeTrash(event.target.checked)} />Include Trash</label> : <p className="notes-search-scope">Searching Trash only</p>}
         {listError ? <p className="form-error" role="alert">{listError}</p> : null}
         {listView === "trash" && !hits ? <h2 className="eyebrow notes-list-heading">Trash</h2> : null}
         <div className="notes-list" role="list" aria-label={hits ? "Matching notes" : listView === "trash" ? "Trash" : "Notes"}>

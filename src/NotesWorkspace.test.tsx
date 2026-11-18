@@ -48,7 +48,7 @@ describe("Notes workspace", () => {
     const view = render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
     fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: note.title } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Include Trash" }));
+    fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));
     await screen.findByRole("list", { name: "Matching notes" });
     fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Unfinished rename" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Note text" }), { target: { value: "Unfinished local body" } });
@@ -57,7 +57,7 @@ describe("Notes workspace", () => {
     await act(async () => { finish(); });
     await waitFor(() => expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument());
     expect(screen.getByRole("searchbox", { name: "Search Notes" })).toHaveValue(note.title);
-    expect(screen.getByRole("checkbox", { name: "Include Trash" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Include Trash" })).toHaveAttribute("aria-pressed", "true");
     expect(searchNotes).toHaveBeenLastCalledWith(note.title, expect.any(Number), "all");
     expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Unfinished rename");
     expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue("Unfinished local body");
@@ -528,7 +528,7 @@ describe("Notes workspace", () => {
     const first = render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });
     fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "sessionneedle" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Include Trash" }));
+    fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));
     const results = within(await screen.findByRole("list", { name: "Matching notes" }));
     fireEvent.click(await results.findByRole("button", { name: new RegExp(active.title) }));
     first.unmount();
@@ -536,11 +536,12 @@ describe("Notes workspace", () => {
     const search = screen.getByRole("searchbox", { name: "Search Notes" });
     expect(search).toHaveValue("sessionneedle");
     expect(search).not.toHaveFocus();
-    expect(screen.getByRole("checkbox", { name: "Include Trash" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Include Trash" })).toHaveAttribute("aria-pressed", "true");
     const restored = within(await screen.findByRole("list", { name: "Matching notes" }));
     expect(await restored.findByRole("button", { name: new RegExp(active.title) })).toHaveAttribute("aria-current", "true");
     expect(await restored.findByRole("button", { name: new RegExp(trashed.title) })).toHaveTextContent("Trash");
     fireEvent.click(screen.getByRole("button", { name: /^Trash/ }));
+    expect(screen.queryByRole("button", { name: "Include Trash" })).not.toBeInTheDocument();
     await waitFor(() => expect(within(screen.getByRole("list", { name: "Matching notes" })).queryByRole("button", { name: new RegExp(active.title) })).not.toBeInTheDocument());
     const trashResult = await within(screen.getByRole("list", { name: "Matching notes" })).findByRole("button", { name: new RegExp(trashed.title) });
     fireEvent.click(trashResult);
@@ -553,7 +554,7 @@ describe("Notes workspace", () => {
     await screen.findByRole("region", { name: "Note in Trash" });
     fireEvent.click(screen.getByRole("button", { name: "Back to Notes" }));
     expect(screen.getByRole("searchbox", { name: "Search Notes" })).toHaveValue("sessionneedle");
-    expect(screen.getByRole("checkbox", { name: "Include Trash" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Include Trash" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("excludes Trash by default, supports including it and leaves search mode with Enter", async () => {
@@ -566,23 +567,40 @@ describe("Notes workspace", () => {
     const search = screen.getByRole("searchbox", { name: "Search Notes" });
     expect(search.closest("label")).toHaveClass("idle");
     expect(search.closest("label")?.querySelector("svg")).not.toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Include Trash" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Include Trash" })).not.toBeInTheDocument();
     fireEvent.keyDown(document.body, { key: "/" });
     await waitFor(() => expect(search).toHaveFocus());
     fireEvent.change(search, { target: { value: "scopeneedle" } });
+    const scope = within(search.closest("label")!).getByRole("button", { name: "Include Trash", pressed: false });
+    expect(scope).toHaveClass("search-toggle");
+    expect(scope.closest(".search-input-actions")).not.toBeNull();
+    expect(scope).toHaveAttribute("title", "Searching notes only. Click to include Trash.");
+    // Changing scope keeps keyboard input in the search field.
+    fireEvent.mouseDown(scope);
+    fireEvent.click(scope);
+    expect(scope).toHaveAttribute("aria-pressed", "true");
+    expect(scope).toHaveClass("active");
+    expect(scope).toHaveAttribute("title", "Searching notes and Trash. Click to exclude Trash.");
+    expect(search).toHaveFocus();
+    fireEvent.click(scope);
+    expect(scope).toHaveAttribute("aria-pressed", "false");
+    expect(scope).not.toHaveClass("active");
     const results = within(await screen.findByRole("list", { name: "Matching notes" }));
     await results.findByRole("button", { name: new RegExp(active.title) });
     expect(results.queryByRole("button", { name: new RegExp(trashed.title) })).not.toBeInTheDocument();
     fireEvent.keyDown(search, { key: "Enter" });
     expect(search).not.toHaveFocus();
     expect(search).toHaveValue("scopeneedle");
-    fireEvent.click(screen.getByRole("checkbox", { name: "Include Trash" }));
+    fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));
     await results.findByRole("button", { name: new RegExp(trashed.title) });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Include Trash" }));
+    fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));
     await waitFor(() => expect(results.queryByRole("button", { name: new RegExp(trashed.title) })).not.toBeInTheDocument());
     await results.findByRole("button", { name: new RegExp(active.title) });
     fireEvent.click(screen.getByRole("button", { name: "Close Search" }));
     expect(search).toHaveValue("");
     await screen.findByRole("list", { name: "Notes" });
+    expect(screen.queryByRole("button", { name: "Include Trash" })).not.toBeInTheDocument();
   });
 
   it("ignores a search response from an earlier scope", async () => {
@@ -595,9 +613,9 @@ describe("Notes workspace", () => {
     render(<NotesWorkspace />);
     await screen.findByRole("button", { name: /^Today/ });
     fireEvent.change(screen.getByRole("searchbox", { name: "Search Notes" }), { target: { value: "delayedneedle" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Include Trash" }));
+    fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));
     await waitFor(() => expect(lookup).toHaveBeenCalledWith("delayedneedle", expect.any(Number), "all"));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Include Trash" }));
+    fireEvent.click(screen.getByRole("button", { name: "Include Trash" }));
     await waitFor(() => expect(lookup).toHaveBeenCalledWith("delayedneedle", expect.any(Number), "active"));
     await act(async () => finishAll([{ ...note, trashed: true, matchSnippet: "delayedneedle" }]));
     expect(within(screen.getByRole("list", { name: "Matching notes" })).queryByRole("button", { name: new RegExp(note.title) })).not.toBeInTheDocument();
