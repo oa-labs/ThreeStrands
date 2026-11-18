@@ -427,16 +427,19 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await page.keyboard.press("ControlOrMeta+1");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
-  // Picking an account from another workspace lands on its mail, by shortcut or rail click, even the active one.
+  // Picking an account from another workspace keeps that workspace open, by shortcut or rail click; mail then shows the chosen account.
   await page.keyboard.press("2");
   await expect(page.getByRole("region", { name: "Calendar week" })).toBeVisible();
   await page.keyboard.press("ControlOrMeta+2");
-  await expect(page.getByRole("region", { name: "Calendar week" })).toBeHidden();
+  await expect(page.getByRole("region", { name: "Calendar week" })).toBeVisible();
+  await page.keyboard.press("1");
   await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+1");
   await page.keyboard.press("2");
   await expect(page.getByRole("region", { name: "Calendar week" })).toBeVisible();
   await rail.getByRole("radio", { name: "demo-2@example.com" }).click();
-  await expect(page.getByRole("region", { name: "Calendar week" })).toBeHidden();
+  await expect(page.getByRole("region", { name: "Calendar week" })).toBeVisible();
+  await page.keyboard.press("1");
   await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
   await page.keyboard.press("ControlOrMeta+1");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
@@ -1085,7 +1088,7 @@ test("a Brief's offered slots reach calendar checks and a reply without a meetin
   await get.click();
   const proposed = context.getByRole("region",{name:"Proposed times"});
   await expect(proposed.getByRole("status")).toHaveText("Checking proposed times…");
-  const candidates = proposed.getByRole("checkbox",{name:/^\d+\./});
+  const candidates = proposed.getByRole("checkbox",{name:/^Include \d+\./});
   await expect(candidates).toHaveCount(2);
   await expect(candidates.first()).toBeDisabled();
   await expect(proposed.locator(".proposed-time-title")).toHaveText([
