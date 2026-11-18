@@ -556,14 +556,15 @@ describe("CalendarWeekView", () => {
       const dialog = screen.getByRole("region", { name: "Planning details" });
       fireEvent.click(within(dialog).getByRole("button", { name: "Delete Event" }));
       const confirm = within(dialog).getByRole("group", { name: "Delete event confirmation" });
-      expect(confirm).toHaveTextContent("Delete this event? Guests will be notified.");
-      fireEvent.click(within(confirm).getByRole("button", { name: "Keep" }));
+      expect(within(confirm).getByText("Delete this event?")).toBeVisible();
+      expect(within(confirm).getByText("Guests will be notified.")).toBeVisible();
+      fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
       expect(within(dialog).queryByRole("group", { name: "Delete event confirmation" })).not.toBeInTheDocument();
       expect(remove).not.toHaveBeenCalled();
 
       fireEvent.click(within(dialog).getByRole("button", { name: "Delete Event" }));
       vi.mocked(mailClient.listScheduleEvents).mockImplementation(() => new Promise(() => {}));
-      fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete event" }));
       await waitFor(() => expect(remove).toHaveBeenCalledWith(planning));
       // The deleted event leaves the grid before the refetch finishes.
       await waitFor(() => expect(screen.queryByRole("region", { name: "Planning details" })).not.toBeInTheDocument());
@@ -578,7 +579,7 @@ describe("CalendarWeekView", () => {
       const dialog = screen.getByRole("region", { name: "Planning details" });
       fireEvent.click(within(dialog).getByRole("button", { name: "Delete Event" }));
       expect(within(dialog).getByRole("group", { name: "Delete event confirmation" })).not.toHaveTextContent("Guests will be notified");
-      fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete event" }));
       expect(await within(dialog).findByRole("alert")).toHaveTextContent("Only events you organize can be changed");
       expect(calendarGrid().getByRole("button", { name: /^Planning/ })).toBeInTheDocument();
     });
