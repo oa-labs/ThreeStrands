@@ -243,6 +243,7 @@ describe("ThreadAssist", () => {
     expect(items.map((item) => item.textContent)).toEqual(["They now want it Monday instead.", "Earlier: The client asked for the website by Friday."]);
     expect(items[1]).toHaveClass("thread-assist-summary-earlier");
     expect(screen.getByRole("list").compareDocumentPosition(screen.getByText("From the latest message")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("From the latest message").compareDocumentPosition(screen.getByText("Generation details")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     rerender(<ThreadAssist {...props({ detail: { ...thread, thread: { ...thread.thread, summaryFocusFrom: "2026-09-20T10:00:00Z" } }, suggestions: { requested: true } })} />);
     expect(screen.getByText("From the 2 latest messages")).toBeInTheDocument();

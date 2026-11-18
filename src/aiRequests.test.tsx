@@ -58,7 +58,9 @@ describe("native AI request controls", () => {
     vi.mocked(invoke).mockResolvedValue([null,null]);
     render(<AiCachedProvenance threadId="A" />);
     expect(invoke).not.toHaveBeenCalled();
-    const details=screen.getByText("Cached Generation Details").parentElement as HTMLDetailsElement;
+    const details=screen.getByText("Generation details").parentElement as HTMLDetailsElement;
+    expect(details).toHaveClass("ai-cached-provenance");
+    expect(details.open).toBe(false);
     await act(async()=>{details.open=true;fireEvent(details,new Event("toggle"));});
     expect(invoke).toHaveBeenCalledWith("ai_result_provenance",{threadId:"A"});
   });
