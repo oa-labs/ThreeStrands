@@ -40,12 +40,42 @@ describe("demo notes", () => {
     await notes.trashNote(trashed.id);
     await notes.saveDailyNote("2026-11-09", "A daily note", null);
     const at = Date.parse(kept.createdAt);
-    const range = (start: number, end: number) => notes.listNotesCreatedBetween(new Date(at + start).toISOString(), new Date(at + end).toISOString(), 10);
+    const range = (start: number, end: number) => notes.listNotesDoneBetween(new Date(at + start).toISOString(), new Date(at + end).toISOString(), 10);
     expect((await range(-1000, 1000)).map((note) => note.title)).toEqual(["Kept"]);
-    expect(await range(-1000, 1000)).toEqual([{ id: kept.id, title: "Kept", preview: "About it", createdAt: kept.createdAt }]);
+    expect(await range(-1000, 1000)).toEqual([{ id: kept.id, title: "Kept", preview: "About it", at: kept.createdAt, edited: false }]);
     expect(await range(0, 1000)).toHaveLength(1);
     expect(await range(-1000, 0)).toEqual([]);
     expect(await range(1, 1000)).toEqual([]);
+  });
+
+  it("includes only starred saved edits in range, once at their latest edit time", async () => {
+    const notes = createDemoNotes();
+    const star = await notes.createNote("Star", "Original");
+    const plain = await notes.createNote("Plain", "Original");
+    const untouched = await notes.createNote("Untouched", "Original");
+    const daily = (await notes.saveDailyNote("2026-11-09", "Original", null)).note!;
+    await notes.setNoteStarred(star.id, true);
+    await notes.setNoteStarred(untouched.id, true);
+    await notes.recordNoteVisit(untouched.id);
+    const edited = (await notes.updateNote(star.id, "Star renamed", star.body, star.updatedAt)).note!;
+    await notes.updateNote(plain.id, plain.title, "Unstarred edit", plain.updatedAt);
+    await notes.setNoteStarred(daily.id, true);
+    const editedDaily = (await notes.saveDailyNote("2026-11-09", "Edited daily", daily.updatedAt)).note!;
+    const start = edited.updatedAt, end = new Date(Date.parse(editedDaily.updatedAt) + 1).toISOString();
+    const range = () => notes.listNotesDoneBetween(start, end, 100);
+    expect(await range()).toEqual([
+      { id: daily.id, title: daily.title, preview: "Edited daily", at: editedDaily.updatedAt, edited: true },
+      { id: star.id, title: "Star renamed", preview: "Original", at: edited.updatedAt, edited: true },
+    ]);
+    expect(await notes.listNotesDoneBetween(start, editedDaily.updatedAt, 100)).toEqual([(await range())[1]]);
+    expect(await notes.listNotesDoneBetween(start, end, 1)).toEqual([(await range())[0]]);
+    const all = await notes.listNotesDoneBetween(star.createdAt, end, 100);
+    expect(all.filter((note) => note.id === star.id)).toEqual([(await range())[1]]);
+    expect(all.find((note) => note.id === untouched.id)).toMatchObject({ at: untouched.createdAt, edited: false });
+    await notes.trashNote(daily.id);
+    expect(await range()).toHaveLength(1);
+    await notes.setNoteStarred(star.id, false);
+    expect(await range()).toEqual([]);
   });
 
   it("loads seeded notes by the native rules, the last seed most recently changed", async () => {

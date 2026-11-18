@@ -714,8 +714,8 @@ function TodayLayout({
         detail: [sent.recipients.map((recipient) => parseAddress(recipient).name || parseAddress(recipient).email).join(", "), accountId === null && mailAccountCount > 1 ? sent.thread.accountId : null].filter(Boolean).join(" · ") || undefined },
     })),
     ...doneOnDay.notes.map((note): DoneEntry => ({
-      id: `note:${note.id}`, identities: [`note:${note.id}`], category: "notes", title: note.title, at: note.createdAt,
-      row: { wrapTitle: true, icon: <NotebookPen size={ICON_SIZE.sm} />, onActivate: () => onOpenNote?.(note.id), detail: note.preview || undefined },
+      id: `note:${note.id}`, identities: [`note:${note.id}`], category: "notes", title: note.title, at: note.at,
+      row: { wrapTitle: true, icon: <NotebookPen size={ICON_SIZE.sm} />, onActivate: () => onOpenNote?.(note.id), detail: [note.edited ? "Edited" : null, note.preview].filter(Boolean).join(" · ") || undefined },
     })),
   ]) : [];
   const doneErrors = { tasks: sourceErrors.tasks, noteTasks: completedNotes.error, ...doneOnDay.errors };

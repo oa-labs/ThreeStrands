@@ -7,7 +7,7 @@ import { meetingBlocks } from "../meetingExcerpt";
 import type { MailClient } from "./client";
 import type { DemoNoteSeed } from "./demoDataset";
 
-type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "listStarredNotes" | "setNoteStarred" | "listNotesCreatedBetween" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
+type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "listStarredNotes" | "setNoteStarred" | "listNotesDoneBetween" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = collapseWhitespace;
@@ -181,13 +181,17 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
       notes.set(id, next);
       return { note: structuredClone(next), added: true, previousBody, meetingNote: meetingNote && structuredClone(meetingNote), createdMeetingNote };
     },
-    /** Mirrors `list_notes_created_between` in `src-tauri/src/db/notes.rs`. */
-    async listNotesCreatedBetween(start, end, limit) {
+    /** Mirrors `list_notes_done_between` in `src-tauri/src/db/notes.rs`. */
+    async listNotesDoneBetween(start, end, limit) {
       const from = Date.parse(start), to = Date.parse(end);
-      return [...notes.values()].filter((note) => !note.trashed && note.dailyDate === null && Date.parse(note.createdAt) >= from && Date.parse(note.createdAt) < to)
-        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id))
-        .slice(0, limit)
-        .map((note) => ({ id: note.id, title: note.title, preview: preview(note.body), createdAt: note.createdAt }));
+      return [...notes.values()].filter((note) => !note.trashed).flatMap((note) => {
+        const updated = Date.parse(note.updatedAt), created = Date.parse(note.createdAt);
+        const edited = Boolean(note.starred) && updated > created && updated >= from && updated < to;
+        return edited || (note.dailyDate === null && created >= from && created < to)
+          ? [{ id: note.id, title: note.title, preview: preview(note.body), at: edited ? note.updatedAt : note.createdAt, edited }] : [];
+      })
+        .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || a.id.localeCompare(b.id))
+        .slice(0, limit);
     },
     async listRecentNotes(limit) {
       const recent = (note: Note) => [visits.get(note.id) ?? "", note.updatedAt].sort().at(-1)!;

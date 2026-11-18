@@ -2255,7 +2255,7 @@ fn note_created(id: &str, title: &str, created_at: &str, daily: Option<&str>) ->
 }
 
 #[test]
-fn notes_created_between_keeps_the_day_and_skips_daily_and_trashed_notes() {
+fn notes_done_between_keeps_the_day_and_skips_daily_and_trashed_notes() {
     let db = database();
     for (id, title, at) in [
         (
@@ -2302,7 +2302,7 @@ fn notes_created_between_keeps_the_day_and_skips_daily_and_trashed_notes() {
     .unwrap();
 
     let titles = |start: &str, end: &str| {
-        db.list_notes_created_between(start, end, 100)
+        db.list_notes_done_between(start, end, 100)
             .unwrap()
             .into_iter()
             .map(|note| note.title)
@@ -2317,10 +2317,146 @@ fn notes_created_between_keeps_the_day_and_skips_daily_and_trashed_notes() {
         ["Before end", "At start"]
     );
     let first = &db
-        .list_notes_created_between("2026-11-10T00:00:00Z", "2026-11-11T00:00:00Z", 1)
+        .list_notes_done_between("2026-11-10T00:00:00Z", "2026-11-11T00:00:00Z", 1)
         .unwrap()[0];
-    assert_eq!(first.created_at, "2026-11-10T23:59:59Z");
+    assert_eq!(first.at, "2026-11-10T23:59:59Z");
+    assert!(!first.edited);
     assert_eq!(first.preview, "About Before end");
+}
+
+#[test]
+fn done_notes_include_only_starred_edits_in_range_once_newest_first() {
+    let db = database();
+    let start = "2026-11-10T00:00:00.000Z";
+    let end = "2026-11-11T00:00:00.000Z";
+    for (suffix, title, created, updated, starred, daily) in [
+        (
+            "01",
+            "Before start",
+            "2026-11-01T00:00:00Z",
+            "2026-11-09T23:59:59Z",
+            true,
+            None,
+        ),
+        (
+            "02",
+            "At start",
+            "2026-11-01T00:00:00Z",
+            "2026-11-10T00:00:00Z",
+            true,
+            None,
+        ),
+        (
+            "03",
+            "Before end",
+            "2026-11-01T00:00:00Z",
+            "2026-11-10T23:59:59Z",
+            true,
+            None,
+        ),
+        (
+            "04",
+            "At end",
+            "2026-11-01T00:00:00Z",
+            "2026-11-11T00:00:00Z",
+            true,
+            None,
+        ),
+        (
+            "05",
+            "Unstarred edit",
+            "2026-11-01T00:00:00Z",
+            "2026-11-10T22:00:00Z",
+            false,
+            None,
+        ),
+        (
+            "06",
+            "Created and edited",
+            "2026-11-10T01:00:00Z",
+            "2026-11-10T21:00:00Z",
+            true,
+            None,
+        ),
+        (
+            "07",
+            "Trashed edit",
+            "2026-11-01T00:00:00Z",
+            "2026-11-10T22:00:00Z",
+            true,
+            None,
+        ),
+        (
+            "08",
+            "2026-11-09",
+            "2026-11-09T00:00:00Z",
+            "2026-11-10T20:00:00Z",
+            true,
+            Some("2026-11-09"),
+        ),
+        (
+            "09",
+            "Created then edited later",
+            "2026-11-10T02:00:00Z",
+            "2026-11-11T12:00:00Z",
+            true,
+            None,
+        ),
+    ] {
+        let id = daily
+            .map(crate::notes::daily_note_id)
+            .unwrap_or_else(|| format!("import-000000000000000000000000000000{suffix}"));
+        let mut note = note_created(&id, title, created, daily);
+        note.updated_at = updated.into();
+        note.starred = starred;
+        db.import_note(note, &[]).unwrap();
+        if title == "Trashed edit" {
+            db.trash_note(&id).unwrap();
+        }
+    }
+    let listed = db.list_notes_done_between(start, end, 100).unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|note| note.title.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Before end",
+            "Created and edited",
+            "2026-11-09",
+            "Created then edited later",
+            "At start"
+        ]
+    );
+    assert_eq!(
+        listed.iter().map(|note| note.edited).collect::<Vec<_>>(),
+        [true, true, true, false, true]
+    );
+    assert_eq!(listed[1].at, "2026-11-10T21:00:00Z");
+    assert_eq!(
+        db.list_notes_done_between(start, end, 1).unwrap(),
+        listed[..1]
+    );
+
+    // Opening or starring an old untouched note does not make an edit.
+    let id = "import-00000000000000000000000000000010";
+    db.import_note(
+        note_created(id, "Only starred and visited", "2026-11-01T00:00:00Z", None),
+        &[],
+    )
+    .unwrap();
+    db.set_note_starred(id, true).unwrap();
+    db.record_note_visit(id).unwrap();
+    let today = chrono::Utc::now().date_naive();
+    assert!(!db
+        .list_notes_done_between(
+            &format!("{today}T00:00:00Z"),
+            &format!("{}T00:00:00Z", today.succ_opt().unwrap()),
+            100,
+        )
+        .unwrap()
+        .iter()
+        .any(|note| note.id == id));
 }
 
 #[test]

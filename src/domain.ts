@@ -1058,15 +1058,16 @@ export type Note = {
   trashedAt: string | null;
 };
 
-/** A note as the note list shows it. */
-/** A note created within a range, for the Today Done card. */
-export type CreatedNote = {
+/** A creation or latest saved edit within a range, for the Today Done card. */
+export type DoneNote = {
   id: string;
   title: string;
   preview: string;
-  createdAt: string;
+  at: string;
+  edited: boolean;
 };
 
+/** A note as the note list shows it. */
 export type NoteSummary = {
   id: string;
   title: string;

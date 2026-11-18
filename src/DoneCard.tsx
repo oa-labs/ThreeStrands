@@ -19,7 +19,7 @@ export type DoneEntry = {
   identities: string[];
   category: DoneCategory;
   title: string;
-  /** When it was finished, sent or created (ISO); rows without one come last. */
+  /** When it was finished, sent, created or edited (ISO); rows without one come last. */
   at: string | null;
   row: Omit<Parameters<typeof ContextRow>[0], "title" | "date" | "onPointerDown" | "actions" | "trailing">;
 };
@@ -52,7 +52,7 @@ function initialFilter(): DoneFilter {
   return readLocalStorage<DoneFilter>(DONE_FILTER_KEY, (raw) => FILTERS.some((filter) => filter.id === raw) ? raw as DoneFilter : "all", "all");
 }
 
-/** What got finished on the day the schedule shows: tasks, mail the user sent, and notes they started. */
+/** Progress on the day the schedule shows: finished tasks, sent mail, new notes and edits to starred notes. */
 export function DoneCard({ title, today, dayLabel, entries, errors, loading }: {
   /** "Done Today", or "Done" for another day, as the schedule card is named. */
   title: string;
