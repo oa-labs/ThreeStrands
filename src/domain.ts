@@ -1173,11 +1173,9 @@ export type PlanChanges = {
   items: PlanEntry[];
   remove: string[];
   notToday: NotTodayEntry[];
-  /** A note on the day, appended as a paragraph under `### Shutdown` at the end of the plan section. */
-  shutdown?: string | null;
 };
 /** What a plan save did; retrying its `operationId` returns the same result. */
-export type PlanSaveResult = { operationId: string; note: Note; added: string[]; removed: string[]; notToday: string[]; already: string[]; changed: boolean; shutdown: boolean };
+export type PlanSaveResult = { operationId: string; note: Note; added: string[]; removed: string[]; notToday: string[]; already: string[]; changed: boolean };
 /** Carry count and planned days (oldest first) of one plan item key over a range. */
 export type PlanHistory = { target: string; carryCount: number; plannedDays: string[] };
 export type PlanSourceKind = "suggested" | "tasks" | "starredMail" | "promises" | "keepInTouch" | "goals" | "notes";

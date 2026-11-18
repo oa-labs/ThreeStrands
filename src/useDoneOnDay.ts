@@ -31,10 +31,11 @@ function useDaySource<T>(key: string, enabled: boolean, refreshKey: string, read
       if (request === version.current) setLoading(false);
     }
   }, [key, enabled]);
+  const cancel = useCallback(() => { version.current++; }, []);
   useEffect(() => {
     void reload();
-    return () => { version.current++; };
-  }, [reload, refreshKey]);
+    return cancel;
+  }, [reload, refreshKey, cancel]);
   useNoteChanges(watchNotes ? reload : noop);
   const current = state.key === key ? state : empty<T>(key);
   return { ...current, loading: enabled && (loading || state.key !== key) };
