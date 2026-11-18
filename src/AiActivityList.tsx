@@ -56,24 +56,30 @@ export function AiActivityList() {
     {error ? <p className="form-error" role="alert">{error}</p> : null}
     {!entries && !error ? <p className="settings-hint">Loading activity…</p> : null}
     {entries && entries.length === 0 ? <p className="settings-hint">Nothing has been sent yet.</p> : null}
-    {shown.length > 0 ? <ul className="ai-activity-list">
-      {shown.map((entry, index) => {
-        const when = formatDateTime(new Date(entry.at));
-        const details = [
-          when,
-          `${providerLabel(entry.provider)} ${entry.model}`,
-          entry.messageCount !== null ? plural(entry.messageCount, "message") : null,
-          `${formatTokens(entry.inputTokens + entry.outputTokens)} tokens`,
-        ].filter(Boolean).join(" · ");
-        return <li key={`${entry.at}-${index}`}>
-          <span className="ai-activity-title">
+    {shown.length > 0 ? <div className="ai-activity-scroll" role="region" aria-label="Activity table" tabIndex={0}>
+      <table className="ai-activity-table" aria-label="Recent AI requests">
+        <thead><tr>
+          <th scope="col">Activity / Conversation</th>
+          <th scope="col">When</th>
+          <th scope="col">Provider / Model</th>
+          <th scope="col" className="ai-activity-number">Messages</th>
+          <th scope="col" className="ai-activity-number">Tokens</th>
+        </tr></thead>
+        <tbody>{shown.map((entry, index) => <tr key={`${entry.at}-${index}`}>
+          <td>
             <strong>{aiActivityFeatureLabel(entry.feature)}</strong>
             {entry.subject ? <span className="ai-activity-subject">{entry.subject}</span> : null}
-          </span>
-          <small>{details}</small>
-        </li>;
-      })}
-    </ul> : null}
+          </td>
+          <td><time dateTime={entry.at}>{formatDateTime(new Date(entry.at))}</time></td>
+          <td>
+            <span className="ai-activity-provider">{providerLabel(entry.provider)}</span>
+            <span className="ai-activity-model">{entry.model}</span>
+          </td>
+          <td className="ai-activity-number" aria-label={entry.messageCount !== null ? plural(entry.messageCount, "message") : "Not applicable"}>{entry.messageCount ?? "—"}</td>
+          <td className="ai-activity-number" aria-label={`${formatTokens(entry.inputTokens + entry.outputTokens)} tokens`}>{formatTokens(entry.inputTokens + entry.outputTokens)}</td>
+        </tr>)}</tbody>
+      </table>
+    </div> : null}
     {entries && entries.length > AI_ACTIVITY_SHOWN ? <button type="button" className="btn-link" onClick={() => setShowAll(!showAll)}>
       {showAll ? "Show Fewer" : `Show ${entries.length - AI_ACTIVITY_SHOWN} More`}
     </button> : null}
