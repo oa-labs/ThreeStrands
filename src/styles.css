@@ -3799,6 +3799,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* Clip the grid's square backgrounds to the schedule card without clipping inbox menus. */
 .today-time { overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 .today-stack { display: flex; flex-direction: column; gap: var(--space-4); }
+/* The inbox card takes the column's spare height, so the column ends level with the schedule and the Done card sits at its foot. */
+.today-stack > .today-work:first-child { flex: 1 0 auto; }
 /* The Done card sits under the Planning Inbox as its own card. */
 .today-done-day { margin-left: var(--space-1); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-medium); }
 /* A finished row reads as checked and quiet, not struck through; the strikethrough stays for other lists. */
