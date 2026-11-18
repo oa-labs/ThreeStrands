@@ -646,7 +646,9 @@ or exported).
 
 > **Removed (2026-11-18).** The evening view, **Review Today**, **Plan
 > Tomorrow**, **Day closed**, and **Notes on the Day** were built (stage 4) and
-> removed before release. Kept as design history.
+> removed before release. Kept as design history. The plan save's note-on-the-day
+> write (`### Shutdown`) is gone too; paragraphs already written stay in notes as
+> ordinary text and are never read as plan items.
 
 **Decision (2026-11-17, after review of the installed app):** Shut Down is not a
 modal routine. In the evening the user's questions are what they accomplished,

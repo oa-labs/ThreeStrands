@@ -1,13 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { appendShutdownNote, arrangePlanItems, insertPlanLines, MAX_SHUTDOWN_NOTE_CHARS, parsePlan, planLine, removePlanLine, shutdownParagraph, type PlanItemKind, type PlanMarker } from "./dailyPlan";
+import {  arrangePlanItems, insertPlanLines, parsePlan, planLine, removePlanLine, type PlanItemKind, type PlanMarker } from "./dailyPlan";
 import { noteReferenceHref, type NoteReference } from "./noteEntities";
 
 type Expected = { kind: PlanItemKind; text: string; marker?: PlanMarker; checked?: boolean };
 const fixtures = JSON.parse(readFileSync("fixtures/daily-plan.json", "utf8")) as {
   references: Record<string, NoteReference>;
   parse: { name: string; body: string; expected: Expected[] | null; notToday?: Expected[] }[];
-  shutdown: { name: string; body: string; text: string; expected: string }[];
   insert: { name: string; body: string; lines: string[]; notToday?: boolean; expected: string }[];
   arrange: { name: string; body: string; order: ({ existing: number } | { new: string })[]; remove: number[]; expected: string }[];
 };
@@ -37,23 +36,11 @@ describe("daily plan", () => {
     expect(actual).toBe(fill(expected));
   });
 
-  it.each(fixtures.shutdown)("appends a note on the day: $name", ({ body, text, expected }) => {
-    let actual: string;
-    try { actual = appendShutdownNote("daily:2026-11-16", body, text); } catch { actual = "ERROR"; }
-    expect(actual).toBe(expected);
-  });
-
-  it("bounds a note on the day at the limit and keeps the plan's own items", () => {
-    const longest = "x".repeat(MAX_SHUTDOWN_NOTE_CHARS);
-    expect(shutdownParagraph(longest)).toBe(longest);
-    expect(() => shutdownParagraph(`${longest}x`)).toThrow();
-    expect(shutdownParagraph("+ plus")).toBe("\\+ plus");
-    expect(shutdownParagraph("> quoted")).toBe("\\> quoted");
-    expect(shutdownParagraph("12) twelve")).toBe("12\\) twelve");
-    expect(shutdownParagraph("2026 was fine")).toBe("2026 was fine");
-    const twice = appendShutdownNote("n", appendShutdownNote("n", "## Plan\n\n- a\n", "One."), "Two.");
-    const section = parsePlan("n", twice)!;
-    expect(section.items).toHaveLength(1);
+  it("reads plans whose notes still hold a Shutdown paragraph from earlier versions", () => {
+    // Earlier versions appended notes on the day under `### Shutdown`; they stay prose, never plan items.
+    const body = "## Plan\n\n- a\n\n### Shutdown\n\nOne.\n\n\\- call Sam\n\n1\\. later\n\n## Meetings\n\n- 9am Sync\n";
+    const section = parsePlan("n", body)!;
+    expect(section.items.map((item) => item.label)).toEqual(["a"]);
     expect(section.notToday).toHaveLength(0);
   });
 
