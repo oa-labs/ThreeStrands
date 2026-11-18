@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-li
 import { readFileSync } from "node:fs";
 import postcss from "postcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isDaytime, readTodayBackdrop, sunHeight, TODAY_BACKDROP_KEY, useTodayBackdrop, writeTodayBackdrop } from "./backdropPreference";
+import { isDaytime, readTodayBackdrop, skyPhase, sunHeight, TODAY_BACKDROP_KEY, useTodayBackdrop, writeTodayBackdrop } from "./backdropPreference";
 import { TodayBackdropSettings } from "./AppearanceSettings";
 import { readExportablePreferences } from "./userPreferences";
 import { TodayBackdrop } from "./TodayBackdrop";
@@ -86,13 +86,21 @@ describe("isDaytime", () => {
   });
 });
 
+describe("skyPhase", () => {
+  it("is night from 9 pm to 4:59 am, dusk from 5 to 5:59 am and 6 to 8:59 pm, and day between", () => {
+    const phases = [[4, 59, "night"], [5, 0, "dusk"], [5, 59, "dusk"], [6, 0, "day"], [17, 59, "day"], [18, 0, "dusk"], [20, 59, "dusk"], [21, 0, "night"], [0, 0, "night"]] as const;
+    for (const [hours, minutes, phase] of phases) expect(skyPhase(at(hours, minutes)), `${hours}:${minutes}`).toBe(phase);
+    expect(isDaytime(at(20, 59))).toBe(false);
+  });
+});
+
 describe("TodayBackdrop", () => {
   const scene = () => document.querySelector(".today-backdrop") as HTMLElement;
 
   it("draws a day sky whose sun is higher at noon than in the morning, hidden from assistive technology", () => {
     const { rerender } = render(<TodayBackdrop now={at(8)} />);
     expect(scene()).toHaveAttribute("aria-hidden", "true");
-    expect(scene()).toHaveAttribute("data-view", "day");
+    expect(scene()).toHaveAttribute("data-phase", "day");
     const sunY = () => Number(scene().querySelector(".today-backdrop-sun")!.getAttribute("cy"));
     const morning = sunY();
     rerender(<TodayBackdrop now={at(12)} />);
@@ -104,8 +112,8 @@ describe("TodayBackdrop", () => {
   });
 
   it("draws a dusk sky with a moon and a few stars after sunset", () => {
-    render(<TodayBackdrop now={at(22, 30)} />);
-    expect(scene()).toHaveAttribute("data-view", "evening");
+    render(<TodayBackdrop now={at(19, 30)} />);
+    expect(scene()).toHaveAttribute("data-phase", "dusk");
     expect(scene()).toHaveAttribute("aria-hidden", "true");
     expect(scene().querySelector(".today-backdrop-moon")).not.toBeNull();
     expect(scene().querySelectorAll(".today-backdrop-star").length).toBeGreaterThanOrEqual(3);
@@ -113,13 +121,29 @@ describe("TodayBackdrop", () => {
     expect(scene().querySelector("[focusable='true'], a, button, input")).toBeNull();
   });
 
-  it("follows the clock: night before sunrise, day after it, night again at sunset", () => {
-    const { rerender } = render(<TodayBackdrop now={at(5, 30)} />);
-    expect(scene()).toHaveAttribute("data-view", "evening");
-    rerender(<TodayBackdrop now={at(6)} />);
-    expect(scene()).toHaveAttribute("data-view", "day");
-    rerender(<TodayBackdrop now={at(18)} />);
-    expect(scene()).toHaveAttribute("data-view", "evening");
+  it("draws a late-night sky with more stars than dusk, a moon, and no sun", () => {
+    const { rerender } = render(<TodayBackdrop now={at(19, 30)} />);
+    const duskStars = scene().querySelectorAll(".today-backdrop-star").length;
+    rerender(<TodayBackdrop now={at(0)} />);
+    expect(scene()).toHaveAttribute("data-phase", "night");
+    expect(scene()).toHaveAttribute("aria-hidden", "true");
+    expect(scene().querySelectorAll(".today-backdrop-star").length).toBeGreaterThan(duskStars);
+    expect(scene().querySelector(".today-backdrop-moon")).not.toBeNull();
+    expect(scene().querySelector(".today-backdrop-sun")).toBeNull();
+    // Fixed places: the same phase draws the same stars.
+    const positions = () => [...scene().querySelectorAll(".today-backdrop-star")].map((star) => `${star.getAttribute("cx")},${star.getAttribute("cy")}`);
+    const first = positions();
+    rerender(<TodayBackdrop now={at(2)} />);
+    expect(positions()).toEqual(first);
+  });
+
+  it("follows the clock: night, then dusk, day, dusk, and night again", () => {
+    const { rerender } = render(<TodayBackdrop now={at(4, 59)} />);
+    const phases: Array<[Date, string]> = [[at(4, 59), "night"], [at(5), "dusk"], [at(6), "day"], [at(18), "dusk"], [at(21), "night"]];
+    for (const [time, phase] of phases) {
+      rerender(<TodayBackdrop now={time} />);
+      expect(scene()).toHaveAttribute("data-phase", phase);
+    }
     expect(scene().querySelector(".today-backdrop-sun")).toBeNull();
   });
 
