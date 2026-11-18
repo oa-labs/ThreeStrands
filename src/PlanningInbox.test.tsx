@@ -161,4 +161,53 @@ describe("PlanningInbox", () => {
     expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Fresh")).toBeInTheDocument();
   });
+
+  describe("adding a task inline", () => {
+    const field = () => screen.getByRole("textbox", { name: "Add a task" });
+    const type = (value: string) => fireEvent.change(field(), { target: { value } });
+
+    it("is the last row before Completed, on All and Tasks only, and only when tasks can be created", () => {
+      const done = entry("Finished");
+      const view = render(<PlanningInbox {...defaults} entries={[entry("Task")]} completed={[done]} onAddTask={vi.fn()} />);
+      const after = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(after(screen.getByText("Task"), field())).toBe(true);
+      expect(after(field(), screen.getByRole("region", { name: "Completed" }))).toBe(true);
+      expect(screen.queryByRole("button", { name: "New Task" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+      expect(field()).toBeInTheDocument();
+      for (const filter of ["Emails", "Contacts"]) {
+        fireEvent.click(screen.getByRole("tab", { name: filter }));
+        expect(screen.queryByRole("textbox", { name: "Add a task" })).not.toBeInTheDocument();
+      }
+      view.rerender(<PlanningInbox {...defaults} entries={[]} />);
+      fireEvent.click(screen.getByRole("tab", { name: "All" }));
+      expect(screen.queryByRole("textbox", { name: "Add a task" })).not.toBeInTheDocument();
+    });
+
+    it("adds a trimmed title on Enter, clears the field, and keeps focus for the next task", async () => {
+      const onAddTask = vi.fn().mockResolvedValue(undefined);
+      render(<PlanningInbox {...defaults} entries={[]} onAddTask={onAddTask} />);
+      field().focus();
+      type("   ");
+      fireEvent.keyDown(field(), { key: "Enter" });
+      expect(onAddTask).not.toHaveBeenCalled();
+      type("  Call Sam ");
+      await act(async () => { fireEvent.keyDown(field(), { key: "Enter" }); });
+      expect(onAddTask).toHaveBeenCalledExactlyOnceWith("Call Sam");
+      expect(field()).toHaveValue("");
+      expect(field()).toHaveFocus();
+    });
+
+    it("clears on Escape, and keeps the title with an alert when adding fails", async () => {
+      const onAddTask = vi.fn().mockRejectedValue(new Error("Disk full"));
+      render(<PlanningInbox {...defaults} entries={[]} onAddTask={onAddTask} />);
+      type("Draft");
+      await act(async () => { fireEvent.keyDown(field(), { key: "Enter" }); });
+      expect(screen.getByRole("alert")).toHaveTextContent("Disk full");
+      expect(field()).toHaveValue("Draft");
+      fireEvent.keyDown(field(), { key: "Escape" });
+      expect(field()).toHaveValue("");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+  });
 });

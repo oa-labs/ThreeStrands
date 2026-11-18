@@ -1,7 +1,7 @@
 import { formatCompactDate } from "./dateFormatting";
 import { CalendarDays, ChevronLeft, ChevronRight, ContactRound, ListChecks, ListPlus, Mail, NotebookPen, Send, Star, Plus, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isPreparable, meetingsToPrepare, preparationKey, readinessByKey, readinessSummary } from "./meetingPrep";
 import { useMeetingReadiness } from "./useMeetingPreparation";
 import { useWorkspaceCommands } from "./workspaceCommands";
@@ -422,8 +422,14 @@ function TodayLayout({
   };
 
   // Sources: each a tab of cards that can be added to the plan or dragged onto the day.
+  /** A task's due date for a row; an overdue one is marked in color and named for screen readers. */
+  const dueRow = (task: ThreadTask | undefined): { date?: ReactNode; dateClassName?: string } => {
+    const due = task ? formatDue(task) : null;
+    if (!task || !due) return {};
+    const overdue = isOverdue(task);
+    return { date: <>{overdue ? <span className="sr-only">Overdue: </span> : null}Due {due}</>, dateClassName: overdue ? "task-due-overdue" : undefined };
+  };
   const taskCandidate = (task: ThreadTask): PlanCandidate => {
-    const due = formatDue(task);
     const done = !isActiveTaskStatus(task.status);
     const resolved = { addition: { kind: "link" as const, reference: taskReference(task.id), label: task.title }, block: { title: task.title, sourceTaskId: task.id, accountId: task.accountId, sourcePlanKey: planItemKey(taskReference(task.id)) }, title: task.title };
     return {
@@ -440,8 +446,7 @@ function TodayLayout({
             aria-label={done ? `Mark ${task.title} Not Done` : `Mark ${task.title} Done`} onChange={() => void toggleDone(task)} />
         </HoverTooltip>,
         wrapTitle: true,
-        date: due ? `Due ${due}` : undefined,
-        dateClassName: due && isOverdue(task) ? "task-due-overdue" : undefined,
+        ...dueRow(task),
         // Every task card names its account when Today shows them all.
         detail: [task.subjectSnapshot, accountId === null ? task.accountId : null].filter(Boolean).join(" · ") || undefined,
         onActivate: () => onEditTask(task),
@@ -563,6 +568,7 @@ function TodayLayout({
         icon: candidate.reason === "starred" ? <Star size={ICON_SIZE.sm} /> : candidate.reason === "noteTask" ? <NotebookPen size={ICON_SIZE.sm} />
           : candidate.reason === "promise" ? <Send size={ICON_SIZE.sm} /> : candidate.reason === "keepInTouch" ? <ContactRound size={ICON_SIZE.sm} /> : undefined,
         wrapTitle: true,
+        ...dueRow(tasks.find((task) => task.id === candidate.taskId)),
         detail: [candidate.detail, candidate.goal?.title, accountId === null ? candidate.accountId : null].filter(Boolean).join(" · ") || undefined,
         // A card opens its task, its note, or the starred conversation; adding never unstars or archives it.
         onActivate: candidate.taskId ? () => void openCandidateTask(candidate.taskId!) : candidate.threadId ? () => onOpenThread(candidate.threadId!)
@@ -591,6 +597,7 @@ function TodayLayout({
       actions: [{ label: "Remove from Today's Plan", onSelect: () => void removeItem(item) }],
       row: {
         rowKey: source.id, wrapTitle: true, className: "context-task today-plan-card",
+        ...(done ? {} : dueRow(tasks.find((task) => task.id === item.taskId))),
         control: checkable ? <input type="checkbox" className="context-task-checkbox" checked={done} aria-label={`Mark ${item.title} ${done ? "Not Done" : "Done"}`} onChange={() => void togglePlanItem(item)} /> : undefined,
         icon: item.kind === "contact" ? <ContactRound size={ICON_SIZE.sm} /> : item.kind === "noteTask" || item.kind === "newTask" ? <NotebookPen size={ICON_SIZE.sm} /> : undefined,
         detail: [item.state === "unavailable" ? "Unavailable on this device" : item.kind === "noteTask" || item.kind === "newTask" ? "Note" : (accountId === null || item.accountId !== accountId) ? item.accountId : null, item.goal?.title, carriedLabel(item.carryCount ?? 0)].filter(Boolean).join(" · ") || undefined,
@@ -680,8 +687,9 @@ function TodayLayout({
     {inboxPages(filter).map((page, index) => page.error ? <p key={index} className="form-error" role="alert">{page.error}</p> : null)}
   </>;
 
-  const [addingTask, setAddingTask] = useState(false);
-  const [newEventStart, setNewEventStart] = useState<Date | null>(null);
+  /** The editor, opened with a title typed in the inline field when no single account can take the task. */
+  const [addingTask, setAddingTask] = useState<string | null>(null);
+  const [newEventRange, setNewEventRange] = useState<{ start: Date; end: Date } | null>(null);
   const taskAccounts = mailAccounts.map((account) => account.email);
   const defaultTaskAccount = accountId && taskAccounts.includes(accountId) ? accountId : taskAccounts.length === 1 ? taskAccounts[0] : undefined;
   const startNewEvent = () => {
@@ -689,8 +697,15 @@ function TodayLayout({
     const current = new Date();
     const hour = isSameDay(start, current) ? Math.min(current.getHours() + (current.getMinutes() ? 1 : 0), 23) : 9;
     start.setHours(hour, 0, 0, 0);
-    setNewEventStart(start);
+    setNewEventRange({ start, end: new Date(start.getTime() + 60 * 60_000) });
   };
+  const createStandaloneTask = async (values: Omit<Parameters<typeof mailClient.createTask>[0], "accountId" | "threadId" | "subjectSnapshot">, taskAccount: string) => {
+    const created = await mailClient.createTask({ ...values, accountId: taskAccount, threadId: null, subjectSnapshot: null });
+    applyTaskUpdate(created);
+    onTasksChanged();
+    return created;
+  };
+  const canCreateEvents = Boolean(schedule) && calendarAccounts.some((account) => account.status === "connected");
 
   return <section ref={pageRef} className="today-workspace" aria-label="Today" aria-busy={pull.refreshing}>
     <div className="today-page today-page-planning">
@@ -704,28 +719,33 @@ function TodayLayout({
     </header>
     <div className="today-columns">
       <div className="today-column today-work">
-        <PlanningInbox onNewTask={taskAccounts.length ? () => setAddingTask(true) : undefined} entries={inboxEntries} completed={completedEntries} completedError={completedNotes.error} scope={scope} status={inboxStatus} unavailable={inboxUnavailable}
+        <PlanningInbox onAddTask={taskAccounts.length ? async (title) => {
+          if (!defaultTaskAccount) { setAddingTask(title); return; }
+          await createStandaloneTask({ title, kind: "action", dueKind: "none", dueValue: null }, defaultTaskAccount);
+          setAnnouncement(`Task added: ${title}`);
+        } : undefined} entries={inboxEntries} completed={completedEntries} completedError={completedNotes.error} scope={scope} status={inboxStatus} unavailable={inboxUnavailable}
           loading={(filter) => loadingSources || inboxPages(filter).some((page) => page.loading)}
           hasMore={(filter) => inboxPages(filter).some((page) => Boolean(page.next))}
           onLoadMore={(filter) => { for (const page of inboxPages(filter)) if (page.next) void page.loadMore(); }} drag={showingToday ? drag : { ...drag, startDrag: () => {} }} />
       </div>
       <div className="today-column today-time" role="group" aria-label="Schedule">
         <div className="today-panel-heading"><h2><CalendarDays size={ICON_SIZE.md} />{showingToday ? "Today’s Schedule" : "Schedule"}</h2><div className="today-schedule-actions">
-          {schedule && calendarAccounts.some((account) => account.status === "connected") ? <button type="button" className="btn btn-sm" onClick={startNewEvent}><Plus size={ICON_SIZE.sm} aria-hidden="true" />New Event</button> : null}
           <button type="button" className="btn-link" onClick={() => onOpenCalendar(shownDay)}>Open Calendar</button>
         </div></div>
         {displaySchedule ? <>
           <div className="today-schedule-navigation">
-            <span aria-live="polite">{shownDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
+            {/* The page heading names today, so the date is written out only for another day; screen readers hear either. */}
+            <span className={showingToday ? "sr-only" : undefined} aria-live="polite">{shownDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
             <div className="today-schedule-actions" role="group" aria-label="Schedule Date">
               <button type="button" className="btn btn-sm" aria-label="Previous Day" onClick={() => onChangeDay?.(addDays(shownDay, -1))}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" /></button>
               <button type="button" className="btn btn-sm" onClick={() => onChangeDay?.(null)}>Today</button>
               <button type="button" className="btn btn-sm" aria-label="Next Day" onClick={() => onChangeDay?.(addDays(shownDay, 1))}><ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button>
+              {canCreateEvents ? <button type="button" className="btn btn-sm" aria-label="New Event" title="New Event" onClick={startNewEvent}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
             </div>
           </div>
           <TodayDayView events={shownEvents} day={showingToday ? undefined : shownDay} now={now} loading={displaySchedule.loading} error={displaySchedule.error} onRetry={displaySchedule.reload}
             selectedEvent={null} onChooseEvent={chooseEvent} eventDecoration={decorateEvent}
-            gridRef={gridRef} preview={drag.preview} dragging={drag.draggingId !== null} workingHours={workingHours} />
+            gridRef={gridRef} preview={drag.preview} dragging={drag.draggingId !== null} workingHours={workingHours} onCreateEvent={canCreateEvents ? setNewEventRange : undefined} />
           {/* Below Today's breakpoint the agenda list takes the day view's place (a container query in CSS). */}
           <div className="today-agenda-fallback">
             {/* The page heading already names today, so its agenda leaves the date out. */}
@@ -738,30 +758,28 @@ function TodayLayout({
     </div>
     </div>
     <p className="sr-only" aria-live="polite">{announcement}</p>
-    {addingTask ? <TaskEditorDialog
-      initial={{ title: "" }}
+    {addingTask !== null ? <TaskEditorDialog
+      initial={{ title: addingTask }}
       accountId={defaultTaskAccount}
       accountOptions={defaultTaskAccount ? undefined : taskAccounts}
-      onClose={() => setAddingTask(false)}
+      onClose={() => setAddingTask(null)}
       onSubmit={async (values, selectedAccount) => {
         const taskAccount = defaultTaskAccount ?? selectedAccount;
         if (!taskAccount || !taskAccounts.includes(taskAccount)) throw new Error("Choose a connected account for this task");
-        const created = await mailClient.createTask({ ...values, accountId: taskAccount, threadId: null, subjectSnapshot: null });
-        applyTaskUpdate(created);
-        setAddingTask(false);
-        onTasksChanged();
+        await createStandaloneTask(values, taskAccount);
+        setAddingTask(null);
         notice({ message: "Task added" });
       }}
     /> : null}
-    {newEventStart ? <CreateCalendarEventDialog
-      start={newEventStart}
-      end={new Date(newEventStart.getTime() + 60 * 60_000)}
+    {newEventRange ? <CreateCalendarEventDialog
+      start={newEventRange.start}
+      end={newEventRange.end}
       accounts={calendarAccounts}
       calendars={calendars}
-      onClose={() => setNewEventStart(null)}
+      onClose={() => setNewEventRange(null)}
       onCreated={(event) => {
         revalidateScheduleCache(event);
-        setNewEventStart(null);
+        setNewEventRange(null);
         onEventCreated?.();
         notice({ message: "Event added" });
       }}

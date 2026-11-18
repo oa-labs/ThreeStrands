@@ -3788,7 +3788,17 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-work .today-source-tabs .mailbox-tab + .mailbox-tab::before { content: none; }
 .today-work .today-source-tabs .mailbox-tab { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: var(--text-control); }
 .today-work .today-source-tabs .mailbox-tab.active { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--accent); }
-.today-work .today-inbox-card, .today-work .today-plan-card { margin-block: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); }
+.today-work .today-inbox-card, .today-work .today-plan-card { margin-block: var(--space-1-5); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); min-height: var(--control-h); }
+/* Row actions appear on hover or focus, or while a menu is open; they keep their space so rows don't shift, and stay in the tab order. Touch screens always show them. */
+.today-work .today-inbox-card .context-row-action > * { opacity: 0; transition: opacity var(--duration-fast) ease; }
+.today-work .today-inbox-card:hover .context-row-action > *,
+.today-work .today-inbox-card:focus-within .context-row-action > *,
+.today-work .today-inbox-card .context-row-action > :has([aria-expanded="true"]),
+.today-work .today-inbox-card .context-row-action > [aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .today-work .today-inbox-card .context-row-action > * { opacity: 1; } }
+.today-add-task { margin-block: var(--space-1-5); }
+.today-add-task-input { box-sizing: border-box; width: 100%; height: var(--control-h); padding-inline: var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); background: transparent; color: var(--text); font: inherit; }
+.today-add-task-input:focus { border-style: solid; border-color: var(--accent); outline: none; box-shadow: var(--focus-ring); }
 .today-schedule-navigation { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: 0 var(--space-4) var(--space-3); color: var(--secondary); font-size: var(--text-meta); }
 .today-schedule-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
 .today-time > .today-day-view { border: 0; border-top: 1px solid var(--border); border-radius: 0; flex: 1; height: auto; min-height: 0; }
@@ -3799,7 +3809,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-routines { margin-left: auto; min-width: 0; }
 .today-routines .today-plan-status { justify-content: flex-end; margin-top: 0; }
 .today-working-location, .agenda-working-location { display: inline-flex; align-items: center; gap: var(--space-1); vertical-align: bottom; }
-.today-columns { display: grid; grid-template-columns: minmax(var(--today-column-min), 1fr) minmax(var(--today-day-view-min), 2fr); align-items: stretch; gap: var(--space-6); padding: var(--space-4) var(--pane-inset); }
+.today-columns { display: grid; grid-template-columns: minmax(var(--today-column-min), 1fr) minmax(var(--today-day-view-min), 1.25fr); align-items: stretch; gap: var(--space-6); padding: var(--space-4) var(--pane-inset); }
 .today-heading { min-width: 0; }
 /* The optional Today Backdrop sits behind the header band only, under its text. */
 .today-header { position: relative; isolation: isolate; }
@@ -3892,6 +3902,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* With working hours, the grid is as tall as the working day (set inline) so Tomorrow stays in view; evenings scroll inside it. */
 .today-day-view-working { height: auto; }
 .today-day-view-working .calendar-week-scroll { flex: none; height: min(var(--today-day-view-grid-h), 65vh); }
+/* Today names the shading with a tooltip, so its bands take the pointer; clicks still reach the column. */
+.today-day-view .calendar-outside-hours[title] { pointer-events: auto; }
 .calendar-outside-hours { position: absolute; left: 0; right: 0; background: color-mix(in srgb, var(--muted) 10%, transparent); pointer-events: none; }
 /* Today: finished meetings dim; selected means the meeting being prepared, nothing else. An
    unanswered invitation keeps a filled block here, so it can't be mistaken for that selection. */
@@ -3905,6 +3917,13 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .calendar-all-day-entry { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
 .calendar-all-day-entry > .calendar-all-day-event { flex: 1; min-width: 0; }
 .calendar-all-day-action { display: inline-flex; flex-shrink: 0; }
+/* Today: a note or meeting action shows on hover or focus, and always on touch screens. */
+.today-day-view .calendar-event-action > .btn-icon { opacity: 0; transition: opacity var(--duration-fast) ease; }
+.today-day-view .calendar-schedule-event:hover + .calendar-event-action > .btn-icon,
+.today-day-view .calendar-schedule-event:focus-visible + .calendar-event-action > .btn-icon,
+.today-day-view .calendar-event-action:hover > .btn-icon,
+.today-day-view .calendar-event-action:focus-within > .btn-icon { opacity: 1; }
+@media (hover: none) { .today-day-view .calendar-event-action > .btn-icon { opacity: 1; } }
 .calendar-event-mark { display: inline-flex; align-items: center; gap: var(--space-0-5); margin-right: var(--space-1); color: var(--accent); vertical-align: middle; }
 .calendar-event-mark-count { font-size: var(--text-micro); font-weight: var(--weight-semibold); }
 .today-agenda-fallback { display: none; }

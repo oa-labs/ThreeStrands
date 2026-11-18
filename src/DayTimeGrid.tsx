@@ -60,6 +60,14 @@ export function slotAt(clientY: number, column: HTMLElement): number {
   return Math.floor(offset / HOUR_HEIGHT * 60 / SLOT_MINUTES) * SLOT_MINUTES;
 }
 
+/** The range a click (`dragged` false: one hour from the slot) or a drag from `anchor` to `current` selects on `day`. */
+export function eventRangeFromSlots(day: Date, anchor: number, current: number, dragged: boolean) {
+  const startMinutes = Math.min(anchor, current);
+  const endMinutes = dragged ? Math.max(anchor, current) + SLOT_MINUTES : anchor + 60;
+  const at = (minutes: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, minutes);
+  return { start: at(startMinutes), end: at(endMinutes), startMinutes, endMinutes };
+}
+
 function fullDateLabel(date: Date): string {
   return new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" }).format(date);
 }
@@ -89,6 +97,7 @@ export function DayTimeGrid({
   columnProps,
   eventDecoration,
   shade,
+  shadeLabel,
   shortTimes = false,
   showDayLabels = true,
   showTimeZone = true,
@@ -114,6 +123,8 @@ export function DayTimeGrid({
   eventDecoration?(event: ScheduleEvent): DayGridEventDecoration | null;
   /** Stretches drawn shaded behind the events; Calendar passes none. */
   shade?: DayGridShade[];
+  /** What the shading means; shown as a tooltip on the shaded stretch and read once, for assistive technology, in the day's column description. */
+  shadeLabel?: string;
   /** A block too short for two lines still shows its start time after the title, with or without a location. */
   shortTimes?: boolean;
   /** Shows the weekday-and-date label above each day. A single-day view whose page already names the date hides it; the day's column is then named instead. */
@@ -238,7 +249,7 @@ export function DayTimeGrid({
           </div>
           {days.map((day, dayIndex) => (
             <div
-              {...(showDayLabels ? {} : { role: "group", "aria-label": fullDateLabel(day) })}
+              {...(showDayLabels ? {} : { role: "group", "aria-label": fullDateLabel(day), "aria-description": shadeLabel && shade?.some((span) => span.dayIndex === dayIndex) ? `Shaded time is ${shadeLabel.toLowerCase()}` : undefined })}
               {...columnProps?.(day, dayIndex)}
               className={DAY_COLUMN_CLASS}
               key={day.toDateString()}
@@ -246,7 +257,7 @@ export function DayTimeGrid({
             >
               {HOURS.map((hour) => <div className="calendar-hour-line" key={hour} />)}
               {shade?.filter((span) => span.dayIndex === dayIndex && span.endMinutes > span.startMinutes).map((span) => (
-                <div key={`${span.startMinutes}-${span.endMinutes}`} className="calendar-outside-hours" aria-hidden="true" style={{
+                <div key={`${span.startMinutes}-${span.endMinutes}`} className="calendar-outside-hours" aria-hidden="true" title={shadeLabel} style={{
                   top: span.startMinutes / 60 * HOUR_HEIGHT,
                   height: (span.endMinutes - span.startMinutes) / 60 * HOUR_HEIGHT,
                 }} />
