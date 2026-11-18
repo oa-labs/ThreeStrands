@@ -38,6 +38,40 @@ describe("calendar sidebar", () => {
     localStorage.removeItem("threestrands.settings.availabilityPreferences");
   });
 
+  it.each([false, true])("stacks the delete question, explanation, and actions with space below the title (embedded: %s)", (embedded) => {
+    const event = { id: "meeting", accountId: "me@example.com", canEdit: true,
+      title: "FO Relentless Meeting - Federal Galley then Alloy26", attendees: ["jane@example.com"],
+      start: "2099-09-21T13:00:00Z", end: "2099-09-21T13:30:00Z", allDay: false };
+    const remove = vi.spyOn(mailClient, "deleteCalendarEvent").mockResolvedValue();
+    const onDismiss = vi.fn();
+    const { rerender } = render(<EventViewer event={event} embedded={embedded} onDismiss={onDismiss} onUpdated={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Event" }));
+    const confirmation = screen.getByRole("group", { name: "Delete event confirmation" });
+    expect(confirmation).toHaveClass("settings-inline-confirm--stacked");
+    const title = within(confirmation).getByText("Delete this event?");
+    const detail = within(confirmation).getByText("Guests will be notified.");
+    expect(title).toHaveClass("settings-inline-confirm-title");
+    expect(detail).toHaveClass("settings-inline-confirm-detail");
+    expect(title.nextElementSibling).toBe(detail);
+    expect(title.parentElement?.nextElementSibling).toContainElement(within(confirmation).getByRole("button", { name: "Delete event" }));
+    expect(declarations(".settings-inline-confirm--stacked")).toMatchObject({
+      "flex-direction": "column", "align-items": "stretch", gap: "var(--space-3)", padding: "var(--space-3)",
+    });
+    expect(declarations(".settings-inline-confirm--stacked .settings-inline-confirm-actions")).toMatchObject({
+      "flex-wrap": "wrap", "justify-content": "flex-end",
+    });
+    expect(declarations(":is(.calendar-event-viewer, .calendar-event-details) > .settings-inline-confirm")).toMatchObject({ "margin-top": "var(--space-4)" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("group", { name: "Delete event confirmation" })).not.toBeInTheDocument();
+    expect(remove).not.toHaveBeenCalled();
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    rerender(<EventViewer event={{ ...event, attendees: [] }} embedded={embedded} onDismiss={onDismiss} onUpdated={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Event" }));
+    expect(screen.getByRole("group", { name: "Delete event confirmation" })).not.toHaveTextContent("Guests will be notified");
+    expect(screen.getByText("This event will be removed from your calendar.")).toBeVisible();
+  });
+
   it("opens guest scheduling directly from an owned event's Reschedule action", async () => {
     vi.spyOn(mailClient, "meetingAvailability").mockResolvedValue({ own: { email: "me@example.com", busy: [], checked: true }, guests: [], candidates: [] });
     const event = { id: "meeting", accountId: "me@example.com", calendarId: "primary", canEdit: true,

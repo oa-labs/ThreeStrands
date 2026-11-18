@@ -221,9 +221,9 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false, cal
         </div>
       </header>
       {confirmingDelete ? (
-        <InlineConfirm ariaLabel="Delete event confirmation" cancelLabel="Keep" onCancel={() => setConfirmingDelete(false)} disabled={deletePending}
-          actions={[{ label: deletePending ? "Deleting…" : "Delete", className: "btn-danger", onClick: () => void deleteEvent() }]}>
-          <strong>Delete this event?</strong>{event.attendees?.length ? " Guests will be notified." : null}
+        <InlineConfirm ariaLabel="Delete event confirmation" title="Delete this event?" stacked cancelLabel="Cancel" onCancel={() => setConfirmingDelete(false)} disabled={deletePending}
+          actions={[{ label: deletePending ? "Deleting…" : "Delete event", className: "btn-danger", onClick: () => void deleteEvent() }]}>
+          {event.attendees?.length ? "Guests will be notified." : "This event will be removed from your calendar."}
         </InlineConfirm>
       ) : null}
       {deleteError ? <p className="form-error" role="alert">{deleteError}</p> : null}
