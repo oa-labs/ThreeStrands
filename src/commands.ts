@@ -136,7 +136,6 @@ export type CommandContext = {
   openAgentsView?(): void;
   delegateSelected?(): void;
   openTodayView?(): void;
-  /** Opens Today and starts Plan Today for today's or tomorrow's date, or toggles its evening view (`review`). */
   openContactsView(): void;
   openKeepInTouchView(): void;
   openContactGroupsView(): void;

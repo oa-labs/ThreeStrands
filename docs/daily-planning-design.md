@@ -1,6 +1,17 @@
 # Daily planning and shutdown
 
-**Status:** Stages 1 to 4 are built. Stage 1 (contracts): the plan section format,
+**Status:** Superseded in part (2026-11-18). The **Plan Today** routine (and
+its **Plan Tomorrow** variant), the **Shut Down** evening view with **Review
+Today**, **Day closed**, and **Notes on the Day**, and the Day Details / Edit
+Plan header controls were built and then removed before release, when Today was
+simplified to the Planning Inbox beside the schedule (see
+[Today view design](today-design.md)). Their sections below are kept as design
+history and are marked as removed; they do not describe the app. What remains
+in use: the plan section in the daily note and its parser and writes (stage 1),
+the Planning Inbox and day view (stage 2, as since simplified), and the optional
+header backdrop, which now follows the clock rather than the view.
+
+**Original status:** Stages 1 to 4 are built. Stage 1 (contracts): the plan section format,
 parser, item-level writes, and plan reading (`src-tauri/src/daily_plan.rs`,
 `src-tauri/src/db/daily_plan.rs`, `src/dailyPlan.ts`, `fixtures/daily-plan.json`);
 plan history and review (`src-tauri/src/db/plan_review.rs`); candidate sources
@@ -175,6 +186,10 @@ accordingly; nothing is stored separately.
 
 ## Plan Today
 
+> **Removed (2026-11-18).** The routine below was built (stage 3) and removed
+> before release; nothing in Today or the command palette opens it. Kept as
+> design history.
+
 ### Entry points
 
 - **Plan Today** in Today's header while today's note has no plan items; once it
@@ -316,6 +331,11 @@ event and deleting the event keeps the task, as for other tasks. Old events with
 replicated task id keep their meaning.
 
 ## Today's new layout
+
+> **Partly superseded (2026-11-18).** The two-column layout below stands, but
+> Today no longer offers Plan Today, Plan Tomorrow, Review Today, Day Details, or
+> Edit Plan. The schedule's arrows browse other days, including tomorrow, and
+> tasks and events are added inline. See [Today view design](today-design.md).
 
 Today keeps its key (`0`), its role as a read surface, and its live updates. It
 has no text inputs; the routine and every form open as modals. Today stays one
@@ -608,8 +628,8 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
 ### Day and evening backdrop (optional)
 
 An optional, purely decorative backdrop behind Today's header: a daytime scene
-during working hours and an evening scene in the evening view, so the two faces of
-Today are recognizable at a glance. It is off by default and turned on under
+from 6 am and an evening scene from 6 pm, following the clock. (It first followed
+the evening view; since that view was removed it follows the time of day.) It is off by default and turned on under
 **Settings → Appearance → Today Backdrop**, stored on this device only (not synced
 or exported).
 
@@ -623,6 +643,10 @@ or exported).
   optional slow change when the view switches; reduced-motion turns that off.
 
 ## Shut Down: Today's evening view
+
+> **Removed (2026-11-18).** The evening view, **Review Today**, **Plan
+> Tomorrow**, **Day closed**, and **Notes on the Day** were built (stage 4) and
+> removed before release. Kept as design history.
 
 **Decision (2026-11-17, after review of the installed app):** Shut Down is not a
 modal routine. In the evening the user's questions are what they accomplished,
@@ -910,11 +934,11 @@ Where the stage 1 contracts differ from the text above, and why:
    the routine; every Calendar drag and booking test still passes against the
    shared grid; no mail-derived information that the old column provided is lost
    without a path to it.
-3. **Plan Today.** The five-step routine with the Done / Didn't get to review and
+3. **Plan Today** (built, then removed 2026-11-18). The five-step routine with the Done / Didn't get to review and
    the source switcher, Edit Plan, and Plan Tomorrow. Gate: a user can review,
    choose from every source, prepare, fit, and save a plan with the calendar
    available or not, and restart mid-routine without losing choices.
-4. **Shut Down as Today's evening view** (see [Shut Down](#shut-down-todays-evening-view)),
+4. **Shut Down as Today's evening view** (built, then removed 2026-11-18; see [Shut Down](#shut-down-todays-evening-view)),
    with meeting rows completed once meeting preparation stage 3 lands. Gate: the
    day's done items and loose ends show without a routine, decisions appear in the
    next morning's review, Plan Tomorrow starts from the carried items, and the

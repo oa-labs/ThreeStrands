@@ -248,7 +248,7 @@ function TodayLayout({
   };
 
   const everyEventToday = agendaEventsFor(schedule?.events ?? [], now, calendars);
-  // Where the user works is stated once, in the header, so no view of the day lists it as an event.
+  // A working location is not a meeting, so no view of the day lists it as an event.
   const todaysEvents = everyEventToday.filter((event) => !isWorkingLocation(event));
   const shownEvents = showingToday ? todaysEvents : agendaEventsFor(displaySchedule?.events ?? [], shownDay, calendars).filter((event) => !isWorkingLocation(event));
   // Meeting preparation lives with the linked note. Event titles open Calendar;

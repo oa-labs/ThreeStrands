@@ -1,8 +1,9 @@
 # Meeting preparation and follow-through
 
 **Status:** Stages 1 (contracts and extraction), 2 (local preparation), and 3
-(manual follow-through and durable drafts) implemented. Stage 3's Shut Down
-list appears in Today's evening view. Later stages remain proposed.
+(manual follow-through and durable drafts) implemented. Follow-through is
+reviewed from the preparation view; the Shut Down list that showed it in Today's
+evening view was removed with that view (2026-11-18). Later stages remain proposed.
 **Baseline:** 0.210.0 repository, reviewed 2026-11-15; daily-loop entry points
 added 2026-11-16.
 **Priority:** Next feature in the [product plan](../PLAN.MD#recommended-sequence-and-next-feature),
@@ -497,10 +498,12 @@ the first complete local preparation-to-follow-up workflow.
 (`src/MeetingFollowThroughDialog.tsx`) open from a **Follow-through** section in
 the preparation view, which lists the reviews saved for the occurrence and says
 "Not reviewed yet" otherwise. `MeetingFollowThroughList` (in
-`src/MeetingReadinessList.tsx`) is the Shut Down meeting step: the day's ended,
+`src/MeetingReadinessList.tsx`) was the Shut Down meeting step: the day's ended,
 not-declined, timed meetings with their follow-through state, **Review
-Follow-through**, and **No Follow-through**. Shut Down is Today's evening view
-(daily planning design, stage 4), which shows the list in its **Loose ends**.
+Follow-through**, and **No Follow-through**, shown in the **Loose ends** of
+Today's evening view (daily planning design, stage 4). That view was removed
+before release (2026-11-18), so follow-through is now reviewed only from the
+preparation view.
 
 - **Section format** (`src-tauri/src/meeting_follow_through.rs`, mirrored by
   `src/meetingFollowThrough.ts`, both passing `fixtures/meeting-follow-through.json`):

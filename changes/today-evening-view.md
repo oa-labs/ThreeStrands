@@ -1,3 +1,2 @@
 ### New
-- **Review Today** turns Today into an evening view once your last meeting has ended and your working hours are over, or whenever you choose it from the header or the command palette: see what you finished, decide each loose end with **Carry to Tomorrow**, **Defer…**, or **Drop** (each with **Undo**), review meeting follow-through, handle the day's promises, and add **Notes on the Day**. Tomorrow's day view sits beside it with what you carried and **Plan Tomorrow**, and the header says **Day closed** when nothing is left undecided.
 - **Settings → Appearance → Today Backdrop** adds an optional soft sky behind the top of Today that follows the clock: daytime from 6 am, and a moonlit evening sky from 6 pm. It is off by default and stays on this computer.
