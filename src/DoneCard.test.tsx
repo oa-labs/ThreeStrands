@@ -76,6 +76,31 @@ describe("DoneCard", () => {
     expect(screen.queryByRole("button", { name: "Show All" })).not.toBeInTheDocument();
   });
 
+  it("keeps results in a keyboard-accessible scroll area and resets scrolling when switching filters", () => {
+    const entries = [
+      ...Array.from({ length: DONE_COLLAPSED_ROWS + 2 }, (_, index) => entry(`Task ${index}`, "tasks", at(8 + index))),
+      { ...entry("A long email subject ".repeat(20), "emails", at(15)), row: { subtitle: "Recipients ".repeat(30), onActivate: vi.fn() } },
+    ];
+    const view = render(<DoneCard {...defaults} entries={entries} />);
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveClass("today-done-items");
+    expect(panel).toHaveAttribute("tabindex", "0");
+    expect(panel).not.toContainElement(screen.getByRole("tablist"));
+    fireEvent.click(screen.getByRole("button", { name: "Show All" }));
+    expect(within(panel).getAllByRole("button", { name: /^Task / })).toHaveLength(DONE_COLLAPSED_ROWS + 2);
+    for (const filter of ["Tasks", "Emails", "Notes", "All"]) {
+      panel.scrollTop = 200;
+      fireEvent.click(screen.getByRole("tab", { name: filter }));
+      expect(screen.getByRole("tabpanel")).toBe(panel);
+      expect(panel.scrollTop).toBe(0);
+      expect(panel).toHaveClass("today-done-items");
+    }
+    view.rerender(<DoneCard {...defaults} entries={[]} errors={{ emails: "Offline" }} loading />);
+    expect(screen.getByRole("tabpanel")).toBe(panel);
+    expect(within(panel).getByRole("alert")).toHaveTextContent("Offline");
+    expect(panel).toHaveAttribute("aria-busy", "true");
+  });
+
   it("says nothing was finished yet today, nothing was recorded on a past day, and reading while loading", () => {
     const view = render(<DoneCard {...defaults} entries={[]} />);
     expect(screen.getByText("Nothing finished yet")).toBeInTheDocument();

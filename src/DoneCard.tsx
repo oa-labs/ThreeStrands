@@ -87,6 +87,7 @@ export function DoneCard({ title, today, dayLabel, entries, errors, loading }: {
   }, [entries]);
   const select = (next: DoneFilter, focus = false) => {
     setFilter(next); setExpanded(false);
+    if (panel.current) panel.current.scrollTop = 0;
     if (focus) tabs.current?.querySelector<HTMLButtonElement>(`[data-filter="${next}"]`)?.focus();
   };
   const move = (event: KeyboardEvent) => {
@@ -106,7 +107,7 @@ export function DoneCard({ title, today, dayLabel, entries, errors, loading }: {
       {FILTERS.map((choice) => <button key={choice.id} type="button" className="planning-inbox-tab" role="tab" id={`${id}-${choice.id}`} data-filter={choice.id}
         aria-selected={filter === choice.id} aria-controls={`${id}-items`} tabIndex={filter === choice.id ? 0 : -1} onClick={() => select(choice.id)}>{choice.label}</button>)}
     </div>
-    <div ref={panel} role="tabpanel" id={`${id}-items`} aria-labelledby={`${id}-${filter}`} aria-busy={loading} onChangeCapture={(event) => {
+    <div ref={panel} className="today-done-items" role="tabpanel" tabIndex={0} id={`${id}-items`} aria-labelledby={`${id}-${filter}`} aria-busy={loading} onChangeCapture={(event) => {
       const target = event.target;
       if (target instanceof HTMLInputElement && target.type === "checkbox" && document.activeElement === target) reopened.current = target;
     }}>

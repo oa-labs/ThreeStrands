@@ -165,6 +165,7 @@
   --swatch-size: 22px;      /* color swatches */
   --today-day-view-min: 300px; /* narrowest day view beside Today's plan */
   --today-column-min: 280px;   /* narrowest Today column once they stack */
+  --today-done-list-height: 280px; /* stable space for finished rows across filters */
   /* Today Backdrop art. Day colors stay legible under the header's normal text; dusk and night are dark skies in both themes, under the light --backdrop-ink text the header switches to. styleTokens.test.ts checks every one. */
   --backdrop-sky-top: #142238;
   --backdrop-sky-bottom: #182a46;
@@ -3828,6 +3829,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* The inbox card takes the column's spare height, so the column ends level with the schedule and the Done card sits at its foot. */
 .today-stack > .today-work:first-child { flex: 1 0 auto; }
 /* The Done card sits under the Planning Inbox as its own card. */
+.today-done-card { flex-shrink: 0; }
+/* Keep the card's tabs in place even for empty filters, wrapped rows, or Show All. */
+.today-done-items { height: var(--today-done-list-height); overflow-y: auto; scrollbar-gutter: stable; }
 .today-done-day { margin-left: var(--space-1); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-medium); }
 /* A finished row reads as checked and quiet, not struck through; the strikethrough stays for other lists. */
 .today-done .context-task-done .context-row-title { text-decoration: none; }

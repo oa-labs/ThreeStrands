@@ -538,6 +538,19 @@ describe("icon sizes", () => {
 });
 
 describe("component sizes", () => {
+  it("keeps Done at a fixed height with scrolling inside the results, leaving its tabs outside", () => {
+    const value = (selector: string, prop: string) => {
+      let result: string | undefined;
+      css.walkRules(selector, (rule) => rule.walkDecls(prop, (declaration) => { result = declaration.value; }));
+      return result;
+    };
+    expect(value(".today-done-card", "flex-shrink")).toBe("0");
+    expect(value(".today-done-items", "height")).toBe("var(--today-done-list-height)");
+    expect(spacePx("--today-done-list-height")).toBeGreaterThan(0);
+    expect(value(".today-done-items", "overflow-y")).toBe("auto");
+    expect(value(".today-done-items", "scrollbar-gutter")).toBe("stable");
+  });
+
   it("rounds corners and stacks layers only with the radius and layer tokens", () => {
     const raw = componentDeclarations(/^(border(-[a-z]+)*-radius|z-index)$/)
       .filter((declaration) => !/^(var\(--(radius|z)-[\w-]+\)|0)$/.test(declaration.value))
