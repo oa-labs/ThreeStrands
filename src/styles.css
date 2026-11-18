@@ -2361,11 +2361,11 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .contact-editor-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-4) var(--space-6); margin:var(--space-6) 0; }
 .contact-editor-grid label,.contact-editor-grid .contact-multi-value-field { min-width:0; display:grid; align-content:start; gap:var(--space-1-5); color:var(--muted); }
 /* One line of badges is exactly a control tall; more badges wrap and grow the box. */
-.contact-multi-value-box { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-1-5); min-width:0; min-height:var(--control-h); padding:var(--space-0-5) var(--space-1-5); border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--background); cursor:text; }
+.contact-multi-value-box { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-1-5); min-width:0; min-height:var(--control-h); padding:var(--space-1) var(--space-1-5); border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--background); cursor:text; }
 .contact-multi-value-box:focus-within { border-color:var(--accent); }
 .contact-multi-value-field.has-suggestions { position:relative; }
 .contact-multi-value-box:has(input[aria-invalid="true"]) { border-color:var(--error); }
-.contact-multi-value-box .contact-multi-value-input { flex:1 1 140px; width:auto; min-width:80px; height:var(--control-h-xs); padding:0 var(--space-1); border:0; color:var(--text); background:transparent; font-size:var(--text-body); outline:none; }
+.contact-multi-value-box .contact-multi-value-input { flex:1 1 calc(var(--placeholder-length, 16) * 1ch + 2 * var(--space-1)); width:auto; min-width:0; max-width:100%; height:var(--control-h-xs); padding:0 var(--space-1); border:0; color:var(--text); background:transparent; font-size:var(--text-body); outline:none; }
 .contact-multi-value-chip { min-width:0; max-width:100%; color:var(--text); letter-spacing:normal; text-transform:none; cursor:default; }
 /* Field values, chips, and placeholders share one size across the form. */
 .contact-multi-value-chip { font-size:var(--text-body); }

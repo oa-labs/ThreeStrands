@@ -42,3 +42,11 @@ describe("names on email badges", () => {
     expect(screen.getByText("Ann Lee")).toBeInTheDocument();
   });
 });
+
+describe("address field layout", () => {
+  it("sizes the entry field to its whole prompt so it wraps rather than cutting the prompt off", () => {
+    render(<ContactAddressField addresses={["carolyn@example.com", "carolyn.long.name@example.com"]} onChange={() => {}} />);
+    const input = screen.getByRole("textbox", { name: "Email Addresses" }) as HTMLInputElement;
+    expect(Number(input.style.getPropertyValue("--placeholder-length"))).toBeGreaterThanOrEqual(input.placeholder.length);
+  });
+});
