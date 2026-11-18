@@ -302,7 +302,8 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling, ownEma
   const where = proposal.type === "meeting" ? meetingPlace(proposal.location, matchedEvent?.conferenceUrl) : null;
   const people = proposal.type === "meeting" ? participantsText(proposal.participants, ownEmails, ownNames) : "";
   // The email's own words, quoted so they read as what was asked rather than as a description.
-  const quote = proposal.type === "meeting" && !matched && proposal.rawTimeLanguage ? proposal.rawTimeLanguage : null;
+  // Punctuation-only AI placeholders carry no timing; keep the evidence under its generic label.
+  const quote = proposal.type === "meeting" && !matched && /[\p{L}\p{N}]/u.test(proposal.rawTimeLanguage) ? proposal.rawTimeLanguage : null;
   const evidence = <details className="proposal-evidence">
     <summary aria-label={quote ? `From the email: ${quote}` : undefined}>
       <ChevronRight className="proposal-evidence-chevron" size={ICON_SIZE.xs} aria-hidden="true" />

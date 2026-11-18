@@ -4,7 +4,7 @@
 use tauri::State;
 
 use crate::models::{
-    CreateNoteRequest, CreatedNote, Note, NoteAttachment, NoteLinks, NoteSave, NoteSearchHit,
+    CreateNoteRequest, DoneNote, Note, NoteAttachment, NoteLinks, NoteSave, NoteSearchHit,
     NoteSearchScope, NoteSummary, NoteTitle, NotesStorage, UpdateNoteRequest,
 };
 use crate::{
@@ -41,16 +41,16 @@ pub(crate) fn set_note_starred(
     Ok(note)
 }
 
-/// Notes created during `[start, end)`, for the Today view's Done card.
+/// Notes created or starred notes last edited during `[start, end)`.
 #[tauri::command]
-pub(crate) async fn list_notes_created_between(
+pub(crate) async fn list_notes_done_between(
     start: String,
     end: String,
     limit: usize,
     state: State<'_, AppState>,
-) -> AppResult<Vec<CreatedNote>> {
+) -> AppResult<Vec<DoneNote>> {
     let database = state.database.clone();
-    run_database_task(move || database.list_notes_created_between(&start, &end, limit)).await
+    run_database_task(move || database.list_notes_done_between(&start, &end, limit)).await
 }
 
 #[tauri::command]

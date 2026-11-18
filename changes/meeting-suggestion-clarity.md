@@ -4,3 +4,4 @@
 
 ### Fixed
 - Editing a meeting suggestion now accepts participant names as well as email addresses, without showing an email-address error for names extracted from the conversation.
+- Meeting suggestions show “Time not specified” when the extracted timing contains only punctuation, while keeping the source email evidence available to expand.

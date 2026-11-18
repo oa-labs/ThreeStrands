@@ -4,7 +4,7 @@ import type { NoteDocument, NoteTaskRecord, NoteReference, NoteCapture, NoteBack
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
 import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
-import type { SentInRange, CreatedNote } from "../domain";
+import type { SentInRange, DoneNote } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingContext, MeetingReadiness, PlanChanges, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
@@ -462,8 +462,8 @@ export interface MailClient extends CorrespondenceClient {
   listRecentNotes(limit: number): Promise<NoteSummary[]>;
   listStarredNotes(limit: number): Promise<NoteSummary[]>;
   setNoteStarred(id: string, starred: boolean): Promise<Note>;
-  /** Notes created from `start` (inclusive) to `end` (exclusive), ISO times, newest first; daily notes and notes in Trash are left out. */
-  listNotesCreatedBetween(start: string, end: string, limit: number): Promise<CreatedNote[]>;
+  /** New non-daily notes and starred notes last edited in `[start, end)`, ISO times, newest first, once per note and outside Trash. */
+  listNotesDoneBetween(start: string, end: string, limit: number): Promise<DoneNote[]>;
   getNote(id: string): Promise<Note | null>;
   getDailyNote(date: string): Promise<Note | null>;
   createNote(title: string, body: string): Promise<Note>;
@@ -746,7 +746,7 @@ const tauriClient: MailClient = {
   listRecentNotes: (limit) => read("list_recent_notes", { limit }),
   listStarredNotes: (limit) => read("list_starred_notes", { limit }),
   setNoteStarred: (id, starred) => complete("set_note_starred", { id, starred }),
-  listNotesCreatedBetween: (start, end, limit) => read("list_notes_created_between", { start, end, limit }),
+  listNotesDoneBetween: (start, end, limit) => read("list_notes_done_between", { start, end, limit }),
   getNote: (id) => read("get_note", { id }),
   getDailyNote: (date) => read("get_daily_note", { date }),
   createNote: (title, body) => complete("create_note", { request: { title, body } }),

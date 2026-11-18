@@ -4,7 +4,7 @@
 
 ### Improved
 - Add tasks and events directly from Today, and use the schedule arrows or <kbd>-</kbd> and <kbd>=</kbd> to browse other days. The **Agenda** heading and left-aligned controls stay in place on every day, while the Planning Inbox stays on today’s work.
-- Today’s columns use more of the window, and a **Done** card under the Planning Inbox shows the tasks you finished, emails you sent, and notes you created on the day the schedule shows, where you can reopen a task. Today keeps the day you picked until midnight. Check off an email suggestion to record a completed task while keeping the email unchanged.
+- Today’s columns use more of the window, and a **Done** card under the Planning Inbox shows the tasks you finished, emails you sent, notes you created, and starred notes you edited on the day the schedule shows, where you can reopen a task. Today keeps the day you picked until midnight. Check off an email suggestion to record a completed task while keeping the email unchanged.
   The card keeps a fixed height when switching filters, with scrolling for longer lists so its tabs stay in place.
 
 ### Fixed

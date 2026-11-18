@@ -569,14 +569,15 @@ pub struct SentInRange {
     pub recipients: Vec<String>,
 }
 
-/// A note created within a range, for the Today view's Done card.
+/// A creation or latest saved edit within a range, for the Today view's Done card.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreatedNote {
+pub struct DoneNote {
     pub id: String,
     pub title: String,
     pub preview: String,
-    pub created_at: String,
+    pub at: String,
+    pub edited: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

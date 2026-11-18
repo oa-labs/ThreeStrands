@@ -18,7 +18,7 @@ import { todayItem, todayThread } from "./test/todayMail";
 import { formatClockTime } from "./agendaEvents";
 import { readDayChoice, TODAY_DAY_KEY } from "./todayDayChoice";
 import { writeTodayBackdrop } from "./backdropPreference";
-import type { CreatedNote, SentInRange } from "./domain";
+import type { DoneNote, SentInRange } from "./domain";
 
 vi.mock("./refreshSyncedData", () => ({ refreshSyncedData: vi.fn(async () => {}) }));
 
@@ -115,7 +115,7 @@ describe("TodayWorkspace", () => {
     vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([]);
     vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([]);
     vi.spyOn(mailClient, "listSentBetween").mockResolvedValue([]);
-    vi.spyOn(mailClient, "listNotesCreatedBetween").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listNotesDoneBetween").mockResolvedValue([]);
     vi.spyOn(mailClient, "dailyPlan").mockImplementation(async (date) => emptyPlan(date));
     // The inbox reads its paged sources as soon as Today opens.
     vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [] });
@@ -1453,7 +1453,7 @@ describe("TodayWorkspace", () => {
     const local = (day: number, hours: number, minutes = 0) => new Date(2026, 10, day, hours, minutes).toISOString();
     const done = () => within(screen.getByRole("region", { name: /^Done/ }));
     const sentIn = (id: string, lastSentAt: string, overrides: Partial<SentInRange> = {}): SentInRange => ({ thread: todayThread(id, { subject: `Sent ${id}`, accountId: "you@example.com" }), lastSentAt, sentCount: 1, recipients: ["Jill <jill@example.org>"], ...overrides });
-    const created = (id: string, createdAt: string): CreatedNote => ({ id, title: `Note ${id}`, preview: `About ${id}`, createdAt });
+    const created = (id: string, at: string): DoneNote => ({ id, title: `Note ${id}`, preview: `About ${id}`, at, edited: false });
 
     it("sits under the Planning Inbox and lists today's tasks, sent mail and new notes newest first with their times", async () => {
       vi.mocked(mailClient.listTasks).mockResolvedValue([
@@ -1463,7 +1463,7 @@ describe("TodayWorkspace", () => {
         task("elsewhere", { accountId: "other@example.com", status: "completed", completedAt: local(17, 9) }),
       ]);
       vi.mocked(mailClient.listSentBetween).mockResolvedValue([sentIn("m1", local(17, 9, 55))]);
-      vi.mocked(mailClient.listNotesCreatedBetween).mockResolvedValue([created("n1", local(17, 7, 30))]);
+      vi.mocked(mailClient.listNotesDoneBetween).mockResolvedValue([created("n1", local(17, 7, 30))]);
       const onOpenNote = vi.fn();
       const { onOpenThread, onEditTask } = renderToday({ onOpenNote });
       const card = screen.getByRole("region", { name: "Done Today" });
@@ -1474,7 +1474,7 @@ describe("TodayWorkspace", () => {
       expect(within(card).getByRole("button", { name: /^Sent m1/ })).toHaveTextContent(formatClockTime(new Date(local(17, 9, 55))).replace(/\s/g, " "));
       expect(within(card).getByText("2 tasks · 1 email · 1 note")).toBeInTheDocument();
       expect(mailClient.listSentBetween).toHaveBeenCalledWith("you@example.com", local(17, 0), local(18, 0));
-      expect(mailClient.listNotesCreatedBetween).toHaveBeenCalledWith(local(17, 0), local(18, 0), expect.any(Number));
+      expect(mailClient.listNotesDoneBetween).toHaveBeenCalledWith(local(17, 0), local(18, 0), expect.any(Number));
       fireEvent.click(within(card).getByRole("button", { name: /^Sent m1/ }));
       expect(onOpenThread).toHaveBeenCalledWith("m1");
       fireEvent.click(within(card).getByRole("button", { name: /^Note n1/ }));
@@ -1490,13 +1490,27 @@ describe("TodayWorkspace", () => {
       expect(within(card).getByRole("button", { name: /^Sent m1/ })).toBeInTheDocument();
     });
 
+    it("labels a starred note edit with its saved time and opens the note", async () => {
+      vi.mocked(mailClient.listNotesDoneBetween).mockResolvedValue([
+        { ...created("star", local(17, 9, 45)), edited: true },
+      ]);
+      const onOpenNote = vi.fn();
+      renderToday({ onOpenNote });
+      const row = await done().findByRole("button", { name: /^Note star/ });
+      expect(row).toHaveTextContent("Edited · About star");
+      expect(row).toHaveTextContent(formatClockTime(new Date(local(17, 9, 45))).replace(/\s/g, " "));
+      expect(done().getByText("1 note")).toBeInTheDocument();
+      fireEvent.click(row);
+      expect(onOpenNote).toHaveBeenCalledWith("star");
+    });
+
     it("follows the schedule's day arrows: past days are named Done and load that day, future days have no card", async () => {
       vi.mocked(mailClient.listTasks).mockResolvedValue([
         task("today", { status: "completed", completedAt: local(17, 9) }),
         task("before", { status: "completed", completedAt: local(16, 15, 20) }),
       ]);
       vi.mocked(mailClient.listSentBetween).mockImplementation(async (_account, start) => start === local(16, 0) ? [sentIn("old", local(16, 16))] : []);
-      vi.mocked(mailClient.listNotesCreatedBetween).mockImplementation(async (start) => start === local(16, 0) ? [created("old", local(16, 12))] : []);
+      vi.mocked(mailClient.listNotesDoneBetween).mockImplementation(async (start) => start === local(16, 0) ? [created("old", local(16, 12))] : []);
       renderToday({ calendarConnected: true });
       await screen.findByRole("checkbox", { name: "Mark Task today Not Done" });
       fireEvent.click(screen.getByRole("button", { name: "Previous Day" }));
@@ -1550,7 +1564,7 @@ describe("TodayWorkspace", () => {
     it("keeps the other sources when one fails, showing the error on its own filters", async () => {
       vi.mocked(mailClient.listTasks).mockResolvedValue([task("fine", { status: "completed", completedAt: local(17, 9) })]);
       vi.mocked(mailClient.listSentBetween).mockRejectedValue(new Error("Mail is offline"));
-      vi.mocked(mailClient.listNotesCreatedBetween).mockResolvedValue([created("n1", local(17, 7))]);
+      vi.mocked(mailClient.listNotesDoneBetween).mockResolvedValue([created("n1", local(17, 7))]);
       renderToday();
       const alert = await within(screen.getByRole("region", { name: "Done Today" })).findByRole("alert");
       expect(alert).toHaveTextContent("Sent mail: Mail is offline");
