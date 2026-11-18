@@ -24,7 +24,8 @@ test("Today's columns fill the available height and clip the grid to the rounded
     await page.setViewportSize({ width: 1440, height });
     await expect.poll(() => today.evaluate((root) => {
       const box = (selector: string) => root.querySelector<HTMLElement>(selector)!;
-      const inbox = box(".today-work").getBoundingClientRect();
+      // The left column (Planning Inbox above the Done card) ends level with the schedule.
+      const inbox = box(".today-stack > .today-work:last-child").getBoundingClientRect();
       const schedule = box(".today-time").getBoundingClientRect();
       const grid = box(".calendar-week-scroll").getBoundingClientRect();
       const columns = box(".today-columns");
@@ -41,8 +42,9 @@ test("Today's columns fill the available height and clip the grid to the rounded
 
 test("completes a starred suggestion through the task form, preserves the email, and reopens the work", async ({ page }) => {
   const today = await openToday(page);
-  await today.getByRole("tab", { name: "Emails", exact: true }).click();
-  const checkbox = today.getByRole("checkbox", { name: /^Mark .* Done$/ }).first();
+  const inbox = today.getByRole("region", { name: "Planning Inbox", exact: true });
+  await inbox.getByRole("tab", { name: "Emails", exact: true }).click();
+  const checkbox = inbox.getByRole("checkbox", { name: /^Mark .* Done$/ }).first();
   const label = await checkbox.getAttribute("aria-label");
   await checkbox.click();
   let form = page.getByRole("dialog", { name: "Add Task", exact: true });
@@ -53,7 +55,7 @@ test("completes a starred suggestion through the task form, preserves the email,
   form = page.getByRole("dialog", { name: "Add Task", exact: true });
   await form.getByRole("textbox", { name: "Task", exact: true }).fill("Review the roadmap");
   await form.getByRole("button", { name: "Add Task", exact: true }).click();
-  const completed = today.getByRole("region", { name: "Completed", exact: true });
+  const completed = today.getByRole("region", { name: "Done Today", exact: true });
   await expect(completed.getByRole("checkbox", { name: "Mark Review the roadmap Not Done" })).toBeChecked();
   const saved = await page.evaluate(async () => {
     const path = "/src/data/client.ts";
@@ -68,8 +70,8 @@ test("completes a starred suggestion through the task form, preserves the email,
   await page.getByRole("button", { name: "Today (0)", exact: true }).click();
   await expect(completed.getByRole("checkbox", { name: "Mark Review the roadmap Not Done" })).toBeChecked();
   await completed.getByRole("checkbox", { name: "Mark Review the roadmap Not Done" }).click();
-  await today.getByRole("tab", { name: "Tasks", exact: true }).click();
-  await expect(today.getByRole("checkbox", { name: "Mark Review the roadmap Done" })).not.toBeChecked();
+  await inbox.getByRole("tab", { name: "Tasks", exact: true }).click();
+  await expect(inbox.getByRole("checkbox", { name: "Mark Review the roadmap Done" })).not.toBeChecked();
 });
 
 test("drags a Planning Inbox item onto the schedule to book a block at the dropped time", async ({ page }) => {
