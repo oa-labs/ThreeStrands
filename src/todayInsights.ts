@@ -1,4 +1,4 @@
-import { formatClockTime, isDeclined } from "./agendaEvents";
+import {  isDeclined } from "./agendaEvents";
 import { eventDate } from "./calendarTime";
 import type { AvailabilityPreferences, ScheduleEvent } from "./domain";
 import { schedulingDay, shiftSchedulingDay } from "./meetingAvailability";
@@ -46,84 +46,12 @@ export function mentionsRecording(event: ScheduleEvent): boolean {
   return /\b(?:will be|is being|is|are|gets?|being) recorded\b|\brecording (?:will be|is) (?:shared|available|posted|sent)\b/i.test(text);
 }
 
-/**
- * The rest of the day in one line, such as "Free until 2:00 pm · Double-booked
- * at 4:00 pm · Last meeting ends 5:00 pm". Two or more clashes are counted
- * instead, since the agenda marks each one. Empty for a day without meetings.
- */
-export function dayShape(events: readonly ScheduleEvent[], now: Date): string {
-  const remaining = events.filter((event) => isAttending(event) && new Date(event.end).getTime() > now.getTime())
-    .sort((left, right) => eventDate(left).getTime() - eventDate(right).getTime());
-  if (remaining.length === 0) return events.some(isAttending) ? "No more meetings today" : "";
-  const parts: string[] = [];
-  const firstStart = eventDate(remaining[0]);
-  if (firstStart.getTime() - now.getTime() >= FREE_STRETCH_MINUTES * 60_000) parts.push(`Free until ${formatClockTime(firstStart)}`);
-
-  // A clash is named by when it begins: the later of the two starts.
-  const clashes = new Map<number, ScheduleEvent[]>();
-  for (const [event, others] of agendaConflicts(remaining)) {
-    for (const other of others) {
-      const start = Math.max(eventDate(event).getTime(), eventDate(other).getTime());
-      const recorded = clashes.get(start) ?? [];
-      if (!recorded.includes(event)) recorded.push(event);
-      clashes.set(start, recorded);
-    }
-  }
-  if (clashes.size > 0) {
-    const recorded = [...new Set([...clashes.values()].flat())].filter(mentionsRecording);
-    const note = recorded.length ? ` (${recorded.map((event) => event.title).join(", ")} ${recorded.length === 1 ? "is" : "are"} recorded)` : "";
-    parts.push(clashes.size === 1 ? `Double-booked at ${formatClockTime(new Date([...clashes.keys()][0]))}${note}` : `${clashes.size} double-bookings${note}`);
-  }
-
-  const lastEnd = Math.max(...remaining.map((event) => new Date(event.end).getTime()));
-  parts.push(`Last meeting ends ${formatClockTime(new Date(lastEnd))}`);
-  return parts.join(" · ");
-}
-
-/**
- * Today's header line about meetings, true at any time of day: "No meetings
- * today", "2 meetings · next at 2:00 pm", "2 meetings · in Standup until
- * 10:30 am", or "2 meetings, both finished · last ended 3:30 pm", followed
- * by any double-booking still ahead and, with more than one meeting left,
- * when the last ends. Declined and all-day events aren't meetings here, and
- * `omitNext` leaves out the next/current part.
- */
-export function daySummary(events: readonly ScheduleEvent[], now: Date, { omitNext = false }: { omitNext?: boolean } = {}): string {
-  const meetings = events.filter(isAttending).sort((left, right) => eventDate(left).getTime() - eventDate(right).getTime());
-  if (meetings.length === 0) return "No meetings today";
-  const total = `${meetings.length} meeting${meetings.length === 1 ? "" : "s"}`;
-  const remaining = meetings.filter((event) => new Date(event.end).getTime() > now.getTime());
-  if (remaining.length === 0) {
-    const lastEnd = new Date(Math.max(...meetings.map((event) => new Date(event.end).getTime())));
-    const finished = meetings.length === 1 ? "finished" : meetings.length === 2 ? "both finished" : "all finished";
-    return `${total}, ${finished} · ${meetings.length === 1 ? "ended" : "last ended"} ${formatClockTime(lastEnd)}`;
-  }
-  const current = remaining.find((event) => eventDate(event).getTime() <= now.getTime());
-  // With omitNext the page shows the next or current meeting on its own line.
-  const parts = [total];
-  if (!omitNext) parts.push(current ? `in ${current.title} until ${formatClockTime(new Date(current.end))}` : `next at ${formatClockTime(eventDate(remaining[0]))}`);
-  // The rest of dayShape: double-bookings, and when the last meeting ends once there's more than one left.
-  for (const part of dayShape(events, now).split(" · ")) {
-    if (!part || part.startsWith("Free until")) continue;
-    if (part.startsWith("Last meeting ends") && remaining.length < 2) continue;
-    parts.push(part.charAt(0).toLocaleLowerCase() + part.slice(1));
-  }
-  return parts.join(" · ");
-}
-
 /** The meetings still ahead today, or under way, that `address` is invited to. */
 export function meetingsWith(address: string, events: readonly ScheduleEvent[], now: Date): ScheduleEvent[] {
   const email = address.toLocaleLowerCase();
   return events.filter((event) => isAttending(event) && new Date(event.end).getTime() > now.getTime()
     && (event.attendees ?? []).includes(email))
     .sort((left, right) => eventDate(left).getTime() - eventDate(right).getTime());
-}
-
-/** "Also in your 2:00 pm meeting", "Also in your 2:00 pm and 3:00 pm meetings". */
-export function sharedMeetingsNote(meetings: readonly ScheduleEvent[]): string {
-  if (meetings.length === 0) return "";
-  const times = new Intl.ListFormat(undefined, { type: "conjunction" }).format(meetings.map((event) => formatClockTime(eventDate(event))));
-  return `Also in your ${times} meeting${meetings.length === 1 ? "" : "s"}`;
 }
 
 /** The default availability profile's hours: its zone and weekly windows. */
@@ -208,46 +136,4 @@ export function planCapacity(events: readonly ScheduleEvent[] | null, workingHou
     stretches,
     bookedBlocks: events.filter((event) => !!event.sourceTaskId && isAttending(event) && inHours(event)).length,
   };
-}
-
-/** How long before the end of working hours Today also offers Plan Tomorrow. */
-export const EVENING_HINT_MINUTES = 60;
-
-/**
- * Whether Today's header also offers Plan Tomorrow: once today's last
- * attended, timed meeting has ended, or within the last
- * `EVENING_HINT_MINUTES` of today's working hours (and after them). A quiet
- * offer, never a prompt; false on a day with neither.
- */
-export function offersPlanTomorrow(events: readonly ScheduleEvent[], workingHours: WorkingHours | null, now: Date): boolean {
-  const meetings = events.filter((event) => isAttending(event) && event.eventType !== "workingLocation");
-  if (meetings.length && Math.max(...meetings.map((event) => new Date(event.end).getTime())) <= now.getTime()) return true;
-  const end = workingDayEnd(workingHours, now);
-  return end !== null && now.getTime() >= end - EVENING_HINT_MINUTES * 60_000;
-}
-
-/** When the default profile's working hours end today (the last window's end), or null without working hours or a window today. */
-export function workingDayEnd(workingHours: WorkingHours | null, now: Date): number | null {
-  if (!workingHours) return null;
-  const day = planCapacity([], workingHours, new Date(0), schedulingDay(now.getTime(), workingHours.timeZone));
-  return day?.stretches.at(-1)?.end.getTime() ?? null;
-}
-
-/** Without working hours, Today's evening view opens after this local hour (6 pm). */
-export const EVENING_FALLBACK_HOUR = 18;
-
-/**
- * Whether Today's evening view opens by itself: today's last attending, timed
- * meeting has ended (a day without one counts) and now is past the end of
- * the default profile's working hours, or past 6 pm local time without any.
- * `events` is null while the schedule is unknown (loading or failed), which
- * never opens it, since a meeting may still be ahead.
- */
-export function eveningOpens(events: readonly ScheduleEvent[] | null, workingHours: WorkingHours | null, now: Date): boolean {
-  if (!events) return false;
-  const meetings = events.filter((event) => isAttending(event) && event.eventType !== "workingLocation");
-  if (meetings.some((event) => new Date(event.end).getTime() > now.getTime())) return false;
-  const end = workingDayEnd(workingHours, now);
-  if (end !== null) return now.getTime() >= end;
-  return now.getHours() >= EVENING_FALLBACK_HOUR;
 }

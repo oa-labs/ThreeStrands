@@ -1,8 +1,5 @@
-import type { FollowThroughItem, MeetingContext, ScheduleEvent } from "./domain";
-import { isDeclined } from "./agendaEvents";
-import { meetingDate, meetingEventReference } from "./meetingNoteEntry";
+import type { FollowThroughItem, MeetingContext } from "./domain";
 import { fenceRun, indent, isListItem, itemEnd, lines, occurrenceBlocks } from "./meetingExcerpt";
-import { isPreparable } from "./meetingPrep";
 import { escapeMarkdownText, extractNoteEntityLinks, normalizeContactAddress, noteReferenceHref, noteReferenceKey, parseNoteReference, type NoteReference } from "./noteEntities";
 
 /** Ends a follow-through section's line; mirrors `FOLLOW_THROUGH_MARKER`. */
@@ -128,11 +125,6 @@ export function localDay(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-/** The day's meetings Shut Down reviews: preparable, not declined, and ended by `now`. */
-export function meetingsToFollowThrough(events: readonly ScheduleEvent[], now: Date): ScheduleEvent[] {
-  return events.filter((event) => isPreparable(event) && !isDeclined(event) && !event.allDay && new Date(event.end).getTime() <= now.getTime());
-}
-
 /** Local state below belongs to this device only: none of it syncs or goes
  * into a settings export, and the note content stays the record. */
 function readList<T>(key: string, valid: (value: unknown) => value is T): T[] {
@@ -147,24 +139,6 @@ function writeList(key: string, values: unknown[]) {
   try { localStorage.setItem(key, JSON.stringify(values)); } catch { /* Applies until reload. */ }
 }
 
-const NO_FOLLOW_THROUGH_KEY = "threestrands.meetings.noFollowThrough";
-/** Most "No follow-through" choices kept; the oldest go first. */
-export const MAX_NO_FOLLOW_THROUGH_CHOICES = 200;
-
-/** The choice's key: the occurrence and the day it was set aside. */
-export function noFollowThroughKey(event: ScheduleEvent): string | null {
-  const reference = meetingEventReference(event);
-  return reference ? `${meetingDate(event)}|${noteReferenceKey(reference)}` : null;
-}
-export function readNoFollowThrough(): string[] {
-  return readList(NO_FOLLOW_THROUGH_KEY, (value): value is string => typeof value === "string");
-}
-/** Sets aside, or brings back, one occurrence's follow-through for its day, on this device only. */
-export function setNoFollowThrough(key: string, chosen: boolean): string[] {
-  const next = [...readNoFollowThrough().filter((value) => value !== key), ...(chosen ? [key] : [])].slice(-MAX_NO_FOLLOW_THROUGH_CHOICES);
-  writeList(NO_FOLLOW_THROUGH_KEY, next);
-  return next;
-}
 
 /** An item being edited in the review: its kind and text, or the task it links. */
 export type ReviewItem = { id: string } & FollowThroughItem;

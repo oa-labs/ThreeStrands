@@ -56,8 +56,6 @@ describe("spacing", () => {
       return result;
     };
     expect(value(".today-columns", "grid-template-columns")).toBe("minmax(var(--today-column-min), 1fr) minmax(var(--today-day-view-min), 1.25fr)");
-    expect(value(".today-work .today-source-tabs", "flex-wrap")).toBe("wrap");
-    expect(value(".today-work .today-source-tabs", "overflow")).toBe("visible");
     expect(value(".calendar-week-column .calendar-event-has-action", "padding-right")).toBe("calc(var(--control-h-xs) + var(--space-2))");
     expect(value(".calendar-event-action", "pointer-events")).toBe("none");
     expect(value(".calendar-event-action > .btn-icon", "pointer-events")).toBe("auto");

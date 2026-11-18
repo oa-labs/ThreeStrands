@@ -222,7 +222,6 @@ describe("component typography", () => {
       expect(sizeOf(selector), selector).toBe(emailSize);
       expect(rolePx(sizeOf(selector)!), selector).toBeGreaterThan(rolePx(sizeOf(".context-row-detail")!));
     }
-    expect(sizeOf(".today-day-shape")).toBe(emailSize);
     expect(sizeOf(".context-section-header h3")).toBe("--text-label");
   });
 

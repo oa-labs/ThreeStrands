@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CalendarOption, ScheduleEvent } from "./domain";
-import { blockRequest, bookedFor, nextFreeSlot, withinWorkingHours } from "./todayBooking";
+import { blockRequest, nextFreeSlot, withinWorkingHours } from "./todayBooking";
 import type { WorkingHours } from "./todayInsights";
 
 const at = (hours: number, minutes = 0) => new Date(2026, 9, 28, hours, minutes);
@@ -82,13 +82,3 @@ describe("blockRequest", () => {
   });
 });
 
-describe("bookedFor", () => {
-  it("finds the next block for the task still to end, else the latest", () => {
-    const events = [busy("a", at(9), at(9, 30), { sourceTaskId: "t" }), busy("b", at(15), at(15, 30), { sourceTaskId: "t" }), busy("c", at(12), at(12, 30))];
-    expect(bookedFor("t", events, at(10))?.id).toBe("b");
-    expect(bookedFor("t", events, at(16))?.id).toBe("b");
-    expect(bookedFor(null, events, at(10))).toBeNull();
-    // A note task's block is found by its note reference, as Calendar resolves it.
-    expect(bookedFor("note:daily:2026-10-28:m1", [busy("n", at(14), at(14, 30), { sourceTaskId: " note:daily:2026-10-28:m1 " })], at(10))?.id).toBe("n");
-  });
-});

@@ -1161,22 +1161,6 @@ export type PlanChanges = {
 export type PlanSaveResult = { operationId: string; note: Note; added: string[]; removed: string[]; notToday: string[]; already: string[]; changed: boolean; shutdown: boolean };
 /** Carry count and planned days (oldest first) of one plan item key over a range. */
 export type PlanHistory = { target: string; carryCount: number; plannedDays: string[] };
-/** An item Review offers to carry, defer, or drop, with the plan it came from. */
-export type PlanReviewItem = DailyPlanItem & { plannedOn: string };
-/** A task completed on the reviewed day outside its plan. */
-export type PlanCompletedTask = { key: string; taskId: string; title: string; accountId: string | null; noteId: string | null; noteTitle: string | null; completedAt: string };
-/** Plan Today's Review step (`src-tauri/src/db/plan_review.rs`). */
-export type PlanReview = {
-  date: string;
-  /** The most recent earlier plan within `PLAN_LOOKBACK_DAYS`, or null. */
-  reviewed: string | null;
-  done: DailyPlanItem[];
-  alsoDone: PlanCompletedTask[];
-  /** Ended, attended meetings of the reviewed day; null when that day isn't cached (unknown, not empty). */
-  meetings: ScheduleEvent[] | null;
-  /** The reviewed plan's unsettled items, then older plans', then deferrals due by `date`. */
-  didntGetTo: PlanReviewItem[];
-};
 export type PlanSourceKind = "suggested" | "tasks" | "starredMail" | "promises" | "keepInTouch" | "goals" | "notes";
 export type PlanCandidateReason = "overdue" | "dueToday" | "inProgress" | "waiting" | "open" | "promise" | "keepInTouch" | "starred" | "goal" | "goalTask" | "noteTask";
 /** What adding a candidate takes: the item itself, or a task made first. */
