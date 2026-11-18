@@ -1,4 +1,4 @@
-import { CalendarClock, Plus } from "lucide-react";
+import { CalendarClock } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
@@ -56,12 +56,13 @@ function initialFilter(): InboxFilter {
   return readLocalStorage(INBOX_FILTER_KEY, (raw) => FILTERS.some((filter) => filter.id === raw) ? raw as InboxFilter : fallback, fallback);
 }
 
-export function PlanningInbox({ entries, completed = [], completedError, scope, onNewTask, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
+export function PlanningInbox({ entries, completed = [], completedError, scope, onAddTask, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
   entries: InboxEntry[];
   completed?: InboxEntry[];
   completedError?: string | null;
   scope?: string;
-  onNewTask?(): void;
+  /** Creates a task from a typed title. Present only when tasks can be created. Resolve to keep the input for the next task; reject to show the error. */
+  onAddTask?(title: string): Promise<void> | void;
   status(filter: InboxFilter): ReactNode;
   unavailable?(filter: InboxFilter): boolean;
   loading(filter: InboxFilter): boolean;
@@ -86,6 +87,19 @@ export function PlanningInbox({ entries, completed = [], completedError, scope, 
   const count = items.length <= limit + 1 ? items.length : limit;
   const completedItems = completed.filter((entry) => filter === "all" || filter === "tasks" || entry.category === filter);
   const showCompleted = filter !== "contacts";
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const draftInput = useRef<HTMLInputElement>(null);
+  const showAddTask = Boolean(onAddTask) && (filter === "all" || filter === "tasks");
+  const submitDraft = async () => {
+    const title = draftTitle.trim();
+    if (!title || adding || !onAddTask) return;
+    setAdding(true); setDraftError(null);
+    try { await onAddTask(title); setDraftTitle(""); }
+    catch (reason) { setDraftError(errorMessage(reason)); }
+    finally { setAdding(false); draftInput.current?.focus(); }
+  };
   const rowKey = (entry: InboxEntry) => entry.identities.find((identity) => identity.startsWith("task:")) ?? entry.id;
   useLayoutEffect(() => {
     const request = completionFocus.current;
@@ -132,7 +146,6 @@ export function PlanningInbox({ entries, completed = [], completedError, scope, 
   return <section aria-label="Planning Inbox" className="planning-inbox">
     <header className="today-panel-heading">
       <h2>Planning Inbox <span className="context-count" aria-label={`${items.length}${more ? " or more" : ""} unscheduled ${noun}`}>{items.length}{more ? "+" : ""}</span></h2>
-      {onNewTask ? <button type="button" className="btn btn-sm" onClick={onNewTask}><Plus size={ICON_SIZE.sm} aria-hidden="true" />New Task</button> : null}
       {scope && filter !== "contacts" ? <span className="today-source-scope">Mail · {scope}</span> : null}
     </header>
     <div ref={tabs} className="planning-inbox-tabs" role="tablist" aria-label="Planning Inbox Filters" onKeyDown={move}>
@@ -161,6 +174,16 @@ export function PlanningInbox({ entries, completed = [], completedError, scope, 
         if (count < items.length) setLimit((value) => value + INBOX_PAGE_SIZE);
         else onLoadMore(filter);
       }}>Show More</button> : null}
+      {showAddTask ? <div className="today-add-task">
+        <input ref={draftInput} type="text" className="today-add-task-input" aria-label="Add a task" placeholder="Add a task…" value={draftTitle} readOnly={adding}
+          aria-invalid={draftError ? true : undefined}
+          onChange={(event) => { setDraftTitle(event.target.value); setDraftError(null); }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") { event.preventDefault(); void submitDraft(); }
+            else if (event.key === "Escape" && draftTitle) { event.preventDefault(); event.stopPropagation(); setDraftTitle(""); setDraftError(null); }
+          }} />
+        {draftError ? <p className="form-error" role="alert">{draftError}</p> : null}
+      </div> : null}
       {showCompleted && (completedItems.length || (filter !== "emails" && completedError)) ? <ContextSection id="today-completed" title="Completed" className="today-completed-card" count={completedItems.length}
         status={filter !== "emails" && completedError ? <p className="form-error" role="alert">Completed note tasks: {completedError}</p> : undefined}
         rows={completedItems.map((entry) => <ContextRow {...entry.row} key={entry.id} as="div" title={entry.title} rowKey={rowKey(entry)} className="context-task context-task-done" />)} /> : null}

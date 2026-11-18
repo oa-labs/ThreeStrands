@@ -35,7 +35,7 @@ import { ICON_SIZE } from "./iconSizes";
 import { bookedTaskFor, defaultEventCalendar, openTasksFor, showCalendar, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
 import type { Notice } from "./useNotice";
 import { formatShortcut } from "./shortcutLabels";
-import { DayTimeGrid, sameEvent, SLOT_MINUTES, slotAt, type DayGridPreview } from "./DayTimeGrid";
+import { DayTimeGrid, eventRangeFromSlots, sameEvent, slotAt, type DayGridPreview } from "./DayTimeGrid";
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
@@ -45,13 +45,6 @@ const DEFAULT_WEEK_SCROLL_TOP = 7 * HOUR_HEIGHT;
 const MAX_WEEK_SCROLL_TOP = 24 * HOUR_HEIGHT;
 /** How often the "now" indicator re-renders, in milliseconds. */
 const NOW_TICK_MS = 60_000;
-
-function eventRangeFromSlots(day: Date, anchor: number, current: number, dragged: boolean) {
-  const startMinutes = Math.min(anchor, current);
-  const endMinutes = dragged ? Math.max(anchor, current) + SLOT_MINUTES : anchor + 60;
-  const at = (minutes: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, minutes);
-  return { start: at(startMinutes), end: at(endMinutes), startMinutes, endMinutes };
-}
 
 function readWeekScrollTop(): number {
   return readLocalStorage(WEEK_SCROLL_TOP_KEY, (stored) => {

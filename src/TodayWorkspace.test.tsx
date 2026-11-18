@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postcss from "postcss";
 import { nextMeeting, TodayWorkspace } from "./TodayWorkspace";
+import { DAY_VIEW_LABEL_ROOM_PX } from "./TodayDayView";
 import { runWorkspaceCommand } from "./workspaceCommands";
 import { todayItem, todayThread } from "./test/todayMail";
 
@@ -193,13 +194,15 @@ describe("TodayWorkspace", () => {
     renderToday({ mailAccounts: [{ email: "you@example.com" } as Account] });
     expect(screen.queryByRole("button", { name: /Plan Today|Day Details|Review Today/ })).not.toBeInTheDocument();
     await inbox().findByText("Nothing to schedule here.");
-    fireEvent.click(inbox().getByRole("button", { name: "New Task" }));
-    const dialog = within(screen.getByRole("dialog", { name: "Add Task" }));
-    fireEvent.change(dialog.getByRole("textbox", { name: "Task" }), { target: { value: "Draft a brief" } });
-    fireEvent.click(dialog.getByRole("button", { name: "Add Task" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument());
-    expect(inbox().getByText("Draft a brief")).toBeInTheDocument();
+    expect(inbox().queryByRole("button", { name: "New Task" })).not.toBeInTheDocument();
+    const field = inbox().getByRole("textbox", { name: "Add a task" });
+    fireEvent.change(field, { target: { value: "Draft a brief" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(await inbox().findByText("Draft a brief")).toBeInTheDocument();
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: "Draft a brief", accountId: "you@example.com", threadId: null }));
+    expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument();
+    await waitFor(() => expect(field).toHaveValue(""));
+    expect(field).toHaveFocus();
   });
 
   it("lets the user choose a task account from All Accounts and cancel without saving", async () => {
@@ -207,17 +210,20 @@ describe("TodayWorkspace", () => {
     const mailAccounts = ["you@example.com", "work@example.com"].map((email) => ({ email }) as Account);
     renderToday({ accountId: null, mailAccounts });
     await inbox().findByText("Nothing to schedule here.");
-    const trigger = inbox().getByRole("button", { name: "New Task" });
-    fireEvent.click(trigger);
-    fireEvent.click(within(screen.getByRole("dialog", { name: "Add Task" })).getByRole("button", { name: "Cancel" }));
-    expect(create).not.toHaveBeenCalled();
-
-    fireEvent.click(trigger);
+    const field = inbox().getByRole("textbox", { name: "Add a task" });
+    fireEvent.change(field, { target: { value: "Call Sam" } });
+    fireEvent.keyDown(field, { key: "Enter" });
     const form = within(screen.getByRole("dialog", { name: "Add Task" }));
-    fireEvent.change(form.getByRole("textbox", { name: "Task" }), { target: { value: "Call Sam" } });
-    expect(form.getByRole("button", { name: "Add Task" })).toBeDisabled();
-    fireEvent.change(form.getByRole("combobox", { name: "Account" }), { target: { value: "work@example.com" } });
-    fireEvent.click(form.getByRole("button", { name: "Add Task" }));
+    expect(form.getByRole("textbox", { name: "Task" })).toHaveValue("Call Sam");
+    fireEvent.click(form.getByRole("button", { name: "Cancel" }));
+    expect(create).not.toHaveBeenCalled();
+    await waitFor(() => expect(field).toHaveValue(""));
+    fireEvent.change(field, { target: { value: "Call Sam" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    const retry = within(screen.getByRole("dialog", { name: "Add Task" }));
+    expect(retry.getByRole("button", { name: "Add Task" })).toBeDisabled();
+    fireEvent.change(retry.getByRole("combobox", { name: "Account" }), { target: { value: "work@example.com" } });
+    fireEvent.click(retry.getByRole("button", { name: "Add Task" }));
     await waitFor(() => expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ title: "Call Sam", accountId: "work@example.com", threadId: null })));
   });
 
@@ -240,6 +246,8 @@ describe("TodayWorkspace", () => {
     expect(grid.queryByRole("button", { name: /^Today's briefing/ })).not.toBeInTheDocument();
     expect(inbox().getByText("Task today")).toBeInTheDocument();
 
+    expect(screen.getAllByRole("button", { name: "New Event" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "New Event" }).closest(".today-schedule-navigation")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "New Event" }));
     const dialog = within(screen.getByRole("dialog", { name: "New Event" }));
     fireEvent.change(dialog.getByRole("textbox", { name: "Title" }), { target: { value: "New booking" } });
@@ -252,6 +260,23 @@ describe("TodayWorkspace", () => {
     expect(grid.queryByRole("button", { name: /^Today's briefing/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
     expect(await grid.findByRole("button", { name: /^Today's briefing/ })).toBeInTheDocument();
+  });
+
+  it("opens the new event dialog for a dragged range on the schedule, only with a connected calendar", async () => {
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [], errors: [] });
+    renderToday({ calendarConnected: true, calendarAccounts: [{ email: "cal@example.com", status: "connected", connectedAt: "" }] });
+    const column = (await screen.findByRole("group", { name: "Day view" })).querySelector<HTMLElement>(".calendar-week-column")!;
+    fireEvent.pointerDown(column, { button: 0, pointerId: 1, clientY: 14 * HOUR_HEIGHT });
+    fireEvent.pointerMove(column, { pointerId: 1, clientY: 15 * HOUR_HEIGHT });
+    fireEvent.pointerUp(column, { pointerId: 1, clientY: 15 * HOUR_HEIGHT });
+    const dialog = within(screen.getByRole("dialog", { name: "New Event" }));
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(event("made", 14 * 60));
+    fireEvent.change(dialog.getByRole("textbox", { name: "Title" }), { target: { value: "Review" } });
+    fireEvent.submit(dialog.getByRole("textbox", { name: "Title" }).closest("form")!);
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: "Review", start: new Date(2026, 10, 17, 14).toISOString(), end: new Date(2026, 10, 17, 15, 15).toISOString() })));
+    cleanup();
+    renderToday({ calendarConnected: true, calendarAccounts: [] });
+    expect(screen.queryByRole("button", { name: "New Event" })).not.toBeInTheDocument();
   });
 
   describe("tasks", () => {
@@ -1055,7 +1080,7 @@ describe("TodayWorkspace", () => {
       expect(day).toHaveClass("today-day-view-working");
       expect(day.style.getPropertyValue("--today-day-view-grid-h")).toBe(`${8.5 * HOUR_HEIGHT}px`);
       // Ten o'clock is inside working hours, so the top is half an hour before now.
-      expect(day.querySelector<HTMLElement>(".calendar-week-scroll")!.scrollTop).toBe(9.5 * HOUR_HEIGHT);
+      expect(day.querySelector<HTMLElement>(".calendar-week-scroll")!.scrollTop).toBe(9.5 * HOUR_HEIGHT - DAY_VIEW_LABEL_ROOM_PX);
       const shaded = [...day.querySelectorAll<HTMLElement>(".calendar-outside-hours")].map((shade) => [shade.style.top, shade.style.height]);
       expect(shaded).toEqual([["0px", `${9 * HOUR_HEIGHT}px`], [`${17 * HOUR_HEIGHT}px`, `${7 * HOUR_HEIGHT}px`]]);
     });

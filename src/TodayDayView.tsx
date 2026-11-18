@@ -1,7 +1,7 @@
-import { useCallback, useLayoutEffect, useMemo, useState, type CSSProperties, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { HOUR_HEIGHT, eventDayBounds, occursOnDay, startOfLocalDay } from "./calendarTime";
 import { formatClockTime } from "./agendaEvents";
-import { DayTimeGrid, type DayGridEventDecoration, type DayGridPreview, type DayGridShade } from "./DayTimeGrid";
+import { DayTimeGrid, eventRangeFromSlots, slotAt, type DayGridEventDecoration, type DayGridPreview, type DayGridShade } from "./DayTimeGrid";
 import type { ScheduleEvent } from "./domain";
 import { isWorkingLocation } from "./WorkingLocation";
 import { workingSpans } from "./todayBooking";
@@ -9,6 +9,8 @@ import type { WorkingHours } from "./todayInsights";
 
 /** Room kept above now when the grid opens inside working hours, so the current period shows. */
 export const DAY_VIEW_LEAD_MINUTES = 30;
+/** Room kept above the first visible hour so its label, centered on its line, is not cut off. */
+export const DAY_VIEW_LABEL_ROOM_PX = 10;
 /** Room below the end of working hours when sizing the grid to the working day. */
 export const DAY_VIEW_TAIL_MINUTES = 30;
 
@@ -72,7 +74,7 @@ function clockLabel(minutes: number): string {
  * working day (see `dayViewLayout`). Choosing an event is the caller's
  * business (prepare a meeting, or open anything else in Calendar).
  */
-export function TodayDayView({ events, now, loading, error, onRetry, selectedEvent, onChooseEvent, eventDecoration, gridRef, preview, dragging, workingHours = null, day: shown, label = "Day view" }: {
+export function TodayDayView({ events, now, loading, error, onRetry, selectedEvent, onChooseEvent, eventDecoration, gridRef, preview, dragging, workingHours = null, day: shown, label = "Day view", onCreateEvent }: {
   events: ScheduleEvent[];
   now: Date;
   loading: boolean;
@@ -88,6 +90,8 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
   /** The day shown, such as tomorrow while planning it; today by default. */
   day?: Date;
   label?: string;
+  /** A click on an empty slot (an hour from there) or a drag across slots chose a time range for a new event. Omit when events can't be created. */
+  onCreateEvent?(range: { start: Date; end: Date }): void;
 }) {
   const day = startOfLocalDay(shown ?? now);
   const dayKey = day.getTime();
@@ -95,6 +99,8 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
   const days = useMemo(() => [new Date(dayKey)], [dayKey]);
   // Laid out from the time Today opened (or the day turned), not every minute.
   const layout = useMemo(() => dayViewLayout(workingHours, dayKey === startOfLocalDay(new Date()).getTime() ? new Date() : new Date(dayKey)), [workingHours, dayKey]);
+  const [selection, setSelection] = useState<DayGridPreview | null>(null);
+  const selecting = useRef<{ anchor: number; pointerId: number } | null>(null);
   const [metrics, setMetrics] = useState({ scrollTop: 0, height: 0 });
   const measure = useCallback(() => {
     const grid = gridRef.current;
@@ -103,7 +109,7 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
   useLayoutEffect(() => {
     const grid = gridRef.current;
     if (!grid) return;
-    if (layout.scrollMinutes !== null) grid.scrollTop = layout.scrollMinutes / 60 * HOUR_HEIGHT;
+    if (layout.scrollMinutes !== null) grid.scrollTop = Math.max(0, layout.scrollMinutes / 60 * HOUR_HEIGHT - DAY_VIEW_LABEL_ROOM_PX);
     else {
       const current = new Date();
       const minutes = dayKey === startOfLocalDay(current).getTime() ? current.getHours() * 60 + current.getMinutes() : 9 * 60;
@@ -137,6 +143,33 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
       <span aria-hidden="true">{side === "below" ? "↓ " : "↑ "}</span>{text}
     </button>;
   };
+  const columnProps = onCreateEvent ? (columnDay: Date) => ({
+    onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => {
+      // Events and a task being dragged onto the grid keep their own pointer handling.
+      if (event.button !== 0 || dragging || (event.target as HTMLElement).closest("[data-calendar-event-trigger], .calendar-event-action")) return;
+      const anchor = slotAt(event.clientY, event.currentTarget);
+      selecting.current = { anchor, pointerId: event.pointerId };
+      setSelection({ dayIndex: 0, startMinutes: anchor, endMinutes: anchor + 60 });
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    },
+    onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = selecting.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const current = slotAt(event.clientY, event.currentTarget);
+      const range = eventRangeFromSlots(columnDay, drag.anchor, current, current !== drag.anchor);
+      setSelection({ dayIndex: 0, startMinutes: range.startMinutes, endMinutes: range.endMinutes });
+    },
+    onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = selecting.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const current = slotAt(event.clientY, event.currentTarget);
+      const range = eventRangeFromSlots(columnDay, drag.anchor, current, current !== drag.anchor);
+      selecting.current = null;
+      setSelection(null);
+      onCreateEvent({ start: range.start, end: range.end });
+    },
+    onPointerCancel: () => { selecting.current = null; setSelection(null); },
+  }) : undefined;
   const style = layout.heightPx === null ? undefined : { "--today-day-view-grid-h": `${layout.heightPx}px` } as CSSProperties;
   return <div className={`today-day-view calendar-week-main${layout.heightPx === null ? "" : " today-day-view-working"}${dragging ? " calendar-week-task-drag" : ""}`} role="group" aria-label={label} style={style}>
     {error ? <div className="calendar-error-notice" role="alert">
@@ -150,10 +183,12 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
       loading={loading}
       selectedEvent={selectedEvent}
       onToggleEvent={onChooseEvent}
-      preview={preview}
+      preview={preview ?? selection}
+      columnProps={columnProps}
       scrollRef={gridRef}
       eventDecoration={eventDecoration}
       shade={layout.shade}
+      shadeLabel="Outside working hours"
       shortTimes
       showDayLabels={false}
       showTimeZone={false}

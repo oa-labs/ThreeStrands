@@ -3,7 +3,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HOUR_HEIGHT } from "./calendarTime";
 import type { ScheduleEvent } from "./domain";
-import { hiddenEvents, TodayDayView } from "./TodayDayView";
+import { DAY_VIEW_LABEL_ROOM_PX, hiddenEvents, TodayDayView } from "./TodayDayView";
 
 const hour = (h: number, length = 60) => ({ startMinutes: h * 60, endMinutes: h * 60 + length });
 const view = 6 * HOUR_HEIGHT;
@@ -95,5 +95,71 @@ describe("TodayDayView hidden-event indicators", () => {
     expect(screen.queryByRole("button", { name: /more later/ })).not.toBeInTheDocument();
     expect(grid.scrollTop).toBe(before);
     restore();
+  });
+});
+
+describe("TodayDayView creating events", () => {
+  afterEach(cleanup);
+  const day = new Date(2026, 9, 28);
+  const meeting: ScheduleEvent = { id: "m", accountId: "a@example.com", calendarId: "primary", title: "Standup", start: new Date(2026, 9, 28, 9).toISOString(), end: new Date(2026, 9, 28, 10).toISOString(), allDay: false };
+  function renderCreating(props: Partial<Parameters<typeof TodayDayView>[0]> = {}) {
+    const onCreateEvent = vi.fn();
+    const onChooseEvent = vi.fn();
+    render(<TodayDayView events={[meeting]} now={new Date(2026, 9, 28, 10)} day={day} loading={false} error={null} onRetry={vi.fn()}
+      selectedEvent={null} onChooseEvent={onChooseEvent} eventDecoration={() => null} gridRef={createRef<HTMLDivElement>()} preview={null} dragging={false}
+      onCreateEvent={onCreateEvent} {...props} />);
+    return { onCreateEvent, onChooseEvent, column: screen.getByRole("group", { name: /Wednesday/ }) };
+  }
+  const press = (column: HTMLElement, minutes: number, extra = {}) => fireEvent.pointerDown(column, { button: 0, pointerId: 1, clientY: minutes / 60 * HOUR_HEIGHT, ...extra });
+  const release = (column: HTMLElement, minutes: number) => fireEvent.pointerUp(column, { pointerId: 1, clientY: minutes / 60 * HOUR_HEIGHT });
+
+  it("makes a one-hour range from a click, snapped to the grid", () => {
+    const { onCreateEvent, column } = renderCreating();
+    press(column, 13 * 60 + 20);
+    release(column, 13 * 60 + 20);
+    expect(onCreateEvent).toHaveBeenCalledExactlyOnceWith({ start: new Date(2026, 9, 28, 13, 15), end: new Date(2026, 9, 28, 14, 15) });
+  });
+
+  it("makes a range from a drag, ending with the last slot, and previews it while dragging", () => {
+    const { onCreateEvent, column } = renderCreating();
+    press(column, 14 * 60);
+    fireEvent.pointerMove(column, { pointerId: 1, clientY: 15 * HOUR_HEIGHT + 20 });
+    expect(column.querySelector(".calendar-create-selection")).not.toBeNull();
+    release(column, 15 * 60 + 20);
+    expect(onCreateEvent).toHaveBeenCalledExactlyOnceWith({ start: new Date(2026, 9, 28, 14), end: new Date(2026, 9, 28, 15, 30) });
+    expect(column.querySelector(".calendar-create-selection")).toBeNull();
+  });
+
+  it("leaves events, a task being dragged, and a cancelled gesture alone", () => {
+    const { onCreateEvent, onChooseEvent, column } = renderCreating();
+    const standup = screen.getByRole("button", { name: /^Standup/ });
+    fireEvent.pointerDown(standup, { button: 0, pointerId: 1, clientY: 9.5 * HOUR_HEIGHT });
+    fireEvent.pointerUp(column, { pointerId: 1, clientY: 9.5 * HOUR_HEIGHT });
+    fireEvent.click(standup);
+    expect(onChooseEvent).toHaveBeenCalledOnce();
+    press(column, 12 * 60);
+    fireEvent.pointerCancel(column, { pointerId: 1 });
+    release(column, 12 * 60);
+    expect(onCreateEvent).not.toHaveBeenCalled();
+    cleanup();
+    const dragging = renderCreating({ dragging: true });
+    press(dragging.column, 12 * 60);
+    release(dragging.column, 12 * 60);
+    expect(dragging.onCreateEvent).not.toHaveBeenCalled();
+  });
+
+  it("does nothing without a handler, and names the shaded hours", () => {
+    const { column } = renderCreating({ onCreateEvent: undefined, workingHours: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", workingWindows: [{ weekday: 3, start: "09:00", end: "17:00" }] } });
+    press(column, 12 * 60);
+    expect(column.querySelector(".calendar-create-selection")).toBeNull();
+    expect(column).toHaveAccessibleDescription("Shaded time is outside working hours");
+    expect(column.querySelector(".calendar-outside-hours")).toHaveAttribute("title", "Outside working hours");
+  });
+
+  it("leaves room above the first working hour so its label is not cut off", () => {
+    const gridRef = createRef<HTMLDivElement>();
+    render(<TodayDayView events={[]} now={new Date(2026, 9, 28, 7)} day={day} loading={false} error={null} onRetry={vi.fn()} selectedEvent={null} onChooseEvent={vi.fn()}
+      eventDecoration={() => null} gridRef={gridRef} preview={null} dragging={false} workingHours={{ timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", workingWindows: [{ weekday: 3, start: "09:00", end: "17:00" }] }} />);
+    expect(gridRef.current!.scrollTop).toBe(9 * HOUR_HEIGHT - DAY_VIEW_LABEL_ROOM_PX);
   });
 });

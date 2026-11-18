@@ -55,7 +55,7 @@ describe("spacing", () => {
       css.walkRules(selector, (r) => { if (r.parent?.type === "root") r.walkDecls(prop, (d) => { result = d.value; }); });
       return result;
     };
-    expect(value(".today-columns", "grid-template-columns")).toBe("minmax(var(--today-column-min), 1fr) minmax(var(--today-day-view-min), 2fr)");
+    expect(value(".today-columns", "grid-template-columns")).toBe("minmax(var(--today-column-min), 1fr) minmax(var(--today-day-view-min), 1.25fr)");
     expect(value(".today-work .today-source-tabs", "flex-wrap")).toBe("wrap");
     expect(value(".today-work .today-source-tabs", "overflow")).toBe("visible");
     expect(value(".calendar-week-column .calendar-event-has-action", "padding-right")).toBe("calc(var(--control-h-xs) + var(--space-2))");
