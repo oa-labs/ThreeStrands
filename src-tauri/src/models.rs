@@ -555,6 +555,30 @@ pub struct OpenPromise {
     pub excerpt: String,
 }
 
+/// A conversation the user sent mail in during a range; see
+/// `Database::list_sent_between`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SentInRange {
+    pub thread: Thread,
+    /// When the user's newest own message in the range was sent.
+    pub last_sent_at: String,
+    /// How many messages the user sent in the conversation within the range.
+    pub sent_count: i64,
+    /// The To line of that newest message, minus the user's own addresses.
+    pub recipients: Vec<String>,
+}
+
+/// A note created within a range, for the Today view's Done card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedNote {
+    pub id: String,
+    pub title: String,
+    pub preview: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {

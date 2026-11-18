@@ -1,6 +1,6 @@
 import { CalendarClock } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
-import { ContextRow, ContextSection } from "./ContextSections";
+import { ContextRow } from "./ContextSections";
 import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
@@ -56,10 +56,8 @@ function initialFilter(): InboxFilter {
   return readLocalStorage(INBOX_FILTER_KEY, (raw) => FILTERS.some((filter) => filter.id === raw) ? raw as InboxFilter : fallback, fallback);
 }
 
-export function PlanningInbox({ entries, completed = [], completedError, scope, onAddTask, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
+export function PlanningInbox({ entries, scope, onAddTask, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
   entries: InboxEntry[];
-  completed?: InboxEntry[];
-  completedError?: string | null;
   scope?: string;
   /** Creates a task from a typed title. Present only when tasks can be created. Resolve to keep the input for the next task; reject to show the error. */
   onAddTask?(title: string): Promise<void> | void;
@@ -85,8 +83,6 @@ export function PlanningInbox({ entries, completed = [], completedError, scope, 
   const more = hasMore(filter);
   const noun = items.length === 1 ? "item" : "items";
   const count = items.length <= limit + 1 ? items.length : limit;
-  const completedItems = completed.filter((entry) => filter === "all" || filter === "tasks" || entry.category === filter);
-  const showCompleted = filter !== "contacts";
   const [draftTitle, setDraftTitle] = useState("");
   const [draftError, setDraftError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -108,10 +104,9 @@ export function PlanningInbox({ entries, completed = [], completedError, scope, 
     if (document.activeElement !== document.body) return;
     const row = [...(panel.current?.querySelectorAll<HTMLElement>("[data-row-key]") ?? [])].find((element) => element.dataset.rowKey === request.key && !element.closest("[hidden]"));
     const target = row?.querySelector<HTMLInputElement>('input[type="checkbox"]')
-      ?? panel.current?.querySelector<HTMLButtonElement>(".today-completed-card .context-section-toggle")
       ?? tabs.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]');
     target?.focus();
-  }, [entries, completed, filter]);
+  }, [entries, filter]);
   useLayoutEffect(() => {
     const request = restore.current;
     if (!request || items.some((entry) => entry.id === request.id)) return;
@@ -184,9 +179,6 @@ export function PlanningInbox({ entries, completed = [], completedError, scope, 
           }} />
         {draftError ? <p className="form-error" role="alert">{draftError}</p> : null}
       </div> : null}
-      {showCompleted && (completedItems.length || (filter !== "emails" && completedError)) ? <ContextSection id="today-completed" title="Completed" className="today-completed-card" count={completedItems.length}
-        status={filter !== "emails" && completedError ? <p className="form-error" role="alert">Completed note tasks: {completedError}</p> : undefined}
-        rows={completedItems.map((entry) => <ContextRow {...entry.row} key={entry.id} as="div" title={entry.title} rowKey={rowKey(entry)} className="context-task context-task-done" />)} /> : null}
     </div>
   </section>;
 }

@@ -2138,3 +2138,86 @@ fn a_recurring_series_lists_the_notes_about_every_occurrence() {
         .any(|choice| choice.reference == standup("standup_1112", Some("standup"))));
     assert!(choices.iter().any(|choice| choice.reference == whole));
 }
+
+fn note_created(id: &str, title: &str, created_at: &str, daily: Option<&str>) -> Note {
+    Note {
+        id: id.into(),
+        title: title.into(),
+        authored_title: None,
+        body: format!("About {title}"),
+        daily_date: daily.map(String::from),
+        created_at: created_at.into(),
+        updated_at: created_at.into(),
+        trashed: false,
+        trashed_at: None,
+    }
+}
+
+#[test]
+fn notes_created_between_keeps_the_day_and_skips_daily_and_trashed_notes() {
+    let db = database();
+    for (id, title, at) in [
+        (
+            "import-00000000000000000000000000000001",
+            "Before start",
+            "2026-11-09T23:59:59Z",
+        ),
+        (
+            "import-00000000000000000000000000000002",
+            "At start",
+            "2026-11-10T00:00:00Z",
+        ),
+        (
+            "import-00000000000000000000000000000003",
+            "Before end",
+            "2026-11-10T23:59:59Z",
+        ),
+        (
+            "import-00000000000000000000000000000004",
+            "At end",
+            "2026-11-11T00:00:00Z",
+        ),
+        (
+            "import-00000000000000000000000000000005",
+            "Trashed",
+            "2026-11-10T12:00:00Z",
+        ),
+    ] {
+        assert!(db
+            .import_note(note_created(id, title, at, None), &[])
+            .unwrap());
+    }
+    db.trash_note("import-00000000000000000000000000000005")
+        .unwrap();
+    db.import_note(
+        note_created(
+            &crate::notes::daily_note_id("2026-11-10"),
+            "2026-11-10",
+            "2026-11-10T08:00:00Z",
+            Some("2026-11-10"),
+        ),
+        &[],
+    )
+    .unwrap();
+
+    let titles = |start: &str, end: &str| {
+        db.list_notes_created_between(start, end, 100)
+            .unwrap()
+            .into_iter()
+            .map(|note| note.title)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        titles("2026-11-10T00:00:00Z", "2026-11-11T00:00:00Z"),
+        ["Before end", "At start"]
+    );
+    assert_eq!(
+        titles("2026-11-10T00:00:00.000Z", "2026-11-11T00:00:00.000Z"),
+        ["Before end", "At start"]
+    );
+    let first = &db
+        .list_notes_created_between("2026-11-10T00:00:00Z", "2026-11-11T00:00:00Z", 1)
+        .unwrap()[0];
+    assert_eq!(first.created_at, "2026-11-10T23:59:59Z");
+    assert_eq!(first.preview, "About Before end");
+}

@@ -20,8 +20,8 @@ use super::sync_state::{
 };
 use super::{serialization_error, Database, DatabaseError, DbResult};
 use crate::models::{
-    Note, NoteBacklink, NoteLinks, NoteRelink, NoteSave, NoteSearchHit, NoteSearchScope,
-    NoteSummary, NoteTitle, NotesStorage,
+    CreatedNote, Note, NoteBacklink, NoteLinks, NoteRelink, NoteSave, NoteSearchHit,
+    NoteSearchScope, NoteSummary, NoteTitle, NotesStorage,
 };
 use crate::notes::{
     clean_note_title, daily_note_id, extract_links, is_daily_date, plain_text, rewrite_links,
@@ -826,6 +826,37 @@ impl Database {
                  LIMIT ?1",
             )?;
             let rows = statement.query_map([limit.min(MAX_LIST_ROWS) as i64], summary_from_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// Notes created from `start` (inclusive) to `end` (exclusive), newest
+    /// first, leaving out daily notes and notes in Trash.
+    pub fn list_notes_created_between(
+        &self,
+        start: &str,
+        end: &str,
+        limit: usize,
+    ) -> DbResult<Vec<CreatedNote>> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, title, substr(body, 1, 1000), created_at FROM notes
+                 WHERE trashed=0 AND daily_date IS NULL
+                   AND julianday(created_at) >= julianday(?1) AND julianday(created_at) < julianday(?2)
+                 ORDER BY julianday(created_at) DESC, id
+                 LIMIT ?3",
+            )?;
+            let rows = statement.query_map(
+                params![start, end, limit.min(MAX_LIST_ROWS) as i64],
+                |row| {
+                    Ok(CreatedNote {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        preview: preview(&row.get::<_, String>(2)?),
+                        created_at: row.get(3)?,
+                    })
+                },
+            )?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
     }

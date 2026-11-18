@@ -2,6 +2,7 @@ import { createDemoAgents } from "./demoAgents";
 import { previewScheduleChoices } from "../scheduleTimes";
 import { isHolidayCalendar } from "../calendarAvailability";
 import type { FindAvailabilityRequest } from "../domain";
+import type { SentInRange } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
 import { createDemoNotes } from "./demoNotes";
 import { createDemoMeetings } from "./demoMeetings";
@@ -527,6 +528,18 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async listSentPage(accountId, offset, limit): Promise<ThreadPage> {
       const items = visibleSent(accountId);
       return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
+    },
+    /** Mirrors `list_sent_between` in `src-tauri/src/db/today.rs`. */
+    async listSentBetween(accountId, start, end) {
+      const own = new Set(accounts.map((account) => account.email.toLocaleLowerCase()));
+      const isOwn = (address: string) => own.has(parseAddress(address).email.toLocaleLowerCase());
+      const from = Date.parse(start), to = Date.parse(end);
+      return visibleWhere(accountId, (thread) => !thread.trashed).flatMap((thread): SentInRange[] => {
+        const mine = messagesFor(thread).filter((message) => isOwn(message.sender) && Date.parse(message.sentAt) >= from && Date.parse(message.sentAt) < to)
+          .sort((a, b) => Date.parse(b.sentAt) - Date.parse(a.sentAt));
+        const latest = mine[0];
+        return latest ? [{ thread: structuredClone(thread), lastSentAt: latest.sentAt, sentCount: mine.length, recipients: latest.recipients.filter((recipient) => !isOwn(recipient)) }] : [];
+      }).sort((a, b) => Date.parse(b.lastSentAt) - Date.parse(a.lastSentAt));
     },
     async listUnreadCounts() {
       return threads.reduce<Record<string, number>>((counts, thread) => {

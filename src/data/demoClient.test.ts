@@ -165,6 +165,22 @@ describe("showcase dataset", () => {
     expect(await createDemoClient(defaultDemoDataset()).listOpenPromises()).toEqual([]);
   });
 
+  it("lists the conversations the user sent in during a range, start inclusive and end exclusive, scoped by account", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    const [promise] = await client.listOpenPromises(SHOWCASE_WORK_ACCOUNT);
+    const at = Date.parse(promise.sentAt);
+    const iso = (offset: number) => new Date(at + offset).toISOString();
+    const ids = async (start: number, end: number, account: string | undefined = SHOWCASE_WORK_ACCOUNT) => (await client.listSentBetween(account, iso(start), iso(end))).map((item) => item.thread.id);
+    expect(await ids(-1000, 1000)).toContain("interview-notes");
+    expect(await ids(0, 1000)).toContain("interview-notes");
+    expect(await ids(-1000, 0)).not.toContain("interview-notes");
+    expect(await ids(1, 1000)).not.toContain("interview-notes");
+    expect(await ids(-1000, 1000, "maya.chen@example.com")).not.toContain("interview-notes");
+    const [found] = (await client.listSentBetween(SHOWCASE_WORK_ACCOUNT, iso(-1000), iso(1000))).filter((item) => item.thread.id === "interview-notes");
+    expect(found).toMatchObject({ lastSentAt: promise.sentAt, sentCount: 1 });
+    expect(found.recipients).toEqual(promise.recipients);
+  });
+
   it("keeps a promise tracked after its task is completed or cancelled", async () => {
     for (const status of ["completed", "cancelled"] as const) {
       const client = createDemoClient(buildShowcaseDataset(now));

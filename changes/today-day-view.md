@@ -4,7 +4,7 @@
 
 ### Improved
 - Add tasks and events directly from Today, and use the schedule arrows to browse other days. The Planning Inbox stays on today’s work.
-- Today’s columns use more of the window, and finished work stays in a **Completed** card where you can reopen it. Check off an email suggestion to record a completed task while keeping the email unchanged.
+- Today’s columns use more of the window, and a **Done** card under the Planning Inbox shows the tasks you finished, emails you sent, and notes you created on the day the schedule shows, where you can reopen a task. Today keeps the day you picked until midnight. Check off an email suggestion to record a completed task while keeping the email unchanged.
 
 ### Fixed
 - Meeting preparation now receives keyboard focus when opened, returns focus to its event link when closed, and leaves Escape available when its saved session is not visible. Today’s filter buttons and labels follow the app’s shared typography and capitalization.

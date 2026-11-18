@@ -32,6 +32,21 @@ describe("demo notes", () => {
     await expect(notes.createNote("a|b", "")).rejects.toThrow("can't contain");
   });
 
+  it("lists notes created in a range, leaving out daily notes and notes in Trash", async () => {
+    const notes = createDemoNotes();
+    const kept = await notes.createNote("Kept", "About it");
+    const trashed = await notes.createNote("Trashed", "");
+    await notes.trashNote(trashed.id);
+    await notes.saveDailyNote("2026-11-09", "A daily note", null);
+    const at = Date.parse(kept.createdAt);
+    const range = (start: number, end: number) => notes.listNotesCreatedBetween(new Date(at + start).toISOString(), new Date(at + end).toISOString(), 10);
+    expect((await range(-1000, 1000)).map((note) => note.title)).toEqual(["Kept"]);
+    expect(await range(-1000, 1000)).toEqual([{ id: kept.id, title: "Kept", preview: "About it", createdAt: kept.createdAt }]);
+    expect(await range(0, 1000)).toHaveLength(1);
+    expect(await range(-1000, 0)).toEqual([]);
+    expect(await range(1, 1000)).toEqual([]);
+  });
+
   it("loads seeded notes by the native rules, the last seed most recently changed", async () => {
     const notes = createDemoNotes(undefined, [
       { title: "Project plan", body: "- ( ) Ship it\n" },

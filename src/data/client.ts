@@ -4,6 +4,7 @@ import type { NoteDocument, NoteTaskRecord, NoteReference, NoteCapture, NoteBack
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
 import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
+import type { SentInRange, CreatedNote } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingContext, MeetingReadiness, PlanChanges, PlanHistory, PlanReview, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
@@ -158,6 +159,8 @@ export interface MailClient extends CorrespondenceClient {
   listStarredPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   /** Conversations holding a message one of the account's addresses sent, newest activity first. */
   listSentPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
+  /** Conversations in which one of the account's addresses sent a message from `start` (inclusive) to `end` (exclusive), ISO times, newest own message first. */
+  listSentBetween(accountId: string | undefined, start: string, end: string): Promise<SentInRange[]>;
   listUnreadCounts(): Promise<UnreadCounts>;
   /** Unread totals for the Inbox and each split inbox tab, scoped to `accountId` (merged across all when omitted). */
   mailboxUnreadCounts(accountId?: string): Promise<MailboxUnreadCounts>;
@@ -460,6 +463,8 @@ export interface MailClient extends CorrespondenceClient {
   /** Writes a meeting's line into `date`'s daily note, if that note is still at `expected`. */
   addMeetingToDailyNote(date: string, expected: string | null, entry: MeetingEntry): Promise<MeetingCapture>;
   listRecentNotes(limit: number): Promise<NoteSummary[]>;
+  /** Notes created from `start` (inclusive) to `end` (exclusive), ISO times, newest first; daily notes and notes in Trash are left out. */
+  listNotesCreatedBetween(start: string, end: string, limit: number): Promise<CreatedNote[]>;
   getNote(id: string): Promise<Note | null>;
   getDailyNote(date: string): Promise<Note | null>;
   createNote(title: string, body: string): Promise<Note>;
@@ -544,6 +549,7 @@ const tauriClient: MailClient = {
   listTrashPage: (accountId, offset, limit) => read("list_trash_page", { accountId, offset, limit }),
   listStarredPage: (accountId, offset, limit) => read("list_starred_page", { accountId, offset, limit }),
   listSentPage: (accountId, offset, limit) => read("list_sent_page", { accountId, offset, limit }),
+  listSentBetween: (accountId, start, end) => read("list_sent_between", { accountId, start, end }),
   listUnreadCounts: () => read("list_unread_counts"),
   mailboxUnreadCounts: (accountId) => read("mailbox_unread_counts", { accountId }),
   listTodayMail: (accountId) => read("list_today_mail", { accountId }),
@@ -740,6 +746,7 @@ const tauriClient: MailClient = {
   captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),
   addMeetingToDailyNote: (date, expected, entry) => complete("add_meeting_to_daily_note", { date, expected, entry }),
   listRecentNotes: (limit) => read("list_recent_notes", { limit }),
+  listNotesCreatedBetween: (start, end, limit) => read("list_notes_created_between", { start, end, limit }),
   getNote: (id) => read("get_note", { id }),
   getDailyNote: (date) => read("get_daily_note", { date }),
   createNote: (title, body) => complete("create_note", { request: { title, body } }),

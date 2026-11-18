@@ -566,3 +566,156 @@ fn a_reply_does_not_complete_a_task_created_from_a_promise() {
     );
     assert!(promise_threads(&database).is_empty());
 }
+
+const DAY_START: &str = "2026-11-10T00:00:00Z";
+const DAY_END: &str = "2026-11-11T00:00:00Z";
+
+fn sent_between(database: &crate::db::Database, account: Option<&str>) -> Vec<String> {
+    database
+        .list_sent_between(account, DAY_START, DAY_END)
+        .unwrap()
+        .into_iter()
+        .map(|item| item.thread.provider_thread_id)
+        .collect()
+}
+
+#[test]
+fn sent_between_uses_a_start_inclusive_end_exclusive_day() {
+    let database = database();
+    clear_seed_threads(&database);
+    for (id, date) in [
+        ("before-start", "2026-11-09T23:59:59Z"),
+        ("at-start", "2026-11-10T00:00:00Z"),
+        ("before-end", "2026-11-10T23:59:59Z"),
+        ("at-end", "2026-11-11T00:00:00Z"),
+    ] {
+        database
+            .upsert_thread(
+                ME,
+                &[sent(id, id, date, &["Jill <jill@example.org>"], "Hi")],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        sent_between(&database, Some(ME)),
+        vec!["before-end", "at-start"]
+    );
+    // Bounds as the app writes them, with fractional seconds, pick the same instants.
+    let found = database
+        .list_sent_between(
+            Some(ME),
+            "2026-11-10T00:00:00.000Z",
+            "2026-11-11T00:00:00.000Z",
+        )
+        .unwrap();
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0].last_sent_at, "2026-11-10T23:59:59Z");
+}
+
+#[test]
+fn sent_between_counts_only_the_users_own_messages_in_one_account() {
+    let database = database();
+    clear_seed_threads(&database);
+    database
+        .upsert_thread(
+            ME,
+            &[
+                unread(
+                    "a1",
+                    "chat",
+                    "2026-11-10T08:00:00Z",
+                    "Jill <jill@example.org>",
+                    &[ME],
+                ),
+                sent(
+                    "a2",
+                    "chat",
+                    "2026-11-10T09:00:00Z",
+                    &["Jill <jill@example.org>", ME],
+                    "One",
+                ),
+                sent(
+                    "a3",
+                    "chat",
+                    "2026-11-10T10:00:00Z",
+                    &["Jill <jill@example.org>", "Bo <bo@example.org>"],
+                    "Two",
+                ),
+                sent(
+                    "a4",
+                    "chat",
+                    "2026-11-12T10:00:00Z",
+                    &["Jill <jill@example.org>"],
+                    "Later day",
+                ),
+            ],
+        )
+        .unwrap();
+    // Only received mail on the day, and mail sent from another account.
+    database
+        .upsert_thread(
+            ME,
+            &[unread(
+                "b1",
+                "received",
+                "2026-11-10T08:00:00Z",
+                "Jill <jill@example.org>",
+                &[ME],
+            )],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            "other@example.com",
+            &[{
+                let mut message = sent(
+                    "c1",
+                    "elsewhere",
+                    "2026-11-10T11:00:00Z",
+                    &["Jill <jill@example.org>"],
+                    "Hi",
+                );
+                message.from = "Me <other@example.com>".into();
+                message
+            }],
+        )
+        .unwrap();
+
+    let found = database
+        .list_sent_between(Some(ME), DAY_START, DAY_END)
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].thread.provider_thread_id, "chat");
+    assert_eq!(found[0].sent_count, 2);
+    assert_eq!(found[0].last_sent_at, "2026-11-10T10:00:00Z");
+    assert_eq!(
+        found[0].recipients,
+        vec![
+            "Jill <jill@example.org>".to_string(),
+            "Bo <bo@example.org>".to_string()
+        ]
+    );
+    assert_eq!(
+        sent_between(&database, Some("other@example.com")),
+        vec!["elsewhere"]
+    );
+    let mut everyone = sent_between(&database, None);
+    everyone.sort();
+    assert_eq!(everyone, vec!["chat", "elsewhere"]);
+}
+
+#[test]
+fn sent_between_skips_trashed_conversations() {
+    let database = database();
+    clear_seed_threads(&database);
+    let mut message = sent(
+        "t1",
+        "gone",
+        "2026-11-10T09:00:00Z",
+        &["Jill <jill@example.org>"],
+        "Hi",
+    );
+    message.labels = vec!["SENT".into(), "TRASH".into()];
+    database.upsert_thread(ME, &[message]).unwrap();
+    assert!(sent_between(&database, Some(ME)).is_empty());
+}

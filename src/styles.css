@@ -3801,7 +3801,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-work { padding: 0 var(--space-3) var(--space-3); }
 /* Clip the grid's square backgrounds to the schedule card without clipping inbox menus. */
 .today-time { overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
-.today-completed-card { margin-top: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); }
+.today-stack { display: flex; flex-direction: column; gap: var(--space-4); }
+/* The Done card sits under the Planning Inbox as its own card. */
+.today-done-day { margin-left: var(--space-1); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-medium); }
+/* A finished row reads as checked and quiet, not struck through; the strikethrough stays for other lists. */
+.today-done .context-task-done .context-row-title { text-decoration: none; }
 .today-work .today-panel-heading { padding-inline: var(--space-1); }
 .today-work .today-sources { margin-top: 0; }
 .today-work .today-source-bar { flex-wrap: wrap; margin-left: 0; }

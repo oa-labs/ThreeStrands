@@ -5,7 +5,7 @@ use super::messages::resolve_body;
 use super::threads::{thread_from_row, THREAD_COLUMNS};
 use super::{normalize_sender, sending_addresses_for_account, Database, DbResult};
 use crate::mime::readable_body_text;
-use crate::models::{MessageAttachment, OpenPromise, TodayMail, TodayMailPage};
+use crate::models::{MessageAttachment, OpenPromise, SentInRange, TodayMail, TodayMailPage};
 use crate::quoted_history::ThreadHistory;
 use rusqlite::{params, OptionalExtension};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -23,6 +23,62 @@ pub(crate) const MAX_OPEN_PROMISES: usize = 20;
 const UNREAD_FILTER: &str = "archived = 0 AND trashed = 0 AND unread = 1 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=t.id AND json_extract(s.record_json, '$.state')='active')";
 
 impl Database {
+    /// Conversations the user sent mail in between `start` (inclusive) and
+    /// `end` (exclusive), newest own message first. A message is the user's
+    /// when its From is one of the account's sending identities, the same
+    /// test `list_open_promises` uses. Times compare as instants, so bounds
+    /// with and without fractional seconds agree.
+    pub fn list_sent_between(
+        &self,
+        account_id: Option<&str>,
+        start: &str,
+        end: &str,
+    ) -> DbResult<Vec<SentInRange>> {
+        self.with_connection(|connection| {
+            let mut sent = connection.prepare(
+                "SELECT m.thread_id, m.sender, m.recipients_json, m.sent_at, t.account_id
+                 FROM messages AS m JOIN threads AS t ON t.id = m.thread_id
+                 WHERE t.trashed = 0 AND (?3 IS NULL OR t.account_id = ?3)
+                   AND julianday(m.sent_at) >= julianday(?1) AND julianday(m.sent_at) < julianday(?2)
+                 ORDER BY julianday(m.sent_at) DESC",
+            )?;
+            let mut thread = connection.prepare(&format!("SELECT {THREAD_COLUMNS} FROM threads AS t WHERE t.id = ?1"))?;
+            let mut identity_sets: HashMap<String, BTreeSet<String>> = HashMap::new();
+            let mut found: Vec<SentInRange> = Vec::new();
+            let mut index: HashMap<String, usize> = HashMap::new();
+            let mut rows = sent.query(params![start, end, account_id])?;
+            while let Some(row) = rows.next()? {
+                let (thread_id, sender, recipients_json, sent_at, owner): (String, String, String, String, String) =
+                    (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?);
+                let mine = identity_sets
+                    .entry(owner.clone())
+                    .or_insert_with(|| sending_addresses_for_account(connection, &owner));
+                if !mine.contains(&normalize_sender(&sender).0) {
+                    continue;
+                }
+                // Rows run newest first, so a conversation's first row is its newest.
+                if let Some(&at) = index.get(&thread_id) {
+                    found[at].sent_count += 1;
+                    continue;
+                }
+                let Some(row_thread) = thread.query_row([&thread_id], thread_from_row).optional()? else {
+                    continue;
+                };
+                let recipients = serde_json::from_str::<Vec<String>>(&recipients_json)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|recipient| {
+                        let address = normalize_sender(recipient).0;
+                        !address.is_empty() && !mine.contains(&address)
+                    })
+                    .collect();
+                index.insert(thread_id, found.len());
+                found.push(SentInRange { thread: row_thread, last_sent_at: sent_at, sent_count: 1, recipients });
+            }
+            Ok(found)
+        })
+    }
+
     /// Every unread conversation not archived or trashed, newest arrival
     /// first, split inbox matches included. `account_id` scopes to one
     /// account, or merges every account when absent.
