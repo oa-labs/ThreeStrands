@@ -1,5 +1,5 @@
 import { signatureBody } from "./signatures";
-import type { Draft, OutboxItem } from "./correspondence";
+import type { Draft, OutboxItem, OutboxMetadata, DraftSummary } from "./correspondence";
 import type { Message, ThreadDetail } from "./domain";
 import { decodeHtmlEntities } from "./SafeMessage";
 import { parseAddress } from "./emailAddress";
@@ -68,8 +68,20 @@ export function queuedMessage(item: OutboxItem, threadId: string): Message {
  * only when the source had a Message-ID to thread on; otherwise it starts a
  * new conversation and its local copy would never be replaced.
  */
-function joinsSourceConversation(draft: Draft): boolean {
+function joinsSourceConversation(draft: Pick<DraftSummary, "mode" | "replyId">): boolean {
   return ["reply", "replyAll"].includes(draft.mode) || (draft.mode === "forward" && Boolean(draft.replyId));
+}
+
+/** Metadata alone tells us which sends need bodies for this conversation. */
+export function outboxBelongsToThread(item: OutboxMetadata, detail: ThreadDetail): boolean {
+  return joinsSourceConversation(item.draft)
+    && !["canceled", "failed", "scheduled", "overdue"].includes(item.state)
+    && Boolean(item.draft.sourceId)
+    && (detail.messages.some((message) => message.id === item.draft.sourceId)
+      || (Boolean(item.draft.sourceId?.startsWith("outbox-"))
+        && item.draft.account === detail.thread.accountId
+        && item.draft.threadId === detail.thread.providerThreadId))
+    && !detail.messages.some((message) => item.providerId && message.id === item.providerId);
 }
 
 /**

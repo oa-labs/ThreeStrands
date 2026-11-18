@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { emailRenderingFixtures } from "../../src/test/emailRenderingFixtures";
 import { composite, contrastRatio, parseComputedColor } from "../../src/emailTextColors";
-import { EMAIL_TEXT_COLORS } from "../../src/emailRenderingPolicy";
+import { EMAIL_IMAGE_LIMITS, EMAIL_TEXT_COLORS } from "../../src/emailRenderingPolicy";
 
 async function openRenderingFixture(page: Page, url: string) {
   // Parent load includes every dependent frame/resource and is not the
@@ -700,4 +700,33 @@ test.describe("email rendering fixtures", () => {
     await expect(body).toContainText("Engineering Lead");
     await expect(body).toContainText("Earlier message content.");
   });
+});
+
+test("attachment thumbnail fallback retains only small rasters for landscape JPEG and PNG sources", async ({ page }) => {
+  await page.goto("/tests/email-rendering.html?fixture=wideNestedNewsletter", { waitUntil: "domcontentloaded" });
+  const sizes = await page.evaluate(async () => {
+    // Exercise real browser decoding and canvas output, which jsdom cannot render.
+    const modulePath = "/src/attachmentThumbnailLoader.ts";
+    const { resizeAttachmentThumbnail } = await import(modulePath);
+    const result = [];
+    for (const name of ["ridge-line.jpg", "regional-rollout.png"]) {
+      const blob = await (await fetch(`/src/data/showcaseImages/${name}`)).blob();
+      const original = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader(); reader.onload = () => resolve(reader.result as string); reader.onerror = reject; reader.readAsDataURL(blob);
+      });
+      const source = new Image(); source.src = original; await source.decode();
+      const thumbnail = await resizeAttachmentThumbnail(original);
+      const image = new Image(); image.src = thumbnail; await image.decode();
+      result.push({ width: image.naturalWidth, height: image.naturalHeight, originalPixels: source.naturalWidth * source.naturalHeight, thumbnailBytes: thumbnail.length, png: thumbnail.startsWith("data:image/png;base64,") });
+    }
+    return result;
+  });
+  for (const size of sizes) {
+    expect(size.width).toBeGreaterThan(0);
+    expect(size.height).toBeGreaterThan(0);
+    expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(EMAIL_IMAGE_LIMITS.attachmentThumbnailEdgePx);
+    expect(size.width * size.height).toBeLessThan(size.originalPixels);
+    expect(size.thumbnailBytes).toBeLessThanOrEqual(EMAIL_IMAGE_LIMITS.maxAttachmentThumbnailDataUriBytes);
+    expect(size.png).toBe(true);
+  }
 });

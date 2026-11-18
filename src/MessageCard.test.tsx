@@ -311,7 +311,7 @@ describe("MessageCard", () => {
 
     it("shows a supported raster's picture and keeps the kind icon for other files", async () => {
       vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
-      const fetch = vi.spyOn(mailClient, "fetchAttachmentImage").mockResolvedValue("data:image/png;base64,AAAA");
+      const fetch = vi.spyOn(mailClient, "fetchAttachmentThumbnail").mockResolvedValue({ dataUri: "data:image/png;base64,AAAA", needsResize: false });
       render(<MessageCard message={withAttachments([photo, vector, report])} isExpanded {...stableProps} />);
       const photoButton = screen.getByRole("button", { name: "Open Joel.png" });
       await waitFor(() => expect(photoButton.querySelector("img.attachment-thumbnail")).toHaveAttribute("src", "data:image/png;base64,AAAA"));
@@ -326,12 +326,12 @@ describe("MessageCard", () => {
     it("keeps the kind icon when the picture is refused or is not an image data URI", async () => {
       vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
       const second = { ...photo, id: "a-photo-2", filename: "Greg.jpg", mimeType: "image/jpeg" };
-      vi.spyOn(mailClient, "fetchAttachmentImage").mockImplementation(async (_message, attachment) => {
+      vi.spyOn(mailClient, "fetchAttachmentThumbnail").mockImplementation(async (_message, attachment) => {
         if (attachment === photo.id) throw new Error("Image exceeds the maximum allowed size");
-        return "https://tracker.example/pixel.png";
+        return { dataUri: "https://tracker.example/pixel.png", needsResize: false };
       });
       render(<MessageCard message={withAttachments([photo, second])} isExpanded {...stableProps} />);
-      await waitFor(() => expect(mailClient.fetchAttachmentImage).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(mailClient.fetchAttachmentThumbnail).toHaveBeenCalledTimes(2));
       await act(async () => {});
       for (const name of ["Open Joel.png", "Open Greg.jpg"]) {
         const button = screen.getByRole("button", { name });
@@ -360,7 +360,7 @@ describe("MessageCard", () => {
         },
       } as OutboxItem;
       const readInline = vi.spyOn(mailClient, "readInlineImage").mockResolvedValue("data:image/png;base64,iVBORw==");
-      const fetchImage = vi.spyOn(mailClient, "fetchAttachmentImage");
+      const fetchImage = vi.spyOn(mailClient, "fetchAttachmentThumbnail");
       render(<MessageCard message={queuedMessage(queued, "t1")} isExpanded {...stableProps} queuedItem={queued} />);
 
       // Resolved images are patched into the loaded frame rather than rewritten
@@ -378,7 +378,7 @@ describe("MessageCard", () => {
 
     it("requests no thumbnails for a reply still in the outbox", () => {
       vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
-      const fetch = vi.spyOn(mailClient, "fetchAttachmentImage");
+      const fetch = vi.spyOn(mailClient, "fetchAttachmentThumbnail");
       const queuedItem = { draft: { id: "d1" } } as unknown as OutboxItem;
       render(<MessageCard message={withAttachments([photo])} isExpanded {...stableProps} queuedItem={queuedItem} />);
       expect(fetch).not.toHaveBeenCalled();

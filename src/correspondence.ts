@@ -26,6 +26,25 @@ export type Draft = {
   serverDraft?: ServerDraftStatus | null;
   attachments: Attachment[]; updatedAt: number;
 };
+/** List metadata only. Message content is fetched when the user opens it. */
+export type DraftSummary = Pick<Draft, "id" | "revision" | "account" | "from" | "mode" | "sourceId" | "threadId" | "replyId" | "to" | "cc" | "bcc" | "subject" | "updatedAt" | "followUpTaskId" | "serverDraft"> & { preview: string; hasAttachments: boolean };
+export const DRAFT_PREVIEW_CHARS = 200;
+export function summarizeDraft(draft: Draft): DraftSummary {
+  return {
+    id: draft.id, revision: draft.revision, account: draft.account, from: draft.from,
+    mode: draft.mode, sourceId: draft.sourceId, threadId: draft.threadId, replyId: draft.replyId,
+    to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject, updatedAt: draft.updatedAt,
+    followUpTaskId: draft.followUpTaskId, serverDraft: draft.serverDraft,
+    preview: draft.body.replace(/\s+/g, " ").trim().slice(0, DRAFT_PREVIEW_CHARS),
+    hasAttachments: draft.attachments.some((attachment) => !attachment.inline),
+  };
+}
+/** State and headers used by delivery controls, shared by summaries and full records. */
+export type OutboxMetadata = Omit<OutboxItem, "draft"> & { draft: Pick<Draft, "id" | "revision" | "account" | "from" | "mode" | "sourceId" | "threadId" | "replyId" | "to" | "cc" | "bcc" | "subject" | "updatedAt"> };
+export type OutboxSummary = Omit<OutboxItem, "draft"> & { draft: DraftSummary };
+export function summarizeOutbox(item: OutboxItem): OutboxSummary {
+  return { ...item, draft: summarizeDraft(item.draft) };
+}
 /** `pending` waits for the push delay, `retrying` follows a temporary failure, `failed` needs the user, `conflict` means the draft also changed elsewhere and the user picks a version, `local` means the account keeps drafts on this device only. */
 export type ServerDraftStatus = { state: "pending" | "retrying" | "failed" | "conflict" | "local" | "saved"; error?: string };
 /** Emitted as `draft-server-status` when a push finishes or fails; `revision` is the draft revision it describes. */
@@ -66,6 +85,8 @@ export interface CorrespondenceClient {
   setDraftFrom(id: string, from: string | null): Promise<Draft>;
   saveDraft(draft: Draft): Promise<Draft>;
   listDrafts(): Promise<Draft[]>;
+  listDraftSummaries(): Promise<DraftSummary[]>;
+  getDraft(id: string): Promise<Draft>;
   discardDraft(id: string): Promise<void>;
   /** Brings back a draft discarded within the last hour (Undo). */
   restoreDraft(id: string): Promise<Draft>;
@@ -75,6 +96,8 @@ export interface CorrespondenceClient {
   resolveDraftConflict(id: string, keepServer: boolean): Promise<Draft>;
   queueDraft(id: string, revision: number, archiveOnSend?: boolean): Promise<OutboxItem>;
   listOutbox(): Promise<OutboxItem[]>;
+  listOutboxSummaries(): Promise<OutboxSummary[]>;
+  getOutboxItem(id: string): Promise<OutboxItem>;
   cancelSend(id: string): Promise<Draft>;
   recoverSend(id: string): Promise<Draft>;
   reconcileSend(id: string): Promise<void>;
@@ -87,6 +110,7 @@ export interface CorrespondenceClient {
 
 type CorrespondenceOperation =
   | "schedulingInfo" | "scheduleChoices" | "schedule" | "reschedule" | "sendScheduledNow" | "listScheduledSummaries"
+  | "listDraftSummaries" | "getDraft" | "listOutboxSummaries" | "getOutboxItem"
   | "identity" | "create" | "handoff" | "handoffStatus" | "createFromSent" | "setAccount" | "identities" | "setFrom" | "save" | "listDrafts"
   | "discard" | "restoreDraft" | "pushDraft" | "resolveConflict" | "queue" | "listOutbox" | "cancel" | "recover"
   | "reconcile" | "attach" | "attachInline" | "readInline"
@@ -100,6 +124,10 @@ const OPERATION_POLICY: Record<CorrespondenceOperation, InvokePolicy> = {
   sendScheduledNow: WAIT_FOR_NATIVE_COMPLETION,
   listScheduledSummaries: BOUNDED_LOCAL_READ,
   identity: BOUNDED_LOCAL_READ,
+  listDraftSummaries: BOUNDED_LOCAL_READ,
+  getDraft: BOUNDED_LOCAL_READ,
+  listOutboxSummaries: BOUNDED_LOCAL_READ,
+  getOutboxItem: BOUNDED_LOCAL_READ,
   create: WAIT_FOR_NATIVE_COMPLETION,
   handoff: WAIT_FOR_NATIVE_COMPLETION,
   handoffStatus: BOUNDED_LOCAL_READ,
@@ -148,12 +176,16 @@ export const nativeCorrespondence: CorrespondenceClient = {
   setDraftFrom: (id, from) => request("setFrom", { id, from }),
   saveDraft: (draft) => request("save", { draft }),
   listDrafts: () => request("listDrafts"),
+  listDraftSummaries: () => request("listDraftSummaries"),
+  getDraft: (id) => request("getDraft", { id }),
   discardDraft: (id) => request("discard", { id }),
   restoreDraft: (id) => request("restoreDraft", { id }),
   pushDraft: (id) => request("pushDraft", { id }),
   resolveDraftConflict: (id, keepServer) => request("resolveConflict", { id, keepServer }),
   queueDraft: (id, revision, archiveOnSend) => request("queue", { id, revision, archiveOnSend: archiveOnSend ?? false }),
   listOutbox: () => request("listOutbox"),
+  listOutboxSummaries: () => request("listOutboxSummaries"),
+  getOutboxItem: (id) => request("getOutboxItem", { id }),
   cancelSend: (id) => request("cancel", { id }),
   recoverSend: (id) => request("recover", { id }),
   reconcileSend: (id) => request("reconcile", { id }),

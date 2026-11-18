@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor, render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
+import { summarizeDraft, type DraftSummary, type Draft, type OutboxItem, type ScheduledSendReport } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Snippet } from "./domain";
 import { OutboxDetail, OutboxList, outboxStateLabel, useCorrespondence } from "./useCorrespondence";
@@ -47,6 +47,41 @@ afterEach(() => {
 });
 
 describe("useCorrespondence", () => {
+  it("keeps list state body-free and fetches a draft only when opened", async () => {
+    const written = { ...draft, subject: "Plans", body: "Large body ".repeat(10000), bodyHtml: "<p>Private body</p>", forwardedContent: { html: "<p>Original</p>", text: "Original" } };
+    vi.spyOn(mailClient, "listDraftSummaries").mockResolvedValue([summarizeDraft(written)]);
+    vi.spyOn(mailClient, "listOutboxSummaries").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    const fullDrafts = vi.spyOn(mailClient, "listDrafts");
+    const fullOutbox = vi.spyOn(mailClient, "listOutbox");
+    const get = vi.spyOn(mailClient, "getDraft").mockResolvedValue(written);
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await waitFor(() => expect(result.current.draftCount).toBe(1));
+    expect(result.current.drafts[0]).not.toHaveProperty("body");
+    expect(result.current.drafts[0]).not.toHaveProperty("forwardedContent");
+    expect(result.current.drafts[0].preview).toHaveLength(200);
+    expect(fullDrafts).not.toHaveBeenCalled();
+    expect(fullOutbox).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+    await act(async () => { result.current.openDraft(result.current.drafts[0]); });
+    expect(get).toHaveBeenCalledExactlyOnceWith(written.id);
+    expect(result.current.activeDraft?.body).toBe(written.body);
+    expect(result.current.activeDraft?.forwardedContent).toEqual(written.forwardedContent);
+  });
+
+  it("does not reopen a draft whose detail arrives after leaving", async () => {
+    vi.spyOn(mailClient, "listDraftSummaries").mockResolvedValue([summarizeDraft(draft)]);
+    vi.spyOn(mailClient, "listOutboxSummaries").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    let finish!: (draft: Draft) => void;
+    vi.spyOn(mailClient, "getDraft").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await act(async () => { result.current.openDraft(draft); });
+    await act(async () => { await result.current.closeDraft(); });
+    await act(async () => { finish(draft); });
+    expect(result.current.activeDraft).toBeNull();
+  });
+
   it.each(["idle", "scheduled"])("polls %s mail without reloading drafts or re-rendering unchanged state", async (state) => {
     vi.useFakeTimers();
     const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([draft]);
@@ -161,7 +196,7 @@ describe("useCorrespondence", () => {
       await refreshed;
     });
     expect(listDrafts).toHaveBeenCalledTimes(2);
-    expect(result.current.drafts[0].body).toBe("New edits");
+    expect(result.current.drafts[0].preview).toBe("New edits");
     expect(result.current.drafts[0].revision).toBe(draft.revision + 1);
   });
 
@@ -196,13 +231,13 @@ describe("useCorrespondence", () => {
     await waitFor(() => expect(result.current.draftCount).toBe(1));
     expect(result.current.parkedDraft).toBeNull();
 
-    act(() => result.current.openDraft(written));
+    await act(async () => result.current.openDraft(written));
     expect(result.current.parkedDraft).toBeNull();
     act(() => result.current.context.openInbox());
     await waitFor(() => expect(result.current.activeDraft).toBeNull());
     expect(result.current.parkedDraft?.subject).toBe("Budget");
 
-    act(() => result.current.openDraft(written));
+    await act(async () => result.current.openDraft(written));
     expect(result.current.activeDraft?.id).toBe(written.id);
     expect(result.current.parkedDraft).toBeNull();
     act(() => result.current.context.openInbox());
@@ -231,8 +266,8 @@ describe("useCorrespondence", () => {
     }
     try {
       render(<Harness />);
-      await waitFor(() => expect(state.drafts).toEqual([written]));
-      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+      await waitFor(() => expect(state.drafts).toEqual([summarizeDraft(written)]));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open" })); });
       fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Updated plans" } });
       await act(async () => { await expect(state.closeDraft()).rejects.toThrow("Storage unavailable"); });
       expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue("Updated plans");
@@ -268,8 +303,8 @@ describe("useCorrespondence", () => {
     }
     try {
       render(<Harness />);
-      await waitFor(() => expect(state.drafts).toEqual([written]));
-      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+      await waitFor(() => expect(state.drafts).toEqual([summarizeDraft(written)]));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open" })); });
       fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Updated plans" } });
       await act(async () => { await expect(state.openDraftHandoff(request)).rejects.toThrow("Storage unavailable"); });
       expect(handoff).not.toHaveBeenCalled();
@@ -302,7 +337,7 @@ describe("useCorrespondence", () => {
     vi.spyOn(mailClient, "listIdentities").mockResolvedValue([]);
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => next);
     vi.spyOn(mailClient, "discardDraft").mockImplementation(async () => { listDrafts.mockResolvedValue([]); });
-    const parked: (Draft | null)[] = [];
+    const parked: (DraftSummary | null)[] = [];
     function Harness() {
       const state = useCorrespondence([], undefined, undefined, ...snippetArgs, null);
       parked.push(state.parkedDraft);
@@ -313,7 +348,7 @@ describe("useCorrespondence", () => {
     }
     try {
       render(<Harness />);
-      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open" })); });
       fireEvent.click(screen.getByRole("button", { name: "Discard Draft" }));
       await waitFor(() => expect(screen.queryByRole("textbox", { name: "Subject" })).toBeNull());
       await waitFor(() => expect(listDrafts.mock.calls.length).toBeGreaterThan(1));
@@ -351,7 +386,7 @@ describe("useCorrespondence", () => {
       }
       render(<Harness />);
       await waitFor(() => expect(listenMock).toHaveBeenCalledWith("drafts-changed", expect.any(Function)));
-      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open" })); });
       expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue("Plans");
 
       listDrafts.mockResolvedValue([{ ...opened, revision: opened.revision + 1, subject: "Plans from the laptop", updatedAt: 5 }]);

@@ -25,6 +25,7 @@ pub(crate) mod contact_groups;
 pub(crate) mod contact_management;
 mod contact_suggestions;
 pub(crate) mod contacts;
+mod correspondence_summaries;
 pub(crate) mod daily_plan;
 pub(crate) mod drafts;
 mod enrollment;

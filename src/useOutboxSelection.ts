@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { OutboxItem, ScheduledSendReport } from "./correspondence";
+import type { OutboxMetadata, ScheduledSendReport } from "./correspondence";
 import { adjacentOutboxKey, outboxEntries, selectedOutboxEntry } from "./outboxView";
 
 /** Which Outbox row the reader shows. Like the conversation list, the first row is shown until another is chosen. */
-export function useOutboxSelection(outbox: OutboxItem[], summaries: ScheduledSendReport[]) {
+export function useOutboxSelection(outbox: OutboxMetadata[], summaries: ScheduledSendReport[]) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selectedRowRef = useRef<HTMLButtonElement | null>(null);
   const entries = useMemo(() => outboxEntries(outbox, summaries), [outbox, summaries]);

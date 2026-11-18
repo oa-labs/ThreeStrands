@@ -1324,6 +1324,7 @@ describe("Composer forwarded content and attachments", () => {
 });
 
 describe("Composer drafts synced from other devices", () => {
+  beforeEach(() => { vi.spyOn(mailClient, "getDraft").mockResolvedValue(elsewhere); });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
   const saved = { ...draft, revision: 3, subject: "Plans", body: "Typed here" };
   const elsewhere = { ...saved, revision: 4, body: "Typed on the laptop" };

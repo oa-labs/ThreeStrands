@@ -1765,6 +1765,31 @@ describe("Drafts folder", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
+  it("releases a newly queued standalone body until its Outbox row is opened", async () => {
+    const draft = await mailClient.createDraft("new");
+    await mailClient.saveDraft({ ...draft, subject: "Body loaded on demand", to: "jane@example.com", body: "Keep the full message on disk" });
+    const get = vi.spyOn(mailClient, "getOutboxItem");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    selectFolder("Drafts");
+    fireEvent.click(await screen.findByRole("option", { name: /Body loaded on demand/ }));
+    const composer = await screen.findByRole("dialog", { name: "New Message" });
+    fireEvent.click(within(composer).getByRole("button", { name: "Send" }));
+    await screen.findByRole("button", { name: "Undo Send" });
+    expect(get).not.toHaveBeenCalled();
+    selectFolder("Outbox");
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    const [queued] = await mailClient.listOutbox();
+    expect(get).toHaveBeenCalledWith(queued.id);
+    selectFolder("Inbox");
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    selectFolder("Outbox");
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    selectFolder("Inbox");
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    get.mockRestore();
+  });
+
   it("switches folders from the menu while a draft is open and keeps unsaved edits", async () => {
     await mailClient.createDraft("new");
     render(<App />);

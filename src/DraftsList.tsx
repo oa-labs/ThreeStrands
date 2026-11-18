@@ -1,6 +1,6 @@
 import { Paperclip, Square, SquareCheckBig } from "lucide-react";
 import { useMemo } from "react";
-import type { Draft } from "./correspondence";
+import type { DraftSummary } from "./correspondence";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import { ICON_SIZE } from "./iconSizes";
 import { matchesShortcut } from "./commands";
@@ -8,19 +8,14 @@ import { formatMailTimestamp } from "./threadPresentation";
 import { selectionGestureFor, type SelectionGesture } from "./threadSelection";
 import { useCheckedSelection } from "./useCheckedSelection";
 
-function draftRecipients(draft: Draft): string {
+function draftRecipients(draft: DraftSummary): string {
   const recipients = splitAddressList([draft.to, draft.cc, draft.bcc].filter(Boolean).join(", "));
   if (recipients.length === 0) return "No recipients";
   return `To ${recipients.map((recipient) => formatDisplayName(parseAddress(recipient).name)).join(", ")}`;
 }
 
-/** The first words of the body, as the inbox shows a conversation's snippet. */
-function draftPreview(draft: Draft): string {
-  return draft.body.replace(/\s+/g, " ").trim().slice(0, 200);
-}
-
 /** Checked drafts for batch actions. */
-export function useDraftSelection(drafts: Draft[], openId: string | null) {
+export function useDraftSelection(drafts: DraftSummary[], openId: string | null) {
   const orderedIds = useMemo(() => drafts.map((draft) => draft.id), [drafts]);
   return useCheckedSelection(orderedIds, openId);
 }
@@ -36,20 +31,20 @@ export function DraftsList({
   onToggleCheck,
   onSelectionGesture,
 }: {
-  drafts: Draft[];
+  drafts: DraftSummary[];
   openId: string | null;
   checkedIds: ReadonlySet<string>;
   showAccount: boolean;
   accountColors: ReadonlyMap<string, string>;
-  onOpen(draft: Draft): void;
-  onDiscard(draft: Draft): void;
+  onOpen(draft: DraftSummary): void;
+  onDiscard(draft: DraftSummary): void;
   onToggleCheck(id: string): void;
   onSelectionGesture(id: string, gesture: SelectionGesture): void;
 }) {
   if (drafts.length === 0) return <p className="empty">No saved drafts.</p>;
   return <>{drafts.map((draft) => {
     const checked = checkedIds.has(draft.id);
-    const preview = draftPreview(draft);
+    const preview = draft.preview;
     return (
       <button
         key={draft.id}
@@ -86,7 +81,7 @@ export function DraftsList({
           >
             {checked ? <SquareCheckBig size={ICON_SIZE.md} /> : <Square size={ICON_SIZE.md} />}
           </span>
-          {draft.attachments.some((attachment) => !attachment.inline) ? <Paperclip className="thread-attachment" size={ICON_SIZE.xs} aria-label="Has attachments" /> : null}
+          {draft.hasAttachments ? <Paperclip className="thread-attachment" size={ICON_SIZE.xs} aria-label="Has attachments" /> : null}
         </span>
         {checked ? <span className="sr-only">Selected for batch actions</span> : null}
         <span className="unread-dot" />

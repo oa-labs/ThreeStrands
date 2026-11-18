@@ -44,7 +44,7 @@ export type ComposerHandle = {
   /** Focuses the body with the caret back where it was before the body lost focus. */
   focusBody(): void;
   /** Reports this draft as the native store now has it after sync, or `null` once it is gone. */
-  remoteChanged(stored: Draft | null): void;
+  remoteChanged(stored: Pick<Draft, "id" | "revision"> | null): void;
 };
 
 export const Composer = forwardRef<ComposerHandle, {
@@ -364,7 +364,7 @@ export const Composer = forwardRef<ComposerHandle, {
   // Untouched drafts follow it; local edits ask first. A removal is checked
   // against a fresh list, since a list read just before this draft was
   // created would not hold it yet.
-  function remoteChanged(stored: Draft | null) {
+  function remoteChanged(stored: Pick<Draft, "id" | "revision"> | null) {
     void (async () => {
       if (busyRef.current) return;
       await settled();
@@ -372,13 +372,15 @@ export const Composer = forwardRef<ComposerHandle, {
       if (!stored) {
         // Only existence is read here: a save started since could make this
         // list's revision look like another device's.
-        const exists = (await mailClient.listDrafts()).some((candidate) => candidate.id === latest.current.id);
+        const exists = (await mailClient.listDraftSummaries()).some((candidate) => candidate.id === latest.current.id);
         if (mounted.current && !busyRef.current && !exists) setRemote({ kind: "removed" });
         return;
       }
       if (stored.revision <= latest.current.revision) return;
-      if (hasUnsavedChanges() || !onRemoteVersion) setRemote({ kind: "edited", draft: stored });
-      else onRemoteVersion(stored);
+      const next = await mailClient.getDraft(stored.id);
+      if (!mounted.current || busyRef.current || next.revision <= latest.current.revision) return;
+      if (hasUnsavedChanges() || !onRemoteVersion) setRemote({ kind: "edited", draft: next });
+      else onRemoteVersion(next);
     })().catch(logBackgroundFailure("Draft sync check"));
   }
   useImperativeHandle(ref, () => ({ draftReview, flush, send, remoteChanged, schedule: openSchedule, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {

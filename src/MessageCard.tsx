@@ -8,7 +8,7 @@ import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachm
 import type { InvitationActions } from "./InvitationSection";
 import { AddressWithCard } from "./AddressWithCard";
 import { ContactCardContext } from "./ContactCard";
-import type { OutboxItem } from "./correspondence";
+import type { OutboxMetadata } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Account, Message } from "./domain";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
@@ -39,7 +39,7 @@ type MessageCardProps = {
   isActive: boolean;
   accounts: Account[];
   /** Set when this card shows a reply still in the outbox. */
-  queuedItem: OutboxItem | undefined;
+  queuedItem: OutboxMetadata | undefined;
   loadRemoteImages: boolean;
   theme: "light" | "dark";
   fontScale: number;

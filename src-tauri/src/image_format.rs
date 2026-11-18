@@ -210,3 +210,59 @@ mod tests {
         );
     }
 }
+
+/// 20 CSS pixels at 2x density. Encoded thumbnails have a separate small budget.
+pub(crate) const MAX_CONCURRENT_ATTACHMENT_THUMBNAILS: usize = 2;
+pub(crate) const ATTACHMENT_THUMBNAIL_EDGE: u32 = 40;
+pub(crate) const MAX_ATTACHMENT_THUMBNAIL_BYTES: usize = 64 * 1024;
+pub(crate) fn valid_thumbnail(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_ATTACHMENT_THUMBNAIL_BYTES || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return false;
+    }
+    imagesize::blob_size(bytes).is_ok_and(|size| {
+        size.width > 0
+            && size.height > 0
+            && size.width <= ATTACHMENT_THUMBNAIL_EDGE as usize
+            && size.height <= ATTACHMENT_THUMBNAIL_EDGE as usize
+    })
+}
+
+#[cfg(test)]
+mod thumbnail_tests {
+    use super::*;
+    #[test]
+    fn thumbnail_dimensions_and_bytes_are_bounded_without_changing_originals() {
+        let source = include_bytes!("../../src/data/showcaseImages/ridge-line.jpg");
+        assert!(validate_raster(source).is_ok());
+        assert!(!valid_thumbnail(source));
+        for edge in [
+            ATTACHMENT_THUMBNAIL_EDGE - 1,
+            ATTACHMENT_THUMBNAIL_EDGE,
+            ATTACHMENT_THUMBNAIL_EDGE + 1,
+        ] {
+            // The same PNG header geometry reader used at the trust boundary.
+            let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+            png.extend(edge.to_be_bytes());
+            png.extend(1u32.to_be_bytes());
+            png.extend([8, 6, 0, 0, 0]);
+            for length in [
+                MAX_ATTACHMENT_THUMBNAIL_BYTES - 1,
+                MAX_ATTACHMENT_THUMBNAIL_BYTES,
+                MAX_ATTACHMENT_THUMBNAIL_BYTES + 1,
+            ] {
+                let mut bytes = png.clone();
+                bytes.resize(length, 0);
+                assert_eq!(
+                    valid_thumbnail(&bytes),
+                    edge <= ATTACHMENT_THUMBNAIL_EDGE && length <= MAX_ATTACHMENT_THUMBNAIL_BYTES
+                );
+            }
+        }
+        assert!(!valid_thumbnail(
+            b"<svg xmlns='http://www.w3.org/2000/svg'><script>bad()</script></svg>"
+        ));
+        assert!(!valid_thumbnail(
+            b"<html><img src='https://tracker.invalid'></html>"
+        ));
+    }
+}

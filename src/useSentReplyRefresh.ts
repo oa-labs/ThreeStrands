@@ -1,5 +1,5 @@
 import { useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
-import type { OutboxItem } from "./correspondence";
+import type { OutboxMetadata } from "./correspondence";
 import type { Message, ThreadDetail } from "./domain";
 import { mailClient } from "./data/client";
 import { logBackgroundFailure } from "./errors";
@@ -19,7 +19,7 @@ export const SENT_REPLY_REFRESH_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000,
 export function useSentReplyRefresh(
   detail: ThreadDetail | null,
   displayedMessages: Message[],
-  outbox: OutboxItem[],
+  outbox: OutboxMetadata[],
   setDetail: Dispatch<SetStateAction<ThreadDetail | null>>,
 ) {
   const threadId = detail?.thread.id ?? null;

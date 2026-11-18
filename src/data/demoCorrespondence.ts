@@ -1,3 +1,4 @@
+import { summarizeDraft, summarizeOutbox } from "../correspondence";
 import { readDemoSignatures } from "./demoSignatures";
 import { defaultSignature } from "../signatures";
 import { previewScheduleChoices } from "../scheduleTimes";
@@ -217,6 +218,12 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
       Object.assign(previous, next, { revision: next.revision + 1, updatedAt: Date.now() }); write(store); return previous;
     },
     async listDrafts() { return read().drafts; },
+    async listDraftSummaries() { return (await this.listDrafts()).map(summarizeDraft); },
+    async getDraft(id) {
+      const found = (await this.listDrafts()).find((candidate) => candidate.id === id);
+      if (!found) throw new Error("Draft no longer exists");
+      return found;
+    },
     async discardDraft(id) {
       const store = read();
       const discarded = store.drafts.find((d) => d.id === id);
@@ -249,6 +256,12 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
       store.outbox.unshift(item); store.drafts = store.drafts.filter((d) => d.id !== id); write(store); return item;
     },
     async listOutbox() { const store = read(); tick(store); return store.outbox; },
+    async listOutboxSummaries() { return (await this.listOutbox()).map(summarizeOutbox); },
+    async getOutboxItem(id) {
+      const item = (await this.listOutbox()).find((item) => item.id === id);
+      if (!item) throw new Error("Outbox item no longer exists");
+      return item;
+    },
     async cancelSend(id) { return cancel(id); },
     async recoverSend(id) { return cancel(id, true); },
     async reconcileSend() { throw new Error("No Gmail connection in browser preview"); },

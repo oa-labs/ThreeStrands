@@ -89,6 +89,52 @@ pub(crate) async fn fetch_attachment_image(
     ))
 }
 
+/// A tiny PNG for an attachment chip. On platforms without an OS thumbnail
+/// service, the already validated raster is returned for browser downsampling.
+#[tauri::command]
+pub(crate) async fn fetch_attachment_thumbnail(
+    message_id: String,
+    attachment_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<models::AttachmentThumbnail> {
+    use base64::Engine;
+    // Limits both full-image buffers and the OS thumbnail jobs, across messages.
+    static SLOTS: tokio::sync::Semaphore =
+        tokio::sync::Semaphore::const_new(image_format::MAX_CONCURRENT_ATTACHMENT_THUMBNAILS);
+    let _slot = SLOTS
+        .acquire()
+        .await
+        .map_err(|_| "Thumbnail service unavailable")?;
+    let (filename, mime_type, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
+    let mime_type = mime_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if !image_format::is_supported_raster_mime(&mime_type) {
+        return Err("Attachment is not a supported image".into());
+    }
+    image_format::validate_raster(&bytes)?;
+    if file_preview::HAS_BACKEND {
+        // An unavailable OS provider leaves the file-kind icon in place; never
+        // send an oversized original to a supported thumbnail backend's reader.
+        let data_uri =
+            file_preview::thumbnail_data_uri(&state.file_previews, &filename, &bytes).await?;
+        return Ok(models::AttachmentThumbnail {
+            data_uri,
+            needs_resize: false,
+        });
+    }
+    Ok(models::AttachmentThumbnail {
+        data_uri: Some(format!(
+            "data:{mime_type};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        )),
+        needs_resize: true,
+    })
+}
+
 /// A picture of the attachment for Files, or `None` when it has none. A
 /// preview is optional, so a file the platform cannot draw is not an error.
 #[tauri::command]

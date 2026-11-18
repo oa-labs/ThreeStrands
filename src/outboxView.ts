@@ -1,11 +1,11 @@
-import type { OutboxItem, ScheduledSendReport } from "./correspondence";
+import type { OutboxMetadata, ScheduledSendReport } from "./correspondence";
 
 /**
  * One row of the Outbox: a send this computer owns, or a read-only report of
  * a schedule another device owns. Peer reports never carry message content.
  */
 export type OutboxEntry =
-  | { key: string; kind: "local"; item: OutboxItem }
+  | { key: string; kind: "local"; item: OutboxMetadata }
   | { key: string; kind: "peer"; report: ScheduledSendReport };
 
 /**
@@ -13,14 +13,14 @@ export type OutboxEntry =
  * outcome is unknown, or its copy for the Sent folder is still being saved or
  * could not be. A finished send lives in Sent; a canceled one went back to Drafts.
  */
-export function isOutgoing(item: OutboxItem): boolean {
+export function isOutgoing(item: OutboxMetadata): boolean {
   if (item.state === "canceled") return false;
   if (item.state !== "sent") return true;
   return item.sentCopy?.state === "pending" || item.sentCopy?.state === "verify" || item.sentCopy?.state === "abandoned";
 }
 
 /** Outbox rows in display order: this computer's outgoing sends, then peer schedules. */
-export function outboxEntries(outbox: OutboxItem[], summaries: ScheduledSendReport[]): OutboxEntry[] {
+export function outboxEntries(outbox: OutboxMetadata[], summaries: ScheduledSendReport[]): OutboxEntry[] {
   return [
     ...outbox
       .filter(isOutgoing)

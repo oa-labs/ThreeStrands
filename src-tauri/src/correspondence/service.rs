@@ -148,12 +148,33 @@ impl Correspondence {
         let mut items = self.database.outbox()?;
         for item in &mut items {
             if let Some(schedule) = &mut item.schedule {
-                schedule.can_manage =
-                    owner.as_deref() == Some(&schedule.report.owner_installation_id);
-                if !schedule.can_manage {
-                    schedule.report.blocked_reason = Some("owner_unavailable".into());
-                }
-                schedule.visibility = self.database.schedule_visibility(schedule)?;
+                self.decorate_listed_schedule(schedule, owner.as_deref())?;
+            }
+        }
+        serde_json::to_value(items).map_err(error)
+    }
+    fn decorate_listed_schedule(
+        &self,
+        schedule: &mut crate::scheduled_send::Schedule,
+        owner: Option<&str>,
+    ) -> Result<(), String> {
+        schedule.can_manage = owner == Some(&schedule.report.owner_installation_id);
+        if !schedule.can_manage {
+            schedule.report.blocked_reason = Some("owner_unavailable".into());
+        }
+        schedule.visibility = self.database.schedule_visibility(schedule)?;
+        Ok(())
+    }
+    fn listed_outbox_summaries(&self) -> Result<serde_json::Value, String> {
+        let owner = self.schedule_owner(false).ok();
+        if let Some(owner) = &owner {
+            self.database
+                .refresh_schedule_reports(owner, unix_millis())?;
+        }
+        let mut items = self.database.outbox_summaries()?;
+        for item in &mut items {
+            if let Some(schedule) = &mut item.schedule {
+                self.decorate_listed_schedule(schedule, owner.as_deref())?;
             }
         }
         serde_json::to_value(items).map_err(error)
@@ -265,6 +286,34 @@ impl Correspondence {
         // Reads and reconciliation do not edit browser-owned drafts. In particular,
         // a slow or locked keychain during polling must not stall create/save.
         match &request {
+            ListDraftSummaries | ListOutboxSummaries | GetDraft { .. } | GetOutboxItem { .. } => {
+                let service = self.clone();
+                return crate::run_database_task(move || match request {
+                    ListDraftSummaries => {
+                        let mut drafts = service.database.draft_summaries()?;
+                        for draft in &mut drafts {
+                            draft.server_draft = service.database.server_draft_status_for(
+                                &draft.id,
+                                &draft.account,
+                                draft.revision,
+                            )?;
+                        }
+                        serde_json::to_value(drafts).map_err(error)
+                    }
+                    ListOutboxSummaries => service.listed_outbox_summaries(),
+                    GetDraft { id } => {
+                        let mut draft = service.database.draft(&id)?;
+                        draft.server_draft = service.database.server_draft_status(&draft)?;
+                        serde_json::to_value(draft).map_err(error)
+                    }
+                    GetOutboxItem { id } => {
+                        serde_json::to_value(service.database.outbox_item(&id)?).map_err(error)
+                    }
+                    _ => unreachable!(),
+                })
+                .await
+                .map_err(String::from);
+            }
             ListOutbox => {
                 let service = self.clone();
                 return crate::run_database_task(move || service.listed_outbox())
@@ -357,7 +406,11 @@ impl Correspondence {
                 });
                 Ok(serde_json::to_value(identity?).map_err(error)?)
             }
-            ListDrafts
+            ListDraftSummaries
+            | ListOutboxSummaries
+            | GetDraft { .. }
+            | GetOutboxItem { .. }
+            | ListDrafts
             | ListOutbox
             | ListScheduledSummaries
             | Reconcile { .. }

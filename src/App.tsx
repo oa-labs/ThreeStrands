@@ -1,3 +1,4 @@
+import { outboxBelongsToThread } from "./queuedReplies";
 import { addMeetingToDailyNote, captureConversation, planningMeetingNote } from "./noteCapture";
 import { prepareNoteMutation } from "./noteMutations";
 import { MeetingNoteDialog } from "./MeetingNoteDialog";
@@ -296,8 +297,8 @@ export function App() {
     [accounts, composerBelongsToVisibleThread, correspondence.liveDraft],
   );
   const displayedMessages = useMemo(
-    () => visibleDetail ? messagesWithQueuedReplies(visibleDetail, correspondence.outbox) : [],
-    [visibleDetail, correspondence.outbox],
+    () => visibleDetail ? messagesWithQueuedReplies(visibleDetail, correspondence.outboxDetails) : [],
+    [visibleDetail, correspondence.outboxDetails],
   );
   useSentReplyRefresh(visibleDetail, displayedMessages, correspondence.outbox, setDetail);
   const displayedThreadText = useMemo(() => threadTextIndex(displayedMessages), [displayedMessages]);
@@ -307,7 +308,8 @@ export function App() {
   const checkedOutboxEntries = outboxSelection.entries.filter((entry) => outboxChecks.checkedIds.has(entry.key));
   const returnableSends = checkedOutboxEntries.filter((entry) => outboxBatchAbility(entry).returnable).flatMap((entry) => entry.kind === "local" ? [entry.item.id] : []);
   const discardableSends = checkedOutboxEntries.filter((entry) => outboxBatchAbility(entry).discardable).flatMap((entry) => entry.kind === "local" ? [entry.item.id] : []);
-  const selectedOutboxItem = outboxSelection.selectedEntry?.kind === "local" ? outboxSelection.selectedEntry.item : undefined;
+  const selectedOutboxSummary = mailbox === "outbox" && !correspondence.activeDraft && outboxSelection.selectedEntry?.kind === "local" ? outboxSelection.selectedEntry.item : undefined;
+  const selectedOutboxItem = correspondence.outboxDetails.find((item) => item.id === selectedOutboxSummary?.id);
   const selectedOutboxMessage = useMemo(
     () => selectedOutboxItem ? queuedMessage(selectedOutboxItem, `outbox-${selectedOutboxItem.id}`) : null,
     [selectedOutboxItem],
@@ -957,6 +959,9 @@ export function App() {
   };
   const composeInView = rightWorkspace === null && Boolean(correspondence.activeDraft);
   const mailInView = rightWorkspace === null;
+  const requestedOutboxIds = JSON.stringify(mailInView ? correspondence.outbox.filter((item) => item.id === selectedOutboxSummary?.id || (!composingApart && visibleDetail && outboxBelongsToThread(item, visibleDetail))).map((item) => item.id) : []);
+  const { requestOutboxDetails } = correspondence;
+  useEffect(() => { requestOutboxDetails(JSON.parse(requestedOutboxIds)); }, [requestedOutboxIds, requestOutboxDetails, correspondence.outbox]);
   const sideDrawerShown = mailInView && sideDrawerOpen;
   useEscapeDismiss(() => setSideDrawerOpen(false), sideDrawerShown);
   // A click or focus back in the inbox or the reader puts the drawer away.
@@ -1570,6 +1575,7 @@ export function App() {
             pendingActions={correspondence.pendingOutboxActions}
             onChanged={correspondence.refresh}
           >
+            {correspondence.outboxDetailError ? <p role="alert">{correspondence.outboxDetailError} <button type="button" className="btn btn-sm" onClick={correspondence.retryOutboxDetails}>Try Again</button></p> : correspondence.outboxDetailsLoading ? <p role="status">Loading outgoing message…</p> : null}
             {selectedOutboxItem && selectedOutboxMessage ? (
               <ContactCardContext.Provider value={contactCardActions}>
                 <div className="message-stack">

@@ -1582,6 +1582,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         // Images and attachments
         commands::attachments::fetch_remote_image,
         commands::attachments::fetch_attachment_image,
+        commands::attachments::fetch_attachment_thumbnail,
         commands::attachments::file_preview,
         commands::attachments::preview_calendar_attachment,
         commands::attachments::open_attachment,

@@ -3992,3 +3992,33 @@ fn gmail_alias_reply_and_mime_keep_the_address_reply_to_and_signature() {
         .unwrap();
     assert_eq!(continuation.from.as_deref(), Some("alias@example.org"));
 }
+
+#[tokio::test]
+async fn summary_and_detail_reads_do_not_wait_for_compose_edits() {
+    let service = service();
+    let draft = saved(&service.database);
+    let _editing = service.edits.lock().await;
+    for request in [
+        Request::ListDraftSummaries,
+        Request::ListOutboxSummaries,
+        Request::GetDraft {
+            id: draft.id.clone(),
+        },
+    ] {
+        let response = tokio::time::timeout(Duration::from_secs(1), service.request(request))
+            .await
+            .expect("reads bypass edits")
+            .unwrap();
+        assert!(!response.is_null());
+    }
+    let detail = service
+        .request(Request::GetDraft {
+            id: draft.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(detail["body"], draft.body);
+    let summary = service.request(Request::ListDraftSummaries).await.unwrap();
+    assert!(summary[0].get("body").is_none());
+    assert_eq!(summary[0]["preview"], draft.body);
+}

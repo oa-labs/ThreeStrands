@@ -28,6 +28,43 @@ pub struct Attachment {
     #[serde(default)]
     pub content_id: Option<String>,
 }
+/// A body-free projection for Drafts and Outbox lists. Never used to save or send.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftSummary {
+    pub id: String,
+    pub revision: i64,
+    pub account: String,
+    pub from: Option<String>,
+    pub mode: String,
+    pub source_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub reply_id: Option<String>,
+    pub to: String,
+    pub cc: String,
+    pub bcc: String,
+    pub subject: String,
+    pub updated_at: i64,
+    pub follow_up_task_id: Option<String>,
+    pub preview: String,
+    pub has_attachments: bool,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub server_draft: Option<crate::draft_push::ServerDraftStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxSummary {
+    pub id: String,
+    pub draft: DraftSummary,
+    pub state: String,
+    pub deadline: i64,
+    pub error: Option<String>,
+    pub provider_id: Option<String>,
+    pub schedule: Option<crate::scheduled_send::Schedule>,
+    pub sent_copy: Option<SentCopyStatus>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForwardedContent {
     pub html: String,
@@ -144,6 +181,14 @@ pub struct SentCopyStatus {
 pub enum Request {
     Identity,
     ListDrafts,
+    ListDraftSummaries,
+    GetDraft {
+        id: String,
+    },
+    ListOutboxSummaries,
+    GetOutboxItem {
+        id: String,
+    },
     ListOutbox,
     ListScheduledSummaries,
     SchedulingInfo,

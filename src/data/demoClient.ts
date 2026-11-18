@@ -618,6 +618,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       if (image) return image;
       throw new Error("Embedded attachment images are unavailable in browser preview");
     },
+    async fetchAttachmentThumbnail(messageId, attachmentId) {
+      return { dataUri: await this.fetchAttachmentImage(messageId, attachmentId), needsResize: true };
+    },
     async filePreview() {
       return null;
     },

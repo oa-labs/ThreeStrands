@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import postcss from "postcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Draft } from "./correspondence";
+import { summarizeDraft, type Draft } from "./correspondence";
 import { ThreadDrafts, threadDrafts } from "./ThreadDrafts";
 
 afterEach(cleanup);
@@ -27,12 +27,12 @@ describe("ThreadDrafts", () => {
   it("shows each unsent draft as a draft and resumes it", () => {
     const onOpen = vi.fn();
     const reply = draft({});
-    render(<ThreadDrafts drafts={[reply, draft({ id: "empty", to: "" })]} onOpen={onOpen} />);
+    render(<ThreadDrafts drafts={[reply, draft({ id: "empty", to: "" })].map(summarizeDraft)} onOpen={onOpen} />);
     const cards = screen.getAllByRole("group", { name: "Unsent draft" });
     expect(cards[0]).toHaveTextContent("Draft to jane@example.com");
     expect(cards[1]).toHaveTextContent("Draft with no recipients");
     fireEvent.click(screen.getAllByRole("button", { name: "Resume Draft" })[0]);
-    expect(onOpen).toHaveBeenCalledWith(reply);
+    expect(onOpen).toHaveBeenCalledWith(summarizeDraft(reply));
   });
 
   it("sizes the draft like a message card with Resume Draft centered at the right", () => {

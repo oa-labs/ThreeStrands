@@ -10,7 +10,11 @@ pub use mime::{addresses, stored_addresses};
 pub(crate) use mime::{build_draft_mime, build_mime};
 #[cfg(test)]
 pub(crate) use model::BuiltDraft;
-pub use model::{Attachment, Draft, OutboxItem, Request, SentCopyStatus};
+#[cfg(test)]
+pub(crate) use model::ForwardedContent;
+pub use model::{
+    Attachment, Draft, DraftSummary, OutboxItem, OutboxSummary, Request, SentCopyStatus,
+};
 pub use service::Correspondence;
 
 use serde::Serialize;

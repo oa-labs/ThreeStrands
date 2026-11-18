@@ -1713,3 +1713,11 @@ pub struct WorkspaceConversation {
     pub sent_at: String,
     pub participants: Vec<String>,
 }
+
+/// A bounded attachment-chip picture, or a validated raster for browser resizing.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentThumbnail {
+    pub data_uri: Option<String>,
+    pub needs_resize: bool,
+}

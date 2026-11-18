@@ -67,6 +67,36 @@ pub(crate) async fn preview_data_uri(
     filename: &str,
     bytes: &[u8],
 ) -> Result<Option<String>, String> {
+    render_data_uri(
+        root,
+        filename,
+        bytes,
+        (PREVIEW_SIZE_POINTS * PREVIEW_SCALE) as u32,
+    )
+    .await
+}
+
+/// Attachment chips request a small raster from the same isolated OS service.
+pub(crate) async fn thumbnail_data_uri(
+    root: &PreviewRoot,
+    filename: &str,
+    bytes: &[u8],
+) -> Result<Option<String>, String> {
+    render_data_uri(
+        root,
+        filename,
+        bytes,
+        crate::image_format::ATTACHMENT_THUMBNAIL_EDGE,
+    )
+    .await
+}
+
+async fn render_data_uri(
+    root: &PreviewRoot,
+    filename: &str,
+    bytes: &[u8],
+    edge: u32,
+) -> Result<Option<String>, String> {
     use base64::Engine;
 
     if !previewable(filename, bytes) {
@@ -81,14 +111,17 @@ pub(crate) async fn preview_data_uri(
     crate::attachment_security::quarantine(&source)
         .map_err(|error| format!("Unable to prepare preview: {error}"))?;
     let output = scratch.0.join("preview.png");
-    if !render(&source, &output).await {
+    if !render(&source, &output, edge).await {
         return Ok(None);
     }
     let png = match fs::read(&output) {
         Ok(png) => png,
         Err(_) => return Ok(None),
     };
-    if !png_is_valid(&png) {
+    if !png_is_valid(&png)
+        || (edge == crate::image_format::ATTACHMENT_THUMBNAIL_EDGE
+            && !crate::image_format::valid_thumbnail(&png))
+    {
         return Ok(None);
     }
     Ok(Some(format!(
@@ -102,8 +135,8 @@ fn png_is_valid(png: &[u8]) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-async fn render(source: &Path, output: &Path) -> bool {
-    let Some(done) = macos::request_thumbnail(source, output) else {
+async fn render(source: &Path, output: &Path, edge: u32) -> bool {
+    let Some(done) = macos::request_thumbnail(source, output, edge) else {
         return false;
     };
     matches!(
@@ -113,19 +146,19 @@ async fn render(source: &Path, output: &Path) -> bool {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-async fn render(_source: &Path, _output: &Path) -> bool {
+async fn render(_source: &Path, _output: &Path, _edge: u32) -> bool {
     false
 }
 
 #[cfg(target_os = "windows")]
-async fn render(source: &Path, output: &Path) -> bool {
+async fn render(source: &Path, output: &Path, edge: u32) -> bool {
     let source = source.to_path_buf();
     let output = output.to_path_buf();
     // The Shell thumbnail call is blocking COM work; keep it off the async
     // runtime, and abandon it on the same deadline macOS uses for Quick Look.
     let drawn = tokio::time::timeout(
         PREVIEW_TIMEOUT,
-        tokio::task::spawn_blocking(move || windows_shell::render_png(&source, &output)),
+        tokio::task::spawn_blocking(move || windows_shell::render_png(&source, &output, edge)),
     )
     .await;
     // Timeout, then the blocking task's join, then the Shell call itself.
@@ -134,7 +167,6 @@ async fn render(source: &Path, output: &Path) -> bool {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{PREVIEW_SCALE, PREVIEW_SIZE_POINTS};
     use block2::RcBlock;
     use objc2::AllocAnyThread;
     use objc2_core_foundation::CGSize;
@@ -154,6 +186,7 @@ mod macos {
     pub(super) fn request_thumbnail(
         source: &Path,
         output: &Path,
+        edge: u32,
     ) -> Option<oneshot::Receiver<bool>> {
         let source = NSURL::fileURLWithPath(&NSString::from_str(source.to_str()?));
         let output = NSURL::fileURLWithPath(&NSString::from_str(output.to_str()?));
@@ -167,10 +200,10 @@ mod macos {
                 QLThumbnailGenerationRequest::alloc(),
                 &source,
                 CGSize {
-                    width: PREVIEW_SIZE_POINTS,
-                    height: PREVIEW_SIZE_POINTS,
+                    width: edge as f64,
+                    height: edge as f64,
                 },
-                PREVIEW_SCALE,
+                1.0,
                 QLThumbnailGenerationRequestRepresentationTypes::Thumbnail,
             )
         };
@@ -194,7 +227,6 @@ mod macos {
 
 #[cfg(target_os = "windows")]
 mod windows_shell {
-    use super::{PREVIEW_SCALE, PREVIEW_SIZE_POINTS};
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
     use windows::core::PCWSTR;
@@ -207,10 +239,6 @@ mod windows_shell {
     use windows::Win32::UI::Shell::{
         IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_THUMBNAILONLY,
     };
-
-    /// The thumbnail edge in pixels: the same points × scale macOS renders to,
-    /// so both platforms emit an image of the same physical size (640 px).
-    const EDGE: i32 = (PREVIEW_SIZE_POINTS * PREVIEW_SCALE) as i32;
 
     /// COM apartment held for one thumbnail request and uninitialised on drop,
     /// even if a later step returns early. One `CoInitializeEx`/`CoUninitialize`
@@ -248,7 +276,11 @@ mod windows_shell {
     /// `output` as PNG. Returns `Ok(false)` when the Shell produced no
     /// thumbnail (we ask `THUMBNAILONLY`, so a generic file icon is declined,
     /// matching macOS), and `Err` on an unexpected API failure.
-    pub(super) fn render_png(source: &Path, output: &Path) -> windows::core::Result<bool> {
+    pub(super) fn render_png(
+        source: &Path,
+        output: &Path,
+        edge: u32,
+    ) -> windows::core::Result<bool> {
         let _com = ComApartment::enter()?;
 
         let mut wide: Vec<u16> = source.as_os_str().encode_wide().collect();
@@ -256,7 +288,10 @@ mod windows_shell {
         let factory: IShellItemImageFactory =
             unsafe { SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None)? };
 
-        let size = SIZE { cx: EDGE, cy: EDGE };
+        let size = SIZE {
+            cx: edge as i32,
+            cy: edge as i32,
+        };
         // THUMBNAILONLY: never fall back to an icon. A missing thumbnail comes
         // back as an error we translate to Ok(false), so the panel keeps its
         // own icon rather than showing a generic file glyph.
@@ -464,6 +499,38 @@ mod tests {
             .expect("a preview");
         assert!(uri.starts_with("data:image/png;base64,"));
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[tokio::test]
+    async fn attachment_thumbnails_are_small_and_leave_originals_untouched() {
+        use base64::Engine;
+        let directory =
+            std::env::temp_dir().join(format!("thumbnail-test-{}", uuid::Uuid::new_v4()));
+        let root = PreviewRoot::new(directory.clone()).unwrap();
+        for (name, bytes) in [
+            (
+                "photo.jpg",
+                include_bytes!("../../src/data/showcaseImages/ridge-line.jpg").as_slice(),
+            ),
+            ("pixel.png", PNG_1X1),
+        ] {
+            let before = bytes.to_vec();
+            let result = thumbnail_data_uri(&root, name, bytes).await.unwrap();
+            // Some OS thumbnail providers decline a 1px image.
+            if name == "photo.jpg" {
+                assert!(result.is_some(), "a photo gets a thumbnail");
+            }
+            if let Some(uri) = result {
+                let png = base64::engine::general_purpose::STANDARD
+                    .decode(uri.strip_prefix("data:image/png;base64,").unwrap())
+                    .unwrap();
+                assert!(crate::image_format::valid_thumbnail(&png));
+            }
+            assert_eq!(bytes, before);
+            assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+        }
         let _ = fs::remove_dir_all(directory);
     }
 

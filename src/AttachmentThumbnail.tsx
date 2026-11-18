@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AttachmentIcon } from "./AttachmentIcon";
-import { mailClient } from "./data/client";
+import { loadAttachmentThumbnail } from "./attachmentThumbnailLoader";
 import type { MessageAttachment } from "./domain";
 
 /**
@@ -19,8 +19,8 @@ export function AttachmentThumbnail({ messageId, attachment, enabled }: {
     setSrc(null);
     if (!enabled) return;
     let active = true;
-    void mailClient.fetchAttachmentImage(messageId, attachment.id).then((value) => {
-      if (active && value.startsWith("data:image/")) setSrc(value);
+    void loadAttachmentThumbnail(messageId, attachment.id).then((value) => {
+      if (active) setSrc(value);
     }).catch(() => undefined);
     return () => { active = false; };
   }, [attachment.id, enabled, messageId]);

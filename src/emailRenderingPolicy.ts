@@ -106,7 +106,16 @@ export const EMAIL_IMAGE_LIMITS = {
    */
   maxAttachmentThumbnailBytes: 5 * 1024 * 1024,
   maxAttachmentThumbnailsPerMessage: 8,
+  attachmentThumbnailEdgePx: 40,
+  maxAttachmentThumbnailDataUriBytes: 64 * 1024,
+  maxConcurrentAttachmentThumbnails: 2,
 } as const;
+
+/** Only small PNG output from the thumbnail pipeline may reach a chip. */
+export function parseAttachmentThumbnailDataUri(value: unknown): string | null {
+  return typeof value === "string" && value.startsWith("data:image/png;base64,")
+    && value.length <= EMAIL_IMAGE_LIMITS.maxAttachmentThumbnailDataUriBytes ? value : null;
+}
 
 /**
  * Quick Look previews in the Files details panel. The source cap mirrors the

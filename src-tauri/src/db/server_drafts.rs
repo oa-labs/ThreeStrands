@@ -134,18 +134,26 @@ impl Database {
     /// The composer's view of `draft`'s server copy, or `None` when the
     /// draft stays on this device.
     pub(crate) fn server_draft_status(&self, draft: &Draft) -> DbResult<Option<ServerDraftStatus>> {
+        self.server_draft_status_for(&draft.id, &draft.account, draft.revision)
+    }
+    pub(crate) fn server_draft_status_for(
+        &self,
+        id: &str,
+        account: &str,
+        revision: i64,
+    ) -> DbResult<Option<ServerDraftStatus>> {
         self.with_connection(|connection| {
             let row: Option<(i64, String, Option<String>, bool)> = connection
                 .query_row(
                     "SELECT pushed_revision, state, error, conflict IS NOT NULL FROM draft_server_links WHERE draft_id=?1 AND account=?2",
-                    params![draft.id, draft.account],
+                    params![id, account],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .optional()?;
             Ok(row.map(|(pushed, state, error, conflict)| {
                 if conflict {
                     ServerDraftStatus { state: "conflict".into(), error: None }
-                } else if pushed >= draft.revision {
+                } else if pushed >= revision {
                     ServerDraftStatus { state: "saved".into(), error: None }
                 } else if state == "saved" {
                     ServerDraftStatus { state: "pending".into(), error: None }

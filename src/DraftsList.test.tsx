@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Draft } from "./correspondence";
+import type { DraftSummary } from "./correspondence";
 import { mailClient } from "./data/client";
 import { DraftsList, useDraftSelection } from "./DraftsList";
 
@@ -9,7 +9,7 @@ afterEach(async () => {
   for (const draft of await mailClient.listDrafts()) await mailClient.discardDraft(draft.id);
 });
 
-function Harness({ drafts, onOpen = vi.fn() }: { drafts: Draft[]; onOpen?: (draft: Draft) => void }) {
+function Harness({ drafts, onOpen = vi.fn() }: { drafts: DraftSummary[]; onOpen?: (draft: DraftSummary) => void }) {
   const selection = useDraftSelection(drafts, null);
   return <>
     <p>{selection.checkedIds.size} selected</p>
@@ -32,7 +32,7 @@ function Harness({ drafts, onOpen = vi.fn() }: { drafts: Draft[]; onOpen?: (draf
 
 async function drafts(count: number) {
   for (let index = 0; index < count; index++) await mailClient.createDraft("new");
-  return mailClient.listDrafts();
+  return mailClient.listDraftSummaries();
 }
 
 describe("drafts list selection", () => {

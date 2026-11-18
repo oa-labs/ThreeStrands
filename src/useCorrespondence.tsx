@@ -1,3 +1,4 @@
+import { useOutboxDetails } from "./useOutboxDetails";
 import { formatDateTime } from "./dateFormatting";
 import { nextUndoOrder } from "./undoOrder";
 import { runBeforeExitTasks } from "./beforeExit";
@@ -9,7 +10,7 @@ import { Square, SquareCheckBig, X } from "lucide-react";
 import { Composer, type ComposerHandle } from "./Composer";
 import type { DraftReviewAvailability } from "./DraftReviewSection";
 import { mailClient } from "./data/client";
-import type { ComposeMode, Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
+import { summarizeDraft, summarizeOutbox, type DraftSummary, type OutboxSummary, type OutboxMetadata, type ComposeMode, type Draft, type OutboxItem, type ScheduledSendReport } from "./correspondence";
 import type { Account, DraftHandoff, DraftHandoffRequest, Snippet } from "./domain";
 import { logBackgroundFailure } from "./errors";
 import { draftWithSelectedQuote } from "./selectedMessageQuote";
@@ -69,16 +70,17 @@ async function draftFromSent(messageId: string | undefined, account: string | un
   return draft;
 }
 
-function sameDraft(left: Draft, right: Draft): boolean {
+function sameDraft(left: DraftSummary, right: DraftSummary): boolean {
   // Persisted revisions cover body, headers, attachments, and account changes.
-  return left.id === right.id && left.revision === right.revision && left.updatedAt === right.updatedAt;
+  return left.id === right.id && left.revision === right.revision && left.updatedAt === right.updatedAt && JSON.stringify(left.serverDraft) === JSON.stringify(right.serverDraft);
 }
 
-function sameOutbox(left: OutboxItem, right: OutboxItem): boolean {
+function sameOutbox(left: OutboxSummary, right: OutboxSummary): boolean {
   return left.id === right.id && sameDraft(left.draft, right.draft)
     && left.state === right.state && left.deadline === right.deadline
     && left.error === right.error && left.providerId === right.providerId
-    && JSON.stringify(left.schedule) === JSON.stringify(right.schedule);
+    && JSON.stringify(left.schedule) === JSON.stringify(right.schedule)
+    && JSON.stringify(left.sentCopy) === JSON.stringify(right.sentCopy);
 }
 
 function retainUnchanged<T>(current: T[], next: T[], equal: (left: T, right: T) => boolean): T[] {
@@ -135,12 +137,16 @@ export function useCorrespondence(
   const [liveDraft, setLiveDraft] = useState<Draft | null>(null);
   const [drafts, setDrafts] = useCorrespondenceList(sameDraft);
   const [outbox, setOutbox] = useCorrespondenceList(sameOutbox);
+  const [outboxDetailIds, setOutboxDetailIds] = useState<string[]>([]);
+  const outboxBodies = useOutboxDetails(outbox, outboxDetailIds);
+  const requestOutboxDetails = useCallback((ids: string[]) => setOutboxDetailIds((current) => current.length === ids.length && current.every((id, index) => id === ids[index]) ? current : ids), []);
   const sendUndoOrders = useRef(new Map<string, number>());
   const [summaries, setSummaries] = useCorrespondenceList(sameSummary);
   const [error, setError] = useState("");
   const [closing, setClosing] = useState(false);
   const editor = useRef<ComposerHandle>(null);
   const opening = useRef(false);
+  const draftOpenRequest = useRef(0);
   const quitting = useRef(false);
   const [clock, setClock] = useState(Date.now());
   const [pendingOutboxActions, setPendingOutboxActions] = useState<ReadonlySet<string>>(new Set());
@@ -152,8 +158,8 @@ export function useCorrespondence(
       ? refreshing.current.then(() => refresh(), () => refresh())
       : refreshing.current;
     const pending = Promise.all([
-      includeDrafts ? mailClient.listDrafts() : Promise.resolve(null),
-      mailClient.listOutbox(),
+      includeDrafts ? mailClient.listDraftSummaries() : Promise.resolve(null),
+      mailClient.listOutboxSummaries(),
       mailClient.listScheduledSummaries?.() ?? Promise.resolve([]),
     ]).then(([d, o, reports]) => {
       if (d) setDrafts(d);
@@ -192,6 +198,7 @@ export function useCorrespondence(
   const start = useCallback(async (mode: ComposeMode | "editAsNew", messageId?: string, options?: ComposeOptions) => {
     if (opening.current) return;
     opening.current = true;
+    draftOpenRequest.current++;
     try {
       await editor.current?.flush();
       const created = mode === "new"
@@ -221,12 +228,13 @@ export function useCorrespondence(
   // Saves pending edits before the composer unmounts, so leaving a draft for
   // another folder never drops what was typed since the last autosave.
   const closeComposer = useCallback(async () => {
+    draftOpenRequest.current++;
     const saved = await editor.current?.flush();
     // Publish the saved version before leaving: conversation draft cards and
     // Return to Draft must not depend on opening Drafts or the next sync.
-    if (saved) setDrafts((current) => [saved, ...current.filter((draft) => draft.id !== saved.id)]);
+    if (saved) setDrafts((current) => [summarizeDraft(saved), ...current.filter((draft) => draft.id !== saved.id)]);
     if (activeRef.current) setParkedId(activeRef.current.id);
-    setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
+    setActive(null); setLiveDraft(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
   }, [setDrafts]);
   // Called when navigating to the inline Drafts/Outbox view: makes sure
   // whatever was being edited is saved and the lists are current.
@@ -376,13 +384,21 @@ export function useCorrespondence(
     compose, reply, replyAll, forward, editAsNew, openInbox, openDrafts, openOutbox,
     scheduleDraft, sendDraft, sendDraftAndThen, attachFiles, discardDraft, draftReplyWithAI, undoSend, canUndoSend: pendingId !== null,
   }), [scheduleDraft, attachFiles, closing, compose, composerActive, discardDraft, draftReplyWithAI, editAsNew, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
-  const openDraft = useCallback((draft: Draft) => {
-    setParkedId((current) => current === draft.id ? null : current);
-    setSelectedQuoteDraftId(null);
-    setActiveFollowUpTaskId(draft.followUpTaskId ?? null);
-    setActiveThreadId(null);
-    setActive(draft);
-  }, []);
+  const openDraft = useCallback((summary: Pick<Draft, "id">) => {
+    const request = ++draftOpenRequest.current;
+    void (async () => {
+      const saved = await editor.current?.flush();
+      if (saved) setDrafts((current) => [summarizeDraft(saved), ...current.filter((draft) => draft.id !== saved.id)]);
+      const draft = await mailClient.getDraft(summary.id);
+      if (request !== draftOpenRequest.current) return;
+      setParkedId((current) => current === draft.id ? null : current);
+      setSelectedQuoteDraftId(null);
+      setActiveFollowUpTaskId(draft.followUpTaskId ?? null);
+      setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null);
+      setActiveThreadId(null);
+      setActive(draft); setError("");
+    })().catch((reason) => { if (request === draftOpenRequest.current) setError(String(reason)); });
+  }, [setDrafts]);
   /**
    * Opens or resumes the one draft of a follow-up handoff with the reviewed
    * values, for an explicit account and, for a reply, an explicit message.
@@ -392,12 +408,12 @@ export function useCorrespondence(
    */
   const openDraftHandoff = useCallback(async (request: DraftHandoffRequest): Promise<DraftHandoff> => {
     const saved = await editor.current?.flush();
-    if (saved) setDrafts((current) => [saved, ...current.filter((draft) => draft.id !== saved.id)]);
+    if (saved) setDrafts((current) => [summarizeDraft(saved), ...current.filter((draft) => draft.id !== saved.id)]);
     const handoff = await mailClient.draftHandoff(request);
     if (handoff.state === "open" && handoff.draft) {
       const opened = handoff.draft;
       if (activeRef.current && activeRef.current.id !== opened.id) setParkedId(activeRef.current.id);
-      setDrafts((current) => [opened, ...current.filter((draft) => draft.id !== opened.id)]);
+      setDrafts((current) => [summarizeDraft(opened), ...current.filter((draft) => draft.id !== opened.id)]);
       setSelectedQuoteDraftId(null);
       setActiveAvailabilityText(null);
       setActiveReplyAssistInstruction(null);
@@ -426,7 +442,7 @@ export function useCorrespondence(
     await refresh().catch((e: unknown) => setError(String(e)));
     return [...(open ? [open] : []), ...others.filter((_, index) => results[index].status === "fulfilled")];
   }, [active, refresh]);
-  const discardListedDraft = useCallback((draft: Draft) => discardListedDrafts([draft.id]), [discardListedDrafts]);
+  const discardListedDraft = useCallback((draft: DraftSummary) => discardListedDrafts([draft.id]), [discardListedDrafts]);
   /** Undo for a discard: brings the drafts back to Drafts. */
   const restoreDiscardedDrafts = useCallback(async (ids: readonly string[]) => {
     const results = await Promise.allSettled(ids.map((id) => mailClient.restoreDraft(id)));
@@ -455,7 +471,7 @@ export function useCorrespondence(
       review={review}
       onClose={() => {
         const closedId = active.id;
-        setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
+        setActive(null); setLiveDraft(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
         // Park only after Drafts is current: closing an empty draft or the
         // trash button discards it, and it must not be offered back meanwhile.
         void refresh().then(() => setParkedId(closedId), logBackgroundFailure("Drafts refresh after closing the composer"));
@@ -463,7 +479,7 @@ export function useCorrespondence(
       onQueued={(item) => {
         setParkedId((current) => current === active.id ? null : current);
         const followUpTaskId = activeFollowUpTaskId ?? active.followUpTaskId ?? null;
-        setActive(null);
+        setActive(null); setLiveDraft(null);
         setActiveThreadId(null);
         setActiveAvailabilityText(null);
         setActiveReplyAssistInstruction(null);
@@ -471,7 +487,9 @@ export function useCorrespondence(
         // queueDraft already returned the authoritative queued item. Publish
         // it immediately instead of waiting for a second listOutbox roundtrip
         // so an open conversation can render the reply optimistically.
-        setOutbox((current) => [item, ...current.filter((entry) => entry.id !== item.id)]);
+        setOutboxDetailIds((current) => [...current.filter((id) => id !== item.id), item.id]);
+        outboxBodies.prime(item);
+        setOutbox((current) => [summarizeOutbox(item), ...current.filter((entry) => entry.id !== item.id)]);
         void refresh();
         if (followUpTaskId && !item.schedule) {
           void mailClient.recordFollowUp(followUpTaskId).catch((reason) => setError(String(reason)));
@@ -493,6 +511,11 @@ export function useCorrespondence(
     replyWithFollowUp,
     drafts,
     outbox,
+    outboxDetails: outboxBodies.details,
+    outboxDetailError: outboxBodies.error,
+    retryOutboxDetails: outboxBodies.retry,
+    outboxDetailsLoading: outboxBodies.loading,
+    requestOutboxDetails,
     summaries: peerSummaries,
     refresh,
     clock,
@@ -529,7 +552,7 @@ export function useCorrespondence(
   };
 }
 
-function outboxRecipients(draft: Draft): string {
+function outboxRecipients(draft: Pick<Draft, "to" | "cc">): string {
   const recipients = splitAddressList([draft.to, draft.cc].filter(Boolean).join(", "));
   if (recipients.length === 0) return "Bcc recipients";
   return recipients.map((recipient) => formatDisplayName(parseAddress(recipient).name)).join(", ");
@@ -556,7 +579,7 @@ function outboxRowStatus(entry: OutboxEntry, clock: number): { text: string; pro
   };
 }
 
-function outboxUndoText(item: OutboxItem, clock: number): string | null {
+function outboxUndoText(item: OutboxMetadata, clock: number): string | null {
   if (item.state !== "undo_pending") return null;
   return item.deadline > clock ? `Undo available · ${Math.ceil((item.deadline - clock) / 1000)}s` : "Waiting for connection";
 }
@@ -669,10 +692,10 @@ export function OutboxDetail({
   onChanged?(): Promise<void>;
   children?: ReactNode;
 }) {
-  const [rescheduling, setRescheduling] = useState<OutboxItem | null>(null);
+  const [rescheduling, setRescheduling] = useState<OutboxMetadata | null>(null);
   const [actionError, setActionError] = useState("");
   const actions = useRef(new Set<string>());
-  const runScheduleAction = async (item: OutboxItem) => {
+  const runScheduleAction = async (item: OutboxMetadata) => {
     if (actions.current.has(item.id)) return;
     actions.current.add(item.id); setActionError("");
     try { await mailClient.sendScheduledNow(item.id,item.schedule!.report.reportRevision); await onChanged?.(); }

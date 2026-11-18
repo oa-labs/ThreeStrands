@@ -19,11 +19,15 @@ pub(crate) struct SentCopyJob {
 
 impl Database {
     pub fn outbox(&self) -> DbResult<Vec<OutboxItem>> {
+        self.read_outbox(None)
+    }
+    pub(super) fn read_outbox(&self, id: Option<&str>) -> DbResult<Vec<OutboxItem>> {
         self.with_connection(|c| {
-            let mut q = c.prepare(
-                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send,schedule_json,last_attempt_at,sent_copy_state,sent_copy_error FROM outbox_messages ORDER BY rowid DESC",
-            )?;
-            let rows = q.query_map([], |r| {
+            let filter = if id.is_some() { "WHERE id=?1" } else { "WHERE ?1 IS NULL" };
+            let mut q = c.prepare(&format!(
+                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send,schedule_json,last_attempt_at,sent_copy_state,sent_copy_error FROM outbox_messages {filter} ORDER BY rowid DESC"
+            ))?;
+            let rows = q.query_map([id], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
