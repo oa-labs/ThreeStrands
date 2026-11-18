@@ -17,6 +17,7 @@ import { runWorkspaceCommand } from "./workspaceCommands";
 import { todayItem, todayThread } from "./test/todayMail";
 import { formatClockTime } from "./agendaEvents";
 import { readDayChoice, TODAY_DAY_KEY } from "./todayDayChoice";
+import { writeTodayBackdrop } from "./backdropPreference";
 import type { CreatedNote, SentInRange } from "./domain";
 
 vi.mock("./refreshSyncedData", () => ({ refreshSyncedData: vi.fn(async () => {}) }));
@@ -122,25 +123,39 @@ describe("TodayWorkspace", () => {
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); openUrl.mockReset(); localStorage.clear(); });
 
-  it("switches the header to light text only while the backdrop shows dusk or night", () => {
+  it("keeps the gutter tint in the header's sky phase and uses light text only for dusk or night", () => {
     const header = () => document.querySelector(".today-header")!;
+    const workspace = () => screen.getByRole("region", { name: "Today" });
     renderToday();
     expect(header()).not.toHaveAttribute("data-sky");
+    expect(workspace()).not.toHaveAttribute("data-backdrop");
+    expect(header().querySelector(".today-backdrop")).toBeNull();
     cleanup();
     localStorage.setItem("threestrands.today.backdrop", "on");
     renderToday();
     expect(header()).not.toHaveAttribute("data-sky");
+    expect(workspace()).toHaveAttribute("data-backdrop", "day");
     cleanup();
-    for (const [hours, dark] of [[2, true], [19, true], [5, true], [12, false]] as const) {
+    for (const [hours, phase] of [[2, "night"], [19, "dusk"], [5, "dusk"], [12, "day"]] as const) {
       vi.setSystemTime(new Date(2026, 10, 17, hours, 0));
       renderToday();
-      if (dark) expect(header()).toHaveAttribute("data-sky", "dark"); else expect(header()).not.toHaveAttribute("data-sky");
+      if (phase !== "day") expect(header()).toHaveAttribute("data-sky", "dark"); else expect(header()).not.toHaveAttribute("data-sky");
+      expect(workspace()).toHaveAttribute("data-backdrop", phase);
+      expect(header().querySelector(".today-backdrop")).toHaveAttribute("data-phase", phase);
       cleanup();
     }
     localStorage.clear();
     vi.setSystemTime(new Date(2026, 10, 17, 2, 0));
     renderToday();
     expect(header()).not.toHaveAttribute("data-sky");
+    expect(workspace()).not.toHaveAttribute("data-backdrop");
+    act(() => writeTodayBackdrop(true));
+    expect(workspace()).toHaveAttribute("data-backdrop", "night");
+    expect(header()).toHaveAttribute("data-sky", "dark");
+    act(() => writeTodayBackdrop(false));
+    expect(workspace()).not.toHaveAttribute("data-backdrop");
+    expect(header()).not.toHaveAttribute("data-sky");
+    expect(header().querySelector(".today-backdrop")).toBeNull();
   });
 
   it.each(["you@example.com", null])("pulls fresh sources for the current account (%s) without changing agenda choices", async (accountId) => {

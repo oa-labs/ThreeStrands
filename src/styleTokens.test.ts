@@ -61,6 +61,20 @@ describe("spacing", () => {
     expect(value(".calendar-event-action > .btn-icon", "pointer-events")).toBe("auto");
   });
 
+  it("aligns Today's header edges with its panels while keeping the title in place when it wraps", () => {
+    const value = (selector: string, prop: string) => {
+      let result: string | undefined;
+      css.walkRules(selector, (r) => { if (r.parent?.type === "root") r.walkDecls(prop, (d) => { result = d.value; }); });
+      return result;
+    };
+    const columnInset = value(".today-columns", "padding")!.split(" ")[1];
+    expect(value(".today-header", "margin-inline")).toBe(columnInset);
+    expect(value(".today-header", "padding-inline")).toBe("0");
+    expect(value(".today-header", "flex-wrap")).toBe("wrap");
+    expect(value(".today-heading", "min-width")).toBe("0");
+    expect(value(".today-backdrop", "inset")).toBe("0");
+  });
+
   it("aligns the mail search actions with the card gutter and gives the recovered width to the input", () => {
     const value = (selector: string, prop: string) => {
       let result: string | undefined;

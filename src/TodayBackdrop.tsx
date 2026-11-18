@@ -15,7 +15,7 @@ const DUSK_STARS = [[0.6, 0.55], [0.68, 0.28], [0.79, 0.16], [0.93, 0.62], [0.97
 const NIGHT_STARS = [...DUSK_STARS, [0.52, 0.2], [0.56, 0.78], [0.64, 0.12], [0.73, 0.7], [0.76, 0.42], [0.83, 0.82], [0.9, 0.12], [0.95, 0.45], [0.99, 0.8], [0.46, 0.5], [0.42, 0.18], [0.7, 0.9]] as const;
 
 /**
- * Today's optional backdrop, behind the header band only: between sunrise and
+ * Today's optional sky art, inside the header band: between sunrise and
  * sunset a daytime sky whose sun stands higher toward noon; a twilight sky
  * with a moon and a few stars around it; and a dark late-night sky with more
  * stars and a brighter moon from 9 pm to 5 am.

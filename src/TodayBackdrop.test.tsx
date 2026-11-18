@@ -147,7 +147,7 @@ describe("TodayBackdrop", () => {
     expect(scene().querySelector(".today-backdrop-sun")).toBeNull();
   });
 
-  it("sits behind the header band only, ignores the pointer, and has no motion when reduced motion is set", () => {
+  it("keeps art in the header, tints the gutters behind opaque panels, and respects pointer and motion preferences", () => {
     const css = postcss.parse(readFileSync("src/styles.css", "utf8"));
     const rule = (selector: string, atRule?: string) => {
       let found: postcss.Rule | undefined;
@@ -162,6 +162,17 @@ describe("TodayBackdrop", () => {
     expect(value(base, "position")).toBe("absolute");
     expect(value(base, "pointer-events")).toBe("none");
     expect(value(base, "z-index")).toBe("0");
+    expect(value(base, "background")).toBe("linear-gradient(to bottom, var(--today-sky-top), var(--today-sky-bottom))");
+    // Both surfaces use the same theme tokens for each phase, in light and dark themes.
+    for (const [phase, token] of [["day", "sky"], ["dusk", "dusk"], ["night", "night"]] as const) {
+      const selector = phase === "day" ? ".today-workspace[data-backdrop], .today-backdrop"
+        : `.today-workspace[data-backdrop="${phase}"], .today-backdrop[data-phase="${phase}"]`;
+      expect(value(rule(selector), "--today-sky-top")).toBe(`var(--backdrop-${token}-top)`);
+      expect(value(rule(selector), "--today-sky-bottom")).toBe(`var(--backdrop-${token}-bottom)`);
+    }
+    expect(value(rule(".today-workspace[data-backdrop]"), "background")).toBe("linear-gradient(to bottom, color-mix(in srgb, var(--today-sky-top) 12%, var(--background)), var(--background) 70%)");
+    expect(value(rule(".today-workspace"), "background")).toBe("var(--background)");
+    expect(value(rule(".today-work, .today-time"), "background")).toBe("var(--surface)");
     // The header's own content paints above the art.
     expect(value(rule(".today-header > :not(.today-backdrop)"), "position")).toBe("relative");
     expect(value(rule(".today-header"), "position")).toBe("relative");

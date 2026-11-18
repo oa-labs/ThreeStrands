@@ -754,7 +754,7 @@ function TodayLayout({
   };
   const canCreateEvents = Boolean(schedule) && calendarAccounts.some((account) => account.status === "connected");
 
-  return <section ref={pageRef} className="today-workspace" aria-label="Today" aria-busy={pull.refreshing}>
+  return <section ref={pageRef} className="today-workspace" data-backdrop={backdrop ? skyPhase(now) : undefined} aria-label="Today" aria-busy={pull.refreshing}>
     <div className="today-page today-page-planning">
     <PullToRefreshStatus {...pull} />
     <header className="today-header" data-sky={backdrop && skyPhase(now) !== "day" ? "dark" : undefined}>
