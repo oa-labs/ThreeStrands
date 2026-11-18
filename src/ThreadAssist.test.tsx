@@ -506,6 +506,40 @@ describe("ThreadAssist", () => {
     expect(screen.queryByRole("group", { name: "Schedule" })).not.toBeInTheDocument();
   });
 
+  it.each([".", " ... ", "\u201c.\u201d", "\u2014", "", " \t\n"])("keeps evidence accessible when meeting timing contains no words or numbers: %j", (rawTimeLanguage) => {
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "schedule", title: "Website kickoff", participants: [], location: null,
+      rawTimeLanguage, normalizedStart: null, normalizedEnd: null, searchRangeStart: null, searchRangeEnd: null,
+      durationMinutes: 30, timeZone: null, confidence: 0.9,
+      evidence: { sourceMessageId: "message-1", excerpt: "Let's discuss the website." },
+    };
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting] } })} />);
+
+    expect(screen.getByText("Time not specified")).toBeVisible();
+    expect(document.querySelector(".proposal-time-language")).toBeNull();
+    const evidence = screen.getByText("From the email");
+    fireEvent.click(evidence);
+    expect(evidence.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText(meeting.evidence.excerpt)).toBeVisible();
+  });
+
+  it.each(["next week", "14:30", "\u4e0b\u5468\u4e8c"])("preserves meeting timing with words or numbers: %s", (rawTimeLanguage) => {
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "schedule", title: "Website kickoff", participants: [], location: null,
+      rawTimeLanguage, normalizedStart: null, normalizedEnd: null, searchRangeStart: null, searchRangeEnd: null,
+      durationMinutes: 30, timeZone: null, confidence: 0.9,
+      evidence: { sourceMessageId: "message-1", excerpt: `Let's meet ${rawTimeLanguage}.` },
+    };
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting] } })} />);
+
+    expect(screen.queryByText("Time not specified")).not.toBeInTheDocument();
+    const timing = screen.getByText(rawTimeLanguage);
+    expect(timing).toHaveClass("proposal-time-language");
+    fireEvent.click(timing);
+    expect(timing.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText(meeting.evidence.excerpt)).toBeVisible();
+  });
+
   it("flags uncertain suggestions for a closer look and schedules an unzoned meeting in the user's time zone", async () => {
     const meeting: ActionProposal = {
       type: "meeting",
