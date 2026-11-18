@@ -1,8 +1,9 @@
 import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKey, noteReferenceSeriesKey, contactNoteReferences, markdownEntityLink, type NoteDocument } from "../noteEntities";
-import type { ContactProfile, Thread, ThreadTask, ScheduleEvent, Note, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
+import type { ContactProfile, Thread, ThreadTask, ScheduleEvent, Note, NoteBacklink, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
 import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
 import { notePlainText, notePreview, noteInlineText } from "../notePreview";
 import { insertMeetingLine, meetingLine, meetingNoteTitle } from "../noteMeetings";
+import { meetingBlocks } from "../meetingExcerpt";
 import type { MailClient } from "./client";
 import type { DemoNoteSeed } from "./demoDataset";
 
@@ -127,8 +128,20 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
       return structuredClone(edit(note, note.title, body));
     },
     async noteBacklinks(reference) {
-      const key = noteReferenceKey(reference);
-      return [...notes.values()].filter((note) => !note.trashed).flatMap((note) => { const link = document(note).links.find((link) => noteReferenceKey(link.reference) === key || noteReferenceSeriesKey(link.reference) === key); return link ? [{ noteId: note.id, title: note.title, dailyDate: note.dailyDate, context: link.context, reference: link.reference }] : []; });
+      const target = noteReferenceKey(reference);
+      const active = [...notes.values()].filter((note) => !note.trashed);
+      const rows: NoteBacklink[] = active.flatMap((note) => { const link = document(note).links.find((link) => noteReferenceKey(link.reference) === target || noteReferenceSeriesKey(link.reference) === target); return link ? [{ noteId: note.id, title: note.title, dailyDate: note.dailyDate, context: link.context, reference: link.reference }] : []; });
+      if (reference.kind === "event") for (const row of [...rows].filter((row) => row.dailyDate)) {
+        const note = existing(row.noteId);
+        for (const block of meetingBlocks(note.body, (link) => link.kind === "event" && (noteReferenceKey(link) === target || noteReferenceSeriesKey(link) === target)).filter((block) => block.kind === "excerpt")) {
+          const line = note.body.slice(block.start, block.end).split("\n")[0];
+          const links = extractWikiLinks(line);
+          if (links.length !== 1) continue;
+          const linked = active.filter((note) => !note.dailyDate && key(note.title) === key(links[0].title)).sort((a, b) => a.id.localeCompare(b.id))[0];
+          if (linked && !rows.some((row) => row.noteId === linked.id)) rows.push({ noteId: linked.id, title: linked.title, dailyDate: null, context: linkContext(line) });
+        }
+      }
+      return rows;
     },
     async resolveNoteContact(reference) {
       const contacts = await sources.contacts?.() ?? [];
