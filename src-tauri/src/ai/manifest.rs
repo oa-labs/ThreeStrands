@@ -38,8 +38,8 @@ impl Feature {
     /// Bump when instructions/interpretation change; hashes also detect drift.
     pub fn prompt_version(self) -> u32 {
         match self {
-            Self::Summary => 1,
-            Self::Brief => 1,
+            Self::Summary => 2,
+            Self::Brief => 2,
             Self::Suggestions => 1,
             Self::Chat => 1,
             Self::Reply => 1,

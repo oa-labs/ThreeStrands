@@ -426,9 +426,9 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
   const missingSuggestions = suggestions.available && !suggestions.requested;
   const waiting = upcoming && (missingSummary || missingSuggestions || stale);
   const busy = loading || summary.pending || waiting;
-  // With a brief already here, only suggestions are coming: the brief stays
-  // readable and the wait shows where the suggestions will appear.
-  const readingBrief = summary.pending || (busy && !summaryText);
+  // A queued refresh also keeps the old brief visible, with its updating
+  // state here rather than implying that only suggestions are coming.
+  const readingBrief = summary.available && (summary.pending || (busy && !summaryText) || (waiting && stale));
   const lookingForSuggestions = suggestions.available && !readingBrief && (loading || (waiting && missingSuggestions));
   const generated = Boolean(summaryText) || suggestions.requested;
   const visibleProposals = withoutInvitationMeetings(suggestions.proposals, detail);
@@ -440,7 +440,7 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
   // so an empty Suggested section would only repeat it.
   const showSuggestions = lookingForSuggestions || offerSuggestions || (suggestions.available && (suggestions.requested || visibleProposals.length > 0)
     && (visibleProposals.length > 0 || !latestInvitationMessage(detail) || suggestions.hiddenCount > 0 || Boolean(suggestions.extraCount))
-    && !(noSuggestions && !busy && summaryText));
+    && !(noSuggestions && !lookingForSuggestions && summaryText));
   const messageSource = (messageId: string) => {
     const message = detail.messages.find((candidate) => candidate.id === messageId);
     if (!message) return null;
@@ -474,12 +474,16 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
 
   const scope = briefScope(detail);
   const lines = summaryText ? summaryLines(summaryText) : [];
-  const scopeNote = summaryText && scope.newCount < scope.coveredCount
+  const scopeNote = summaryText && !stale && !readingBrief && scope.newCount < scope.coveredCount
     ? (scope.newCount === 1 ? "From the latest message" : `From the ${scope.newCount} latest messages`)
     : null;
-  // The recap of earlier messages, if the brief gave one, always reads last.
-  const orderedLines = [...lines.filter((line) => !EARLIER_PREFIX.test(line)), ...lines.filter((line) => EARLIER_PREFIX.test(line))];
-  const headerActions = readingBrief ? <span className="context-status" role="status">Reading the conversation…</span> : (
+  const currentLines = lines.filter((line) => !EARLIER_PREFIX.test(line));
+  const earlierLines = lines.filter((line) => EARLIER_PREFIX.test(line));
+  const cancelRequest = <AiCancelButton owner={thread.id} command={["ai_brief_thread", "ai_analyze_thread", "ai_summarize_thread"]} label="Cancel" className="btn-link thread-assist-cancel" />;
+  const headerActions = readingBrief ? <div className="thread-assist-progress">
+    <span className="context-status" role="status">{summaryText ? "Updating brief…" : "Reading the conversation…"}</span>
+    {cancelRequest}
+  </div> : (
     <>
       {!failure && missingSummary && !busy ? briefButton : null}
       {/* Copy is revealed on hover or focus, so Refresh is the action that reads first. */}
@@ -508,20 +512,24 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
     <ContextSectionHeader title="Brief" titleId="thread-assist-heading" actions={headerActions} toggle={{ collapsed, controls: bodyId, onToggle: toggleCollapsed }} />
     <div id={bodyId} hidden={collapsed}>
       {copyFailed ? <p className="context-status" role="status">Could not copy brief</p> : null}
-      {orderedLines.length === 1 ? <p className="thread-assist-summary thread-assist-summary-paragraph">{orderedLines[0]}</p> : summaryText ? <ul className="thread-assist-summary" role="list">
-        {orderedLines.map((line, index) => {
+      {currentLines.length === 1 ? <p className="thread-assist-summary thread-assist-summary-paragraph thread-assist-summary-lead">{currentLines[0]}</p> : currentLines.length > 0 ? <ul className="thread-assist-summary" role="list">
+        {currentLines.map((line, index) => {
           const toClose = TO_CLOSE_PREFIX.test(line);
-          return <li key={index} className={EARLIER_PREFIX.test(line) ? "thread-assist-summary-earlier" : toClose ? "thread-assist-summary-close" : undefined}>
+          return <li key={index} className={toClose ? "thread-assist-summary-close" : index === 0 ? "thread-assist-summary-lead" : undefined}>
             <span className="context-row-glyph thread-assist-summary-marker" aria-hidden="true"><svg width={ICON_SIZE.xs} height={ICON_SIZE.xs} viewBox="0 0 12 12"><circle cx="6" cy="6" r="2" fill="currentColor" /></svg></span>
             {toClose ? <span><strong className="thread-assist-summary-label">To close:</strong> {line.replace(TO_CLOSE_PREFIX, "")}</span> : <span>{line}</span>}
           </li>;
         })}
       </ul> : null}
-      {stale ? <p className="context-status">New messages since this brief.</p> : null}
-      <AiCancelButton owner={thread.id} command={["ai_brief_thread", "ai_analyze_thread", "ai_summarize_thread"]} />
-      {/* Which messages the brief covers, when not the whole conversation. */}
-      {scopeNote ? <p className="thread-assist-shared">{scopeNote}</p> : null}
-      {summaryText ? <AiCachedProvenance key={`${thread.id}:${thread.summaryGeneratedAt}`} threadId={thread.id} /> : null}
+      {earlierLines.length > 0 ? <details key={thread.id} className="thread-assist-earlier">
+        <summary>Earlier context</summary>
+        {earlierLines.map((line, index) => <p key={index}>{line.replace(EARLIER_PREFIX, "")}</p>)}
+      </details> : null}
+      {summaryText ? <footer className="thread-assist-meta">
+        {stale && !readingBrief ? <p className="thread-assist-shared">New messages since this brief.</p> : null}
+        {scopeNote ? <p className="thread-assist-shared">{scopeNote}</p> : null}
+        <AiCachedProvenance key={`${thread.id}:${thread.summaryGeneratedAt}`} threadId={thread.id} />
+      </footer> : null}
       {failureNotice}
     </div>
   </section> : null;
@@ -535,12 +543,11 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
       title="Suggestions"
       titleId={suggestionsHeadingId}
       count={visibleProposals.length}
-      actions={<>{summary.available ? null : headerActions}{offerSuggestions ? suggestionsButton : null}</>}
+      actions={<>{summary.available ? null : headerActions}{lookingForSuggestions ? <div className="thread-assist-progress"><span className="context-status" role="status">Looking for suggestions…</span>{cancelRequest}</div> : null}{offerSuggestions ? suggestionsButton : null}</>}
       toggle={{ collapsed: suggestionsCollapsed, controls: suggestionsId, onToggle: toggleSuggestionsCollapsed }}
     />
     <div id={suggestionsId} className="thread-assist-suggestions-body" hidden={suggestionsCollapsed}>
       {summary.available ? null : failureNotice}
-      {lookingForSuggestions ? <p className="context-status" role="status">Looking for suggestions…</p> : null}
       {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
       {!busy && suggestions.hiddenCount > 0 ? <HiddenSuggestionsNotice count={suggestions.hiddenCount} /> : null}
       {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}

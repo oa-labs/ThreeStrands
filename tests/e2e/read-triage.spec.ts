@@ -84,6 +84,78 @@ for (const count of [0, 1, 3]) {
   });
 }
 
+test("keeps brief refresh status and cancellation inside a narrow panel at larger text sizes", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".context-panel")).toBeVisible();
+  await page.evaluate(async () => {
+    const resources = performance.getEntriesByType("resource");
+    const reactPath = resources.find((entry) => new URL(entry.name).pathname.endsWith("/react.js"))!.name;
+    const domPath = resources.find((entry) => new URL(entry.name).pathname.endsWith("/react-dom_client.js"))!.name;
+    const assistPath = "/src/ThreadAssist.tsx";
+    const clientPath = "/src/data/client.ts";
+    const requestsPath = "/src/aiRequests.ts";
+    const mocksPath = "/node_modules/@tauri-apps/api/mocks.js";
+    const [{ default: React }, { default: ReactDOM }, { ThreadAssist }, { mailClient }, { invokeAi }, { mockIPC }] = await Promise.all([
+      import(reactPath), import(domPath), import(assistPath), import(clientPath), import(requestsPath), import(mocksPath),
+    ]);
+    const detail = await mailClient.getThread("welcome");
+    detail.thread.id = "refresh-layout-thread";
+    detail.thread.summary = "- Your review is needed before the consent request.\n- Earlier: The proposed terms are still under discussion.";
+    detail.thread.summaryRevision = "2026-10-01T10:00:00Z";
+    detail.thread.lastMessageAt = "2026-10-02T10:00:00Z";
+    let finish!: () => void;
+    mockIPC((command: string) => {
+      if (command === "ai_brief_thread") return new Promise<void>((resolve) => { finish = resolve; });
+      if (command === "cancel_ai_request") finish();
+      return null;
+    });
+    void invokeAi("ai_brief_thread", {}, detail.thread.id);
+    const panel = document.createElement("aside");
+    panel.id = "brief-refresh-fixture";
+    panel.className = "context-panel";
+    Object.assign(panel.style, { position: "fixed", top: "0", left: "0", bottom: "0", width: "260px" });
+    document.body.append(panel);
+    const noop = () => {};
+    ReactDOM.createRoot(panel).render(React.createElement(ThreadAssist, {
+      detail, providerChosen: true,
+      summary: { enabled: true, available: true, pending: true },
+      suggestions: { enabled: false, available: false, requested: false, proposals: [], hiddenCount: 0, onDiscard: noop, onReview: noop },
+      scheduling: { preferences: {}, calendarConnected: false, onAddToCalendar: noop, onReplyWithTimes: noop, onConfirmTime: noop, onOpenCalendarSettings: noop },
+      loading: true, error: null, onRun: noop, onOpenSettings: noop,
+    }));
+  });
+  const fixture = page.locator("#brief-refresh-fixture");
+  await expect(fixture.getByRole("status")).toHaveText("Updating brief…");
+  await expect(fixture.getByText("Your review is needed before the consent request.")).toBeVisible();
+  await expect(fixture.getByText("The proposed terms are still under discussion.")).toBeHidden();
+  await expect(fixture.getByText("New messages since this brief.")).toHaveCount(0);
+  for (const width of [260, 360]) {
+    for (const scale of [1, 1.4]) {
+      await fixture.evaluate((panel, values) => {
+        panel.style.width = `${values.width}px`;
+        document.documentElement.style.setProperty("--font-scale", String(values.scale));
+      }, { width, scale });
+      const geometry = await fixture.locator("header").evaluate((header) => {
+        const progress = header.querySelector<HTMLElement>(".thread-assist-progress")!;
+        const label = header.querySelector("h3")!.getBoundingClientRect();
+        const status = progress.querySelector('[role="status"]')!.getBoundingClientRect();
+        const cancel = progress.querySelector("button")!.getBoundingClientRect();
+        return { left: header.getBoundingClientRect().left, right: header.getBoundingClientRect().right,
+          labelRight: label.right, statusLeft: status.left, cancelLeft: cancel.left, cancelRight: cancel.right,
+          width: progress.clientWidth, scroll: progress.scrollWidth };
+      });
+      expect(geometry.statusLeft).toBeGreaterThanOrEqual(geometry.labelRight);
+      expect(geometry.cancelLeft).toBeGreaterThanOrEqual(geometry.left);
+      expect(geometry.cancelRight).toBeLessThanOrEqual(geometry.right);
+      expect(geometry.scroll).toBeLessThanOrEqual(geometry.width + 1);
+    }
+  }
+  await fixture.getByRole("button", { name: "Brief", exact: true }).click();
+  await expect(fixture.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+  await fixture.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(fixture.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+});
+
 test("keeps a long suggested task inside the right panel", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".context-panel")).toBeVisible();

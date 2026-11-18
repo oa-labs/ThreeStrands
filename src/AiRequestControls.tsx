@@ -5,15 +5,15 @@ import { aiActivityFeatureLabel } from "./AiActivityList";
 import { formatUsd } from "./aiUsage";
 import { errorMessage } from "./errors";
 
-export function AiCancelButton({ command, owner }: { command: string | string[]; owner?: string | null }) {
+export function AiCancelButton({ command, owner, label, className = "btn btn-sm" }: { command: string | string[]; owner?: string | null; label?: string; className?: string }) {
   const pending = usePendingAiRequests();
   const [error, setError] = useState("");
   const matching = pending.filter((request) => owner != null && request.owner === owner && (typeof command === "string" ? request.command === command : command.includes(request.command)));
   if (!matching.length) return null;
-  return <><button type="button" className="btn btn-sm" onClick={() => {
+  return <><button type="button" className={className} onClick={() => {
     setError("");
     void Promise.all(matching.map((request) => cancelAiRequest(request.requestId))).catch((reason: unknown) => setError(errorMessage(reason)));
-  }}>Cancel AI Request{matching.length > 1 ? "s" : ""}</button>{error ? <p role="alert" className="form-error">{error}</p> : null}</>;
+  }}>{label ?? `Cancel AI Request${matching.length > 1 ? "s" : ""}`}</button>{error ? <p role="alert" className="form-error">{error}</p> : null}</>;
 }
 
 export function AiRequestControls() {

@@ -1,5 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
+import { invokeAi } from "./aiRequests";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
@@ -9,6 +11,7 @@ import { briefScope, conversationPeople, meetingPlace, proposalDueText, ownNames
 import type { ActionProposal, ThreadDetail } from "./domain";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 const detail: ThreadDetail = {
   thread: {
@@ -210,7 +213,7 @@ describe("ThreadAssist", () => {
     expect(screen.queryByRole("button", { name: "AI Activity" })).not.toBeInTheDocument();
   });
 
-  it("labels what would complete the conversation and keeps it before the recap of earlier messages", () => {
+  it("emphasizes the lead, labels the outcome, and folds earlier context", () => {
     const thread: ThreadDetail = {
       ...summarized,
       thread: {
@@ -220,9 +223,15 @@ describe("ThreadAssist", () => {
     };
     render(<ThreadAssist {...props({ detail: thread, suggestions: { requested: true } })} />);
     const items = screen.getAllByRole("listitem");
-    expect(items.map((item) => item.textContent)).toEqual(["Waiting on the vendor.", "To close: the vendor fixes the sync.", "Earlier: Roles kept vanishing."]);
+    expect(items.map((item) => item.textContent)).toEqual(["Waiting on the vendor.", "To close: the vendor fixes the sync."]);
+    expect(items[0]).toHaveClass("thread-assist-summary-lead");
     expect(items[1]).toHaveClass("thread-assist-summary-close");
     expect(within(items[1]).getByText("To close:").tagName).toBe("STRONG");
+    const earlier = screen.getByText("Earlier context").parentElement as HTMLDetailsElement;
+    expect(earlier.open).toBe(false);
+    expect(screen.getByText("Roles kept vanishing.")).not.toBeVisible();
+    fireEvent.click(screen.getByText("Earlier context"));
+    expect(screen.getByText("Roles kept vanishing.")).toBeVisible();
   });
 
   it("says when a brief covers only the latest messages and reads the recap of earlier ones last", () => {
@@ -239,10 +248,9 @@ describe("ThreadAssist", () => {
     };
     const { rerender } = render(<ThreadAssist {...props({ detail: thread, suggestions: { requested: true } })} />);
     expect(screen.getByText("From the latest message")).toBeInTheDocument();
-    const items = screen.getAllByRole("listitem");
-    expect(items.map((item) => item.textContent)).toEqual(["They now want it Monday instead.", "Earlier: The client asked for the website by Friday."]);
-    expect(items[1]).toHaveClass("thread-assist-summary-earlier");
-    expect(screen.getByRole("list").compareDocumentPosition(screen.getByText("From the latest message")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("They now want it Monday instead.")).toHaveClass("thread-assist-summary-lead");
+    expect(screen.getByText("The client asked for the website by Friday.")).not.toBeVisible();
+    expect(screen.getByText("Earlier context").compareDocumentPosition(screen.getByText("From the latest message")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText("From the latest message").compareDocumentPosition(screen.getByText("Generation details")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     rerender(<ThreadAssist {...props({ detail: { ...thread, thread: { ...thread.thread, summaryFocusFrom: "2026-09-20T10:00:00Z" } }, suggestions: { requested: true } })} />);
@@ -363,6 +371,89 @@ describe("ThreadAssist", () => {
     render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal] } })} />);
     expect(within(screen.getByRole("heading", { name: "Suggestions" })).getByRole("button")).toHaveAttribute("aria-expanded", "false");
     localStorage.clear();
+  });
+
+  it("keeps the existing brief while queued or updating and shows its freshness once the run ends", () => {
+    const oldBrief: ThreadDetail = {
+      thread: {
+        ...summarized.thread,
+        summaryRevision: "2026-09-19T10:00:00Z",
+        summaryFocusFrom: "2026-09-19T10:00:00Z",
+        lastMessageAt: "2026-09-20T10:00:00Z",
+      },
+      messages: [
+        { ...detail.messages[0], id: "earlier", sentAt: "2026-09-18T10:00:00Z" },
+        ...detail.messages,
+        { ...detail.messages[0], id: "new", sentAt: "2026-09-20T10:00:00Z" },
+      ],
+    };
+    const base = { detail: oldBrief, suggestions: { requested: true } };
+    const { rerender } = render(<ThreadAssist {...props({ ...base, upcoming: true })} />);
+    const brief = screen.getByRole("region", { name: "Brief" });
+    expect(within(brief).getByRole("status")).toHaveTextContent("Updating brief…");
+    expect(within(brief).getByText("The client needs the website.")).toBeVisible();
+    expect(screen.queryByText("Reading the conversation…")).not.toBeInTheDocument();
+    expect(screen.queryByText("New messages since this brief.")).not.toBeInTheDocument();
+    expect(screen.queryByText("From the latest message")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Suggestions" })).not.toBeInTheDocument();
+
+    rerender(<ThreadAssist {...props({ ...base, loading: true, summary: { pending: true } })} />);
+    expect(within(brief).getByRole("status")).toHaveTextContent("Updating brief…");
+    expect(within(brief).getByText("The client needs the website.")).toBeVisible();
+    fireEvent.click(within(brief).getByRole("button", { name: "Brief" }));
+    expect(within(brief).getByRole("status")).toBeVisible();
+    fireEvent.click(within(brief).getByRole("button", { name: "Brief" }));
+
+    // A failed or cancelled update preserves the old brief without claiming
+    // it covers the latest message. Provenance stays in the same footer.
+    rerender(<ThreadAssist {...props({ ...base, error: "AI request cancelled" })} />);
+    expect(within(brief).getByText("The client needs the website.")).toBeVisible();
+    expect(screen.queryByText("Updating brief…")).not.toBeInTheDocument();
+    expect(screen.getByText("New messages since this brief.")).toBeInTheDocument();
+    expect(screen.queryByText("From the latest message")).not.toBeInTheDocument();
+    expect(within(brief).getByRole("alert")).toHaveTextContent("AI request cancelled");
+    expect(within(brief.querySelector("footer")!).getByText("Generation details")).toBeInTheDocument();
+
+    // Only a result covering the newest revision earns the latest-message label.
+    rerender(<ThreadAssist {...props({ ...base, detail: { ...oldBrief, thread: {
+      ...oldBrief.thread, summary: "- Delivery is now due Monday.",
+      summaryRevision: oldBrief.thread.lastMessageAt, summaryFocusFrom: oldBrief.thread.lastMessageAt,
+    } } })} />);
+    expect(screen.getByText("Delivery is now due Monday.")).toBeVisible();
+    expect(screen.queryByText("New messages since this brief.")).not.toBeInTheDocument();
+    expect(screen.getByText("From the latest message")).toBeInTheDocument();
+  });
+
+  it("keeps a compact Cancel beside progress even when folded, scoped to this conversation", async () => {
+    const releases: (() => void)[] = [];
+    vi.mocked(invoke).mockImplementation((command) => command === "ai_brief_thread" || command === "ai_thread_chat"
+      ? new Promise<void>((resolve) => releases.push(resolve)) : Promise.resolve());
+    const requests = [
+      invokeAi("ai_brief_thread", {}, detail.thread.id),
+      invokeAi("ai_brief_thread", {}, "other-thread"),
+      invokeAi("ai_thread_chat", {}, detail.thread.id),
+    ];
+    try {
+      render(<ThreadAssist {...props({ detail: summarized, loading: true, summary: { pending: true }, suggestions: { requested: true } })} />);
+      const brief = screen.getByRole("region", { name: "Brief" });
+      const header = brief.querySelector("header")!;
+      const cancel = within(header).getByRole("button", { name: "Cancel" });
+      expect(cancel.parentElement).toContainElement(within(header).getByRole("status"));
+      expect(within(brief).getAllByRole("button", { name: "Cancel" })).toHaveLength(1);
+      fireEvent.click(within(header).getByRole("button", { name: "Brief" }));
+      expect(cancel).toBeVisible();
+      fireEvent.click(cancel);
+      await act(async () => {});
+      const args = vi.mocked(invoke).mock.calls.find(([command]) => command === "ai_brief_thread")![1] as { control: { requestId: string } };
+      expect(invoke).toHaveBeenCalledWith("cancel_ai_request", { requestId: args.control.requestId });
+      expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "cancel_ai_request")).toHaveLength(1);
+      // The original request remains attached until native completion.
+      expect(cancel).toBeVisible();
+      await act(async () => { releases[0](); await requests[0]; });
+      expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    } finally {
+      await act(async () => { releases.forEach((release) => release()); await Promise.all(requests); });
+    }
   });
 
   it("flags a summary that predates the newest message", () => {
