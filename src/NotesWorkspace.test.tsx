@@ -387,7 +387,7 @@ describe("Notes workspace", () => {
   });
 
   it("shows no link controls for a read-only note without links", async () => {
-    const note = await mailClient.createNote(uniqueTitle("Trashed links"), "Some text");
+    const note = await mailClient.createNote(uniqueTitle("Read-only links"), "Some text");
     vi.spyOn(mailClient, "getNote").mockResolvedValue({ ...note, trashed: true, trashedAt: "2026-11-01T20:33:00Z" });
     render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
