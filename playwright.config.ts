@@ -25,6 +25,13 @@ export default defineConfig({
       use: { browserName: "webkit" },
     },
     {
+      // Real pointer drags behave differently in WebKit (Tauri's macOS web view): text selection and native drags cancel pointer events.
+      name: "webkit-today-drag",
+      testMatch: "today.spec.ts",
+      grep: /drags a Planning Inbox item/,
+      use: { browserName: "webkit" },
+    },
+    {
       name: "chromium",
       use: { browserName: "chromium" },
     },

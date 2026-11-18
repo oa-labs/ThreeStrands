@@ -41,6 +41,7 @@ import { useDoneOnDay } from "./useDoneOnDay";
 import { DoneCard, uniqueDoneEntries, type DoneEntry } from "./DoneCard";
 import { activeDayChoice, clearDayChoice, localDay, readDayChoice, writeDayChoice, type DayChoice } from "./todayDayChoice";
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
+import { TaskDragChip } from "./TaskDragChip";
 import { isFinished, itemBlock, carriedLabel, linkKey, type PlanCandidate, type PlanDragSource } from "./TodayPlan";
 import { PlanningInbox, uniqueInboxEntries, interleaveInboxCategories, type InboxCategory, type InboxEntry, type InboxFilter } from "./PlanningInbox";
 import { TodayDayView } from "./TodayDayView";
@@ -335,9 +336,11 @@ function TodayLayout({
   );
   // A drop is an explicit time, so it books wherever it lands, but says when that is outside working hours.
   const outsideHours = (start: Date) => withinWorkingHours(start, workingHours) === false ? " (outside working hours)" : "";
+  // Another day's booking names the day, since the schedule on screen may not be the one the person expects.
+  const onOtherDay = (start: Date) => isSameDay(start, now) ? "" : ` on ${start.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`;
   const bookAt = async (target: BlockTarget, start: Date) => {
     const booked = await bookBlock(target, start, booking);
-    if (booked) notice({ message: `Booked ${booked.when}${outsideHours(start)} for “${target.title}”`, undo: undoBooking(booked.undo) });
+    if (booked) notice({ message: `Booked ${booked.when}${onOtherDay(start)}${outsideHours(start)} for “${target.title}”`, undo: undoBooking(booked.undo) });
     return booked;
   };
   const bookNext = async (target: BlockTarget) => {
@@ -396,12 +399,18 @@ function TodayLayout({
     const resolved = await source.candidate.resolve();
     if (!resolved) return;
     const booked = await bookBlock(resolved.block, start, booking);
-    if (booked) await planBookedCandidate(resolved, booked);
+    if (!booked) return;
+    // Only today's plan takes the item; a block on another day books the time and leaves the plan alone.
+    if (isSameDay(start, now)) await planBookedCandidate(resolved, booked);
+    else notice({ message: `Booked ${booked.when}${onOtherDay(start)}${outsideHours(start)} for “${resolved.title}”`, undo: undoBooking(booked.undo) });
   };
   const gridRef = useRef<HTMLDivElement>(null);
   const dayStart = startOfLocalDay(now).getTime();
-  const dragDays = useMemo(() => [new Date(dayStart)], [dayStart]);
-  const drag = useTaskBlockDrag<PlanDragSource>({ gridRef, days: dragDays, blockMinutes: TASK_BLOCK_MINUTES, onDrop: (source, day, minutes) => void dropOnDay(source, day, minutes) });
+  // Drops book on the day the schedule shows, today or later; a past day takes none.
+  const shownDayStart = startOfLocalDay(shownDay).getTime();
+  const canBookShownDay = shownDayStart >= dayStart;
+  const dragDays = useMemo(() => [new Date(shownDayStart)], [shownDayStart]);
+  const drag = useTaskBlockDrag<PlanDragSource>({ gridRef, days: dragDays, blockMinutes: TASK_BLOCK_MINUTES, onDrop: (source, day, minutes) => { if (canBookShownDay) void dropOnDay(source, day, minutes); } });
 
   const togglePlanItem = async (item: DailyPlanItem) => {
     const finished = isFinished(item);
@@ -763,7 +772,7 @@ function TodayLayout({
         } : undefined} entries={inboxEntries} scope={scope} status={inboxStatus} unavailable={inboxUnavailable}
           loading={(filter) => loadingSources || inboxPages(filter).some((page) => page.loading)}
           hasMore={(filter) => inboxPages(filter).some((page) => Boolean(page.next))}
-          onLoadMore={(filter) => { for (const page of inboxPages(filter)) if (page.next) void page.loadMore(); }} drag={showingToday ? drag : { ...drag, startDrag: () => {} }} />
+          onLoadMore={(filter) => { for (const page of inboxPages(filter)) if (page.next) void page.loadMore(); }} drag={{ startDrag: drag.startDrag, clickSuppressed: drag.clickSuppressed, draggingId: drag.draggingId, enabled: canBookShownDay }} />
       </div>
       {doneShown ? <div className="today-work today-done-card">
         <DoneCard title={doneTitle} today={showingToday} dayLabel={showingToday ? undefined : shownDay.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
@@ -785,6 +794,7 @@ function TodayLayout({
               {canCreateEvents ? <button type="button" className="btn btn-sm" aria-label="New Event" title="New Event" onClick={startNewEvent}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
             </div>
           </div>
+          <TaskDragChip title={drag.draggingTitle} pointerRef={drag.pointerRef} onPointer={drag.onPointer} />
           <TodayDayView events={shownEvents} day={showingToday ? undefined : shownDay} now={now} loading={displaySchedule.loading} error={displaySchedule.error} onRetry={displaySchedule.reload}
             selectedEvent={null} onChooseEvent={chooseEvent} eventDecoration={decorateEvent}
             gridRef={gridRef} preview={drag.preview} dragging={drag.draggingId !== null} workingHours={workingHours} onCreateEvent={canCreateEvents ? setNewEventRange : undefined} />

@@ -66,7 +66,13 @@ export function PlanningInbox({ entries, scope, onAddTask, status, unavailable =
   loading(filter: InboxFilter): boolean;
   hasMore(filter: InboxFilter): boolean;
   onLoadMore(filter: InboxFilter): void;
-  drag: { startDrag(source: PlanDragSource, event: ReactPointerEvent<HTMLElement>): void; clickSuppressed(): boolean };
+  drag: {
+    startDrag(source: PlanDragSource, event: ReactPointerEvent<HTMLElement>): void; clickSuppressed(): boolean;
+    /** The row being dragged, shown dimmed. */
+    draggingId: string | null;
+    /** False while the schedule shows a day that can't take a booking, so rows show no grab cursor. */
+    enabled: boolean;
+  };
 }) {
   const [filter, setFilter] = useLocalStorageState<InboxFilter>(INBOX_FILTER_KEY, initialFilter);
   const [limit, setLimit] = useState(INBOX_PAGE_SIZE);
@@ -158,9 +164,9 @@ export function PlanningInbox({ entries, scope, onAddTask, status, unavailable =
       {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
       {!items.length && !unavailable(filter) && (busy || !more) ? <p className="context-status">{busy ? "Reading planning items…" : filter === "contacts" ? "You're up to date with all keep in touch contact goals" : "Nothing to schedule here."}</p> : null}
       {items.slice(0, count).map((entry, index) => <ContextRow {...entry.row} key={entry.id} as="article" title={entry.title} rowKey={rowKey(entry)}
-        className={[entry.row.className, "today-inbox-card"].filter(Boolean).join(" ")}
+        className={[entry.row.className, "today-inbox-card", entry.source && drag.enabled ? "today-inbox-card-draggable" : "", drag.draggingId === entry.id ? "today-inbox-card-dragging" : ""].filter(Boolean).join(" ")}
         onActivate={entry.row.onActivate ? () => { if (!drag.clickSuppressed()) entry.row.onActivate?.(); } : undefined}
-        onPointerDown={entry.source ? (event) => { if (!entry.busy && !pending.current.has(entry.id) && entry.source) drag.startDrag(entry.source, event); } : undefined}
+        onPointerDown={entry.source ? (event) => { if (drag.enabled && !entry.busy && !pending.current.has(entry.id) && entry.source) drag.startDrag(entry.source, event); } : undefined}
         actions={[
           ...(entry.schedule ? [<button key="schedule" type="button" className="btn-icon btn-icon-sm" aria-label={`Schedule: ${entry.title}`} title="Schedule the next free half hour" disabled={entry.busy || busyEntries.has(entry.id)} onClick={(event) => void schedule(entry, index, event.currentTarget)}><CalendarClock size={ICON_SIZE.sm} /></button>] : []),
           ...(entry.actions.length ? [<MoreActionsMenu key="more" compact label={`Actions for ${entry.title}`} actions={entry.actions.map((action) => ({ ...action, disabled: entry.busy || busyEntries.has(entry.id) || action.disabled }))} />] : []),

@@ -7,6 +7,11 @@ export const TASK_DRAG_THRESHOLD = 4;
 export const TASK_DRAG_SCROLL_EDGE = 40;
 export const TASK_DRAG_SCROLL_STEP = 16;
 
+/** Presses on these only operate the control; the rest of a row drags. */
+const DRAG_IGNORED = ".context-row-control, .context-row-action, input, select, textarea, a[href]";
+/** Set on the body while a drag is under way, so the whole page shows a grabbing cursor and nothing selects. */
+export const TASK_DRAG_BODY_CLASS = "task-block-dragging";
+
 /** Anything that can be dragged onto a day grid to book a block for it. */
 export type TaskBlockDragSource = { id: string; title: string };
 
@@ -33,16 +38,25 @@ export function useTaskBlockDrag<T extends TaskBlockDragSource>({
 }): {
   /** The source being dragged, once it has passed the threshold. */
   draggingId: string | null;
+  /** The dragged source's title, for a chip that follows the pointer. */
+  draggingTitle: string | null;
+  /** The pointer's latest viewport position while dragging; read it to place a chip without re-rendering. */
+  pointerRef: RefObject<{ x: number; y: number } | null>;
   /** Where the block would land, for the grid to show. */
   preview: DayGridPreview | null;
   /** Call from the source's pointerdown. */
   startDrag(source: T, event: ReactPointerEvent<HTMLElement>): void;
   /** True for the click that a drag released over its source produces. */
   clickSuppressed(): boolean;
+  /** A drag chip sets this to be told of each pointer move; it is not state, so a move doesn't re-render the owner. */
+  onPointer: RefObject<((point: { x: number; y: number }) => void) | null>;
 } {
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [draggingTitle, setDraggingTitle] = useState<string | null>(null);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const [preview, setPreview] = useState<DayGridPreview | null>(null);
   const dragRef = useRef<{ source: T; pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  const onPointer = useRef<((point: { x: number; y: number }) => void) | null>(null);
   const endRef = useRef<(() => void) | null>(null);
   const suppressClick = useRef(false);
   const latest = useRef({ days, blockMinutes, onDrop });
@@ -60,6 +74,9 @@ export function useTaskBlockDrag<T extends TaskBlockDragSource>({
 
   const startDrag = useCallback((source: T, event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || dragRef.current) return;
+    if (event.target instanceof Element && event.target.closest(DRAG_IGNORED)) return;
+    // Without this, WebKit may start a text selection or a native drag from the press, which cancels the pointer stream.
+    event.preventDefault();
     dragRef.current = { source, pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
     const move = (pointer: PointerEvent) => {
       const drag = dragRef.current;
@@ -68,8 +85,13 @@ export function useTaskBlockDrag<T extends TaskBlockDragSource>({
         if (Math.hypot(pointer.clientX - drag.x, pointer.clientY - drag.y) < TASK_DRAG_THRESHOLD) return;
         drag.moved = true;
         setDraggingId(drag.source.id);
+        setDraggingTitle(drag.source.title);
+        document.body.classList.add(TASK_DRAG_BODY_CLASS);
+        window.getSelection()?.removeAllRanges();
       }
       pointer.preventDefault();
+      pointerRef.current = { x: pointer.clientX, y: pointer.clientY };
+      onPointer.current?.(pointerRef.current);
       const grid = gridRef.current;
       const bounds = grid?.getBoundingClientRect();
       if (grid && bounds && pointer.clientX >= bounds.left && pointer.clientX <= bounds.right) {
@@ -77,7 +99,9 @@ export function useTaskBlockDrag<T extends TaskBlockDragSource>({
         else if (pointer.clientY > bounds.bottom - TASK_DRAG_SCROLL_EDGE) grid.scrollTop += TASK_DRAG_SCROLL_STEP;
       }
       const drop = dropAt(pointer.clientX, pointer.clientY);
-      setPreview(drop ? { ...drop, endMinutes: drop.startMinutes + latest.current.blockMinutes, label: drag.source.title } : null);
+      const next = drop ? { ...drop, endMinutes: drop.startMinutes + latest.current.blockMinutes, label: drag.source.title } : null;
+      // A move within one slot keeps the same preview, so it doesn't re-render the grid.
+      setPreview((previous) => previous && next && previous.dayIndex === next.dayIndex && previous.startMinutes === next.startMinutes && previous.endMinutes === next.endMinutes && previous.label === next.label ? previous : next);
     };
     const finish = (pointer: PointerEvent) => {
       const drag = dragRef.current;
@@ -105,7 +129,10 @@ export function useTaskBlockDrag<T extends TaskBlockDragSource>({
       window.removeEventListener("keydown", escape, true);
       dragRef.current = null;
       endRef.current = null;
+      pointerRef.current = null;
+      document.body.classList.remove(TASK_DRAG_BODY_CLASS);
       setDraggingId(null);
+      setDraggingTitle(null);
       setPreview(null);
     };
     window.addEventListener("pointermove", move);
@@ -118,5 +145,5 @@ export function useTaskBlockDrag<T extends TaskBlockDragSource>({
 
   const clickSuppressed = useCallback(() => suppressClick.current, []);
 
-  return { draggingId, preview, startDrag, clickSuppressed };
+  return { draggingId, draggingTitle, pointerRef, onPointer, preview, startDrag, clickSuppressed };
 }

@@ -1949,6 +1949,11 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-task .context-row-main { cursor: grab; touch-action: none; user-select: none; }
 .calendar-task-dragging { opacity: var(--opacity-dragging); }
 .calendar-week-task-drag, .calendar-week-task-drag * { cursor: grabbing; user-select: none; }
+/* The "N earlier" and "N more later" pills must not swallow the pointer, or a drop over them finds no column. */
+.calendar-week-task-drag .calendar-hidden-events { pointer-events: none; }
+body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
+/* Follows the pointer during a drag; it ignores the pointer so the grid beneath is still found. */
+.task-drag-chip { position: fixed; z-index: var(--z-popover); top: 0; left: 0; margin: var(--space-2) 0 0 var(--space-3); max-width: 240px; overflow: hidden; padding: var(--space-1) var(--space-2); border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--raised); box-shadow: var(--shadow-floating); color: var(--text); font-size: var(--text-secondary); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; pointer-events: none; will-change: transform; }
 .calendar-week-column .calendar-schedule-event { right: auto; left: 0; padding: var(--space-1) var(--space-1); }
 .calendar-scroll-overlay { position: sticky; z-index: var(--z-local-panel); height: 0; pointer-events: none; }
 .calendar-scroll-overlay-top { top: 0; }
@@ -3812,6 +3817,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-work .today-inbox-card .context-row-action > :has([aria-expanded="true"]),
 .today-work .today-inbox-card .context-row-action > [aria-expanded="true"] { opacity: 1; }
 @media (hover: none) { .today-work .today-inbox-card .context-row-action > * { opacity: 1; } }
+/* A row that can be dragged onto the schedule: grab cursor, and no text selection or native touch gesture from the press. */
+.today-inbox-card-draggable .context-row-main { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.today-inbox-card-dragging { opacity: var(--opacity-dragging); }
 .today-add-task { margin-block: var(--space-1-5); }
 .today-add-task-input { box-sizing: border-box; width: 100%; height: var(--control-h); padding-inline: var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); background: transparent; color: var(--text); font: inherit; }
 .today-add-task-input:focus { border-style: solid; border-color: var(--accent); outline: none; box-shadow: var(--focus-ring); }
