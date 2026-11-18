@@ -24,6 +24,7 @@ import {
   saveAiModel,
   saveAiProvider,
   setAiApiKey,
+  saveAiCatalogPrices,
   testAiConnection,
   withAiArea,
   withAiAutomaticBriefs,
@@ -92,7 +93,9 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
     setModelsError(null);
     void listAiModels(forProvider)
       .then((list) => {
-        if (request === modelRequest.current) setModels(list);
+        if (request !== modelRequest.current) return;
+        saveAiCatalogPrices(forProvider, list);
+        setModels(list);
       })
       .catch((reason: unknown) => {
         if (request !== modelRequest.current) return;

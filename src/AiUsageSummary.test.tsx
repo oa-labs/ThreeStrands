@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AiUsageSummary } from "./AiUsageSummary";
 import { localDay } from "./aiUsage";
-import { readAiPrices } from "./aiSettings";
+import { readAiPrices, saveAiCatalogPrices } from "./aiSettings";
 import { mailClient } from "./data/client";
 import type { AiUsageDay } from "./domain";
 
@@ -83,15 +83,52 @@ describe("AiUsageSummary", () => {
     expect(readAiPrices()).toEqual({});
   });
 
-  it("uses OpenRouter's reported cost without asking for prices", async () => {
+  it("uses OpenRouter's reported cost and still offers prices to hold room under the daily limit", async () => {
     vi.spyOn(mailClient, "aiUsageSummary").mockResolvedValue([
       row({ provider: "openrouter", model: "openai/gpt-4o", requests: 2, inputTokens: 900, outputTokens: 100, reportedCostRequests: 2, reportedCostUsd: 0.25 }),
     ]);
     render(<AiUsageSummary provider="openrouter" model="openai/gpt-4o" />);
 
     expect(await screen.findAllByText("2 requests · 1K tokens · $0.25")).toHaveLength(2);
-    expect(screen.getByText("OpenRouter reports the exact cost of each request.")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Input Price")).not.toBeInTheDocument();
+    expect(screen.getByText(/OpenRouter reports the exact cost of each request/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Input Price")).toHaveValue(null);
+  });
+
+  it.each([
+    ["openrouter", "openai/gpt-4o"],
+    ["straitly", "claude-sonnet-5"],
+  ] as const)("prefills %s prices from its model list and falls back to them when the override is cleared", async (provider, model) => {
+    saveAiCatalogPrices(provider, [{ id: model, label: null, price: { inputPerMillion: 2.4, outputPerMillion: 12 } }]);
+    vi.spyOn(mailClient, "aiUsageSummary").mockResolvedValue([
+      row({ provider, model, requests: 1, inputTokens: 1_000_000, outputTokens: 0 }),
+    ]);
+    render(<AiUsageSummary provider={provider} model={model} />);
+
+    const group = screen.getByRole("group", { name: `Prices for ${model}` });
+    expect(within(group).getByLabelText("Input Price")).toHaveValue(2.4);
+    expect(within(group).getByLabelText("Output Price")).toHaveValue(12);
+    expect(group).toHaveAccessibleDescription(/model list/);
+    // The catalog price already estimates the cost; nothing is saved as an override.
+    expect((await screen.findAllByText("1 request · 1M tokens · $2.40")).length).toBe(2);
+    expect(readAiPrices()).toEqual({});
+
+    fireEvent.change(within(group).getByLabelText("Input Price"), { target: { value: "5" } });
+    expect(readAiPrices()).toEqual({ [`${provider}:${model}`]: { inputPerMillion: 5, outputPerMillion: 12 } });
+    expect(screen.getAllByText("1 request · 1M tokens · $5.00").length).toBe(2);
+
+    fireEvent.change(within(group).getByLabelText("Input Price"), { target: { value: "" } });
+    fireEvent.change(within(group).getByLabelText("Output Price"), { target: { value: "" } });
+    expect(readAiPrices()).toEqual({});
+    expect(screen.getAllByText("1 request · 1M tokens · $2.40").length).toBe(2);
+  });
+
+  it("asks for manual prices when the catalog lists none for a model", async () => {
+    saveAiCatalogPrices("straitly", [{ id: "other", label: null, price: { inputPerMillion: 1, outputPerMillion: 1 } }]);
+    vi.spyOn(mailClient, "aiUsageSummary").mockResolvedValue([]);
+    render(<AiUsageSummary provider="straitly" model="claude-sonnet-5" />);
+    await screen.findByText("Today");
+    expect(screen.getByLabelText("Input Price")).toHaveValue(null);
+    expect(screen.getByRole("group", { name: "Prices for claude-sonnet-5" })).not.toHaveAccessibleDescription(/model list/);
   });
 
   it("reports a failure to load usage", async () => {

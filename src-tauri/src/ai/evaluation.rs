@@ -408,6 +408,7 @@ pub async fn run(options: Options) -> Result<Report, String> {
         "anthropic" => AiProvider::Anthropic,
         "openrouter" => AiProvider::OpenRouter,
         "fireworks" => AiProvider::Fireworks,
+        "straitly" => AiProvider::Straitly,
         "custom" => AiProvider::Custom,
         _ => return Err("Unsupported evaluation provider".into()),
     };

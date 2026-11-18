@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
-import { aiPriceKey, readAiPrices } from "./aiSettings";
+import { resolveAiPrice, type AiProvider } from "./aiSettings";
 import { invokeWithPolicy, WAIT_FOR_NATIVE_COMPLETION } from "./invoke";
 
 export type AiRequestPolicy = { dailyBudgetUsd: number | null };
@@ -23,7 +23,7 @@ export function usePendingAiRequests() { return useSyncExternalStore(subscribe, 
  * webview promise alone cannot abort a provider request. No payloads are kept. */
 export async function invokeAi<T>(command: string, args: Record<string, unknown>, owner?: string): Promise<T> {
   const requestId = crypto.randomUUID();
-  const price = readAiPrices()[aiPriceKey(args.provider as Parameters<typeof aiPriceKey>[0], String(args.model ?? ""))];
+  const price = resolveAiPrice(args.provider as AiProvider, String(args.model ?? ""));
   const request = args.request as { threadId?: string; sourceMessageId?: string } | undefined;
   const target = owner ?? (args.threadId as string | undefined) ?? request?.threadId ?? request?.sourceMessageId ?? (args.id as string | undefined) ?? null;
   pending = [...pending, { requestId, command, owner: target }]; publish();

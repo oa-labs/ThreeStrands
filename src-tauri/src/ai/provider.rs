@@ -20,6 +20,7 @@ pub enum AiProvider {
     Anthropic,
     OpenRouter,
     Fireworks,
+    Straitly,
     Custom,
 }
 
@@ -60,12 +61,13 @@ impl AiProvider {
     }
 
     #[cfg(test)]
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::None,
         Self::OpenAi,
         Self::Anthropic,
         Self::OpenRouter,
         Self::Fireworks,
+        Self::Straitly,
         Self::Custom,
     ];
 
@@ -91,6 +93,10 @@ impl AiProvider {
                 protocol: ApiProtocol::OpenAiCompatible,
                 base_url: Some("https://api.fireworks.ai/inference/v1"),
             },
+            Self::Straitly => ProviderDescriptor {
+                protocol: ApiProtocol::OpenAiCompatible,
+                base_url: Some("https://api.straitly.ai/v1"),
+            },
             Self::Custom => ProviderDescriptor {
                 protocol: ApiProtocol::OpenAiCompatible,
                 base_url: None,
@@ -106,8 +112,16 @@ impl AiProvider {
             Self::Anthropic => "anthropic",
             Self::OpenRouter => "openrouter",
             Self::Fireworks => "fireworks",
+            Self::Straitly => "straitly",
             Self::Custom => "custom",
         }
+    }
+
+    /// Whether the provider's `/models` catalog answers without a key. A key
+    /// must never be sent where it is not needed: the keychain holds one key
+    /// for whichever provider the user set up.
+    fn catalog_is_public(self) -> bool {
+        matches!(self, Self::OpenRouter | Self::Straitly)
     }
 
     fn base_url(self, endpoint: Option<&str>) -> Result<String, String> {
@@ -658,13 +672,23 @@ pub async fn test_connection(
 pub struct ModelInfo {
     pub id: String,
     pub label: Option<String>,
+    /// The catalog's price, when it lists a usable one.
+    pub price: Option<CatalogPrice>,
+}
+
+/// A catalog price in US dollars per million tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogPrice {
+    pub input_per_million: f64,
+    pub output_per_million: f64,
 }
 
 /// Fetches the models a provider offers, for the settings model picker. Reads
 /// nothing but the provider's own catalog: no mail data leaves the device.
 /// Returns the list verbatim; the webview filters and sorts it.
 ///
-/// OpenRouter's catalog is public, so it is always fetched anonymously: the
+/// A public catalog (OpenRouter, Straitly) is always fetched anonymously: the
 /// keychain holds one key for whichever provider the user set up, and a key
 /// must never reach a vendor that does not need it. The other providers
 /// require `api_key` and error without one.
@@ -690,7 +714,7 @@ async fn fetch_models(
         _ => format!("{base_url}/models"),
     };
     let mut request = ai_client()?.get(url);
-    if !matches!(provider, AiProvider::OpenRouter) {
+    if !provider.catalog_is_public() {
         let api_key = api_key.ok_or_else(|| "No AI API key configured".to_string())?;
         request = authorize(request, protocol, api_key);
     }
@@ -706,9 +730,12 @@ async fn fetch_models(
     parse_models(&text)
 }
 
-/// Parses a `/models` list (`{ "data": [{ "id", "name" | "display_name"? }] }`).
-/// OpenAI, OpenRouter, and Fireworks share the OpenAI-compatible shape, where
-/// OpenRouter adds `name`; Anthropic's differs only in calling it `display_name`.
+/// Parses a `/models` list (`{ "data": [{ "id", "name" | "display_name"?,
+/// "pricing"? }] }`). The OpenAI-compatible providers share one shape, where
+/// OpenRouter and Straitly add `name` and `pricing` (USD per token as decimal
+/// strings); Anthropic's differs only in calling the name `display_name`. A
+/// missing, unparsable, negative (OpenRouter's variable-price routers), or
+/// out-of-range price leaves that model without one and never fails the list.
 fn parse_models(body: &str) -> Result<Vec<ModelInfo>, String> {
     #[derive(Deserialize)]
     struct ModelsResponse {
@@ -719,6 +746,8 @@ fn parse_models(body: &str) -> Result<Vec<ModelInfo>, String> {
         id: String,
         #[serde(default, alias = "display_name")]
         name: Option<String>,
+        #[serde(default)]
+        pricing: Option<serde_json::Value>,
     }
     let parsed: ModelsResponse = serde_json::from_str(body)
         .map_err(|_| "The AI provider returned an invalid response".to_string())?;
@@ -729,9 +758,32 @@ fn parse_models(body: &str) -> Result<Vec<ModelInfo>, String> {
         .map(|entry| ModelInfo {
             id: entry.id,
             label: entry.name.filter(|name| !name.trim().is_empty()),
+            price: entry.pricing.as_ref().and_then(catalog_price),
         })
         .collect())
 }
+
+/// Reads `prompt` and `completion` (USD per token) from a catalog `pricing`
+/// object as per-million prices, held to the same bounds as a request's price.
+fn catalog_price(pricing: &serde_json::Value) -> Option<CatalogPrice> {
+    let per_million = |field: &str| -> Option<f64> {
+        let raw = match pricing.get(field)? {
+            serde_json::Value::String(text) => text.trim().parse::<f64>().ok()?,
+            serde_json::Value::Number(number) => number.as_f64()?,
+            _ => return None,
+        };
+        // Ten significant digits drop float noise (0.0000024 * 1e6).
+        let scaled = format!("{:.9e}", raw * 1_000_000.0).parse::<f64>().ok()?;
+        (scaled.is_finite() && (0.0..=MAX_CATALOG_PRICE).contains(&scaled)).then_some(scaled)
+    };
+    Some(CatalogPrice {
+        input_per_million: per_million("prompt")?,
+        output_per_million: per_million("completion")?,
+    })
+}
+
+/// The same ceiling as `ModelPrice::valid` in `requests.rs`.
+const MAX_CATALOG_PRICE: f64 = 1_000_000.0;
 
 fn ai_client() -> Result<reqwest::Client, String> {
     crate::http_client::builder()
@@ -886,6 +938,92 @@ mod tests {
     }
 
     #[test]
+    fn parse_models_reads_catalog_prices_per_million() {
+        let body = r#"{"data":[
+            {"id":"or/model","name":"OR","pricing":{"prompt":"0.0000024","completion":"0.000012","request":"0","image":"0"}},
+            {"id":"straitly/model","pricing":{"prompt":"0.000003","completion":"0.000015","input_cache_read":"0.0000003"}},
+            {"id":"or/auto","pricing":{"prompt":"-1","completion":"-1"}},
+            {"id":"free","pricing":{"prompt":"0","completion":"0"}},
+            {"id":"none"},
+            {"id":"garbage","pricing":{"prompt":"abc","completion":"0.1"}},
+            {"id":"half","pricing":{"prompt":"0.1"}},
+            {"id":"huge","pricing":{"prompt":"1","completion":"1.5"}},
+            {"id":"odd","pricing":"free"},
+            {"id":"numeric","pricing":{"prompt":0.000001,"completion":0.000002}}
+        ]}"#;
+        let models = parse_models(body).expect("a bad price never fails the list");
+        let price = |id: &str| models.iter().find(|m| m.id == id).unwrap().price;
+        assert_eq!(
+            price("or/model"),
+            Some(CatalogPrice {
+                input_per_million: 2.4,
+                output_per_million: 12.0
+            })
+        );
+        assert_eq!(
+            price("straitly/model"),
+            Some(CatalogPrice {
+                input_per_million: 3.0,
+                output_per_million: 15.0
+            })
+        );
+        assert_eq!(
+            price("free"),
+            Some(CatalogPrice {
+                input_per_million: 0.0,
+                output_per_million: 0.0
+            })
+        );
+        assert_eq!(
+            price("numeric"),
+            Some(CatalogPrice {
+                input_per_million: 1.0,
+                output_per_million: 2.0
+            })
+        );
+        for id in ["or/auto", "none", "garbage", "half", "huge", "odd"] {
+            assert_eq!(price(id), None, "{id}");
+        }
+        assert_eq!(models.len(), 10);
+    }
+
+    #[test]
+    fn catalog_prices_accept_the_exact_limit_and_reject_above_it() {
+        let at = serde_json::json!({"prompt": "1", "completion": "0.5"});
+        assert_eq!(catalog_price(&at).unwrap().input_per_million, 1_000_000.0);
+        let above = serde_json::json!({"prompt": "1.000001", "completion": "0"});
+        assert_eq!(catalog_price(&above), None);
+    }
+
+    #[test]
+    fn straitly_is_an_openai_compatible_provider_with_a_public_catalog() {
+        assert_eq!(AiProvider::Straitly.id(), "straitly");
+        let descriptor = AiProvider::Straitly.descriptor();
+        assert_eq!(descriptor.protocol, ApiProtocol::OpenAiCompatible);
+        assert_eq!(descriptor.base_url, Some("https://api.straitly.ai/v1"));
+        assert!(AiProvider::Straitly.catalog_is_public());
+        assert!(AiProvider::OpenRouter.catalog_is_public());
+        for provider in [
+            AiProvider::OpenAi,
+            AiProvider::Anthropic,
+            AiProvider::Fireworks,
+            AiProvider::Custom,
+        ] {
+            assert!(!provider.catalog_is_public());
+        }
+        assert_eq!(
+            serde_json::from_str::<AiProvider>("\"straitly\"")
+                .unwrap()
+                .id(),
+            "straitly"
+        );
+        assert!(openai_body(&provider_request(AiProvider::Straitly), None)
+            .get("usage")
+            .is_none());
+        assert!(AiProvider::Straitly.reasoning_off_parameter().is_none());
+    }
+
+    #[test]
     fn parse_models_rejects_malformed_payloads() {
         assert!(parse_models("not json").is_err());
         assert!(parse_models(r#"{"models":[]}"#).is_err());
@@ -926,6 +1064,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(models[0].id, "model-a");
+        fetch_models(AiProvider::Straitly, &base_url, Some("secret-key"))
+            .await
+            .unwrap();
         fetch_models(AiProvider::OpenAi, &base_url, Some("secret-key"))
             .await
             .unwrap();
@@ -934,15 +1075,17 @@ mod tests {
             .unwrap();
 
         let headers = captured.lock().unwrap();
-        assert_eq!(headers.len(), 3);
-        assert!(headers[0].get("authorization").is_none());
-        assert!(headers[0].get("x-api-key").is_none());
+        assert_eq!(headers.len(), 4);
+        for public in [&headers[0], &headers[1]] {
+            assert!(public.get("authorization").is_none());
+            assert!(public.get("x-api-key").is_none());
+        }
         assert_eq!(
-            headers[1].get("authorization").unwrap(),
+            headers[2].get("authorization").unwrap(),
             "Bearer secret-key"
         );
-        assert_eq!(headers[2].get("x-api-key").unwrap(), "secret-key");
-        assert!(headers[2].get("anthropic-version").is_some());
+        assert_eq!(headers[3].get("x-api-key").unwrap(), "secret-key");
+        assert!(headers[3].get("anthropic-version").is_some());
         server.abort();
     }
 
@@ -955,6 +1098,10 @@ mod tests {
         assert_eq!(
             AiProvider::OpenRouter.base_url(None).unwrap(),
             "https://openrouter.ai/api/v1"
+        );
+        assert_eq!(
+            AiProvider::Straitly.base_url(None).unwrap(),
+            "https://api.straitly.ai/v1"
         );
         assert_eq!(
             AiProvider::Fireworks.base_url(None).unwrap(),
@@ -1109,6 +1256,7 @@ mod tests {
             AiProvider::OpenAi,
             AiProvider::OpenRouter,
             AiProvider::Fireworks,
+            AiProvider::Straitly,
             AiProvider::Custom,
         ] {
             let request = provider_request(provider);
