@@ -1,4 +1,4 @@
-import { CalendarDays, ClipboardList, NotebookPen } from "lucide-react";
+import { CalendarDays, ClipboardList, ListChecks, NotebookPen } from "lucide-react";
 import { useCallback, useRef, type ReactNode } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
@@ -7,7 +7,7 @@ import { agendaEventsFor, formatClockTime, isDeclined, isPastEvent } from "./age
 import { responseLabel } from "./calendarResponse";
 import { agendaConflicts, mentionsRecording } from "./todayInsights";
 import { useCalendarSchedule } from "./useCalendarSchedule";
-import type { CalendarOption, ScheduleEvent } from "./domain";
+import type { CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { isWorkingLocation, WorkingLocationIcon } from "./WorkingLocation";
 import { isPreparable, preparationKey } from "./meetingPrep";
@@ -40,6 +40,9 @@ type AgendaProps = {
   markConflicts?: boolean;
   /** Offers Add Note on each event that a note can link. */
   onAddNote?(event: ScheduleEvent): void;
+  /** The task an event books time for, if any; with `onOpenTask`, that event's row offers a button to open it. */
+  taskFor?(event: ScheduleEvent): ThreadTask | undefined;
+  onOpenTask?(task: ThreadTask): void;
   /** Offers Prepare on each event that a note can link. */
   onPrepare?(event: ScheduleEvent): void;
   /** The meeting being prepared (`preparationKey`), shown selected. */
@@ -81,7 +84,7 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, selectedKey = null, describe, now, day = "today", id, showDate = true, markConflicts = false, workingLocation, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, taskFor, onOpenTask, selectedKey = null, describe, now, day = "today", id, showDate = true, markConflicts = false, workingLocation, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
   const agendaRef = useRef<HTMLElement>(null);
   const refresh = useCallback(async () => { if (refreshSchedule) await refreshSchedule(); else reload(); }, [refreshSchedule, reload]);
   const pull = usePullToRefresh(agendaRef, pullToRefresh ? refresh : undefined);
@@ -109,6 +112,12 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
     const detail = [formatEventTime(event), describe?.(event), ...conflict, event.location, multipleCalendars ? calendar?.name : null, account, responseLabel(event)].filter(Boolean).join(" · ");
     const key = preparationKey(event);
     const isSelected = selectedKey !== null && key === selectedKey;
+    const bookedTask = onOpenTask ? taskFor?.(event) : undefined;
+    const rowActions = [
+      ...(bookedTask && onOpenTask ? [<OpenTaskButton key="task" task={bookedTask} onOpenTask={onOpenTask} />] : []),
+      ...(isPreparable(event) && onPrepare ? [<PrepareButton key="prepare" event={event} onPrepare={onPrepare} pressed={selectedKey !== null ? isSelected : undefined} />] : []),
+      ...(isPreparable(event) && onAddNote ? [<AddNoteButton key="note" event={event} onAddNote={onAddNote} />] : []),
+    ];
     rows.push(<ContextRow
       rowKey={key ? `meeting:${key}` : undefined}
       pressed={selectedKey !== null ? isSelected : undefined}
@@ -118,10 +127,7 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
       title={event.title}
       detail={detail}
       onActivate={() => onOpenEvent(event)}
-      actions={isPreparable(event) && (onPrepare || onAddNote) ? [
-        ...(onPrepare ? [<PrepareButton key="prepare" event={event} onPrepare={onPrepare} pressed={selectedKey !== null ? isSelected : undefined} />] : []),
-        ...(onAddNote ? [<AddNoteButton key="note" event={event} onAddNote={onAddNote} />] : []),
-      ] : undefined}
+      actions={rowActions.length ? rowActions : undefined}
     />);
   });
   if (now && pastCount > 0 && pastCount === agenda.length) rows.push(<NowDivider key="now" now={now} />);
@@ -155,6 +161,11 @@ export function PrepareButton({ event, onPrepare, pressed }: { event: ScheduleEv
 }
 
 /** Add Note for one agenda event. */
+/** Opens the task a booked block is for, beside the row that opens its event. */
+export function OpenTaskButton({ task, onOpenTask }: { task: ThreadTask; onOpenTask(task: ThreadTask): void }) {
+  return <button type="button" className="btn-icon btn-icon-sm" aria-label={`Open task ${task.title}`} title="Open task" onClick={() => onOpenTask(task)}><ListChecks size={ICON_SIZE.sm} aria-hidden="true" /></button>;
+}
+
 export function AddNoteButton({ event, onAddNote }: { event: ScheduleEvent; onAddNote(event: ScheduleEvent): void }) {
   return <button type="button" className="btn-icon btn-icon-sm" aria-label={`Add Note for ${event.title}`} title="Add Note" onClick={() => onAddNote(event)}><NotebookPen size={ICON_SIZE.sm} aria-hidden="true" /></button>;
 }

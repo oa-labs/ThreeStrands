@@ -1652,6 +1652,7 @@ export function App() {
             onOpenNote={openNote}
             onAddNote={(event) => { void openMeetingNote(event); }}
             onSelectedEventChange={setCalendarSelectedEvent}
+            onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
             preparation={{ key: calendarPreparing, onChange: setCalendarPreparing, render: renderPreparation("calendar") }}
             anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
             initialEvent={calendarEventToOpen}

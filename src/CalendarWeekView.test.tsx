@@ -1188,6 +1188,20 @@ describe("CalendarWeekView", () => {
       await waitFor(() => expect(setStatus).toHaveBeenCalledWith("proposal", "completed"));
       expect(onTasksChanged).toHaveBeenCalledOnce();
     });
+
+    it("opens the task editor from the booked task's title in event details", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+        { ...event("block", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Write proposal"), calendarId: "primary", sourceTaskId: "proposal" },
+      ], errors: [] });
+      const onEditTask = vi.fn();
+      renderWeek({ mailAccountIds: ["joel@example.com"], onEditTask });
+      await within(openTasks()).findByRole("button", { name: /Write proposal/ });
+      fireEvent.click(await calendarGrid().findByRole("button", { name: "Write proposal" }));
+      const booked = await screen.findByRole("region", { name: "Task" });
+      fireEvent.click(within(booked).getByRole("button", { name: /Write proposal/ }));
+      expect(onEditTask).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "proposal" }));
+    });
   });
 
   describe("note tasks in open tasks", () => {

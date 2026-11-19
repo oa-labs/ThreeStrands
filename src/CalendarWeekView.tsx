@@ -225,6 +225,7 @@ export function CalendarWeekView({
   onSelectedEventChange,
   taskRefreshKey = 0,
   onTasksChanged,
+  onEditTask,
   onNotice,
   active = true,
   session,
@@ -239,6 +240,8 @@ export function CalendarWeekView({
   /** Changes whenever tasks change elsewhere, to reload Open tasks. */
   taskRefreshKey?: number;
   onTasksChanged?(): void;
+  /** Opens the task editor, from the task an event books time for. */
+  onEditTask?(task: ThreadTask): void;
   /** Says a task block was booked, with Undo, or why it was not. */
   onNotice?(notice: Notice): void;
   active?: boolean;
@@ -564,7 +567,7 @@ export function CalendarWeekView({
             setSelectedEvent(null);
             if (!eventTrigger.current) document.getElementById("workspace-Meeting-context")?.focus();
           }} onUpdated={setSelectedEvent} />
-          {bookedTask ? <BookedTask task={bookedTask} onChanged={tasksChanged} /> : null}
+          {bookedTask ? <BookedTask task={bookedTask} onChanged={tasksChanged} onEditTask={onEditTask} /> : null}
           {preparingSelected ? preparation!.render(selectedEvent, closePreparation) : <>
             {meetingEventReference(selectedEvent) ? <EventNoteBacklinks occurrence={meetingEventReference(selectedEvent)!} onOpenNote={onOpenNote} /> : null}
             <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />

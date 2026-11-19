@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isPastEvent } from "./agendaEvents";
 import { CalendarAgenda, TOMORROW_AGENDA_ROWS } from "./CalendarAgenda";
-import type { CalendarOption, ScheduleEvent } from "./domain";
+import type { CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
 
 const calendars: CalendarOption[] = [{ id: "primary", accountId: "cal@example.com", name: "Work", primary: true, selected: true, writable: true }];
 const day = new Date(2026, 9, 23);
@@ -228,5 +228,31 @@ describe("CalendarAgenda with a stated working location", () => {
   it("still lists working locations when the page doesn't state one", () => {
     renderAgenda([place("Office")], { today: tomorrow, day: "tomorrow" });
     expect(screen.getByText("Office")).toBeInTheDocument();
+  });
+});
+
+describe("Open task in the agenda", () => {
+  afterEach(cleanup);
+  const proposal = { id: "proposal", title: "Write proposal" } as ThreadTask;
+
+  it("offers the task beside each event it resolves for, without opening the event", () => {
+    const onOpenEvent = vi.fn();
+    const onOpenTask = vi.fn();
+    const booked = event("Block", 9, 10, { sourceTaskId: "proposal" });
+    render(<CalendarAgenda today={day} calendars={calendars} onOpenEvent={onOpenEvent} onOpenTask={onOpenTask}
+      taskFor={(candidate) => candidate.sourceTaskId === "proposal" ? proposal : undefined}
+      schedule={{ events: [booked, event("Plain", 11, 12), event("Orphan", 13, 14, { sourceTaskId: "gone" })], loading: false, error: null, reload: vi.fn() }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open task Write proposal" }));
+    expect(onOpenTask).toHaveBeenCalledExactlyOnceWith(proposal);
+    expect(onOpenEvent).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("button", { name: /^Open task/ })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /^Block/ }));
+    expect(onOpenEvent).toHaveBeenCalledExactlyOnceWith(booked);
+  });
+
+  it("offers no task button without a handler", () => {
+    render(<CalendarAgenda today={day} calendars={calendars} onOpenEvent={vi.fn()} taskFor={() => proposal}
+      schedule={{ events: [event("Block", 9, 10)], loading: false, error: null, reload: vi.fn() }} />);
+    expect(screen.queryByRole("button", { name: /^Open task/ })).not.toBeInTheDocument();
   });
 });

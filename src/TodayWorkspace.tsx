@@ -30,7 +30,7 @@ import { addToDailyPlan, removeFromDailyPlan } from "./noteCapture";
 import { planItemKey } from "./dailyPlan";
 import { changeNoteItem } from "./noteMutations";
 import { todayTarget } from "./noteDrafts";
-import { TASK_BLOCK_MINUTES } from "./taskBooking";
+import { bookedTaskFor, TASK_BLOCK_MINUTES } from "./taskBooking";
 import { bookBlock, nextFreeSlot, withinWorkingHours, type BlockTarget } from "./todayBooking";
 import { bookedSource } from "./taskBooking";
 import type { WorkingHours } from "./todayInsights";
@@ -855,7 +855,7 @@ function TodayLayout({
           {/* Below Today's breakpoint the agenda list takes the day view's place (a container query in CSS). */}
           <div className="today-agenda-fallback">
             {/* The page heading already names today, so its agenda leaves the date out. */}
-            <CalendarAgenda pullToRefresh={false} today={shownDay} day={showingToday ? "today" : "chosen"} now={now} showDate={false} workingLocation={null} markConflicts calendars={calendars} schedule={displaySchedule} onOpenEvent={chooseEvent} onAddNote={onAddNote} onPrepare={onAddNote} selectedKey={null} describe={describeReadiness} />
+            <CalendarAgenda pullToRefresh={false} today={shownDay} day={showingToday ? "today" : "chosen"} now={now} showDate={false} workingLocation={null} markConflicts calendars={calendars} schedule={displaySchedule} onOpenEvent={chooseEvent} taskFor={(event) => bookedTaskFor(event, [...tasks, ...completedTasks])} onOpenTask={onEditTask} onAddNote={onAddNote} onPrepare={onAddNote} selectedKey={null} describe={describeReadiness} />
           </div>
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}

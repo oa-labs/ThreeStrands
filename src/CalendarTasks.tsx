@@ -202,7 +202,7 @@ export function CalendarTasks({ tasks, loading, error, reload, events, now, mult
 }
 
 /** The task an event books time for, in its details, so it can be ticked off there. */
-export function BookedTask({ task, onChanged }: { task: ThreadTask; onChanged(): void }) {
+export function BookedTask({ task, onChanged, onEditTask }: { task: ThreadTask; onChanged(): void; onEditTask?(task: ThreadTask): void }) {
   const [error, setError] = useState<string | null>(null);
   const done = task.status === "completed";
   const toggle = async () => {
@@ -235,6 +235,7 @@ export function BookedTask({ task, onChanged }: { task: ThreadTask; onChanged():
       />}
       title={task.title}
       wrapTitle
+      onActivate={onEditTask ? () => onEditTask(task) : undefined}
       date={due ? `Due ${due}` : undefined}
       dateClassName={due && !done && isOverdue(task) ? "task-due-overdue" : undefined}
       detail={task.noteSource ? `Note · ${task.noteSource.noteTitle}` : undefined}

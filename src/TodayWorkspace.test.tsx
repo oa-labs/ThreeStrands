@@ -803,6 +803,26 @@ describe("TodayWorkspace", () => {
       expect(inbox().getByText("Sam Ortiz")).toBeInTheDocument();
     });
 
+    it("offers a task button on a booked block in the agenda, only when its task is loaded, and opens the event from the row", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([task("focus", { title: "Review the contract" }), task("note:note-7:m1", { title: "Draft the memo", source: "note", noteSource: { noteId: "note-7", markerId: "m1", noteTitle: "Notes", conflicted: false } } as Partial<ThreadTask>)]);
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ errors: [], events: [
+        event("block", 0, { title: "Block for contract", start: at(14), end: at(14, 30), sourceTaskId: "focus" }),
+        event("memo-block", 0, { title: "Block for memo", start: at(15), end: at(15, 30), sourceTaskId: "note:note-7:m1" }),
+        event("orphan", 0, { title: "Block for deleted", start: at(16), end: at(16, 30), sourceTaskId: "gone" }),
+        event("plain", 0, { title: "Plain meeting", start: at(17), end: at(17, 30) }),
+      ] });
+      const { onEditTask, onOpenEvent } = renderToday({ calendarConnected: true });
+      const agenda = within(await screen.findByRole("region", { name: "Today's agenda" }));
+      fireEvent.click(await agenda.findByRole("button", { name: "Open task Review the contract" }));
+      expect(onEditTask).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "focus" }));
+      fireEvent.click(agenda.getByRole("button", { name: "Open task Draft the memo" }));
+      expect(onEditTask).toHaveBeenLastCalledWith(expect.objectContaining({ id: "note:note-7:m1" }));
+      expect(agenda.getAllByRole("button", { name: /^Open task/ })).toHaveLength(2);
+      expect(onOpenEvent).not.toHaveBeenCalled();
+      fireEvent.click(agenda.getByRole("button", { name: /^Block for contract/ }));
+      expect(onOpenEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "block" }));
+    });
+
     it("shows active unscheduled plan items in order", async () => {
       withPlan();
       vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ errors: [], events: [event("block", 0, { title: "Review the contract", start: at(10, 30), end: at(11), sourceTaskId: "focus" })] });
