@@ -128,12 +128,14 @@ export function TaskEditorDialog({
         {accountOptions ? <label><span>Account</span><select required value={selectedAccount} onChange={(event) => setSelectedAccount(event.target.value)}>
           <option value="">Choose an account</option>{accountOptions.map((email) => <option key={email} value={email}>{email}</option>)}
         </select></label> : null}
+        <div className="modal-form-row">
         <label><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as TaskKind)}><option value="action">Action</option><option value="follow_up">Follow Up</option><option value="waiting_for">Waiting for Reply</option></select></label>
         <label><span>Due</span><select value={dueKind} onChange={(event) => {
           const nextKind = event.target.value as TaskDueKind;
           setDueKind(nextKind);
           setDueValue((current) => nextKind === "none" ? "" : convertDueInputValue(current, nextKind));
         }}><option value="none">No Due Date</option><option value="date">Date</option><option value="datetime">Date and Time</option></select></label>
+        </div>
         {dueKind !== "none" ? <label><span>{dueKind === "date" ? "Due Date" : "Due Date and Time"}</span><input type={dueKind === "date" ? "date" : "datetime-local"} value={dueValue} onChange={(event) => setDueValue(event.target.value)} required /></label> : null}
         {dueKind !== "none" ? <label>
           <span>Timezone</span>
@@ -163,7 +165,7 @@ export function TaskEditorDialog({
             })}
           </select>
         </label> : null}
-        <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional details" /></label>
+        <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={5} placeholder="Optional details" /></label>
         {evidence ? <div className="modal-form-evidence"><span>Evidence</span><blockquote>{evidence}</blockquote></div> : null}
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="modal-form-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || !title.trim() || Boolean(accountOptions && !selectedAccount)}>{busy ? "Saving…" : submitLabel}</button></div>

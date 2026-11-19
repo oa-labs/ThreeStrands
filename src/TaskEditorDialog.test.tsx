@@ -7,6 +7,13 @@ import { expectPrimaryActionLast } from "./test/sharedButtons";
 describe("TaskEditorDialog", () => {
   afterEach(cleanup);
 
+  it("places Type and Due side by side in one row", () => {
+    render(<TaskEditorDialog initial={{ title: "", kind: "action", dueKind: "none" }} onClose={vi.fn()} onSubmit={vi.fn()} />);
+    const row = screen.getByRole("combobox", { name: "Type" }).closest(".modal-form-row");
+    expect(row).not.toBeNull();
+    expect(row).toContainElement(screen.getByRole("combobox", { name: "Due" }));
+  });
+
   it("owns text entry and submits reviewed task values", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
