@@ -450,9 +450,9 @@ describe("Today backdrop", () => {
     for (const [theme, tokens] of Object.entries(themes)) {
       const art = [...tokens].filter(([name]) => name.startsWith("--backdrop-"));
       expect(art.map(([name]) => name).sort()).toEqual([
-        "--backdrop-cloud", "--backdrop-dusk-bottom", "--backdrop-dusk-moon", "--backdrop-dusk-moon-shade", "--backdrop-dusk-star", "--backdrop-dusk-top",
+        "--backdrop-cloud", "--backdrop-dusk-bottom", "--backdrop-dusk-moon", "--backdrop-dusk-star", "--backdrop-dusk-top",
         "--backdrop-ink", "--backdrop-ink-soft",
-        "--backdrop-night-bottom", "--backdrop-night-moon", "--backdrop-night-moon-shade", "--backdrop-night-star", "--backdrop-night-surround", "--backdrop-night-top",
+        "--backdrop-night-bottom", "--backdrop-night-moon", "--backdrop-night-star", "--backdrop-night-surround", "--backdrop-night-top",
         "--backdrop-sky-bottom", "--backdrop-sky-top", "--backdrop-sun",
       ]);
       // The day sky keeps the theme's normal text legible.

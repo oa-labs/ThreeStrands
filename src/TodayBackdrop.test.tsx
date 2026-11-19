@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import postcss from "postcss";
+import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isDaytime, readTodayBackdrop, skyPhase, sunHeight, TODAY_BACKDROP_KEY, useTodayBackdrop, writeTodayBackdrop } from "./backdropPreference";
 import { TodayBackdropSettings } from "./AppearanceSettings";
@@ -135,6 +136,26 @@ describe("TodayBackdrop", () => {
     const first = positions();
     rerender(<TodayBackdrop now={at(2)} />);
     expect(positions()).toEqual(first);
+  });
+
+  it("cuts a transparent crescent at dusk and night with independent clips for each backdrop", async () => {
+    render(<><TodayBackdrop now={at(19)} /><TodayBackdrop now={at(22)} /></>);
+    const scenes = [...document.querySelectorAll<SVGSVGElement>(".today-backdrop-moon-scene")];
+    const clipIds = scenes.map((svg) => svg.querySelector("clipPath")!.id);
+    expect(new Set(clipIds).size).toBe(2);
+    for (const [index, scene] of scenes.entries()) {
+      expect(scene.querySelector(".today-backdrop-moon")).toHaveAttribute("clip-path", `url(#${clipIds[index]})`);
+      const svg = scene.cloneNode(true) as SVGSVGElement;
+      svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      svg.setAttribute("width", "64");
+      svg.setAttribute("height", "64");
+      const { data, info } = await sharp(Buffer.from(svg.outerHTML)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const alpha = (x: number, y: number) => data[(y * info.width + x) * info.channels + 3];
+      expect(alpha(12, 32)).toBe(255); // The lit crescent remains opaque.
+      expect(alpha(32, 32)).toBe(0); // The crescent's hollow reveals the sky.
+      expect(alpha(60, 26)).toBe(0); // No dark disc extends outside the moon.
+      expect(alpha(2, 2)).toBe(0);
+    }
   });
 
   it("keeps the moon round and fully inset in narrow, wide, and wrapped headers", () => {
