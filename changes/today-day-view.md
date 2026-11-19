@@ -1,6 +1,6 @@
 ### New
 - **Today** now has a simpler **Planning Inbox** on the left and a larger **Agenda** on the right. Filter one list with **All**, **Tasks**, **Emails**, and **Contacts**; note and goal tasks appear under Tasks, and scheduled items move to the calendar without completing their source.
-- Today's schedule opens on your working hours with the time outside them shaded, and dims finished and declined meetings. Use a meeting’s note icon to open its notes or start an entry in its daily note, then prepare alongside the note editor.
+- Today's schedule opens on your working hours and dims finished and declined meetings. Use a meeting’s note icon to open its notes or start an entry in its daily note, then prepare alongside the note editor.
 
 ### Improved
 - Add tasks and events directly from Today, and use the schedule arrows or <kbd>-</kbd> and <kbd>=</kbd> to browse other days. The **Agenda** heading and left-aligned controls stay in place on every day, while the Planning Inbox stays on today’s work.

@@ -31,18 +31,14 @@ describe("dayViewLayout", () => {
     expect(dayViewLayout(nineToFive, at(9, 10)).scrollMinutes).toBe(540);
   });
 
-  it("sizes the grid to the working day and shades before, between, and after split windows", () => {
+  it("sizes the grid to the full working day including gaps between split windows", () => {
     const split = dayViewLayout(hours(["09:00", "12:00"], ["13:00", "17:00"]), at(8));
     expect(split.heightPx).toBe(Math.round(8.5 * HOUR_HEIGHT));
-    expect(split.shade).toEqual([
-      { dayIndex: 0, startMinutes: 0, endMinutes: 540 },
-      { dayIndex: 0, startMinutes: 720, endMinutes: 780 },
-      { dayIndex: 0, startMinutes: 1020, endMinutes: 1440 },
-    ]);
+    expect(split.scrollMinutes).toBe(540);
   });
 
   it("keeps the old behaviour when working hours are unknown or the day has none", () => {
-    expect(dayViewLayout(null, at(10))).toEqual({ scrollMinutes: null, heightPx: null, shade: [] });
-    expect(dayViewLayout({ timeZone: zone, workingWindows: [] }, at(10))).toEqual({ scrollMinutes: null, heightPx: null, shade: [] });
+    expect(dayViewLayout(null, at(10))).toEqual({ scrollMinutes: null, heightPx: null });
+    expect(dayViewLayout({ timeZone: zone, workingWindows: [] }, at(10))).toEqual({ scrollMinutes: null, heightPx: null });
   });
 });

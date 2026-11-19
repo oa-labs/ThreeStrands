@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlanningInbox, uniqueInboxEntries, interleaveInboxCategories, INBOX_FILTER_KEY, INBOX_PAGE_SIZE, type InboxEntry } from "./PlanningInbox";
+import { ICON_SIZE } from "./iconSizes";
 
 const entry = (id: string, category: InboxEntry["category"] = "tasks", identities = [id]): InboxEntry => ({ id, identities, category, title: id, source: null, row: { onActivate: vi.fn() }, schedule: vi.fn(), actions: [{ label: "Add to Today's Plan", onSelect: vi.fn() }] });
 const defaults = { scope: undefined, status: () => null, loading: () => false, hasMore: () => false, onLoadMore: vi.fn(), drag: { startDrag: vi.fn(), clickSuppressed: () => false, draggingId: null as string | null, enabled: true } };
@@ -21,6 +22,10 @@ describe("PlanningInbox", () => {
   it("holds only unscheduled work: finished items live in the Done card, not under the inbox", () => {
     render(<PlanningInbox {...defaults} entries={[entry("Active")]} />);
     expect(screen.getByLabelText("1 unscheduled item")).toHaveTextContent("1");
+    const icon = screen.getByRole("heading", { name: /Planning Inbox/ }).querySelector("svg");
+    expect(icon).toHaveClass("lucide-inbox");
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    expect(icon).toHaveAttribute("width", String(ICON_SIZE.md));
     for (const filter of ["All", "Tasks", "Emails", "Contacts"]) {
       fireEvent.click(screen.getByRole("tab", { name: filter }));
       expect(screen.queryByRole("region", { name: "Completed" })).not.toBeInTheDocument();

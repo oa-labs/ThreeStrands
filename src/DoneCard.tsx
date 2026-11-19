@@ -1,6 +1,8 @@
+import { CircleCheck } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ContextRow } from "./ContextSections";
 import { formatClockTime } from "./agendaEvents";
+import { ICON_SIZE } from "./iconSizes";
 import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 
 export type DoneCategory = "tasks" | "emails" | "notes";
@@ -100,7 +102,7 @@ export function DoneCard({ title, today, dayLabel, entries, errors, loading }: {
   };
   return <section aria-label={title} className="planning-inbox today-done">
     <header className="today-panel-heading">
-      <h2>{title} <span className="context-count" aria-label={`${sorted.length} finished ${noun}`}>{sorted.length}</span>{dayLabel ? <small className="today-done-day">{dayLabel}</small> : null}</h2>
+      <h2><CircleCheck size={ICON_SIZE.md} aria-hidden="true" />{title} <span className="context-count" aria-label={`${sorted.length} finished ${noun}`}>{sorted.length}</span>{dayLabel ? <small className="today-done-day">{dayLabel}</small> : null}</h2>
       {summary ? <span className="today-source-scope">{summary}</span> : null}
     </header>
     <div ref={tabs} className="planning-inbox-tabs" role="tablist" aria-label={`${title} Filters`} onKeyDown={move}>

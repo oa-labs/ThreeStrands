@@ -3831,6 +3831,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .notes-meeting-preparation:focus { outline: none; box-shadow: var(--focus-ring); }
 .today-panel-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-4); }
 .today-panel-heading h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--text-pane-title); }
+.today-panel-heading h2 > svg { flex-shrink: 0; }
 .today-work, .today-time { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
 .today-work { padding: 0 var(--space-3) var(--space-3); }
 /* Clip the grid's square backgrounds to the schedule card without clipping inbox menus. */
@@ -3851,7 +3852,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* A finished row reads as checked and quiet, not struck through; the strikethrough stays for other lists. */
 .today-done .context-task-done .context-row-title { text-decoration: none; }
 .today-work .today-panel-heading { padding-inline: var(--space-1); }
-.today-work .today-inbox-card, .today-work .today-plan-card { margin-block: var(--space-1-5); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); min-height: var(--control-h); }
+.today-work .today-inbox-card, .today-work .today-plan-card { margin-block: var(--space-1-5); border: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); min-height: var(--control-h); }
 /* Row actions appear on hover or focus, or while a menu is open; they keep their space so rows don't shift, and stay in the tab order. Touch screens always show them. */
 .today-work .today-inbox-card .context-row-action > * { opacity: 0; transition: opacity var(--duration-fast) ease; }
 .today-work .today-inbox-card:hover .context-row-action > *,
@@ -3863,7 +3864,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-inbox-card-draggable .context-row-main { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .today-inbox-card-dragging { opacity: var(--opacity-dragging); }
 .today-add-task { margin-block: var(--space-1-5); }
-.today-add-task-input { box-sizing: border-box; width: 100%; height: var(--control-h); padding-inline: var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); background: transparent; color: var(--text); font: inherit; }
+.today-add-task-input { box-sizing: border-box; width: 100%; height: var(--control-h); padding-inline: var(--space-2); border: 1px dashed var(--border); border-radius: var(--radius-md); background: transparent; color: var(--text); font: inherit; }
 .today-add-task-input:focus { border-style: solid; border-color: var(--accent); outline: none; box-shadow: var(--focus-ring); }
 .today-schedule-navigation { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: 0 var(--space-4) var(--space-3); color: var(--secondary); font-size: var(--text-meta); }
 .today-schedule-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
@@ -3922,9 +3923,6 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* With working hours, the grid is as tall as the working day (set inline) so Tomorrow stays in view; evenings scroll inside it. */
 .today-day-view-working { height: auto; }
 .today-day-view-working .calendar-week-scroll { flex: none; height: min(var(--today-day-view-grid-h), 65vh); }
-/* Today names the shading with a tooltip, so its bands take the pointer; clicks still reach the column. */
-.today-day-view .calendar-outside-hours[title] { pointer-events: auto; }
-.calendar-outside-hours { position: absolute; left: 0; right: 0; background: color-mix(in srgb, var(--muted) 10%, transparent); pointer-events: none; }
 /* Today: finished meetings dim; selected means the meeting being prepared, nothing else. An
    unanswered invitation keeps a filled block here, so it can't be mistaken for that selection. */
 .today-day-view .calendar-schedule-event[data-past="true"] { opacity: var(--opacity-dimmed); }

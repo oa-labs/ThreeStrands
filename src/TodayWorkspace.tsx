@@ -791,7 +791,7 @@ function TodayLayout({
       </div> : null}
       </div>
       <div className="today-column today-time" role="group" aria-label="Schedule">
-        <div className="today-panel-heading"><h2><CalendarDays size={ICON_SIZE.md} />Agenda</h2><div className="today-schedule-actions">
+        <div className="today-panel-heading"><h2><CalendarDays size={ICON_SIZE.md} aria-hidden="true" />Agenda</h2><div className="today-schedule-actions">
           <button type="button" className="btn-link" onClick={() => onOpenCalendar(shownDay)}>Open Calendar</button>
         </div></div>
         {displaySchedule ? <>

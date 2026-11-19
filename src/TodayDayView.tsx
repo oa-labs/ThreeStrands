@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { HOUR_HEIGHT, eventDayBounds, occursOnDay, startOfLocalDay } from "./calendarTime";
 import { formatClockTime } from "./agendaEvents";
-import { DayTimeGrid, eventRangeFromSlots, slotAt, type DayGridEventDecoration, type DayGridPreview, type DayGridShade } from "./DayTimeGrid";
+import { DayTimeGrid, eventRangeFromSlots, slotAt, type DayGridEventDecoration, type DayGridPreview } from "./DayTimeGrid";
 import type { ScheduleEvent } from "./domain";
 import { isWorkingLocation } from "./WorkingLocation";
 import { workingSpans } from "./todayBooking";
@@ -18,24 +18,17 @@ export const DAY_VIEW_TAIL_MINUTES = 30;
  * Where Today's day view opens and how tall it is. With working hours, the
  * top is their start, or a little before now once now is inside them; the
  * grid is as tall as the working day, so what follows (Tomorrow) stays in
- * view, and evening hours scroll inside it. Outside time is shaded. Without
- * working hours, it opens on now at its old height and shades nothing.
+ * view, and evening hours scroll inside it. Without working hours, it opens
+ * on now at its old height.
  */
-export function dayViewLayout(workingHours: WorkingHours | null, now: Date): { scrollMinutes: number | null; heightPx: number | null; shade: DayGridShade[] } {
+export function dayViewLayout(workingHours: WorkingHours | null, now: Date): { scrollMinutes: number | null; heightPx: number | null } {
   const spans = workingSpans(workingHours, now);
-  if (!spans?.length) return { scrollMinutes: null, heightPx: null, shade: [] };
+  if (!spans?.length) return { scrollMinutes: null, heightPx: null };
   const start = spans[0].startMinutes;
   const end = spans.at(-1)!.endMinutes;
   const current = now.getHours() * 60 + now.getMinutes();
   const scrollMinutes = current > start && current < end ? Math.max(start, current - DAY_VIEW_LEAD_MINUTES) : start;
-  const shade: DayGridShade[] = [];
-  let cursor = 0;
-  for (const span of spans) {
-    if (span.startMinutes > cursor) shade.push({ dayIndex: 0, startMinutes: cursor, endMinutes: span.startMinutes });
-    cursor = Math.max(cursor, span.endMinutes);
-  }
-  if (cursor < 24 * 60) shade.push({ dayIndex: 0, startMinutes: cursor, endMinutes: 24 * 60 });
-  return { scrollMinutes, heightPx: Math.round((end - start + DAY_VIEW_TAIL_MINUTES) / 60 * HOUR_HEIGHT), shade };
+  return { scrollMinutes, heightPx: Math.round((end - start + DAY_VIEW_TAIL_MINUTES) / 60 * HOUR_HEIGHT) };
 }
 
 /** A timed event's place on the grid, in minutes after midnight. */
@@ -187,8 +180,6 @@ export function TodayDayView({ events, now, loading, error, onRetry, selectedEve
       columnProps={columnProps}
       scrollRef={gridRef}
       eventDecoration={eventDecoration}
-      shade={layout.shade}
-      shadeLabel="Outside working hours"
       shortTimes
       showDayLabels={false}
       showTimeZone={false}

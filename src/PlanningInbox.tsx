@@ -1,4 +1,4 @@
-import { CalendarClock } from "lucide-react";
+import { CalendarClock, Inbox } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { ContextRow } from "./ContextSections";
 import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
@@ -146,7 +146,7 @@ export function PlanningInbox({ entries, scope, onAddTask, status, unavailable =
   };
   return <section aria-label="Planning Inbox" className="planning-inbox">
     <header className="today-panel-heading">
-      <h2>Planning Inbox <span className="context-count" aria-label={`${items.length}${more ? " or more" : ""} unscheduled ${noun}`}>{items.length}{more ? "+" : ""}</span></h2>
+      <h2><Inbox size={ICON_SIZE.md} aria-hidden="true" />Planning Inbox <span className="context-count" aria-label={`${items.length}${more ? " or more" : ""} unscheduled ${noun}`}>{items.length}{more ? "+" : ""}</span></h2>
       {scope && filter !== "contacts" ? <span className="today-source-scope">Mail · {scope}</span> : null}
     </header>
     <div ref={tabs} className="planning-inbox-tabs" role="tablist" aria-label="Planning Inbox Filters" onKeyDown={move}>

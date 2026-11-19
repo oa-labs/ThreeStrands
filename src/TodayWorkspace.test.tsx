@@ -7,6 +7,7 @@ import { mailClient } from "./data/client";
 import type { PlanCandidate as SourceCandidate, PlanSourceKind, PlanSourcePage } from "./domain";
 import type { Account, CalendarAccount, CalendarOption, ContactProfile, DailyPlan, DailyPlanItem, Note, OpenPromise, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { HOUR_HEIGHT } from "./calendarTime";
+import { ICON_SIZE } from "./iconSizes";
 import type { WorkingHours } from "./todayInsights";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -1116,7 +1117,7 @@ describe("TodayWorkspace", () => {
       expect(ops).toHaveAccessibleDescription(/Has notes · 2 open commitments/);
     });
 
-    it("opens on the working day, shades the time outside it, and sizes the grid to fit", async () => {
+    it("opens on the working day and sizes the grid to fit without shading time outside it", async () => {
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
       renderToday({ calendarConnected: true, workingHours });
       const day = await screen.findByRole("group", { name: "Day view" });
@@ -1124,8 +1125,7 @@ describe("TodayWorkspace", () => {
       expect(day.style.getPropertyValue("--today-day-view-grid-h")).toBe(`${8.5 * HOUR_HEIGHT}px`);
       // Ten o'clock is inside working hours, so the top is half an hour before now.
       expect(day.querySelector<HTMLElement>(".calendar-week-scroll")!.scrollTop).toBe(9.5 * HOUR_HEIGHT - DAY_VIEW_LABEL_ROOM_PX);
-      const shaded = [...day.querySelectorAll<HTMLElement>(".calendar-outside-hours")].map((shade) => [shade.style.top, shade.style.height]);
-      expect(shaded).toEqual([["0px", `${9 * HOUR_HEIGHT}px`], [`${17 * HOUR_HEIGHT}px`, `${7 * HOUR_HEIGHT}px`]]);
+      expect(day.querySelector(".calendar-outside-hours")).toBeNull();
     });
 
     it("keeps its old opening and height without working hours", async () => {
@@ -1604,6 +1604,8 @@ describe("TodayWorkspace", () => {
     it("keeps the Agenda heading and navigation controls in place on every day", async () => {
       renderToday({ calendarConnected: true, calendarAccounts });
       const heading = screen.getByRole("heading", { name: "Agenda", level: 2 });
+      expect(heading.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+      expect(heading.querySelector("svg")).toHaveAttribute("width", String(ICON_SIZE.md));
       const controls = screen.getByRole("group", { name: "Schedule Date" });
       const navigation = controls.parentElement!;
       const buttons = within(controls).getAllByRole("button");

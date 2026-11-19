@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatClockTime } from "./agendaEvents";
+import { ICON_SIZE } from "./iconSizes";
 import { DONE_COLLAPSED_ROWS, DONE_FILTER_KEY, doneSummary, DoneCard, sortDoneEntries, uniqueDoneEntries, type DoneEntry } from "./DoneCard";
 
 const entry = (id: string, category: DoneEntry["category"], at: string | null, identities = [id]): DoneEntry => ({ id, identities, category, title: id, at, row: { onActivate: vi.fn() } });
@@ -20,6 +21,10 @@ describe("DoneCard", () => {
   it("names the heading, counts every row, and summarizes only the nonzero categories", () => {
     const view = render(<DoneCard {...defaults} entries={[entry("a", "tasks", at(9)), entry("b", "tasks", at(10)), entry("c", "tasks", at(11)), entry("d", "emails", at(12)), entry("e", "emails", at(13)), entry("f", "notes", at(14))]} />);
     expect(screen.getByRole("region", { name: "Done Today" })).toBeInTheDocument();
+    const icon = screen.getByRole("heading", { name: /Done Today/ }).querySelector("svg");
+    expect(icon).toHaveClass("lucide-circle-check");
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    expect(icon).toHaveAttribute("width", String(ICON_SIZE.md));
     expect(screen.getByLabelText("6 finished items")).toHaveTextContent("6");
     expect(screen.getByText("3 tasks · 2 emails · 1 note")).toBeInTheDocument();
     view.rerender(<DoneCard {...defaults} entries={[entry("a", "notes", at(9))]} />);

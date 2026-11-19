@@ -148,12 +148,12 @@ describe("TodayDayView creating events", () => {
     expect(dragging.onCreateEvent).not.toHaveBeenCalled();
   });
 
-  it("does nothing without a handler, and names the shaded hours", () => {
-    const { column } = renderCreating({ onCreateEvent: undefined, workingHours: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", workingWindows: [{ weekday: 3, start: "09:00", end: "17:00" }] } });
+  it("does nothing without a handler and leaves working-hour gaps unshaded", () => {
+    const { column } = renderCreating({ onCreateEvent: undefined, workingHours: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", workingWindows: [{ weekday: 3, start: "09:00", end: "12:00" }, { weekday: 3, start: "13:00", end: "17:00" }] } });
     press(column, 12 * 60);
     expect(column.querySelector(".calendar-create-selection")).toBeNull();
-    expect(column).toHaveAccessibleDescription("Shaded time is outside working hours");
-    expect(column.querySelector(".calendar-outside-hours")).toHaveAttribute("title", "Outside working hours");
+    expect(column).not.toHaveAccessibleDescription();
+    expect(column.querySelector(".calendar-outside-hours")).toBeNull();
   });
 
   it("leaves room above the first working hour so its label is not cut off", () => {

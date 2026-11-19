@@ -44,9 +44,6 @@ export type DayGridEventDecoration = {
   selected?: boolean;
 };
 
-/** A stretch of a day column to shade, such as time outside working hours. */
-export type DayGridShade = { dayIndex: number; startMinutes: number; endMinutes: number };
-
 /** A highlighted stretch of one day column: a selection or a drop preview. */
 export type DayGridPreview = { dayIndex: number; startMinutes: number; endMinutes: number; label?: string };
 
@@ -96,8 +93,6 @@ export function DayTimeGrid({
   timeZoneAt = days[0],
   columnProps,
   eventDecoration,
-  shade,
-  shadeLabel,
   shortTimes = false,
   showDayLabels = true,
   showTimeZone = true,
@@ -121,10 +116,6 @@ export function DayTimeGrid({
   /** Extra attributes for a day column, such as a label and pointer handlers. */
   columnProps?(day: Date, dayIndex: number): HTMLAttributes<HTMLDivElement>;
   eventDecoration?(event: ScheduleEvent): DayGridEventDecoration | null;
-  /** Stretches drawn shaded behind the events; Calendar passes none. */
-  shade?: DayGridShade[];
-  /** What the shading means; shown as a tooltip on the shaded stretch and read once, for assistive technology, in the day's column description. */
-  shadeLabel?: string;
   /** A block too short for two lines still shows its start time after the title, with or without a location. */
   shortTimes?: boolean;
   /** Shows the weekday-and-date label above each day. A single-day view whose page already names the date hides it; the day's column is then named instead. */
@@ -249,19 +240,13 @@ export function DayTimeGrid({
           </div>
           {days.map((day, dayIndex) => (
             <div
-              {...(showDayLabels ? {} : { role: "group", "aria-label": fullDateLabel(day), "aria-description": shadeLabel && shade?.some((span) => span.dayIndex === dayIndex) ? `Shaded time is ${shadeLabel.toLowerCase()}` : undefined })}
+              {...(showDayLabels ? {} : { role: "group", "aria-label": fullDateLabel(day) })}
               {...columnProps?.(day, dayIndex)}
               className={DAY_COLUMN_CLASS}
               key={day.toDateString()}
               data-day-index={dayIndex}
             >
               {HOURS.map((hour) => <div className="calendar-hour-line" key={hour} />)}
-              {shade?.filter((span) => span.dayIndex === dayIndex && span.endMinutes > span.startMinutes).map((span) => (
-                <div key={`${span.startMinutes}-${span.endMinutes}`} className="calendar-outside-hours" aria-hidden="true" title={shadeLabel} style={{
-                  top: span.startMinutes / 60 * HOUR_HEIGHT,
-                  height: (span.endMinutes - span.startMinutes) / 60 * HOUR_HEIGHT,
-                }} />
-              ))}
               {preview?.dayIndex === dayIndex ? (
                 <div className="calendar-create-selection" aria-hidden="true" style={{
                   top: preview.startMinutes / 60 * HOUR_HEIGHT,

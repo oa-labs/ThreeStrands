@@ -510,9 +510,9 @@ and day views and by Today and the Fit step. Calendar's behavior does not change
     Mail, Goals, and Notes sit behind **More Sources** (`overflow`) and join the
     row while chosen; arrow keys still move through every source.
   - The day view opens on the default profile's working hours (their start, or
-    half an hour before now inside them), shades time outside them
-    (`DayTimeGrid`'s `shade`), and is as tall as the working day so Tomorrow stays
-    in view (`dayViewLayout`). Unknown hours keep the old opening and height.
+    half an hour before now inside them), and is as tall as the working day so
+    Tomorrow stays in view (`dayViewLayout`). Working-hour gaps and time outside
+    them are not shaded. Unknown hours keep the old opening and height.
   - Finished meetings carry `data-past` and dim; only the meeting being prepared
     carries `data-selected`. The "selected" look the developer saw was Calendar's
     unanswered-invitation style (white fill, 2px outline), which Today now draws
@@ -707,7 +707,7 @@ decision is one guarded item-level write with Undo.
 
 ### Right column: tomorrow
 
-Tomorrow's day view (the same shared grid, working hours shaded, readiness marks
+Tomorrow's day view (the same shared grid, uniform background, readiness marks
 on meetings, **Prepare** on choosing a meeting), with the items carried to
 tomorrow listed above it as the start of tomorrow's plan, and **Plan Tomorrow**,
 which opens the Plan Today routine for tomorrow with those items selected. The
@@ -784,7 +784,7 @@ device-local input.
 - **Right column (`EveningTomorrow`).** The items carried to tomorrow
   (`carriedToTomorrow`: today's Not today lines deferred to tomorrow's date),
   **Plan Tomorrow**, and tomorrow's day view (`TodayDayView` with `day`), with
-  working hours shaded and readiness marks, since the readiness read and the
+  a uniform background and readiness marks, since the readiness read and the
   unread-from-attendees counts include tomorrow's meetings in the evening view.
   Choosing a meeting prepares it in the left column in place of the review, and
   `p` with no meeting in focus prepares tomorrow's first when today's are over.
