@@ -21,6 +21,32 @@ describe("useDoneOnDay", () => {
     await waitFor(() => expect(view.result.current.notes).toEqual([]));
   });
 
+  it("stays settled while a background refresh reads the same day", async () => {
+    vi.spyOn(mailClient, "listSentBetween").mockResolvedValue([]);
+    const read = vi.spyOn(mailClient, "listNotesDoneBetween").mockResolvedValue([]);
+    const view = renderHook(({ selected, revision }) => useDoneOnDay(selected, null, revision, true), {
+      initialProps: { selected: day, revision: "1" },
+    });
+    expect(view.result.current.loading).toBe(true);
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    let finish!: (items: DoneNote[]) => void;
+    read.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    view.rerender({ selected: day, revision: "2" });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(view.result.current.loading).toBe(false);
+    await act(async () => finish([edited]));
+    await waitFor(() => expect(view.result.current.notes).toEqual([edited]));
+    read.mockImplementationOnce(() => new Promise(() => {}));
+    act(() => window.dispatchEvent(new CustomEvent(NOTES_CHANGED)));
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(view.result.current.loading).toBe(false);
+    expect(view.result.current.notes).toEqual([edited]);
+    read.mockImplementationOnce(() => new Promise(() => {}));
+    view.rerender({ selected: new Date(2026, 10, 16, 12), revision: "2" });
+    expect(view.result.current.loading).toBe(true);
+    expect(view.result.current.notes).toEqual([]);
+  });
+
   it("keeps note activity on a failed refresh and ignores a late response for another day", async () => {
     vi.spyOn(mailClient, "listSentBetween").mockResolvedValue([]);
     const read = vi.spyOn(mailClient, "listNotesDoneBetween").mockResolvedValue([edited]);

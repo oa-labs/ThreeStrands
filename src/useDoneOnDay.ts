@@ -8,27 +8,27 @@ import { useNoteChanges } from "./noteMutations";
 /** Most notes the Done card reads for one day. */
 export const DONE_NOTES_LIMIT = 100;
 
-type Loaded<T> = { key: string; items: T[]; error: string | null };
-const empty = <T,>(key: string): Loaded<T> => ({ key, items: [], error: null });
+type Loaded<T> = { key: string; items: T[]; error: string | null; settled: boolean };
+const empty = <T,>(key: string): Loaded<T> => ({ key, items: [], error: null, settled: false });
 
-/** Reads one source for a day, ignoring answers that arrive after the day, account or refresh moved on. */
+/**
+ * Reads one source for a day, ignoring answers that arrive after the day, account or refresh moved on.
+ * It reports loading only until the first answer for a day and account; background refreshes keep the
+ * last answer on screen so the card never flickers back to a loading message.
+ */
 function useDaySource<T>(key: string, enabled: boolean, refreshKey: string, read: () => Promise<T[]>, watchNotes = false) {
   const [state, setState] = useState<Loaded<T>>(() => empty(key));
-  const [loading, setLoading] = useState(enabled);
   const version = useRef(0);
   const readRef = useRef(read);
   readRef.current = read;
   const reload = useCallback(async () => {
     const request = ++version.current;
-    if (!enabled) { setLoading(false); return; }
-    setLoading(true);
+    if (!enabled) return;
     try {
       const items = await readRef.current();
-      if (request === version.current) setState({ key, items, error: null });
+      if (request === version.current) setState({ key, items, error: null, settled: true });
     } catch (reason) {
-      if (request === version.current) setState((previous) => ({ key, items: previous.key === key ? previous.items : [], error: errorMessage(reason) }));
-    } finally {
-      if (request === version.current) setLoading(false);
+      if (request === version.current) setState((previous) => ({ key, items: previous.key === key ? previous.items : [], error: errorMessage(reason), settled: true }));
     }
   }, [key, enabled]);
   const cancel = useCallback(() => { version.current++; }, []);
@@ -38,7 +38,7 @@ function useDaySource<T>(key: string, enabled: boolean, refreshKey: string, read
   }, [reload, refreshKey, cancel]);
   useNoteChanges(watchNotes ? reload : noop);
   const current = state.key === key ? state : empty<T>(key);
-  return { ...current, loading: enabled && (loading || state.key !== key) };
+  return { ...current, loading: enabled && !current.settled };
 }
 const noop = () => {};
 
