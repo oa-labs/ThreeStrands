@@ -56,6 +56,7 @@ const MIGRATIONS: &[Migration] = &[
     (109, to_v109),
     (110, to_v110),
     (111, to_v111),
+    (112, to_v112),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1512,6 +1513,23 @@ fn ensure_note_starred_column(tx: &rusqlite::Transaction) -> Result<(), String> 
     Ok(())
 }
 
+/// A saved contact can remember which timezone their proposed meeting times
+/// are in. Null means "same as mine", which is every existing contact.
+fn to_v112(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('contacts') WHERE name='time_zone')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
+    if !exists {
+        tx.execute_batch("ALTER TABLE contacts ADD COLUMN time_zone TEXT;")
+            .map_err(error)?;
+    }
+    Ok(())
+}
+
 fn to_v111(tx: &rusqlite::Transaction) -> Result<(), String> {
     ensure_note_starred_column(tx)?;
     tx.execute_batch("CREATE INDEX IF NOT EXISTS notes_starred ON notes(starred, trashed);")
@@ -2098,6 +2116,32 @@ mod tests {
         assert_eq!(version, super::LATEST_VERSION);
         // Running it again changes nothing.
         super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v112_adds_a_nullable_contact_time_zone_and_keeps_contacts() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE contacts DROP COLUMN time_zone; PRAGMA user_version=111;
+                 INSERT INTO contacts(id,display_name,updated_at) VALUES('c','Ana','2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let (name, zone): (String, Option<String>) = connection
+            .query_row(
+                "SELECT display_name,time_zone FROM contacts WHERE id='c'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((name.as_str(), zone), ("Ana", None));
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
     }
 
     #[test]

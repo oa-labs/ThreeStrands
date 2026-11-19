@@ -25,7 +25,7 @@ pub(crate) const MAX_KEEP_IN_TOUCH_DAYS: i64 = 730;
 const MAX_KEEP_IN_TOUCH_SNOOZE_DAYS: i64 = 730;
 /// Birthday, interval, and keep-in-touch timestamps, read by [`contact_extras`].
 const CONTACT_EXTRA_COLUMNS: &str =
-    "c.birthday,c.kit_interval_days,c.kit_started_at,c.kit_snoozed_until,c.kit_snoozed_at,c.kit_last_touch_at";
+    "c.birthday,c.kit_interval_days,c.kit_started_at,c.kit_snoozed_until,c.kit_snoozed_at,c.kit_last_touch_at,c.time_zone";
 
 pub(super) fn index_contact_message(
     tx: &rusqlite::Transaction<'_>,
@@ -160,6 +160,7 @@ impl Database {
                 addresses: vec![email],
                 birthday: None,
                 keep_in_touch: None,
+                time_zone: None,
             })?;
         }
         Ok(())
@@ -197,9 +198,9 @@ impl Database {
                 row.get::<_,Option<String>>(13)?,contact_extras(row,14)?,
             )))?;
             rows.map(|row|{
-                let(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,(birthday,keep_in_touch))=row?;
+                let(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,(birthday,keep_in_touch,time_zone))=row?;
                 let keep_in_touch_due_at=keep_in_touch_due_at(&keep_in_touch,last_interacted_at.as_deref());
-                Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses:serde_json::from_str(&addresses).unwrap_or_default(),sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at})
+                Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses:serde_json::from_str(&addresses).unwrap_or_default(),sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at,time_zone})
             }).collect()
         })
     }
@@ -280,7 +281,7 @@ impl Database {
             links,
             photo,
             favorite,
-            (birthday, keep_in_touch),
+            (birthday, keep_in_touch, time_zone),
         ) in saved
         {
             let addresses = self.contact_addresses(&id)?;
@@ -340,6 +341,7 @@ impl Database {
                 birthday,
                 keep_in_touch,
                 keep_in_touch_due_at,
+                time_zone,
             });
         }
         // The existing ranked suggestion query supplies mail-derived entries and
@@ -376,6 +378,7 @@ impl Database {
                 birthday: None,
                 keep_in_touch: KeepInTouch::default(),
                 keep_in_touch_due_at: None,
+                time_zone: None,
             });
             profile.sent_count += item.sent_count;
             profile.received_count += item.received_count;
@@ -461,18 +464,94 @@ impl Database {
                 birthday: None,
                 keep_in_touch: KeepInTouch::default(),
                 keep_in_touch_due_at: None,
+                time_zone: None,
             }));
         }
         self.with_connection(|connection| {
             let row = connection.query_row(
                 &format!("SELECT c.id,c.display_name,c.role,c.company,c.location,c.bio,c.notes,c.links_json,c.photo_data,c.favorite,{CONTACT_EXTRA_COLUMNS} FROM contacts c WHERE c.id=?1"),[id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,row.get::<_,Option<String>>(3)?,row.get::<_,Option<String>>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,String>(7)?,row.get::<_,Option<String>>(8)?,row.get::<_,bool>(9)?,contact_extras(row,10)?))).optional()?;
             Ok(row)
-        })?.map(|(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,(birthday,keep_in_touch))| {
+        })?.map(|(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,(birthday,keep_in_touch,time_zone))| {
             let addresses=self.contact_addresses(&id)?;
             let (sent_count,received_count,last_interacted_at)=self.contact_interaction_summary(&addresses)?;
             let keep_in_touch_due_at=keep_in_touch_due_at(&keep_in_touch,last_interacted_at.as_deref());
-            Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at})
+            Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at,time_zone})
         }).transpose()
+    }
+
+    /// The timezone remembered for a saved contact with this address, if any.
+    pub fn contact_time_zone(&self, email: &str) -> DbResult<Option<String>> {
+        let email = email.trim().to_ascii_lowercase();
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT c.time_zone FROM contacts c JOIN contact_addresses a ON a.contact_id=c.id WHERE a.email=?1",
+                    [&email],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten())
+        })
+    }
+
+    /// Remembers (or, with `None`, forgets) the timezone a sender's proposed
+    /// times are in. Setting a zone for someone with no saved contact saves
+    /// one, since the zone has to live somewhere; clearing it for such a
+    /// person does nothing. Returns the contact that changed.
+    pub fn set_contact_time_zone(
+        &self,
+        email: &str,
+        display_name: Option<&str>,
+        time_zone: Option<&str>,
+    ) -> DbResult<Option<ContactProfile>> {
+        let email = email.trim().to_ascii_lowercase();
+        if !email.contains('@') || email.len() > 320 || email.chars().any(char::is_whitespace) {
+            return Err(DatabaseError::invalid("Enter a valid email address"));
+        }
+        let zone = time_zone.map(validate_time_zone).transpose()?;
+        let owner: Option<String> = self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT contact_id FROM contact_addresses WHERE email=?1",
+                    [&email],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })?;
+        let Some(id) = owner else {
+            if zone.is_none() {
+                return Ok(None);
+            }
+            return self
+                .save_contact_profile(&SaveContactRequest {
+                    id: None,
+                    display_name: display_name
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(|name| name.chars().take(200).collect()),
+                    role: None,
+                    company: None,
+                    location: None,
+                    bio: None,
+                    notes: None,
+                    links: Vec::new(),
+                    photo_data: None,
+                    favorite: false,
+                    addresses: vec![email],
+                    birthday: None,
+                    keep_in_touch: None,
+                    time_zone: Some(zone),
+                })
+                .map(Some);
+        };
+        self.with_connection(|connection| {
+            connection.execute(
+                "UPDATE contacts SET time_zone=?1,updated_at=?2 WHERE id=?3",
+                params![zone, Utc::now().to_rfc3339(), id],
+            )?;
+            Ok(())
+        })?;
+        self.get_contact_profile(&id)
     }
 
     pub fn save_contact_profile(&self, request: &SaveContactRequest) -> DbResult<ContactProfile> {
@@ -631,6 +710,7 @@ impl Database {
             addresses: profile.addresses,
             birthday: None,
             keep_in_touch: None,
+            time_zone: None,
         })?;
         Ok(saved.id)
     }
@@ -876,7 +956,7 @@ fn clean_contact_text(value: Option<&str>, max: usize) -> DbResult<Option<String
 fn contact_extras(
     row: &rusqlite::Row<'_>,
     start: usize,
-) -> rusqlite::Result<(Option<String>, KeepInTouch)> {
+) -> rusqlite::Result<(Option<String>, KeepInTouch, Option<String>)> {
     Ok((
         row.get(start)?,
         KeepInTouch {
@@ -886,6 +966,7 @@ fn contact_extras(
             snoozed_at: row.get(start + 4)?,
             last_touch_at: row.get(start + 5)?,
         },
+        row.get(start + 6)?,
     ))
 }
 
@@ -893,6 +974,16 @@ fn parse_instant(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|value| value.with_timezone(&Utc))
+}
+
+/// A remembered zone must be a real IANA name, so a bad value can never reach
+/// the proposed-time checks.
+pub(crate) fn validate_time_zone(zone: &str) -> DbResult<String> {
+    let zone = zone.trim();
+    if zone.len() > 64 || zone.parse::<chrono_tz::Tz>().is_err() {
+        return Err(DatabaseError::invalid("Choose a valid timezone"));
+    }
+    Ok(zone.to_string())
 }
 
 pub(crate) fn validate_keep_in_touch_days(days: i64) -> DbResult<()> {
@@ -1017,6 +1108,11 @@ pub(super) fn save_contact_on(
     if let Some(keep_in_touch) = &request.keep_in_touch {
         validate_keep_in_touch(keep_in_touch)?;
     }
+    let replace_time_zone = request.time_zone.is_some();
+    let time_zone = match request.time_zone.as_ref().and_then(Option::as_deref) {
+        Some(zone) => Some(validate_time_zone(zone)?),
+        None => None,
+    };
     let replace_keep_in_touch = request.keep_in_touch.is_some();
     let keep_in_touch = request.keep_in_touch.clone().unwrap_or_default();
     let mut addresses = Vec::new();
@@ -1101,12 +1197,13 @@ pub(super) fn save_contact_on(
                 return Err(DatabaseError::invalid("That address already belongs to another saved contact. Remove it there before linking it here."));
             }
         }
-        tx.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,role=excluded.role,company=excluded.company,location=excluded.location,bio=excluded.bio,notes=excluded.notes,links_json=excluded.links_json,photo_data=excluded.photo_data,favorite=excluded.favorite,updated_at=excluded.updated_at,birthday=excluded.birthday,
+        tx.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at,time_zone) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?19) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,role=excluded.role,company=excluded.company,location=excluded.location,bio=excluded.bio,notes=excluded.notes,links_json=excluded.links_json,photo_data=excluded.photo_data,favorite=excluded.favorite,updated_at=excluded.updated_at,birthday=excluded.birthday,
                 kit_interval_days=CASE WHEN ?18 THEN excluded.kit_interval_days ELSE contacts.kit_interval_days END,
                 kit_started_at=CASE WHEN ?18 THEN excluded.kit_started_at ELSE contacts.kit_started_at END,
                 kit_snoozed_until=CASE WHEN ?18 THEN excluded.kit_snoozed_until ELSE contacts.kit_snoozed_until END,
                 kit_snoozed_at=CASE WHEN ?18 THEN excluded.kit_snoozed_at ELSE contacts.kit_snoozed_at END,
-                kit_last_touch_at=CASE WHEN ?18 THEN excluded.kit_last_touch_at ELSE contacts.kit_last_touch_at END",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339(),birthday,keep_in_touch.interval_days,keep_in_touch.started_at,keep_in_touch.snoozed_until,keep_in_touch.snoozed_at,keep_in_touch.last_touch_at,replace_keep_in_touch])?;
+                kit_last_touch_at=CASE WHEN ?18 THEN excluded.kit_last_touch_at ELSE contacts.kit_last_touch_at END,
+                time_zone=CASE WHEN ?20 THEN excluded.time_zone ELSE contacts.time_zone END",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339(),birthday,keep_in_touch.interval_days,keep_in_touch.started_at,keep_in_touch.snoozed_until,keep_in_touch.snoozed_at,keep_in_touch.last_touch_at,replace_keep_in_touch,time_zone,replace_time_zone])?;
         tx.execute("DELETE FROM contact_addresses WHERE contact_id=?1", [&id])?;
         for (position, email) in addresses.iter().enumerate() {
             insert_contact_address(tx, &id, email, position as i64)?;
@@ -1144,6 +1241,7 @@ mod tests {
             addresses: addresses.iter().map(|value| value.to_string()).collect(),
             birthday: None,
             keep_in_touch: None,
+            time_zone: None,
         };
         let saved = database
             .save_contact_profile(&request(None, &["zed@work.example", "Zed@Home.example"]))
@@ -1200,6 +1298,7 @@ mod tests {
                 addresses: vec!["  Jane@Example.com ".into()],
                 birthday: None,
                 keep_in_touch: None,
+                time_zone: None,
             })
             .unwrap();
         assert_eq!(
@@ -1343,7 +1442,7 @@ pub(super) fn insert_imported_contact(
     contact: &crate::transfer::TransferContact,
 ) -> DbResult<()> {
     let kit = &contact.keep_in_touch;
-    connection.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(super::serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339(),contact.birthday,kit.interval_days,kit.started_at,kit.snoozed_until,kit.snoozed_at,kit.last_touch_at])?;
+    connection.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at,time_zone) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(super::serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339(),contact.birthday,kit.interval_days,kit.started_at,kit.snoozed_until,kit.snoozed_at,kit.last_touch_at,contact.time_zone])?;
     Ok(())
 }
 

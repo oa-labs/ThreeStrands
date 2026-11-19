@@ -765,6 +765,10 @@ pub struct ContactProfile {
     /// `keep_in_touch` and mail history on every read; never stored.
     #[serde(default)]
     pub keep_in_touch_due_at: Option<String>,
+    /// IANA zone this person's proposed times are assumed to be in. `None`
+    /// means the same zone as the user.
+    #[serde(default)]
+    pub time_zone: Option<String>,
 }
 
 /// Keep-in-touch reminder settings stored on a saved contact. Every field is
@@ -804,10 +808,14 @@ pub struct ContactRecord {
     pub birthday: Option<String>,
     #[serde(default)]
     pub keep_in_touch: KeepInTouch,
+    /// Added after 0.67.0; records from older builds omit it.
+    #[serde(default)]
+    pub time_zone: Option<String>,
 }
 impl From<&ContactProfile> for ContactRecord {
     fn from(c: &ContactProfile) -> Self {
         Self {
+            time_zone: c.time_zone.clone(),
             birthday: c.birthday.clone(),
             keep_in_touch: c.keep_in_touch.clone(),
             id: c.id.clone(),
@@ -980,6 +988,10 @@ pub struct SaveContactRequest {
     /// holding an older copy can never overwrite a newer snooze or touch.
     #[serde(skip)]
     pub keep_in_touch: Option<KeepInTouch>,
+    /// `None` keeps the stored zone; `Some(None)` clears it. Never read from
+    /// the webview, so a profile form holding an older copy cannot overwrite it.
+    #[serde(skip)]
+    pub time_zone: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

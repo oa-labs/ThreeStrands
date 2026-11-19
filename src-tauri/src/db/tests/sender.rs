@@ -762,6 +762,7 @@ fn save_contact(database: &crate::db::Database, name: &str, addresses: &[&str]) 
             photo_data: None,
             favorite: false,
             addresses: addresses.iter().map(|address| (*address).into()).collect(),
+            time_zone: None,
         })
         .unwrap();
 }

@@ -56,6 +56,7 @@ fn contact(db: &Database, address: &str) -> crate::models::ContactProfile {
         photo_data: None,
         favorite: false,
         addresses: vec![address.into()],
+        time_zone: None,
     })
     .unwrap()
 }

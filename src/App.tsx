@@ -6,6 +6,7 @@ import { meetingDate, meetingEventReference, primaryMeetingNote } from "./meetin
 import { preparationKey } from "./meetingPrep";
 import { MeetingPrepActions, reservePrepTime } from "./meetingPrepActions";
 import type { MeetingCommitment } from "./domain";
+import { parseAddress } from "./emailAddress";
 import type { MeetingEntry } from "./noteMeetings";
 import { dailyNoteName } from "./noteDates";
 import type { ScheduleEvent, ThreadTask } from "./domain";
@@ -1773,6 +1774,12 @@ export function App() {
               key={`${visibleDetail.thread.id}:${visibleDetail.thread.lastMessageAt}`}
               compact
               offeredTimes={offeredTimes}
+              offeredSender={(() => {
+                const message = visibleDetail.messages.find((item) => item.id === offeredTimes?.sourceMessageId);
+                if (!message) return null;
+                const parsed = parseAddress(message.sender);
+                return parsed.email ? { email: parsed.email.toLowerCase(), name: parsed.name && parsed.name !== parsed.email ? parsed.name : null } : null;
+              })()}
               offeredTimesError={offeredTimesError}
               onRetryOfferedTimes={aiSummaryAvailable && aiActionAvailable ? () => runBrief({ force: true }) : undefined}
               ownEmails={accounts.map((account) => account.email)}

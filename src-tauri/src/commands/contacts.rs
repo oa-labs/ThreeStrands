@@ -107,6 +107,32 @@ pub(crate) async fn get_contact_profile(
     run_database_task(move || database.get_contact_profile(&id)).await
 }
 
+#[tauri::command]
+pub(crate) async fn get_contact_time_zone(
+    email: String,
+    state: State<'_, AppState>,
+) -> AppResult<Option<String>> {
+    let database = state.database.clone();
+    run_database_task(move || database.contact_time_zone(&email)).await
+}
+
+#[tauri::command(async)]
+pub(crate) fn set_contact_time_zone(
+    email: String,
+    display_name: Option<String>,
+    time_zone: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    if let Some(profile) = state.database.set_contact_time_zone(
+        &email,
+        display_name.as_deref(),
+        time_zone.as_deref(),
+    )? {
+        record_synced_contact(&state, &profile)?;
+    }
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub(crate) fn save_contact_profile(
     request: SaveContactRequest,

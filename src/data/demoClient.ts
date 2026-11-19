@@ -964,6 +964,21 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       savedContactProfiles = [...savedContactProfiles.filter((profile) => profile.id !== id), candidate];
       return structuredClone(candidate);
     },
+    async getContactTimeZone(email) {
+      const address = email.trim().toLocaleLowerCase();
+      return savedContactProfiles.find((profile) => profile.addresses.includes(address))?.timeZone ?? null;
+    },
+    async setContactTimeZone(email, displayName, timeZone) {
+      const address = email.trim().toLocaleLowerCase();
+      const owner = savedContactProfiles.find((profile) => profile.addresses.includes(address));
+      if (owner) {
+        savedContactProfiles = savedContactProfiles.map((profile) => profile === owner ? { ...profile, timeZone } : profile);
+        return;
+      }
+      if (!timeZone) return;
+      const saved = await client.saveContactProfile({ id: null, displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses: [address], birthday: null });
+      savedContactProfiles = savedContactProfiles.map((profile) => profile.id === saved.id ? { ...profile, timeZone } : profile);
+    },
     async previewContactImport() { throw new Error("Contact file import is available in the desktop app."); },
     async exportContacts() { throw new Error("Contact file export is available in the desktop app."); },
     async importContacts(requests) {

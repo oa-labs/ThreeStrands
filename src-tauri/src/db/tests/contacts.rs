@@ -64,6 +64,7 @@ fn saved_contact_search_links_addresses_and_enforces_unique_ownership() {
             photo_data: None,
             favorite: true,
             addresses: vec!["jane@example.com".into(), "j.rivera@example.com".into()],
+            time_zone: None,
         })
         .unwrap();
     assert_eq!(
@@ -92,6 +93,7 @@ fn saved_contact_search_links_addresses_and_enforces_unique_ownership() {
         photo_data: None,
         favorite: false,
         addresses: vec!["jane@example.com".into()],
+        time_zone: None,
     });
     assert!(duplicate.is_err());
 }
@@ -117,6 +119,7 @@ fn contact_ids_for_addresses_maps_every_linked_address_to_its_saved_owner() {
                 "jane@example.com".into(),
                 "j.rivera@work.example.com".into(),
             ],
+            time_zone: None,
         })
         .unwrap();
     let owners = database
@@ -169,6 +172,7 @@ fn reusing_a_removed_address_cannot_overwrite_the_previous_profile_id() {
             photo_data: None,
             favorite: false,
             addresses: vec!["x@x.example".into()],
+            time_zone: None,
         })
         .unwrap();
     let moved = database
@@ -186,6 +190,7 @@ fn reusing_a_removed_address_cannot_overwrite_the_previous_profile_id() {
             photo_data: None,
             favorite: false,
             addresses: vec!["y@y.example".into()],
+            time_zone: None,
         })
         .unwrap();
     assert_eq!(moved.id, original.id);
@@ -205,6 +210,7 @@ fn reusing_a_removed_address_cannot_overwrite_the_previous_profile_id() {
             photo_data: None,
             favorite: false,
             addresses: vec!["x@x.example".into()],
+            time_zone: None,
         })
         .unwrap();
     assert_ne!(reused.id, original.id);
@@ -229,6 +235,7 @@ fn reusing_a_removed_address_cannot_overwrite_the_previous_profile_id() {
             photo_data: None,
             favorite: false,
             addresses: vec![pin_email.into()],
+            time_zone: None,
         })
         .unwrap();
     database
@@ -246,6 +253,7 @@ fn reusing_a_removed_address_cannot_overwrite_the_previous_profile_id() {
             photo_data: None,
             favorite: false,
             addresses: vec!["moved@x.example".into()],
+            time_zone: None,
         })
         .unwrap();
     database
@@ -541,6 +549,7 @@ fn contact_list_uses_sent_to_history_and_timeline_combines_accounts() {
             photo_data: None,
             favorite: false,
             addresses: vec!["jane@example.com".into()],
+            time_zone: None,
         })
         .unwrap();
     let timeline = database.contact_timeline(&saved.id, 0, 10).unwrap();
@@ -608,6 +617,7 @@ fn contact_list_uses_sent_to_history_and_timeline_combines_accounts() {
             photo_data: None,
             favorite: false,
             addresses: vec!["taylor@example.com".into()],
+            time_zone: None,
         })
         .unwrap();
     assert!(database
@@ -644,6 +654,7 @@ fn contact_list_uses_sent_to_history_and_timeline_combines_accounts() {
             photo_data: None,
             favorite: false,
             addresses: vec!["newfriend@example.com".into()],
+            time_zone: None,
         })
         .unwrap();
     assert_eq!(
@@ -690,6 +701,7 @@ fn contact_timeline_shows_the_address_used_on_the_latest_matching_message() {
             photo_data: None,
             favorite: false,
             addresses: vec!["jane@example.com".into(), "jane@work.example.com".into()],
+            time_zone: None,
         })
         .unwrap();
 
@@ -811,6 +823,7 @@ fn contact_activity_counts_every_address_and_lists_arrivals_newest_first() {
             photo_data: None,
             favorite: false,
             addresses: vec!["jane@example.com".into(), "jane@work.example.com".into()],
+            time_zone: None,
         })
         .unwrap();
 
@@ -1187,6 +1200,7 @@ fn contact_tasks_span_every_conversation_with_the_person_and_only_open_work() {
             photo_data: None,
             favorite: false,
             addresses: vec!["jane@example.com".into(), "jane@work.example.com".into()],
+            time_zone: None,
         })
         .unwrap();
     assert_eq!(
@@ -1241,6 +1255,7 @@ fn removing_an_account_clears_its_local_contact_interactions_but_keeps_saved_pro
             photo_data: None,
             favorite: false,
             addresses: vec!["sam@example.com".into()],
+            time_zone: None,
         })
         .unwrap();
     assert_eq!(
@@ -1272,6 +1287,7 @@ fn contact_request(name: &str, email: &str) -> SaveContactRequest {
         photo_data: None,
         favorite: false,
         addresses: vec![email.into()],
+        time_zone: None,
     }
 }
 
@@ -1367,4 +1383,70 @@ fn a_gmail_message_from_a_non_login_address_is_received_as_before() {
         )
         .unwrap();
     assert_eq!(direction, "received");
+}
+
+#[test]
+fn a_contacts_remembered_time_zone_is_saved_cleared_and_kept_across_profile_saves() {
+    let database = database();
+    // Nobody saved yet: clearing does nothing, setting saves the person.
+    assert!(database
+        .set_contact_time_zone("ana@example.com", Some("Ana"), None)
+        .unwrap()
+        .is_none());
+    assert!(database.list_saved_contact_profiles().unwrap().is_empty());
+    database
+        .set_contact_time_zone(" Ana@Example.com ", Some("Ana"), Some("Europe/London"))
+        .unwrap();
+    let saved = database.list_saved_contact_profiles().unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].display_name.as_deref(), Some("Ana"));
+    assert!(!saved[0].favorite);
+    assert_eq!(saved[0].time_zone.as_deref(), Some("Europe/London"));
+    assert_eq!(
+        database
+            .contact_time_zone("ana@example.com")
+            .unwrap()
+            .as_deref(),
+        Some("Europe/London")
+    );
+    // The profile form never sends the zone, so saving it keeps the zone.
+    let mut request = SaveContactRequest {
+        id: Some(saved[0].id.clone()),
+        display_name: Some("Ana B".into()),
+        role: None,
+        company: None,
+        location: None,
+        bio: None,
+        notes: None,
+        links: vec![],
+        photo_data: None,
+        favorite: false,
+        addresses: vec!["ana@example.com".into()],
+        birthday: None,
+        keep_in_touch: None,
+        time_zone: None,
+    };
+    database.save_contact_profile(&request).unwrap();
+    assert_eq!(
+        database
+            .contact_time_zone("ana@example.com")
+            .unwrap()
+            .as_deref(),
+        Some("Europe/London")
+    );
+    request.time_zone = Some(None);
+    database.save_contact_profile(&request).unwrap();
+    assert_eq!(database.contact_time_zone("ana@example.com").unwrap(), None);
+    // Setting and clearing on an existing contact.
+    database
+        .set_contact_time_zone("ana@example.com", None, Some("Asia/Tokyo"))
+        .unwrap();
+    database
+        .set_contact_time_zone("ana@example.com", None, None)
+        .unwrap();
+    assert_eq!(database.contact_time_zone("ana@example.com").unwrap(), None);
+    assert_eq!(database.list_saved_contact_profiles().unwrap().len(), 1);
+    assert!(database
+        .set_contact_time_zone("ana@example.com", None, Some("Not/AZone"))
+        .is_err());
 }

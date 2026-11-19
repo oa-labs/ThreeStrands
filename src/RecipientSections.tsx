@@ -43,7 +43,7 @@ export const AVAILABILITY_SECTION_ID = "availability-section";
  * changed, Re-read reads them afresh; before that it could only repeat the
  * same search, so it is not offered. The provider never sees the calendar.
  */
-export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, offeredTimes = null, offeredTimesError = null, onRetryOfferedTimes, onInsertTimes, onAcceptTime, onOpenCalendarSettings }: {
+export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, offeredTimes = null, offeredSender = null, offeredTimesError = null, onRetryOfferedTimes, onInsertTimes, onAcceptTime, onOpenCalendarSettings }: {
   preferences: AvailabilityPreferences;
   /** Draft Assist is on and an AI provider is ready. */
   ai: boolean;
@@ -65,6 +65,8 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
    */
   offered?: boolean;
   offeredTimes?: OfferedTimes | null;
+  /** Who sent the offered times, so a timezone chosen for them is remembered. */
+  offeredSender?: { email: string; name: string | null } | null;
   offeredTimesError?: string | null;
   /** Re-read the Brief using its own enabled feature and model. */
   onRetryOfferedTimes?(): Promise<void>;
@@ -212,6 +214,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
           reasonAction={reread}
           preferences={preferences}
           calendarConnected
+          sender={search.plan.proposedTimes?.length && !ownEmails.some((own) => own.toLowerCase() === offeredSender?.email.toLowerCase()) ? offeredSender : null}
           coworkers={emails.length && draft.account ? { accountId: draft.account, emails } : undefined}
           ai={ai ? context : null}
           intoDraft={intoDraft}

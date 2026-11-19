@@ -167,6 +167,8 @@ describe("proposed times", () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
     render(<ProposedTimesCard {...props()} />);
     await screen.findAllByText("Free · Outside your usual hours");
+    expect(screen.getByText(/^Times in Eastern Time/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Change sender’s timezone"}));
     const zone = screen.getByRole("combobox",{name:"Sender’s timezone"});
     expect(zone).toHaveValue("America/New_York");
     expect(within(zone).getByRole("option",{selected:true})).toHaveTextContent("Eastern Time (ET)");
@@ -245,6 +247,7 @@ describe("proposed times", () => {
     const current = props(); const view = render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
     fireEvent.click(screen.getAllByRole("checkbox", {name:/^Include \d+\./})[1]);
+    fireEvent.click(screen.getByRole("button",{name:"Change sender’s timezone"}));
     fireEvent.change(screen.getByRole("combobox",{name:"Sender’s timezone"}),{target:{value:"Europe/London"}});
     await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
     expect(check.mock.lastCall?.[0].assumedTimeZone).toBe("Europe/London");
@@ -339,6 +342,18 @@ describe("proposed times", () => {
     await waitFor(() => expect(other).toHaveBeenCalledWith(expect.objectContaining({preferences:expect.objectContaining({defaultDurationMinutes:60})})));
   });
 
+  it("reads the remembered zone for whoever sent the offered times, but never for the user's own address", async () => {
+    vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
+    const get = vi.spyOn(mailClient,"getContactTimeZone").mockResolvedValue("Europe/London");
+    const view = render(<AvailabilitySection compact offered={false} preferences={preferences} ai draft={{sourceId:"m1",subject:"CRT",body:""}} offeredTimes={{sourceMessageId:"m1",times}} offeredSender={{email:"ana@example.com",name:"Ana"}} ownEmails={["me@example.com"]} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
+    await screen.findByRole("region",{name:"Proposed times"});
+    await waitFor(() => expect(get).toHaveBeenCalledWith("ana@example.com"));
+    view.unmount(); get.mockClear();
+    render(<AvailabilitySection compact offered={false} preferences={preferences} ai draft={{sourceId:"m1",subject:"CRT",body:""}} offeredTimes={{sourceMessageId:"m1",times}} offeredSender={{email:"Me@example.com",name:null}} ownEmails={["me@example.com"]} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
+    await screen.findByRole("region",{name:"Proposed times"});
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it("lets Find Times extract alternatives without reusing a broader meeting search", async () => {
     vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
     vi.spyOn(mailClient,"findTimes").mockResolvedValue({rangeStart:"2026-10-31T00:00:00-04:00",rangeEnd:"2026-11-05T00:00:00-05:00",durationMinutes:60,weekdays:[],dayStart:null,dayEnd:null,reason:"Offered options",proposedTimes:times});
@@ -349,5 +364,105 @@ describe("proposed times", () => {
     await screen.findByRole("region",{name:"Proposed times"});
     expect(screen.getAllByRole("checkbox", {name:/^Include \d+\./})).toHaveLength(7);
     saveAiProvider("none");
+  });
+
+  describe("the sender's timezone", () => {
+    const sender = { email: "ana@example.com", name: "Ana" };
+    const mockCheck = () => vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
+    const mockContact = (zone: string | null) => {
+      const get = vi.spyOn(mailClient,"getContactTimeZone").mockResolvedValue(zone);
+      const set = vi.spyOn(mailClient,"setContactTimeZone").mockResolvedValue(undefined);
+      return { get, set };
+    };
+
+    it("shows one line with the zone until Change reveals the picker and focuses it", async () => {
+      mockCheck();
+      render(<ProposedTimesCard {...props()} />);
+      expect(screen.getByText(/^Times in Eastern Time/)).toBeInTheDocument();
+      expect(screen.queryByRole("combobox",{name:"Sender’s timezone"})).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button",{name:"Change sender’s timezone"}));
+      const picker = screen.getByRole("combobox",{name:"Sender’s timezone"});
+      expect(picker).toHaveFocus();
+      expect(picker).toHaveAccessibleDescription();
+      expect(within(picker).getByRole("option",{name:"Pacific Time (PT)"})).toBeInTheDocument();
+      await screen.findAllByText("Free · Outside your usual hours");
+    });
+
+    it("builds the zone list only once the picker opens", async () => {
+      const calendarTime = await import("./calendarTime");
+      const choices = vi.spyOn(calendarTime,"timeZoneChoices");
+      mockCheck();
+      render(<ProposedTimesCard {...props()} />);
+      expect(choices).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button",{name:"Change sender’s timezone"}));
+      expect(choices).toHaveBeenCalled();
+    });
+
+    it("collapses back to the line with the new zone after a choice, returning focus to Change", async () => {
+      mockCheck();
+      render(<ProposedTimesCard {...props()} />);
+      fireEvent.click(screen.getByRole("button",{name:"Change sender’s timezone"}));
+      fireEvent.change(screen.getByRole("combobox",{name:"Sender’s timezone"}),{target:{value:"America/Los_Angeles"}});
+      expect(screen.queryByRole("combobox",{name:"Sender’s timezone"})).not.toBeInTheDocument();
+      expect(screen.getByText(/^Times in Pacific Time/)).toBeInTheDocument();
+      expect(screen.getByRole("button",{name:"Change sender’s timezone"})).toHaveFocus();
+    });
+
+    it("keeps the line out of the card when the email states every zone", async () => {
+      mockCheck();
+      render(<ProposedTimesCard {...props()} times={times.map((time) => ({...time,timeZone:"America/Chicago"}))} />);
+      expect(screen.queryByRole("button",{name:"Change sender’s timezone"})).not.toBeInTheDocument();
+    });
+
+    it("remembers a chosen zone for the sender", async () => {
+      mockCheck();
+      const { set } = mockContact(null);
+      render(<ProposedTimesCard {...props()} sender={sender} />);
+      fireEvent.click(await screen.findByRole("button",{name:"Change sender’s timezone"}));
+      fireEvent.change(screen.getByRole("combobox",{name:"Sender’s timezone"}),{target:{value:"Europe/London"}});
+      expect(set).toHaveBeenCalledWith("ana@example.com","Ana","Europe/London");
+    });
+
+    it("assumes the zone remembered for the sender, checking times with it from the start", async () => {
+      const check = mockCheck();
+      mockContact("Europe/London");
+      render(<ProposedTimesCard {...props()} sender={sender} />);
+      await screen.findByText(/^Times in British Time|^Times in United Kingdom Time|^Times in Greenwich Mean Time/);
+      await waitFor(() => expect(check).toHaveBeenCalled());
+      expect(check.mock.calls.every(([request]) => request.assumedTimeZone === "Europe/London")).toBe(true);
+      expect(screen.getByText("Shown in your timezone, Eastern Time (ET).")).toBeInTheDocument();
+    });
+
+    it("lets an explicit zone from the email win over the remembered one", async () => {
+      const check = mockCheck();
+      mockContact("Europe/London");
+      const stated = times.map((time) => ({...time,timeZone:"America/Chicago"}));
+      render(<ProposedTimesCard {...props()} times={stated} sender={sender} />);
+      await waitFor(() => expect(check).toHaveBeenCalled());
+      expect(screen.queryByRole("button",{name:"Change sender’s timezone"})).not.toBeInTheDocument();
+      // The remembered zone only fills in for times that state none.
+      expect(check.mock.lastCall?.[0].times).toEqual(stated);
+    });
+
+    it("forgets the remembered zone when the user's own zone is chosen again", async () => {
+      mockCheck();
+      const { set } = mockContact("Europe/London");
+      render(<ProposedTimesCard {...props()} sender={sender} />);
+      fireEvent.click(await screen.findByRole("button",{name:"Change sender’s timezone"}));
+      fireEvent.change(screen.getByRole("combobox",{name:"Sender’s timezone"}),{target:{value:"America/New_York"}});
+      expect(set).toHaveBeenCalledWith("ana@example.com","Ana",null);
+      expect(screen.getByText(/^Times in Eastern Time/)).toBeInTheDocument();
+    });
+
+    it("keeps the chosen zone for this card and says so when remembering it fails", async () => {
+      const check = mockCheck();
+      mockContact(null);
+      vi.spyOn(mailClient,"setContactTimeZone").mockRejectedValue(new Error("disk"));
+      render(<ProposedTimesCard {...props()} sender={sender} />);
+      fireEvent.click(await screen.findByRole("button",{name:"Change sender’s timezone"}));
+      fireEvent.change(screen.getByRole("combobox",{name:"Sender’s timezone"}),{target:{value:"Europe/London"}});
+      expect(await screen.findByText("Couldn’t remember this timezone for the sender.")).toBeInTheDocument();
+      await waitFor(() => expect(check.mock.lastCall?.[0].assumedTimeZone).toBe("Europe/London"));
+    });
   });
 });

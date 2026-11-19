@@ -387,6 +387,7 @@ mod tests {
                     birthday: None,
                     keep_in_touch: Default::default(),
                     keep_in_touch_due_at: None,
+                    time_zone: None,
                 },
                 messages: vec![ContactMessageInput {
                     id: "m1".into(),

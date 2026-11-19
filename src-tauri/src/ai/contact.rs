@@ -722,6 +722,7 @@ mod tests {
             birthday: None,
             keep_in_touch: Default::default(),
             keep_in_touch_due_at: None,
+            time_zone: None,
         };
         let suggestion = |field: &str, value: &str| ContactFieldSuggestion {
             field: field.into(),
@@ -853,6 +854,7 @@ mod tests {
             birthday: None,
             keep_in_touch: Default::default(),
             keep_in_touch_due_at: None,
+            time_zone: None,
         };
         let request = ContactEnrichmentRequest {
             provider: AiProvider::Custom,
@@ -948,6 +950,7 @@ mod tests {
                     birthday: None,
                     keep_in_touch: Default::default(),
                     keep_in_touch_due_at: None,
+                    time_zone: None,
                 },
                 messages: (0..12)
                     .map(|index| ContactMessageInput {
@@ -1062,6 +1065,7 @@ mod tests {
             birthday: None,
             keep_in_touch: Default::default(),
             keep_in_touch_due_at: None,
+            time_zone: None,
         };
         let request = |profile: ContactProfile| ContactEnrichmentRequest {
             provider: AiProvider::Custom,

@@ -1551,6 +1551,7 @@ fn saved_contact(db: &Database, name: &str, addresses: &[&str]) -> crate::models
         photo_data: None,
         favorite: false,
         addresses: addresses.iter().map(|a| a.to_string()).collect(),
+        time_zone: None,
     })
     .unwrap()
 }

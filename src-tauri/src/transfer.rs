@@ -611,10 +611,16 @@ pub(crate) struct TransferContact {
     /// Added in 0.67.0; earlier exports omit it and import with reminders off.
     #[serde(default)]
     pub keep_in_touch: TransferKeepInTouch,
+    /// Added after 0.67.0; earlier exports omit it and import as "same as
+    /// mine". Left out of exports when unset so they stay readable by
+    /// builds that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<String>,
 }
 impl From<ContactProfile> for TransferContact {
     fn from(c: ContactProfile) -> Self {
         Self {
+            time_zone: c.time_zone,
             id: c.id,
             display_name: c.display_name,
             role: c.role,
@@ -873,6 +879,10 @@ impl TransferPayload {
             }
             crate::db::contacts::normalize_birthday(contact.birthday.as_deref())
                 .map_err(|_| "The transfer contains an invalid contact birthday")?;
+            if let Some(zone) = &contact.time_zone {
+                crate::db::contacts::validate_time_zone(zone)
+                    .map_err(|_| "The transfer contains an invalid contact timezone")?;
+            }
             crate::db::contacts::validate_keep_in_touch(&KeepInTouch::from(&contact.keep_in_touch))
                 .map_err(|_| "The transfer contains invalid keep-in-touch settings")?;
             if let Some(photo) = &contact.photo_data {
@@ -2801,6 +2811,7 @@ mod tests {
                     snoozed_at: Some("2026-09-28T09:00:00+00:00".to_string()),
                     last_touch_at: Some("2026-09-15T09:00:00+00:00".to_string()),
                 },
+                time_zone: None,
             }],
             retention_days: Some(365),
             contact_groups: Some(vec![TransferContactGroup {
@@ -3283,6 +3294,7 @@ mod tests {
             crate::models::KeepInTouch::default()
         );
         assert_eq!(contacts[0].keep_in_touch_due_at, None);
+        assert_eq!(contacts[0].time_zone, None);
     }
 
     #[test]
@@ -3744,7 +3756,8 @@ mod tests {
     fn transfer_rejects_invalid_birthdays_and_keep_in_touch_settings() {
         let valid = current_fixture_payload();
         valid.validate().unwrap();
-        let invalid: [fn(&mut TransferContact); 5] = [
+        let invalid: [fn(&mut TransferContact); 6] = [
+            |contact| contact.time_zone = Some("Mars/Olympus".into()),
             |contact| contact.birthday = Some("13-01".into()),
             |contact| contact.birthday = Some("1850-01-01".into()),
             |contact| contact.keep_in_touch.interval_days = Some(0),
@@ -3767,6 +3780,22 @@ mod tests {
         let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
         unknown["contacts"][0]["keepInTouch"]["unexpected"] = serde_json::json!(1);
         assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
+    }
+
+    #[test]
+    fn a_remembered_contact_timezone_round_trips_and_is_left_out_when_unset() {
+        let mut payload = current_fixture_payload();
+        let unset = serde_json::to_value(&payload).unwrap();
+        assert!(unset["contacts"][0].get("timeZone").is_none());
+        payload.contacts[0].time_zone = Some("Europe/London".into());
+        payload.validate().unwrap();
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["contacts"][0]["timeZone"], "Europe/London");
+        let back: TransferPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back.contacts[0].time_zone.as_deref(), Some("Europe/London"));
+        // An export from before the field, with no key at all, still reads.
+        let old: TransferPayload = serde_json::from_value(unset).unwrap();
+        assert_eq!(old.contacts[0].time_zone, None);
     }
 
     #[test]

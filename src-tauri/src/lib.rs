@@ -1612,6 +1612,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::contacts::set_contact_suppressed,
         commands::contacts::resolve_contact_ids,
         commands::contacts::get_contact_profile,
+        commands::contacts::get_contact_time_zone,
+        commands::contacts::set_contact_time_zone,
         commands::contacts::save_contact_profile,
         commands::contacts::delete_contact_profile,
         commands::contacts::list_contact_groups,
