@@ -1,3 +1,4 @@
+import { AccountScopeChip } from "./AccountScope";
 import { formatCompactDate } from "./dateFormatting";
 import { CalendarDays, ChevronLeft, ChevronRight, ContactRound, ListChecks, ListPlus, Mail, NotebookPen, Send, Star, Plus, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
@@ -802,6 +803,7 @@ function TodayLayout({
       <div className="today-heading">
         <span className="eyebrow">{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</span>
         <h1>Plan Your Day</h1>
+        {mailAccountCount > 1 ? <AccountScopeChip accountId={accountId} /> : null}
       </div>
     </header>
     <div className="today-columns">

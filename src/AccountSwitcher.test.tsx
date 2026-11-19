@@ -39,6 +39,7 @@ describe("AccountSwitcher", () => {
         activeAccountId={null}
         onSwitch={() => {}}
         onShowAll={() => {}}
+        onReselect={() => {}}
         onReorder={() => {}}
       />,
     );
@@ -61,6 +62,7 @@ describe("AccountSwitcher", () => {
         activeAccountId={null}
         onSwitch={() => {}}
         onShowAll={() => {}}
+        onReselect={() => {}}
         onReorder={() => {}}
       />,
     );
@@ -73,7 +75,7 @@ describe("AccountSwitcher", () => {
   it("keeps All accounts selectable for saved views with only one connected account", async () => {
     const [account] = await mailClient.listAccounts();
     const onShowAll = vi.fn();
-    const props = { accounts: [account!], unreadCounts: {}, onSwitch: vi.fn(), onShowAll, onReorder: vi.fn(), showAllAccounts: true };
+    const props = { accounts: [account!], unreadCounts: {}, onSwitch: vi.fn(), onShowAll, onReselect: vi.fn(), onReorder: vi.fn(), showAllAccounts: true };
     const { rerender } = render(<AccountSwitcher {...props} activeAccountId={account!.email} />);
     const all = screen.getByRole("radio", { name: /^All accounts/i });
     expect(all).toHaveAttribute("aria-checked", "false");
@@ -92,17 +94,82 @@ describe("AccountSwitcher", () => {
       { ...account!, email: "joelreed@gmail.com", displayName: "Joel Reed", nickname: "Personal", status: "needs_reauth" as const },
     ];
     const { rerender } = render(<AccountSwitcher accounts={accounts} unreadCounts={{ "joel@openarc.net": 10 }}
-      activeAccountId="joel@openarc.net" onSwitch={onSwitch} onShowAll={vi.fn()} onReorder={vi.fn()} />);
+      activeAccountId="joel@openarc.net" onSwitch={onSwitch} onShowAll={vi.fn()} onReselect={vi.fn()} onReorder={vi.fn()} />);
     const work = screen.getByRole("radio", { name: "Work, 10 unread" });
     expect(work).toHaveTextContent("W10");
     expect(work).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: "Personal, Needs reconnect" })).toHaveTextContent("P");
     expect(screen.getByRole("tooltip", { name: "Work (joel@openarc.net)", hidden: true })).toBeInTheDocument();
     expect(screen.getByRole("tooltip", { name: "Personal (joelreed@gmail.com) · Needs reconnect in Mail Accounts", hidden: true })).toBeInTheDocument();
-    fireEvent.click(work);
-    expect(onSwitch).toHaveBeenCalledWith("joel@openarc.net");
+    fireEvent.click(screen.getByRole("radio", { name: "Personal, Needs reconnect" }));
+    expect(onSwitch).toHaveBeenCalledWith("joelreed@gmail.com");
     rerender(<AccountSwitcher accounts={[{ ...accounts[0]!, nickname: null }]} unreadCounts={{}}
-      activeAccountId={null} onSwitch={onSwitch} onShowAll={vi.fn()} onReorder={vi.fn()} />);
+      activeAccountId={null} onSwitch={onSwitch} onShowAll={vi.fn()} onReselect={vi.fn()} onReorder={vi.fn()} />);
     expect(screen.getByRole("radio", { name: "Joel Reed" })).toHaveTextContent("J");
+  });
+
+  describe("clicking the selected account", () => {
+    const accounts = async () => {
+      const [account] = await mailClient.listAccounts();
+      return [
+        { ...account!, email: "joel@openarc.net", displayName: "Joel", nickname: "Work" },
+        { ...account!, email: "joelreed@gmail.com", displayName: "Joel", nickname: "Personal", sortOrder: 1 },
+      ];
+    };
+    const handlers = () => ({ onSwitch: vi.fn(), onShowAll: vi.fn(), onReselect: vi.fn(), onReorder: vi.fn() });
+
+    it("reselects instead of switching, and switches without reselecting for another account", async () => {
+      const h = handlers();
+      render(<AccountSwitcher accounts={await accounts()} unreadCounts={{}} activeAccountId="joel@openarc.net" {...h} />);
+      fireEvent.click(screen.getByRole("radio", { name: "Work" }));
+      expect(h.onReselect).toHaveBeenCalledOnce();
+      expect(h.onSwitch).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("radio", { name: "Personal" }));
+      expect(h.onSwitch).toHaveBeenCalledWith("joelreed@gmail.com");
+      expect(h.onReselect).toHaveBeenCalledOnce();
+    });
+
+    it("treats All accounts the same way", async () => {
+      const h = handlers();
+      const { rerender } = render(<AccountSwitcher accounts={await accounts()} unreadCounts={{}} activeAccountId={null} {...h} />);
+      fireEvent.click(screen.getByRole("radio", { name: /^All accounts/i }));
+      expect(h.onReselect).toHaveBeenCalledOnce();
+      expect(h.onShowAll).not.toHaveBeenCalled();
+      rerender(<AccountSwitcher accounts={await accounts()} unreadCounts={{}} activeAccountId="joel@openarc.net" {...h} />);
+      fireEvent.click(screen.getByRole("radio", { name: /^All accounts/i }));
+      expect(h.onShowAll).toHaveBeenCalledOnce();
+      expect(h.onReselect).toHaveBeenCalledOnce();
+    });
+
+    it("reselects the implicitly selected only account", async () => {
+      const h = handlers();
+      render(<AccountSwitcher accounts={[(await accounts())[0]!]} unreadCounts={{}} activeAccountId={null} {...h} />);
+      fireEvent.click(screen.getByRole("radio", { name: "Work" }));
+      expect(h.onReselect).toHaveBeenCalledOnce();
+      expect(h.onSwitch).not.toHaveBeenCalled();
+    });
+
+    it("describes the click-again hint only on the selected account outside Mail", async () => {
+      const h = handlers();
+      const props = { accounts: await accounts(), unreadCounts: {}, activeAccountId: "joel@openarc.net", ...h };
+      const { rerender } = render(<AccountSwitcher {...props} mailInView={false} />);
+      expect(screen.getByRole("radio", { name: "Work" })).toHaveAccessibleDescription();
+      expect(screen.getByRole("radio", { name: "Personal" })).not.toHaveAccessibleDescription();
+      expect(screen.getByRole("radio", { name: /^All accounts/i })).not.toHaveAccessibleDescription();
+      rerender(<AccountSwitcher {...props} mailInView />);
+      expect(screen.getByRole("radio", { name: "Work" })).not.toHaveAccessibleDescription();
+      rerender(<AccountSwitcher {...props} activeAccountId={null} mailInView={false} />);
+      expect(screen.getByRole("radio", { name: /^All accounts/i })).toHaveAccessibleDescription();
+    });
+
+    it("pops the newly selected avatar only after the selection changes", async () => {
+      const h = handlers();
+      const props = { accounts: await accounts(), unreadCounts: {}, ...h };
+      const { rerender } = render(<AccountSwitcher {...props} activeAccountId="joel@openarc.net" />);
+      expect(screen.getByRole("radio", { name: "Work" })).not.toHaveClass("just-selected");
+      rerender(<AccountSwitcher {...props} activeAccountId="joelreed@gmail.com" />);
+      expect(screen.getByRole("radio", { name: "Personal" })).toHaveClass("just-selected");
+      expect(screen.getByRole("radio", { name: "Work" })).not.toHaveClass("just-selected");
+    });
   });
 });

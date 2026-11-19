@@ -23,6 +23,7 @@ import { attachmentRisk } from "./attachmentRisk";
 import { FilePreview } from "./FilePreview";
 import { formatNoteDate } from "./noteDates";
 import { formatShortcut } from "./shortcutLabels";
+import { AccountScopeChip } from "./AccountScope";
 
 /**
  * What Files remembers while another view is open: filters, selection,
@@ -172,7 +173,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenNote
       if (next) { setSelected(keyFor(next)); rows.current.get(keyFor(next))?.focus(); }
     }
   }}>
-    <header className="files-header"><div><span className="eyebrow">Files · {accountId ?? "All accounts"}</span><h1>{total} {total===1 ? "file" : "files"}</h1></div>
+    <header className="files-header"><div><span className="eyebrow">Files <AccountScopeChip accountId={accountId} /></span><h1>{total} {total===1 ? "file" : "files"}</h1></div>
       <div className="segmented" role="group" aria-label="File views"><button type="button" className="segment" aria-pressed={!starred} onClick={() => setStarred(false)}>All</button><button type="button" className="segment" aria-pressed={starred} onClick={() => setStarred(true)}>Starred</button></div>
     </header>
     <div className="files-workspace-body">

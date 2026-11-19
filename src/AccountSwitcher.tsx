@@ -1,5 +1,5 @@
 import { CircleAlert } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Account, UnreadCounts } from "./domain";
 import { HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
@@ -10,8 +10,10 @@ export function AccountSwitcher({
   activeAccountId,
   onSwitch,
   onShowAll,
+  onReselect,
   onReorder,
   showAllAccounts = false,
+  mailInView = true,
 }: {
   accounts: Account[];
   showAllAccounts?: boolean;
@@ -19,11 +21,24 @@ export function AccountSwitcher({
   activeAccountId: string | null;
   onSwitch(email: string): void;
   onShowAll(): void;
+  /** Called instead of onSwitch/onShowAll when the already selected account is clicked again. */
+  onReselect(): void;
+  /** Whether Mail is already open; the click-again hint is only useful elsewhere. */
+  mailInView?: boolean;
   onReorder(emails: string[]): void;
 }) {
   const [draggedEmail, setDraggedEmail] = useState<string | null>(null);
   const [dragOverEmail, setDragOverEmail] = useState<string | null>(null);
   const draggedEmailRef = useRef<string | null>(null);
+  // The newly selected avatar pops once; nothing animates on first mount.
+  const selectionKey = activeAccountId ?? "all";
+  const previousSelection = useRef(selectionKey);
+  const [selectionChanged, setSelectionChanged] = useState(false);
+  useEffect(() => {
+    if (previousSelection.current === selectionKey) return;
+    previousSelection.current = selectionKey;
+    setSelectionChanged(true);
+  }, [selectionKey]);
 
   if (accounts.length === 0) return null;
 
@@ -52,36 +67,40 @@ export function AccountSwitcher({
 
   return (
     <div className="account-rail" role="radiogroup" aria-label="Filter by account">
-      {accounts.length > 1 || showAllAccounts ? <HoverTooltip label="All accounts">
+      {accounts.length > 1 || showAllAccounts ? <HoverTooltip label="All accounts" hint={activeAccountId === null && !mailInView ? RESELECT_HINT : undefined} hintId="account-rail-hint-all">
         <button
           type="button"
           role="radio"
           aria-checked={activeAccountId === null}
           aria-label={totalUnread > 0 ? `All accounts, ${totalUnread} unread` : "All Accounts"}
-          className={`account-icon all-accounts ${activeAccountId === null ? "active" : ""}`}
-          onClick={onShowAll}
+          aria-describedby={activeAccountId === null && !mailInView ? "account-rail-hint-all" : undefined}
+          className={`account-icon all-accounts ${activeAccountId === null ? "active" : ""}${activeAccountId === null && selectionChanged ? " just-selected" : ""}`}
+          onClick={activeAccountId === null ? onReselect : onShowAll}
         >
           {totalUnread > 0 ? <UnreadBadge count={totalUnread} /> : null}
         </button>
       </HoverTooltip> : null}
-      {accounts.map((account) => {
+      {accounts.map((account, index) => {
         const nickname = account.nickname?.trim();
         const name = nickname || account.displayName || account.email;
         const identity = nickname ? `${nickname} (${account.email})` : account.email;
         const unreadCount = unreadCounts[account.email] ?? 0;
         const needsReconnect = account.status === "needs_reauth";
         const selected = activeAccountId === account.email || (accounts.length === 1 && !showAllAccounts && activeAccountId === null);
+        const hintId = `account-rail-hint-${index}`;
+        const showHint = selected && !mailInView;
         return (
-          <HoverTooltip key={account.email} label={needsReconnect ? `${identity} · Needs reconnect in Mail Accounts` : identity}>
+          <HoverTooltip key={account.email} label={needsReconnect ? `${identity} · Needs reconnect in Mail Accounts` : identity} hint={showHint ? RESELECT_HINT : undefined} hintId={hintId}>
             <button
               type="button"
               role="radio"
               aria-checked={selected}
+              aria-describedby={showHint ? hintId : undefined}
               aria-label={[name, unreadCount > 0 ? `${unreadCount} unread` : null, needsReconnect ? "Needs reconnect" : null].filter(Boolean).join(", ")}
               draggable
-              className={`account-icon ${selected ? "active" : ""} ${draggedEmail === account.email ? "dragging" : ""} ${dragOverEmail === account.email && draggedEmail !== account.email ? "drag-over" : ""}`}
-              style={{ background: account.color }}
-              onClick={() => onSwitch(account.email)}
+              className={`account-icon ${selected ? "active" : ""}${selected && selectionChanged ? " just-selected" : ""} ${draggedEmail === account.email ? "dragging" : ""} ${dragOverEmail === account.email && draggedEmail !== account.email ? "drag-over" : ""}`}
+              style={{ background: account.color, "--account-ring": account.color } as CSSProperties}
+              onClick={() => (selected ? onReselect() : onSwitch(account.email))}
               onDragStart={(event) => {
                 draggedEmailRef.current = account.email;
                 setDraggedEmail(account.email);
@@ -113,6 +132,8 @@ export function AccountSwitcher({
     </div>
   );
 }
+
+const RESELECT_HINT = "Click again to open Mail";
 
 function UnreadBadge({ count }: { count: number }) {
   return <span className="account-unread-badge" aria-hidden="true">{count > 99 ? "99+" : count}</span>;

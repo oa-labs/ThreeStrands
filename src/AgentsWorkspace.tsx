@@ -1,3 +1,4 @@
+import { AccountScopeChip } from "./AccountScope";
 import { formatDateTime, formatFullDate } from "./dateFormatting";
 import frozenPolicy from "../docs/agent-integrations/contract-v1.json";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
@@ -176,7 +177,7 @@ export function AgentsWorkspace({ controller: c, accounts, accountId, onOpenThre
       e.preventDefault(); const index = rows.findIndex(d => d.task.id === c.selectedId); c.select(rows[Math.max(0, Math.min(rows.length - 1, index + (["j", "ArrowDown"].includes(e.key) ? 1 : -1)))].task.id);
     }
   }}>
-    <header className="agents-toolbar"><h1>Agents <span className="agent-preview">Preview</span></h1><button className="btn" onClick={begin}>New Delegated Task</button><button className="btn" disabled={c.busy} onClick={() => void c.refresh()}>Refresh Agents</button>{c.enabled ? <button className="btn" disabled={c.busy || !c.loaded} onClick={() => void c.enable(false)} title="Pauses queued and running tasks until you choose Resume All.">Pause All</button> : null}<button className="btn" onClick={onOpenResearchSettings}>Research Settings</button></header>
+    <header className="agents-toolbar"><h1>Agents <span className="agent-preview">Preview</span></h1><AccountScopeChip accountId={accountId} /><button className="btn" onClick={begin}>New Delegated Task</button><button className="btn" disabled={c.busy} onClick={() => void c.refresh()}>Refresh Agents</button>{c.enabled ? <button className="btn" disabled={c.busy || !c.loaded} onClick={() => void c.enable(false)} title="Pauses queued and running tasks until you choose Resume All.">Pause All</button> : null}<button className="btn" onClick={onOpenResearchSettings}>Research Settings</button></header>
     {paused ? <div className="agents-paused" role="status"><PauseCircle size={ICON_SIZE.sm} aria-hidden="true" /><span><strong>Delegated work is paused.</strong> {waiting ? `${waiting === 1 ? "1 task is" : `${waiting} tasks are`} waiting to resume.` : "No tasks will run until you resume."}</span><button className="btn" disabled={c.busy} onClick={() => void c.resumeAll()}>Resume All</button></div> : null}
     {c.error ? <p className="form-error" role="alert">{c.error} <button className="btn-link" onClick={() => void c.refresh()}>Try Again</button></p> : null}
     <div className="agents-layout"><nav className="agent-list" aria-label="Delegated tasks">

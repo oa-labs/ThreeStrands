@@ -348,7 +348,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([{threadId:"work-thread",accountId:"work@example.com",contactEmail:"jane@example.com",subject:"Project",snippet:"Kickoff notes attached",sentAt:"2026-09-20T00:00:00Z",labels:[]}]);
     render(<ContactsWorkspace accountId="work@example.com" onOpenThread={onOpenThread} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    expect(screen.getByText("· work@example.com")).toBeInTheDocument();
+    expect(screen.getByText("work@example.com")).toBeInTheDocument();
     expect(mailClient.listContactProfiles).toHaveBeenCalledWith("",500,"work@example.com");
     expect(mailClient.contactTimeline).toHaveBeenCalledWith(jane.id,0,20,"work@example.com");
     // The row shows what was said; every row is with this person, so the address would repeat.

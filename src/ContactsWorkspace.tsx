@@ -1,3 +1,4 @@
+import { AccountScopeChip } from "./AccountScope";
 import { AiCancelButton } from "./AiRequestControls";
 import { listen } from "@tauri-apps/api/event";
 import { useAiAvailability } from "./useAiAvailability";
@@ -226,7 +227,7 @@ export function ContactsWorkspace({onOpenThread,onOpenNote,onCompose,onSaved,onO
   const listSize=useContactListWidth();
   return <section className="contacts-workspace" aria-label="Contacts">
     {merging?<MergeContactsDialog contacts={profiles.filter(item=>checkedIds.includes(item.id))} onClose={()=>setMerging(false)} onMerged={merged=>{setMerging(false);setProfileRevision(current=>current+1);stopSelecting();setProfile(merged);setDraft(draftFrom(merged));setSelectedId(merged.id);void load(merged);void loadKeepInTouch();void loadGroups();onSaved();}}/>:null}
-    <header className="contacts-header"><div><span className="eyebrow">Address book <span className="eyebrow-account">· {accountId??"All accounts"}</span></span><h1>Contacts</h1></div><div className="contacts-header-actions"><ContactManagement hasUnsavedChanges={unsaved} addresses={profile?.addresses??[]} onChanged={()=>{void load();void loadKeepInTouch();void loadGroups();onSaved();}}/><button type="button" className="btn" title={`New group (${formatShortcut("Shift+g")})`} aria-keyshortcuts="Shift+G" onClick={startNewGroup}><Users size={ICON_SIZE.md}/>New Group</button><button type="button" className="btn" title={`New contact (${formatShortcut("Shift+n")})`} aria-keyshortcuts="Shift+N" onClick={startNew}><Plus size={ICON_SIZE.md}/>New Contact</button></div></header>
+    <header className="contacts-header"><div><span className="eyebrow">Address book <AccountScopeChip accountId={accountId}/></span><h1>Contacts</h1></div><div className="contacts-header-actions"><ContactManagement hasUnsavedChanges={unsaved} addresses={profile?.addresses??[]} onChanged={()=>{void load();void loadKeepInTouch();void loadGroups();onSaved();}}/><button type="button" className="btn" title={`New group (${formatShortcut("Shift+g")})`} aria-keyshortcuts="Shift+G" onClick={startNewGroup}><Users size={ICON_SIZE.md}/>New Group</button><button type="button" className="btn" title={`New contact (${formatShortcut("Shift+n")})`} aria-keyshortcuts="Shift+N" onClick={startNew}><Plus size={ICON_SIZE.md}/>New Contact</button></div></header>
     <div className="contacts-workspace-body" style={{ "--contact-list-width": `${listSize.width}px` } as CSSProperties}>
       <div className="contacts-list-pane"><PanelResizeHandle {...listSize} label="Resize contact list" controlsId="contact-list-panel" title="Drag to resize the contact list. Use arrow keys to adjust; double-click to reset."/>
       <aside id="contact-list-panel" className="contacts-list-panel" aria-label="Contact list">

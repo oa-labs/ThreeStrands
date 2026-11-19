@@ -186,6 +186,9 @@
   /* Entrance animations; motion.test.ts keeps one-shot entrances at 200ms or less. */
   --duration-entrance: 160ms;
   --duration-spin: 1s;
+  --duration-pop: 200ms;   /* the newly selected account avatar */
+  --duration-pulse: 500ms; /* highlight that fades out after the account in view changes */
+  --all-accounts-mark: conic-gradient(#4285F4, #34A853, #EA4335, #FBBC05, #4285F4);
   --ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1); /* surfaces that rise into place */
   --sidebar-item-size: 34px;
   --sidebar-item-gap: 10px;
@@ -477,10 +480,54 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .account-icon:active { cursor: grabbing; }
 .account-icon.all-accounts { cursor: pointer; }
 .account-icon:hover { transform: scale(1.07); }
-.account-icon.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--accent); }
-.account-icon.all-accounts { background: conic-gradient(#4285F4, #34A853, #EA4335, #FBBC05, #4285F4); }
+/* Selected: a thick ring in the account's own colour with a gap, plus a pill on the rail's leading edge. */
+.account-icon.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 5px var(--account-ring, var(--accent)); }
+.account-icon.active::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: calc(-1 * var(--space-2) - 1px);
+  width: 4px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  background: var(--account-ring, var(--accent));
+  transform: translateY(-50%);
+}
+.account-icon.all-accounts { background: var(--all-accounts-mark); }
 .account-icon.dragging { opacity: var(--opacity-dragging); }
 .account-icon.drag-over { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--text); }
+.hover-tooltip { flex-wrap: wrap; }
+.hover-tooltip-hint { flex-basis: 100%; color: var(--muted); font-size: var(--text-label); }
+
+/* Which account a view is filtered to. */
+.account-scope-chip {
+  --scope-color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: var(--space-0-5) var(--space-2) var(--space-0-5) var(--space-1-5);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--scope-color) 12%, transparent);
+  color: var(--text);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: normal;
+  text-transform: none;
+  vertical-align: middle;
+}
+.account-scope-dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: var(--radius-circle); background: var(--scope-color); }
+.account-scope-chip[data-all="true"] .account-scope-dot { background: var(--all-accounts-mark); }
+.account-scope-chip { position: relative; }
+.account-scope-chip::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--scope-color) 30%, transparent); opacity: 0; pointer-events: none; }
+.account-scope-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@keyframes account-pop { 50% { transform: scale(1.12); } }
+@keyframes account-scope-pulse { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  .account-icon.just-selected { animation: account-pop var(--duration-pop) ease-out; }
+  .account-scope-chip.pulse::after { animation: account-scope-pulse var(--duration-pulse) ease-out; }
+}
 .account-unread-badge {
   position: absolute;
   top: -6px;

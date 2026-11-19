@@ -1912,17 +1912,17 @@ describe("account selection persistence", () => {
     const workAccount = await screen.findByRole("radio", { name: "Work" });
     fireEvent.click(workAccount);
     expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("work@example.com");
-    expect(firstRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("work@example.com");
+    expect(firstRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("Work");
     fireEvent.click(screen.getByRole("button", { name: "Tasks (3)" }));
-    expect(firstRun.container.querySelector(".tasks-sidebar-header")).toHaveTextContent("work@example.com");
+    expect(firstRun.container.querySelector(".tasks-sidebar-header")).toHaveTextContent("Work");
     fireEvent.click(screen.getByRole("button", { name: "Contacts (5)" }));
-    expect(firstRun.container.querySelector(".contacts-header")).toHaveTextContent("work@example.com");
+    expect(firstRun.container.querySelector(".contacts-header")).toHaveTextContent("Work");
     firstRun.unmount();
 
     const secondRun = render(<App />);
     await waitFor(() => expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true"));
     // The restart reopens the workspace that was open, Contacts.
-    expect(secondRun.container.querySelector(".contacts-header")).toHaveTextContent("work@example.com");
+    expect(secondRun.container.querySelector(".contacts-header")).toHaveTextContent("Work");
     fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
     fireEvent.click(screen.getByRole("radio", { name: /All accounts/i }));
     expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("all");
@@ -2315,4 +2315,22 @@ describe("empty mail states", () => {
     expect(await screen.findByRole("option")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
   });
+  it("keeps a workspace open when switching accounts, and opens mail when the selected account is clicked again", async () => {
+    const [primary] = await mailClient.listAccounts();
+    vi.spyOn(mailClient, "listAccounts").mockResolvedValue([primary!, { ...primary!, email: "work@example.com", displayName: "Work", sortOrder: 1 }]);
+    localStorage.setItem("threestrands.settings.selectedAccountId", "all");
+    render(<App />);
+    expect(await screen.findByRole("region", { name: "Inbox" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Files (6)" }));
+    expect(await screen.findByRole("region", { name: "Files" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Work" }));
+    expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("region", { name: "Files" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Work" })).toHaveAccessibleDescription();
+    fireEvent.click(screen.getByRole("radio", { name: "Work" }));
+    expect(await screen.findByRole("region", { name: "Inbox" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Files" })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Work" })).not.toHaveAccessibleDescription();
+  });
+
 });

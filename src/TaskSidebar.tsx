@@ -1,3 +1,4 @@
+import { AccountScopeChip } from "./AccountScope";
 import { refreshSyncedData } from "./refreshSyncedData";
 import { usePullToRefresh } from "./usePullToRefresh";
 import { PullToRefreshStatus } from "./PullToRefreshStatus";
@@ -598,7 +599,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           <div>
             <span className="eyebrow">
               Tasks
-              <span className="eyebrow-account"> · {accountId ?? "All accounts"}</span>
+              <AccountScopeChip accountId={accountId} />
             </span>
             <div className="tasks-title-row">
               <h1>{orderedTasks.length} {orderedTasks.length === 1 ? "task" : "tasks"}</h1>

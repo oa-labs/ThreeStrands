@@ -62,6 +62,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { AccountSwitcher } from "./AccountSwitcher";
+import { AccountScopeChip, AccountScopeProvider } from "./AccountScope";
 import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, ShortcutHelp } from "./AppChrome";
 import { GettingStartedDialog, useGettingStarted } from "./GettingStarted";
 import { inboxCheckedLabel } from "./inboxZero";
@@ -996,6 +997,7 @@ export function App() {
 
   return (
     <AvailabilityProfileChoiceContext.Provider value={profileChoice(threadProfileKey, "conversation", visibleDetail?.thread.accountId)}>
+    <AccountScopeProvider accounts={accounts} activeAccountId={activeAccountId}>
     <main className={`app-shell${rightWorkspace === "agents" ? " agents-open" : rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "notes" ? " notes-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}${mailInView && !narrowLayout && mailPanelCollapsed ? " side-panel-collapsed" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px`, "--side-panel-width": `${mailPanel.size.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
@@ -1003,8 +1005,10 @@ export function App() {
           accounts={accounts}
           unreadCounts={unreadCounts}
           activeAccountId={activeAccountId}
+          mailInView={mailInView}
           onSwitch={context.switchAccount}
           onShowAll={context.showAllAccounts}
+          onReselect={() => navigateFromSidebar(context.openMailView)}
           onReorder={reorderNavbarAccounts}
         />
         <div className="sidebar-spacer" />
@@ -1214,7 +1218,7 @@ export function App() {
                         else context.openTrash();
                       }}
                     />
-                    <span className="eyebrow-account">· {activeAccountId ?? "All accounts"}</span>
+                    <AccountScopeChip accountId={activeAccountId} />
                   </div>
                   <div className="mailbox-title-row">
                     <h1>
@@ -2158,6 +2162,7 @@ export function App() {
         <ImageLightbox src={lightboxImageSrc} onClose={() => setLightboxImageSrc(null)} />
       ) : null}
     </main>
+    </AccountScopeProvider>
     </AvailabilityProfileChoiceContext.Provider>
   );
 }

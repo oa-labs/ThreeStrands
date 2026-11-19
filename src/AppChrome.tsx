@@ -108,19 +108,24 @@ export function HoverTooltip({
   title,
   placement = "right",
   shortcut,
+  hint,
+  hintId,
 }: {
   children: ReactNode;
   label?: string;
   title?: string;
   placement?: "right" | "bottom";
   shortcut?: string;
+  /** A secondary line under the label; give `hintId` so a control can reference it with aria-describedby. */
+  hint?: string;
+  hintId?: string;
 }) {
   const tooltipLabel = label ?? title;
   if (!tooltipLabel) throw new Error("HoverTooltip requires a label or title");
   return (
     <span className={`tooltip-anchor tooltip-${placement}`} title={title}>
       {children}
-      <span className="hover-tooltip" role="tooltip"><strong>{tooltipLabel}</strong>{shortcut ? <kbd>{formatShortcut(shortcut)}</kbd> : null}</span>
+      <span className="hover-tooltip" role="tooltip"><strong>{tooltipLabel}</strong>{shortcut ? <kbd>{formatShortcut(shortcut)}</kbd> : null}{hint ? <span className="hover-tooltip-hint" id={hintId}>{hint}</span> : null}</span>
     </span>
   );
 }

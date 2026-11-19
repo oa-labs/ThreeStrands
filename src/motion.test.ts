@@ -29,7 +29,9 @@ describe("interface motion", () => {
     css.walkDecls("animation", (declaration) => {
       if (declaration.value.includes("infinite")) return;
       const [duration] = durationMs(declaration.value);
-      expect(duration, declaration.parent?.toString()).toBeLessThanOrEqual(200);
+      // A highlight pulse fades out slowly enough to be noticed; it still only animates opacity.
+      const limit = /-pulse\b/.test(declaration.value) ? 600 : 200;
+      expect(duration, declaration.parent?.toString()).toBeLessThanOrEqual(limit);
       // `both`/`forwards` would pin the final keyframe (e.g. a transform)
       // onto the element after the entrance, changing stacking contexts.
       expect(declaration.value).not.toMatch(/\b(both|forwards)\b/);

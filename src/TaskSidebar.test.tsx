@@ -395,7 +395,7 @@ describe("TaskSidebar", () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     const onCreateTask = vi.fn().mockResolvedValue(workspaceTask("work-task", { accountId: "work@example.com" }));
     render(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
-    expect(screen.getByText("· All accounts")).toBeInTheDocument();
+    expect(screen.getByText("All accounts")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Add Task…" }));
     const form = screen.getByRole("dialog", { name: "Add Task" });
     fireEvent.change(within(form).getByRole("textbox", { name: "Task Title" }), { target: { value: "Review proposal" } });
