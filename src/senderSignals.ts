@@ -346,7 +346,8 @@ function registrableName(site: string): string {
 }
 
 /** An address written into a display name: `"support@bank.example" <…>`. */
-const NAME_ADDRESS = /[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})/i;
+// The lookbehind keeps a long token with no "@" linear; see LINKIFY_PATTERN.
+const NAME_ADDRESS = /(?<![\w.+-])[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})/i;
 /**
  * A domain written into a display name, such as "Shop.example" or "news.example.org".
  * The suffix must be lowercase and two or three letters, so initials and

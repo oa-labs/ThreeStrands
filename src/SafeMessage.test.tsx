@@ -1843,6 +1843,34 @@ describe("linkifying bare URLs in HTML bodies", () => {
     expect(anchorsIn(html)).toEqual(expected);
   });
 
+  // An Outlook FindTime vote link carries ~95,000 URL-encoded characters with
+  // no spaces. Address detection used to retry from every character of such a
+  // run, taking ~10s per message; a quadratic search would need many seconds
+  // here, a linear one a few milliseconds.
+  it("links a very long token and the addresses around it in linear time", () => {
+    const token = "a1.b2-c3+d4_".repeat(10_000);
+    const html = `<p>Vote here&lt;https://example.com/vote?state=${token}&gt; or write ann@example.com. Data: ${token} then bob@example.org</p>`;
+    const started = performance.now();
+    const anchors = anchorsIn(html);
+    const { container } = render(<>{linkifyText(`Data: ${token} then bob@example.org`)}</>);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(anchors.map(([href]) => href)).toEqual([
+      `https://example.com/vote?state=${token}`,
+      "mailto:ann@example.com",
+      "mailto:bob@example.org",
+    ]);
+    expect(Array.from(container.querySelectorAll("a"), (anchor) => anchor.getAttribute("href"))).toEqual(["mailto:bob@example.org"]);
+  });
+
+  it("links an address only from the start of its run of address characters", () => {
+    const { container } = render(<>{linkifyText("ids x.y+z@example.com, %20tom@example.com and (sue@example.net)")}</>);
+    expect(Array.from(container.querySelectorAll("a"), (anchor) => anchor.textContent)).toEqual([
+      "x.y+z@example.com",
+      "20tom@example.com",
+      "sue@example.net",
+    ]);
+  });
+
   it("links every message the same way, however many were rendered before", () => {
     const html = "<p>One https://example.com/first</p><p>Two https://example.com/second</p>";
     const first = anchorsIn(html);

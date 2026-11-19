@@ -23,7 +23,8 @@ function stripLinkAnnotations(text: string): string {
 }
 
 const headerField = /^(from|sent|date|to|cc|subject)\s*:/i;
-const emailOrTimestamp = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d{1,2}:\d{2}\b)/i;
+// The lookbehind keeps a long token with no "@" linear; see LINKIFY_PATTERN.
+const emailOrTimestamp = /(?:(?<![\w.+-])[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d{1,2}:\d{2}\b)/i;
 
 /**
  * Cuts at a forwarded or replied-to message's From/Sent/To/Subject block.
