@@ -38,6 +38,7 @@ import type { TaskFormRequest } from "./useTaskActions";
 import { useDailyPlan } from "./useDailyPlan";
 import { useTodayCompletedNotes } from "./useTodayCompletedNotes";
 import { useDoneOnDay } from "./useDoneOnDay";
+import { TodayCompletionCheckbox, useTodayCompletionTransition } from "./useTodayCompletionTransition";
 import { DoneCard, uniqueDoneEntries, type DoneEntry } from "./DoneCard";
 import { activeDayChoice, clearDayChoice, localDay, readDayChoice, writeDayChoice, type DayChoice } from "./todayDayChoice";
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
@@ -145,6 +146,7 @@ function TodayLayout({
   const showingToday = isSameDay(shownDay, now);
 
   const pageRef = useRef<HTMLElement>(null);
+  const completion = useTodayCompletionTransition(pageRef, `${accountId}:${dateInputValue(shownDay)}`, showingToday);
   const planDate = todayTarget(now).date;
   const accountRef = useRef(accountId);
   accountRef.current = accountId;
@@ -260,8 +262,10 @@ function TodayLayout({
       setAnnouncement(`${done ? "Completed" : "Reopened"}: ${task.title}`);
       onTasksChanged();
       void reloadPlan();
+      return done ? `task:${updated.id}` : null;
     } catch (reason) {
       setAnnouncement(errorMessage(reason));
+      return null;
     }
   };
 
@@ -428,8 +432,10 @@ function TodayLayout({
       }
       setAnnouncement(`${finished ? "Reopened" : "Completed"}: ${item.title}`);
       onTasksChanged();
+      return !finished && item.taskId ? `task:${linkKey(item.taskId) ?? item.taskId}` : null;
     } catch (reason) {
       notice({ message: errorMessage(reason), action: openNoteFor(item) });
+      return null;
     } finally {
       void reloadPlan();
     }
@@ -470,8 +476,8 @@ function TodayLayout({
         as: "article",
         className: done ? "context-task context-task-done" : "context-task",
         control: <HoverTooltip label={done ? "Mark not done" : "Mark done"}>
-          <input type="checkbox" className="context-task-checkbox" checked={done}
-            aria-label={done ? `Mark ${task.title} Not Done` : `Mark ${task.title} Done`} onChange={() => void toggleDone(task)} />
+          <TodayCompletionCheckbox checked={done} transition={completion}
+            label={done ? `Mark ${task.title} Not Done` : `Mark ${task.title} Done`} save={() => toggleDone(task)} />
         </HoverTooltip>,
         wrapTitle: true,
         ...dueRow(task),
@@ -541,18 +547,20 @@ function TodayLayout({
   const completingEmails = useRef(new Set<string>());
   const [busyEmails, setBusyEmails] = useState(new Set<string>());
   const completeEmail = async (key: string, resolve: () => Promise<{ taskId: string } | null>) => {
-    if (completingEmails.current.has(key)) return;
+    if (completingEmails.current.has(key)) return null;
     completingEmails.current.add(key); setBusyEmails(new Set(completingEmails.current));
     try {
       const resolved = await resolve();
-      if (!resolved) return;
+      if (!resolved) return null;
       const updated = await mailClient.setTaskStatus(resolved.taskId, "completed");
       applyTaskUpdate(updated);
       starredPage.remove(key);
       setAnnouncement(`Completed: ${updated.title}`);
       onTasksChanged(); setInboxRevision((value) => value + 1);
+      return `task:${updated.id}`;
     } catch (reason) {
       notice({ message: errorMessage(reason) });
+      return null;
     } finally {
       completingEmails.current.delete(key); setBusyEmails(new Set(completingEmails.current));
     }
@@ -629,7 +637,7 @@ function TodayLayout({
       row: {
         rowKey: source.id, wrapTitle: true, className: "context-task today-plan-card",
         ...(done ? {} : dueRow(tasks.find((task) => task.id === item.taskId))),
-        control: checkable ? <input type="checkbox" className="context-task-checkbox" checked={done} aria-label={`Mark ${item.title} ${done ? "Not Done" : "Done"}`} onChange={() => void togglePlanItem(item)} /> : undefined,
+        control: checkable ? <TodayCompletionCheckbox checked={done} transition={completion} label={`Mark ${item.title} ${done ? "Not Done" : "Done"}`} save={() => togglePlanItem(item)} /> : undefined,
         icon: item.kind === "contact" ? <ContactRound size={ICON_SIZE.sm} /> : item.kind === "noteTask" || item.kind === "newTask" ? <NotebookPen size={ICON_SIZE.sm} /> : undefined,
         detail: [item.state === "unavailable" ? "Unavailable on this device" : item.kind === "noteTask" || item.kind === "newTask" ? "Note" : (accountId === null || item.accountId !== accountId) ? item.accountId : null, item.goal?.title, carriedLabel(item.carryCount ?? 0)].filter(Boolean).join(" · ") || undefined,
         onActivate: item.kind === "text" ? undefined : () => void activatePlanItem(item),
@@ -651,18 +659,19 @@ function TodayLayout({
   };
   const setNoteTaskDone = async (taskId: string | null | undefined, title: string, checked: boolean) => {
     const parts = noteTaskParts(taskId ?? null);
-    if (!parts) return;
+    if (!parts) return null;
     try {
       const note = await mailClient.getNote(parts.noteId);
       if (!note) throw new Error("That note isn't on this device");
       await changeNoteItem(parts.noteId, parts.markerId, note.updatedAt, { checked });
       setAnnouncement(`${checked ? "Completed" : "Reopened"}: ${title}`);
       onTasksChanged(); setInboxRevision((value) => value + 1);
-    } catch (reason) { notice({ message: errorMessage(reason) }); }
+      return checked && taskId ? `task:${linkKey(taskId) ?? taskId}` : null;
+    } catch (reason) { notice({ message: errorMessage(reason) }); return null; }
   };
   const noteCandidates = pageCandidates(notesPage, "notes").map((candidate) => ({ ...candidate, row: {
     ...candidate.row,
-    control: <input type="checkbox" className="context-task-checkbox" checked={false} aria-label={`Mark ${candidate.title} Done`} onChange={() => void setNoteTaskDone(candidate.taskId, candidate.title, true)} />,
+    control: <TodayCompletionCheckbox checked={false} transition={completion} label={`Mark ${candidate.title} Done`} save={() => setNoteTaskDone(candidate.taskId, candidate.title, true)} />,
   } }));
   const candidates: (InboxEntry | null)[] = [
     ...tasks.filter((task) => isActiveTaskStatus(task.status) && (accountId === null || task.accountId === accountId)).map((task) => candidateEntry(taskCandidate(task), "tasks")),
@@ -671,14 +680,14 @@ function TodayLayout({
       const entry = candidateEntry(candidate, candidate.taskId ? "tasks" : "emails");
       if (!entry || candidate.taskId) return entry;
       const key = candidate.planKey ?? candidate.id;
-      return { ...entry, busy: busyEmails.has(key), row: { ...entry.row, control: <input type="checkbox" className="context-task-checkbox" checked={false} disabled={busyEmails.has(key)} aria-label={`Mark ${candidate.title} Done`} onChange={() => void completeEmail(key, async () => {
+      return { ...entry, busy: busyEmails.has(key), row: { ...entry.row, control: <TodayCompletionCheckbox checked={false} transition={completion} disabled={busyEmails.has(key)} label={`Mark ${candidate.title} Done`} save={() => completeEmail(key, async () => {
         const resolved = await candidate.resolve();
         return resolved?.block.sourceTaskId ? { taskId: resolved.block.sourceTaskId } : null;
       })} /> } };
     }),
     ...openPromises.filter((promise) => accountId === null || promise.thread.accountId === accountId).map((promise) => {
       const candidate = promiseCandidate(promise);
-      candidate.row = { ...candidate.row, control: <input type="checkbox" className="context-task-checkbox" checked={false} disabled={busyEmails.has(candidate.id)} aria-label={`Mark ${candidate.title} Done`} onChange={() => void completeEmail(candidate.id, async () => {
+      candidate.row = { ...candidate.row, control: <TodayCompletionCheckbox checked={false} transition={completion} disabled={busyEmails.has(candidate.id)} label={`Mark ${candidate.title} Done`} save={() => completeEmail(candidate.id, async () => {
         const created = await trackPromise(promise, false);
         return created ? { taskId: created.id } : null;
       })} /> };

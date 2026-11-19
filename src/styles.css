@@ -3843,6 +3843,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* Keep the card's tabs in place even for empty filters, wrapped rows, or Show All. */
 .today-done-items { height: var(--today-done-list-height); overflow-y: auto; scrollbar-gutter: stable; }
 .today-done-day { margin-left: var(--space-1); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-medium); }
+/* A decorative copy carries the checked title between cards without taking focus or pointer input. */
+.today-completion-ghost { position: fixed; z-index: var(--z-drawer); box-sizing: border-box; margin: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text); font-size: var(--text-body); box-shadow: var(--shadow-raised); pointer-events: none; overflow: hidden; }
+.today-completion-ghost .context-row-action { visibility: hidden; }
+.today-done .context-row, .today-done .today-panel-heading { transition: background-color var(--duration-slow) ease; }
+.today-done .today-completion-arrival { background-color: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
 /* A finished row reads as checked and quiet, not struck through; the strikethrough stays for other lists. */
 .today-done .context-task-done .context-row-title { text-decoration: none; }
 .today-work .today-panel-heading { padding-inline: var(--space-1); }

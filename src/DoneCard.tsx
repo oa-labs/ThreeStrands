@@ -113,7 +113,7 @@ export function DoneCard({ title, today, dayLabel, entries, errors, loading }: {
     }}>
       {shownErrors.map(([source, message]) => <p key={source} className="form-error" role="alert">{ERROR_LABELS[source]}: {message}</p>)}
       {!items.length ? <p className="context-status">{loading ? "Reading finished items…" : today ? "Nothing finished yet" : "Nothing recorded"}</p> : null}
-      {visible.map((entry) => <ContextRow {...entry.row} key={entry.id} as="div" title={entry.title} wrapTitle date={entry.at && !Number.isNaN(Date.parse(entry.at)) ? formatClockTime(new Date(entry.at)) : undefined}
+      {visible.map((entry) => <ContextRow {...entry.row} key={entry.id} as="div" rowKey={entry.identities.find((identity) => identity.startsWith("task:")) ?? entry.id} title={entry.title} wrapTitle date={entry.at && !Number.isNaN(Date.parse(entry.at)) ? formatClockTime(new Date(entry.at)) : undefined}
         className={[entry.row.className, "context-task context-task-done"].filter(Boolean).join(" ")} />)}
       {collapsible ? <button type="button" className="btn-link context-link-button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? "Show Fewer" : "Show All"}</button> : null}
     </div>
