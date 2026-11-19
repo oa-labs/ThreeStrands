@@ -34,7 +34,8 @@ const SCORE = {
 const quotedHistoryMarker = /(?:^|\n)\s*(?:(?:[-—_]{2,})\s*)?(?:original message|forwarded message|begin forwarded message):?(?:\s*(?:[-—_]{2,}))?\s*(?:\n|$)/i;
 const wroteMarker = new RegExp(String.raw`(?:^|\n)\s*On\s+[^\n]{1,${LIMITS.maxAttributionLength}}\s+wrote:\s*(?:\n|$)`, "i");
 const headerField = /^(from|sent|date|to|cc|bcc|subject)\s*:/i;
-const emailOrTimestamp = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d{1,2}:\d{2}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b)/i;
+// The lookbehind keeps a long token with no "@" linear; see LINKIFY_PATTERN.
+const emailOrTimestamp = /(?:(?<![\w.+-])[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d{1,2}:\d{2}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b)/i;
 const separatorLine = /^\s*[-—_=]{2,}\s*$/;
 const quoteLine = /^\s*>/;
 

@@ -3,7 +3,11 @@
  * both when composing (paste) and when displaying received messages whose
  * HTML never wrapped their URLs in <a> tags.
  */
-export const LINKIFY_PATTERN = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|[\w.+-]+@[\w-]+\.[\w.-]+)/gi;
+// An address match starts only where a run of address characters starts
+// (`(?<![\w.+-])`). Retrying from inside the run finds nothing new, but on a
+// long token with no "@" (an encoded URL, a base64 blob) every retry scans to
+// the run's end, and the search takes quadratic time.
+export const LINKIFY_PATTERN = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|(?<![\w.+-])[\w.+-]+@[\w-]+\.[\w.-]+)/gi;
 
 // Trailing punctuation (a sentence-ending period, a closing paren around the
 // URL, ...) reads as part of the surrounding sentence, not the link.
