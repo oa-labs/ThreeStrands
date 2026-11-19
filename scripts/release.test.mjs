@@ -512,7 +512,7 @@ describe("release builds on the developer's Mac", () => {
 
   // Stand-ins for tart, gh, and ssh log each call and keep just enough state:
   // which VMs exist, and whether the VM still takes SSH passwords.
-  async function runner(t, { vms = ["threestrands-release-base"], policy = "all_external_contributors", xcode = "Xcode 26.1", sudo = "passwordless", failAt = "", key = true } = {}) {
+  async function runner(t, { vms = ["threestrands-release-base"], policy = "all_external_contributors", xcode = "Xcode 26.1", sudo = "passwordless", failAt = "", failOnce = "", key = true } = {}) {
     const directory = await mkdtemp(join(tmpdir(), "threestrands-runner-"));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const state = join(directory, "state");
@@ -525,7 +525,10 @@ describe("release builds on the developer's Mac", () => {
     const common = `import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 const state = (name) => process.env.RUNNER_TEST_STATE + "/" + name;
-const fail = (step, code = 1) => { if (process.env.RUNNER_TEST_FAIL_AT === step) process.exit(code); };
+const fail = (step, code = 1) => {
+  if (process.env.RUNNER_TEST_FAIL_AT === step) process.exit(code);
+  if (process.env.RUNNER_TEST_FAIL_ONCE === step && !existsSync(state("failed-" + step))) { writeFileSync(state("failed-" + step), ""); process.exit(code); }
+};
 `;
     for (const [tool, behavior] of Object.entries({
       tart: `appendFileSync(process.env.RUNNER_TEST_LOG, JSON.stringify({ tool: "tart", args, input: "" }) + "\\n");
@@ -552,7 +555,7 @@ if (command.startsWith("xcodebuild")) console.log(process.env.RUNNER_TEST_XCODE 
 if (command === "sudo -n true" && process.env.RUNNER_TEST_SUDO !== "passwordless") process.exit(1);
 if (command.includes("tee /etc/ssh/sshd_config.d/")) writeFileSync(state("keys-only"), "");
 if (command.includes("curl")) fail("download");
-if (input.includes("ENCODED")) fail("job", 3);`,
+if (input.includes("ENCODED")) { fail("connect", 255); fail("job", 3); }`,
     })) {
       await writeFile(join(directory, "bin", tool), `#!/usr/bin/env node\n${common}${behavior}\n`);
       await chmod(join(directory, "bin", tool), 0o755);
@@ -565,7 +568,7 @@ if (input.includes("ENCODED")) fail("job", 3);`,
         env: {
           ...process.env, HOME: home, PATH: `${join(directory, "bin")}${delimiter}${process.env.PATH}`, RUNNER_SSH_KEY: "",
           RUNNER_TEST_LOG: log, RUNNER_TEST_STATE: state, RUNNER_TEST_POLICY: policy, RUNNER_TEST_XCODE: xcode,
-          RUNNER_TEST_SUDO: sudo, RUNNER_TEST_FAIL_AT: failAt,
+          RUNNER_TEST_SUDO: sudo, RUNNER_TEST_FAIL_AT: failAt, RUNNER_TEST_FAIL_ONCE: failOnce, RUNNER_RETRY_DELAY: "0",
         },
       }),
       commands: async () => (await readFile(log, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)),
@@ -614,11 +617,45 @@ if (input.includes("ENCODED")) fail("job", 3);`,
       assert.deepEqual(remove.args, ["api", "-X", "DELETE", "repos/oa-labs/ThreeStrands/actions/runners/4242"]);
     });
 
-    it("removes the clone and its runner even when the job fails", async (t) => {
+    it("removes the clone and its runner even when the job fails, and stops after three failures in a row", async (t) => {
       const fixture = await runner(t, { failAt: "job" });
-      assert.notEqual(fixture.run().status, 0);
+      const result = fixture.run();
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /the runner on threestrands-release-\S+ stopped with status 3/);
+      assert.match(result.stderr, /3 jobs in a row failed to start; stopping/);
       const commands = await fixture.commands();
-      assert.deepEqual(summary(commands).slice(-3).map(([tool, what]) => [tool, what.split(" ")[0]]), [["gh", "api"], ["tart", "stop"], ["tart", "delete"]]);
+      const clones = commands.filter((command) => command.args[0] === "clone").map((command) => command.args[2]);
+      assert.deepEqual(clones.map((clone) => clone.at(-1)), ["1", "2", "3"]);
+      for (const clone of clones) {
+        assert.ok(commands.some((command) => command.args.join(" ") === `delete ${clone}`), clone);
+        assert.equal(await fixture.exists(clone), false);
+      }
+      const removed = commands.filter((command) => command.tool === "gh" && command.args.includes("DELETE"));
+      assert.equal(removed.length, 3, "each failed job's runner is removed");
+      // A job that ran and failed is not started again in the same VM.
+      assert.equal(commands.filter((command) => command.tool === "ssh" && command.input.includes("ENCODED")).length, 3);
+    });
+
+    it("connects again when the VM doesn't answer in time to start the runner", async (t) => {
+      const fixture = await runner(t, { failOnce: "connect" });
+      const result = fixture.run();
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stderr, /Could not connect to threestrands-release-\S+ to start the runner; trying again/);
+      const commands = await fixture.commands();
+      const starts = commands.filter((command) => command.tool === "ssh" && command.input.includes("ENCODED"));
+      assert.equal(starts.length, 2);
+      assert.equal(commands.filter((command) => command.args[0] === "clone").length, 1, "the same VM and runner are used");
+      assert.equal(commands.filter((command) => command.tool === "gh" && command.args.includes("POST")).length, 1);
+    });
+
+    it("keeps serving with a fresh VM after a job fails to start", async (t) => {
+      const fixture = await runner(t, { failOnce: "clone" });
+      const result = fixture.run();
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stderr, /Starting again with a fresh VM in 0 seconds/);
+      const clones = (await fixture.commands()).filter((command) => command.args[0] === "clone").map((command) => command.args[2]);
+      assert.equal(clones.length, 2);
+      assert.deepEqual(clones.map((clone) => clone.at(-1)), ["1", "2"]);
     });
 
     it("serves the number of jobs asked for, each in its own clone", async (t) => {

@@ -311,7 +311,9 @@ gh variable set MACOS_RELEASE_RUNNER --body '["self-hosted", "threestrands-relea
 ```
 
 Keep `scripts/release-runner.sh` running, and the Mac awake, while a
-release builds; queued jobs wait for it. A release uses one clone per macOS
+release builds; queued jobs wait for it. If a job can't start, for example
+because a freshly booted VM is slow to answer, it deletes that VM and tries
+again with a fresh one, and stops after three failures in a row. A release uses one clone per macOS
 build, one after another, because macOS runs at most two VMs at a time and the
 development VM may be one. The `RUNNER_*` settings listed at the top of the script
 change its defaults. To go back to GitHub's

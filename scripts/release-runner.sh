@@ -10,7 +10,9 @@
 # Usage: scripts/release-runner.sh [serve] [--jobs N]
 #        scripts/release-runner.sh setup [--image IMAGE] [--replace]
 #        scripts/release-runner.sh require-approval
-#   serve             serve release jobs (the default)
+#   serve             serve release jobs (the default); after a job that fails
+#                     to start, it tries again in a fresh VM, and stops after
+#                     three such failures in a row
 #     --jobs N        stop after N jobs; by default it serves until interrupted
 #   setup             require approval for outside contributors' workflows,
 #                     then build the base VM from IMAGE
@@ -29,6 +31,7 @@
 #   RUNNER_SSH_KEY        public key to install (the first of the keys above)
 #   RUNNER_BASE_PASSWORD  the image's password for that user, used once (admin)
 #   RUNNER_DIR            runner folder in that user's home (actions-runner)
+#   RUNNER_RETRY_DELAY    seconds to wait before trying again (10)
 # See "Release builds on your own Mac" in DEVELOPERS.md.
 set -Eeuo pipefail
 
@@ -45,12 +48,16 @@ IMAGE="${RUNNER_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-xcode:latest}"
 MIN_XCODE=26
 APPROVAL_POLICY=all_external_contributors
 SSHD_CONFIG=/etc/ssh/sshd_config.d/100-threestrands-release.conf
+RETRY_DELAY="${RUNNER_RETRY_DELAY:-10}"
+MAX_FAILURES=3
 
 die() { echo "error: $*" >&2; exit 1; }
 usage() { sed -n '/^# Usage/,/^#   require-approval/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 command="serve"
 case "${1:-}" in serve|setup|require-approval) command="$1"; shift ;; esac
+# serve runs each job as `_serve-one N` in its own process (see serve).
+if [[ "${1:-}" == _serve-one && "${2:-}" =~ ^[0-9]+$ ]]; then command="_serve-one" attempt="$2"; shift 2; fi
 jobs=0 replace=0
 while [[ $# -gt 0 ]]; do
   case "$command:$1" in
@@ -95,7 +102,10 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-ssh_options=(-o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+# A VM that has just booted can take a while to answer, and the connection
+# that runs a job stays open for its whole length.
+ssh_options=(-o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=6
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 identity=()
 [[ -z "${RUNNER_SSH_KEY:-}" ]] || identity=(-i "${RUNNER_SSH_KEY%.pub}")
 
@@ -225,8 +235,8 @@ test -x '$RUNNER_DIR/run.sh'" </dev/null || die "installing the Actions runner f
 }
 
 serve_one() {
-  local ip config jit
-  vm="threestrands-release-$(date +%Y%m%d-%H%M%S)-$$-$((served + 1))"
+  local ip config jit status started try
+  vm="threestrands-release-$(date +%Y%m%d-%H%M%S)-$PPID-$attempt"
   echo "Starting $vm from $BASE_VM"
   "$TART" clone "$BASE_VM" "$vm"
   start_vm
@@ -242,24 +252,50 @@ serve_one() {
   [[ "$runner_id" =~ ^[0-9]+$ && -n "$jit" && "$jit" != "$config" ]] || die "GitHub did not return a runner configuration"
 
   echo "Waiting for a release job on $vm (label $LABEL)"
-  # The configuration is a credential: send it over stdin, not the command line.
-  printf '%s\n' "$jit" | vm_ssh "$ip" "read -r jit && cd ~/$RUNNER_DIR && ./run.sh --jitconfig \"\$jit\""
+  for try in 1 2 3; do
+    started=$SECONDS status=0
+    # The configuration is a credential: send it over stdin, not the command line.
+    printf '%s\n' "$jit" | vm_ssh "$ip" "read -r jit && cd ~/$RUNNER_DIR && ./run.sh --jitconfig \"\$jit\"" || status=$?
+    # ssh exits 255 when it can't connect. Failing that quickly, the runner
+    # never started, so connecting again is safe.
+    if [[ "$status" == 255 && $((SECONDS - started)) -lt 90 && "$try" -lt 3 ]]; then
+      echo "Could not connect to $vm to start the runner; trying again" >&2
+      sleep "$RETRY_DELAY"
+      continue
+    fi
+    break
+  done
+  [[ "$status" == 0 ]] || die "the runner on $vm stopped with status $status"
   echo "Finished the job on $vm"
   cleanup
 }
 
+# Each job runs in its own process: a job that fails to start then exits
+# through its own cleanup, which deletes its VM and runner, and the loop goes
+# on with a fresh VM. (Run as an `if` or `||` condition in this shell, set -e
+# would stop applying inside it.)
 serve() {
   "$TART" get "$BASE_VM" >/dev/null 2>&1 || die "no base VM named $BASE_VM; create it with: $0 setup"
   check_approval
-  served=0
+  local served=0 attempt=0 failures=0 status
   while [[ "$jobs" == 0 || "$served" -lt "$jobs" ]]; do
-    serve_one
-    served=$((served + 1))
+    attempt=$((attempt + 1)) status=0
+    "$BASH" "$0" serve _serve-one "$attempt" || status=$?
+    if [[ "$status" == 0 ]]; then
+      served=$((served + 1)) failures=0
+      continue
+    fi
+    [[ "$status" != 130 ]] || exit 130
+    failures=$((failures + 1))
+    [[ "$failures" -lt "$MAX_FAILURES" ]] || die "$MAX_FAILURES jobs in a row failed to start; stopping"
+    echo "Starting again with a fresh VM in $RETRY_DELAY seconds" >&2
+    sleep "$RETRY_DELAY"
   done
 }
 
 case "$command" in
   serve) serve ;;
+  _serve-one) serve_one ;;
   setup) setup ;;
   require-approval) require_approval ;;
 esac
