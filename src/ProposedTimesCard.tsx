@@ -9,9 +9,14 @@ import { breakWarning, cachedEventsInRange, eventsInRange } from "./SlotDayPrevi
 import { SlotDayToggle } from "./SlotDayToggle";
 import { errorMessage } from "./errors";
 
-export function ProposedTimesCard({ times: offered, preferences, intoDraft, onReplyWithTimes, onAcceptTime, onFindOtherTimes, calendarConnected, onOpenCalendarSettings }: {
+export function ProposedTimesCard({ times: offered, preferences, sender = null, intoDraft, onReplyWithTimes, onAcceptTime, onFindOtherTimes, calendarConnected, onOpenCalendarSettings }: {
   times: ProposedTime[];
   preferences: AvailabilityPreferences;
+  /**
+   * Who sent the times. A zone chosen here is remembered for them, and the
+   * zone remembered earlier is the one assumed until the user picks another.
+   */
+  sender?: { email: string; name: string | null } | null;
   intoDraft?: boolean;
   calendarConnected: boolean;
   onReplyWithTimes(times: AvailabilityCandidate[]): void;
@@ -27,8 +32,41 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
   const generation = useRef(0);
   const ids = useId();
   const [zoneOverride, setZone] = useState<string | null>(null);
-  const zone = zoneOverride ?? preferences.timeZone;
-  const zones = useMemo(() => timeZoneChoices(zone), [zone]);
+  // What was remembered for this sender; undefined until it has been read, so the first check uses it.
+  const senderEmail = sender?.email ?? null;
+  const [remembered, setRemembered] = useState<{ email: string | null; zone: string | null } | null>(senderEmail ? null : { email: null, zone: null });
+  const rememberedZone = remembered?.email === senderEmail ? remembered.zone : null;
+  const zoneKnown = remembered?.email === senderEmail;
+  useEffect(() => {
+    if (!senderEmail) return;
+    let current = true;
+    mailClient.getContactTimeZone(senderEmail)
+      .then((zone) => { if (current) setRemembered({ email: senderEmail, zone }); })
+      .catch(() => { if (current) setRemembered({ email: senderEmail, zone: null }); });
+    return () => { current = false; };
+  }, [senderEmail]);
+  const zone = zoneOverride ?? rememberedZone ?? preferences.timeZone;
+  const [picking, setPicking] = useState(false);
+  const pickerRef = useRef<HTMLSelectElement>(null);
+  const changeRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  const [rememberFailed, setRememberFailed] = useState(false);
+  // The full list is long; build it only once the picker is opened.
+  const zones = useMemo(() => picking ? timeZoneChoices(zone) : null, [picking, zone]);
+  useEffect(() => { if (picking) pickerRef.current?.focus(); }, [picking]);
+  useEffect(() => {
+    if (!picking && returnFocus.current) { returnFocus.current = false; changeRef.current?.focus(); }
+  }, [picking]);
+  const chooseZone = (value: string) => {
+    setZone(value);
+    returnFocus.current = true;
+    setPicking(false);
+    if (!senderEmail) return;
+    // Choosing the reader's own zone is the default again, so nothing needs remembering.
+    setRememberFailed(false);
+    mailClient.setContactTimeZone(senderEmail, sender?.name ?? null, value === preferences.timeZone ? null : value)
+      .catch(() => setRememberFailed(true));
+  };
   // Most emails never say how long; assume the usual length visibly instead of refusing the time.
   const [lengthOverride, setLength] = useState<number | null>(null);
   const length = lengthOverride ?? preferences.defaultDurationMinutes;
@@ -56,13 +94,13 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
     setRows(null);
     setSelected(new Set());
     setError("");
-    if (calendarConnected) {
+    if (calendarConnected && zoneKnown) {
       void mailClient.checkProposedTimes({ times, assumedTimeZone: zone, preferences }).then((result) => {
         if (current()) setRows(result);
       }).catch((reason) => { if (current()) setError(errorMessage(reason)); });
     }
     return () => { generation.current = version + 1; };
-  }, [times, zone, preferences, attempt, calendarConnected]);
+  }, [times, zone, zoneKnown, preferences, attempt, calendarConnected]);
 
   // One resolvable time opens its day; several stay collapsed until chosen.
   useEffect(() => {
@@ -138,8 +176,8 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
   };
   return <section aria-label="Proposed times" className="proposed-times">
     <p className="context-section-note proposed-times-summary">{offered.length} proposed {offered.length === 1 ? "time" : "times"}{durations.length === 1 && durations[0] ? ` · ${formatLength(durations[0])} each` : ""}</p>
-    {offered.some((time) => !time.timeZone) ? <label className="proposed-times-zone">Sender’s timezone
-      <select value={zone} disabled={checking} title="The email didn’t say which timezone its times are in." onChange={(event) => setZone(event.target.value)}>
+    {offered.some((time) => !time.timeZone) ? picking && zones ? <label className="proposed-times-zone">Sender’s timezone
+      <select ref={pickerRef} value={zone} disabled={checking} title="The email didn’t say which timezone its times are in." onChange={(event) => chooseZone(event.target.value)}>
         <optgroup label="Common">
           {zones.common.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
         </optgroup>
@@ -147,7 +185,8 @@ export function ProposedTimesCard({ times: offered, preferences, intoDraft, onRe
           {zones.all.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
         </optgroup>
       </select>
-    </label> : null}
+    </label> : <p className="context-section-note proposed-times-zone-line">Times in {friendlyZoneName(zone)} · <button type="button" ref={changeRef} className="btn-link" disabled={checking} aria-label="Change sender’s timezone" onClick={() => setPicking(true)}>Change</button></p> : null}
+    {rememberFailed ? <p className="context-status" role="status">Couldn’t remember this timezone for the sender.</p> : null}
     {lengthUnstated ? <label className="proposed-times-zone">Meeting length
       <select value={length} disabled={checking} title="The email didn’t say how long the meeting is." onChange={(event) => setLength(Number(event.target.value))}>
         {lengths.map((minutes) => <option key={minutes} value={minutes}>{formatLength(minutes)}</option>)}

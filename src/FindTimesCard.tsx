@@ -48,7 +48,7 @@ export function askFindTimes(
 export function FindTimesCard({
   requestOwner, plan, reason = null, reasonAction = null, preferences, calendarConnected, ai, intoDraft,
   onAddToCalendar, onReplyWithTimes, onAcceptTime, onConfirmTime, onOpenCalendarSettings, identity, onOpenCalendarEvent,
-  onMatchChange, matchedActions, moreActions, extraActions, coworkers,
+  onMatchChange, matchedActions, moreActions, extraActions, coworkers, sender,
 }: {
   requestOwner?: string | null;
   plan: SchedulePlan;
@@ -59,6 +59,8 @@ export function FindTimesCard({
   preferences: AvailabilityPreferences;
   calendarConnected: boolean;
   coworkers?: CoworkerCalendars;
+  /** Who sent the times an email proposed; see ProposedTimesCard. */
+  sender?: { email: string; name: string | null } | null;
   /** Reads what to share when the user adjusts in words; null when Find Times AI is off. */
   ai: (() => FindTimesContext) | null;
   intoDraft?: boolean;
@@ -133,7 +135,7 @@ export function FindTimesCard({
   const effectivePlan = adjusted?.plan ?? plan;
   if (effectivePlan.proposedTimes?.length) return <>
     {shownReason || reasonAction ? <p className="find-times-reason">{shownReason}{shownReason && reasonAction ? " " : null}{reasonAction}</p> : null}
-    <ProposedTimesCard times={effectivePlan.proposedTimes} preferences={preferences} calendarConnected={calendarConnected}
+    <ProposedTimesCard times={effectivePlan.proposedTimes} preferences={preferences} sender={sender} calendarConnected={calendarConnected}
       intoDraft={intoDraft} onReplyWithTimes={onReplyWithTimes} onAcceptTime={onAcceptTime} onOpenCalendarSettings={onOpenCalendarSettings}
       onFindOtherTimes={() => setAdjusted((previous) => ({ key: (previous?.key ?? 0) + 1,
         plan: { query: lookaheadRange(new Date()), durationMinutes: effectivePlan.durationMinutes, durationIsDefault: effectivePlan.durationIsDefault, timeZoneAssumed: false },

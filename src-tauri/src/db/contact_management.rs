@@ -21,12 +21,13 @@ pub struct ContactImportResult {
 
 fn read_record(connection: &Connection, id: &str) -> DbResult<ContactRecord> {
     let mut record = connection.query_row(
-        "SELECT id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at FROM contacts WHERE id=?1", [id],
+        "SELECT id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at,time_zone FROM contacts WHERE id=?1", [id],
         |row| Ok(ContactRecord {
             id: row.get(0)?, display_name: row.get(1)?, role: row.get(2)?, company: row.get(3)?, location: row.get(4)?, bio: row.get(5)?, notes: row.get(6)?,
             links: serde_json::from_str(&row.get::<_, String>(7)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(error)))?,
             photo_data: row.get(8)?, favorite: row.get(9)?, birthday: row.get(10)?, addresses: Vec::new(),
             keep_in_touch: KeepInTouch { interval_days: row.get(11)?, started_at: row.get(12)?, snoozed_until: row.get(13)?, snoozed_at: row.get(14)?, last_touch_at: row.get(15)? },
+            time_zone: row.get(16)?,
         })
     ).optional()?.ok_or(DatabaseError::NotFound("Saved contact"))?;
     let mut statement = connection.prepare(
@@ -139,6 +140,7 @@ impl Database {
                 for address in source.addresses { if !target.addresses.contains(&address) { target.addresses.push(address); } }
                 for link in source.links { if !target.links.contains(&link) { target.links.push(link); } }
                 target.favorite |= source.favorite;
+                if target.time_zone.is_none() { target.time_zone = source.time_zone; }
                 if target.photo_data.is_none() { target.photo_data = source.photo_data; }
                 let latest_touch = [target.keep_in_touch.last_touch_at.clone(), source.keep_in_touch.last_touch_at.clone()]
                     .into_iter().flatten().max_by_key(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
@@ -156,7 +158,7 @@ impl Database {
                 tx.execute("DELETE FROM contacts WHERE id=?1", [source_id])?;
                 if sync { record_replicated_deletion_in_transaction(tx, EntityType::Contact, source_id)?; }
             }
-            let request = SaveContactRequest { id: Some(target.id), display_name: target.display_name, role: target.role, company: target.company, location: target.location, bio: target.bio, notes: target.notes, links: target.links, photo_data: target.photo_data, favorite: target.favorite, addresses: target.addresses, birthday: target.birthday, keep_in_touch: Some(target.keep_in_touch) };
+            let request = SaveContactRequest { id: Some(target.id), display_name: target.display_name, role: target.role, company: target.company, location: target.location, bio: target.bio, notes: target.notes, links: target.links, photo_data: target.photo_data, favorite: target.favorite, addresses: target.addresses, birthday: target.birthday, keep_in_touch: Some(target.keep_in_touch), time_zone: Some(target.time_zone) };
             save_contact_on(tx, &request)?;
             if sync { record_contact(tx, target_id)?; }
             for (group, fields) in group_fields {
@@ -232,6 +234,7 @@ mod tests {
             addresses: vec![email.into()],
             birthday: None,
             keep_in_touch: None,
+            time_zone: None,
         }
     }
     fn sync_into(to: &Database, from: &Database) {

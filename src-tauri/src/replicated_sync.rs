@@ -2671,6 +2671,7 @@ mod replicator_tests {
                 photo_data: None,
                 favorite: false,
                 addresses: vec!["shared@example.com".into()],
+                time_zone: None,
             })
             .unwrap();
         let contact = json!({"id":"remote-contact","displayName":"Remote person","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["shared@example.com"]});
@@ -2737,6 +2738,7 @@ mod replicator_tests {
             photo_data: None,
             favorite: false,
             addresses: vec!["owner@example.com".into()],
+            time_zone: None,
         })
         .unwrap();
         // No newer remote snapshot is needed; pending projection state is
@@ -2765,6 +2767,7 @@ mod replicator_tests {
             photo_data: None,
             favorite: false,
             addresses: vec!["kit@example.com".into()],
+            time_zone: None,
         })
         .unwrap();
         let local = db
@@ -2788,6 +2791,24 @@ mod replicator_tests {
         let cleared = db.get_contact_profile("kit-contact").unwrap().unwrap();
         assert_eq!(cleared.birthday, None);
         assert_eq!(cleared.keep_in_touch, crate::models::KeepInTouch::default());
+    }
+
+    #[test]
+    fn a_contact_record_from_an_older_build_keeps_the_local_time_zone() {
+        let db = Database::open_memory();
+        db.set_contact_time_zone("zone@example.com", Some("Zed"), Some("Asia/Tokyo"))
+            .unwrap();
+        let id = db.list_saved_contact_profiles().unwrap().remove(0).id;
+        let legacy = json!({"id":id,"displayName":"Zed","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["zone@example.com"],"birthday":null,"keepInTouch":{}});
+        db.upsert_synced_contact(&legacy).unwrap();
+        assert_eq!(
+            db.contact_time_zone("zone@example.com").unwrap().as_deref(),
+            Some("Asia/Tokyo")
+        );
+        let mut current = legacy.clone();
+        current["timeZone"] = Value::Null;
+        db.upsert_synced_contact(&current).unwrap();
+        assert_eq!(db.contact_time_zone("zone@example.com").unwrap(), None);
     }
 
     #[test]
@@ -2848,6 +2869,7 @@ mod replicator_tests {
                     addresses: vec![email.into()],
                     birthday: None,
                     keep_in_touch: None,
+                    time_zone: None,
                 })
                 .unwrap()
                 .id
@@ -5113,6 +5135,7 @@ mod reconciliation_tests {
                 photo_data: None,
                 favorite: false,
                 addresses: vec!["sweep@example.com".into()],
+                time_zone: None,
             })
             .unwrap();
 

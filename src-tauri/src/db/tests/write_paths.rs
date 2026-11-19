@@ -380,8 +380,8 @@ id=<uuid> | name=Hi | body=Hello | created_at=<now> | updated_at=NULL
 [split_inboxes]
 id=<uuid> | name=News | match_kind=domain | match_value=example.com | sort_order=0 | created_at=<now> | account_id=me@example.com | updated_at=NULL
 [contacts]
-id=contact-1 | display_name=Ada | role=NULL | company=Engines | location=NULL | bio=NULL | notes=NULL | links_json=["https://example.com"] | photo_data=NULL | favorite=1 | updated_at=<now> | birthday=1990-12-10 | kit_interval_days=NULL | kit_started_at=NULL | kit_snoozed_until=NULL | kit_snoozed_at=NULL | kit_last_touch_at=NULL
-id=contact:f0030501023327437b06e5c6f87df7871b8e704ae608d1d0b7b24fdd2a06c716 | display_name=NULL | role=NULL | company=NULL | location=NULL | bio=NULL | notes=NULL | links_json=[] | photo_data=NULL | favorite=0 | updated_at=<now> | birthday=NULL | kit_interval_days=NULL | kit_started_at=NULL | kit_snoozed_until=NULL | kit_snoozed_at=NULL | kit_last_touch_at=NULL
+id=contact-1 | display_name=Ada | role=NULL | company=Engines | location=NULL | bio=NULL | notes=NULL | links_json=["https://example.com"] | photo_data=NULL | favorite=1 | updated_at=<now> | birthday=1990-12-10 | kit_interval_days=NULL | kit_started_at=NULL | kit_snoozed_until=NULL | kit_snoozed_at=NULL | kit_last_touch_at=NULL | time_zone=NULL
+id=contact:f0030501023327437b06e5c6f87df7871b8e704ae608d1d0b7b24fdd2a06c716 | display_name=NULL | role=NULL | company=NULL | location=NULL | bio=NULL | notes=NULL | links_json=[] | photo_data=NULL | favorite=0 | updated_at=<now> | birthday=NULL | kit_interval_days=NULL | kit_started_at=NULL | kit_snoozed_until=NULL | kit_snoozed_at=NULL | kit_last_touch_at=NULL | time_zone=NULL
 [contact_addresses]
 contact_id=contact-1 | email=ada@example.com | position=0
 contact_id=contact-1 | email=ada@work.example.com | position=1
@@ -403,7 +403,7 @@ id=split-1 | name=News | match_kind=domain | match_value=example.com | sort_orde
 [snippets]
 id=snippet-1 | name=Hi | body=Hello | created_at=2020-01-02T03:04:05+00:00 | updated_at=NULL
 [contacts]
-id=contact-1 | display_name=Ada | role=Analyst | company=NULL | location=NULL | bio=NULL | notes=n | links_json=["https://example.com"] | photo_data=NULL | favorite=0 | updated_at=<now> | birthday=1990-12-10 | kit_interval_days=30 | kit_started_at=2020-01-02T03:04:05+00:00 | kit_snoozed_until=NULL | kit_snoozed_at=NULL | kit_last_touch_at=2021-02-03T04:05:06+00:00
+id=contact-1 | display_name=Ada | role=Analyst | company=NULL | location=NULL | bio=NULL | notes=n | links_json=["https://example.com"] | photo_data=NULL | favorite=0 | updated_at=<now> | birthday=1990-12-10 | kit_interval_days=30 | kit_started_at=2020-01-02T03:04:05+00:00 | kit_snoozed_until=NULL | kit_snoozed_at=NULL | kit_last_touch_at=2021-02-03T04:05:06+00:00 | time_zone=NULL
 [contact_addresses]
 contact_id=contact-1 | email=ada@example.com | position=0
 [contact_groups]

@@ -263,6 +263,7 @@ impl Database {
                 addresses: vec![email],
                 birthday: None,
                 keep_in_touch: None,
+                time_zone: None,
             })?;
             resolved.push(profile.id.clone());
             saved_contacts.push(profile);
@@ -513,6 +514,7 @@ mod tests {
                 addresses: vec![email.into()],
                 birthday: None,
                 keep_in_touch: None,
+                time_zone: None,
             })
             .unwrap()
             .id
@@ -833,6 +835,7 @@ mod tests {
                 addresses: request.addresses,
                 birthday: None,
                 keep_in_touch: None,
+                time_zone: None,
             })
             .unwrap();
         let bob = contact(&database, "Bob", "bob@example.com");

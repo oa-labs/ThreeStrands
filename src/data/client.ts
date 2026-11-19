@@ -254,6 +254,10 @@ export interface MailClient extends CorrespondenceClient {
   resolveContactIds(emails: string[]): Promise<Record<string, string>>;
   getContactProfile(id: string): Promise<ContactProfile | null>;
   saveContactProfile(request: SaveContactRequest): Promise<ContactProfile>;
+  /** The timezone remembered for a saved contact with this address, or null for "same as mine". */
+  getContactTimeZone(email: string): Promise<string | null>;
+  /** Remembers a timezone for this address, saving a contact when there is none yet; null forgets it. */
+  setContactTimeZone(email: string, displayName: string | null, timeZone: string | null): Promise<void>;
   deleteContactProfile(id: string): Promise<void>;
   previewContactImport(): Promise<ContactImportPreview | null>;
   importContacts(contacts: SaveContactRequest[]): Promise<ContactImportResult>;
@@ -601,6 +605,8 @@ const tauriClient: MailClient = {
   resolveContactIds: (emails) => read("resolve_contact_ids", { emails }),
   getContactProfile: (id) => read("get_contact_profile", { id }),
   saveContactProfile: (request) => complete("save_contact_profile", { request }),
+  getContactTimeZone: (email) => read("get_contact_time_zone", { email }),
+  setContactTimeZone: (email, displayName, timeZone) => complete("set_contact_time_zone", { email, displayName, timeZone }),
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
   previewContactImport: () => complete("preview_contact_import"),
   importContacts: (contacts) => complete("import_contacts", { contacts }),

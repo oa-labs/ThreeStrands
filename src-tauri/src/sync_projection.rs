@@ -231,7 +231,10 @@ impl Database {
         // A device on a build before birthdays and keep-in-touch sends
         // records without those keys. Treat a missing key as "unknown to the
         // sender" and keep the local value rather than clearing it.
-        let local = if value.get("birthday").is_none() || value.get("keepInTouch").is_none() {
+        let local = if value.get("birthday").is_none()
+            || value.get("keepInTouch").is_none()
+            || value.get("timeZone").is_none()
+        {
             self.get_contact_profile(&item.id)?
         } else {
             None
@@ -239,6 +242,11 @@ impl Database {
         let birthday = match (&local, value.get("birthday")) {
             (Some(local), None) => local.birthday.clone(),
             _ => item.birthday,
+        };
+        // Likewise a record from a build before remembered timezones.
+        let time_zone = match (&local, value.get("timeZone")) {
+            (Some(local), None) => local.time_zone.clone(),
+            _ => item.time_zone,
         };
         let keep_in_touch = match (&local, value.get("keepInTouch")) {
             (Some(local), None) => local.keep_in_touch.clone(),
@@ -258,6 +266,7 @@ impl Database {
             addresses: item.addresses,
             birthday,
             keep_in_touch: Some(keep_in_touch),
+            time_zone: Some(time_zone),
         })
         .map(|_| ())
     }

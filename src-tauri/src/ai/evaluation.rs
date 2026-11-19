@@ -348,6 +348,7 @@ async fn execute(case: &Case, provider: AiProvider, options: &Options) -> Result
                 birthday: None,
                 keep_in_touch: Default::default(),
                 keep_in_touch_due_at: None,
+                time_zone: None,
             };
             serde_json::to_value(
                 Box::pin(enrich_contact(

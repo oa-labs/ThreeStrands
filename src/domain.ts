@@ -483,6 +483,8 @@ export type ContactProfile = {
   keepInTouch: KeepInTouch;
   /** When the next keep-in-touch reminder falls due; derived on every read. */
   keepInTouchDueAt: string | null;
+  /** The timezone this person's proposed times are assumed to be in; absent or null means the same as yours. */
+  timeZone?: string | null;
 };
 
 /** A group member as a compose recipient: `email` is the primary address; `addresses` lists every one. */
@@ -681,7 +683,7 @@ export type WorkspaceConversation = { threadId: string; accountId: string; subje
 
 
 /** Keep-in-touch settings change only through their own commands, never through the profile form. */
-export type SaveContactRequest = Omit<ContactProfile, "sentCount" | "receivedCount" | "lastInteractedAt" | "id" | "keepInTouch" | "keepInTouchDueAt"> & { id: string | null };
+export type SaveContactRequest = Omit<ContactProfile, "sentCount" | "receivedCount" | "lastInteractedAt" | "id" | "keepInTouch" | "keepInTouchDueAt" | "timeZone"> & { id: string | null };
 export type ContactFieldSuggestion = { field: "displayName" | "role" | "company" | "location" | "bio" | "link"; value: string; sourceMessageId: string; sourceThreadId: string; excerpt: string };
 export type ContactEnrichmentResult = { suggestions: ContactFieldSuggestion[]; messagesReviewed: number; hasMore: boolean };
 

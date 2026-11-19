@@ -41,6 +41,7 @@ fn empty() -> SaveContactRequest {
         addresses: Vec::new(),
         birthday: None,
         keep_in_touch: None,
+        time_zone: None,
     }
 }
 fn optional(value: &str) -> Option<String> {

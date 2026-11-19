@@ -101,6 +101,7 @@ fn suggested_offers_pressing_tasks_then_promises_then_due_check_ins() {
             photo_data: None,
             favorite: false,
             addresses: vec![address.into()],
+            time_zone: None,
         })
         .unwrap()
     };

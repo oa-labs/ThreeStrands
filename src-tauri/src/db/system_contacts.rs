@@ -186,6 +186,7 @@ impl Database {
                 birthday: None,
                 keep_in_touch: KeepInTouch::default(),
                 keep_in_touch_due_at: None,
+                time_zone: None,
             });
         }
         Ok(profiles)
