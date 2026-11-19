@@ -396,7 +396,7 @@ describe("Composer formatting hints", () => {
     // Plain t types into the draft, so the idle line names the shortcuts that work from it.
     const composeHints = screen.getByLabelText("Compose shortcuts");
     expect(composeHints).toHaveTextContent("Calendar Ctrl+Shift+T");
-    expect(composeHints).toHaveTextContent("Context Panel F6");
+    expect(composeHints).toHaveTextContent("Context Panel Ctrl+Shift+P");
 
     select(editor.firstChild!, 0, 5);
     expect(screen.queryByLabelText("Compose shortcuts")).not.toBeInTheDocument();

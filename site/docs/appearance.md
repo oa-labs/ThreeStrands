@@ -21,7 +21,7 @@ For when conversations are marked read, see [Reading & Triage](triage.html#mark-
 
 ## Move Without a Mouse {#move-without-a-mouse}
 
-Use <kbd>⌘/Ctrl + k</kbd> for commands and <kbd>?</kbd> for shortcuts. Single-letter shortcuts apply outside editing fields. <kbd>F6</kbd> moves between the composer and its side panel. Standard editing shortcuts keep their text-editing behavior inside fields.
+Use <kbd>⌘/Ctrl + k</kbd> for commands and <kbd>?</kbd> for shortcuts. Single-letter shortcuts apply outside editing fields. <kbd>⌘/Ctrl + Shift + P</kbd> (or <kbd>F6</kbd>) moves between the composer and its side panel. Standard editing shortcuts keep their text-editing behavior inside fields.
 
 ## Add a Backdrop to Today {#today-backdrop}
 

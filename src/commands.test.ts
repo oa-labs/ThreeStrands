@@ -532,7 +532,7 @@ describe("command registry", () => {
 
   it("moves between the draft and the context panel on F6 or Mod+Shift+P while the composer is open", async () => {
     const command = commands.find((candidate) => candidate.id === "draft.contextPanel");
-    expect(command?.keys).toEqual(["F6", "Mod+Shift+p"]);
+    expect(command?.keys).toEqual(["Mod+Shift+p", "F6"]);
     expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(true);
     expect(command?.enabled(noopContext())).toBe(false);
     const toggleContextPanelFocus = vi.fn();
