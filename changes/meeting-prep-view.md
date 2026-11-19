@@ -1,3 +1,0 @@
-### New
-- **Prepare** for a meeting from its details in **Calendar**, an agenda, **Today**, the command palette, or by pressing <kbd>p</kbd>. Preparation shows that meeting's notes, notes from earlier meetings in its series, mail likely about the meeting, and open commitments, each one click from its source, with **Back to Meeting** to return. It reads only what is on your computer and changes nothing; <kbd>Escape</kbd> closes it.
-- **Today**'s agenda says what is ready for each meeting still ahead. Choosing a meeting shows its preparation beside the agenda, and the arrow keys move to the next or previous meeting. **Reserve Prep Time** adds a "Prepare for" task under the meeting in that day's note.

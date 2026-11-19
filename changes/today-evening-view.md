@@ -1,2 +1,0 @@
-### New
-- **Settings → Appearance → Today Backdrop** adds an optional sky in a header aligned with Today's panels, with a matching tint in the side gutters and between panels that fades down the page: daytime from 6 am, twilight from 6 pm, and a gentle navy night sky with stars from 9 pm. The moon stays fully visible with the sky showing through its crescent, header text stays legible, and a lighter blue night tint surrounds the cards; the backdrop is off by default and stays on this computer.

@@ -4,6 +4,94 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.211.0 — 2026-11-19
+
+### New
+- Choose Straitly as an AI provider in **Settings → AI Provider**.
+- Cancel AI requests while they run, and set an optional daily estimated spending limit under **Settings → AI Provider**. AI requests now use bounded queues and retries, and show source and generation details in their request history.
+- **Review Follow-through** for a meeting from its preparation: write down its decisions and actions, or pick them from its notes, and save them to the meeting's note as tasks, checklist items, or links to tasks you already have. The meeting then shows as reviewed on all your devices, and **Undo** removes what was added.
+- **Draft Follow-up** opens a message to the meeting's attendees in the composer, starting from your reviewed decisions and actions. Opening it again resumes the same draft, and nothing is sent until you send it.
+- **Prepare** for a meeting from its details in **Calendar**, an agenda, **Today**, the command palette, or by pressing <kbd>p</kbd>. Preparation shows that meeting's notes, notes from earlier meetings in its series, mail likely about the meeting, and open commitments, each one click from its source, with **Back to Meeting** to return. It reads only what is on your computer and changes nothing; <kbd>Escape</kbd> closes it.
+- **Today**'s agenda says what is ready for each meeting still ahead. Choosing a meeting shows its preparation beside the agenda, and the arrow keys move to the next or previous meeting. **Reserve Prep Time** adds a "Prepare for" task under the meeting in that day's note.
+- Star notes from the list or the open note to keep them in an automatic **Starred** tab. Use Tab and Shift+Tab to switch between **All Notes** and **Starred**.
+- Link a task from any note by typing **@** and its name, and start a note about a task with **Add Note** in its details.
+- **Today** now has a simpler **Planning Inbox** on the left and a larger **Agenda** on the right. Filter one list with **All**, **Tasks**, **Emails**, and **Contacts**; note and goal tasks appear under Tasks, and scheduled items move to the calendar without completing their source.
+- Today's schedule opens on your working hours and dims finished and declined meetings. Use a meeting’s note icon to open its notes or start an entry in its daily note, then prepare alongside the note editor.
+- **Settings → Appearance → Today Backdrop** adds an optional sky in a header aligned with Today's panels, with a matching tint in the side gutters and between panels that fades down the page: daytime from 6 am, twilight from 6 pm, and a gentle navy night sky with stars from 9 pm. The moon stays fully visible with the sky showing through its crescent, header text stays legible, and a lighter blue night tint surrounds the cards; the backdrop is off by default and stays on this computer.
+
+### Improved
+- Clicking the selected account in the sidebar now opens its mail. Switching accounts is easier to spot, with a clearer highlight and the account name shown in Today, Files, Contacts, Tasks and Agents.
+- Model prices are now filled in from OpenRouter's and Straitly's model lists, so you no longer have to type them. You can still change them.
+- **Draft Reply** now uses the sending account’s **Writing Profile**, shown alongside the email context before you generate.
+- In **Settings → AI Provider**, **Reasoning Model** now sits under **Connection**, just above **Test Connection**. Switching providers clears the old provider's model names, so the new provider's default model is used until you choose another.
+- **Settings → AI Provider** now shows recent Activity in columns for the conversation, date, provider and model, messages, and tokens. The daily budget controls and request history have clearer spacing.
+- Time you booked for a task on **Today** now shows a task button that opens the task, and the event's details in **Calendar** link back to the task too.
+- **Calendar**'s **Open tasks** now lists open tasks from your notes, so you can drag them onto the week to block time or check them off there.
+- Briefs lead with the immediate request or current situation and keep supporting facts short, without repeating deadlines or requests. Earlier context is folded away, and message coverage and generation details sit together in a quiet footer.
+- While you write, the line under the draft now shows the shortcuts for showing or hiding the calendar and moving to the context panel, and the **Command Palette** lists commands you can use right now above ones that are unavailable, so searching "toggle" from a draft finds **Show / Hide Calendar**.
+- Event deletion confirmations now show the question, explanation, and actions on separate rows, with more space below the event title and clearer **Cancel** and **Delete event** buttons.
+- When you create or edit an event, the start and end times now show AM or PM, such as "10:00 AM". You can still type 24-hour times like "14:30".
+- In the calendar sidebar's event details, the edit, delete, and close buttons stay beside the first line of a long event title.
+- An event's **Files** in **Calendar** no longer list its calendar invitation files, since the event is already open. Invitations you've starred still appear.
+- Mail uses less memory when showing photo attachments and keeping Drafts and Outbox up to date.
+- Pull down at the top of the mail list to check the server for new mail in the selected account. In All accounts, pulling refreshes every connected account.
+- Meeting suggestions keep Edit in the card menu to reduce clutter. New suggestions better distinguish booking links from calendar invitations awaiting acceptance. When an email clearly supplies a booking link, **Open booking page** takes priority, with **Offer my own times** available as a secondary option.
+- Assumed meeting time zones use a shorter label, with the explanation available on hover and keyboard focus.
+- After opening a contact from a note, press Escape to return to the note with your Notes search preserved.
+- In the Notes sidebar, today is marked with a quiet outline so it no longer looks like the selected day, and the **Links** section is always shown with an **Add link** button for contacts, conversations, tasks, and events.
+- Created, Updated, and Trashed times in a note's details now read "Today at…" or "Yesterday at…" for recent notes.
+- Notes search now has a compact **Include Trash** icon inside the search field, matching the scope toggle in Mail.
+- Notes search now opens with **/** and closes with Escape, while an active search stays available when you return to Notes.
+- Use <kbd>⌘/Ctrl + Shift + V</kbd> to paste without formatting in messages, notes, and signatures. Ordinary paste keeps its existing behavior.
+- Selecting text in Notes now shows formatting shortcuts at the bottom, matching the email composer. Both editors offer **Clear Formatting** (<kbd>⌘/Ctrl + \</kbd>) and **Normal Text** (<kbd>⌘/Ctrl + 0</kbd>), with Clear Formatting taking priority over Strikethrough when space is limited.
+- The proposed-times card in **Availability** now shows one line, "Times in Eastern Time", instead of a timezone menu. Choose **Change** to pick another zone; the zone you pick is remembered for that sender, so their next email is read in it automatically.
+- Email recipient pills leave less space between the address and the remove icon, keeping long addresses closer to the ×.
+- The task editor puts **Type** and **Due** side by side, leaving more room for notes.
+- The task editor's free-text field is now called **Description**, matching task details.
+- **That day** now uses the Event card's colored agenda layout, with the invitation's time shown among nearby meetings and conflicts marked on their cards. Choose **Show Full Day** to see the rest of the day's events, or click an event to open it.
+- Meetings that start well after another has begun now sit on top of it instead of squeezing it, so long meetings keep their full width and readable titles in **Today** and **Calendar**.
+- **Today**'s day view no longer repeats the date or adds a timezone row above the schedule, and shows a small button when meetings are scrolled out of view above or below, such as evening meetings.
+- Read and write daily notes alongside your Planning Inbox in Today, showing Agenda or Daily Note for the selected date. Switch between them with <kbd>Tab</kbd> or <kbd>Shift+Tab</kbd>, or click the hint on the right beside the date controls; while writing, press <kbd>Escape</kbd> first.
+- Add tasks and events directly from Today, and use the schedule arrows or <kbd>-</kbd> and <kbd>=</kbd> to browse other days. The left-aligned date controls stay in place on every day, while the Planning Inbox stays on today’s work.
+- Today’s columns use more of the window, and a **Done** card under the Planning Inbox shows the tasks you finished, emails you sent, notes you created, and starred notes you edited on the day the schedule shows, where you can reopen a task. Today keeps the day you picked until midnight. Check off an email suggestion to record a completed task while keeping the email unchanged.
+  Completing an item briefly carries its checked title into **Done Today**, with a highlight when the destination is hidden and a motion-free cue when reduced motion is enabled.
+  The card keeps a fixed height when switching filters, with scrolling for longer lists so its tabs stay in place, and it no longer flickers to a loading message while Today refreshes in the background.
+- Drag an item from the **Planning Inbox** onto **Today’s Schedule** to book time for it, on today or a future day you browse to with the schedule arrows. A small label follows the pointer while you drag, and Escape cancels.
+- **Today's Schedule** no longer lists your working location as an event, so it doesn't take up the timeline or count as a meeting.
+- On **Today**, add a task by typing it into the **Add a task** field at the end of the list, and create an event by clicking or dragging on the schedule or with the **+** button beside the date controls.
+- **Today** gives the task list more room, hides task actions until you point at a task, and marks overdue dates. The **Agenda** has a uniform background, all three card headings have matching icons, and task outlines are softer.
+- Today's **Plan** column lines up on a single left edge, with larger empty-state text and a clearer underline on the selected source tab.
+- When the selected source on Today is empty, the cards borrowed from the next source now read "Meanwhile, from…", show their real count, and offer **Show all** to switch to that source.
+- Pull down to refresh Today, a Calendar agenda, the Tasks list, or the Notes list, with progress shown while fresh data loads. Refresh keeps your account, filters, selection, and unfinished edits in place.
+
+### Fixed
+- With a daily AI spending limit set, OpenRouter requests no longer fail asking for model prices.
+- AI replies and analyses no longer appear complete when the provider stops at its output limit. Private AI response text is excluded from diagnostic logs.
+- **Test Connection** no longer reports that the model ran out of output space when you use a reasoning model. The test now passes once the provider accepts the endpoint, key, and model.
+- Refreshing a Brief keeps the existing text visible with one updating status and a compact Cancel control beside it, without claiming an older brief covers the latest mail.
+- In a contact's **Emails** field, the "Add another address" prompt moves to its own line instead of being cut off when the contact has several addresses, and the addresses no longer sit against the field's top edge.
+- Meetings added to a daily note now appear in time order, keeping nested notes with their meeting.
+- Long attendee summaries in event details wrap while keeping the expand arrow aligned with the first line at the right edge.
+- Switching accounts with Command+1, Command+2, and the other account shortcuts now keeps your current view open, including Today, Calendar, Contacts, Tasks, Notes, and Files. Account icons and All accounts follow the same behavior.
+- In a Brief's proposed times, each time's status and "From the email" line up under the time again instead of under its checkbox.
+- The website’s changelog now wraps release notes correctly without horizontal scrolling.
+- Leaving a reply to check another conversation now keeps its saved draft available to resume in Split Inboxes, with reliable navigation to Drafts afterward.
+- Drafts use the available writing space, keeping quote and writing tools at the bottom instead of midway through an empty area.
+- Conversations containing a very long link, such as an Outlook meeting poll, now open right away instead of freezing the window for several seconds, including when you return to **Mail** from another view.
+- Opening a meeting's note from Today, Calendar, or an agenda now opens its backlinked meeting note when available, including notes created previously. The daily-note entry remains the fallback when there is no meeting note.
+- Editing a meeting suggestion now accepts participant names as well as email addresses, without showing an email-address error for names extracted from the conversation.
+- Meeting suggestions show “Time not specified” when the extracted timing contains only punctuation, while keeping the source email evidence available to expand.
+- Pasting formatted content from Google Docs into Notes preserves headings, paragraphs, lists, bold, and italic text instead of merging blocks and showing stray Markdown symbols.
+- Carried, deferred, and dropped items in a daily note's plan, and meeting follow-through lines, no longer show hidden notes at the end of the line while you edit, and the rest of the line, such as a link, now displays normally.
+- The **That Day** section beside a meeting invitation, and the day preview under an offered time, now use the context panel's text sizes, and its date line no longer spreads the date, location, and free time across the row.
+- Meeting preparation now receives keyboard focus when opened, returns focus to its event link when closed, and leaves Escape available when its saved session is not visible. Today’s filter buttons and labels follow the app’s shared typography and capitalization.
+- Today’s schedule keeps its rounded border visible at the bottom corners. The **Contacts** filter tells you when you are up to date with your keep-in-touch goals.
+- The add button on Today's plan cards now lines up with the card's title and sits centered in its highlight.
+- **Today** no longer repeats your account address when you have only one account, says "3 need a reply" instead of "3 needs a reply", shows every suggested task instead of hiding one behind a link, writes meeting times the same way everywhere, and no longer leaves a stray dot after tomorrow's date.
+- Promises in **Today → You said you would** stay out of the list after you turn them into a task, even after that task is completed or cancelled and you reopen the app.
+- Tasks created from **You said you would** now use **Action**. Replies no longer automatically complete **Follow Up** tasks; automatic completion applies only to **Waiting for Reply**.
+- Pressing Escape in an input field now releases focus so you can use keyboard shortcuts again. Existing Escape actions, such as closing suggestions or dialogs, still take priority.
+
 ## 0.210.0 — 2026-11-12
 
 ### New
