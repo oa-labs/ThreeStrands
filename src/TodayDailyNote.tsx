@@ -88,7 +88,7 @@ export function TodayDailyNote({ ref, date, active, refreshKey, onLeave, onOpenN
       <h2 className="notes-editor-title">{formatNoteDate(date)}</h2>
       <p className="notes-save-status" role="status">{status}</p>
     </div>
-    <p className="context-status today-note-hint">Enter or click the note to write. Escape returns to the tabs; then {formatShortcut("Tab")} switches panels.</p>
+    <p className="context-status today-note-hint">Enter or click the note to write. Press Escape when you're done; then {formatShortcut("Tab")} switches to Agenda.</p>
     {editor.loadError ? <p className="form-error" role="alert">{editor.loadError}</p> : null}
     {conflictError ? <div role="alert"><p className="form-error">{conflictError}</p><button type="button" className="btn btn-sm" onClick={() => void reload()}>Try Again</button></div> : null}
     {editor.note?.trashed && !stale ? <p className="context-status">This daily note is in Trash. Open it in Notes to restore it.</p> : null}

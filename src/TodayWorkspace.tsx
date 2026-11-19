@@ -1,7 +1,7 @@
 import { formatCompactDate } from "./dateFormatting";
 import { CalendarDays, ChevronLeft, ChevronRight, ContactRound, ListChecks, ListPlus, Mail, NotebookPen, Send, Star, Plus, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { useCallback, useEffect, useMemo, useRef, useState, useId, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isPreparable, meetingsToPrepare, preparationKey, readinessByKey, readinessSummary } from "./meetingPrep";
 import { useMeetingReadiness } from "./useMeetingPreparation";
 import { useWorkspaceCommands } from "./workspaceCommands";
@@ -154,14 +154,24 @@ function TodayLayout({
   const [panel, setPanel] = useLocalStorageState<"agenda" | "note">("threestrands.today.panel", () => readLocalStorage("threestrands.today.panel", (raw) => raw === "note" ? "note" : "agenda", "agenda"));
   const [noteVisited, setNoteVisited] = useState(panel === "note");
   const dailyNote = useRef<TodayDailyNoteHandle>(null);
-  const agendaTab = useRef<HTMLButtonElement>(null);
-  const noteTab = useRef<HTMLButtonElement>(null);
-  const panelId = useId();
-  const selectPanel = (next: "agenda" | "note", focus = false) => {
+  const agendaPanel = useRef<HTMLDivElement>(null);
+  const notePanel = useRef<HTMLDivElement>(null);
+  const focusShownPanel = useRef(false);
+  // Switching never focuses a control. Focus moves only when it sat inside the panel being hidden, so it is not lost.
+  const selectPanel = (next: "agenda" | "note") => {
+    if (next === panel) return;
     if (next === "note") setNoteVisited(true);
+    const hiding = (panel === "agenda" ? agendaPanel : notePanel).current;
+    focusShownPanel.current = Boolean(hiding?.contains(document.activeElement));
     setPanel(next);
-    if (focus) (next === "agenda" ? agendaTab : noteTab).current?.focus();
   };
+  useEffect(() => {
+    if (!focusShownPanel.current) return;
+    focusShownPanel.current = false;
+    (panel === "agenda" ? agendaPanel : notePanel).current?.focus();
+  }, [panel]);
+  const otherPanel = panel === "agenda" ? "note" : "agenda";
+  const otherName = otherPanel === "note" ? "Daily Note" : "Agenda";
 
   const pageRef = useRef<HTMLElement>(null);
   const completion = useTodayCompletionTransition(pageRef, `${accountId}:${dateInputValue(shownDay)}`, showingToday);
@@ -344,8 +354,8 @@ function TodayLayout({
     };
   };
   useWorkspaceCommands({
-    "today.nextView": () => selectPanel(panel === "agenda" ? "note" : "agenda", true),
-    "today.previousView": () => selectPanel(panel === "agenda" ? "note" : "agenda", true),
+    "today.nextView": () => selectPanel(otherPanel),
+    "today.previousView": () => selectPanel(otherPanel),
     ...(panel === "note" ? { "today.write": () => dailyNote.current?.focus() } : {}),
     "today.previousDay": () => onChangeDay?.(addDays(shownDay, -1)),
     "today.nextDay": () => onChangeDay?.(addDays(shownDay, 1)),
@@ -813,21 +823,11 @@ function TodayLayout({
       </div>
       <div className="today-column today-time" role="group" aria-label="Day Planning">
         <div className="today-panel-heading">
-          <div className="today-panel-tabs" role="tablist" aria-label="Day Planning" title={`Switch agenda and daily note (${formatShortcut("Tab")} / ${formatShortcut("Shift+Tab")})`}
-            onKeyDown={(event) => {
-              if (event.metaKey || event.ctrlKey || event.altKey) return;
-              if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
-                event.preventDefault();
-                selectPanel(event.key === "Home" ? "agenda" : event.key === "End" ? "note" : panel === "agenda" ? "note" : "agenda", true);
-              } else if (event.key === "Enter" && panel === "note" && event.target === noteTab.current) {
-                event.preventDefault();
-                dailyNote.current?.focus();
-              }
-            }}>
-            <button ref={agendaTab} id={`${panelId}-agenda-tab`} type="button" role="tab" data-mailbox-tab-shortcut aria-keyshortcuts="Tab Shift+Tab" aria-selected={panel === "agenda"} aria-controls={`${panelId}-agenda`} tabIndex={panel === "agenda" ? 0 : -1}
-              className={`mailbox-tab${panel === "agenda" ? " active" : ""}`} onClick={() => selectPanel("agenda")}><CalendarDays size={ICON_SIZE.md} aria-hidden="true" />Agenda</button>
-            <button ref={noteTab} id={`${panelId}-note-tab`} type="button" role="tab" data-mailbox-tab-shortcut aria-keyshortcuts="Tab Shift+Tab" aria-selected={panel === "note"} aria-controls={`${panelId}-note`} tabIndex={panel === "note" ? 0 : -1}
-              className={`mailbox-tab${panel === "note" ? " active" : ""}`} onClick={() => selectPanel("note")}><NotebookPen size={ICON_SIZE.md} aria-hidden="true" />Daily Note</button>
+          <div className="today-panel-title">
+            <h2>{panel === "agenda" ? <CalendarDays size={ICON_SIZE.md} aria-hidden="true" /> : <NotebookPen size={ICON_SIZE.md} aria-hidden="true" />}{panel === "agenda" ? "Agenda" : "Daily Note"}</h2>
+            <button type="button" className="today-panel-switch" data-mailbox-tab-shortcut aria-keyshortcuts="Tab" aria-label={`Switch to ${otherName}`} onClick={() => selectPanel(otherPanel)}>
+              <kbd aria-hidden="true">{formatShortcut("Tab")}</kbd> for {otherName}
+            </button>
           </div>
           <div className="today-schedule-actions">
             {panel === "agenda" ? <button type="button" className="btn-link" onClick={() => onOpenCalendar(shownDay)}>Open Calendar</button>
@@ -844,7 +844,7 @@ function TodayLayout({
           {/* Keep controls on the left for every day. The page heading already names today. */}
           <span className={showingToday ? "sr-only" : undefined} aria-live="polite">{shownDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
         </div>
-        <div id={`${panelId}-agenda`} role="tabpanel" aria-labelledby={`${panelId}-agenda-tab`} className="today-panel-content today-agenda-panel" hidden={panel !== "agenda"} tabIndex={0}>
+        <div ref={agendaPanel} role="region" aria-label="Agenda" data-mailbox-tab-shortcut className="today-panel-content today-agenda-panel" hidden={panel !== "agenda"} tabIndex={0}>
         {displaySchedule ? <>
           <TaskDragChip title={drag.draggingTitle} pointerRef={drag.pointerRef} onPointer={drag.onPointer} />
           <TodayDayView events={shownEvents} day={showingToday ? undefined : shownDay} now={now} loading={displaySchedule.loading} error={displaySchedule.error} onRetry={displaySchedule.reload}
@@ -859,9 +859,9 @@ function TodayLayout({
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}
         </div>
-        <div id={`${panelId}-note`} role="tabpanel" aria-labelledby={`${panelId}-note-tab`} className="today-panel-content" hidden={panel !== "note"}>
+        <div ref={notePanel} role="region" aria-label="Daily Note" data-mailbox-tab-shortcut className="today-panel-content" hidden={panel !== "note"} tabIndex={-1}>
           {noteVisited ? <TodayDailyNote key={dateInputValue(shownDay)} ref={dailyNote} date={dateInputValue(shownDay)} active={panel === "note"} refreshKey={refreshKey}
-            onLeave={() => noteTab.current?.focus()} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} /> : null}
+            onLeave={() => notePanel.current?.focus()} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} /> : null}
         </div>
       </div>
     </div>

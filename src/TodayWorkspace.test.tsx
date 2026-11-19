@@ -109,6 +109,10 @@ async function cardAction(title: string, action: string) {
 }
 
 
+// Calendar cards inside Today also carry an "Agenda" heading, so name the one in the day planning column's title.
+const panelHeading = (name: string) => within(document.querySelector<HTMLElement>(".today-panel-title")!).getByRole("heading", { name });
+const queryPanelHeading = (name: string) => within(document.querySelector<HTMLElement>(".today-panel-title")!).queryByRole("heading", { name });
+
 describe("TodayWorkspace", () => {
   beforeEach(() => {
     // Mid-morning, so the evening view (which opens by itself after hours) never depends on when the suite runs.
@@ -130,8 +134,9 @@ describe("TodayWorkspace", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); openUrl.mockReset(); localStorage.clear(); });
 
   describe("daily note panel", () => {
-    const tabs = () => within(screen.getByRole("tablist", { name: "Day Planning" }));
-    const choose = (name: string) => fireEvent.click(tabs().getByRole("tab", { name }));
+    const planning = () => within(screen.getByRole("group", { name: "Day Planning" }));
+    const choose = (name: string) => fireEvent.click(planning().getByRole("button", { name: `Switch to ${name}` }));
+    const panel = (name: string) => planning().getByLabelText(name, { selector: '[role="region"]' });
     const box = () => screen.getByRole("textbox", { name: "Daily Note Text" });
     const bindShortcuts = () => {
       const context = commandContext({ focusedPane: "today" });
@@ -144,54 +149,63 @@ describe("TodayWorkspace", () => {
 
     it("opens the shared daily note without focusing the editor or writing, and remembers the selected panel", async () => {
       renderToday();
-      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveAttribute("aria-selected", "true");
+      expect(panelHeading("Agenda")).toBeInTheDocument();
+      expect(panel("Agenda")).toBeVisible();
+      expect(panel("Daily Note")).not.toBeVisible();
       expect(mailClient.getDailyNote).not.toHaveBeenCalled();
-      const tab = tabs().getByRole("tab", { name: "Daily Note" });
-      tab.focus(); choose("Daily Note");
+      const hint = planning().getByRole("button", { name: "Switch to Daily Note" });
+      expect(hint).toHaveAttribute("aria-keyshortcuts", "Tab");
+      expect(hint).toHaveAttribute("data-mailbox-tab-shortcut");
+      expect(hint.querySelector("kbd")).not.toBeNull();
+      hint.focus(); choose("Daily Note");
       await waitFor(() => expect(box()).toHaveValue(`Notes for ${localDate(0)}`));
       expect(box()).not.toHaveAttribute("readonly");
-      expect(tab).toHaveFocus();
+      expect(panelHeading("Daily Note")).toBeInTheDocument();
+      expect(queryPanelHeading("Agenda")).not.toBeInTheDocument();
+      expect(panel("Daily Note")).toBeVisible();
+      expect(panel("Agenda")).not.toBeVisible();
       expect(box().closest("[data-shortcut-scope]")).toHaveAttribute("data-shortcut-scope", "compose");
-      expect(screen.getByRole("tabpanel", { name: "Daily Note" })).toHaveAttribute("id", tab.getAttribute("aria-controls"));
-      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveAttribute("tabindex", "-1");
+      expect(planning().getByRole("button", { name: "Switch to Agenda" })).toBeInTheDocument();
       expect(mailClient.saveDailyNote).not.toHaveBeenCalled();
       cleanup(); renderToday();
-      expect(tabs().getByRole("tab", { name: "Daily Note" })).toHaveAttribute("aria-selected", "true");
+      expect(panelHeading("Daily Note")).toBeInTheDocument();
       await waitFor(() => expect(box()).toHaveValue(`Notes for ${localDate(0)}`));
       expect(box()).not.toHaveFocus();
       expect(mailClient.saveDailyNote).not.toHaveBeenCalled();
     });
 
-    it("uses Tab to switch in read mode, Enter to write, and Escape to leave, preserving editor and button keys", async () => {
+    it("uses Tab to switch in read mode without focusing a control, Enter to write, and Escape to return to the panel", async () => {
       renderToday(); bindShortcuts();
       fireEvent.keyDown(document.body, { key: "Tab" });
-      const tab = tabs().getByRole("tab", { name: "Daily Note" });
-      expect(tab).toHaveFocus();
+      expect(panelHeading("Daily Note")).toBeInTheDocument();
+      expect(panel("Daily Note")).toBeVisible();
+      expect(planning().getByRole("button", { name: "Switch to Agenda" })).not.toHaveFocus();
+      expect(document.body).toHaveFocus();
       await waitFor(() => expect(box()).not.toHaveAttribute("readonly"));
-      fireEvent.keyDown(tab, { key: "Enter" });
+      fireEvent.keyDown(panel("Daily Note"), { key: "Enter" });
       expect(box()).toHaveFocus();
       fireEvent.change(box(), { target: { value: "Typed 0 - = j k" } });
       const shownDay = readDayChoice(localDate(0));
       for (const key of ["Tab", "0", "-", "=", "j", "k"]) expect(fireEvent.keyDown(box(), { key })).toBe(true);
       expect(readDayChoice(localDate(0))).toEqual(shownDay);
-      expect(tabs().getByRole("tab", { name: "Daily Note" })).toHaveAttribute("aria-selected", "true");
+      expect(panelHeading("Daily Note")).toBeInTheDocument();
       fireEvent.keyDown(box(), { key: "Escape" });
-      expect(tab).toHaveFocus();
-      fireEvent.keyDown(tab, { key: "Tab" });
-      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveFocus();
+      expect(panel("Daily Note")).toHaveFocus();
+      expect(panel("Daily Note")).toHaveAttribute("data-mailbox-tab-shortcut");
+      fireEvent.keyDown(panel("Daily Note"), { key: "Tab" });
+      expect(panelHeading("Agenda")).toBeInTheDocument();
+      expect(panel("Agenda")).toBeVisible();
       expect(screen.queryByRole("textbox", { name: "Daily Note Text" })).not.toBeInTheDocument();
-      fireEvent.keyDown(document.activeElement!, { key: "Tab", shiftKey: true });
-      expect(tab).toHaveFocus();
+      // Focus was inside the hidden note panel, so it moves to the shown agenda panel.
+      expect(panel("Agenda")).toHaveFocus();
+      fireEvent.keyDown(panel("Agenda"), { key: "Tab", shiftKey: true });
+      expect(panelHeading("Daily Note")).toBeInTheDocument();
+      expect(planning().getByRole("button", { name: "Switch to Agenda" })).not.toHaveFocus();
       const previous = screen.getByRole("button", { name: "Previous Day" });
       previous.focus();
       expect(fireEvent.keyDown(previous, { key: "Tab" })).toBe(true);
-      expect(tab).toHaveAttribute("aria-selected", "true");
-      fireEvent.keyDown(tab, { key: "ArrowLeft" });
-      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveFocus();
-      fireEvent.keyDown(document.activeElement!, { key: "End" });
-      expect(tab).toHaveFocus();
-      fireEvent.keyDown(document.activeElement!, { key: "Home" });
-      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveFocus();
+      expect(panelHeading("Daily Note")).toBeInTheDocument();
+      expect(previous).toHaveFocus();
     });
 
     it("keeps the agenda mounted and its scroll position when switching panels", async () => {
@@ -231,7 +245,7 @@ describe("TodayWorkspace", () => {
       choose("Daily Note");
       await waitFor(() => expect(box()).not.toHaveAttribute("readonly"));
       fireEvent.change(box(), { target: { value: "Today’s thoughts" } });
-      fireEvent.keyDown(tabs().getByRole("tab", { name: "Daily Note" }), { key: "=" });
+      fireEvent.keyDown(panel("Daily Note"), { key: "=" });
       await waitFor(() => expect(box()).toHaveValue(`Notes for ${localDate(1)}`));
       expect(mailClient.saveDailyNote).toHaveBeenCalledWith(localDate(0), "Today’s thoughts", "v1");
       expect(screen.getByRole("group", { name: "Schedule Date" })).toBe(controls);
@@ -1720,7 +1734,7 @@ describe("TodayWorkspace", () => {
       expect(await screen.findByRole("region", { name: "Done Today" })).toBeInTheDocument();
       expect(screen.getByRole("checkbox", { name: "Mark Task today Not Done" })).toBeChecked();
       fireEvent.click(screen.getByRole("button", { name: "Next Day" }));
-      await screen.findByRole("tab", { name: "Agenda" });
+      await waitFor(() => panelHeading("Agenda"));
       expect(screen.queryByRole("region", { name: /^Done/ })).not.toBeInTheDocument();
       const calls = vi.mocked(mailClient.listSentBetween).mock.calls.length;
       expect(vi.mocked(mailClient.listSentBetween).mock.calls.some(([, start]) => start === local(18, 0))).toBe(false);
@@ -1799,7 +1813,7 @@ describe("TodayWorkspace", () => {
   describe("remembered day", () => {
     it("keeps the Agenda heading and navigation controls in place on every day", async () => {
       renderToday({ calendarConnected: true, calendarAccounts });
-      const heading = screen.getByRole("tab", { name: "Agenda" });
+      const heading = panelHeading("Agenda");
       expect(heading.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
       expect(heading.querySelector("svg")).toHaveAttribute("width", String(ICON_SIZE.md));
       const controls = screen.getByRole("group", { name: "Schedule Date" });
@@ -1813,7 +1827,7 @@ describe("TodayWorkspace", () => {
         ["Previous Day", "Monday, November 16, 2026", false],
       ] as const) {
         if (action) fireEvent.click(within(controls).getByRole("button", { name: action }));
-        expect(screen.getByRole("tab", { name: "Agenda" })).toBe(heading);
+        expect(panelHeading("Agenda")).toBe(heading);
         expect(navigation.firstElementChild).toBe(controls);
         expect(within(controls).getAllByRole("button")).toEqual(buttons);
         const dateLabel = screen.getByText(date);
@@ -1826,13 +1840,13 @@ describe("TodayWorkspace", () => {
     it("stores the picked day on this device, restores it when Today reopens, and forgets it when Today is chosen", async () => {
       renderToday({ calendarConnected: true });
       fireEvent.click(await screen.findByRole("button", { name: "Next Day" }));
-      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
+      await waitFor(() => expect(panelHeading("Agenda")).toBeInTheDocument());
       expect(readDayChoice("2026-11-17")).toEqual({ chosenOn: "2026-11-17", day: "2026-11-18" });
       cleanup(); renderToday({ calendarConnected: true });
-      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
+      await waitFor(() => expect(panelHeading("Agenda")).toBeInTheDocument());
       expect(screen.getByText("Wednesday, November 18, 2026")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Today" }));
-      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
+      await waitFor(() => expect(panelHeading("Agenda")).toBeInTheDocument());
       expect(screen.getByText("Tuesday, November 17, 2026")).toHaveClass("sr-only");
       expect(localStorage.getItem(TODAY_DAY_KEY)).toBeNull();
     });
@@ -1840,12 +1854,12 @@ describe("TodayWorkspace", () => {
     it("ignores a choice made on an earlier day and a choice that cannot be read", async () => {
       localStorage.setItem(TODAY_DAY_KEY, JSON.stringify({ chosenOn: "2026-11-16", day: "2026-11-20" }));
       renderToday({ calendarConnected: true });
-      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
+      await waitFor(() => expect(panelHeading("Agenda")).toBeInTheDocument());
       expect(screen.getByText("Tuesday, November 17, 2026")).toHaveClass("sr-only");
       cleanup();
       localStorage.setItem(TODAY_DAY_KEY, "{broken");
       renderToday({ calendarConnected: true });
-      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
+      await waitFor(() => expect(panelHeading("Agenda")).toBeInTheDocument());
       expect(screen.getByText("Tuesday, November 17, 2026")).toHaveClass("sr-only");
     });
 
@@ -1854,10 +1868,10 @@ describe("TodayWorkspace", () => {
       vi.setSystemTime(new Date(2026, 10, 17, 23, 59));
       renderToday({ calendarConnected: true });
       fireEvent.click(await screen.findByRole("button", { name: "Previous Day" }));
-      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
+      await waitFor(() => expect(panelHeading("Agenda")).toBeInTheDocument());
       expect(screen.getByText("Monday, November 16, 2026")).toBeInTheDocument();
       await act(async () => { vi.setSystemTime(new Date(2026, 10, 18, 0, 1)); vi.advanceTimersByTime(60_000); });
-      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
+      await waitFor(() => expect(panelHeading("Agenda")).toBeInTheDocument());
       expect(screen.getByText("Wednesday, November 18, 2026")).toHaveClass("sr-only");
       expect(localStorage.getItem(TODAY_DAY_KEY)).toBeNull();
     });
