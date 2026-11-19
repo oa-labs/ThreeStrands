@@ -174,13 +174,11 @@
   --backdrop-dusk-top: #1f1b4d;
   --backdrop-dusk-bottom: #7f424e;
   --backdrop-dusk-moon: #efe6c8;
-  --backdrop-dusk-moon-shade: #44294f;
   --backdrop-dusk-star: #d8d4f0;
   --backdrop-night-top: #111e34;
   --backdrop-night-bottom: #243657;
   --backdrop-night-surround: #1b2c48;
   --backdrop-night-moon: #f3efd2;
-  --backdrop-night-moon-shade: #1b2944;
   --backdrop-night-star: #f4f6ff;
   --backdrop-ink: #f4f2fb;
   --backdrop-ink-soft: #d6d2ea;
@@ -233,13 +231,11 @@
   --backdrop-dusk-top: #1f1b4d;
   --backdrop-dusk-bottom: #7f424e;
   --backdrop-dusk-moon: #efe6c8;
-  --backdrop-dusk-moon-shade: #44294f;
   --backdrop-dusk-star: #d8d4f0;
   --backdrop-night-top: #111e34;
   --backdrop-night-bottom: #243657;
   --backdrop-night-surround: #dce7f8;
   --backdrop-night-moon: #f3efd2;
-  --backdrop-night-moon-shade: #1b2944;
   --backdrop-night-star: #f4f6ff;
   --backdrop-ink: #f4f2fb;
   --backdrop-ink-soft: #d6d2ea;
@@ -3897,10 +3893,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-backdrop-sun { fill: var(--backdrop-sun); }
 .today-backdrop-cloud { fill: var(--backdrop-cloud); }
 .today-backdrop[data-phase="dusk"] .today-backdrop-moon { fill: var(--backdrop-dusk-moon); }
-.today-backdrop[data-phase="dusk"] .today-backdrop-moon-shade { fill: var(--backdrop-dusk-moon-shade); }
 .today-backdrop[data-phase="dusk"] .today-backdrop-star { fill: var(--backdrop-dusk-star); }
 .today-backdrop[data-phase="night"] .today-backdrop-moon { fill: var(--backdrop-night-moon); }
-.today-backdrop[data-phase="night"] .today-backdrop-moon-shade { fill: var(--backdrop-night-moon-shade); }
 .today-backdrop[data-phase="night"] .today-backdrop-star { fill: var(--backdrop-night-star); }
 @keyframes today-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 

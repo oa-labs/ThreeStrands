@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { skyPhase, sunHeight } from "./backdropPreference";
 
 /** The scene's own coordinate space, scaled to the header's width and height. */
@@ -25,6 +26,7 @@ const NIGHT_STARS = [...DUSK_STARS, [0.52, 0.2], [0.56, 0.78], [0.64, 0.12], [0.
  * reduced motion turns off.
  */
 export function TodayBackdrop({ now }: { now: Date }) {
+  const moonCutoutId = useId();
   const phase = skyPhase(now);
   const stars = phase === "night" ? NIGHT_STARS : DUSK_STARS;
   return <div className="today-backdrop" data-phase={phase} aria-hidden="true">
@@ -39,8 +41,13 @@ export function TodayBackdrop({ now }: { now: Date }) {
       </>}
     </svg>
     {phase !== "day" ? <svg className="today-backdrop-moon-scene" viewBox="0 0 64 64" preserveAspectRatio="xMidYMid meet" focusable="false">
-      <circle className="today-backdrop-moon" cx={MOON.x} cy={MOON.y} r={MOON.radius} />
-      <circle className="today-backdrop-moon-shade" cx={MOON.x + 12} cy={MOON.y - 6} r={MOON.radius - 2} />
+      <defs>
+        <clipPath id={moonCutoutId} clipPathUnits="userSpaceOnUse">
+          {/* Subtract the offset circle from the viewport so the real sky shows through. */}
+          <path clipRule="evenodd" d="M0 0H64V64H0Z M44 4a22 22 0 1 0 0 44a22 22 0 1 0 0-44Z" />
+        </clipPath>
+      </defs>
+      <circle className="today-backdrop-moon" cx={MOON.x} cy={MOON.y} r={MOON.radius} clipPath={`url(#${moonCutoutId})`} />
     </svg> : null}
   </div>;
 }
