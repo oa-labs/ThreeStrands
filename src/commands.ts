@@ -296,7 +296,7 @@ export const commands: Command[] = [
   },
   { id: "draft.schedule", title: "Send Later", keys: ["Mod+Shift+L"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(() => c.scheduleDraft?.()) },
   // Plain t is text in a draft, so the composer toggles the calendar with a modifier.
-  { id: "draft.calendar", title: "Show / Hide Calendar", keywords: ["schedule", "availability"], keys: ["Mod+Shift+t"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleSchedule) },
+  { id: "draft.calendar", title: "Show / Hide Calendar", keywords: ["toggle", "schedule", "availability", "sidebar"], keys: ["Mod+Shift+t"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleSchedule) },
   { id: "draft.send", title: "Send Draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
   { id: "draft.sendAndMarkDone", title: "Send & Archive", keywords: ["mark done"], keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
   // The open draft in the Drafts folder is what "#" deletes there, matching
@@ -304,7 +304,7 @@ export const commands: Command[] = [
   { id: "draft.discard", title: "Discard Draft", keys: ["#"], group: "Compose", enabled: (c) => c.composerActive && c.focusedPane === "mail" && c.mailbox === "drafts", run: (c) => complete(c.discardDraft) },
   { id: "draft.attach", title: "Attach Files", keys: ["Mod+Shift+a"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
   { id: "draft.replyAssist", title: "Draft Reply", keywords: ["AI", "write", "generate"], keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive && c.aiReplyAssistEnabled, run: (c) => complete(c.draftReplyWithAI) },
-  { id: "draft.contextPanel", title: "Switch Between Draft and Context Panel", keys: ["F6", "Mod+Shift+p"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleContextPanelFocus) },
+  { id: "draft.contextPanel", title: "Switch Between Draft and Context Panel", keywords: ["brief", "sidebar", "focus"], keys: ["F6", "Mod+Shift+p"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleContextPanelFocus) },
   { id: "send.undo", title: "Undo Send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {
     id: "thread.next",

@@ -69,6 +69,18 @@ describe("App chrome", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("lists the calendar shortcut that works while composing above the one that is off", () => {
+    render(<CommandPalette context={{ ...context, composerActive: true }} execute={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter Commands" }), { target: { value: "toggle" } });
+
+    const working = screen.getByRole("button", { name: /Show \/ Hide Calendar/ });
+    const off = screen.getByRole("button", { name: /Toggle Schedule/ });
+    expect(working).toBeEnabled();
+    expect(within(working).getByText("Ctrl+Shift+T").tagName).toBe("KBD");
+    expect(off).toBeDisabled();
+    expect(working.compareDocumentPosition(off) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("finds a command by its extra search terms", () => {
     render(<CommandPalette context={context} execute={vi.fn()} onClose={vi.fn()} />);
     const input = screen.getByRole("textbox", { name: "Filter Commands" });

@@ -176,7 +176,10 @@ export function CommandPalette({
     }, PALETTE_NOTE_DELAY_MS);
     return () => { active = false; window.clearTimeout(timer); };
   }, [filter, searchNotes, onOpenNote]);
-  const visible = [...commands, ...extraCommands].filter((command) => commandMatchesFilter(command, filter));
+  // Commands that can run now come first, so a shortcut that is off (plain
+  // keys while composing, say) never sits above the one that works.
+  const matching = [...commands, ...extraCommands].filter((command) => commandMatchesFilter(command, filter));
+  const visible = [...matching.filter((command) => command.enabled(context)), ...matching.filter((command) => !command.enabled(context))];
   return (
     <Modal title="Command Palette" onClose={onClose} shortcutScope="palette" initialFocusRef={inputRef}>
       <label className="palette-search">

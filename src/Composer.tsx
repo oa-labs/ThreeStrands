@@ -26,7 +26,7 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import type { DraftReviewActions } from "./draftReview";
 import { plainTextToHtml } from "./richText";
-import { FormattingHints } from "./FormattingHints";
+import { ComposeShortcutHints, FormattingHints } from "./FormattingHints";
 import { ScheduleSendPicker } from "./ScheduleSendPicker";
 import { ComposeSendActions } from "./ComposeSendActions";
 import { formatShortcut } from "./shortcutLabels";
@@ -577,7 +577,7 @@ export const Composer = forwardRef<ComposerHandle, {
       <p className="compose-note">
         {textSelected
           ? <FormattingHints />
-          : "Send has a 10-second undo window."}
+          : <span className="compose-idle-note">Send has a 10-second undo window. <ComposeShortcutHints /></span>}
         {!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}
       </p>
       {signaturesOpen && signatures ? <Modal title="Manage Signatures" className="signature-dialog" onClose={() => setSignaturesOpen(false)}><div className="signature-form"><SignaturesSettings library={signatures} accounts={accounts} /></div></Modal> : null}

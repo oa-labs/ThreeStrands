@@ -3653,6 +3653,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .save-status { font-size: var(--text-meta); color: var(--muted); }
 .compose-note { flex-shrink: 0; margin: 0; padding: 0 var(--pane-inset) var(--space-4); color: var(--muted); font-size: var(--text-meta); container-type: inline-size; }
 .compose-format-hints { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
+.compose-idle-note .compose-format-hints { margin-left: var(--space-3); }
 /* Clear Formatting and Normal Text stay visible as lower-priority hints
    drop out. The remaining hints can wrap in a narrow editor. */
 @container (max-width: 920px) { .compose-format-hint-optional-4 { display: none; } }

@@ -393,8 +393,13 @@ describe("Composer formatting hints", () => {
     render(<Composer draft={{ ...draft, body: "Hello there" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const editor = screen.getByRole("textbox", { name: "Message Body" });
     expect(screen.getByText(/Send has a 10-second undo window/)).toBeInTheDocument();
+    // Plain t types into the draft, so the idle line names the shortcuts that work from it.
+    const composeHints = screen.getByLabelText("Compose shortcuts");
+    expect(composeHints).toHaveTextContent("Calendar Ctrl+Shift+T");
+    expect(composeHints).toHaveTextContent("Context Panel F6");
 
     select(editor.firstChild!, 0, 5);
+    expect(screen.queryByLabelText("Compose shortcuts")).not.toBeInTheDocument();
     const hints = screen.getByLabelText("Formatting shortcuts");
     expect(hints).toHaveTextContent("Bold Ctrl+B");
     expect(hints).toHaveTextContent("Italics Ctrl+I");
