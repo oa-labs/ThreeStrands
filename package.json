@@ -23,6 +23,7 @@
     "build:linux": "./scripts/build-linux.sh",
     "release": "node scripts/release.mjs tag",
     "release:docs": "node scripts/release.mjs docs",
+    "release:intel": "node scripts/release.mjs tag --intel",
     "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {

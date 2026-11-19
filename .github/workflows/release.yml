@@ -21,6 +21,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       channel: ${{ steps.version.outputs.channel }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      intel: ${{ steps.version.outputs.intel }}
+      macos_builds: ${{ steps.version.outputs.macos_builds }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -28,11 +30,16 @@ jobs:
           node-version: 22.22.0
       - name: Test release validation and artifact collection
         run: node --test scripts/release.test.mjs scripts/changelog.test.mjs scripts/license-rtf.test.mjs
+      # The checkout may hold the tag as a lightweight ref; fetch the annotated
+      # tag itself, whose message says whether to build for Intel Macs.
       - name: Check tag against all application versions and the changelog format
         id: version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: node scripts/release.mjs validate "$RELEASE_TAG"
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --force origin "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          node scripts/release.mjs validate "$RELEASE_TAG"
 
   macos:
     name: macOS ${{ matrix.arch }}
@@ -41,16 +48,12 @@ jobs:
     # compile on Apple Silicon; Rust tests run natively on the runner.
     runs-on: macos-26
     timeout-minutes: 90
+    # Apple Silicon always; Intel only when the tag asks for it
+    # (pnpm release:intel). Tests run once, in the Apple Silicon build.
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: aarch64-apple-darwin
-            arch: aarch64
-            binary_arch: arm64
-          - target: x86_64-apple-darwin
-            arch: x86_64
-            binary_arch: x86_64
+        include: ${{ fromJSON(needs.validate.outputs.macos_builds) }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -65,10 +68,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run JavaScript tests
+        if: ${{ matrix.tests }}
         run: pnpm test
       - name: Run Rust tests
+        if: ${{ matrix.tests }}
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Run shared crate tests
+        if: ${{ matrix.tests }}
         run: cargo test --locked --workspace
       - name: Build, sign, and notarize macOS installer
         env:
@@ -304,8 +310,9 @@ jobs:
   release:
     name: Create draft GitHub Release
     needs: [validate, macos, linux, windows]
-    # macOS must build. Linux and Windows are optional: when either fails, the
-    # draft ships without it and the run summary says so.
+    # Every requested macOS build must succeed. Intel Macs are left out unless
+    # the tag asks for them; Linux and Windows are optional: when either
+    # fails, the draft ships without it and the run summary says so.
     if: ${{ !cancelled() && needs.validate.result == 'success' && needs.macos.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -328,19 +335,27 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
           RELEASE_SKIPPED_PLATFORMS: >-
+            ${{ needs.validate.outputs.intel != 'true' && 'macos-x86_64' || '' }}
             ${{ needs.linux.result != 'success' && 'linux-amd64' || '' }}
             ${{ needs.windows.result != 'success' && 'windows-x86_64' || '' }}
         run: node scripts/release.mjs prepare-assets artifacts/release-input artifacts/release-assets "$RELEASE_VERSION"
       # Notes cover every CHANGELOG.md section since the last published
-      # release. Drafts never shipped, so they do not end the range.
+      # release. Drafts never shipped, so they do not end the range. Without
+      # Intel builds, the notes open by linking the latest release with them.
       - name: Write release notes from CHANGELOG.md
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_INTEL: ${{ needs.validate.outputs.intel }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "$RELEASE_INTEL" != true ]]; then
+            RELEASE_LAST_INTEL_TAG="$(gh api "repos/$GH_REPO/releases?per_page=100" --jq \
+              '[.[] | select(.draft == false and .prerelease == false) | select(any(.assets[]; .name | endswith("_macos_x86_64.dmg")))][0].tag_name // empty')"
+            export RELEASE_LAST_INTEL_TAG
+          fi
           gh release list --exclude-drafts --limit 1000 --json tagName --jq '.[].tagName' > "$RUNNER_TEMP/published-tags"
           RELEASE_SITE_URL="$(gh api "repos/$GH_REPO/pages" --jq '.html_url' 2>/dev/null || true)" \
             node scripts/release.mjs notes "$RELEASE_TAG" "$RUNNER_TEMP/published-tags" > "$RUNNER_TEMP/release-notes.md"
@@ -352,6 +367,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_CHANNEL: ${{ needs.validate.outputs.channel }}
           RELEASE_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+          RELEASE_INTEL: ${{ needs.validate.outputs.intel }}
           LINUX_RESULT: ${{ needs.linux.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
         shell: bash
@@ -376,13 +392,14 @@ jobs:
             echo "### ThreeStrands $RELEASE_TAG ($RELEASE_CHANNEL)"
             echo
             missing=()
+            [[ "$RELEASE_INTEL" == true ]] || missing+=("Intel Macs (not requested; pnpm release:intel includes them)")
             [[ "$LINUX_RESULT" == success ]] || missing+=("Linux ($LINUX_RESULT)")
             [[ "$WINDOWS_RESULT" == success ]] || missing+=("Windows ($WINDOWS_RESULT)")
             if (( ${#missing[@]} )); then
               echo "> [!WARNING]"
               echo "> Not in this release: ${missing[*]}. Those users are not offered this update."
               echo
-              echo "The macOS installers and update packages, plus any other platform that built, are attached to a draft release."
+              echo "The Apple Silicon installer and update package, plus any other platform that built, are attached to a draft release."
             else
               echo "All installers, update packages, latest.json, and SHA256SUMS are attached to a draft release."
             fi

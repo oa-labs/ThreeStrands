@@ -152,9 +152,64 @@ const updatePlatforms = [
   ["windows-x86_64", "windows-x86_64", ".exe"],
 ];
 
-// macOS is the primary target and always ships. A release may go out without
-// these when their build fails; the workflow names each one it leaves out.
-export const OPTIONAL_PLATFORMS = ["linux-amd64", "windows-x86_64"];
+// Apple Silicon macOS is the primary target and always ships. A release may go
+// out without the others: Intel Macs when its tag doesn't ask for them, and
+// Linux or Windows when their build fails. The workflow names each one it
+// leaves out.
+export const OPTIONAL_PLATFORMS = ["macos-x86_64", "linux-amd64", "windows-x86_64"];
+
+// Intel Macs are built only when the release tag carries this line, which
+// `pnpm release:intel` and `scripts/release.sh --intel` add. Other releases
+// build Apple Silicon alone to save macOS build minutes.
+export const INTEL_TAG_LINE = "Intel: included";
+
+/** The `-m` arguments for the signed release tag. */
+export function releaseTagMessage(tag, { intel = false } = {}) {
+  return ["-m", `ThreeStrands ${tag}`, ...(intel ? ["-m", INTEL_TAG_LINE] : [])];
+}
+
+/** Whether a release tag's message asks for Intel Mac builds. */
+export function includesIntel(tagMessage) {
+  return (tagMessage ?? "").split("\n").some((line) => line.trim() === INTEL_TAG_LINE);
+}
+
+const MACOS_BUILDS = [
+  // Tests run once, natively, on the Apple Silicon runner; the Intel build
+  // would only repeat them, since its tests also run as Apple Silicon.
+  { target: "aarch64-apple-darwin", arch: "aarch64", binary_arch: "arm64", tests: true },
+  { target: "x86_64-apple-darwin", arch: "x86_64", binary_arch: "x86_64", tests: false },
+];
+
+/** The macOS build matrix for a release, Apple Silicon first. */
+export function macosBuilds({ intel }) {
+  return MACOS_BUILDS.filter((build) => intel || build.arch === "aarch64");
+}
+
+/**
+ * The message of an annotated release tag, without its signature. A
+ * lightweight tag has none, so it builds Apple Silicon only.
+ */
+export function readTagMessage(directory, tag) {
+  const result = spawnSync("git", ["for-each-ref", "--format=%(objecttype)%00%(contents:subject)%00%(contents:body)", `refs/tags/${tag}`], {
+    cwd: directory, encoding: "utf8",
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`Unable to read tag ${tag} (exit ${result.status})`);
+  if (!result.stdout.trim()) throw new Error(`Tag ${tag} is not in this checkout; fetch it first`);
+  const [type, subject, body] = result.stdout.replace(/\n$/, "").split("\0");
+  return type === "tag" ? `${subject}\n\n${body}`.trim() : "";
+}
+
+/**
+ * The note that tops the release notes of a release without Intel Mac
+ * installers, pointing at the latest published release that has them.
+ */
+export function intelNotice({ lastIntelTag, repository } = {}) {
+  const latest = lastIntelTag && repository
+    ? ` Intel Macs can install [${lastIntelTag}](https://github.com/${repository}/releases/tag/${lastIntelTag}), the latest release that includes them.`
+    : "";
+  return `> [!NOTE]\n> This release has no installer for Intel Macs.${latest} Intel Macs are offered updates only by releases that include them.\n`;
+}
 
 export const UPDATE_MANIFEST = "latest.json";
 const RELEASE_DOWNLOADS = "https://github.com/oa-labs/ThreeStrands/releases/download";
@@ -373,14 +428,14 @@ export async function tagRelease(directory = root, options = {}) {
   }
   warnUndocumented(await docsCoverage(directory));
 
-  console.log(`Releasing ThreeStrands ${tag}`);
+  console.log(`Releasing ThreeStrands ${tag}${options.intel ? " for Apple Silicon and Intel Macs" : " (Apple Silicon only; pnpm release:intel adds Intel Macs)"}`);
   const paths = await writeRelease(directory, plan);
   if (paths.length) {
     git(["add", "-A", "--", ...paths]);
     git(["commit", "-m", `Release ${tag}`]);
   }
   git(["push", "primary", "master"]);
-  git(["tag", "-s", tag, "-m", `ThreeStrands ${tag}`]);
+  git(["tag", "-s", tag, ...releaseTagMessage(tag, { intel: options.intel })]);
   git(["push", "primary", tag]);
   return tag;
 }
@@ -398,7 +453,12 @@ async function main() {
   const [command, argument, outputDir, version] = process.argv.slice(2);
   const rest = process.argv.slice(3);
   if (command === "validate") {
-    const metadata = releaseMetadata(argument, await readReleaseSources(root));
+    const intel = includesIntel(readTagMessage(root, argument));
+    const metadata = {
+      ...releaseMetadata(argument, await readReleaseSources(root)),
+      intel,
+      macos_builds: JSON.stringify(macosBuilds({ intel })),
+    };
     await pendingChangelog(root);
     if (process.env.GITHUB_OUTPUT) {
       await appendFile(process.env.GITHUB_OUTPUT, Object.entries(metadata)
@@ -413,18 +473,24 @@ async function main() {
   } else if (command === "notes" && argument && outputDir) {
     const publishedTagsFile = outputDir; // Published (non-draft) release tags, one per line.
     const published = (await readFile(publishedTagsFile, "utf8")).split("\n").filter(Boolean);
+    const repository = process.env.GITHUB_REPOSITORY;
+    // RELEASE_INTEL comes from the validate job; anything but "true" means no Intel build.
+    if (process.env.RELEASE_INTEL !== "true") {
+      process.stdout.write(`${intelNotice({ lastIntelTag: process.env.RELEASE_LAST_INTEL_TAG || undefined, repository })}\n`);
+    }
     process.stdout.write(releaseNotes(await readFile(resolve(root, "CHANGELOG.md"), "utf8"), argument, published, {
-      repository: process.env.GITHUB_REPOSITORY, siteUrl: process.env.RELEASE_SITE_URL || undefined,
+      repository, siteUrl: process.env.RELEASE_SITE_URL || undefined,
     }));
   } else if (command === "docs") {
     warnUndocumented(await docsCoverage());
   } else if (command === "tag") {
-    await tagRelease(root, versionOptions(rest));
+    // --intel adds Intel Mac builds; it combines with either version choice.
+    await tagRelease(root, { ...versionOptions(rest.filter((arg) => arg !== "--intel")), intel: rest.includes("--intel") });
   } else if (command === "bump" && argument) {
     // Changes the working tree and prints only the tag; warnings go to stderr.
     console.log(await bumpRelease(root, { date: argument, ...versionOptions(rest.slice(1)) }));
   } else {
-    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | docs | tag [--major | VERSION] | bump YYYY-MM-DD [--major | VERSION]");
+    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | docs | tag [--intel] [--major | VERSION] | bump YYYY-MM-DD [--major | VERSION]");
   }
 }
 

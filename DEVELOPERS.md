@@ -205,6 +205,17 @@ scripts/release.sh          # on a host without Node; uses the macOS VM (see abo
 pnpm release                # where Node is installed
 ```
 
+A release builds for Apple Silicon Macs only, unless you ask for Intel Macs
+too with `pnpm release:intel` or `scripts/release.sh --intel`. Building Intel
+roughly doubles a release's macOS build minutes, so include it every few
+releases rather than every time. The choice is the line `Intel: included` in
+the signed tag's message, which the release workflow reads back; a tag
+without it, including a lightweight tag, builds Apple Silicon alone. A release
+without Intel leaves it out of the assets and `latest.json`, so Intel Macs
+keep their version until a release includes them, and its notes open by
+linking the latest published release that has an Intel installer. Re-cutting
+a release decides again, so pass `--intel` again if the first cut had it.
+
 The release checks that the version in `package.json` matches the Tauri
 configuration, Cargo manifest, and application entry in `src-tauri/Cargo.lock`,
 and that `CHANGELOG.md` and every file in `changes/` are well formed. It then
@@ -246,7 +257,8 @@ The release workflow builds installers and attaches them to a draft GitHub
 Release for installation checks before publishing. If the final tag push fails,
 retry `git push origin v<version>`; the signed tag already exists locally.
 
-Only the macOS builds are required. If the Linux or Windows build fails, the
+Only the requested macOS builds are required. Tests run once, in the Apple
+Silicon build. If the Linux or Windows build fails, the
 draft is still created without that platform's installers and without its entry
 in `latest.json`, and the run summary names what is missing. Copies on that
 platform keep their current version until a later release includes it. To fill

@@ -7,7 +7,7 @@ reviewed: 0.190.0
 
 ## Platforms {#platforms}
 
-macOS has Apple Silicon and Intel installers and is the platform used and tested regularly. Windows x86-64 and Linux x86-64 builds are experimental; a release may omit them if their builds fail. Choose an installer from the release's assets, not an updater payload. See [installation](getting-started.html#install-the-app).
+macOS is the platform used and tested regularly. Every release has an Apple Silicon installer. Intel Macs are supported, but only some releases include an Intel installer; when the latest doesn't, its notes link to the latest release that does. An Intel Mac is offered updates only by releases that include it, so it skips the releases in between and gets their changes all at once. Windows x86-64 and Linux x86-64 builds are experimental; a release may omit them if their builds fail. Choose an installer from the release's assets, not an updater payload. See [installation](getting-started.html#install-the-app).
 
 Safe attachment previews are available on macOS and Windows. Linux does not currently provide those native previews.
 

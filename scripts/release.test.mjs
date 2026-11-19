@@ -5,7 +5,10 @@ import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile 
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { describe, it } from "node:test";
-import { prepareReleaseAssets, releaseMetadata, setAppVersion, stampReviewed, updaterPublicKey, verifyUpdateSignature } from "./release.mjs";
+import {
+  INTEL_TAG_LINE, includesIntel, intelNotice, macosBuilds, prepareReleaseAssets, readTagMessage, releaseMetadata, releaseTagMessage,
+  setAppVersion, stampReviewed, updaterPublicKey, verifyUpdateSignature,
+} from "./release.mjs";
 
 describe("developer evaluator packaging", () => {
   it("requires an opt-in feature so Cargo and Tauri exclude ai-eval from normal builds", () => {
@@ -421,6 +424,86 @@ describe("optional release platforms", () => {
   });
 });
 
+describe("Intel Mac builds", () => {
+  const workflow = () => readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  const job = (text, name) => text.split(`\n  ${name}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0];
+
+  it("are asked for by a line in the release tag that the workflow reads back", () => {
+    assert.deepEqual(releaseTagMessage("v0.56.0"), ["-m", "ThreeStrands v0.56.0"]);
+    assert.deepEqual(releaseTagMessage("v0.56.0", { intel: true }), ["-m", "ThreeStrands v0.56.0", "-m", INTEL_TAG_LINE]);
+    assert.equal(includesIntel(`ThreeStrands v0.56.0\n\n${INTEL_TAG_LINE}`), true);
+    for (const message of ["ThreeStrands v0.56.0", "", undefined, "Intel: included later", "Notes: Intel: included"]) {
+      assert.equal(includesIntel(message), false, String(message));
+    }
+  });
+
+  it("build Apple Silicon alone by default, with tests run only there", () => {
+    assert.deepEqual(macosBuilds({ intel: false }), [
+      { target: "aarch64-apple-darwin", arch: "aarch64", binary_arch: "arm64", tests: true },
+    ]);
+    const both = macosBuilds({ intel: true });
+    assert.deepEqual(both.map((build) => [build.arch, build.tests]), [["aarch64", true], ["x86_64", false]]);
+    assert.deepEqual(both[1], { target: "x86_64-apple-darwin", arch: "x86_64", binary_arch: "x86_64", tests: false });
+  });
+
+  it("read the annotated tag's message, and treat a lightweight tag as Apple Silicon only", async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "threestrands-tag-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const git = (...args) => {
+      const result = spawnSync("git", ["-c", "user.name=Release Test", "-c", "user.email=release@example.invalid", "-c", "tag.gpgSign=false", ...args], { cwd: directory, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+    };
+    git("init", "--quiet");
+    git("commit", "--quiet", "--allow-empty", "-m", `Release v0.56.0\n\n${INTEL_TAG_LINE}`);
+    git("tag", "v0.56.0", ...releaseTagMessage("v0.56.0", { intel: true }));
+    git("tag", "v0.56.1", ...releaseTagMessage("v0.56.1"));
+    git("tag", "v0.56.2");
+    assert.equal(includesIntel(readTagMessage(directory, "v0.56.0")), true);
+    assert.equal(readTagMessage(directory, "v0.56.1"), "ThreeStrands v0.56.1");
+    // A lightweight tag points at the commit; its message must not count.
+    assert.equal(readTagMessage(directory, "v0.56.2"), "");
+    assert.throws(() => readTagMessage(directory, "v0.57.0"), /not in this checkout/);
+  });
+
+  it("open release notes without them by linking the latest release that has them", () => {
+    assert.equal(intelNotice({ lastIntelTag: "v0.210.0", repository: "oa-labs/ThreeStrands" }),
+      "> [!NOTE]\n> This release has no installer for Intel Macs. Intel Macs can install [v0.210.0](https://github.com/oa-labs/ThreeStrands/releases/tag/v0.210.0), the latest release that includes them. Intel Macs are offered updates only by releases that include them.\n");
+    assert.equal(intelNotice({ repository: "oa-labs/ThreeStrands" }),
+      "> [!NOTE]\n> This release has no installer for Intel Macs. Intel Macs are offered updates only by releases that include them.\n");
+  });
+
+  it("are wired through the workflow: the validated tag picks the macOS builds, and the release skips Intel otherwise", async () => {
+    const text = await workflow();
+    const validate = job(text, "validate");
+    assert.match(validate, /git fetch --no-tags --force origin "\+refs\/tags\/\$RELEASE_TAG:refs\/tags\/\$RELEASE_TAG"\n {10}node scripts\/release\.mjs validate "\$RELEASE_TAG"/);
+    assert.match(validate, /^ {6}macos_builds: \$\{\{ steps\.version\.outputs\.macos_builds \}\}$/m);
+    assert.match(validate, /^ {6}intel: \$\{\{ steps\.version\.outputs\.intel \}\}$/m);
+
+    const macos = job(text, "macos");
+    assert.match(macos, /^ {8}include: \$\{\{ fromJSON\(needs\.validate\.outputs\.macos_builds\) \}\}$/m);
+    assert.doesNotMatch(macos, /target: x86_64-apple-darwin/, "Intel must come only from the validated tag");
+    const steps = macos.split(/\n {6}- /);
+    for (const name of ["Run JavaScript tests", "Run Rust tests", "Run shared crate tests"]) {
+      const step = steps.find((candidate) => candidate.startsWith(`name: ${name}\n`));
+      assert.match(step, /^ {8}if: \$\{\{ matrix\.tests \}\}$/m, name);
+    }
+    assert.doesNotMatch(steps.find((step) => step.startsWith("name: Build, sign")), /matrix\.tests/);
+
+    const release = job(text, "release");
+    assert.match(release, /needs\.validate\.outputs\.intel != 'true' && 'macos-x86_64'/);
+    assert.match(release, /RELEASE_INTEL: \$\{\{ needs\.validate\.outputs\.intel \}\}/);
+    assert.match(release, /export RELEASE_LAST_INTEL_TAG/);
+    assert.match(release, /Intel Macs \(not requested/);
+  });
+
+  it("are asked for the same way by scripts/release.sh --intel", async () => {
+    const script = await readFile(new URL("./release.sh", import.meta.url), "utf8");
+    assert.match(script, /^ {4}--intel\) intel=1; shift ;;$/m);
+    assert.ok(script.includes(`tag_message+=(-m "${INTEL_TAG_LINE}")`), "release.sh must write the same tag line");
+    assert.match(script, /^git tag -s "\$tag" "\$\{tag_message\[@\]\}"$/m);
+  });
+});
+
 describe("marketing site refresh", () => {
   it("redeploys the site from master only after a stable release is built", async () => {
     const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
@@ -463,6 +546,19 @@ describe("pnpm release command", () => {
   ];
   const fix = { "clearer-fix.md": "### Fixed\n- A clearer fix.\n" };
   const feature = { "snooze.md": "### New\n- **Snooze** a conversation.\n" };
+  const withIntel = (list) => list.map((args) => args[0] === "tag" && args[1] === "-s" ? [...args, "-m", INTEL_TAG_LINE] : args);
+
+  it("adds Intel Macs to the release with pnpm release:intel, alone or with a version choice", async (t) => {
+    const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+    assert.equal(packageJson.scripts["release:intel"], `${packageJson.scripts.release} --intel`);
+    for (const [args, version] of [[["--intel"], "0.55.1"], [["--intel", "--major"], "1.0.0"], [["0.56.0", "--intel"], "0.56.0"]]) {
+      const fixture = await releaseCommand(t, { changes: fix });
+      const result = fixture.run(args);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /for Apple Silicon and Intel Macs/);
+      assert.deepEqual(await fixture.commands(), withIntel(commands(version, [...VERSION_PATHS, "CHANGELOG.md", DOC, "changes/clearer-fix.md"])), args.join(" "));
+    }
+  });
 
   async function assertVersion(fixture, version) {
     const written = { packageJson: "package.json", tauriConfig: "src-tauri/tauri.conf.json", cargoToml: "src-tauri/Cargo.toml", cargoLock: "src-tauri/Cargo.lock" };
@@ -749,6 +845,17 @@ describe("release installer collection", () => {
     const manifest = JSON.parse(await readFile(join(output, "latest.json"), "utf8"));
     assert.deepEqual(Object.keys(manifest.platforms), ["darwin-aarch64", "darwin-x86_64"]);
     assert.doesNotMatch(await readFile(join(output, "SHA256SUMS"), "utf8"), /linux|windows/);
+  });
+
+  it("leaves Intel Macs out of the assets, checksums, and update manifest when the release skips them", async (t) => {
+    const { directory, output } = await artifacts(t);
+    await rm(join(directory, "threestrands-release-macos-x86_64"), { recursive: true });
+    const names = await prepare(directory, output, "0.56.0", undefined, ["macos-x86_64"]);
+    assert.ok(names.includes("ThreeStrands_0.56.0_macos_aarch64.dmg"));
+    assert.equal(names.some((name) => name.includes("x86_64") && name.includes("macos")), false);
+    const manifest = JSON.parse(await readFile(join(output, "latest.json"), "utf8"));
+    assert.deepEqual(Object.keys(manifest.platforms), ["darwin-aarch64", "linux-x86_64", "windows-x86_64"]);
+    assert.doesNotMatch(await readFile(join(output, "SHA256SUMS"), "utf8"), /macos_x86_64/);
   });
 
   it("still requires a platform that was not skipped, and never skips macOS", async (t) => {
