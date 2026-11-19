@@ -205,16 +205,15 @@ scripts/release.sh          # on a host without Node; uses the macOS VM (see abo
 pnpm release                # where Node is installed
 ```
 
-A release builds for Apple Silicon Macs only, unless you ask for Intel Macs
-too with `pnpm release:intel` or `scripts/release.sh --intel`. Building Intel
-roughly doubles a release's macOS build minutes, so include it every few
-releases rather than every time. The choice is the line `Intel: included` in
-the signed tag's message, which the release workflow reads back; a tag
-without it, including a lightweight tag, builds Apple Silicon alone. A release
-without Intel leaves it out of the assets and `latest.json`, so Intel Macs
-keep their version until a release includes them, and its notes open by
-linking the latest published release that has an Intel installer. Re-cutting
-a release decides again, so pass `--intel` again if the first cut had it.
+A release builds for Apple Silicon and Intel Macs. When the Intel build can't
+run, `pnpm release --no-intel` or `scripts/release.sh --no-intel` leaves it
+out by adding the line `Intel: skipped` to the signed tag's message, which the
+release workflow reads back; any other tag, including a lightweight one,
+builds both. A release without Intel leaves it out of the assets and
+`latest.json`, so Intel Macs keep their version until a release includes
+them, and its notes open by linking the latest published release that has an
+Intel installer. Re-cutting a release decides again, so pass `--no-intel`
+again if the first cut had it.
 
 The release checks that the version in `package.json` matches the Tauri
 configuration, Cargo manifest, and application entry in `src-tauri/Cargo.lock`,
@@ -263,6 +262,53 @@ draft is still created without that platform's installers and without its entry
 in `latest.json`, and the run summary names what is missing. Copies on that
 platform keep their current version until a later release includes it. To fill
 the gap before publishing, re-run the failed job and then the release job.
+
+### Release builds on your own Mac
+
+The macOS builds can run on your Mac instead of GitHub's, which bills each
+macOS minute. `scripts/release-runner.sh`, run on the host, serves each
+release job in a throwaway tart VM: it clones a base VM, registers a
+single-use GitHub Actions runner in the clone, lets it take one job, then
+deletes the clone. The signing secrets stay in GitHub's repository secrets and
+exist only inside that clone during its job, as on GitHub's runners. Don't
+serve release jobs from the development VM: agents and work-in-progress
+branches run code there, and the Developer ID and updater keys must stay out
+of it (see [macOS VM](#macos-vm-tart)).
+
+The `MACOS_RELEASE_RUNNER` repository variable picks where the macOS jobs run.
+Unset, they run on GitHub's Macs; Linux and Windows always do.
+
+Set up once, on the host:
+
+1. Create the base VM from a Cirrus Labs macOS image with Xcode 26, which
+   the Icon Composer asset needs, for example
+   `tart clone ghcr.io/cirruslabs/macos-tahoe-xcode:latest threestrands-release-base`.
+   Its user is `admin`.
+2. Start it with `tart run threestrands-release-base`. Add your host's SSH
+   public key to `~/.ssh/authorized_keys`, then download the macOS ARM64
+   [Actions runner](https://github.com/actions/runner/releases) and extract it
+   into `~/actions-runner`. Don't run its `config.sh`; each job registers its
+   own runner. Shut the VM down. It holds no secrets, and jobs never change
+   it. The workflow installs Node, pnpm, and Rust itself.
+3. Sign `gh` in with access to administer the repository's runners
+   (`gh auth login`, or a fine-grained token with **Administration: write**).
+4. If the repository is public, set **Settings → Actions → General → Approval
+   for running fork pull request workflows** to require approval for all
+   external contributors, so nobody else's workflow can run on your Mac.
+
+Then start serving and point the macOS jobs at it:
+
+```sh
+scripts/release-runner.sh            # serves until interrupted; --jobs N stops after N
+gh variable set MACOS_RELEASE_RUNNER --body '["self-hosted", "threestrands-release"]'
+```
+
+Keep `scripts/release-runner.sh` running, and the Mac awake, while a
+release builds; queued jobs wait for it. A release uses one clone per macOS
+build, one after another, because macOS runs at most two VMs at a time and the
+development VM may be one. `RUNNER_BASE_VM`, `RUNNER_REPO`, `RUNNER_LABEL`,
+`RUNNER_SSH_USER`, and `RUNNER_DIR` change its defaults. To go back to GitHub's
+Macs, run `gh variable delete MACOS_RELEASE_RUNNER`.
 
 ### Release notes and the changelog
 

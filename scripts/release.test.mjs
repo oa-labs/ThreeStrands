@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { describe, it } from "node:test";
 import {
-  INTEL_TAG_LINE, includesIntel, intelNotice, macosBuilds, prepareReleaseAssets, readTagMessage, releaseMetadata, releaseTagMessage,
+  INTEL_SKIP_LINE, includesIntel, intelNotice, macosBuilds, prepareReleaseAssets, readTagMessage, releaseMetadata, releaseTagMessage,
   setAppVersion, stampReviewed, updaterPublicKey, verifyUpdateSignature,
 } from "./release.mjs";
 
@@ -428,16 +428,16 @@ describe("Intel Mac builds", () => {
   const workflow = () => readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   const job = (text, name) => text.split(`\n  ${name}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0];
 
-  it("are asked for by a line in the release tag that the workflow reads back", () => {
+  it("are built unless a line in the release tag, which the workflow reads back, opts out", () => {
     assert.deepEqual(releaseTagMessage("v0.56.0"), ["-m", "ThreeStrands v0.56.0"]);
-    assert.deepEqual(releaseTagMessage("v0.56.0", { intel: true }), ["-m", "ThreeStrands v0.56.0", "-m", INTEL_TAG_LINE]);
-    assert.equal(includesIntel(`ThreeStrands v0.56.0\n\n${INTEL_TAG_LINE}`), true);
-    for (const message of ["ThreeStrands v0.56.0", "", undefined, "Intel: included later", "Notes: Intel: included"]) {
-      assert.equal(includesIntel(message), false, String(message));
+    assert.deepEqual(releaseTagMessage("v0.56.0", { intel: false }), ["-m", "ThreeStrands v0.56.0", "-m", INTEL_SKIP_LINE]);
+    assert.equal(includesIntel(`ThreeStrands v0.56.0\n\n${INTEL_SKIP_LINE}`), false);
+    for (const message of ["ThreeStrands v0.56.0", "", undefined, "Intel: skipped later", "Notes: Intel: skipped", "Intel: included"]) {
+      assert.equal(includesIntel(message), true, String(message));
     }
   });
 
-  it("build Apple Silicon alone by default, with tests run only there", () => {
+  it("leave Apple Silicon alone when skipped, with tests run only there", () => {
     assert.deepEqual(macosBuilds({ intel: false }), [
       { target: "aarch64-apple-darwin", arch: "aarch64", binary_arch: "arm64", tests: true },
     ]);
@@ -446,7 +446,7 @@ describe("Intel Mac builds", () => {
     assert.deepEqual(both[1], { target: "x86_64-apple-darwin", arch: "x86_64", binary_arch: "x86_64", tests: false });
   });
 
-  it("read the annotated tag's message, and treat a lightweight tag as Apple Silicon only", async (t) => {
+  it("read the annotated tag's message, and treat a lightweight tag as including them", async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "threestrands-tag-"));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const git = (...args) => {
@@ -454,14 +454,15 @@ describe("Intel Mac builds", () => {
       assert.equal(result.status, 0, result.stderr);
     };
     git("init", "--quiet");
-    git("commit", "--quiet", "--allow-empty", "-m", `Release v0.56.0\n\n${INTEL_TAG_LINE}`);
-    git("tag", "v0.56.0", ...releaseTagMessage("v0.56.0", { intel: true }));
+    git("commit", "--quiet", "--allow-empty", "-m", `Release v0.56.0\n\n${INTEL_SKIP_LINE}`);
+    git("tag", "v0.56.0", ...releaseTagMessage("v0.56.0", { intel: false }));
     git("tag", "v0.56.1", ...releaseTagMessage("v0.56.1"));
     git("tag", "v0.56.2");
-    assert.equal(includesIntel(readTagMessage(directory, "v0.56.0")), true);
+    assert.equal(includesIntel(readTagMessage(directory, "v0.56.0")), false);
     assert.equal(readTagMessage(directory, "v0.56.1"), "ThreeStrands v0.56.1");
     // A lightweight tag points at the commit; its message must not count.
     assert.equal(readTagMessage(directory, "v0.56.2"), "");
+    assert.equal(includesIntel(readTagMessage(directory, "v0.56.2")), true);
     assert.throws(() => readTagMessage(directory, "v0.57.0"), /not in this checkout/);
   });
 
@@ -493,14 +494,123 @@ describe("Intel Mac builds", () => {
     assert.match(release, /needs\.validate\.outputs\.intel != 'true' && 'macos-x86_64'/);
     assert.match(release, /RELEASE_INTEL: \$\{\{ needs\.validate\.outputs\.intel \}\}/);
     assert.match(release, /export RELEASE_LAST_INTEL_TAG/);
-    assert.match(release, /Intel Macs \(not requested/);
+    assert.match(release, /Intel Macs \(left out with --no-intel\)/);
   });
 
-  it("are asked for the same way by scripts/release.sh --intel", async () => {
+  it("are left out the same way by scripts/release.sh --no-intel", async () => {
     const script = await readFile(new URL("./release.sh", import.meta.url), "utf8");
-    assert.match(script, /^ {4}--intel\) intel=1; shift ;;$/m);
-    assert.ok(script.includes(`tag_message+=(-m "${INTEL_TAG_LINE}")`), "release.sh must write the same tag line");
+    assert.match(script, /^mode=release yes=0 dry_run=0 intel=1 choice=\(\)$/m);
+    assert.match(script, /^ {4}--no-intel\) intel=0; shift ;;$/m);
+    assert.ok(script.includes(`tag_message+=(-m "${INTEL_SKIP_LINE}")`), "release.sh must write the same tag line");
     assert.match(script, /^git tag -s "\$tag" "\$\{tag_message\[@\]\}"$/m);
+  });
+});
+
+describe("release builds on the developer's Mac", () => {
+  async function runner(t, { base = true, failAt = "" } = {}) {
+    const directory = await mkdtemp(join(tmpdir(), "threestrands-runner-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const log = join(directory, "commands.jsonl");
+    await mkdir(join(directory, "bin"));
+    // Each fake logs its name, arguments, and stdin, then acts like the tool.
+    for (const [tool, behavior] of Object.entries({
+      tart: `if (args[0] === "get" && !process.env.RUNNER_TEST_BASE) process.exit(1);
+if (args[0] === "ip") console.log("192.168.64.5");`,
+      gh: `if (args.includes("POST")) console.log("4242 ENCODED-JIT-CONFIG");`,
+      ssh: `if (input.includes("ENCODED") && process.env.RUNNER_TEST_FAIL_AT === "job") process.exit(3);`,
+    })) {
+      await writeFile(join(directory, "bin", tool), `#!/usr/bin/env node
+import { appendFileSync, readFileSync } from "node:fs";
+const args = process.argv.slice(2);
+const input = ${tool === "ssh" ? 'args.at(-1) === "true" ? "" : readFileSync(0, "utf8")' : '""'};
+appendFileSync(process.env.RUNNER_TEST_LOG, JSON.stringify({ tool: "${tool}", args, input }) + "\\n");
+${behavior}
+`);
+      await chmod(join(directory, "bin", tool), 0o755);
+    }
+    return {
+      run: (args = ["--jobs", "1"]) => spawnSync("bash", [new URL("./release-runner.sh", import.meta.url).pathname, ...args], {
+        encoding: "utf8",
+        env: {
+          ...process.env, PATH: `${join(directory, "bin")}${delimiter}${process.env.PATH}`,
+          RUNNER_TEST_LOG: log, RUNNER_TEST_BASE: base ? "1" : "", RUNNER_TEST_FAIL_AT: failAt,
+        },
+      }),
+      commands: async () => (await readFile(log, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)),
+    };
+  }
+  const summary = (commands) => commands.map(({ tool, args }) => [tool, tool === "ssh" ? args.at(-1).split(" ")[0] : args.slice(0, 2).join(" ")]);
+
+  it("runs each job in a fresh clone of the base VM, then deletes the clone", async (t) => {
+    const fixture = await runner(t);
+    const result = fixture.run();
+    assert.equal(result.status, 0, result.stderr);
+    const commands = await fixture.commands();
+    const vm = commands.find((command) => command.tool === "tart" && command.args[0] === "clone").args[2];
+    assert.match(vm, /^threestrands-release-\d{8}-\d{6}-\d+-1$/);
+    assert.deepEqual(commands.find((command) => command.args[0] === "clone").args, ["clone", "threestrands-release-base", vm]);
+    // `tart run` starts in the background, so it may log before or after `tart ip`.
+    const start = commands.find((command) => command.args[0] === "run");
+    assert.deepEqual(start.args, ["run", "--no-graphics", vm]);
+    assert.deepEqual(summary(commands.filter((command) => command !== start)), [
+      ["tart", "get threestrands-release-base"], ["tart", `clone threestrands-release-base`],
+      ["tart", "ip --wait"], ["ssh", "true"], ["gh", "api -X"], ["ssh", "read"],
+      ["gh", "api -X"], ["tart", `stop ${vm}`], ["tart", `delete ${vm}`],
+    ]);
+  });
+
+  it("registers a single-use runner with the release label, passing its credential only on stdin", async (t) => {
+    const fixture = await runner(t);
+    assert.equal(fixture.run().status, 0);
+    const commands = await fixture.commands();
+    const register = commands.find((command) => command.tool === "gh" && command.args.includes("POST"));
+    assert.ok(register.args.includes("repos/oa-labs/ThreeStrands/actions/runners/generate-jitconfig"));
+    for (const label of ["self-hosted", "macOS", "ARM64", "threestrands-release"]) {
+      assert.ok(register.args.includes(`labels[]=${label}`), label);
+    }
+    const job = commands.find((command) => command.tool === "ssh" && command.input);
+    assert.equal(job.input, "ENCODED-JIT-CONFIG\n");
+    assert.match(job.args.at(-1), /cd ~\/actions-runner && \.\/run\.sh --jitconfig "\$jit"/);
+    assert.ok(job.args.includes("admin@192.168.64.5"));
+    for (const command of commands) {
+      assert.ok(!command.args.join(" ").includes("ENCODED-JIT-CONFIG"), `${command.tool} must not see the credential in its arguments`);
+    }
+    const remove = commands.findLast((command) => command.tool === "gh");
+    assert.deepEqual(remove.args, ["api", "-X", "DELETE", "repos/oa-labs/ThreeStrands/actions/runners/4242"]);
+  });
+
+  it("removes the clone and its runner even when the job fails", async (t) => {
+    const fixture = await runner(t, { failAt: "job" });
+    assert.notEqual(fixture.run().status, 0);
+    const commands = await fixture.commands();
+    assert.deepEqual(summary(commands).slice(-3).map(([tool, what]) => [tool, what.split(" ")[0]]), [["gh", "api"], ["tart", "stop"], ["tart", "delete"]]);
+  });
+
+  it("serves the number of jobs asked for, each in its own clone", async (t) => {
+    const fixture = await runner(t);
+    assert.equal(fixture.run(["--jobs", "2"]).status, 0);
+    const clones = (await fixture.commands()).filter((command) => command.args[0] === "clone").map((command) => command.args[2]);
+    assert.equal(clones.length, 2);
+    assert.notEqual(clones[0], clones[1]);
+  });
+
+  it("refuses a missing base VM or a bad job count before cloning anything", async (t) => {
+    const missing = await runner(t, { base: false });
+    const result = missing.run();
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /no base VM named threestrands-release-base/);
+    assert.deepEqual(summary(await missing.commands()), [["tart", "get threestrands-release-base"]]);
+    const bad = await runner(t);
+    assert.match(bad.run(["--jobs", "0"]).stderr, /--jobs needs a positive number/);
+    assert.deepEqual(await bad.commands(), []);
+  });
+
+  it("is chosen by a repository variable, with GitHub's Macs when it is unset", async () => {
+    const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const macos = workflow.split("\n  macos:\n")[1]?.split(/\n  [\w-]+:\n/)[0];
+    assert.match(macos, /^ {4}runs-on: \$\{\{ vars\.MACOS_RELEASE_RUNNER && fromJSON\(vars\.MACOS_RELEASE_RUNNER\) \|\| 'macos-26' \}\}$/m);
+    // Only the macOS builds move; the other jobs stay on GitHub's runners.
+    assert.equal(workflow.match(/vars\.MACOS_RELEASE_RUNNER/g)?.length, 2);
   });
 });
 
@@ -546,17 +656,15 @@ describe("pnpm release command", () => {
   ];
   const fix = { "clearer-fix.md": "### Fixed\n- A clearer fix.\n" };
   const feature = { "snooze.md": "### New\n- **Snooze** a conversation.\n" };
-  const withIntel = (list) => list.map((args) => args[0] === "tag" && args[1] === "-s" ? [...args, "-m", INTEL_TAG_LINE] : args);
+  const withoutIntel = (list) => list.map((args) => args[0] === "tag" && args[1] === "-s" ? [...args, "-m", INTEL_SKIP_LINE] : args);
 
-  it("adds Intel Macs to the release with pnpm release:intel, alone or with a version choice", async (t) => {
-    const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-    assert.equal(packageJson.scripts["release:intel"], `${packageJson.scripts.release} --intel`);
-    for (const [args, version] of [[["--intel"], "0.55.1"], [["--intel", "--major"], "1.0.0"], [["0.56.0", "--intel"], "0.56.0"]]) {
+  it("leaves Intel Macs out with pnpm release --no-intel, alone or with a version choice", async (t) => {
+    for (const [args, version] of [[["--no-intel"], "0.55.1"], [["--no-intel", "--major"], "1.0.0"], [["0.56.0", "--no-intel"], "0.56.0"]]) {
       const fixture = await releaseCommand(t, { changes: fix });
       const result = fixture.run(args);
       assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stdout, /for Apple Silicon and Intel Macs/);
-      assert.deepEqual(await fixture.commands(), withIntel(commands(version, [...VERSION_PATHS, "CHANGELOG.md", DOC, "changes/clearer-fix.md"])), args.join(" "));
+      assert.match(result.stdout, /without Intel Macs/);
+      assert.deepEqual(await fixture.commands(), withoutIntel(commands(version, [...VERSION_PATHS, "CHANGELOG.md", DOC, "changes/clearer-fix.md"])), args.join(" "));
     }
   });
 

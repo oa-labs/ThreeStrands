@@ -9,11 +9,11 @@ reviewed: 0.179.0
 
 Download the latest release from [GitHub Releases](https://github.com/oa-labs/ThreeStrands/releases/latest):
 
-- **macOS** — a signed and notarized `.dmg` for Apple Silicon Macs, and for Intel Macs in some releases.
+- **macOS** — a signed and notarized `.dmg` for Apple Silicon and Intel Macs.
 - **Windows (experimental)** — an x86-64 `.exe` installer, when included in the release.
 - **Linux (experimental)** — `.deb`, `.rpm`, and `.AppImage` packages for x86-64.
 
-macOS is the platform used and tested regularly. Not every release includes an Intel Mac installer; when the latest one doesn't, its notes link to the latest release that does. Experimental Windows and Linux installers may be absent when a release build fails. Choose the installer, not an updater signature or archive. On macOS, open the DMG and move ThreeStrands to **Applications** before launching. For Linux, choose the package for your distribution or make the AppImage executable. See [Compatibility](compatibility.html).
+macOS is the platform used and tested regularly. If a release ever lacks the Intel Mac installer, its notes link to the latest release that has one. Experimental Windows and Linux installers may be absent when a release build fails. Choose the installer, not an updater signature or archive. On macOS, open the DMG and move ThreeStrands to **Applications** before launching. For Linux, choose the package for your distribution or make the AppImage executable. See [Compatibility](compatibility.html).
 
 ThreeStrands stores your mail cache in a local database on your computer. Sign-in tokens and passwords go to your operating system's credential store, never to a plain file.
 

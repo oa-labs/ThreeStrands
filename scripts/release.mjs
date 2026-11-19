@@ -153,24 +153,24 @@ const updatePlatforms = [
 ];
 
 // Apple Silicon macOS is the primary target and always ships. A release may go
-// out without the others: Intel Macs when its tag doesn't ask for them, and
-// Linux or Windows when their build fails. The workflow names each one it
+// out without the others: Intel Macs when its tag opts out of them, and Linux
+// or Windows when their build fails. The workflow names each one it
 // leaves out.
 export const OPTIONAL_PLATFORMS = ["macos-x86_64", "linux-amd64", "windows-x86_64"];
 
-// Intel Macs are built only when the release tag carries this line, which
-// `pnpm release:intel` and `scripts/release.sh --intel` add. Other releases
-// build Apple Silicon alone to save macOS build minutes.
-export const INTEL_TAG_LINE = "Intel: included";
+// Every release builds for Intel Macs unless its tag carries this line, which
+// `pnpm release --no-intel` and `scripts/release.sh --no-intel` add, for when
+// the Intel build can't run.
+export const INTEL_SKIP_LINE = "Intel: skipped";
 
 /** The `-m` arguments for the signed release tag. */
-export function releaseTagMessage(tag, { intel = false } = {}) {
-  return ["-m", `ThreeStrands ${tag}`, ...(intel ? ["-m", INTEL_TAG_LINE] : [])];
+export function releaseTagMessage(tag, { intel = true } = {}) {
+  return ["-m", `ThreeStrands ${tag}`, ...(intel ? [] : ["-m", INTEL_SKIP_LINE])];
 }
 
-/** Whether a release tag's message asks for Intel Mac builds. */
+/** Whether a release tag's message leaves Intel Mac builds in. */
 export function includesIntel(tagMessage) {
-  return (tagMessage ?? "").split("\n").some((line) => line.trim() === INTEL_TAG_LINE);
+  return !(tagMessage ?? "").split("\n").some((line) => line.trim() === INTEL_SKIP_LINE);
 }
 
 const MACOS_BUILDS = [
@@ -187,7 +187,7 @@ export function macosBuilds({ intel }) {
 
 /**
  * The message of an annotated release tag, without its signature. A
- * lightweight tag has none, so it builds Apple Silicon only.
+ * lightweight tag has none, so it builds every platform.
  */
 export function readTagMessage(directory, tag) {
   const result = spawnSync("git", ["for-each-ref", "--format=%(objecttype)%00%(contents:subject)%00%(contents:body)", `refs/tags/${tag}`], {
@@ -428,14 +428,15 @@ export async function tagRelease(directory = root, options = {}) {
   }
   warnUndocumented(await docsCoverage(directory));
 
-  console.log(`Releasing ThreeStrands ${tag}${options.intel ? " for Apple Silicon and Intel Macs" : " (Apple Silicon only; pnpm release:intel adds Intel Macs)"}`);
+  const intel = options.intel !== false;
+  console.log(`Releasing ThreeStrands ${tag}${intel ? "" : " without Intel Macs"}`);
   const paths = await writeRelease(directory, plan);
   if (paths.length) {
     git(["add", "-A", "--", ...paths]);
     git(["commit", "-m", `Release ${tag}`]);
   }
   git(["push", "primary", "master"]);
-  git(["tag", "-s", tag, ...releaseTagMessage(tag, { intel: options.intel })]);
+  git(["tag", "-s", tag, ...releaseTagMessage(tag, { intel })]);
   git(["push", "primary", tag]);
   return tag;
 }
@@ -484,13 +485,13 @@ async function main() {
   } else if (command === "docs") {
     warnUndocumented(await docsCoverage());
   } else if (command === "tag") {
-    // --intel adds Intel Mac builds; it combines with either version choice.
-    await tagRelease(root, { ...versionOptions(rest.filter((arg) => arg !== "--intel")), intel: rest.includes("--intel") });
+    // --no-intel leaves Intel Macs out; it combines with either version choice.
+    await tagRelease(root, { ...versionOptions(rest.filter((arg) => arg !== "--no-intel")), intel: !rest.includes("--no-intel") });
   } else if (command === "bump" && argument) {
     // Changes the working tree and prints only the tag; warnings go to stderr.
     console.log(await bumpRelease(root, { date: argument, ...versionOptions(rest.slice(1)) }));
   } else {
-    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | docs | tag [--intel] [--major | VERSION] | bump YYYY-MM-DD [--major | VERSION]");
+    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | docs | tag [--no-intel] [--major | VERSION] | bump YYYY-MM-DD [--major | VERSION]");
   }
 }
 

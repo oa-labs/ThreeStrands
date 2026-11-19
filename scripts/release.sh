@@ -9,13 +9,13 @@
 # signing key, and credentials. `pnpm release` still does the same in one step
 # where Node is available.
 #
-# Usage: scripts/release.sh [--yes] [--dry-run] [--intel] [--major | VERSION]
+# Usage: scripts/release.sh [--yes] [--dry-run] [--no-intel] [--major | VERSION]
 #                                         release the next version: minor when
 #                                         a pending entry is New, otherwise patch
 #        scripts/release.sh docs          list unreleased names missing from the docs
 #   --yes      skip the confirmation prompt
 #   --dry-run  stop after showing the release changes; changes nothing
-#   --intel    also build for Intel Macs; otherwise Apple Silicon only
+#   --no-intel build for Apple Silicon Macs only, leaving Intel Macs out
 #   --major    release the next major version
 #   VERSION    release exactly this version; the current version re-cuts it
 set -Eeuo pipefail
@@ -31,13 +31,13 @@ git() { command git -C "$repo_root" "$@"; }
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(command git -C "$script_dir" rev-parse --show-toplevel)"
 
-mode=release yes=0 dry_run=0 intel=0 choice=()
+mode=release yes=0 dry_run=0 intel=1 choice=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     docs) mode=docs; shift ;;
     --yes) yes=1; shift ;;
     --dry-run) dry_run=1; shift ;;
-    --intel) intel=1; shift ;;
+    --no-intel) intel=0; shift ;;
     --major) choice+=(--major); shift ;;
     [0-9]*.*) choice+=("$1"); shift ;;
     *) sed -n '/^# Usage/,/^set /p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 1 ;;
@@ -127,14 +127,12 @@ else
   echo "Re-cutting $tag: no version or changelog changes."
 fi
 
-# Must match INTEL_TAG_LINE in scripts/release.mjs; the release workflow
-# builds for Intel Macs only when the tag carries it.
+# Must match INTEL_SKIP_LINE in scripts/release.mjs; the release workflow
+# leaves Intel Macs out only when the tag carries it.
 tag_message=(-m "ThreeStrands $tag")
-if [[ "$intel" == 1 ]]; then
-  tag_message+=(-m "Intel: included")
-  echo "Builds: Apple Silicon and Intel Macs."
-else
-  echo "Builds: Apple Silicon only (pass --intel to include Intel Macs)."
+if [[ "$intel" == 0 ]]; then
+  tag_message+=(-m "Intel: skipped")
+  echo "Builds: Apple Silicon only (--no-intel)."
 fi
 
 if [[ "$dry_run" == 1 ]]; then

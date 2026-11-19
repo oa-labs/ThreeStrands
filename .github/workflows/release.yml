@@ -46,10 +46,13 @@ jobs:
     needs: validate
     # Xcode 26 supports the authored Icon Composer asset. Both targets can
     # compile on Apple Silicon; Rust tests run natively on the runner.
-    runs-on: macos-26
+    # The MACOS_RELEASE_RUNNER repository variable, a JSON label list such as
+    # ["self-hosted", "threestrands-release"], sends these jobs to the
+    # developer's Mac (scripts/release-runner.sh); unset, GitHub's Macs run them.
+    runs-on: ${{ vars.MACOS_RELEASE_RUNNER && fromJSON(vars.MACOS_RELEASE_RUNNER) || 'macos-26' }}
     timeout-minutes: 90
-    # Apple Silicon always; Intel only when the tag asks for it
-    # (pnpm release:intel). Tests run once, in the Apple Silicon build.
+    # Apple Silicon always; Intel unless the tag opts out
+    # (pnpm release --no-intel). Tests run once, in the Apple Silicon build.
     strategy:
       fail-fast: false
       matrix:
@@ -310,8 +313,8 @@ jobs:
   release:
     name: Create draft GitHub Release
     needs: [validate, macos, linux, windows]
-    # Every requested macOS build must succeed. Intel Macs are left out unless
-    # the tag asks for them; Linux and Windows are optional: when either
+    # Every requested macOS build must succeed. Intel Macs are left out only
+    # when the tag opts out; Linux and Windows are optional: when either
     # fails, the draft ships without it and the run summary says so.
     if: ${{ !cancelled() && needs.validate.result == 'success' && needs.macos.result == 'success' }}
     runs-on: ubuntu-24.04
@@ -392,7 +395,7 @@ jobs:
             echo "### ThreeStrands $RELEASE_TAG ($RELEASE_CHANNEL)"
             echo
             missing=()
-            [[ "$RELEASE_INTEL" == true ]] || missing+=("Intel Macs (not requested; pnpm release:intel includes them)")
+            [[ "$RELEASE_INTEL" == true ]] || missing+=("Intel Macs (left out with --no-intel)")
             [[ "$LINUX_RESULT" == success ]] || missing+=("Linux ($LINUX_RESULT)")
             [[ "$WINDOWS_RESULT" == success ]] || missing+=("Windows ($WINDOWS_RESULT)")
             if (( ${#missing[@]} )); then
