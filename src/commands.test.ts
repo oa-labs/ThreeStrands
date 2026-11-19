@@ -263,15 +263,15 @@ describe("command registry", () => {
       "shift+n": ["calendar.new", "contacts.new", "agents.new", "notes.new"],
       "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
       "mod+enter": ["contacts.save", "draft.send"],
-      enter: ["notes.write", "tasks.openDetails"],
+      enter: ["today.write", "notes.write", "tasks.openDetails"],
       space: ["notes.pageDown", "thread.pageDown"],
       "shift+space": ["notes.pageUp", "thread.pageUp"],
       "#": ["notes.trash", "draft.discard", "thread.trash"],
       arrowright: ["tasks.nextColumn", "message.next"],
       arrowleft: ["tasks.previousColumn", "message.previous"],
       "mod+j": ["draft.replyAssist", "chat.open"],
-      tab: ["notes.nextView", "mailbox.nextSplit", "tasks.nextView", "contacts.nextView"],
-      "shift+tab": ["notes.previousView", "mailbox.previousSplit", "contacts.previousView", "tasks.previousView"],
+      tab: ["today.nextView", "notes.nextView", "mailbox.nextSplit", "tasks.nextView", "contacts.nextView"],
+      "shift+tab": ["today.previousView", "notes.previousView", "mailbox.previousSplit", "contacts.previousView", "tasks.previousView"],
       // Close Search stands aside while Back is available; closing meeting
       // preparation comes first while it is open.
       escape: ["meetings.closePrepare", "navigation.back", "search.close"],

@@ -1,7 +1,7 @@
 import { formatCompactDate } from "./dateFormatting";
 import { CalendarDays, ChevronLeft, ChevronRight, ContactRound, ListChecks, ListPlus, Mail, NotebookPen, Send, Star, Plus, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useId, type ReactNode } from "react";
 import { isPreparable, meetingsToPrepare, preparationKey, readinessByKey, readinessSummary } from "./meetingPrep";
 import { useMeetingReadiness } from "./useMeetingPreparation";
 import { useWorkspaceCommands } from "./workspaceCommands";
@@ -54,6 +54,9 @@ import { PullToRefreshStatus } from "./PullToRefreshStatus";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { revalidateScheduleCache } from "./calendarScheduleCache";
 import { TaskEditorDialog } from "./TaskEditorDialog";
+import { TodayDailyNote, type TodayDailyNoteHandle } from "./TodayDailyNote";
+import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
+import { formatShortcut } from "./shortcutLabels";
 
 type Schedule = ReturnType<typeof useCalendarSchedule>;
 
@@ -80,6 +83,7 @@ export type TodayWorkspaceProps = {
   onOpenContact(contactId: string): void;
   /** Opens a note, such as today's note when a plan write was refused. */
   onOpenNote?(noteId: string): void;
+  onOpenEntity?(href: string): Promise<void>;
   /** Says what a plan change or booking did, with Undo. */
   onNotice?(notice: Notice): void;
   /** The default availability profile's working hours, which bound Book's free time; unknown without them. */
@@ -103,10 +107,6 @@ export function TodayWorkspace(props: TodayWorkspaceProps) {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
-  return props.calendarConnected ? <ScheduledToday {...props} now={now} /> : <TodayLayout {...props} now={now} schedule={null} />;
-}
-
-function ScheduledToday({ now, ...props }: TodayWorkspaceProps & { now: Date }) {
   const start = startOfLocalDay(now);
   const today = dateInputValue(start);
   // The picked day outlives leaving Today for another workspace, but not the day it was picked on.
@@ -123,18 +123,25 @@ function ScheduledToday({ now, ...props }: TodayWorkspaceProps & { now: Date }) 
     writeDayChoice(stored); setChoice(stored);
   }, [today]);
   const day = chosenDay ?? start;
+  return props.calendarConnected
+    ? <ScheduledToday {...props} now={now} day={day} onChangeDay={changeDay} />
+    : <TodayLayout {...props} now={now} schedule={null} scheduleDay={day} onChangeDay={changeDay} />;
+}
+
+function ScheduledToday({ now, day, onChangeDay, ...props }: TodayWorkspaceProps & { now: Date; day: Date; onChangeDay(day: Date | null): void }) {
+  const start = startOfLocalDay(now);
   const showingToday = isSameDay(day, start);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const schedule = useCalendarSchedule({ timeMin: start.toISOString(), timeMax: addDays(start, 1).toISOString(), timeZone });
   const otherDay = useCalendarSchedule({ timeMin: day.toISOString(), timeMax: addDays(day, 1).toISOString(), timeZone }, false, !showingToday);
-  return <TodayLayout {...props} now={now} schedule={schedule} displaySchedule={showingToday ? schedule : otherDay} scheduleDay={day} onChangeDay={changeDay} />;
+  return <TodayLayout {...props} now={now} schedule={schedule} displaySchedule={showingToday ? schedule : otherDay} scheduleDay={day} onChangeDay={onChangeDay} />;
 }
 
 function TodayLayout({
   accountId, mailAccountCount = 1, refreshKey, taskRefreshKey, calendars, calendarAccounts = [], now, schedule,
   displaySchedule = schedule, scheduleDay, onChangeDay,
   onOpenThread, onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenCalendar, onEventCreated, onOpenContact,
-  onOpenNote, onNotice, workingHours = null, onCreateTask, mailAccounts = [],
+  onOpenNote, onOpenEntity, onNotice, workingHours = null, onCreateTask, mailAccounts = [],
 }: TodayWorkspaceProps & {
   now: Date;
   schedule: Schedule | null;
@@ -144,6 +151,17 @@ function TodayLayout({
 }) {
   const shownDay = scheduleDay ?? now;
   const showingToday = isSameDay(shownDay, now);
+  const [panel, setPanel] = useLocalStorageState<"agenda" | "note">("threestrands.today.panel", () => readLocalStorage("threestrands.today.panel", (raw) => raw === "note" ? "note" : "agenda", "agenda"));
+  const [noteVisited, setNoteVisited] = useState(panel === "note");
+  const dailyNote = useRef<TodayDailyNoteHandle>(null);
+  const agendaTab = useRef<HTMLButtonElement>(null);
+  const noteTab = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
+  const selectPanel = (next: "agenda" | "note", focus = false) => {
+    if (next === "note") setNoteVisited(true);
+    setPanel(next);
+    if (focus) (next === "agenda" ? agendaTab : noteTab).current?.focus();
+  };
 
   const pageRef = useRef<HTMLElement>(null);
   const completion = useTodayCompletionTransition(pageRef, `${accountId}:${dateInputValue(shownDay)}`, showingToday);
@@ -326,6 +344,9 @@ function TodayLayout({
     };
   };
   useWorkspaceCommands({
+    "today.nextView": () => selectPanel(panel === "agenda" ? "note" : "agenda", true),
+    "today.previousView": () => selectPanel(panel === "agenda" ? "note" : "agenda", true),
+    ...(panel === "note" ? { "today.write": () => dailyNote.current?.focus() } : {}),
     "today.previousDay": () => onChangeDay?.(addDays(shownDay, -1)),
     "today.nextDay": () => onChangeDay?.(addDays(shownDay, 1)),
     "meetings.prepare": () => {
@@ -414,7 +435,7 @@ function TodayLayout({
   const dayStart = startOfLocalDay(now).getTime();
   // Drops book on the day the schedule shows, today or later; a past day takes none.
   const shownDayStart = startOfLocalDay(shownDay).getTime();
-  const canBookShownDay = shownDayStart >= dayStart;
+  const canBookShownDay = panel === "agenda" && shownDayStart >= dayStart;
   const dragDays = useMemo(() => [new Date(shownDayStart)], [shownDayStart]);
   const drag = useTaskBlockDrag<PlanDragSource>({ gridRef, days: dragDays, blockMinutes: TASK_BLOCK_MINUTES, onDrop: (source, day, minutes) => { if (canBookShownDay) void dropOnDay(source, day, minutes); } });
 
@@ -790,21 +811,41 @@ function TodayLayout({
           entries={doneEntries} errors={doneErrors} loading={doneOnDay.loading || (loadingSources && loadedTasks === null)} />
       </div> : null}
       </div>
-      <div className="today-column today-time" role="group" aria-label="Schedule">
-        <div className="today-panel-heading"><h2><CalendarDays size={ICON_SIZE.md} aria-hidden="true" />Agenda</h2><div className="today-schedule-actions">
-          <button type="button" className="btn-link" onClick={() => onOpenCalendar(shownDay)}>Open Calendar</button>
-        </div></div>
-        {displaySchedule ? <>
-          <div className="today-schedule-navigation">
-            <div className="today-schedule-actions" role="group" aria-label="Schedule Date">
-              <button type="button" className="btn btn-sm" aria-label="Previous Day" aria-keyshortcuts="-" onClick={() => onChangeDay?.(addDays(shownDay, -1))}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" /></button>
-              <button type="button" className="btn btn-sm" onClick={() => onChangeDay?.(null)}>Today</button>
-              <button type="button" className="btn btn-sm" aria-label="Next Day" aria-keyshortcuts="=" onClick={() => onChangeDay?.(addDays(shownDay, 1))}><ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button>
-              {canCreateEvents ? <button type="button" className="btn btn-sm" aria-label="New Event" title="New Event" onClick={startNewEvent}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
-            </div>
-            {/* Keep controls on the left for every day. The page heading already names today. */}
-            <span className={showingToday ? "sr-only" : undefined} aria-live="polite">{shownDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
+      <div className="today-column today-time" role="group" aria-label="Day Planning">
+        <div className="today-panel-heading">
+          <div className="today-panel-tabs" role="tablist" aria-label="Day Planning" title={`Switch agenda and daily note (${formatShortcut("Tab")} / ${formatShortcut("Shift+Tab")})`}
+            onKeyDown={(event) => {
+              if (event.metaKey || event.ctrlKey || event.altKey) return;
+              if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                event.preventDefault();
+                selectPanel(event.key === "Home" ? "agenda" : event.key === "End" ? "note" : panel === "agenda" ? "note" : "agenda", true);
+              } else if (event.key === "Enter" && panel === "note" && event.target === noteTab.current) {
+                event.preventDefault();
+                dailyNote.current?.focus();
+              }
+            }}>
+            <button ref={agendaTab} id={`${panelId}-agenda-tab`} type="button" role="tab" data-mailbox-tab-shortcut aria-keyshortcuts="Tab Shift+Tab" aria-selected={panel === "agenda"} aria-controls={`${panelId}-agenda`} tabIndex={panel === "agenda" ? 0 : -1}
+              className={`mailbox-tab${panel === "agenda" ? " active" : ""}`} onClick={() => selectPanel("agenda")}><CalendarDays size={ICON_SIZE.md} aria-hidden="true" />Agenda</button>
+            <button ref={noteTab} id={`${panelId}-note-tab`} type="button" role="tab" data-mailbox-tab-shortcut aria-keyshortcuts="Tab Shift+Tab" aria-selected={panel === "note"} aria-controls={`${panelId}-note`} tabIndex={panel === "note" ? 0 : -1}
+              className={`mailbox-tab${panel === "note" ? " active" : ""}`} onClick={() => selectPanel("note")}><NotebookPen size={ICON_SIZE.md} aria-hidden="true" />Daily Note</button>
           </div>
+          <div className="today-schedule-actions">
+            {panel === "agenda" ? <button type="button" className="btn-link" onClick={() => onOpenCalendar(shownDay)}>Open Calendar</button>
+              : onOpenNote ? <button type="button" className="btn-link" onClick={() => void dailyNote.current?.openInNotes()}>Open in Notes</button> : null}
+          </div>
+        </div>
+        <div className="today-schedule-navigation">
+          <div className="today-schedule-actions" role="group" aria-label="Schedule Date">
+            <button type="button" className="btn btn-sm" aria-label="Previous Day" aria-keyshortcuts="-" onClick={() => onChangeDay?.(addDays(shownDay, -1))}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" /></button>
+            <button type="button" className="btn btn-sm" onClick={() => onChangeDay?.(null)}>Today</button>
+            <button type="button" className="btn btn-sm" aria-label="Next Day" aria-keyshortcuts="=" onClick={() => onChangeDay?.(addDays(shownDay, 1))}><ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button>
+            {panel === "agenda" && canCreateEvents ? <button type="button" className="btn btn-sm" aria-label="New Event" title="New event" onClick={startNewEvent}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
+          </div>
+          {/* Keep controls on the left for every day. The page heading already names today. */}
+          <span className={showingToday ? "sr-only" : undefined} aria-live="polite">{shownDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
+        </div>
+        <div id={`${panelId}-agenda`} role="tabpanel" aria-labelledby={`${panelId}-agenda-tab`} className="today-panel-content today-agenda-panel" hidden={panel !== "agenda"} tabIndex={0}>
+        {displaySchedule ? <>
           <TaskDragChip title={drag.draggingTitle} pointerRef={drag.pointerRef} onPointer={drag.onPointer} />
           <TodayDayView events={shownEvents} day={showingToday ? undefined : shownDay} now={now} loading={displaySchedule.loading} error={displaySchedule.error} onRetry={displaySchedule.reload}
             selectedEvent={null} onChooseEvent={chooseEvent} eventDecoration={decorateEvent}
@@ -817,6 +858,11 @@ function TodayLayout({
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}
+        </div>
+        <div id={`${panelId}-note`} role="tabpanel" aria-labelledby={`${panelId}-note-tab`} className="today-panel-content" hidden={panel !== "note"}>
+          {noteVisited ? <TodayDailyNote key={dateInputValue(shownDay)} ref={dailyNote} date={dateInputValue(shownDay)} active={panel === "note"} refreshKey={refreshKey}
+            onLeave={() => noteTab.current?.focus()} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} /> : null}
+        </div>
       </div>
     </div>
     </div>

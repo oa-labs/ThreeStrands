@@ -1,6 +1,10 @@
+import { useShortcutHandler } from "./useShortcutHandler";
+import { commandContext } from "./test/commandContext";
+import { readNoteDraft } from "./noteDrafts";
+import { replicatedSyncConflicts } from "./replicatedSync";
 import { planItemKey } from "./dailyPlan";
 import { refreshSyncedData } from "./refreshSyncedData";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
@@ -21,6 +25,7 @@ import { readDayChoice, TODAY_DAY_KEY } from "./todayDayChoice";
 import { writeTodayBackdrop } from "./backdropPreference";
 import type { DoneNote, SentInRange } from "./domain";
 
+vi.mock("./NoteEditor", () => import("./test/NoteEditorStub"));
 vi.mock("./refreshSyncedData", () => ({ refreshSyncedData: vi.fn(async () => {}) }));
 
 const openUrl = vi.hoisted(() => vi.fn());
@@ -123,6 +128,197 @@ describe("TodayWorkspace", () => {
     mockMail([]);
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); openUrl.mockReset(); localStorage.clear(); });
+
+  describe("daily note panel", () => {
+    const tabs = () => within(screen.getByRole("tablist", { name: "Day Planning" }));
+    const choose = (name: string) => fireEvent.click(tabs().getByRole("tab", { name }));
+    const box = () => screen.getByRole("textbox", { name: "Daily Note Text" });
+    const bindShortcuts = () => {
+      const context = commandContext({ focusedPane: "today" });
+      renderHook(() => useShortcutHandler(context, (command) => { void command.run(context); }));
+    };
+    beforeEach(() => {
+      vi.spyOn(mailClient, "getDailyNote").mockImplementation(async (date) => ({ ...note(`daily:${date}`), dailyDate: date, body: `Notes for ${date}` }));
+      vi.spyOn(mailClient, "saveDailyNote").mockImplementation(async (date, body) => ({ saved: true, note: { ...note(`daily:${date}`, "v2"), dailyDate: date, body } }));
+    });
+
+    it("opens the shared daily note without focusing the editor or writing, and remembers the selected panel", async () => {
+      renderToday();
+      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveAttribute("aria-selected", "true");
+      expect(mailClient.getDailyNote).not.toHaveBeenCalled();
+      const tab = tabs().getByRole("tab", { name: "Daily Note" });
+      tab.focus(); choose("Daily Note");
+      await waitFor(() => expect(box()).toHaveValue(`Notes for ${localDate(0)}`));
+      expect(box()).not.toHaveAttribute("readonly");
+      expect(tab).toHaveFocus();
+      expect(box().closest("[data-shortcut-scope]")).toHaveAttribute("data-shortcut-scope", "compose");
+      expect(screen.getByRole("tabpanel", { name: "Daily Note" })).toHaveAttribute("id", tab.getAttribute("aria-controls"));
+      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveAttribute("tabindex", "-1");
+      expect(mailClient.saveDailyNote).not.toHaveBeenCalled();
+      cleanup(); renderToday();
+      expect(tabs().getByRole("tab", { name: "Daily Note" })).toHaveAttribute("aria-selected", "true");
+      await waitFor(() => expect(box()).toHaveValue(`Notes for ${localDate(0)}`));
+      expect(box()).not.toHaveFocus();
+      expect(mailClient.saveDailyNote).not.toHaveBeenCalled();
+    });
+
+    it("uses Tab to switch in read mode, Enter to write, and Escape to leave, preserving editor and button keys", async () => {
+      renderToday(); bindShortcuts();
+      fireEvent.keyDown(document.body, { key: "Tab" });
+      const tab = tabs().getByRole("tab", { name: "Daily Note" });
+      expect(tab).toHaveFocus();
+      await waitFor(() => expect(box()).not.toHaveAttribute("readonly"));
+      fireEvent.keyDown(tab, { key: "Enter" });
+      expect(box()).toHaveFocus();
+      fireEvent.change(box(), { target: { value: "Typed 0 - = j k" } });
+      const shownDay = readDayChoice(localDate(0));
+      for (const key of ["Tab", "0", "-", "=", "j", "k"]) expect(fireEvent.keyDown(box(), { key })).toBe(true);
+      expect(readDayChoice(localDate(0))).toEqual(shownDay);
+      expect(tabs().getByRole("tab", { name: "Daily Note" })).toHaveAttribute("aria-selected", "true");
+      fireEvent.keyDown(box(), { key: "Escape" });
+      expect(tab).toHaveFocus();
+      fireEvent.keyDown(tab, { key: "Tab" });
+      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveFocus();
+      expect(screen.queryByRole("textbox", { name: "Daily Note Text" })).not.toBeInTheDocument();
+      fireEvent.keyDown(document.activeElement!, { key: "Tab", shiftKey: true });
+      expect(tab).toHaveFocus();
+      const previous = screen.getByRole("button", { name: "Previous Day" });
+      previous.focus();
+      expect(fireEvent.keyDown(previous, { key: "Tab" })).toBe(true);
+      expect(tab).toHaveAttribute("aria-selected", "true");
+      fireEvent.keyDown(tab, { key: "ArrowLeft" });
+      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveFocus();
+      fireEvent.keyDown(document.activeElement!, { key: "End" });
+      expect(tab).toHaveFocus();
+      fireEvent.keyDown(document.activeElement!, { key: "Home" });
+      expect(tabs().getByRole("tab", { name: "Agenda" })).toHaveFocus();
+    });
+
+    it("keeps the agenda mounted and its scroll position when switching panels", async () => {
+      renderToday({ calendarConnected: true });
+      await screen.findByRole("group", { name: "Day view" });
+      const grid = document.querySelector<HTMLElement>(".today-time .calendar-week-scroll")!;
+      grid.scrollTop = 432;
+      choose("Daily Note");
+      await waitFor(() => expect(box()).not.toHaveAttribute("readonly"));
+      expect(grid).not.toBeVisible();
+      choose("Agenda");
+      expect(document.querySelector(".today-time .calendar-week-scroll")).toBe(grid);
+      expect(grid.scrollTop).toBe(432);
+    });
+
+    it("keeps unsaved edits across switches and refresh failures, including a failed save", async () => {
+      vi.mocked(mailClient.saveDailyNote).mockRejectedValue(new Error("Disk is full"));
+      const { rerenderToday } = renderToday();
+      choose("Daily Note");
+      await waitFor(() => expect(box()).not.toHaveAttribute("readonly"));
+      fireEvent.change(box(), { target: { value: "Keep my unfinished thoughts" } });
+      choose("Agenda");
+      await waitFor(() => expect(mailClient.saveDailyNote).toHaveBeenCalledWith(localDate(0), "Keep my unfinished thoughts", "v1"));
+      choose("Daily Note");
+      expect(box()).toHaveValue("Keep my unfinished thoughts");
+      expect(await screen.findByText("Disk is full")).toBeInTheDocument();
+      vi.mocked(mailClient.getDailyNote).mockRejectedValue(new Error("Offline"));
+      rerenderToday({ refreshKey: "new-sync" });
+      expect(box()).toHaveValue("Keep my unfinished thoughts");
+      expect(readNoteDraft(`daily:${localDate(0)}`)?.body).toBe("Keep my unfinished thoughts");
+    });
+
+    it("uses the selected date in both panels, flushes when the date changes, and opens that daily note in Notes", async () => {
+      const onOpenNote = vi.fn();
+      renderToday({ onOpenNote }); bindShortcuts();
+      const controls = screen.getByRole("group", { name: "Schedule Date" });
+      choose("Daily Note");
+      await waitFor(() => expect(box()).not.toHaveAttribute("readonly"));
+      fireEvent.change(box(), { target: { value: "Today’s thoughts" } });
+      fireEvent.keyDown(tabs().getByRole("tab", { name: "Daily Note" }), { key: "=" });
+      await waitFor(() => expect(box()).toHaveValue(`Notes for ${localDate(1)}`));
+      expect(mailClient.saveDailyNote).toHaveBeenCalledWith(localDate(0), "Today’s thoughts", "v1");
+      expect(screen.getByRole("group", { name: "Schedule Date" })).toBe(controls);
+      fireEvent.click(screen.getByRole("button", { name: "Open in Notes" }));
+      await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith(`daily:${localDate(1)}`));
+      choose("Agenda");
+      expect(readDayChoice(localDate(0))?.day).toBe(localDate(1));
+      fireEvent.click(screen.getByRole("button", { name: "Today" }));
+      choose("Daily Note");
+      await waitFor(() => expect(box()).toHaveValue(`Notes for ${localDate(0)}`));
+    });
+
+    it("waits for an in-flight save before opening Notes, and refuses navigation when saving fails", async () => {
+      let finish!: (saved: Awaited<ReturnType<typeof mailClient.saveDailyNote>>) => void;
+      vi.mocked(mailClient.saveDailyNote).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+      const onOpenNote = vi.fn();
+      renderToday({ onOpenNote });
+      choose("Daily Note");
+      await waitFor(() => expect(box()).not.toHaveAttribute("readonly"));
+      fireEvent.change(box(), { target: { value: "Save before opening" } });
+      fireEvent.click(screen.getByRole("button", { name: "Open in Notes" }));
+      expect(onOpenNote).not.toHaveBeenCalled();
+      choose("Agenda"); choose("Daily Note");
+      expect(box()).toHaveValue("Save before opening");
+      await act(async () => finish({ saved: true, note: { ...note(`daily:${localDate(0)}`, "v2"), body: "Save before opening" } }));
+      await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith(`daily:${localDate(0)}`));
+      onOpenNote.mockClear();
+      vi.mocked(mailClient.saveDailyNote).mockRejectedValue(new Error("Offline"));
+      fireEvent.change(box(), { target: { value: "Unsent thoughts" } });
+      fireEvent.click(screen.getByRole("button", { name: "Open in Notes" }));
+      await screen.findByText(/Save or resolve this note's changes/);
+      expect(onOpenNote).not.toHaveBeenCalled();
+      expect(box()).toHaveValue("Unsent thoughts");
+    });
+
+    it("keeps a stale note read-only with choices that preserve local text", async () => {
+      const other = { ...note(`daily:${localDate(0)}`, "v2"), body: "Changed on another device" };
+      vi.mocked(mailClient.saveDailyNote).mockResolvedValue({ saved: false, note: other });
+      renderToday(); choose("Daily Note");
+      await waitFor(() => expect(box()).not.toHaveAttribute("readonly"));
+      fireEvent.change(box(), { target: { value: "My local version" } });
+      choose("Agenda"); choose("Daily Note");
+      await screen.findByRole("button", { name: "Keep My Version" });
+      expect(box()).toHaveAttribute("readonly");
+      expect(box()).toHaveValue("My local version");
+      fireEvent.click(screen.getByRole("button", { name: "Use Other Version" }));
+      expect(box()).toHaveValue(other.body);
+      expect(readNoteDraft(`daily:${localDate(0)}`)).toBeNull();
+    });
+
+    it("keeps notes changed on two devices read-only and offers the shared comparison", async () => {
+      const sync = await import("./replicatedSync");
+      vi.spyOn(sync, "replicatedSyncConflicts").mockResolvedValue([{
+        entityType: "note", entityId: `daily:${localDate(0)}`, field: "body", candidates: [
+          { operationId: "self:1", deviceId: "self", value: `Notes for ${localDate(0)}` },
+          { operationId: "laptop:1", deviceId: "laptop", value: "The laptop version" },
+        ],
+      }]);
+      vi.spyOn(sync, "replicatedSyncDeviceRoster").mockResolvedValue([
+        { deviceId: "self", status: "active", isSelf: true, label: null },
+        { deviceId: "laptop", status: "active", isSelf: false, label: "Work laptop" },
+      ]);
+      renderToday(); choose("Daily Note");
+      const banner = await screen.findByRole("region", { name: "Note conflict" });
+      expect(box()).toHaveAttribute("readonly");
+      expect(mailClient.saveDailyNote).not.toHaveBeenCalled();
+      fireEvent.click(within(banner).getByRole("button", { name: "Compare" }));
+      await within(banner).findByText("The laptop version");
+      expect(within(banner).getByRole("button", { name: "Keep Both" })).toBeEnabled();
+    });
+
+    it("does not allow editing a note in Trash or one whose conflict check failed", async () => {
+      vi.mocked(mailClient.getDailyNote).mockResolvedValue({ ...note(`daily:${localDate(0)}`), trashed: true });
+      renderToday(); choose("Daily Note");
+      await screen.findByText(/This daily note is in Trash/);
+      expect(box()).toHaveAttribute("readonly");
+      cleanup();
+      vi.mocked(mailClient.getDailyNote).mockResolvedValue(note(`daily:${localDate(0)}`));
+      vi.spyOn(await import("./replicatedSync"), "replicatedSyncConflicts").mockRejectedValue(new Error("Cannot check conflicts"));
+      renderToday();
+      await screen.findByText("Cannot check conflicts");
+      expect(box()).toHaveAttribute("readonly");
+      vi.mocked(replicatedSyncConflicts).mockResolvedValue([]);
+      fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
+      await waitFor(() => expect(box()).not.toHaveAttribute("readonly"));
+    });
+  });
 
   it("keeps the gutter tint in the header's sky phase and uses light text only for dusk or night", () => {
     const header = () => document.querySelector(".today-header")!;
@@ -1524,7 +1720,7 @@ describe("TodayWorkspace", () => {
       expect(await screen.findByRole("region", { name: "Done Today" })).toBeInTheDocument();
       expect(screen.getByRole("checkbox", { name: "Mark Task today Not Done" })).toBeChecked();
       fireEvent.click(screen.getByRole("button", { name: "Next Day" }));
-      await screen.findByRole("heading", { name: "Agenda", level: 2 });
+      await screen.findByRole("tab", { name: "Agenda" });
       expect(screen.queryByRole("region", { name: /^Done/ })).not.toBeInTheDocument();
       const calls = vi.mocked(mailClient.listSentBetween).mock.calls.length;
       expect(vi.mocked(mailClient.listSentBetween).mock.calls.some(([, start]) => start === local(18, 0))).toBe(false);
@@ -1603,7 +1799,7 @@ describe("TodayWorkspace", () => {
   describe("remembered day", () => {
     it("keeps the Agenda heading and navigation controls in place on every day", async () => {
       renderToday({ calendarConnected: true, calendarAccounts });
-      const heading = screen.getByRole("heading", { name: "Agenda", level: 2 });
+      const heading = screen.getByRole("tab", { name: "Agenda" });
       expect(heading.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
       expect(heading.querySelector("svg")).toHaveAttribute("width", String(ICON_SIZE.md));
       const controls = screen.getByRole("group", { name: "Schedule Date" });
@@ -1617,7 +1813,7 @@ describe("TodayWorkspace", () => {
         ["Previous Day", "Monday, November 16, 2026", false],
       ] as const) {
         if (action) fireEvent.click(within(controls).getByRole("button", { name: action }));
-        expect(screen.getByRole("heading", { name: "Agenda", level: 2 })).toBe(heading);
+        expect(screen.getByRole("tab", { name: "Agenda" })).toBe(heading);
         expect(navigation.firstElementChild).toBe(controls);
         expect(within(controls).getAllByRole("button")).toEqual(buttons);
         const dateLabel = screen.getByText(date);
@@ -1630,13 +1826,13 @@ describe("TodayWorkspace", () => {
     it("stores the picked day on this device, restores it when Today reopens, and forgets it when Today is chosen", async () => {
       renderToday({ calendarConnected: true });
       fireEvent.click(await screen.findByRole("button", { name: "Next Day" }));
-      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
       expect(readDayChoice("2026-11-17")).toEqual({ chosenOn: "2026-11-17", day: "2026-11-18" });
       cleanup(); renderToday({ calendarConnected: true });
-      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
       expect(screen.getByText("Wednesday, November 18, 2026")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Today" }));
-      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
       expect(screen.getByText("Tuesday, November 17, 2026")).toHaveClass("sr-only");
       expect(localStorage.getItem(TODAY_DAY_KEY)).toBeNull();
     });
@@ -1644,12 +1840,12 @@ describe("TodayWorkspace", () => {
     it("ignores a choice made on an earlier day and a choice that cannot be read", async () => {
       localStorage.setItem(TODAY_DAY_KEY, JSON.stringify({ chosenOn: "2026-11-16", day: "2026-11-20" }));
       renderToday({ calendarConnected: true });
-      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
       expect(screen.getByText("Tuesday, November 17, 2026")).toHaveClass("sr-only");
       cleanup();
       localStorage.setItem(TODAY_DAY_KEY, "{broken");
       renderToday({ calendarConnected: true });
-      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
       expect(screen.getByText("Tuesday, November 17, 2026")).toHaveClass("sr-only");
     });
 
@@ -1658,10 +1854,10 @@ describe("TodayWorkspace", () => {
       vi.setSystemTime(new Date(2026, 10, 17, 23, 59));
       renderToday({ calendarConnected: true });
       fireEvent.click(await screen.findByRole("button", { name: "Previous Day" }));
-      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
       expect(screen.getByText("Monday, November 16, 2026")).toBeInTheDocument();
       await act(async () => { vi.setSystemTime(new Date(2026, 10, 18, 0, 1)); vi.advanceTimersByTime(60_000); });
-      expect(await screen.findByRole("heading", { name: "Agenda", level: 2 })).toBeInTheDocument();
+      expect(await screen.findByRole("tab", { name: "Agenda" })).toBeInTheDocument();
       expect(screen.getByText("Wednesday, November 18, 2026")).toHaveClass("sr-only");
       expect(localStorage.getItem(TODAY_DAY_KEY)).toBeNull();
     });
@@ -1766,7 +1962,7 @@ describe("TodayWorkspace", () => {
       act(() => runWorkspaceCommand("meetings.prepare"));
       expect(onAddNote).toHaveBeenCalledTimes(2);
       expect(screen.getByRole("region", { name: "Planning Inbox" })).toBeInTheDocument();
-      expect(screen.getByRole("group", { name: "Schedule" })).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Day Planning" })).toBeInTheDocument();
       expect(screen.queryByRole("group", { name: "Preparation" })).not.toBeInTheDocument();
     });
   });

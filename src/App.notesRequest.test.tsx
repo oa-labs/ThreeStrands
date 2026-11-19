@@ -5,6 +5,8 @@ import { mailClient } from "./data/client";
 import type { MeetingContext, ScheduleEvent, WorkspaceFile } from "./domain";
 import { noteReferenceHref, type NoteReference } from "./noteEntities";
 import { clearScheduleCache } from "./calendarScheduleCache";
+import { todayTarget } from "./noteDrafts";
+import { addDays, dateInputValue } from "./calendarTime";
 import { lastEditorProps } from "./test/NoteEditorStub";
 
 vi.mock("./NoteEditor", () => import("./test/NoteEditorStub"));
@@ -31,6 +33,36 @@ it("consumes the Files note jump so the Notes sidebar restores the last note", a
   await waitFor(() => expect(screen.queryByRole("textbox", { name: "Note text" })).not.toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: "Notes (4)" }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(last.title));
+});
+
+it("edits the selected day's note in Today through keyboard commands and opens that same note in Notes", async () => {
+  localStorage.clear();
+  const tomorrow = dateInputValue(addDays(new Date(), 1));
+  await mailClient.saveDailyNote(tomorrow, "Tomorrow’s daily note", null);
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Today (0)" }));
+  await screen.findByRole("region", { name: "Today" });
+  fireEvent.keyDown(document.body, { key: "=" });
+  fireEvent.keyDown(document.body, { key: "Tab" });
+  const tab = screen.getByRole("tab", { name: "Daily Note" });
+  expect(tab).toHaveFocus();
+  const editor = await screen.findByRole("textbox", { name: "Daily Note Text" });
+  await waitFor(() => expect(editor).toHaveValue("Tomorrow’s daily note"));
+  await waitFor(() => expect(editor).not.toHaveAttribute("readonly"));
+  expect(editor).not.toHaveFocus();
+  fireEvent.keyDown(tab, { key: "Enter" });
+  expect(editor).toHaveFocus();
+  fireEvent.change(editor, { target: { value: "Tomorrow’s edited plan" } });
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(tab).toHaveFocus();
+  fireEvent.click(screen.getByRole("button", { name: "Open in Notes" }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveValue("Tomorrow’s edited plan"));
+  expect((await mailClient.getDailyNote(tomorrow))?.body).toBe("Tomorrow’s edited plan");
+  expect(tomorrow).not.toBe(todayTarget().date);
+  fireEvent.click(screen.getByRole("button", { name: "Today (0)" }));
+  await screen.findByRole("region", { name: "Today" });
+  expect(screen.getByRole("tab", { name: "Daily Note" })).toHaveAttribute("aria-selected", "true");
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Daily Note Text" })).toHaveValue("Tomorrow’s edited plan"));
 });
 
 it("opens a note found from the command palette", async () => {

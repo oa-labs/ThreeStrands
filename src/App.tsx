@@ -1904,6 +1904,7 @@ export function App() {
         onOpenEvent={(event) => openCalendarView(eventDate(event), event)}
         onAddNote={(event) => { void openPlanningMeetingNote(event); }}
         onOpenNote={(noteId) => openNote(noteId)}
+        onOpenEntity={openEntityReference}
         onNotice={setNotice}
         workingHours={availabilityPreferences}
         onCreateTask={createTaskInEditor}

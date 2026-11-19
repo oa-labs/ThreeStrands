@@ -40,7 +40,10 @@ The deliberate exceptions are:
   with `/` and exited with Escape;
 - the open note in Notes, an explicit writing mode entered with Enter from
   the note list or by clicking the note, and left with Escape, which returns
-  focus to the list. Its pane is a `compose` shortcut scope;
+  focus to the list. Today’s Daily Note tab uses the same explicit writing
+  mode: Enter from the active tab or clicking the note enters the editor,
+  and Escape returns focus to the Daily Note tab. Its editor is a `compose`
+  shortcut scope;
 - the command palette, entered explicitly with its shortcut; and
 - thread chat in the context panel, entered explicitly with `q` or `Mod+J`
   or by clicking its prompt, and exited with Escape.
@@ -274,6 +277,10 @@ Current primary commands are:
   Times, then the first control. Tab stays inside the panel, and `F6`, the
   same key again, or Escape returns to the caret in the draft (Escape in the
   panel never closes the draft);
+- `Tab` / `Shift+Tab` in Today read mode: switch between Agenda and Daily
+  Note, as with split inbox views. Focus lands on the selected tab; Enter
+  enters the daily note and Escape returns to its tab. While writing, Tab
+  belongs to the editor. Other focused controls retain native Tab movement;
 - `Cmd/Ctrl+K`: open the command palette.
 
 The focused-pane model routes `j`/`k` and Up/Down to conversations, tasks, or
