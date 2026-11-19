@@ -11,6 +11,9 @@ reviewed: 0.179.0
 - **On its own** — press <kbd>3</kbd> for Tasks and click **Add Task**.
 - **From a promise** — **Today** lists things you said you would do in your sent mail under **You said you would**; turn one into a task from there.
 - **In a note** — type `/Task` in a [note](notes.html#write) for a round task. It appears in **Tasks**, and checking it off in either place checks it off in both. **Open Note** in its details opens the note.
+- **On Today** — type into **Add a task** at the end of the [Planning Inbox](today.html#plan-your-day).
+
+Use **Description** for any detail. To write about a task at length, click **Add Note** in its details to start a note linked to it, or type `@` and the task's name in any note to link it.
 
 Each task has a **Type**:
 
@@ -34,7 +37,7 @@ Press <kbd>v</kbd> to switch between **List** and **Board**. The board has To Do
 | Complete or reopen | <kbd>e</kbd> / <kbd>Shift + e</kbd> |
 | Move between board columns | <kbd>]</kbd> / <kbd>[</kbd> |
 
-Task details save automatically as you edit them.
+Task details save automatically as you edit them. Pull down on the list to refresh it.
 
 To set aside time for a task, drag it from **Open tasks** in **Calendar** onto the week. See [Book Time for Tasks](calendar.html#book-time-for-tasks).
 

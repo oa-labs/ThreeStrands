@@ -11,7 +11,7 @@ import { shortcutGroups } from "../../src/shortcutCatalog";
 
 const RELEASES = "https://github.com/oa-labs/ThreeStrands/releases/latest";
 const LICENSE_URL = "https://github.com/oa-labs/ThreeStrands/blob/master/LICENSE";
-const TOUR_SCENES = ["inbox", "split-inbox", "newsletter", "reply", "tasks", "goals", "today", "find-times", "calendar-week", "calendar-create", "notes", "notes-meeting", "notes-linked", "contacts", "files"];
+const TOUR_SCENES = ["inbox", "split-inbox", "newsletter", "reply", "tasks", "goals", "today", "find-times", "calendar-week", "calendar-create", "notes", "notes-meeting", "meeting-prep", "notes-linked", "contacts", "files"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
 /** Walks the whole page so every lazy image and scroll-driven effect gets a chance to run. */
@@ -103,10 +103,14 @@ test.describe("feature claims", () => {
       await expect(times).toContainText(claim);
     }
     const today = page.locator('[data-step="today"]');
-    for (const claim of ["Join button", "Needs a reply", "overdue or due today", "Keep in Touch", "Inbox zero", "last checked"]) {
+    for (const claim of ["Planning Inbox", "You said you would", "Keep in Touch", "book time", "Done Today", "Inbox zero", "last checked"]) {
       await expect(today).toContainText(claim);
     }
-    await expect(today.locator("kbd")).toHaveText("0");
+    await expect(today.locator("kbd")).toHaveText(["0", "Tab"]);
+    const prep = page.locator('[data-step="meeting-prep"]');
+    for (const claim of ["only what is on your computer and changes nothing", "nothing is sent until you send it"]) {
+      await expect(prep).toContainText(claim);
+    }
     await expect(writing).toContainText("Drafts save to your Gmail or IMAP Drafts folder");
     await expect(page.locator(".privacy-shot")).toContainText("Trust checks run on your computer");
     await expect(page.locator(".privacy-shot")).toContainText("Show link takes you to the link in the email");
@@ -153,7 +157,7 @@ test.describe("feature claims", () => {
     for (const [step, claim] of [
       ["notes", "Each day has its own note"], ["notes", "export everything to a folder of Markdown files"],
       ["notes-meeting", "Create backlinked note"], ["notes-meeting", "notes from every other meeting in its series"],
-      ["notes-linked", "link a contact or an email conversation"], ["notes-linked", "appear in Tasks"],
+      ["notes-linked", "link a contact, an email conversation, or a task"], ["notes-linked", "appear in Tasks"],
     ]) await expect(tour.locator(`[data-step="${step}"]`)).toContainText(claim);
     // Notes sync but never travel in the settings export.
     await expect(page.locator("#privacy")).toContainText("Notes sync to your other devices too");

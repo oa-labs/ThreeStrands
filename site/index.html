@@ -143,7 +143,7 @@
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
               <p class="strand-label">Schedule</p>
               <h3>Your Day, Beside Your Mail</h3>
-              <p>Press <kbd>0</kbd> for Today: your agenda, unread mail, tasks due, and the things you said you would do, on one screen. See your day or week from Google Calendar, find free time against your working hours, and create or edit events, answer invitations, or put available times in a reply.</p>
+              <p>Press <kbd>0</kbd> for Today: tasks, starred mail, and the things you said you would do, beside the day's agenda, ready to drag into open time. Prepare for each meeting with its earlier notes and related mail. See your day or week from Google Calendar, find free time against your working hours, and create or edit events, answer invitations, or put available times in a reply.</p>
             </article>
             <article class="strand-card" style="--strand: var(--strand-notes-ink); --strand-ink: var(--strand-notes-ink)">
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
@@ -266,10 +266,11 @@
               </li>
               <li class="tour-step" data-step="today">
                 <p class="step-count">07</p>
-                <h3>Your Day at a Glance</h3>
-                <p>Press <kbd>0</kbd> for Today. One line sums up your day: how many meetings, when you’re free until, and when you’re double-booked. Below it: your agenda with a Join button for the next meeting and overlaps marked, unread mail sorted into Invitations, Needs a reply, From people, and Updates, and tasks that are overdue or due today. A Now line dims what’s finished, tomorrow’s first events wait below, and people due for a Keep in Touch check-in appear beside your tasks. You said you would lists promises from your own sent mail, like “I’ll send the report over,” that you haven’t followed up on yet. Start the app on Today if you like.</p>
+                <h3>Plan Your Day</h3>
+                <p>Press <kbd>0</kbd> for Today. The Planning Inbox gathers what could fill your day: open tasks, including the ones you wrote in notes, starred conversations, people due for a Keep in Touch check-in, and You said you would, which finds promises in your own sent mail, like “I’ll send the report over,” that you haven’t followed up on yet. Type a task to add it, and drag anything onto the agenda to book time for it, today or later in the week.</p>
+                <p>The agenda opens on your working hours and dims finished and declined meetings; click or drag on it to create an event. Press <kbd>Tab</kbd> to swap it for that day’s note. Done Today lists the tasks you finished, the emails you sent, and the notes you wrote. Start the app on Today if you like, under an optional sky that turns to dusk and then stars as the evening goes on.</p>
                 <p>When the inbox is clear, Inbox zero shows when the account was last checked, so you can tell a clear inbox from a connection problem, and links straight to Today.</p>
-                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="today" sizes="92vw" alt="Today with the day’s agenda and tomorrow’s first events, unread mail grouped by Needs a reply, From people, and Updates, and tasks due beside Keep in Touch reminders."></ts-shot></div></div>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="today" sizes="92vw" alt="Today with the Planning Inbox of tasks, starred emails, and Keep in Touch reminders beside the day’s agenda on working hours."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="find-times">
                 <p class="step-count">08</p>
@@ -304,22 +305,29 @@
                 <p>Open the event later and its notes are right there. A recurring meeting lists the notes from every other meeting in its series, newest first, and a contact's details list the notes that mention them.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="notes-meeting" sizes="92vw" alt="A weekly one-on-one selected in the calendar, with Add Note and the note from last week's meeting listed under Series notes."></ts-shot></div></div>
               </li>
-              <li class="tour-step" data-step="notes-linked">
+              <li class="tour-step" data-step="meeting-prep">
                 <p class="step-count">13</p>
+                <h3>From Prep to Follow-up</h3>
+                <p>Press <kbd>p</kbd>, or choose Prepare on a meeting in Calendar or Today, to see its notes, notes from earlier meetings in the series, mail likely about the meeting, and open commitments, each one click from its source. Preparation reads only what is on your computer and changes nothing. Reserve Prep Time adds a “Prepare for” task to that day’s note.</p>
+                <p>Afterwards, Review Follow-through writes the meeting’s decisions and actions into its note, as tasks, checklist items, or links to tasks you already have. Draft Follow-up then opens a message to the attendees that starts from them, and nothing is sent until you send it.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="meeting-prep" sizes="92vw" alt="Preparation for a weekly one-on-one, with notes from earlier meetings in the series, related mail, and open commitments."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="notes-linked">
+                <p class="step-count">14</p>
                 <h3>Link Anything to Anything</h3>
-                <p>Type <code>[[</code> to link another note, or <code>@</code> to link a contact or an email conversation by name, address, or subject. Every note lists the notes that link to it, showing each linking line as you would read it. Round tasks you write in a note appear in <strong>Tasks</strong> and can be checked off in either place.</p>
-                <p>Notes search leaves Trash out unless you ask, and <kbd data-mod-key>⌘K</kbd> finds notes alongside commands.</p>
+                <p>Type <code>[[</code> to link another note, or <code>@</code> to link a contact, an email conversation, or a task by name, address, or subject. Every note lists the notes that link to it, showing each linking line as you would read it. Round tasks you write in a note appear in <strong>Tasks</strong> and can be checked off in either place.</p>
+                <p>Star the notes you return to and they wait in their own tab. Notes search leaves Trash out unless you ask, and <kbd data-mod-key>⌘K</kbd> finds notes alongside commands.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="notes-linked" sizes="92vw" alt="A Q4 launch project note with a checklist and a linked conversation, beside Backlinks from two daily notes and a meeting note."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="contacts">
-                <p class="step-count">14</p>
+                <p class="step-count">15</p>
                 <h3>People, in Context</h3>
                 <p>Browse, add, and edit contacts with multiple addresses, notes, correspondence history, and shared files. Organize people into groups and start a message to everyone with Email Group. Remember birthdays and recurring Keep in Touch reminders, and bring your address book with CSV or vCard import and export. On macOS, connect selected address books already configured in Apple Contacts, including iCloud. Access stays read-only, and you choose which books contribute contacts and recipient suggestions.</p>
                 <p>Groups show recent conversations with their current members, including sent mail, so you can find other people to add. Add Members prioritizes people you often email together using local history. Merge selected profiles to bring someone's addresses and history together, and control which addresses appear in recipient suggestions. The conversation context panel names the person whose history you are viewing and follows the message you are reading. Switch to another participant to see their files and recent emails alongside related tasks and meetings. Optional AI enrichment suggests profile details for you to apply.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="contacts" sizes="92vw" alt="An editable contact profile with role, company, multiple addresses, notes, and recent emails."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="files">
-                <p class="step-count">15</p>
+                <p class="step-count">16</p>
                 <h3>Find the File Without Hunting Down the Email</h3>
                 <p>Bring attachments from your synced mail together in one Files view, including archived conversations, alongside the pictures and files in your notes. Search by filename or sender, or filter by sender, file type, direction, account, and date. Star the files you return to, and jump straight to the source conversation when you need the context.</p>
                 <p>On macOS and Windows, preview a selected document or picture before opening it. Risky attachments show a warning and are never previewed. Mark Spam removes a message’s files from Files, with Undo if needed. Press <kbd>6</kbd> to open Files. Stars stay on this computer and do not keep an offline copy.</p>
@@ -342,6 +350,7 @@
                   <ts-shot scene="calendar-create" data-scene="calendar-create" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="notes" data-scene="notes" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="notes-meeting" data-scene="notes-meeting" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="meeting-prep" data-scene="meeting-prep" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="notes-linked" data-scene="notes-linked" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="contacts" data-scene="contacts" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="files" data-scene="files" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>

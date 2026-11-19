@@ -190,11 +190,20 @@ const scenes: Scene[] = [
       await page.keyboard.press("0");
       const today = page.getByRole("region", { name: "Today", exact: true });
       await expect(today.getByRole("group", { name: "Day view", exact: true }).getByText("Team standup").first()).toBeVisible();
-      await expect(today.getByRole("group", { name: "Mail", exact: true }).getByRole("button", { name: "Open Inbox" })).toBeVisible();
-      await today.getByRole("tab", { name: "You Said You Would" }).click();
-      await expect(today.getByRole("region", { name: "You said you would", exact: true }).getByText(/interview notes/).first()).toBeVisible();
-      await today.getByRole("tab", { name: "Tasks", exact: true }).click();
-      await expect(today.getByRole("region", { name: "Open tasks", exact: true }).getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
+      await expect(today.getByRole("region", { name: "Planning Inbox", exact: true }).getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
+    },
+  },
+  {
+    name: "meeting-prep",
+    capture: async (page) => {
+      await page.keyboard.press("2");
+      const week = page.getByRole("region", { name: "Calendar week", exact: true });
+      await week.getByRole("button", { name: /^1:1 Daniel \/ Maya/ }).click();
+      const context = page.getByRole("complementary", { name: "Meeting context", exact: true });
+      await context.getByRole("button", { name: "Prepare", exact: true }).click();
+      const preparation = page.getByRole("region", { name: "Preparation for 1:1 Daniel / Maya", exact: true });
+      await expect(preparation).toContainText("met with Daniel Kim");
+      await expect(preparation).toHaveAttribute("aria-busy", "false");
     },
   },
   {

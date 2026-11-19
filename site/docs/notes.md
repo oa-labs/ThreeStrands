@@ -7,7 +7,9 @@ reviewed: 0.210.0
 
 ## Open Notes {#open-notes}
 
-Click **Notes** in the sidebar or press <kbd>4</kbd>. The list on the left starts with **Today**, then the notes you opened or changed most recently on this device. Notes reopens the note you had open last.
+Click **Notes** in the sidebar or press <kbd>4</kbd>. The list on the left starts with **Today**, then the notes you opened or changed most recently on this device. Notes reopens the note you had open last. Pull down on the list to refresh it.
+
+Star a note from the list or from the open note to keep it in the **Starred** tab above the list. Press <kbd>Tab</kbd> and <kbd>Shift + Tab</kbd> to switch between **All Notes** and **Starred**.
 
 Press <kbd>j</kbd> and <kbd>k</kbd>, or <kbd>↓</kbd> and <kbd>↑</kbd>, to switch notes, even when the list doesn't have focus. While you're writing, the arrow keys move the cursor instead. Drag the right edge of the list to make it wider or narrower. The side panel on the right resizes from its left edge; drag it past that edge or press <kbd>\\</kbd> to hide it, and press <kbd>\\</kbd> again to bring it back.
 
@@ -37,8 +39,12 @@ The Markdown formats use the same keyboard shortcuts as email:
 | Quote | <kbd>⌘/Ctrl + Shift + 9</kbd> |
 | Code block | <kbd>⌘/Ctrl + Shift + 0</kbd> |
 | Indent or outdent a list item | <kbd>Tab</kbd>, <kbd>Shift + Tab</kbd>, or <kbd>⌘/Ctrl + ]</kbd>, <kbd>⌘/Ctrl + [</kbd> |
+| Clear formatting | <kbd>⌘/Ctrl + \\</kbd> |
+| Normal text | <kbd>⌘/Ctrl + 0</kbd> |
 
-Select text to format it. Press the same formatting shortcut again to remove the format. Notes stores plain Markdown, so email's underline and text color formats are unavailable.
+Select text to format it; the shortcuts for the selection appear at the bottom of the note, as in the email composer. Press the same formatting shortcut again to remove the format. Notes stores plain Markdown, so email's underline and text color formats are unavailable.
+
+Pasting formatted text, such as from Google Docs, an email, or a web page, keeps its headings, paragraphs, lists, bold, and italics. Press <kbd>⌘/Ctrl + Shift + v</kbd> to paste as plain text instead.
 
 Use `/Checklist` for a square checklist or `/Task` for a round task. Round tasks also appear in **Tasks**, and checking one off in either place checks it off in both. Square checklists stay in their note.
 
@@ -56,9 +62,9 @@ When you rename a note, ThreeStrands changes the links to it in your other notes
 
 ## Link Mail, Contacts, Tasks, and Events {#link-mail-contacts-tasks-and-events}
 
-Type `@` at the start of a word to find a contact or an email conversation by name, address, subject, or participant, and link it. A contact link opens the contact's record, and a conversation link opens the email. An email address you type stays plain text.
+Type `@` at the start of a word to find a contact, an email conversation, or a task by name, address, subject, or participant, and link it. A contact link opens the contact's record, a conversation link opens the email, and a task link opens the task. An email address you type stays plain text. After opening a contact from a note, press <kbd>Escape</kbd> to return to the note with your search kept.
 
-To link a task or a calendar event too, click the **+** beside **Links** in the side panel, or **Link contact or conversation** when the note has no links yet. **Link to…** lets you choose a contact, conversation, task, or event and search for it.
+To start a note about a task, click **Add Note** in the task's details. To link a calendar event too, click the **+** beside **Links** in the side panel, or **Link contact or conversation** when the note has no links yet. **Link to…** lets you choose a contact, conversation, task, or event and search for it.
 
 While reading a conversation in **Mail**, choose **Add to Today's Note** from the conversation's **⋯** menu to add it to today's note. A conversation, task, event, or contact that a note links to lists that note under **Notes** in its side panel, and a contact's details list the notes that mention them.
 
@@ -67,6 +73,8 @@ While reading a conversation in **Mail**, choose **Add to Today's Note** from th
 Click **Add Note** on a calendar event in **Calendar**, or on the day's events beside a daily note, to write a line about the meeting under **Meetings** in that day's note, such as "3:00 pm met with Dana for Monthly Review". The line links the event and each attendee's contact. Before adding it, you can change the **Meeting name** and the **Attendees**; your own addresses are left out.
 
 On **Today**, each meeting’s note icon opens its existing note directly. If it has none, it adds the entry to the meeting’s daily note and opens that note at the meeting’s link. In **Links**, use **Prepare Meeting** to show previous notes, related conversations, and commitments beside the editor. **Close Preparation** or <kbd>Escape</kbd> returns to note details.
+
+Lines are kept in time order, with any notes nested under a meeting staying with it.
 
 Check **Create backlinked note** to also link a note named after the meeting. Every later meeting with the same name links the same note, so the note collects that meeting's history. ThreeStrands says whether it will link an existing note or create a new one. Click **Add to Daily Note** to add the line; the message that follows offers **Open Note** and **Undo**.
 

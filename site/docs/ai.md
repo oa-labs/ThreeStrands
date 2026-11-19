@@ -2,7 +2,7 @@
 title: AI Assistance
 nav: AI Assistance
 summary: Optional summaries, suggestions, thread chat, reply drafts, and draft review, using your own provider and API key. Requests need your action unless you opt into Automatic Briefs.
-reviewed: 0.179.0
+reviewed: 0.210.0
 ---
 
 ## How It Works {#how-it-works}
@@ -12,14 +12,15 @@ AI is off until you choose a provider. After that, ThreeStrands sends a conversa
 ## Set Up a Provider {#set-up-a-provider}
 
 1. Open **Settings → AI Provider**.
-2. Choose a **Provider**: OpenAI, Anthropic, OpenRouter, Fireworks, or **Custom Endpoint** for any compatible service.
+2. Choose a **Provider**: OpenAI, Anthropic, OpenRouter, Fireworks, Straitly, or **Custom Endpoint** for any compatible service.
 3. Paste your **API Key** and click **Save Key**. It's stored in your operating system's credential store.
-4. Click **Test Connection**.
-5. Optionally open **Models and Usage** to choose a **Reasoning Model** and a cheaper **Fast Model**. A **Custom Endpoint** needs a model name.
+4. Optionally choose a **Reasoning Model** under **Connection**. A **Custom Endpoint** needs a model name.
+5. Click **Test Connection**.
+6. Optionally open **Fast Model and Usage** to choose a cheaper **Fast Model** for quick tasks.
 
 Once a provider is chosen, AI shows up in reading, writing, and contacts. Under **Show AI In**, switch off any area you don't want it in. Under **Automatic Briefs**, choose whether to prepare briefs as you read: **Never** (the default), only for **People I've Emailed**, or for **All Conversations**.
 
-ThreeStrands keeps one API key at a time, so enter a new key when you switch providers.
+ThreeStrands keeps one API key at a time, so enter a new key when you switch providers. Switching providers also clears the old provider's model names, so the new provider's default model is used until you choose another.
 
 ## Features {#features}
 
@@ -48,9 +49,9 @@ Areas you switch off disappear from the app, along with their commands. Until yo
 
 ## Usage and Cost {#usage-and-cost}
 
-The usage panel under **Settings → AI Provider → Models and Usage** shows requests, tokens, and estimated cost for today and the last seven days. Add your model's prices to get accurate estimates; OpenRouter reports exact costs itself.
+The usage panel under **Settings → AI Provider → Fast Model and Usage** shows requests, tokens, and estimated cost for today and the last seven days. With OpenRouter or Straitly, model prices are filled in from the provider's model list; for other providers, add your model's prices to get accurate estimates. You can change a filled-in price.
 
-**Activity**, below it, lists recent requests: which feature sent them, the conversation's subject, how many messages, and the model and tokens used. It's kept on this device and never includes email text.
+**Activity**, below it, lists recent requests in columns: the conversation, the date, the provider and model, how many messages, and the tokens used. It's kept on this device and never includes email text.
 
 You can cancel running AI work from its feature panel or **Request Controls**. Cancellation stops queued work or the app’s in-flight request; material already sent cannot be recalled and may still be billed. Up to two requests execute at once, with a bounded queue. Short rate-limit and temporary server failures retry at most twice; authentication failures and ambiguous network timeouts do not retry automatically.
 

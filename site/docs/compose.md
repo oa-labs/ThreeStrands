@@ -42,6 +42,10 @@ Formatting uses keyboard shortcuts:
 | Numbered or bulleted list | <kbd>⌘/Ctrl + Shift + 7</kbd>, <kbd>⌘/Ctrl + Shift + 8</kbd> |
 | Quote | <kbd>⌘/Ctrl + Shift + 9</kbd> |
 | Code Block | <kbd>⌘/Ctrl + Shift + 0</kbd> |
+| Clear formatting | <kbd>⌘/Ctrl + \\</kbd> |
+| Normal text | <kbd>⌘/Ctrl + 0</kbd> |
+
+Press <kbd>⌘/Ctrl + Shift + v</kbd> to paste without formatting, in messages and signatures alike. Ordinary paste keeps the formatting.
 
 Typing `* ` starts a bulleted list and `1. ` starts a numbered one. Typing ```` ``` ```` on its own line and pressing <kbd>Enter</kbd> starts a code block, which keeps its spacing and line breaks and arrives in a fixed-width font. Press <kbd>Enter</kbd> on an empty last line to continue writing normally. Paste an image to place it inline.
 

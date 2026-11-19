@@ -80,6 +80,7 @@ Press <kbd>/</kbd> in Mail to search local messages and, when online, older mail
 
 ## Moving Around {#moving-around}
 
+- Pull down at the top of the mail list to check the server for new mail in the selected account, or every account in **All accounts**.
 - <kbd>0</kbd> opens Today, and <kbd>1</kbd>–<kbd>7</kbd> switch between Mail, Calendar, Tasks, Notes, Contacts, Files, and Agents.
 - <kbd>\\</kbd> hides the side panel beside the conversation, and brings it back. You can also drag its left edge to resize it, or past that edge to hide it.
 - <kbd>g</kbd> then <kbd>i</kbd>, <kbd>a</kbd>, <kbd>t</kbd>, <kbd>d</kbd>, <kbd>o</kbd>, or <kbd>s</kbd> goes to Inbox, All Mail, Trash, Drafts, Outbox, or Sent.
@@ -87,7 +88,7 @@ Press <kbd>/</kbd> in Mail to search local messages and, when online, older mail
 
 ## Today {#today}
 
-[Plan your day with Today](today.html): agenda, unread mail groups, open tasks, and **You said you would** reminders. Press <kbd>0</kbd> to open it.
+[Plan your day with Today](today.html): a Planning Inbox of tasks, starred emails, promises, and contacts beside the day's agenda or daily note. Press <kbd>0</kbd> to open it.
 
 ## Inbox Zero {#inbox-zero}
 
