@@ -278,23 +278,30 @@ of it (see [macOS VM](#macos-vm-tart)).
 The `MACOS_RELEASE_RUNNER` repository variable picks where the macOS jobs run.
 Unset, they run on GitHub's Macs; Linux and Windows always do.
 
-Set up once, on the host:
+Set up once, on the host. Sign `gh` in with admin access to the repository
+(`gh auth login`, or a fine-grained token with **Administration: write**),
+then run:
 
-1. Create the base VM from a Cirrus Labs macOS image with Xcode 26, which
-   the Icon Composer asset needs, for example
-   `tart clone ghcr.io/cirruslabs/macos-tahoe-xcode:latest threestrands-release-base`.
-   Its user is `admin`.
-2. Start it with `tart run threestrands-release-base`. Add your host's SSH
-   public key to `~/.ssh/authorized_keys`, then download the macOS ARM64
-   [Actions runner](https://github.com/actions/runner/releases) and extract it
-   into `~/actions-runner`. Don't run its `config.sh`; each job registers its
-   own runner. Shut the VM down. It holds no secrets, and jobs never change
-   it. The workflow installs Node, pnpm, and Rust itself.
-3. Sign `gh` in with access to administer the repository's runners
-   (`gh auth login`, or a fine-grained token with **Administration: write**).
-4. If the repository is public, set **Settings → Actions → General → Approval
-   for running fork pull request workflows** to require approval for all
-   external contributors, so nobody else's workflow can run on your Mac.
+```sh
+scripts/release-runner.sh setup      # --image IMAGE picks the image, --replace rebuilds
+```
+
+`setup` first sets **Settings → Actions → General → Approval for running fork
+pull request workflows** to require approval for all outside contributors.
+The repository is public, so otherwise a fork's pull request could run its own
+workflow on your Mac; `serve` refuses to start while the setting is anything
+else, and `scripts/release-runner.sh require-approval` sets it alone. Then it
+builds the base VM `threestrands-release-base` from a Cirrus Labs macOS image
+with Xcode 26 (`ghcr.io/cirruslabs/macos-tahoe-xcode:latest`), refusing an
+image with an older Xcode, which can't build the Icon Composer app icon. It
+logs in once with the image's password (`admin`) to install your SSH public
+key, installs the latest Apple Silicon
+[Actions runner](https://github.com/actions/runner/releases) in
+`~/actions-runner` after checking GitHub's published SHA-256, and turns off
+SSH password logins. The runner isn't registered; each job registers its own.
+The base holds no secrets, jobs never change it, and the workflow installs
+Node, pnpm, and Rust itself. If a step fails, `setup` deletes the half-built
+VM and leaves any existing base alone.
 
 Then start serving and point the macOS jobs at it:
 
@@ -306,8 +313,8 @@ gh variable set MACOS_RELEASE_RUNNER --body '["self-hosted", "threestrands-relea
 Keep `scripts/release-runner.sh` running, and the Mac awake, while a
 release builds; queued jobs wait for it. A release uses one clone per macOS
 build, one after another, because macOS runs at most two VMs at a time and the
-development VM may be one. `RUNNER_BASE_VM`, `RUNNER_REPO`, `RUNNER_LABEL`,
-`RUNNER_SSH_USER`, and `RUNNER_DIR` change its defaults. To go back to GitHub's
+development VM may be one. The `RUNNER_*` settings listed at the top of the script
+change its defaults. To go back to GitHub's
 Macs, run `gh variable delete MACOS_RELEASE_RUNNER`.
 
 ### Release notes and the changelog

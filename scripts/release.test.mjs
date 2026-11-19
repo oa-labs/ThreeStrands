@@ -507,102 +507,246 @@ describe("Intel Mac builds", () => {
 });
 
 describe("release builds on the developer's Mac", () => {
-  async function runner(t, { base = true, failAt = "" } = {}) {
+  const SHA = "a".repeat(64);
+  const RUNNER_URL = "https://github.com/actions/runner/releases/download/v2.330.0/actions-runner-osx-arm64-2.330.0.tar.gz";
+
+  // Stand-ins for tart, gh, and ssh log each call and keep just enough state:
+  // which VMs exist, and whether the VM still takes SSH passwords.
+  async function runner(t, { vms = ["threestrands-release-base"], policy = "all_external_contributors", xcode = "Xcode 26.1", sudo = "passwordless", failAt = "", key = true } = {}) {
     const directory = await mkdtemp(join(tmpdir(), "threestrands-runner-"));
     t.after(() => rm(directory, { recursive: true, force: true }));
-    const log = join(directory, "commands.jsonl");
+    const state = join(directory, "state");
+    const home = join(directory, "home");
     await mkdir(join(directory, "bin"));
-    // Each fake logs its name, arguments, and stdin, then acts like the tool.
-    for (const [tool, behavior] of Object.entries({
-      tart: `if (args[0] === "get" && !process.env.RUNNER_TEST_BASE) process.exit(1);
-if (args[0] === "ip") console.log("192.168.64.5");`,
-      gh: `if (args.includes("POST")) console.log("4242 ENCODED-JIT-CONFIG");`,
-      ssh: `if (input.includes("ENCODED") && process.env.RUNNER_TEST_FAIL_AT === "job") process.exit(3);`,
-    })) {
-      await writeFile(join(directory, "bin", tool), `#!/usr/bin/env node
-import { appendFileSync, readFileSync } from "node:fs";
+    await mkdir(state);
+    await mkdir(join(home, ".ssh"), { recursive: true });
+    if (key) await writeFile(join(home, ".ssh", "id_ed25519.pub"), "ssh-ed25519 AAAAhost host\n");
+    for (const name of vms) await writeFile(join(state, `vm-${name}`), "");
+    const common = `import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
-const input = ${tool === "ssh" ? 'args.at(-1) === "true" ? "" : readFileSync(0, "utf8")' : '""'};
-appendFileSync(process.env.RUNNER_TEST_LOG, JSON.stringify({ tool: "${tool}", args, input }) + "\\n");
-${behavior}
-`);
+const state = (name) => process.env.RUNNER_TEST_STATE + "/" + name;
+const fail = (step, code = 1) => { if (process.env.RUNNER_TEST_FAIL_AT === step) process.exit(code); };
+`;
+    for (const [tool, behavior] of Object.entries({
+      tart: `appendFileSync(process.env.RUNNER_TEST_LOG, JSON.stringify({ tool: "tart", args, input: "" }) + "\\n");
+const [verb, name, other] = args;
+if (verb === "get" && !existsSync(state("vm-" + name))) process.exit(1);
+if (verb === "clone") { fail("clone"); writeFileSync(state("vm-" + other), ""); }
+if (verb === "delete") rmSync(state("vm-" + name));
+if (verb === "rename") renameSync(state("vm-" + name), state("vm-" + other));
+if (verb === "ip") console.log("192.168.64.5");`,
+      gh: `appendFileSync(process.env.RUNNER_TEST_LOG, JSON.stringify({ tool: "gh", args, input: "" }) + "\\n");
+const path = args.find((arg) => arg.startsWith("repos/"));
+if (path.endsWith("fork-pr-contributor-approval")) {
+  if (args.includes("PUT")) { fail("approval"); writeFileSync(state("policy"), "all_external_contributors"); }
+  else console.log(existsSync(state("policy")) ? readFileSync(state("policy"), "utf8") : process.env.RUNNER_TEST_POLICY);
+}
+if (path === "repos/actions/runner/releases/latest") console.log("2.330.0 ${SHA} ${RUNNER_URL}");
+if (args.includes("POST")) console.log("4242 ENCODED-JIT-CONFIG");`,
+      ssh: `const command = args.at(-1);
+const password = args.includes("PubkeyAuthentication=no");
+const input = command === "true" || command.startsWith("xcodebuild") || command === "sudo -n true" ? "" : readFileSync(0, "utf8");
+appendFileSync(process.env.RUNNER_TEST_LOG, JSON.stringify({ tool: "ssh", args, input, password, askpass: process.env.SSH_ASKPASS ? readFileSync(process.env.SSH_ASKPASS, "utf8") : null, askpassPassword: process.env.RUNNER_ASKPASS_PASSWORD ?? null }) + "\\n");
+if (password && existsSync(state("keys-only"))) process.exit(255);
+if (command.startsWith("xcodebuild")) console.log(process.env.RUNNER_TEST_XCODE + "\\nBuild version 17A1");
+if (command === "sudo -n true" && process.env.RUNNER_TEST_SUDO !== "passwordless") process.exit(1);
+if (command.includes("tee /etc/ssh/sshd_config.d/")) writeFileSync(state("keys-only"), "");
+if (command.includes("curl")) fail("download");
+if (input.includes("ENCODED")) fail("job", 3);`,
+    })) {
+      await writeFile(join(directory, "bin", tool), `#!/usr/bin/env node\n${common}${behavior}\n`);
       await chmod(join(directory, "bin", tool), 0o755);
     }
+    const log = join(directory, "commands.jsonl");
     return {
+      exists: (name) => stat(join(state, `vm-${name}`)).then(() => true, () => false),
       run: (args = ["--jobs", "1"]) => spawnSync("bash", [new URL("./release-runner.sh", import.meta.url).pathname, ...args], {
         encoding: "utf8",
         env: {
-          ...process.env, PATH: `${join(directory, "bin")}${delimiter}${process.env.PATH}`,
-          RUNNER_TEST_LOG: log, RUNNER_TEST_BASE: base ? "1" : "", RUNNER_TEST_FAIL_AT: failAt,
+          ...process.env, HOME: home, PATH: `${join(directory, "bin")}${delimiter}${process.env.PATH}`, RUNNER_SSH_KEY: "",
+          RUNNER_TEST_LOG: log, RUNNER_TEST_STATE: state, RUNNER_TEST_POLICY: policy, RUNNER_TEST_XCODE: xcode,
+          RUNNER_TEST_SUDO: sudo, RUNNER_TEST_FAIL_AT: failAt,
         },
       }),
       commands: async () => (await readFile(log, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)),
     };
   }
   const summary = (commands) => commands.map(({ tool, args }) => [tool, tool === "ssh" ? args.at(-1).split(" ")[0] : args.slice(0, 2).join(" ")]);
+  const approvalCheck = ["gh", "api repos/oa-labs/ThreeStrands/actions/permissions/fork-pr-contributor-approval"];
 
-  it("runs each job in a fresh clone of the base VM, then deletes the clone", async (t) => {
-    const fixture = await runner(t);
-    const result = fixture.run();
-    assert.equal(result.status, 0, result.stderr);
-    const commands = await fixture.commands();
-    const vm = commands.find((command) => command.tool === "tart" && command.args[0] === "clone").args[2];
-    assert.match(vm, /^threestrands-release-\d{8}-\d{6}-\d+-1$/);
-    assert.deepEqual(commands.find((command) => command.args[0] === "clone").args, ["clone", "threestrands-release-base", vm]);
-    // `tart run` starts in the background, so it may log before or after `tart ip`.
-    const start = commands.find((command) => command.args[0] === "run");
-    assert.deepEqual(start.args, ["run", "--no-graphics", vm]);
-    assert.deepEqual(summary(commands.filter((command) => command !== start)), [
-      ["tart", "get threestrands-release-base"], ["tart", `clone threestrands-release-base`],
-      ["tart", "ip --wait"], ["ssh", "true"], ["gh", "api -X"], ["ssh", "read"],
-      ["gh", "api -X"], ["tart", `stop ${vm}`], ["tart", `delete ${vm}`],
-    ]);
+  describe("serving jobs", () => {
+    it("runs each job in a fresh clone of the base VM, then deletes the clone", async (t) => {
+      const fixture = await runner(t);
+      const result = fixture.run();
+      assert.equal(result.status, 0, result.stderr);
+      const commands = await fixture.commands();
+      const vm = commands.find((command) => command.tool === "tart" && command.args[0] === "clone").args[2];
+      assert.match(vm, /^threestrands-release-\d{8}-\d{6}-\d+-1$/);
+      // `tart run` starts in the background, so it may log before or after `tart ip`.
+      const start = commands.find((command) => command.args[0] === "run");
+      assert.deepEqual(start.args, ["run", "--no-graphics", vm]);
+      assert.deepEqual(summary(commands.filter((command) => command !== start)), [
+        ["tart", "get threestrands-release-base"], approvalCheck, ["tart", "clone threestrands-release-base"],
+        ["tart", "ip --wait"], ["ssh", "true"], ["gh", "api -X"], ["ssh", "read"],
+        ["gh", "api -X"], ["tart", `stop ${vm}`], ["tart", `delete ${vm}`],
+      ]);
+      assert.equal(await fixture.exists(vm), false);
+    });
+
+    it("registers a single-use runner with the release label, passing its credential only on stdin", async (t) => {
+      const fixture = await runner(t);
+      assert.equal(fixture.run().status, 0);
+      const commands = await fixture.commands();
+      const register = commands.find((command) => command.tool === "gh" && command.args.includes("POST"));
+      assert.ok(register.args.includes("repos/oa-labs/ThreeStrands/actions/runners/generate-jitconfig"));
+      for (const label of ["self-hosted", "macOS", "ARM64", "threestrands-release"]) {
+        assert.ok(register.args.includes(`labels[]=${label}`), label);
+      }
+      const job = commands.find((command) => command.tool === "ssh" && command.input);
+      assert.equal(job.input, "ENCODED-JIT-CONFIG\n");
+      assert.match(job.args.at(-1), /cd ~\/actions-runner && \.\/run\.sh --jitconfig "\$jit"/);
+      assert.ok(job.args.includes("admin@192.168.64.5"));
+      assert.ok(job.args.includes("BatchMode=yes"), "serving never falls back to a password");
+      for (const command of commands) {
+        assert.ok(!command.args.join(" ").includes("ENCODED-JIT-CONFIG"), `${command.tool} must not see the credential in its arguments`);
+      }
+      const remove = commands.findLast((command) => command.tool === "gh");
+      assert.deepEqual(remove.args, ["api", "-X", "DELETE", "repos/oa-labs/ThreeStrands/actions/runners/4242"]);
+    });
+
+    it("removes the clone and its runner even when the job fails", async (t) => {
+      const fixture = await runner(t, { failAt: "job" });
+      assert.notEqual(fixture.run().status, 0);
+      const commands = await fixture.commands();
+      assert.deepEqual(summary(commands).slice(-3).map(([tool, what]) => [tool, what.split(" ")[0]]), [["gh", "api"], ["tart", "stop"], ["tart", "delete"]]);
+    });
+
+    it("serves the number of jobs asked for, each in its own clone", async (t) => {
+      const fixture = await runner(t);
+      assert.equal(fixture.run(["serve", "--jobs", "2"]).status, 0);
+      const clones = (await fixture.commands()).filter((command) => command.args[0] === "clone").map((command) => command.args[2]);
+      assert.equal(clones.length, 2);
+      assert.notEqual(clones[0], clones[1]);
+    });
+
+    it("refuses while outside contributors' workflows can run without approval", async (t) => {
+      const fixture = await runner(t, { policy: "first_time_contributors" });
+      const result = fixture.run();
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /without approval \(first_time_contributors\); run: .* require-approval/);
+      assert.deepEqual(summary(await fixture.commands()), [["tart", "get threestrands-release-base"], approvalCheck]);
+    });
+
+    it("refuses a missing base VM or a bad job count before cloning anything", async (t) => {
+      const missing = await runner(t, { vms: [] });
+      const result = missing.run();
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /no base VM named threestrands-release-base; create it with: .* setup/);
+      assert.deepEqual(summary(await missing.commands()), [["tart", "get threestrands-release-base"]]);
+      const bad = await runner(t);
+      assert.match(bad.run(["--jobs", "0"]).stderr, /--jobs needs a positive number/);
+      assert.deepEqual(await bad.commands(), []);
+    });
   });
 
-  it("registers a single-use runner with the release label, passing its credential only on stdin", async (t) => {
-    const fixture = await runner(t);
-    assert.equal(fixture.run().status, 0);
-    const commands = await fixture.commands();
-    const register = commands.find((command) => command.tool === "gh" && command.args.includes("POST"));
-    assert.ok(register.args.includes("repos/oa-labs/ThreeStrands/actions/runners/generate-jitconfig"));
-    for (const label of ["self-hosted", "macOS", "ARM64", "threestrands-release"]) {
-      assert.ok(register.args.includes(`labels[]=${label}`), label);
-    }
-    const job = commands.find((command) => command.tool === "ssh" && command.input);
-    assert.equal(job.input, "ENCODED-JIT-CONFIG\n");
-    assert.match(job.args.at(-1), /cd ~\/actions-runner && \.\/run\.sh --jitconfig "\$jit"/);
-    assert.ok(job.args.includes("admin@192.168.64.5"));
-    for (const command of commands) {
-      assert.ok(!command.args.join(" ").includes("ENCODED-JIT-CONFIG"), `${command.tool} must not see the credential in its arguments`);
-    }
-    const remove = commands.findLast((command) => command.tool === "gh");
-    assert.deepEqual(remove.args, ["api", "-X", "DELETE", "repos/oa-labs/ThreeStrands/actions/runners/4242"]);
+  describe("requiring approval", () => {
+    it("requires approval for every outside contributor, then confirms it", async (t) => {
+      const fixture = await runner(t, { policy: "first_time_contributors" });
+      const result = fixture.run(["require-approval"]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual((await fixture.commands()).map((command) => command.args), [
+        ["api", "-X", "PUT", "repos/oa-labs/ThreeStrands/actions/permissions/fork-pr-contributor-approval", "-f", "approval_policy=all_external_contributors"],
+        ["api", "repos/oa-labs/ThreeStrands/actions/permissions/fork-pr-contributor-approval", "--jq", ".approval_policy"],
+      ]);
+    });
+
+    it("explains when gh may not change the setting", async (t) => {
+      const fixture = await runner(t, { failAt: "approval" });
+      const result = fixture.run(["require-approval"]);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /gh needs admin access to the repository/);
+    });
   });
 
-  it("removes the clone and its runner even when the job fails", async (t) => {
-    const fixture = await runner(t, { failAt: "job" });
-    assert.notEqual(fixture.run().status, 0);
-    const commands = await fixture.commands();
-    assert.deepEqual(summary(commands).slice(-3).map(([tool, what]) => [tool, what.split(" ")[0]]), [["gh", "api"], ["tart", "stop"], ["tart", "delete"]]);
-  });
+  describe("creating the base VM", () => {
+    it("requires approval first, then builds the base from the image with the key, runner, and keys-only SSH", async (t) => {
+      const fixture = await runner(t, { vms: [], policy: "first_time_contributors" });
+      const result = fixture.run(["setup"]);
+      assert.equal(result.status, 0, result.stderr);
+      const commands = await fixture.commands();
+      const vm = commands.find((command) => command.args[0] === "clone").args[2];
+      assert.match(vm, /^threestrands-release-base-setup-\d+$/);
+      assert.deepEqual(commands.find((command) => command.args[0] === "clone").args, ["clone", "ghcr.io/cirruslabs/macos-tahoe-xcode:latest", vm]);
+      const start = commands.find((command) => command.args[0] === "run");
+      assert.deepEqual(summary(commands.filter((command) => command !== start)).map(([tool, what]) => [tool, what.split(" ")[0] === "api" ? what : what.split(" ")[0]]), [
+        ["tart", "get"], ["gh", "api -X"], approvalCheck, ["gh", "api repos/actions/runner/releases/latest"],
+        ["tart", "clone"], ["tart", "ip"], ["ssh", "true"], ["ssh", "umask"], ["ssh", "true"], ["ssh", "xcodebuild"],
+        ["ssh", "set"], ["ssh", "sudo"], ["ssh", "sudo"], ["ssh", "true"], ["tart", "stop"], ["tart", "get"], ["tart", "rename"],
+      ]);
+      assert.equal(await fixture.exists("threestrands-release-base"), true);
+      assert.equal(await fixture.exists(vm), false);
 
-  it("serves the number of jobs asked for, each in its own clone", async (t) => {
-    const fixture = await runner(t);
-    assert.equal(fixture.run(["--jobs", "2"]).status, 0);
-    const clones = (await fixture.commands()).filter((command) => command.args[0] === "clone").map((command) => command.args[2]);
-    assert.equal(clones.length, 2);
-    assert.notEqual(clones[0], clones[1]);
-  });
+      const ssh = commands.filter((command) => command.tool === "ssh");
+      // The image's password is used only to install the key, through askpass.
+      const install = ssh.find((command) => command.args.at(-1).startsWith("umask"));
+      assert.equal(install.password, true);
+      assert.equal(install.input, "ssh-ed25519 AAAAhost host\n");
+      assert.equal(install.askpassPassword, "admin");
+      assert.ok(!install.args.join(" ").includes("admin "), "the password never appears in arguments");
+      assert.ok(ssh.filter((command) => !command.password).every((command) => command.args.includes("BatchMode=yes")));
 
-  it("refuses a missing base VM or a bad job count before cloning anything", async (t) => {
-    const missing = await runner(t, { base: false });
-    const result = missing.run();
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /no base VM named threestrands-release-base/);
-    assert.deepEqual(summary(await missing.commands()), [["tart", "get threestrands-release-base"]]);
-    const bad = await runner(t);
-    assert.match(bad.run(["--jobs", "0"]).stderr, /--jobs needs a positive number/);
-    assert.deepEqual(await bad.commands(), []);
+      const download = ssh.find((command) => command.args.at(-1).startsWith("set -e"));
+      assert.ok(download.args.at(-1).includes(`curl -fsSL -o runner.tar.gz '${RUNNER_URL}'`));
+      assert.ok(download.args.at(-1).includes(`echo '${SHA}  runner.tar.gz' | shasum -a 256 -c -`));
+      const harden = ssh.find((command) => command.args.at(-1).includes("tee /etc/ssh/sshd_config.d/100-threestrands-release.conf"));
+      assert.equal(harden.input, "PasswordAuthentication no\nKbdInteractiveAuthentication no\n");
+      assert.equal(ssh.at(-1).password, true, "it checks that the password no longer works");
+      assert.doesNotMatch(result.stderr, /still accepts the password/);
+    });
+
+    it("sends the image's password to sudo ahead of the settings when sudo asks for one", async (t) => {
+      const fixture = await runner(t, { vms: [], sudo: "password" });
+      assert.equal(fixture.run(["setup"]).status, 0);
+      const harden = (await fixture.commands()).find((command) => command.tool === "ssh" && command.args.at(-1).includes("tee /etc/ssh"));
+      assert.match(harden.args.at(-1), /^sudo -S -p '' tee /);
+      assert.equal(harden.input, "admin\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n");
+    });
+
+    it("deletes the half-built VM and keeps an existing base when a step fails", async (t) => {
+      for (const [options, message] of [
+        [{ xcode: "Xcode 16.4" }, /has Xcode 16\.4; release builds need Xcode 26 or later/],
+        [{ failAt: "download" }, /installing the Actions runner failed/],
+      ]) {
+        const fixture = await runner(t, options);
+        const result = fixture.run(["setup", "--replace"]);
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, message);
+        const commands = await fixture.commands();
+        const vm = commands.find((command) => command.args[0] === "clone").args[2];
+        assert.equal(await fixture.exists(vm), false, "the half-built VM is deleted");
+        assert.equal(await fixture.exists("threestrands-release-base"), true, "the existing base is untouched");
+        assert.ok(!commands.some((command) => command.args[0] === "rename"));
+      }
+    });
+
+    it("replaces an existing base only with --replace, and needs an SSH key", async (t) => {
+      const existing = await runner(t);
+      const refused = existing.run(["setup"]);
+      assert.equal(refused.status, 1);
+      assert.match(refused.stderr, /already exists; pass --replace/);
+      assert.deepEqual(summary(await existing.commands()), [["tart", "get threestrands-release-base"]]);
+
+      const replaced = await runner(t);
+      assert.equal(replaced.run(["setup", "--replace", "--image", "example/xcode:26"]).status, 0);
+      const commands = await replaced.commands();
+      assert.equal(commands.find((command) => command.args[0] === "clone").args[1], "example/xcode:26");
+      assert.ok(commands.some((command) => command.tool === "tart" && command.args.join(" ") === "delete threestrands-release-base"));
+      assert.equal(await replaced.exists("threestrands-release-base"), true);
+
+      const keyless = await runner(t, { vms: [], key: false });
+      assert.match(keyless.run(["setup"]).stderr, /no SSH public key found/);
+      assert.ok(!(await keyless.commands()).some((command) => command.args[0] === "clone"));
+    });
   });
 
   it("is chosen by a repository variable, with GitHub's Macs when it is unset", async () => {
