@@ -68,7 +68,7 @@ export function InvitationDay({ invitation, day, timeZone, onShowDay, onOpenEven
     title="That day"
     label="Your calendar that day"
     count={others.length}
-    note={<>{date}{places.length > 0 ? <> · <span className="context-invitation-day-place">{places.join(", ")}</span></> : null}{summary ? <> · <span className={conflicts > 0 ? "context-invitation-day-conflict" : undefined}>{summary}</span></> : null}</>}
+    note={<span>{date}{places.length > 0 ? <> · <span className="context-invitation-day-place">{places.join(", ")}</span></> : null}{summary ? <> · <span className={conflicts > 0 ? "context-invitation-day-conflict" : undefined}>{summary}</span></> : null}</span>}
     actions={<HoverTooltip title="Show day in schedule" shortcut="t" placement="bottom">
       <button type="button" className="btn-icon btn-icon-sm" aria-label="Show Day in Schedule" onClick={() => onShowDay(day)}><CalendarSearch size={ICON_SIZE.sm} /></button>
     </HoverTooltip>}

@@ -1734,20 +1734,20 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 /* The day around an offered time, indented under its row: each meeting a card
    tinted with its calendar's color, as in the week, and the free time between
    them a connector rather than a card. */
-.slot-day-preview { display: grid; gap: var(--space-1); margin-inline-start: var(--space-3); padding-block: var(--space-1); }
-.slot-day-preview > .btn-link { justify-self: start; font-size: inherit; }
-.slot-day-rows { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.slot-day-preview { display: grid; gap: var(--space-1); margin-inline-start: var(--space-3); padding-block: var(--space-1); font-size: var(--text-secondary); }
+.slot-day-preview > .btn-link { justify-self: start; }
+.slot-day-rows { display: grid; gap: var(--space-1); margin: 0; padding: 0; font-size: var(--text-secondary); list-style: none; }
 .slot-day-row { display: grid; gap: var(--space-0-5); min-width: 0; padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); line-height: var(--leading-snug); }
 .slot-day-event { border: 1px solid color-mix(in srgb, var(--calendar-color, var(--accent)) 25%, transparent); border-inline-start: 3px solid var(--calendar-color, var(--border-strong)); color: var(--text); background: color-mix(in srgb, var(--calendar-color, var(--accent)) 18%, var(--raised)); }
 .slot-day-event-interactive { padding: 0; }
 .slot-day-event-button { display: grid; gap: var(--space-0-5); min-width: 0; width: 100%; padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-xs); color: inherit; background: transparent; font: inherit; text-align: start; cursor: pointer; }
 .slot-day-event-button:hover { background: var(--hover); }
 .slot-day-title { font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
-.slot-day-meta { overflow: hidden; color: var(--secondary); text-overflow: ellipsis; white-space: nowrap; }
+.slot-day-meta { overflow: hidden; color: var(--secondary); font-size: var(--text-meta); text-overflow: ellipsis; white-space: nowrap; }
 .slot-day-meta-with-response { display: flex; }
 .slot-day-meta-content { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .slot-day-response { flex: 0 0 auto; color: var(--accent); font-weight: var(--weight-semibold); white-space: pre; }
-.slot-day-detail { color: var(--secondary); overflow-wrap: anywhere; }
+.slot-day-detail { color: var(--secondary); font-size: var(--text-meta); overflow-wrap: anywhere; }
 .slot-day-detail-conflict { color: var(--error); }
 .slot-day-proposed { border: 1px dashed var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .slot-day-proposed .slot-day-title { color: var(--accent); }

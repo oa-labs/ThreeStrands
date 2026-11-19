@@ -120,6 +120,10 @@ describe("InvitationDay", () => {
     expect(section.querySelector(".context-invitation-day-place")).toHaveTextContent(/^Office, Home$/);
     // A working location does not take up the invitation's time; being out of office does.
     expect(within(section).getByText("Overlaps 1 event")).toBeInTheDocument();
+    // The note is a flex row that spreads its children apart, so the date line is one child that reads as one phrase.
+    const note = section.querySelector(".context-section-note");
+    expect(note?.children).toHaveLength(1);
+    expect(note).toHaveTextContent(/^\w{3}, \w{3} \d+ · Office, Home · Overlaps 1 event$/);
   });
 
   it("calls a day with only a working location free", async () => {
