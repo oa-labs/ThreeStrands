@@ -480,19 +480,8 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .account-icon:active { cursor: grabbing; }
 .account-icon.all-accounts { cursor: pointer; }
 .account-icon:hover { transform: scale(1.07); }
-/* Selected: a thick ring in the account's own colour with a gap, plus a pill on the rail's leading edge. */
+/* Selected: a thick ring in the account's own colour with a gap. */
 .account-icon.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 5px var(--account-ring, var(--accent)); }
-.account-icon.active::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: calc(-1 * var(--space-2) - 1px);
-  width: 4px;
-  height: 18px;
-  border-radius: var(--radius-pill);
-  background: var(--account-ring, var(--accent));
-  transform: translateY(-50%);
-}
 .account-icon.all-accounts { background: var(--all-accounts-mark); }
 .account-icon.dragging { opacity: var(--opacity-dragging); }
 .account-icon.drag-over { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--text); }
