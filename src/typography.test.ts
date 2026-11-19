@@ -163,6 +163,15 @@ describe("component typography", () => {
     expect(sizeOf(".proposed-times-list details")).toBe("--text-meta");
   });
 
+  it("sets a day's event cards in context-panel roles rather than the inherited shell size", () => {
+    // The preview shows in the context panel's That Day section and in meeting cards, neither of which sets a size.
+    for (const selector of [".slot-day-preview", ".slot-day-rows"]) expect(sizeOf(selector), selector).toBe("--text-secondary");
+    for (const selector of [".slot-day-meta", ".slot-day-detail", ".slot-day-break"]) expect(sizeOf(selector), selector).toBe("--text-meta");
+    // Show Full Day keeps the link's control size, like the panel's "Show more".
+    expect(sizeOf(".slot-day-preview > .btn-link")).toBeUndefined();
+    expect(sizeOf(".btn-link")).toBe("--text-control");
+  });
+
   it("uses UI text for the planning inbox and control text for its four filters", () => {
     expect(sizeOf(".planning-inbox")).toBe("--text-body");
     expect(sizeOf(".planning-inbox-tab")).toBe("--text-control");
