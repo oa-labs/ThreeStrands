@@ -101,6 +101,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   agentTasks?: AgentDetail[];
   onOpenAgent?(id: string): void;
   onDelegate?(task: ThreadTask): void;
+  /** Starts a note about the task, linked to it. Not offered for tasks that already live in a note. */
+  onAddNote?(task: ThreadTask): void;
   onOpenThread(threadId: string): void;
   onOpenNote?(id: string, markerId?: string): void;
   onTasksChanged?(): void;
@@ -114,7 +116,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   accountId,
   sessions,
   accountOptions = [],
-  agentTasks = [], onOpenAgent, onDelegate,
+  agentTasks = [], onOpenAgent, onDelegate, onAddNote,
   onOpenThread, onOpenNote,
   onTasksChanged,
   onUndoableCompletion,
@@ -677,6 +679,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               onNavigate={moveSelection} onOpenThread={onOpenThread}
               onClose={() => taskCards.current.get(detailTask.id)?.querySelector<HTMLElement>(".task-card-main")?.focus()} />}
             {onDelegate && !detailTask.noteSource ? <button className="btn-link" onClick={() => onDelegate(detailTask)}>Delegate Work for This Task…</button> : null}
+            {onAddNote && !detailTask.noteSource ? <button className="btn-link" onClick={() => onAddNote(detailTask)}>Add Note</button> : null}
             {agentTasks.filter(d => d.task.linkedTaskId === detailTask.id).map(d => <button className="btn-link" key={d.task.id} onClick={() => onOpenAgent?.(d.task.id)}>{d.task.objective} · Agent work{d.task.unread ? " · New activity" : ""}</button>)}
             <NoteBacklinks reference={{ version: 1, kind: "task", id: detailTask.noteSource?.markerId ?? detailTask.id, ...(detailTask.noteSource ? { note: detailTask.noteSource.noteId } : {}) }} onOpenNote={onOpenNote} />
             {!detailTask.noteSource ? <WorkspaceRelatedContext target={{ kind: "task", task: detailTask }} accountIds={accountId ? [accountId] : accountOptions} onOpenThread={onOpenThread} /> : null}

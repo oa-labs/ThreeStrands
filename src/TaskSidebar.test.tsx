@@ -1038,6 +1038,22 @@ describe("TaskSidebar", () => {
     expect(onOpenThread).not.toHaveBeenCalled();
   });
 
+  it("offers Add Note on a regular task's details with the task, and not on a note task", async () => {
+    vi.spyOn(mailClient, "listGoals").mockResolvedValue([]);
+    vi.spyOn(mailClient, "noteTaskWarnings").mockResolvedValue([]);
+    const task = workspaceTask("task-1", { title: "Plan launch" });
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    vi.spyOn(mailClient, "listNoteTasks").mockResolvedValue([{ id: "note:n1:m1", markerId: "m1", noteId: "n1", noteTitle: "Plans", title: "Inside a note", checked: false, updatedAt: "v1", completedAt: null, conflicted: false }]);
+    const onAddNote = vi.fn();
+    render(<TaskSidebar accountId={null} onOpenThread={vi.fn()} onAddNote={onAddNote} />);
+    fireEvent.click(await screen.findByText("Plan launch", { selector: "strong" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Note" }));
+    expect(onAddNote).toHaveBeenCalledWith(expect.objectContaining({ id: "task-1", title: "Plan launch" }));
+    fireEvent.click(screen.getByText("Inside a note", { selector: "strong" }));
+    await screen.findByRole("button", { name: "Open Note" });
+    expect(screen.queryByRole("button", { name: "Add Note" })).not.toBeInTheDocument();
+  });
+
   it("opens the selected task's details through the workspace handle", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("task-1", { title: "First" }), workspaceTask("task-2", { title: "Second" })]);
     localStorage.setItem("threestrands.tasks.layout", "list");

@@ -62,6 +62,18 @@ describe("note link autocomplete", () => {
     expect(ref.current!.getMarkdown()).not.toContain("[[");
   });
 
+  it("offers tasks, including a note task, and inserts a task link", async () => {
+    const task: NoteLinkChoice = { label: "Send proposal", detail: "me@example.com", reference: { version: 1, kind: "task", id: "task-1" } };
+    const noteTask: NoteLinkChoice = { label: "Send invoice", detail: "Note · Plans", reference: { version: 1, kind: "task", id: "marker-1", note: "note-1" } };
+    const { type, ref } = await mount({ onSearchEntities: vi.fn(async () => [task, noteTask]) });
+    await type("@Send");
+    const tasks = await screen.findByRole("group", { name: "Tasks" });
+    expect(within(tasks).getAllByRole("option")).toHaveLength(2);
+    expect(screen.getByRole("listbox", { name: "Contacts, conversations, and tasks" })).toBeInTheDocument();
+    fireEvent.click(within(tasks).getByText("Send invoice"));
+    await waitFor(() => expect(ref.current!.getMarkdown()).toContain(markdownEntityLink(noteTask.label, noteTask.reference)));
+  });
+
   it("selects a conversation with the keyboard and keeps its provider and account identity", async () => {
     const { type, ref } = await mount();
     await type("@review");

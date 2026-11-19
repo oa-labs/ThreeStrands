@@ -1,3 +1,4 @@
+import { markdownEntityLink } from "./noteEntities";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Draft, OutboxItem } from "./correspondence";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -1268,6 +1269,34 @@ describe("keyboard-first task and action workspaces", () => {
       listTasks.mockRestore();
       setStatus.mockRestore();
       updateTask.mockRestore();
+    }
+  });
+
+  it("starts a note from Add Note in a task's details, titled and linked to the task, and opens it in Notes", async () => {
+    const task = {
+      id: "task-note-me", accountId: "demo@example.com", threadId: null, sourceMessageId: null,
+      subjectSnapshot: null, title: "Draft the launch plan", notes: null,
+      kind: "action" as const, dueKind: "none" as const, dueValue: null, timeZone: null,
+      repeatIntervalDays: null, status: "open" as const, completionSource: null, evidenceText: null,
+      waitAfter: null, createdAt: "2026-09-19T10:00:00Z", updatedAt: "2026-09-19T10:00:00Z", completedAt: null,
+    };
+    const listTasks = vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    const createNote = vi.spyOn(mailClient, "createNote");
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      fireEvent.keyDown(window, { key: "3" });
+      const workspace = await screen.findByRole("region", { name: "Tasks" });
+      fireEvent.click(await within(workspace).findByText("Draft the launch plan", { selector: "strong" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Add Note" }));
+      await waitFor(() => expect(createNote).toHaveBeenCalledWith(
+        expect.stringContaining("Draft the launch plan"),
+        expect.stringContaining(markdownEntityLink("Draft the launch plan", { version: 1, kind: "task", id: "task-note-me" })),
+      ));
+      expect(await screen.findByRole("region", { name: "Notes" })).toBeInTheDocument();
+    } finally {
+      listTasks.mockRestore();
+      createNote.mockRestore();
     }
   });
 });

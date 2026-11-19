@@ -77,8 +77,8 @@ export function TodayDailyNote({ ref, date, active, refreshKey, onLeave, onOpenN
   }));
   const searchLinks = async (query: string) => (await mailClient.suggestNoteTitles(query, 8)).filter((note) => note.id !== noteId).map((note) => ({ title: note.title }));
   const searchEntities = async (query: string) => {
-    const [contacts, conversations] = await Promise.all([mailClient.noteLinkChoices("contact", query), mailClient.noteLinkChoices("conversation", query)]);
-    return [...contacts.slice(0, 8), ...conversations.slice(0, 8)];
+    const [contacts, conversations, tasks] = await Promise.all([mailClient.noteLinkChoices("contact", query), mailClient.noteLinkChoices("conversation", query), mailClient.noteLinkChoices("task", query)]);
+    return [...contacts.slice(0, 8), ...conversations.slice(0, 8), ...tasks.slice(0, 8)];
   };
   const status = editor.loading ? "Loading note…" : editor.saveState.kind === "saving" ? "Saving…" : editor.dirty ? "Not saved yet" : saved ? "Saved" : "";
   return <div className="today-daily-note" data-shortcut-scope="compose" onBlur={(event) => {

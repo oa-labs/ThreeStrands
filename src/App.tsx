@@ -8,8 +8,8 @@ import { MeetingPrepActions, reservePrepTime } from "./meetingPrepActions";
 import type { MeetingCommitment } from "./domain";
 import type { MeetingEntry } from "./noteMeetings";
 import { dailyNoteName } from "./noteDates";
-import type { ScheduleEvent } from "./domain";
-import { parseNoteReference, noteReferenceHref } from "./noteEntities";
+import type { ScheduleEvent, ThreadTask } from "./domain";
+import { markdownEntityLink, parseNoteReference, noteReferenceHref } from "./noteEntities";
 import { NoteBacklinks } from "./NoteEntityContext";
 import { MoreActionsMenu } from "./MoreActionsMenu";
 import { useAgentTasks, type AgentStart } from "./useAgentTasks";
@@ -702,6 +702,18 @@ export function App() {
       const existing = primaryMeetingNote(await mailClient.noteBacklinks(reference));
       if (existing) openNote(existing.noteId, undefined, noteReferenceHref(reference));
       else setMeetingNoteEvent(event);
+    } catch (reason) {
+      setNotice({ message: errorMessage(reason) });
+    }
+  };
+  // Add Note for a task: a new note titled for the task that begins with a link to it.
+  const addTaskNote = async (task: ThreadTask) => {
+    try {
+      let title = task.title, copy = 1;
+      while (await mailClient.findNoteByTitle(title)) title = `${task.title} (${++copy})`;
+      const link = markdownEntityLink(task.title, { version: 1, kind: "task", id: task.id });
+      const note = await mailClient.createNote(title, `${link}\n\n`);
+      openNote(note.id);
     } catch (reason) {
       setNotice({ message: errorMessage(reason) });
     }
@@ -1935,6 +1947,7 @@ export function App() {
           sessions={taskSessions}
           agentTasks={agents.items}
           onOpenAgent={openAgent}
+          onAddNote={(task) => { void addTaskNote(task); }}
           onDelegate={(task) => beginAgent({ accountId: task.accountId, sourceThreadId: task.threadId, linkedTaskId: task.id, objective: task.title })}
           ref={taskWorkspaceRef}
           onOpenNote={openNote}
@@ -2013,6 +2026,7 @@ export function App() {
           submitLabel={taskEditor.kind === "proposal" && taskEditor.intent === "edit" ? "Save Proposal" : taskEditor.kind === "edit" ? "Save Task" : "Add Task"}
           onClose={closeTaskEditor}
           onSubmit={submitTaskEditor}
+          onAddNote={taskEditor.kind === "edit" && !taskEditor.task.noteSource ? (title) => { const task = taskEditor.task; closeTaskEditor(); void addTaskNote({ ...task, title }); } : undefined}
         />
       ) : null}
       {meetingEditor ? (

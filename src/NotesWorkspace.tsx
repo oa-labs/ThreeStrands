@@ -436,8 +436,8 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     return found.filter((note) => note.id !== openNoteId.current).map((note) => ({ title: note.title }));
   }, []);
   const searchEntities = useCallback(async (query: string) => {
-    const [contacts, conversations] = await Promise.all([mailClient.noteLinkChoices("contact", query), mailClient.noteLinkChoices("conversation", query)]);
-    return [...contacts.slice(0, LINK_SUGGESTIONS), ...conversations.slice(0, LINK_SUGGESTIONS)];
+    const [contacts, conversations, tasks] = await Promise.all([mailClient.noteLinkChoices("contact", query), mailClient.noteLinkChoices("conversation", query), mailClient.noteLinkChoices("task", query)]);
+    return [...contacts.slice(0, LINK_SUGGESTIONS), ...conversations.slice(0, LINK_SUGGESTIONS), ...tasks.slice(0, LINK_SUGGESTIONS)];
   }, []);
   const moveToTrash = () => act(async () => {
     const note = editor.note;

@@ -1093,7 +1093,7 @@ describe("Notes workspace", () => {
       });
     });
 
-    it("searches only contacts and conversations for @, with a bounded preview for each", async () => {
+    it("searches contacts, conversations, and tasks for @, with a bounded preview for each", async () => {
       const note = await mailClient.createNote(uniqueTitle("Mention search"), "");
       const choices = vi.spyOn(mailClient, "noteLinkChoices").mockImplementation(async (kind) => Array.from({ length: 12 }, (_, index) => ({
         label: `${kind} ${index}`, detail: "me@example.com", reference: kind === "contact"
@@ -1102,9 +1102,10 @@ describe("Notes workspace", () => {
       })));
       await openNote(note.id);
       const found = await lastEditorProps.current!.onSearchEntities!("Ada");
-      expect(choices.mock.calls).toEqual([["contact", "Ada"], ["conversation", "Ada"]]);
+      expect(choices.mock.calls).toEqual([["contact", "Ada"], ["conversation", "Ada"], ["task", "Ada"]]);
       expect(found.filter((item) => item.reference.kind === "contact")).toHaveLength(8);
       expect(found.filter((item) => item.reference.kind === "conversation")).toHaveLength(8);
+      expect(found.filter((item) => item.reference.kind === "task")).toHaveLength(8);
     });
 
     it("inserts a contact from Link to… as a Markdown reference and lists it under People", async () => {

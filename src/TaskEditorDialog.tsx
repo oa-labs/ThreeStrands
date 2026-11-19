@@ -46,6 +46,7 @@ export function TaskEditorDialog({
   goalSuggested = false,
   onClose,
   onSubmit,
+  onAddNote,
 }: {
   initial: TaskEditorInitial;
   /** The task account's goals; the Goal field shows once they are loaded. */
@@ -59,6 +60,8 @@ export function TaskEditorDialog({
   submitLabel?: string;
   onClose(): void;
   onSubmit(values: TaskEditorValues, selectedAccount?: string): Promise<void> | void;
+  /** Offered when editing an existing task. Unsaved edits are saved first; the dialog closes before the note opens. */
+  onAddNote?(title: string): void;
 }) {
   const [selectedAccount, setSelectedAccount] = useState("");
   const [title, setTitle] = useState(initial.title);
@@ -90,8 +93,10 @@ export function TaskEditorDialog({
     return false;
   };
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const formKey = JSON.stringify([title, notes, kind, dueKind, dueValue, timeZone, repeatIntervalDays, goalId]);
+  const [initialKey] = useState(formKey);
+  const submit = async (event: React.FormEvent | null, addNote = false) => {
+    event?.preventDefault();
     if (!title.trim() || busy || (accountOptions && !selectedAccount)) return;
     if (dueKind !== "none" && !validateTimeZone(timeZone)) return;
     setBusy(true);
@@ -107,8 +112,10 @@ export function TaskEditorDialog({
         repeatIntervalDays: repeatIntervalDays ? Number(repeatIntervalDays) : null,
         ...(goals ? { goalId: offeredGoalId || null } : {}),
       };
-      if (accountOptions) await onSubmit(values, selectedAccount);
+      if (addNote && formKey === initialKey) onClose();
+      else if (accountOptions) await onSubmit(values, selectedAccount);
       else await onSubmit(values);
+      if (addNote) onAddNote?.(values.title);
     } catch (reason) {
       setError(errorMessage(reason));
       setBusy(false);
@@ -165,10 +172,10 @@ export function TaskEditorDialog({
             })}
           </select>
         </label> : null}
-        <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={5} placeholder="Optional details" /></label>
+        <label><span>Description</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={5} placeholder="Optional details" /></label>
         {evidence ? <div className="modal-form-evidence"><span>Evidence</span><blockquote>{evidence}</blockquote></div> : null}
         {error ? <p className="form-error" role="alert">{error}</p> : null}
-        <div className="modal-form-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || !title.trim() || Boolean(accountOptions && !selectedAccount)}>{busy ? "Saving…" : submitLabel}</button></div>
+        <div className="modal-form-actions">{onAddNote ? <button type="button" className="btn" disabled={busy || !title.trim()} onClick={() => void submit(null, true)}>Add Note</button> : null}<button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || !title.trim() || Boolean(accountOptions && !selectedAccount)}>{busy ? "Saving…" : submitLabel}</button></div>
       </form>
     </Modal>
   );

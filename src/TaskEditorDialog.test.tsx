@@ -14,6 +14,33 @@ describe("TaskEditorDialog", () => {
     expect(row).toContainElement(screen.getByRole("combobox", { name: "Due" }));
   });
 
+  it("labels the free-text field Description", () => {
+    render(<TaskEditorDialog initial={{ title: "A", kind: "action", dueKind: "none", notes: "Detail" }} onClose={vi.fn()} onSubmit={vi.fn()} />);
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue("Detail");
+    expect(screen.queryByRole("textbox", { name: "Notes" })).not.toBeInTheDocument();
+  });
+
+  it("offers Add Note only when asked, closing without saving when nothing changed", async () => {
+    const { unmount } = render(<TaskEditorDialog initial={{ title: "A", kind: "action", dueKind: "none" }} onClose={vi.fn()} onSubmit={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Add Note" })).not.toBeInTheDocument();
+    unmount();
+    const onClose = vi.fn(), onSubmit = vi.fn().mockResolvedValue(undefined), onAddNote = vi.fn();
+    render(<TaskEditorDialog initial={{ title: "Plan launch", kind: "action", dueKind: "none" }} submitLabel="Save Task" onClose={onClose} onSubmit={onSubmit} onAddNote={onAddNote} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add Note" }));
+    await waitFor(() => expect(onAddNote).toHaveBeenCalledWith("Plan launch"));
+    expect(onClose).toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("saves unsaved edits before Add Note so none are discarded", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined), onAddNote = vi.fn();
+    render(<TaskEditorDialog initial={{ title: "Plan launch", kind: "action", dueKind: "none" }} submitLabel="Save Task" onClose={vi.fn()} onSubmit={onSubmit} onAddNote={onAddNote} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Task" }), { target: { value: "Plan the launch" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Note" }));
+    await waitFor(() => expect(onAddNote).toHaveBeenCalledWith("Plan the launch"));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ title: "Plan the launch" }));
+  });
+
   it("owns text entry and submits reviewed task values", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
