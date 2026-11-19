@@ -215,13 +215,80 @@ pub enum InsertError {
     UnclosedFence,
 }
 
-/// `body` with `line` added at the end of its `## Meetings` section (the
+/// Only top-level meeting entries participate, so insertion never separates
+/// a meeting from its nested notes. Unknown time labels retain append behavior.
+fn meeting_time_order(line: &str) -> Option<i32> {
+    let text = line.strip_prefix("- ")?;
+    let label = if let Some(linked) = text.strip_prefix('[') {
+        let (label, rest) = linked.split_once("](")?;
+        let (href, rest) = rest.split_once(')')?;
+        if !(rest.is_empty() || rest.starts_with(' '))
+            || NoteReference::parse(href)?.kind != "event"
+        {
+            return None;
+        }
+        label
+    } else {
+        text.split(" met with ").next()?.split(" for ").next()?
+    };
+    let label = label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    if label == "all day" {
+        return Some(-1);
+    }
+    let period = if label.ends_with("am") {
+        Some(0)
+    } else if label.ends_with("pm") {
+        Some(12)
+    } else {
+        None
+    };
+    let clock = if period.is_some() {
+        label[..label.len() - 2].trim_end()
+    } else {
+        &label
+    };
+    let (hour, minute) = match clock.split_once(':') {
+        Some((hour, minute)) => (hour, minute),
+        None if period.is_some() => (clock, "00"),
+        None => return None,
+    };
+    if !(1..=2).contains(&hour.len())
+        || minute.len() != 2
+        || !hour.bytes().all(|ch| ch.is_ascii_digit())
+        || !minute.bytes().all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+    let hour: i32 = hour.parse().ok()?;
+    let minute: i32 = minute.parse().ok()?;
+    if minute > 59
+        || if period.is_some() {
+            !(1..=12).contains(&hour)
+        } else {
+            hour > 23
+        }
+    {
+        return None;
+    }
+    Some((period.map_or(hour, |period| hour % 12 + period)) * 60 + minute)
+}
+
+/// `body` with `line` added in time order to its `## Meetings` section (the
 /// first level-2 heading with that text outside code, up to the next heading
-/// of level 1 or 2), after the section's last non-blank line. Without such a
+/// of level 1 or 2), before the first later top-level meeting. Equal times
+/// stay stable and all-day entries come first. If no later meeting is found,
+/// append after the section's last non-blank line. Without such a
 /// heading, the heading and line are appended at the end of the note,
 /// separated from earlier text by a blank line.
 pub fn insert_meeting_line(body: &str, line: &str) -> Result<String, InsertError> {
     let key = MEETINGS_HEADING.to_lowercase();
+    let time = meeting_time_order(line);
+    let mut ordered_at = None;
+    let mut comment = false;
     let mut fence: Option<(char, usize)> = None;
     let mut offset = 0;
     // (end of the last non-blank line in the section, whether it was the
@@ -231,7 +298,7 @@ pub fn insert_meeting_line(body: &str, line: &str) -> Result<String, InsertError
         let text = piece.trim_end_matches(['\n', '\r']);
         let end = offset + piece.len();
         offset = end;
-        if let Some((ch, size, rest)) = fence_run(text) {
+        if let Some((ch, size, rest)) = (!comment).then(|| fence_run(text)).flatten() {
             match fence {
                 None => fence = Some((ch, size)),
                 Some((open, open_size))
@@ -246,7 +313,7 @@ pub fn insert_meeting_line(body: &str, line: &str) -> Result<String, InsertError
             }
             continue;
         }
-        if fence.is_none() {
+        if fence.is_none() && !comment {
             if let Some((level, content)) = heading(text) {
                 if section.is_some() && level <= 2 {
                     break;
@@ -254,6 +321,38 @@ pub fn insert_meeting_line(body: &str, line: &str) -> Result<String, InsertError
                 if section.is_none() && level == 2 && content == key {
                     section = Some((end, true, false));
                     continue;
+                }
+            }
+            if section.is_some() && ordered_at.is_none() {
+                if let (Some(time), Some(existing_time)) = (time, meeting_time_order(text)) {
+                    if existing_time > time {
+                        ordered_at = Some(end - piece.len());
+                    }
+                }
+            }
+        }
+        if fence.is_none() {
+            let mut rest = text;
+            while !rest.is_empty() {
+                if comment {
+                    let Some(at) = rest.find("-->") else { break };
+                    rest = &rest[at + 3..];
+                    comment = false;
+                } else if let Some(after) = rest.strip_prefix("<!--") {
+                    rest = after;
+                    comment = true;
+                } else if let Some(after) = rest.strip_prefix('\\') {
+                    rest = after
+                        .chars()
+                        .next()
+                        .map_or("", |ch| &after[ch.len_utf8()..]);
+                } else if rest.starts_with('`') {
+                    let size = rest.bytes().take_while(|ch| *ch == b'`').count();
+                    let mark = &rest[..size];
+                    let after = &rest[size..];
+                    rest = after.find(mark).map_or("", |at| &after[at + size..]);
+                } else {
+                    rest = &rest[rest.chars().next().unwrap().len_utf8()..];
                 }
             }
         }
@@ -266,9 +365,13 @@ pub fn insert_meeting_line(body: &str, line: &str) -> Result<String, InsertError
     match section {
         Some((_, _, true)) => Err(InsertError::UnclosedFence),
         Some((at, after_heading, false)) => {
-            let (before, after) = body.split_at(at);
+            let (before, after) = body.split_at(ordered_at.unwrap_or(at));
             let newline = if before.ends_with('\n') { "" } else { "\n" };
-            let gap = if after_heading { "\n" } else { "" };
+            let gap = if ordered_at.is_none() && after_heading {
+                "\n"
+            } else {
+                ""
+            };
             Ok(format!("{before}{newline}{gap}{line}\n{after}"))
         }
         None if fence.is_some() => Err(InsertError::UnclosedFence),
@@ -303,6 +406,7 @@ mod tests {
     struct InsertFixture {
         name: String,
         body: String,
+        line: Option<String>,
         expected: Option<String>,
     }
     #[derive(Deserialize)]
@@ -320,7 +424,8 @@ mod tests {
     #[test]
     fn shared_insert_fixtures() {
         for fixture in fixtures().insert {
-            let result = insert_meeting_line(&fixture.body, "- NEW").ok();
+            let result =
+                insert_meeting_line(&fixture.body, fixture.line.as_deref().unwrap_or("- NEW")).ok();
             assert_eq!(result, fixture.expected, "{}", fixture.name);
         }
     }

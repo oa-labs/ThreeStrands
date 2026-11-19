@@ -1,5 +1,5 @@
 import type { Note } from "./domain";
-import { escapeMarkdownText, markdownEntityLink, type NoteReference } from "./noteEntities";
+import { escapeMarkdownText, markdownEntityLink, parseNoteReference, type NoteReference } from "./noteEntities";
 
 /** Mirrors `src-tauri/src/note_meetings.rs` for the demo client; both are held
  * to `fixtures/note-meetings.json`. */
@@ -62,33 +62,72 @@ function heading(line: string) {
   return { level: match[1]!.length, key: collapse(content).toLowerCase() };
 }
 
-/** `body` with `line` at the end of its `## Meetings` section, or with the
- * heading and line appended; null when that point is inside unclosed code. */
+/** Only top-level meeting entries participate, so insertion never separates
+ * a meeting from its nested notes. Unknown time labels retain append behavior. */
+function meetingTimeOrder(line: string): number | null {
+  if (!line.startsWith("- ")) return null;
+  let label: string;
+  const linked = /^- \[([^\]]+)\]\(([^)]+)\)(?: |$)/.exec(line);
+  if (linked) {
+    if (parseNoteReference(linked[2])?.kind !== "event") return null;
+    label = linked[1];
+  } else {
+    label = line.slice(2).split(/ met with | for /, 1)[0];
+  }
+  label = collapse(label).toLowerCase();
+  if (label === "all day") return -1;
+  const clock = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/.exec(label);
+  if (!clock || (!clock[2] && !clock[3])) return null;
+  const hour = Number(clock[1]), minute = Number(clock[2] ?? 0), period = clock[3];
+  if (minute > 59 || (period ? hour < 1 || hour > 12 : hour > 23)) return null;
+  return (period ? hour % 12 + (period === "pm" ? 12 : 0) : hour) * 60 + minute;
+}
+
+/** Insert before the first later top-level meeting in `## Meetings`, keeping
+ * equal times stable and all-day entries first. Otherwise append to the section
+ * (or add it); null when the section ends inside unclosed code. */
 export function insertMeetingLine(body: string, line: string): string | null {
   const key = MEETINGS_HEADING.toLowerCase();
+  const time = meetingTimeOrder(line);
+  let orderedAt: number | null = null;
+  let comment = false;
   let fence: { ch: string; size: number } | null = null, offset = 0;
   let section: { at: number; afterHeading: boolean; inFence: boolean } | null = null;
   for (const piece of body.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
     const text = piece.replace(/[\r\n]+$/, ""), end = offset + piece.length;
     offset = end;
-    const run = fenceRun(text);
+    const run = comment ? null : fenceRun(text);
     if (run) {
       if (!fence) fence = { ch: run.ch, size: run.size };
       else if (fence.ch === run.ch && run.size >= fence.size && !run.rest.trim()) fence = null;
       if (section) section = { at: end, afterHeading: false, inFence: fence !== null };
       continue;
     }
-    if (!fence) {
+    if (!fence && !comment) {
       const found = heading(text);
       if (found && section && found.level <= 2) break;
       if (found && !section && found.level === 2 && found.key === key) { section = { at: end, afterHeading: true, inFence: false }; continue; }
+      if (section && time !== null && orderedAt === null) {
+        const existingTime = meetingTimeOrder(text);
+        if (existingTime !== null && existingTime > time) orderedAt = end - piece.length;
+      }
+    }
+    if (!fence) {
+      for (let i = 0; i < text.length;) {
+        if (comment) { const end = text.indexOf("-->", i); if (end < 0) break; i = end + 3; comment = false; }
+        else if (text.startsWith("<!--", i)) { comment = true; i += 4; }
+        else if (text[i] === "\\") i += 2;
+        else if (text[i] === "`") { const size = /^`+/.exec(text.slice(i))![0].length; const close = text.indexOf("`".repeat(size), i + size); i = close < 0 ? text.length : close + size; }
+        else i++;
+      }
     }
     if (section && text.trim()) section = { at: end, afterHeading: false, inFence: fence !== null };
   }
   if (section) {
     if (section.inFence) return null;
-    const before = body.slice(0, section.at), after = body.slice(section.at);
-    return `${before}${before.endsWith("\n") ? "" : "\n"}${section.afterHeading ? "\n" : ""}${line}\n${after}`;
+    const at = orderedAt ?? section.at;
+    const before = body.slice(0, at), after = body.slice(at);
+    return `${before}${before.endsWith("\n") ? "" : "\n"}${orderedAt === null && section.afterHeading ? "\n" : ""}${line}\n${after}`;
   }
   if (fence) return null;
   const separator = !body || body.endsWith("\n\n") ? "" : body.endsWith("\n") ? "\n" : "\n\n";

@@ -1194,12 +1194,17 @@ writes to its own day's note.
 - Link labels and the plain meeting name escape Markdown punctuation, and
   line breaks become spaces, as **Add to Today's Note** does.
 
-**Placement.** The line is appended to the note's `## Meetings` section: the
-first `## Meetings` heading (matched by normalized text) outside code, up to
-the next heading of the same or a higher level. It goes after the section's
-last non-blank line. Without such a heading, `## Meetings`, a blank line,
-and the line are appended at the end of the note, separated from existing
-text by a blank line. Lines are not reordered by time in this release.
+**Placement.** The line is inserted into the note's `## Meetings` section:
+the first `## Meetings` heading (matched by normalized text) outside code
+and comments, up to the next heading of the same or a higher level. It goes
+before the first later top-level meeting, keeping nested notes with their
+meeting. All-day entries precede timed entries, and equal times keep their
+insertion order. Both linked and plain time labels support 12-hour and
+24-hour clocks. Unknown labels, nested entries, code, and comments do not
+determine the insertion point. If no later meeting is found, the line goes
+after the section's last non-blank line. Existing entries are not moved.
+Without such a heading, `## Meetings`, a blank line, and the line are appended
+at the end of the note, separated from existing text by a blank line.
 
 **Repeats.** If the note already links this occurrence anywhere (the same
 canonical event reference, not the same text), nothing is added, and the
@@ -1475,7 +1480,6 @@ also opens the dedicated note when **Create backlinked note** was selected.
 - Should the agenda's button read **Open Note** when that day's note already
   links the occurrence? That needs a per-row lookup against the entity-link
   index; this proposal checks on click instead.
-- Should lines in `## Meetings` be kept in time order?
 - Should **Link to…** offer contacts once contact references exist?
 
 ## Later

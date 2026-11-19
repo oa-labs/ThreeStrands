@@ -99,6 +99,234 @@
       "name": "a shorter run doesn't close code",
       "body": "## Meetings\n````\n```\n",
       "expected": null
+    },
+    {
+      "name": "earlier linked meeting precedes a later meeting with nested notes",
+      "body": "## Meetings\n\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n  - Grok bot demo/setup\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n  - Grok bot demo/setup\n"
+    },
+    {
+      "name": "inserts between meeting blocks without splitting nested content",
+      "body": "# Day\n\n## Meetings\n\n- [8:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22early%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Earlier\n  - Earlier details\n    - Nested details\n\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n  - Later details\n\n## Tasks\n- ( ) Work\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "# Day\n\n## Meetings\n\n- [8:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22early%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Earlier\n  - Earlier details\n    - Nested details\n\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n  - Later details\n\n## Tasks\n- ( ) Work\n"
+    },
+    {
+      "name": "later meeting follows the last meeting and all its nested notes",
+      "body": "## Meetings\n\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n  - Notes\n\n",
+      "line": "- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1",
+      "expected": "## Meetings\n\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n  - Notes\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n\n"
+    },
+    {
+      "name": "equal times retain insertion order with their nested notes",
+      "body": "## Meetings\n\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n  - First details\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n",
+      "line": "- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22equal%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Same time",
+      "expected": "## Meetings\n\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n  - First details\n- [9:30am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22equal%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Same time\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n"
+    },
+    {
+      "name": "plain meeting entries use the same chronological order",
+      "body": "## Meetings\n\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n  - Grok bot demo/setup\n",
+      "line": "- 9:30 am met with Frank Jackson for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- 9:30 am met with Frank Jackson for Joel / Frank 1:1\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n  - Grok bot demo/setup\n"
+    },
+    {
+      "name": "compares 11:59 am with 12:00 pm",
+      "body": "## Meetings\n\n- [12:00 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n",
+      "line": "- [11:59 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New",
+      "expected": "## Meetings\n\n- [11:59 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New\n- [12:00 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n"
+    },
+    {
+      "name": "compares 1:00 am with 12:00 am",
+      "body": "## Meetings\n\n- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n",
+      "line": "- [1:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New",
+      "expected": "## Meetings\n\n- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n- [1:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New\n"
+    },
+    {
+      "name": "compares 12:30 pm with 1:00 pm",
+      "body": "## Meetings\n\n- [1:00 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n",
+      "line": "- [12:30 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New",
+      "expected": "## Meetings\n\n- [12:30 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New\n- [1:00 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n"
+    },
+    {
+      "name": "compares 12:00 am with 11:59 pm",
+      "body": "## Meetings\n\n- [11:59 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n",
+      "line": "- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New",
+      "expected": "## Meetings\n\n- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New\n- [11:59 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n"
+    },
+    {
+      "name": "compares 09:30 with 13:00",
+      "body": "## Meetings\n\n- [13:00](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n",
+      "line": "- [09:30](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New",
+      "expected": "## Meetings\n\n- [09:30](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New\n- [13:00](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n"
+    },
+    {
+      "name": "compares 23:59 with 00:00",
+      "body": "## Meetings\n\n- [00:00](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n",
+      "line": "- [23:59](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New",
+      "expected": "## Meetings\n\n- [00:00](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n- [23:59](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New\n"
+    },
+    {
+      "name": "compares 8:59 am with 9am",
+      "body": "## Meetings\n\n- [9am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n",
+      "line": "- [8:59 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New",
+      "expected": "## Meetings\n\n- [8:59 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New\n- [9am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n"
+    },
+    {
+      "name": "compares 9:30 am with 11:00 AM",
+      "body": "## Meetings\n\n- [11:00 AM](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New",
+      "expected": "## Meetings\n\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for New\n- [11:00 AM](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Existing\n"
+    },
+    {
+      "name": "all-day entries precede even midnight",
+      "body": "## Meetings\n\n- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Midnight\n",
+      "line": "- [All day](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for All-day",
+      "expected": "## Meetings\n\n- [All day](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for All-day\n- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Midnight\n"
+    },
+    {
+      "name": "timed entries follow all-day entries",
+      "body": "## Meetings\n\n- [All day](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for All-day\n",
+      "line": "- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Midnight",
+      "expected": "## Meetings\n\n- [All day](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for All-day\n- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Midnight\n"
+    },
+    {
+      "name": "all-day entries retain insertion order",
+      "body": "## Meetings\n\n- [All day](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for All-day\n- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Midnight\n",
+      "line": "- [All day](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22c%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Another all-day",
+      "expected": "## Meetings\n\n- [All day](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for All-day\n- [All day](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22c%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Another all-day\n- [12:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22b%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Midnight\n"
+    },
+    {
+      "name": "nested time labels do not determine insertion",
+      "body": "## Meetings\n\n- [8:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22early%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Earlier\n  - [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n    - Nested meeting details\n- [2:00 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22afternoon%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Afternoon\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [8:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22early%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Earlier\n  - [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n    - Nested meeting details\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n- [2:00 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22afternoon%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Afternoon\n"
+    },
+    {
+      "name": "fenced meeting lines do not determine insertion",
+      "body": "## Meetings\n\n```markdown\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n```\n- [8:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22early%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Earlier\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n```markdown\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n```\n- [8:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22early%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Earlier\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "only the first Meetings section determines insertion",
+      "body": "## Meetings\n\n- [8:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22early%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Earlier\n\n## Tasks\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n\n## Meetings\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [8:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22early%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Earlier\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n\n## Tasks\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n\n## Meetings\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n"
+    },
+    {
+      "name": "inserting earlier still refuses unclosed code in the section",
+      "body": "## Meetings\n\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n```\nunfinished\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": null
+    },
+    {
+      "name": "inserts before a later final line without a newline",
+      "body": "## Meetings\n\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1"
+    },
+    {
+      "name": "preserves existing CRLF text when inserting earlier",
+      "body": "## Meetings\r\n\r\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\r\n  - Details\r\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\r\n\r\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\r\n  - Details\r\n"
+    },
+    {
+      "name": "unknown or invalid existing time Time not set does not determine insertion",
+      "body": "## Meetings\n\n- [Time not set](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [Time not set](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "unknown or invalid existing time 25:00 does not determine insertion",
+      "body": "## Meetings\n\n- [25:00](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [25:00](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "unknown or invalid existing time 9:60 am does not determine insertion",
+      "body": "## Meetings\n\n- [9:60 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [9:60 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "unknown or invalid existing time 0:30 am does not determine insertion",
+      "body": "## Meetings\n\n- [0:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [0:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "unknown or invalid existing time 13:30 pm does not determine insertion",
+      "body": "## Meetings\n\n- [13:30 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [13:30 pm](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "unknown or invalid existing time 9 does not determine insertion",
+      "body": "## Meetings\n\n- [9](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [9](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "unknown or invalid existing time 9:3 am does not determine insertion",
+      "body": "## Meetings\n\n- [9:3 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [9:3 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unknown\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "new entry with an unknown time keeps append behavior",
+      "body": "## Meetings\n\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n",
+      "line": "- [Time not set](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unscheduled",
+      "expected": "## Meetings\n\n- [11:00 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22mark%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for ☀️ Joel / Mark 1:1\n- [Time not set](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22a%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Unscheduled\n"
+    },
+    {
+      "name": "a non-event link is not a timed meeting",
+      "body": "## Meetings\n\n- [11:00 am](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22person%40example.com%22%7D) for Contact\n",
+      "line": "- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- [11:00 am](threestrands:contact/%7B%22version%22%3A1%2C%22kind%22%3A%22contact%22%2C%22id%22%3A%22person%40example.com%22%7D) for Contact\n- [9:30 am](threestrands:event/%7B%22version%22%3A1%2C%22kind%22%3A%22event%22%2C%22id%22%3A%22frank%22%2C%22account%22%3A%22you%40example.com%22%2C%22calendar%22%3A%22work%22%7D) for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "commented meeting lines do not determine insertion",
+      "body": "## Meetings\n\n<!--\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n-->\n- 8:00 am for Earlier\n",
+      "line": "- 9:30 am met with Frank Jackson for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n<!--\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n-->\n- 8:00 am for Earlier\n- 9:30 am met with Frank Jackson for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "headings and fences in a comment cannot capture the insertion point",
+      "body": "## Meetings\n\n<!--\n## Tasks\n```\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n-->\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n",
+      "line": "- 9:30 am met with Frank Jackson for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n<!--\n## Tasks\n```\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n-->\n- 9:30 am met with Frank Jackson for Joel / Frank 1:1\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n"
+    },
+    {
+      "name": "inline task markers do not prevent time ordering",
+      "body": "## Meetings\n\n- 8:00 am for Earlier\n  - ( ) Prep <!-- threestrands-task:existing -->\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n",
+      "line": "- 9:30 am met with Frank Jackson for Joel / Frank 1:1",
+      "expected": "## Meetings\n\n- 8:00 am for Earlier\n  - ( ) Prep <!-- threestrands-task:existing -->\n- 9:30 am met with Frank Jackson for Joel / Frank 1:1\n- 11:00 am met with Mark Williams for ☀️ Joel / Mark 1:1\n"
+    },
+    {
+      "name": "a commented section is not a meeting section",
+      "body": "<!--\n## Meetings\n-->\n",
+      "line": "- 9:30 am met with Frank Jackson for Joel / Frank 1:1",
+      "expected": "<!--\n## Meetings\n-->\n\n## Meetings\n\n- 9:30 am met with Frank Jackson for Joel / Frank 1:1\n"
+    },
+    {
+      "name": "escaped comment delimiters do not prevent ordering",
+      "body": "## Meetings\n\n- 8:00 am for \\<!--\n- 11:00 am for Later\n",
+      "line": "- 9:30 am for New",
+      "expected": "## Meetings\n\n- 8:00 am for \\<!--\n- 9:30 am for New\n- 11:00 am for Later\n"
+    },
+    {
+      "name": "comment delimiters in inline code do not prevent ordering",
+      "body": "## Meetings\n\n- 8:00 am for `<!--`\n- 11:00 am for Later\n",
+      "line": "- 9:30 am for New",
+      "expected": "## Meetings\n\n- 8:00 am for `<!--`\n- 9:30 am for New\n- 11:00 am for Later\n"
+    },
+    {
+      "name": "comment delimiters in longer inline code spans do not prevent ordering",
+      "body": "## Meetings\n\n- 8:00 am for ``a ` <!--``\n- 11:00 am for Later\n",
+      "line": "- 9:30 am for New",
+      "expected": "## Meetings\n\n- 8:00 am for ``a ` <!--``\n- 9:30 am for New\n- 11:00 am for Later\n"
     }
   ],
   "titles": [

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createDemoNotes } from "./demoNotes";
 import { noteReferenceHref } from "../noteEntities";
 import { primaryMeetingNote } from "../meetingNoteEntry";
+import { meetingLine } from "../noteMeetings";
 import type { ContactProfile, Thread } from "../domain";
 
 describe("demo notes", () => {
@@ -155,6 +156,21 @@ describe("demo notes", () => {
     expect(next.createdMeetingNote).toBe(false);
     expect(next.meetingNote?.id).toBe(first.meetingNote?.id);
     await expect(notes.addMeetingToDailyNote("2026-11-12", null, entry("c"))).rejects.toThrow("changed");
+  });
+  it("saves meetings in time order while preserving nested notes and occurrence backlinks", async () => {
+    const notes = createDemoNotes();
+    const entry = (id: string, time: string) => ({ event: { version: 1 as const, kind: "event" as const, id, account: "you@example.com", calendar: "work" }, time, attendees: [], name: id, linkNote: false });
+    const late = entry("Mark", "11:00 am"), early = entry("Frank", "9:30 am");
+    const first = await notes.addMeetingToDailyNote("2026-11-19", null, late);
+    const body = `${first.note.body}  - Grok bot demo/setup\n\n## Tasks\n- ( ) Follow up\n`;
+    const edited = (await notes.saveDailyNote("2026-11-19", body, first.note.updatedAt)).note!;
+    const second = await notes.addMeetingToDailyNote("2026-11-19", edited.updatedAt, early);
+    expect(second.previousBody).toBe(edited.body);
+    expect((await notes.getDailyNote("2026-11-19"))?.body).toBe(edited.body.replace("## Meetings\n\n", `## Meetings\n\n${meetingLine(early, null)}\n`));
+    for (const meeting of [early, late]) expect(await notes.noteBacklinks(meeting.event)).toEqual([expect.objectContaining({ noteId: second.note.id })]);
+    const duplicate = await notes.addMeetingToDailyNote("2026-11-19", second.note.updatedAt, late);
+    expect(duplicate.added).toBe(false);
+    expect(duplicate.note.body).toBe(second.note.body);
   });
   it("resolves existing daily meeting links without changing either note, across rename and Trash", async () => {
     const reference = { version: 1 as const, kind: "event" as const, id: "occurrence", account: "you@example.com", calendar: "work", series: "series" };

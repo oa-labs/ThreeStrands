@@ -1952,6 +1952,48 @@ fn a_meeting_line_goes_into_its_days_meetings_section_once_per_occurrence() {
 }
 
 #[test]
+fn meetings_are_saved_in_time_order_with_nested_notes_and_backlinks_intact() {
+    let db = database();
+    let mut late = meeting("mark", false);
+    late.time = "11:00 am".into();
+    let mut early = meeting("frank", false);
+    early.time = "9:30 am".into();
+    let first = db.add_meeting_to_daily_note(DAY, None, &late).unwrap();
+    let body = format!(
+        "{}  - Grok bot demo/setup\n\n## Tasks\n- ( ) Follow up\n",
+        first.note.body
+    );
+    let edited = db
+        .save_daily_note_edit(DAY, &body, Some(&first.note.updated_at))
+        .unwrap()
+        .note
+        .unwrap();
+    let second = db
+        .add_meeting_to_daily_note(DAY, Some(&edited.updated_at), &early)
+        .unwrap();
+    assert_eq!(second.previous_body, edited.body);
+    let expected = edited.body.replacen(
+        "## Meetings\n\n",
+        &format!(
+            "## Meetings\n\n{}\n",
+            crate::note_meetings::meeting_line(&early, None).unwrap()
+        ),
+        1,
+    );
+    assert_eq!(db.get_daily_note(DAY).unwrap().unwrap().body, expected);
+    for entry in [&early, &late] {
+        let backlinks = db.note_backlinks(&entry.event).unwrap();
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].note_id, second.note.id);
+    }
+    let duplicate = db
+        .add_meeting_to_daily_note(DAY, Some(&second.note.updated_at), &late)
+        .unwrap();
+    assert!(!duplicate.added);
+    assert_eq!(duplicate.note.body, second.note.body);
+}
+
+#[test]
 fn a_linked_meeting_note_is_created_once_and_shared_by_later_occurrences() {
     let db = database();
     let first = db
