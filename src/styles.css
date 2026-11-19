@@ -176,13 +176,15 @@
   --backdrop-dusk-moon: #efe6c8;
   --backdrop-dusk-moon-shade: #44294f;
   --backdrop-dusk-star: #d8d4f0;
-  --backdrop-night-top: #05070f;
-  --backdrop-night-bottom: #101c36;
+  --backdrop-night-top: #111e34;
+  --backdrop-night-bottom: #243657;
+  --backdrop-night-surround: #1b2c48;
   --backdrop-night-moon: #f3efd2;
-  --backdrop-night-moon-shade: #090e1c;
+  --backdrop-night-moon-shade: #1b2944;
   --backdrop-night-star: #f4f6ff;
   --backdrop-ink: #f4f2fb;
   --backdrop-ink-soft: #d6d2ea;
+  --today-backdrop-moon-size: 48px;
   /* Entrance animations; motion.test.ts keeps one-shot entrances at 200ms or less. */
   --duration-entrance: 160ms;
   --duration-spin: 1s;
@@ -233,10 +235,11 @@
   --backdrop-dusk-moon: #efe6c8;
   --backdrop-dusk-moon-shade: #44294f;
   --backdrop-dusk-star: #d8d4f0;
-  --backdrop-night-top: #05070f;
-  --backdrop-night-bottom: #101c36;
+  --backdrop-night-top: #111e34;
+  --backdrop-night-bottom: #243657;
+  --backdrop-night-surround: #dce7f8;
   --backdrop-night-moon: #f3efd2;
-  --backdrop-night-moon-shade: #090e1c;
+  --backdrop-night-moon-shade: #1b2944;
   --backdrop-night-star: #f4f6ff;
   --backdrop-ink: #f4f2fb;
   --backdrop-ink-soft: #d6d2ea;
@@ -3875,11 +3878,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-heading { min-width: 0; }
 /* The optional sky art stays inside the aligned header. Its phase also supplies
    a visible tint around the opaque panels, fading into the workspace background.
-   The pale daytime sky needs more color than the saturated dusk and night skies. */
-.today-workspace[data-backdrop], .today-backdrop { --today-sky-top: var(--backdrop-sky-top); --today-sky-bottom: var(--backdrop-sky-bottom); --today-gutter-tint: 65%; }
+   Day and night use light tints; dusk borrows less of its saturated sky. */
+.today-workspace[data-backdrop], .today-backdrop { --today-sky-top: var(--backdrop-sky-top); --today-sky-bottom: var(--backdrop-sky-bottom); --today-gutter-color: var(--today-sky-top); --today-gutter-tint: 65%; }
 .today-workspace[data-backdrop="dusk"], .today-backdrop[data-phase="dusk"] { --today-sky-top: var(--backdrop-dusk-top); --today-sky-bottom: var(--backdrop-dusk-bottom); --today-gutter-tint: 25%; }
-.today-workspace[data-backdrop="night"], .today-backdrop[data-phase="night"] { --today-sky-top: var(--backdrop-night-top); --today-sky-bottom: var(--backdrop-night-bottom); --today-gutter-tint: 25%; }
-.today-workspace[data-backdrop] { background: linear-gradient(to bottom, color-mix(in srgb, var(--today-sky-top) var(--today-gutter-tint), var(--background)), var(--background) 70%); }
+.today-workspace[data-backdrop="night"], .today-backdrop[data-phase="night"] { --today-sky-top: var(--backdrop-night-top); --today-sky-bottom: var(--backdrop-night-bottom); --today-gutter-color: var(--backdrop-night-surround); --today-gutter-tint: 65%; }
+.today-workspace[data-backdrop] { background: linear-gradient(to bottom, color-mix(in srgb, var(--today-gutter-color) var(--today-gutter-tint), var(--background)), var(--background) 70%); }
 .today-header { position: relative; isolation: isolate; }
 .today-backdrop { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: linear-gradient(to bottom, var(--today-sky-top), var(--today-sky-bottom)); animation: today-backdrop-in var(--duration-slow) ease; }
 /* The header's own content paints above the art, which comes first in the header. */
@@ -3889,6 +3892,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-header[data-sky="dark"] h1 { color: var(--backdrop-ink); }
 .today-header[data-sky="dark"] .eyebrow { color: var(--backdrop-ink-soft); }
 .today-backdrop svg { display: block; width: 100%; height: 100%; }
+/* Keep the moon round and inset even when the sky is cropped by a very wide header. */
+.today-backdrop .today-backdrop-moon-scene { position: absolute; top: var(--space-3); right: 12%; width: var(--today-backdrop-moon-size); height: calc(100% - 2 * var(--space-3)); }
 .today-backdrop-sun { fill: var(--backdrop-sun); }
 .today-backdrop-cloud { fill: var(--backdrop-cloud); }
 .today-backdrop[data-phase="dusk"] .today-backdrop-moon { fill: var(--backdrop-dusk-moon); }

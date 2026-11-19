@@ -637,9 +637,11 @@ only (not synced or exported).
   or stock images: small to ship, crisp at any size, and free of licensing
   questions. Day: a soft sky with the sun's height following the time of day.
   Dusk: a deep blue-violet sky fading to a warm horizon, with the moon and a few
-  faint stars. Night: a late-night sky from near-black navy to deep navy, with
+  faint stars. Night: a late-night sky from soft navy to lighter indigo, with
   more and brighter stars (fixed positions, no twinkle) and a clearly lit moon.
   Dusk and night are dark in both themes.
+  The moon sits in its own inset viewport so wide headers cannot crop it. Night
+  uses a separate blue surround tint that fades into the workspace background.
 - It sits only behind the header band, never behind lists, cards, or the day
   view. Over dusk or night the header's date and title switch to light text
   (`data-sky="dark"` on the header, from `--backdrop-ink` tokens) in either theme;

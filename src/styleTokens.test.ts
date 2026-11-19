@@ -452,7 +452,7 @@ describe("Today backdrop", () => {
       expect(art.map(([name]) => name).sort()).toEqual([
         "--backdrop-cloud", "--backdrop-dusk-bottom", "--backdrop-dusk-moon", "--backdrop-dusk-moon-shade", "--backdrop-dusk-star", "--backdrop-dusk-top",
         "--backdrop-ink", "--backdrop-ink-soft",
-        "--backdrop-night-bottom", "--backdrop-night-moon", "--backdrop-night-moon-shade", "--backdrop-night-star", "--backdrop-night-top",
+        "--backdrop-night-bottom", "--backdrop-night-moon", "--backdrop-night-moon-shade", "--backdrop-night-star", "--backdrop-night-surround", "--backdrop-night-top",
         "--backdrop-sky-bottom", "--backdrop-sky-top", "--backdrop-sun",
       ]);
       // The day sky keeps the theme's normal text legible.
@@ -474,10 +474,23 @@ describe("Today backdrop", () => {
           }
         }
       }
-      // Night is a dark sky: both ends are near-black navy, and the stars and moon stand out from it.
-      expect(luminance(tokens.get("--backdrop-night-top")!)).toBeLessThan(0.01);
-      expect(luminance(tokens.get("--backdrop-night-bottom")!)).toBeLessThan(0.02);
+      // Night is navy with a lighter lower edge; text, stars, and moon keep their contrast.
+      const channels = (hex: string) => [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16));
+      const nightTop = tokens.get("--backdrop-night-top")!;
+      const nightBottom = tokens.get("--backdrop-night-bottom")!;
+      for (const sky of [nightTop, nightBottom]) {
+        const [red, green, blue] = channels(sky);
+        expect(blue).toBeGreaterThan(green);
+        expect(green).toBeGreaterThan(red);
+      }
+      expect(luminance(nightBottom)).toBeGreaterThan(luminance(nightTop));
       for (const lit of ["--backdrop-night-star", "--backdrop-night-moon"]) expect(contrast(tokens.get(lit)!, tokens.get("--backdrop-night-bottom")!)).toBeGreaterThan(10);
+      // The dedicated surround is lighter and bluer than mixing the dark sky into the workspace.
+      const blend = (color: string, share: number) => `#${channels(color).map((channel, index) => Math.round(channel * share + channels(tokens.get("--background")!)[index] * (1 - share)).toString(16).padStart(2, "0")).join("")}`;
+      const surround = blend(tokens.get("--backdrop-night-surround")!, 0.65);
+      expect(luminance(surround)).toBeGreaterThan(luminance(blend(nightTop, 0.25)));
+      const [red, , blue] = channels(surround);
+      expect(blue).toBeGreaterThan(red);
     }
     expect(ratios).toHaveLength(16);
     if (process.env.SHOW_RATIOS) console.log(ratios.join("\n"));
