@@ -2877,6 +2877,7 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .modal-form .form-error { margin: 0; }
 .modal-form .modal-form-check { display: flex; align-items: center; gap: var(--space-2); color: var(--text); font-size: var(--text-body); }
 .modal-form .modal-form-check input[type="checkbox"] { width: auto; flex: 0 0 auto; margin: 0; padding: 0; }
+.modal-form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
 .modal-form-hint { margin: 0; color: var(--muted); font-size: var(--text-secondary); line-height: var(--leading-normal); }
 .follow-through-modal { width: min(var(--dialog-w-lg), calc(100vw - var(--dialog-edge))); max-height: calc(100dvh - var(--dialog-edge)); overflow-y: auto; }
 .follow-through-picks { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
@@ -3432,6 +3433,7 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .imap-mapping-source, .settings-section p.imap-setup-status, .imap-setup p.settings-hint { font-size: var(--text-secondary); color: var(--muted); }
 .settings-section p.imap-setup-error { color: var(--error); font-size: var(--text-secondary); overflow-wrap: anywhere; }
 @media (max-width: 680px) {
+  .modal-form-row { grid-template-columns: minmax(0, 1fr); }
   .settings-field.settings-field-row, .settings-field-row { grid-template-columns: minmax(0, 1fr); }
   .ai-key-row { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   .settings-field-detail { padding-left: 0; }
