@@ -825,9 +825,6 @@ function TodayLayout({
         <div className="today-panel-heading">
           <div className="today-panel-title">
             <h2>{panel === "agenda" ? <CalendarDays size={ICON_SIZE.md} aria-hidden="true" /> : <NotebookPen size={ICON_SIZE.md} aria-hidden="true" />}{panel === "agenda" ? "Agenda" : "Daily Note"}</h2>
-            <button type="button" className="today-panel-switch" data-mailbox-tab-shortcut aria-keyshortcuts="Tab" aria-label={`Switch to ${otherName}`} onClick={() => selectPanel(otherPanel)}>
-              <kbd aria-hidden="true">{formatShortcut("Tab")}</kbd> for {otherName}
-            </button>
           </div>
           <div className="today-schedule-actions">
             {panel === "agenda" ? <button type="button" className="btn-link" onClick={() => onOpenCalendar(shownDay)}>Open Calendar</button>
@@ -843,6 +840,9 @@ function TodayLayout({
           </div>
           {/* Keep controls on the left for every day. The page heading already names today. */}
           <span className={showingToday ? "sr-only" : undefined} aria-live="polite">{shownDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
+          <button type="button" className="today-panel-switch" data-mailbox-tab-shortcut aria-keyshortcuts="Tab" aria-label={`Switch to ${otherName}`} onClick={() => selectPanel(otherPanel)}>
+            <kbd aria-hidden="true">{formatShortcut("Tab")}</kbd> for {otherName}
+          </button>
         </div>
         <div ref={agendaPanel} role="region" aria-label="Agenda" data-mailbox-tab-shortcut className="today-panel-content today-agenda-panel" hidden={panel !== "agenda"} tabIndex={0}>
         {displaySchedule ? <>

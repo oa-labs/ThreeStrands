@@ -157,6 +157,8 @@ describe("TodayWorkspace", () => {
       expect(hint).toHaveAttribute("aria-keyshortcuts", "Tab");
       expect(hint).toHaveAttribute("data-mailbox-tab-shortcut");
       expect(hint.querySelector("kbd")).not.toBeNull();
+      const dateNavigation = planning().getByRole("group", { name: "Schedule Date" }).parentElement;
+      expect(dateNavigation).toContainElement(hint);
       hint.focus(); choose("Daily Note");
       await waitFor(() => expect(box()).toHaveValue(`Notes for ${localDate(0)}`));
       expect(box()).not.toHaveAttribute("readonly");
@@ -165,7 +167,7 @@ describe("TodayWorkspace", () => {
       expect(panel("Daily Note")).toBeVisible();
       expect(panel("Agenda")).not.toBeVisible();
       expect(box().closest("[data-shortcut-scope]")).toHaveAttribute("data-shortcut-scope", "compose");
-      expect(planning().getByRole("button", { name: "Switch to Agenda" })).toBeInTheDocument();
+      expect(dateNavigation).toContainElement(planning().getByRole("button", { name: "Switch to Agenda" }));
       expect(mailClient.saveDailyNote).not.toHaveBeenCalled();
       cleanup(); renderToday();
       expect(panelHeading("Daily Note")).toBeInTheDocument();
@@ -1831,7 +1833,8 @@ describe("TodayWorkspace", () => {
         expect(navigation.firstElementChild).toBe(controls);
         expect(within(controls).getAllByRole("button")).toEqual(buttons);
         const dateLabel = screen.getByText(date);
-        expect(navigation.lastElementChild).toBe(dateLabel);
+        expect(controls.nextElementSibling).toBe(dateLabel);
+        expect(navigation.lastElementChild).toBe(screen.getByRole("button", { name: "Switch to Daily Note" }));
         expect(dateLabel.classList.contains("sr-only")).toBe(isToday);
       }
       await waitFor(() => expect(mailClient.listScheduleEvents).toHaveBeenCalled());
