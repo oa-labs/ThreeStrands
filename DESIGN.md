@@ -211,7 +211,7 @@ Escape. Every view's side panel works this way: Mail's right column
 (context, a draft's context, or the schedule), the panel beside a contact
 or group, and the Notes, Files, Tasks, and Calendar panels. Mail's column
 stays mounted while hidden, and `t`, Show Context, picking a person, and
-F6 bring it back; in a window too narrow for it, it is the drawer, and `\`
+Mod+Shift+P bring it back; in a window too narrow for it, it is the drawer, and `\`
 opens and closes that. Where Contacts stacks its panel under the profile,
 the panel is part of the page and doesn't hide.
 
@@ -272,9 +272,9 @@ Current primary commands are:
 - `i`: summarize the conversation into the context panel's brief;
 - `q` or `Mod+J`: ask about the conversation in the context panel's thread
   chat (`Mod+J` drafts with AI while composing);
-- `F6` or `Mod+Shift+P` while composing: move focus between the draft and the
+- `Mod+Shift+P` or `F6` while composing: move focus between the draft and the
   context panel. Focus lands on the first "Before you send" fix, then Find
-  Times, then the first control. Tab stays inside the panel, and `F6`, the
+  Times, then the first control. Tab stays inside the panel, and `Mod+Shift+P`, the
   same key again, or Escape returns to the caret in the draft (Escape in the
   panel never closes the draft);
 - `Tab` / `Shift+Tab` in Today read mode: switch between Agenda and Daily

@@ -304,7 +304,7 @@ export const commands: Command[] = [
   { id: "draft.discard", title: "Discard Draft", keys: ["#"], group: "Compose", enabled: (c) => c.composerActive && c.focusedPane === "mail" && c.mailbox === "drafts", run: (c) => complete(c.discardDraft) },
   { id: "draft.attach", title: "Attach Files", keys: ["Mod+Shift+a"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
   { id: "draft.replyAssist", title: "Draft Reply", keywords: ["AI", "write", "generate"], keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive && c.aiReplyAssistEnabled, run: (c) => complete(c.draftReplyWithAI) },
-  { id: "draft.contextPanel", title: "Switch Between Draft and Context Panel", keywords: ["brief", "sidebar", "focus"], keys: ["F6", "Mod+Shift+p"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleContextPanelFocus) },
+  { id: "draft.contextPanel", title: "Switch Between Draft and Context Panel", keywords: ["brief", "sidebar", "focus"], keys: ["Mod+Shift+p", "F6"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleContextPanelFocus) },
   { id: "send.undo", title: "Undo Send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {
     id: "thread.next",

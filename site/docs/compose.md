@@ -71,7 +71,7 @@ Click the paperclip (**Attach Files**) to add files. Attachments can total up to
 
 ## Before You Send {#before-you-send}
 
-The panel beside your draft shows recipient history, shared files, related tasks, upcoming meetings, and free times. Press <kbd>F6</kbd> to move between the draft and the panel.
+The panel beside your draft shows recipient history, shared files, related tasks, upcoming meetings, and free times. Press <kbd>⌘/Ctrl + Shift + P</kbd> (or <kbd>F6</kbd>) to move between the draft and the panel.
 
 Its **Before you send** section checks your draft on this computer and suggests fixes. It never blocks sending:
 
