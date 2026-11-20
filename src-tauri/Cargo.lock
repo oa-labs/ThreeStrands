@@ -6027,6 +6027,7 @@ dependencies = [
  "imagesize",
  "iroh-car",
  "jiff",
+ "jni 0.22.4",
  "keyring",
  "log",
  "mail-builder",

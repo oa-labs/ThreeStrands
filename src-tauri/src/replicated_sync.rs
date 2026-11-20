@@ -22,8 +22,8 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use crate::db::replicated_sync::ensure_space_and_device;
+use crate::sync_key_store;
 use chrono::Utc;
-use keyring::Entry;
 use rand::Rng;
 #[cfg(test)]
 use rusqlite::{params, OptionalExtension};
@@ -516,6 +516,17 @@ impl Database {
         })
     }
 
+    #[cfg(target_os = "android")]
+    pub(crate) fn require_mobile_sync_keys(&self) -> Result<(), String> {
+        for name in [SIGNING_KEY_ENTRY, X25519_KEY_ENTRY] {
+            if sync_key_store::get(KEYCHAIN_SERVICE, name)?.is_none() {
+                return Err("Device key is missing".into());
+            }
+        }
+        let _ = self.local_replicated_keys()?;
+        Ok(())
+    }
+
     /// Loads this device's full replicated-sync key material, additionally
     /// requiring that enrollment has already supplied an epoch key for the
     /// sync space's current `active_epoch` — see `enrollment.rs`. Returns an
@@ -547,21 +558,19 @@ impl Database {
 }
 
 fn load_or_create_signing_key() -> Result<SigningKey, String> {
-    let entry = Entry::new(KEYCHAIN_SERVICE, SIGNING_KEY_ENTRY).map_err(display)?;
-    match entry.get_password() {
-        Ok(hex) => {
+    match sync_key_store::get(KEYCHAIN_SERVICE, SIGNING_KEY_ENTRY)? {
+        Some(hex) => {
             let bytes: [u8; 32] = hex_decode(&hex)?
                 .try_into()
                 .map_err(|_| "Stored device signing key is invalid".to_string())?;
             Ok(SigningKey::from_bytes(&bytes))
         }
-        Err(keyring::Error::NoEntry) => {
+        None => {
             let mut seed = [0u8; 32];
             os_rng().fill_bytes(&mut seed);
-            entry.set_password(&hex_encode(&seed)).map_err(display)?;
+            sync_key_store::set(KEYCHAIN_SERVICE, SIGNING_KEY_ENTRY, &hex_encode(&seed))?;
             Ok(SigningKey::from_bytes(&seed))
         }
-        Err(error) => Err(display(error)),
     }
 }
 
@@ -573,43 +582,33 @@ pub(crate) fn x25519_public_bytes(secret: &[u8; 32]) -> [u8; 32] {
 }
 
 fn load_or_create_device_x25519_secret() -> Result<[u8; 32], String> {
-    let entry = Entry::new(KEYCHAIN_SERVICE, X25519_KEY_ENTRY).map_err(display)?;
-    match entry.get_password() {
-        Ok(hex) => hex_decode(&hex)?
+    match sync_key_store::get(KEYCHAIN_SERVICE, X25519_KEY_ENTRY)? {
+        Some(hex) => hex_decode(&hex)?
             .try_into()
             .map_err(|_| "Stored device X25519 key is invalid".to_string()),
-        Err(keyring::Error::NoEntry) => {
+        None => {
             let mut secret = [0u8; 32];
             os_rng().fill_bytes(&mut secret);
-            entry.set_password(&hex_encode(&secret)).map_err(display)?;
+            sync_key_store::set(KEYCHAIN_SERVICE, X25519_KEY_ENTRY, &hex_encode(&secret))?;
             Ok(secret)
         }
-        Err(error) => Err(display(error)),
     }
 }
 
 /// Reads a previously stored epoch key from the keychain, or `None` if this
 /// device has never received (or generated, at genesis) that epoch.
 pub(crate) fn load_epoch_key(key_epoch: u32) -> Result<Option<[u8; 32]>, String> {
-    let entry = Entry::new(KEYCHAIN_SERVICE, &epoch_key_entry(key_epoch)).map_err(display)?;
-    match entry.get_password() {
-        Ok(hex) => hex_decode(&hex)?
-            .try_into()
-            .map(Some)
-            .map_err(|_| "Stored epoch key is invalid".to_string()),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(display(error)),
-    }
+    sync_key_store::get(KEYCHAIN_SERVICE, &epoch_key_entry(key_epoch))?
+        .map(|hex| {
+            hex_decode(&hex)?
+                .try_into()
+                .map_err(|_| "Stored epoch key is invalid".to_string())
+        })
+        .transpose()
 }
 
 fn delete_keychain_entry(name: &str) -> Result<(), String> {
-    match Entry::new(KEYCHAIN_SERVICE, name)
-        .map_err(display)?
-        .delete_credential()
-    {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(display(error)),
-    }
+    sync_key_store::delete(KEYCHAIN_SERVICE, name)
 }
 
 /// Removes every epoch key up to `highest_epoch` and this device's own
@@ -632,8 +631,11 @@ pub(crate) fn forget_sync_space_keys(highest_epoch: u32) -> Result<(), String> {
 /// Persists an epoch key this device just generated (genesis) or received
 /// and opened (enrollment grant, rotation).
 pub(crate) fn store_epoch_key(key_epoch: u32, key: &[u8; 32]) -> Result<(), String> {
-    let entry = Entry::new(KEYCHAIN_SERVICE, &epoch_key_entry(key_epoch)).map_err(display)?;
-    entry.set_password(&hex_encode(key)).map_err(display)
+    sync_key_store::set(
+        KEYCHAIN_SERVICE,
+        &epoch_key_entry(key_epoch),
+        &hex_encode(key),
+    )
 }
 
 // ================================ Sealing ==================================
@@ -1925,6 +1927,8 @@ impl ReplicatedSync {
                 log::warn!(target: "replicated_sync", "removing orphaned note files failed: {error}")
             }
         }
+        // Android v1 displays file references and does not need their bytes.
+        #[cfg(desktop)]
         fetch_note_attachments(&self.database, &keys, &transports).await;
         if let Err(error) =
             crate::enrollment::share_keys_with_lagging_peers(&self.database, &keys, &transports)
@@ -1949,8 +1953,20 @@ impl ReplicatedSync {
             }
         }
 
-        push_result?;
-        pull_result?;
+        let _push = push_result?;
+        let _pull = pull_result?;
+        #[cfg(target_os = "android")]
+        {
+            if _pull.failed_transports > 0 {
+                return Err("Some changes could not be downloaded. Retry sync and check that both apps are up to date.".into());
+            }
+            if _push.failed > 0 {
+                return Err(
+                    "Some changes could not be uploaded. They are still saved on this device."
+                        .into(),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -3310,6 +3326,106 @@ mod replicator_tests {
                 .merged_states,
             0
         );
+    }
+
+    #[tokio::test]
+    async fn mobile_offline_notes_and_tasks_round_trip_with_a_mixed_desktop_replica() {
+        let (desktop, phone) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let desktop_keys = test_keys(&desktop);
+        let phone_keys = test_keys(&phone);
+        trust(&desktop, &phone_keys);
+        trust(&phone, &desktop_keys);
+        desktop.set_beta_features_enabled(true).unwrap();
+        write_snippet(&desktop, "desktop-only", "A saved reply");
+        let reference = desktop
+            .create_note("Reference", "A reference note")
+            .unwrap();
+        let attached = desktop
+            .add_note_attachment(&reference.id, "reference.txt", "text/plain", b"fixture")
+            .unwrap();
+        push_local_state(&desktop, &desktop_keys, &transports)
+            .await
+            .unwrap();
+
+        let date = "2026-11-20";
+        phone
+            .save_daily_note_edit(date, "- [ ] Pack lunch\n- ( ) Call the library", None)
+            .unwrap();
+        let task = phone
+            .create_task(
+                &serde_json::from_value(serde_json::json!({
+                    "accountId": "", "title": "Water the plants", "kind": "action"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        pull_from_transports(&phone, &phone_keys, &transports)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored_snippet_name(&phone, "desktop-only").as_deref(),
+            Some("A saved reply")
+        );
+        assert!(phone.note_attachment(&attached.id).unwrap().is_some());
+        phone.set_beta_features_enabled(true).unwrap();
+
+        // Editing a previously offline task immediately after joining records a
+        // full first value. A later update records only the fields it changed.
+        let request = serde_json::from_value(serde_json::json!({
+            "id": task.id, "dueKind": "date", "dueValue": "2026-11-21"
+        }))
+        .unwrap();
+        phone.update_task(&request).unwrap();
+        phone.reconcile_replicated_sync_backlog().unwrap();
+        push_local_state(&phone, &phone_keys, &transports)
+            .await
+            .unwrap();
+        pull_from_transports(&desktop, &desktop_keys, &transports)
+            .await
+            .unwrap();
+
+        let tasks = desktop.list_note_tasks().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, "Call the library");
+        let note_task = &tasks[0];
+        desktop
+            .patch_note_item(
+                &note_task.note_id,
+                &note_task.marker_id,
+                &note_task.updated_at,
+                Some(true),
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            desktop.list_tasks(None, None).unwrap()[0]
+                .due_value
+                .as_deref(),
+            Some("2026-11-21")
+        );
+        desktop
+            .set_task_status(&task.id, "completed", "user")
+            .unwrap();
+        push_local_state(&desktop, &desktop_keys, &transports)
+            .await
+            .unwrap();
+        pull_from_transports(&phone, &phone_keys, &transports)
+            .await
+            .unwrap();
+
+        let note = phone.get_daily_note(date).unwrap().unwrap();
+        assert!(note.body.contains("- [ ] Pack lunch"));
+        assert!(note.body.contains("- (x) Call the library"));
+        let tasks = phone.list_note_tasks().unwrap();
+        assert_eq!(tasks[0].marker_id, note_task.marker_id);
+        assert!(tasks[0].checked);
+        assert_eq!(phone.list_tasks(None, None).unwrap()[0].status, "completed");
+        assert_eq!(
+            stored_snippet_name(&desktop, "desktop-only").as_deref(),
+            Some("A saved reply")
+        );
+        assert!(desktop.note_attachment(&attached.id).unwrap().is_some());
     }
 
     #[tokio::test]

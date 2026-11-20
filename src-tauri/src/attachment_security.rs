@@ -183,6 +183,7 @@ pub(crate) fn opening_confirmation(filename: &str, bytes: &[u8]) -> Option<Strin
     })
 }
 
+#[cfg(desktop)]
 pub(crate) fn confirmation_allows_open(result: &rfd::MessageDialogResult) -> bool {
     result == &rfd::MessageDialogResult::Custom("Open anyway".into())
 }
@@ -371,16 +372,19 @@ mod tests {
 
     #[test]
     fn only_the_explicit_open_anyway_action_allows_opening() {
-        assert!(confirmation_allows_open(&rfd::MessageDialogResult::Custom(
-            "Open anyway".into()
-        )));
-        assert!(!confirmation_allows_open(
-            &rfd::MessageDialogResult::Custom("Cancel".into())
-        ));
-        assert!(!confirmation_allows_open(&rfd::MessageDialogResult::Cancel));
-        assert!(!confirmation_allows_open(&rfd::MessageDialogResult::Ok));
-        assert!(!confirmation_allows_open(&rfd::MessageDialogResult::Yes));
-        assert!(!confirmation_allows_open(&rfd::MessageDialogResult::No));
+        #[cfg(desktop)]
+        {
+            assert!(confirmation_allows_open(&rfd::MessageDialogResult::Custom(
+                "Open anyway".into()
+            )));
+            assert!(!confirmation_allows_open(
+                &rfd::MessageDialogResult::Custom("Cancel".into())
+            ));
+            assert!(!confirmation_allows_open(&rfd::MessageDialogResult::Cancel));
+            assert!(!confirmation_allows_open(&rfd::MessageDialogResult::Ok));
+            assert!(!confirmation_allows_open(&rfd::MessageDialogResult::Yes));
+            assert!(!confirmation_allows_open(&rfd::MessageDialogResult::No));
+        }
     }
 
     #[cfg(target_os = "macos")]

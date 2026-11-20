@@ -1110,12 +1110,21 @@ impl Database {
     /// Every note outside Trash, daily notes by date then the rest by
     /// title, for Export to Markdown Folder.
     pub fn notes_for_export(&self) -> DbResult<Vec<Note>> {
+        self.exportable_notes(false)
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn notes_for_mobile_export(&self) -> DbResult<Vec<Note>> {
+        self.exportable_notes(true)
+    }
+
+    fn exportable_notes(&self, include_trash: bool) -> DbResult<Vec<Note>> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
-                "SELECT {NOTE_COLUMNS} FROM notes WHERE trashed=0
+                "SELECT {NOTE_COLUMNS} FROM notes WHERE trashed=0 OR ?1
                  ORDER BY daily_date IS NULL, daily_date, title_key, id"
             ))?;
-            let rows = statement.query_map([], note_from_row)?;
+            let rows = statement.query_map([include_trash], note_from_row)?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
     }

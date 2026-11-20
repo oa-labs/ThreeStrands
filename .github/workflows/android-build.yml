@@ -1,0 +1,88 @@
+name: Android
+
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'crates/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/android-build.yml'
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: 'Increasing Google Play version code for a signed AAB. Leave empty for a debug APK.'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ANDROID_NDK_VERSION: '28.2.13676358'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-linux-android
+      - name: Set up Android tools
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;$ANDROID_NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm exec vitest run apps/mobile
+      - name: Build test APK
+        if: inputs.version_code == ''
+        run: |
+          pnpm tauri android build --apk --debug --target aarch64 --ci
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 -v 4 \
+            src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+      - name: Build signed Play bundle
+        if: github.event_name == 'workflow_dispatch' && inputs.version_code != ''
+        env:
+          THREESTRANDS_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
+          THREESTRANDS_ANDROID_KEYSTORE_BASE64: ${{ secrets.THREESTRANDS_ANDROID_KEYSTORE_BASE64 }}
+          THREESTRANDS_ANDROID_STORE_PASSWORD: ${{ secrets.THREESTRANDS_ANDROID_STORE_PASSWORD }}
+          THREESTRANDS_ANDROID_KEY_ALIAS: ${{ secrets.THREESTRANDS_ANDROID_KEY_ALIAS }}
+          THREESTRANDS_ANDROID_KEY_PASSWORD: ${{ secrets.THREESTRANDS_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ "$THREESTRANDS_ANDROID_VERSION_CODE" =~ ^[1-9][0-9]{0,9}$ ]]
+          : "${THREESTRANDS_ANDROID_KEYSTORE_BASE64:?Upload keystore is required}"
+          : "${THREESTRANDS_ANDROID_STORE_PASSWORD:?Keystore password is required}"
+          : "${THREESTRANDS_ANDROID_KEY_ALIAS:?Upload key alias is required}"
+          : "${THREESTRANDS_ANDROID_KEY_PASSWORD:?Upload key password is required}"
+          umask 077
+          export THREESTRANDS_ANDROID_KEYSTORE="$RUNNER_TEMP/threestrands-android-upload.jks"
+          trap 'rm -f "$THREESTRANDS_ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$THREESTRANDS_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$THREESTRANDS_ANDROID_KEYSTORE"
+          pnpm tauri android build --aab --target aarch64 --ci
+          bundle=src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab
+          jarsigner -verify "$bundle"
+          keytool -printcert -jarfile "$bundle" | grep -F 'SHA256:'
+      - name: Verify native page alignment
+        run: |
+          set -euo pipefail
+          readelf="$(find "$NDK_HOME/toolchains/llvm/prebuilt" -path '*/bin/llvm-readelf' -print -quit)"
+          library="$(find src-tauri/target/aarch64-linux-android -maxdepth 2 -name libthreestrands_lib.so -print -quit)"
+          "$readelf" -lW "$library" | python3 -c 'import sys; pages = [int(line.split()[-1], 16) for line in sys.stdin if line.strip().startswith("LOAD")]; sys.exit(not pages or min(pages) < 16384)'
+      - uses: actions/upload-artifact@v6
+        with:
+          name: threestrands-android
+          if-no-files-found: error
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/universalRelease/*.aab

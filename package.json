@@ -23,7 +23,9 @@
     "build:linux": "./scripts/build-linux.sh",
     "release": "node scripts/release.mjs tag",
     "release:docs": "node scripts/release.mjs docs",
-    "tauri": "node scripts/tauri.mjs"
+    "tauri": "node scripts/tauri.mjs",
+    "mobile:build": "vite build --config apps/mobile/vite.config.ts",
+    "mobile:dev": "vite --config apps/mobile/vite.config.ts"
   },
   "dependencies": {
     "@meowdown/core": "0.81.3",

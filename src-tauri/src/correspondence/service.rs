@@ -353,6 +353,7 @@ impl Correspondence {
             _ => {}
         }
         // Never hold a data lock while a user is choosing files; undo remains responsive.
+        #[cfg(desktop)]
         let selected_files = if matches!(&request, Request::Attach { .. }) {
             rfd::AsyncFileDialog::new()
                 .pick_files()
@@ -640,6 +641,9 @@ impl Correspondence {
             Recover { id } => {
                 Ok(serde_json::to_value(self.database.cancel_send(&id, true)?).map_err(error)?)
             }
+            #[cfg(mobile)]
+            Attach { .. } => Err("Mail attachment selection is unavailable on mobile".into()),
+            #[cfg(desktop)]
             Attach { id } => {
                 let mut d = self.database.draft(&id)?;
                 if selected_files.is_empty() {

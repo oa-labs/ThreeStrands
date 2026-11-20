@@ -1,10 +1,16 @@
+use std::collections::BTreeSet;
+
 use chrono::{DateTime, Days, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, OptionalExtension, Transaction};
+use threestrands_sync_protocol::EntityType;
 use uuid::Uuid;
 
 use super::DatabaseError;
-use super::{display_error, goals::ensure_goal_link, Database, DbResult};
+use super::{
+    display_error, goals::ensure_goal_link, notes::sync_recording, serialization_error,
+    sync_state::record_replicated_write_in_transaction, Database, DbResult,
+};
 use crate::models::{CreateTaskRequest, ThreadTask, UpdateTaskRequest};
 
 const MAX_TITLE: usize = 240;
@@ -93,6 +99,32 @@ fn task_by_id(connection: &rusqlite::Connection, id: &str) -> DbResult<Option<Th
             task_from_row,
         )
         .optional()?)
+}
+
+fn record_task(
+    tx: &Transaction<'_>,
+    task: &ThreadTask,
+    fields: Option<BTreeSet<String>>,
+) -> DbResult<()> {
+    if sync_recording(tx)? {
+        let payload = serde_json::to_value(task).map_err(serialization_error)?;
+        // An offline task can already exist locally when sync is enabled.
+        // Its first replica write must publish all required fields.
+        let recorded: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sync_values WHERE entity_type='task' AND entity_id=?1)",
+            [&task.id],
+            |row| row.get(0),
+        )?;
+        let fields = fields.filter(|_| recorded).unwrap_or_else(|| {
+            payload
+                .as_object()
+                .into_iter()
+                .flat_map(|map| map.keys().cloned())
+                .collect()
+        });
+        record_replicated_write_in_transaction(tx, EntityType::Task, &task.id, &fields, &payload)?;
+    }
+    Ok(())
 }
 
 impl Database {
@@ -203,7 +235,7 @@ impl Database {
                 "Task evidence exceeds {MAX_EVIDENCE} characters"
             )));
         }
-        self.with_connection(|connection| {
+        self.with_transaction(|connection| {
             ensure_goal_link(connection, &request.account_id, request.goal_id.as_deref())?;
             let wait_after: Option<String> = match request.thread_id.as_deref() {
                 Some(thread_id) => connection
@@ -245,16 +277,18 @@ impl Database {
                     request.goal_id,
                 ],
             )?;
-            Ok(connection.query_row(
+            let task = connection.query_row(
                 &format!("{} WHERE id = ?1", select_sql()),
                 [id],
                 task_from_row,
-            )?)
+            )?;
+            record_task(connection, &task, None)?;
+            Ok(task)
         })
     }
 
     pub fn update_task(&self, request: &UpdateTaskRequest) -> DbResult<ThreadTask> {
-        self.with_connection(|connection| {
+        self.with_transaction(|connection| {
             let current = task_by_id(connection, &request.id)?
                 .ok_or(DatabaseError::NotFound("Task"))?;
             let title = request.title.as_deref().unwrap_or(&current.title);
@@ -296,7 +330,20 @@ impl Database {
                         time_zone, repeat_interval_days, now, request.id, goal_id
                     ],
                 )?;
-            Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [&request.id], task_from_row)?)
+            let task = connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [&request.id], task_from_row)?;
+            let fields = [
+                ("title", request.title.is_some()),
+                ("notes", request.notes.is_some()),
+                ("kind", request.kind.is_some()),
+                ("dueKind", request.due_kind.is_some()),
+                ("dueValue", request.due_value.is_some()),
+                ("timeZone", request.time_zone.is_some()),
+                ("repeatIntervalDays", request.repeat_interval_days.is_some()),
+                ("goalId", request.goal_id.is_some()),
+                ("updatedAt", true),
+            ].into_iter().filter(|(_, changed)| *changed).map(|(field, _)| field.to_owned()).collect();
+            record_task(connection, &task, Some(fields))?;
+            Ok(task)
         })
     }
 
@@ -314,13 +361,17 @@ impl Database {
         } else {
             Some(source)
         };
-        self.with_connection(|connection| {
+        self.with_transaction(|connection| {
             connection
                 .execute(
                     "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4 WHERE id=?5",
                     params![status, completion_source, completed_at, now, id],
                 )?;
-            Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?)
+            let task = connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?;
+            let fields = ["status", "completionSource", "completedAt", "updatedAt"]
+                .into_iter().map(str::to_owned).collect();
+            record_task(connection, &task, Some(fields))?;
+            Ok(task)
         })
     }
 

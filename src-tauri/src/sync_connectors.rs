@@ -315,44 +315,8 @@ impl TransportSecrets {
     }
 }
 
-/// The OS keychain in the app; a process-wide in-memory map in tests, so
-/// no test ever reads or writes the developer's real keychain.
 #[cfg(not(test))]
-mod secret_store {
-    use keyring::Entry;
-
-    fn display(error: impl std::fmt::Display) -> String {
-        error.to_string()
-    }
-
-    pub fn get(service: &str, account: &str) -> Result<Option<String>, String> {
-        match Entry::new(service, account)
-            .map_err(display)?
-            .get_password()
-        {
-            Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(display(error)),
-        }
-    }
-
-    pub fn set(service: &str, account: &str, value: &str) -> Result<(), String> {
-        Entry::new(service, account)
-            .map_err(display)?
-            .set_password(value)
-            .map_err(display)
-    }
-
-    pub fn delete(service: &str, account: &str) -> Result<(), String> {
-        match Entry::new(service, account)
-            .map_err(display)?
-            .delete_credential()
-        {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(display(error)),
-        }
-    }
-}
+use crate::sync_key_store as secret_store;
 
 #[cfg(test)]
 pub(crate) mod secret_store {

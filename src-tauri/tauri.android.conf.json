@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeDevCommand": "pnpm mobile:dev",
+    "devUrl": "http://localhost:1421",
+    "beforeBuildCommand": "pnpm mobile:build",
+    "frontendDist": "../apps/mobile/dist"
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "ThreeStrands", "dragDropEnabled": false }],
+    "security": {
+      "capabilities": ["mobile"],
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "icon": ["icons/32x32.png", "icons/128x128.png"],
+    "android": { "minSdkVersion": 28 }
+  },
+  "plugins": { "updater": null }
+}

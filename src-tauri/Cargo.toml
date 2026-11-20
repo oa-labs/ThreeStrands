@@ -60,7 +60,6 @@ reqwest = { version = "0.13", default-features = false, features = ["brotli", "d
 # reqwest's `rustls-no-provider` leaves the TLS crypto backend to the app:
 # `http_client::builder` installs ring, matching tauri-plugin-updater.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rfd = "0.17"
 rusqlite = { version = "0.41", features = ["bundled", "functions"] }
 # Sans-IO SigV4 presigning and ListObjectsV2 parsing for the S3 sync
 # connector; requests go over the app's own `reqwest` client.
@@ -72,7 +71,6 @@ sha2 = "0.11"
 tauri = { version = "2.12.1", features = [] }
 tauri-plugin-log = "2.9.2"
 tauri-plugin-opener = "2"
-tauri-plugin-window-state = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "net", "sync", "time", "io-util", "macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", default-features = false }
@@ -86,7 +84,6 @@ threestrands-sync-core = { path = "../crates/sync-core" }
 threestrands-sync-envelope = { path = "../crates/sync-envelope" }
 threestrands-sync-protocol = { path = "../crates/sync-protocol" }
 threestrands-sync-transport = { path = "../crates/sync-transport" }
-tauri-plugin-updater = "2"
 csv = "1"
 # --- Phase 2 IMAP (Slice 1: connection + STARTTLS cert pinning) ----------
 # Promoted from [dev-dependencies] (where they backed the Slice 0 spike) to
@@ -120,6 +117,15 @@ mail-send = { version = "=0.6.2", default-features = false }
 # the direct declaration — no new crate. Pinned to the version mail-send
 # resolves so the two never disagree on the reply type.
 smtp-proto = "=0.2.5"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+rfd = "0.17"
+tauri-plugin-updater = "2"
+tauri-plugin-window-state = "2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Match the JNI API already used by the Android TLS verifier.
+jni = "=0.22.4"
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"

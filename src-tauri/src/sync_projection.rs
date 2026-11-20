@@ -11,6 +11,7 @@
 use std::collections::BTreeSet;
 
 use crate::models::ContactRecord;
+#[cfg(desktop)]
 use keyring::Entry;
 #[cfg(test)]
 use serde_json::json;
@@ -327,6 +328,7 @@ impl Database {
     }
 }
 
+#[cfg(desktop)]
 fn clear_provider_credential(service: &str, key: &str) -> DbResult<()> {
     let keychain = |error: keyring::Error| DatabaseError::Keychain(error.to_string());
     match Entry::new(service, key)
@@ -336,6 +338,13 @@ fn clear_provider_credential(service: &str, key: &str) -> DbResult<()> {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(keychain(error)),
     }
+}
+
+// The mobile shell only authorizes replicated sync. Account records are
+// replicated metadata and have no provider credentials on this device.
+#[cfg(mobile)]
+fn clear_provider_credential(_service: &str, _key: &str) -> DbResult<()> {
+    Ok(())
 }
 
 #[cfg(test)]

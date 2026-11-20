@@ -41,6 +41,8 @@ mod maintenance;
 pub(crate) mod meeting_follow_through;
 pub(crate) mod meetings;
 mod messages;
+#[cfg(any(test, target_os = "android"))]
+pub(crate) mod mobile_drafts;
 mod mutations;
 pub(crate) mod note_additions;
 pub(crate) mod note_attachments;

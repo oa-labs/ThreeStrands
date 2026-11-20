@@ -17,6 +17,23 @@ pub struct NoteDocument {
     pub links: Vec<EntityLink>,
     pub warning: Option<String>,
 }
+impl NoteDocument {
+    pub(crate) fn from_note(note: &Note) -> Self {
+        match note_entities::parse(&note.id, &note.body) {
+            Ok(parsed) => Self {
+                items: parsed.items,
+                links: parsed.links,
+                warning: None,
+            },
+            Err(error) => Self {
+                items: vec![],
+                links: vec![],
+                warning: Some(error),
+            },
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteTask {
@@ -247,18 +264,7 @@ pub(super) fn conversation_id(
 impl Database {
     pub fn note_document(&self, id: &str) -> DbResult<NoteDocument> {
         let note = self.get_note(id)?.ok_or(DatabaseError::NotFound("Note"))?;
-        Ok(match note_entities::parse(id, &note.body) {
-            Ok(p) => NoteDocument {
-                items: p.items,
-                links: p.links,
-                warning: None,
-            },
-            Err(e) => NoteDocument {
-                items: vec![],
-                links: vec![],
-                warning: Some(e),
-            },
-        })
+        Ok(NoteDocument::from_note(&note))
     }
     pub fn list_note_tasks(&self) -> DbResult<Vec<NoteTask>> {
         self.with_connection(|c| {

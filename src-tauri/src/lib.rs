@@ -1,5 +1,8 @@
+#![cfg_attr(mobile, allow(dead_code, unused_imports))]
+
 mod agents;
 mod ai;
+#[cfg(desktop)]
 mod app_update;
 mod attachment_reader;
 mod attachment_security;
@@ -10,6 +13,7 @@ mod backoff;
 mod calendar;
 mod calendar_files;
 mod clock;
+#[cfg(desktop)]
 mod commands;
 mod contact_interchange;
 mod correspondence;
@@ -35,6 +39,8 @@ mod mail_links;
 mod meeting_excerpt;
 mod meeting_follow_through;
 mod meeting_policy;
+#[cfg(target_os = "android")]
+mod mobile;
 mod models;
 mod proposed_times;
 mod scheduled_send;
@@ -59,6 +65,7 @@ mod schema;
 mod sync;
 mod sync_connectors;
 mod sync_folder;
+mod sync_key_store;
 mod sync_policy;
 mod sync_projection;
 #[cfg(test)]
@@ -1043,7 +1050,7 @@ fn record_synced_value<T: serde::Serialize>(
     Ok(())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(desktop)]
 pub fn run() {
     let builder = tauri::Builder::default();
     // Registered first so a second launch forwards its link or file and exits
@@ -1088,6 +1095,7 @@ pub fn run() {
 
 /// Opens (or recovers) the local database, starts every background loop, and
 /// registers `AppState` before the first command can run.
+#[cfg(desktop)]
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // The link or file that launched this copy; the webview drains both
     // queues once it loads.
@@ -1264,6 +1272,7 @@ fn force_full_resync(database: &Database) {
 }
 
 /// Keeps the dock/taskbar badge in step with the Inbox unread count.
+#[cfg(desktop)]
 fn spawn_badge_loop(database: Arc<Database>, handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
@@ -1516,6 +1525,7 @@ fn catalogued_mail_provider(database: &Database, email: &str) -> Result<MailProv
 }
 
 /// Every IPC command the frontend may invoke, grouped by feature area.
+#[cfg(desktop)]
 fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         // Replicated (peer) sync
@@ -1860,6 +1870,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
 /// (a mail link or calendar file).
 pub(crate) fn focus_main_window<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
     if let Some(window) = handle.get_webview_window("main") {
+        #[cfg(desktop)]
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
@@ -1868,6 +1879,7 @@ pub(crate) fn focus_main_window<R: tauri::Runtime>(handle: &tauri::AppHandle<R>)
 
 /// Holds window close and app exit until the frontend has had a chance to
 /// save open compose drafts, and syncs or flushes on focus changes.
+#[cfg(desktop)]
 fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
     use tauri::Emitter;
     match &event {
@@ -1947,3 +1959,6 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
 
 /// Synthetic developer evaluations; not exposed as an application command.
 pub use ai::evaluation as ai_evaluation;
+
+#[cfg(target_os = "android")]
+pub use mobile::run;

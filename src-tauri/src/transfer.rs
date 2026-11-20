@@ -1036,6 +1036,7 @@ fn build_export_payload(
     })
 }
 
+#[cfg(desktop)]
 pub fn export(
     database: &Database,
     preferences: TransferPreferences,
@@ -1095,6 +1096,7 @@ pub struct ImportPreview {
 
 /// Chooses, decrypts and validates an export, and stages it without writing
 /// anything, so the user can pick which accounts to set up on this device.
+#[cfg(desktop)]
 pub fn preview_import(
     database: &Database,
     staged: &StagedImport,

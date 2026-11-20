@@ -23,13 +23,7 @@ pub(crate) fn create_task(
     state: State<'_, AppState>,
 ) -> AppResult<ThreadTask> {
     let task = state.database.create_task(&request)?;
-    record_synced_value(
-        &state,
-        threestrands_sync_protocol::EntityType::Task,
-        &task.id,
-        &task,
-        None,
-    )?;
+    kick_replicated_sync(&state);
     Ok(task)
 }
 
@@ -38,40 +32,8 @@ pub(crate) fn update_task(
     request: UpdateTaskRequest,
     state: State<'_, AppState>,
 ) -> AppResult<ThreadTask> {
-    let mut fields = std::collections::BTreeSet::new();
-    if request.title.is_some() {
-        fields.insert("title".to_string());
-    }
-    if request.notes.is_some() {
-        fields.insert("notes".to_string());
-    }
-    if request.kind.is_some() {
-        fields.insert("kind".to_string());
-    }
-    if request.due_kind.is_some() {
-        fields.insert("dueKind".to_string());
-    }
-    if request.due_value.is_some() {
-        fields.insert("dueValue".to_string());
-    }
-    if request.time_zone.is_some() {
-        fields.insert("timeZone".to_string());
-    }
-    if request.repeat_interval_days.is_some() {
-        fields.insert("repeatIntervalDays".to_string());
-    }
-    if request.goal_id.is_some() {
-        fields.insert("goalId".to_string());
-    }
-    fields.insert("updatedAt".to_string());
     let task = state.database.update_task(&request)?;
-    record_synced_value(
-        &state,
-        threestrands_sync_protocol::EntityType::Task,
-        &task.id,
-        &task,
-        Some(fields),
-    )?;
+    kick_replicated_sync(&state);
     Ok(task)
 }
 
@@ -177,18 +139,7 @@ pub(crate) fn set_task_status(
     state: State<'_, AppState>,
 ) -> AppResult<ThreadTask> {
     let task = state.database.set_task_status(&id, &status, &source)?;
-    record_synced_value(
-        &state,
-        threestrands_sync_protocol::EntityType::Task,
-        &task.id,
-        &task,
-        Some(std::collections::BTreeSet::from([
-            "status".to_string(),
-            "completionSource".to_string(),
-            "completedAt".to_string(),
-            "updatedAt".to_string(),
-        ])),
-    )?;
+    kick_replicated_sync(&state);
     Ok(task)
 }
 

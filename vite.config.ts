@@ -43,7 +43,7 @@ export default defineConfig(({ command }) => ({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    include: ["{src,apps/mobile}/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["tests/e2e/**", "node_modules/**", "dist/**", ".delta/**/node_modules/**"],
     // Several agents and the developer often run the suite at once on one
     // machine; half the cores leaves room so concurrent runs don't starve and

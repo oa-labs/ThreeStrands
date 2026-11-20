@@ -3,7 +3,8 @@ dist/
 site/dist/
 target/
 src-tauri/target/
-src-tauri/gen/
+src-tauri/gen/*
+!src-tauri/gen/android/
 test-results/
 coverage/
 playwright-report/
