@@ -4154,6 +4154,13 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .note-autocomplete-text > span { overflow-wrap: anywhere; }
 .note-autocomplete-text > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-meta); }
 .note-autocomplete-status { padding: var(--space-2); color: var(--muted); font-size: var(--text-secondary); }
+/* Link to… results: the autocomplete's row layout in a scrolling list, so long
+   titles and sender lists stay one row each and the dialog never clips them. */
+.note-link-picker-list { max-height: min(360px, 40vh); margin: 0; padding: var(--space-1); overflow: auto; list-style: none; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.note-link-picker-option { display: flex; align-items: start; gap: var(--space-2); width: 100%; padding: var(--space-2); border: 0; border-radius: var(--radius-sm); color: var(--text); background: none; font: inherit; text-align: left; cursor: pointer; }
+.note-link-picker-option:hover:not(:disabled), .note-link-picker-option:focus-visible { background: var(--selected); }
+.note-link-picker-option:disabled { opacity: var(--opacity-disabled); cursor: default; }
+.modal-form .note-autocomplete-status { margin: 0; }
 /* Block spacing close to Reflect's: list items sit just apart, paragraphs a
    little more, and a heading gets room above and stays near what follows.
    The editor library spaces every block, list items included, 0.85em apart. */
