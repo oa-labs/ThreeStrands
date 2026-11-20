@@ -1,0 +1,13 @@
+.today-backdrop[data-phase="dusk"] { --today-sky-top: var(--backdrop-dusk-top); --today-sky-bottom: var(--backdrop-dusk-bottom); }
+.today-backdrop[data-phase="night"] { --today-sky-top: var(--backdrop-night-top); --today-sky-bottom: var(--backdrop-night-bottom); }
+.today-backdrop { --today-sky-top: var(--backdrop-sky-top); --today-sky-bottom: var(--backdrop-sky-bottom); position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: linear-gradient(to bottom, var(--today-sky-top), var(--today-sky-bottom)); animation: today-backdrop-in var(--duration-slow) ease; }
+.today-backdrop svg { display: block; width: 100%; height: 100%; }
+/* Keep the moon round and inset even when the sky is cropped by a very wide header. */
+.today-backdrop .today-backdrop-moon-scene { position: absolute; top: var(--space-3); right: 12%; width: var(--today-backdrop-moon-size); height: calc(100% - 2 * var(--space-3)); }
+.today-backdrop-sun { fill: var(--backdrop-sun); }
+.today-backdrop-cloud { fill: var(--backdrop-cloud); }
+.today-backdrop[data-phase="dusk"] .today-backdrop-moon { fill: var(--backdrop-dusk-moon); }
+.today-backdrop[data-phase="dusk"] .today-backdrop-star { fill: var(--backdrop-dusk-star); }
+.today-backdrop[data-phase="night"] .today-backdrop-moon { fill: var(--backdrop-night-moon); }
+.today-backdrop[data-phase="night"] .today-backdrop-star { fill: var(--backdrop-night-star); }
+@keyframes today-backdrop-in { from { opacity: 0; } to { opacity: 1; } }

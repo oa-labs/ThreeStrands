@@ -348,6 +348,16 @@ impl Database {
     }
 
     pub fn set_task_status(&self, id: &str, status: &str, source: &str) -> DbResult<ThreadTask> {
+        self.set_task_status_if_current(id, status, source, None)
+    }
+
+    pub(crate) fn set_task_status_if_current(
+        &self,
+        id: &str,
+        status: &str,
+        source: &str,
+        expected: Option<&str>,
+    ) -> DbResult<ThreadTask> {
         if !matches!(status, "open" | "in_progress" | "completed" | "cancelled") {
             return Err(DatabaseError::invalid("Unknown task status"));
         }
@@ -362,14 +372,25 @@ impl Database {
             Some(source)
         };
         self.with_transaction(|connection| {
-            connection
-                .execute(
-                    "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4 WHERE id=?5",
-                    params![status, completion_source, completed_at, now, id],
-                )?;
-            let task = connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?;
+            let changed = connection.execute(
+                "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4
+                 WHERE id=?5 AND (?6 IS NULL OR updated_at=?6)",
+                params![status, completion_source, completed_at, now, id, expected],
+            )?;
+            if changed == 0 && expected.is_some() {
+                return Err(DatabaseError::invalid(
+                    "This task changed. Refresh Tasks and try again.",
+                ));
+            }
+            let task = connection.query_row(
+                &format!("{} WHERE id = ?1", select_sql()),
+                [id],
+                task_from_row,
+            )?;
             let fields = ["status", "completionSource", "completedAt", "updatedAt"]
-                .into_iter().map(str::to_owned).collect();
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
             record_task(connection, &task, Some(fields))?;
             Ok(task)
         })
@@ -623,6 +644,41 @@ mod tests {
         let reopened = database.set_task_status(&task.id, "open", "user").unwrap();
         assert_eq!(reopened.completion_source, None);
         assert_eq!(reopened.completed_at, None);
+    }
+
+    #[test]
+    fn version_checked_completion_can_restore_in_progress_without_replaying_stale_undo() {
+        let database = database_with_thread();
+        let request = serde_json::from_value(serde_json::json!({
+            "accountId": "account@example.com", "threadId": "account:thread",
+            "subjectSnapshot": "Planning", "title": "Call the library", "kind": "action",
+        }))
+        .unwrap();
+        let task = database.create_task(&request).unwrap();
+        let started = database
+            .set_task_status(&task.id, "in_progress", "user")
+            .unwrap();
+        let completed = database
+            .set_task_status_if_current(&task.id, "completed", "user", Some(&started.updated_at))
+            .unwrap();
+        let restored = database
+            .set_task_status_if_current(
+                &task.id,
+                "in_progress",
+                "user",
+                Some(&completed.updated_at),
+            )
+            .unwrap();
+        assert_eq!(restored.status, "in_progress");
+        assert_eq!(restored.completed_at, None);
+
+        assert!(database
+            .set_task_status_if_current(&task.id, "open", "user", Some(&completed.updated_at))
+            .is_err());
+        assert_eq!(
+            database.list_tasks(None, Some("in_progress")).unwrap()[0].updated_at,
+            restored.updated_at
+        );
     }
 
     #[test]

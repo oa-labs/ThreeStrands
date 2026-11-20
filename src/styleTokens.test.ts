@@ -3,8 +3,9 @@ import { resolve } from "node:path";
 import postcss, { type Declaration, type Rule } from "postcss";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { readStylesheet } from "./test/readStylesheet";
 
-const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
+const css = postcss.parse(readStylesheet("src/styles.css"));
 
 const rootTokens = new Map<string, string>();
 css.walkRules(":root", (rule) => rule.walkDecls(/^--/, (declaration) => { rootTokens.set(declaration.prop, declaration.value); }));

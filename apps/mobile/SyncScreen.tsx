@@ -44,7 +44,7 @@ export function SyncScreen({ state }: { state: ReturnType<typeof useSync> }) {
   }
 
   return <section className="sync-screen" aria-label="Sync settings">
-    <h1>Sync settings</h1>
+    <h2>Sync settings</h2>
     {!status && !issue && <p role="status">Checking sync…</p>}
     {status?.revoked && <p role="status">Desktop revoked this phone. Your notes and tasks are still on this device.</p>}
     {status?.enrolled && !status.revoked && <div className="callout">

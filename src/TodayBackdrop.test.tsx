@@ -8,6 +8,7 @@ import { TodayBackdropSettings } from "./AppearanceSettings";
 import { readExportablePreferences } from "./userPreferences";
 import { TodayBackdrop } from "./TodayBackdrop";
 import { SettingsHarness } from "./test/settingsHarness";
+import { readStylesheet } from "./test/readStylesheet";
 
 vi.mock("./systemFonts", () => ({ listSystemFontFamilies: vi.fn().mockResolvedValue([]) }));
 
@@ -160,7 +161,7 @@ describe("TodayBackdrop", () => {
 
   it("keeps the moon round and fully inset in narrow, wide, and wrapped headers", () => {
     const { rerender } = render(<TodayBackdrop now={at(22)} />);
-    const css = postcss.parse(readFileSync("src/styles.css", "utf8"));
+    const css = postcss.parse(readStylesheet("src/styles.css"));
     const tokens = new Map<string, string>();
     css.walkRules(":root", (rule) => rule.walkDecls(/^--/, (declaration) => { tokens.set(declaration.prop, declaration.value); }));
     const geometry = new Map<string, string>();
@@ -208,7 +209,7 @@ describe("TodayBackdrop", () => {
   });
 
   it("keeps art in the header, tints the gutters behind opaque panels, and respects pointer and motion preferences", () => {
-    const css = postcss.parse(readFileSync("src/styles.css", "utf8"));
+    const css = postcss.parse(readStylesheet("src/styles.css"));
     const rule = (selector: string, atRule?: string) => {
       let found: postcss.Rule | undefined;
       css.walkRules(selector, (candidate) => {
@@ -225,14 +226,16 @@ describe("TodayBackdrop", () => {
     expect(value(base, "background")).toBe("linear-gradient(to bottom, var(--today-sky-top), var(--today-sky-bottom))");
     // The header keeps its sky colors; the night surround has a lighter blue of its own.
     for (const [phase, token] of [["day", "sky"], ["dusk", "dusk"], ["night", "night"]] as const) {
-      const selector = phase === "day" ? ".today-workspace[data-backdrop], .today-backdrop"
-        : `.today-workspace[data-backdrop="${phase}"], .today-backdrop[data-phase="${phase}"]`;
-      expect(value(rule(selector), "--today-sky-top")).toBe(`var(--backdrop-${token}-top)`);
-      expect(value(rule(selector), "--today-sky-bottom")).toBe(`var(--backdrop-${token}-bottom)`);
-      expect(value(rule(selector), "--today-gutter-tint")).toBe(phase === "dusk" ? "25%" : "65%");
+      const workspace = phase === "day" ? ".today-workspace[data-backdrop]" : `.today-workspace[data-backdrop="${phase}"]`;
+      const art = phase === "day" ? ".today-backdrop" : `.today-backdrop[data-phase="${phase}"]`;
+      for (const selector of [workspace, art]) {
+        expect(value(rule(selector), "--today-sky-top")).toBe(`var(--backdrop-${token}-top)`);
+        expect(value(rule(selector), "--today-sky-bottom")).toBe(`var(--backdrop-${token}-bottom)`);
+      }
+      expect(value(rule(workspace), "--today-gutter-tint")).toBe(phase === "dusk" ? "25%" : "65%");
     }
-    expect(value(rule('.today-workspace[data-backdrop="night"], .today-backdrop[data-phase="night"]'), "--today-gutter-color")).toBe("var(--backdrop-night-surround)");
-    expect(value(rule(".today-workspace[data-backdrop], .today-backdrop"), "--today-gutter-color")).toBe("var(--today-sky-top)");
+    expect(value(rule('.today-workspace[data-backdrop="night"]'), "--today-gutter-color")).toBe("var(--backdrop-night-surround)");
+    expect(value(rule(".today-workspace[data-backdrop]"), "--today-gutter-color")).toBe("var(--today-sky-top)");
     expect(value(rule(".today-workspace[data-backdrop]"), "background")).toBe("linear-gradient(to bottom, color-mix(in srgb, var(--today-gutter-color) var(--today-gutter-tint), var(--background)), var(--background) 70%)");
     expect(value(rule(".today-workspace"), "background")).toBe("var(--background)");
     expect(value(rule(".today-work, .today-time"), "background")).toBe("var(--surface)");

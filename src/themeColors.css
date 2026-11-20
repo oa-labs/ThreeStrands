@@ -1,0 +1,235 @@
+:root {
+  color-scheme: dark;
+  --text: #e8e8eb;
+  --background: #111113;
+  --sidebar: #0c0c0e;
+  --surface: #161619;
+  --reader: #121214;
+  --raised: #1d1d21;
+  --hover: #24242a;
+  --selected: #292931;
+  --input: #242429;
+  --code: #1b1b20;
+  --border: #303037;
+  --border-strong: #414149;
+  --muted: #92929c;
+  --secondary: #aaaab2;
+  --body-text: #d2d2d7;
+  --accent: #8078ff;
+  --message-active: #655dde;
+  --link: #aaa6ff;
+  --focus-glow: #6e69d833;
+  --quote-border: #66617f;
+  --star: #e3b341;
+  --primary: #6d66d9;
+  --primary-border: #8078ff;
+  --primary-text: #fff;
+  --error: #f29595;
+  --error-contrast: #2a0d10;
+  --error-strong: #d96b6b;
+  --warning: #e4b85f;
+  --success: #6fce91;
+  --accent-contrast: #fff;
+  --overlay: #0008;
+  --shadow: #000a;
+  /* Today Backdrop art. Day colors stay legible under the header's normal text; dusk and night are dark skies in both themes, under the light --backdrop-ink text the header switches to. styleTokens.test.ts checks every one. */
+  --backdrop-sky-top: #142238;
+  --backdrop-sky-bottom: #182a46;
+  --backdrop-sun: #302c1d;
+  --backdrop-cloud: #1b2c49;
+  --backdrop-dusk-top: #1f1b4d;
+  --backdrop-dusk-bottom: #7f424e;
+  --backdrop-dusk-moon: #efe6c8;
+  --backdrop-dusk-star: #d8d4f0;
+  --backdrop-night-top: #111e34;
+  --backdrop-night-bottom: #243657;
+  --backdrop-night-surround: #1b2c48;
+  --backdrop-night-moon: #f3efd2;
+  --backdrop-night-star: #f4f6ff;
+  --backdrop-ink: #f4f2fb;
+  --backdrop-ink-soft: #d6d2ea;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --text: #24242c;
+  --background: #f6f6f9;
+  --sidebar: #eeeef3;
+  --surface: #fafafd;
+  --reader: #fff;
+  --raised: #fff;
+  --hover: #e9e9f1;
+  --selected: #e7e3fa;
+  --input: #f3f3f8;
+  --code: #f1f1f6;
+  --border: #d8d8e2;
+  --border-strong: #b9b9c9;
+  --muted: #626273;
+  --secondary: #5e5e70;
+  --body-text: #353541;
+  --accent: #6350c6;
+  --message-active: #655dde;
+  --link: #5942b5;
+  --focus-glow: #6350c633;
+  --quote-border: #aaa1c7;
+  --star: #896500;
+  --primary: #6350c6;
+  --primary-border: #6350c6;
+  --error: #b02d3c;
+  --error-contrast: #fff;
+  --error-strong: #8f1f2d;
+  --warning: #8a5b08;
+  --success: #237849;
+  --accent-contrast: #fff;
+  --overlay: #20203855;
+  --shadow: #20203826;
+  --backdrop-sky-top: #dcebf8;
+  --backdrop-sky-bottom: #f3f8fd;
+  --backdrop-sun: #fbe9b3;
+  --backdrop-cloud: #ffffff;
+  --backdrop-dusk-top: #1f1b4d;
+  --backdrop-dusk-bottom: #7f424e;
+  --backdrop-dusk-moon: #efe6c8;
+  --backdrop-dusk-star: #d8d4f0;
+  --backdrop-night-top: #111e34;
+  --backdrop-night-bottom: #243657;
+  --backdrop-night-surround: #dce7f8;
+  --backdrop-night-moon: #f3efd2;
+  --backdrop-night-star: #f4f6ff;
+  --backdrop-ink: #f4f2fb;
+  --backdrop-ink-soft: #d6d2ea;
+}
+
+/* Accent color themes. Each accent re-tints the purple-hued tokens from the
+   blocks above while leaving the neutral surface, text, and state colors
+   alone. The plain [data-accent] block supplies the dark-mode values; the
+   [data-accent][data-theme="light"] block overrides them in light mode. The
+   default "purple" needs no blocks — it is what :root already defines. */
+
+:root[data-accent="blue"] {
+  --accent: #4d8ef5;
+  --message-active: #3568c8;
+  --link: #9cc3fb;
+  --focus-glow: #3b76d833;
+  --quote-border: #5f7396;
+  --primary: #3f74c9;
+  --primary-border: #4d8ef5;
+  --selected: #232d3c;
+}
+:root[data-accent="blue"][data-theme="light"] {
+  --accent: #1a73e8;
+  --message-active: #3568c8;
+  --link: #2a5cc2;
+  --focus-glow: #1a73e833;
+  --quote-border: #a3b3d1;
+  --primary: #1a73e8;
+  --primary-border: #1a73e8;
+  --selected: #e1e9fb;
+}
+
+:root[data-accent="teal"] {
+  --accent: #1a9cb4;
+  --message-active: #147d92;
+  --link: #7fd4e4;
+  --focus-glow: #1d9cb433;
+  --quote-border: #5e8289;
+  --primary: #158094;
+  --primary-border: #1a9cb4;
+  --selected: #1d2d31;
+}
+:root[data-accent="teal"][data-theme="light"] {
+  --accent: #0e7490;
+  --message-active: #147d92;
+  --link: #0c6478;
+  --focus-glow: #0e749033;
+  --quote-border: #9cbcc3;
+  --primary: #0e7490;
+  --primary-border: #0e7490;
+  --selected: #dcf0f3;
+}
+
+:root[data-accent="green"] {
+  --accent: #2ea156;
+  --message-active: #267f49;
+  --link: #8fd8ab;
+  --focus-glow: #2f9e5733;
+  --quote-border: #63816e;
+  --primary: #268447;
+  --primary-border: #2ea156;
+  --selected: #20302a;
+}
+:root[data-accent="green"][data-theme="light"] {
+  --accent: #188038;
+  --message-active: #267f49;
+  --link: #156a3a;
+  --focus-glow: #18803833;
+  --quote-border: #a1c2ae;
+  --primary: #188038;
+  --primary-border: #188038;
+  --selected: #dff3e6;
+}
+
+:root[data-accent="amber"] {
+  --accent: #e3b341;
+  --accent-contrast: #241c07;
+  --message-active: #9d7420;
+  --link: #f0cd7f;
+  --focus-glow: #d9a44133;
+  --quote-border: #8a7d5f;
+  --primary: #8f7129;
+  --primary-border: #e3b341;
+  --selected: #2f2a1c;
+}
+:root[data-accent="amber"][data-theme="light"] {
+  --accent: #896500;
+  --accent-contrast: #fff;
+  --message-active: #9d7420;
+  --link: #74550a;
+  --focus-glow: #89650033;
+  --quote-border: #c8b68f;
+  --primary: #896500;
+  --primary-border: #896500;
+  --selected: #f5edd8;
+}
+
+:root[data-accent="rose"] {
+  --accent: #e25b4d;
+  --message-active: #ad463a;
+  --link: #f5a196;
+  --focus-glow: #e25b4d33;
+  --quote-border: #8a645e;
+  --primary: #c24e42;
+  --primary-border: #e25b4d;
+  --selected: #322321;
+}
+:root[data-accent="rose"][data-theme="light"] {
+  --accent: #c5221f;
+  --message-active: #ad463a;
+  --link: #a1332c;
+  --focus-glow: #c5221f33;
+  --quote-border: #cda4a0;
+  --primary: #c5221f;
+  --primary-border: #c5221f;
+  --selected: #fae6e4;
+}
+
+:root[data-accent="graphite"] {
+  --accent: #8a8a94;
+  --message-active: #5d5d67;
+  --link: #b6b6c0;
+  --focus-glow: #8a8a9433;
+  --quote-border: #6e6e78;
+  --primary: #74747c;
+  --primary-border: #8a8a94;
+  --selected: #2b2b32;
+}
+:root[data-accent="graphite"][data-theme="light"] {
+  --accent: #5f6368;
+  --message-active: #5d5d67;
+  --link: #4a4a53;
+  --focus-glow: #5f636833;
+  --quote-border: #b3b3bd;
+  --primary: #5f6368;
+  --primary-border: #5f6368;
+  --selected: #e9e9ef;
+}

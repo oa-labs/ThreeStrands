@@ -49,7 +49,8 @@ export const mobile = {
   createTask: (title: string, notes: string | null, dueDate: string | null) =>
     invoke<ThreadTask>("mobile_create_task", { title, notes, dueDate }),
   updateTask: (request: TaskEdit) => invoke<ThreadTask>("mobile_update_task", { request }),
-  checkTask: (id: string, checked: boolean) => invoke<ThreadTask>("mobile_check_task", { id, checked }),
+  checkTask: (id: string, checked: boolean, expected: string, restoreStatus?: "in_progress") =>
+    invoke<ThreadTask>("mobile_check_task", { id, checked, expected, restoreStatus }),
   syncStatus: () => invoke<SyncStatus>("mobile_sync_status"),
   syncNow: () => invoke<SyncStatus>("mobile_sync_now"),
   previewJoin: (code: string) => invoke<JoinPreview>("mobile_preview_join", { code }),

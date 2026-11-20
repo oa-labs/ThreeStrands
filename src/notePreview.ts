@@ -102,7 +102,12 @@ export function notePlainText(body: string): string {
 /** The list's preview: plain text, cut with an ellipsis. */
 export function notePreview(body: string): string {
   const text = notePlainText(body);
-  return [...text].length <= NOTE_PREVIEW_CHARS ? text : `${[...text].slice(0, NOTE_PREVIEW_CHARS - 1).join("")}…`;
+  const chars = [...text];
+  if (chars.length <= NOTE_PREVIEW_CHARS) return text;
+  const prefix = chars.slice(0, NOTE_PREVIEW_CHARS - 1).join("");
+  const atWordEnd = /\s/u.test(chars[NOTE_PREVIEW_CHARS - 1]);
+  const wholeWords = atWordEnd ? prefix : prefix.replace(/\s+\S*$/u, "");
+  return `${wholeWords.trimEnd()}…`;
 }
 
 /** Inline task titles and link labels keep literal list-like prefixes. */

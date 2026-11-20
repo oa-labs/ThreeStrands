@@ -325,11 +325,20 @@ async fn mobile_update_task(
 async fn mobile_check_task(
     id: String,
     checked: bool,
+    expected: Option<String>,
+    restore_status: Option<String>,
     state: State<'_, MobileState>,
 ) -> AppResult<ThreadTask> {
     let db = state.database.clone();
-    let status = if checked { "completed" } else { "open" };
-    run_database_task(move || db.set_task_status(&id, status, "user")).await
+    let status = match (checked, restore_status.as_deref()) {
+        (true, _) => "completed",
+        (false, Some("in_progress")) if expected.is_some() => "in_progress",
+        (false, _) => "open",
+    };
+    run_database_task(move || {
+        db.set_task_status_if_current(&id, status, "user", expected.as_deref())
+    })
+    .await
 }
 
 #[derive(Serialize)]

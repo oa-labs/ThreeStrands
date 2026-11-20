@@ -567,6 +567,11 @@ fn recent_notes_follow_visits_and_edits_and_search_skips_trash() {
 #[test]
 fn a_long_body_preview_is_cut_with_an_ellipsis() {
     assert_eq!(preview("a\n\n b"), "a b");
+    let words = "words ".repeat(23);
+    assert_eq!(
+        preview(&format!("{words}longer ending")),
+        format!("{}…", words.trim_end())
+    );
     let long = "x".repeat(PREVIEW_CHARS + 1);
     let cut = preview(&long);
     assert_eq!(cut.chars().count(), PREVIEW_CHARS);

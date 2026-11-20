@@ -576,9 +576,16 @@ fn preview(body: &str) -> String {
     if text.chars().count() <= PREVIEW_CHARS {
         return text;
     }
-    let mut preview: String = text.chars().take(PREVIEW_CHARS - 1).collect();
-    preview.push('…');
-    preview
+    let mut chars = text.chars();
+    let prefix: String = chars.by_ref().take(PREVIEW_CHARS - 1).collect();
+    let boundary = if chars.next().is_some_and(char::is_whitespace) {
+        prefix.trim_end()
+    } else {
+        prefix
+            .rsplit_once(char::is_whitespace)
+            .map_or(prefix.as_str(), |(whole, _)| whole)
+    };
+    format!("{boundary}…")
 }
 
 fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteSummary> {

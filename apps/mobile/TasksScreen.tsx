@@ -1,15 +1,15 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { ThreadTask } from "../../src/domain";
 import { noteTaskAsTask, type NoteTaskRecord } from "../../src/noteEntities";
+import { X } from "lucide-react";
 import { formatDue } from "../../src/taskViews";
 import { errorText, mobile, type TaskEdit } from "./api";
 import { useResource } from "./useResource";
 
-export function TasksScreen({ revision, onChange, onOpenNote, onNew, onEdit, done, setDone }: {
+export function TasksScreen({ revision, onChange, onOpenNote, onEdit, done, setDone }: {
   revision: number;
   onChange(): void;
   onOpenNote(task: NoteTaskRecord): void;
-  onNew(): void;
   onEdit(id: string): void;
   done: boolean;
   setDone(value: boolean): void;
@@ -18,21 +18,40 @@ export function TasksScreen({ revision, onChange, onOpenNote, onNew, onEdit, don
   const { data, error, setData } = useResource(mobile.tasks, [revision, retry]);
   const [pending, setPending] = useState<Set<string>>(() => new Set());
   const [failure, setFailure] = useState<string>();
+  const [undo, setUndo] = useState<{ task: ThreadTask; version: string }>();
+  const [feedbackFocused, setFeedbackFocused] = useState(false);
+  useEffect(() => {
+    if (!undo || feedbackFocused || pending.has(undo.task.id)) return;
+    const timer = window.setTimeout(() => setUndo(undefined), 8_000);
+    return () => window.clearTimeout(timer);
+  }, [undo, feedbackFocused, pending]);
   const tasks = [...(data?.standalone ?? []), ...(data?.fromNotes.map(noteTaskAsTask) ?? [])]
     .filter(task => done ? task.status === "completed" : task.status === "open" || task.status === "in_progress");
 
-  async function check(task: ThreadTask) {
-    const checked = task.status !== "completed";
+  async function check(task: ThreadTask, checked: boolean, undoVersion?: string) {
     setPending(current => new Set(current).add(task.id));
     setFailure(undefined);
     try {
+      let version: string;
       if (task.noteSource) {
         const source = task.noteSource;
-        await mobile.checkNoteItem(source.noteId, source.markerId, source.updatedAt, checked);
-        setData(current => current && { ...current, fromNotes: current.fromNotes.map(item => item.id === task.id ? { ...item, checked } : item) });
+        const note = await mobile.checkNoteItem(source.noteId, source.markerId, undoVersion ?? source.updatedAt, checked);
+        version = note.updatedAt;
+        setData(current => current && { ...current, fromNotes: current.fromNotes.map(item => {
+          if (item.id === task.id) return { ...item, checked, updatedAt: version };
+          return item;
+        }) });
       } else {
-        const saved = await mobile.checkTask(task.id, checked);
+        const saved = await mobile.checkTask(task.id, checked, undoVersion ?? task.updatedAt,
+          undoVersion && task.status === "in_progress" ? "in_progress" : undefined);
+        version = saved.updatedAt;
         setData(current => current && { ...current, standalone: current.standalone.map(item => item.id === saved.id ? saved : item) });
+      }
+      if (checked) {
+        setFeedbackFocused(false);
+        setUndo({ task, version });
+      } else {
+        setUndo(current => current?.task.id === task.id ? undefined : current);
       }
       onChange();
     } catch (error) {
@@ -48,11 +67,18 @@ export function TasksScreen({ revision, onChange, onOpenNote, onNew, onEdit, don
   }
 
   return <section aria-label="Tasks">
-    <div className="section-heading"><h1>Tasks</h1><button onClick={onNew}>New Task</button></div>
     <div className="segments" aria-label="Task views">
       <button aria-pressed={!done} onClick={() => setDone(false)}>Open</button>
       <button aria-pressed={done} onClick={() => setDone(true)}>Completed</button>
     </div>
+    {undo && <div className="action-feedback task-feedback"
+      onFocus={() => setFeedbackFocused(true)}
+      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFeedbackFocused(false); }}>
+      <span role="status">Task completed.</span>
+      <button className="quiet" disabled={pending.has(undo.task.id)}
+        onClick={() => void check(undo.task, false, undo.version)}>Undo</button>
+      <button className="icon-button" aria-label="Dismiss completion message" onClick={() => setUndo(undefined)}><X size={18} aria-hidden="true" /></button>
+    </div>}
     {(error || failure) && <p role="alert">{failure || error} <button onClick={() => setRetry(value => value + 1)}>Refresh</button></p>}
     {!data && !error && <p role="status">Loading tasks…</p>}
     {data && !tasks.length && <p className="muted">{done ? "No completed tasks." : "No open tasks."}</p>}
@@ -63,7 +89,7 @@ export function TasksScreen({ revision, onChange, onOpenNote, onNew, onEdit, don
         return <li key={task.id} className="task-row">
           <button type="button" className="note-check round" role="checkbox" aria-checked={task.status === "completed"}
             aria-label={task.title} disabled={pending.has(task.id) || task.noteSource?.conflicted}
-            onClick={() => void check(task)}>{task.status === "completed" ? "✓" : ""}</button>
+            onClick={() => void check(task, task.status !== "completed")}><span className="check-mark" aria-hidden="true">{task.status === "completed" ? "✓" : ""}</span></button>
           <button className="row-button" onClick={() => {
             if (task.noteSource) onOpenNote(task.noteSource);
             else onEdit(task.id);
@@ -118,7 +144,6 @@ export function TaskForm({ task, onSaved, onCancel }: { task?: ThreadTask; onSav
   }
 
   return <form className="editor" onSubmit={submit}>
-    <h1>{task ? "Task details" : "New Task"}</h1>
     {task?.subjectSnapshot && <p className="muted">Linked to “{task.subjectSnapshot}” on desktop.</p>}
     <label>Title<input required autoFocus={!task} value={title} onChange={event => setTitle(event.target.value)} /></label>
     <label>Notes<textarea value={notes} onChange={event => setNotes(event.target.value)} /></label>
@@ -131,7 +156,7 @@ export function TaskForm({ task, onSaved, onCancel }: { task?: ThreadTask; onSav
     {error && <p role="alert">{error}</p>}
     <div className="note-actions">
       <button className="primary" disabled={saving || !title.trim()}>{task ? "Save Changes" : "Add Task"}</button>
-      <button type="button" onClick={onCancel}>Back</button>
+      <button type="button" onClick={onCancel}>Cancel</button>
     </div>
   </form>;
 }

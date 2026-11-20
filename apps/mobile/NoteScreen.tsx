@@ -1,8 +1,12 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { skyPhase } from "../../src/backdropPreference";
+import { TodayBackdrop } from "../../src/TodayBackdrop";
 import type { Note } from "../../src/domain";
 import { parseNoteTargetKey, todayTarget, type NoteTarget } from "../../src/noteDrafts";
 import type { NoteItem } from "../../src/noteEntities";
-import { errorText, mobile } from "./api";
+import { ActionsMenu } from "./ActionsMenu";
+import { errorText, mobile, type NoteAction } from "./api";
 import { NotePreview } from "./NotePreview";
 import { useMobileNote } from "./useMobileNote";
 import { useResource } from "./useResource";
@@ -18,31 +22,38 @@ const fullDate = new Intl.DateTimeFormat(undefined, { dateStyle: "full" });
 const dayOfWeek = new Intl.DateTimeFormat(undefined, { weekday: "short" });
 const dayOfMonth = new Intl.DateTimeFormat(undefined, { day: "numeric" });
 
-export function DailyNavigation({ date, today, onDate }: {
-  date: string; today: string; onDate(date: string): void;
+const compactDay = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric" });
+const compactDayWithYear = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+
+export function formatDailyHeading(date: string, now: Date) {
+  const day = new Date(`${date}T12:00:00`);
+  return (day.getFullYear() === now.getFullYear() ? compactDay : compactDayWithYear).format(day);
+}
+
+export function DailyNavigation({ date, today, now, backdrop, onDate }: {
+  date: string; today: string; now: Date; backdrop: boolean; onDate(date: string): void;
 }) {
-  return <header className="daily-heading">
-    <div className="section-heading">
-      <h1>{fullDate.format(new Date(`${date}T12:00:00`))}</h1>
-      <button onClick={() => onDate(today)} disabled={date === today}>Today</button>
-    </div>
-    <div className="date-strip" aria-label="Daily notes">
-      <button aria-label="Previous day" onClick={() => onDate(nearbyDate(date, -1))}>‹</button>
+  return <section className="daily-heading" aria-label="Daily note dates" data-sky={backdrop ? skyPhase(now) : undefined}>
+    {backdrop && <TodayBackdrop now={now} />}
+    <div className="date-strip">
+      <button aria-label="Previous day" onClick={() => onDate(nearbyDate(date, -1))}><ChevronLeft size={18} aria-hidden="true" /></button>
       {[-2, -1, 0, 1, 2].map(delta => {
         const day = nearbyDate(date, delta);
         const parsed = new Date(`${day}T12:00:00`);
-        return <button key={day} aria-label={fullDate.format(parsed)} aria-pressed={day === date} onClick={() => onDate(day)}>
+        return <button key={day} aria-label={fullDate.format(parsed)} aria-current={day === today ? "date" : undefined}
+          aria-pressed={day === date} onClick={() => onDate(day)}>
           <span>{dayOfWeek.format(parsed)}</span><strong>{dayOfMonth.format(parsed)}</strong>
         </button>;
       })}
-      <button aria-label="Next day" onClick={() => onDate(nearbyDate(date, 1))}>›</button>
+      <button aria-label="Next day" onClick={() => onDate(nearbyDate(date, 1))}><ChevronRight size={18} aria-hidden="true" /></button>
     </div>
-  </header>;
+    {date !== today && <button className="back-to-today" onClick={() => onDate(today)}>Back to Today</button>}
+  </section>;
 }
 
-export function NoteScreen({ target, revision, focused, startEditing, onOpen, onChange }: {
+export function NoteScreen({ target, revision, focused, startEditing, onOpen, onChange, onTitle }: {
   target: NoteTarget; revision: number; focused?: string; startEditing?: boolean;
-  onOpen(target: NoteTarget): void; onChange(): void;
+  onOpen(target: NoteTarget): void; onChange(): void; onTitle?(title: string): void;
 }) {
   const [editing, setEditing] = useState(startEditing ?? false);
   const [composing, setComposing] = useState(false);
@@ -52,6 +63,7 @@ export function NoteScreen({ target, revision, focused, startEditing, onOpen, on
   const [working, setWorking] = useState(false);
   const [actionError, setActionError] = useState<string>();
   const [actionMessage, setActionMessage] = useState<string>();
+  const [trashedHere, setTrashedHere] = useState(false);
   const textArea = useRef<HTMLTextAreaElement>(null);
   const linkRange = useRef<{ start: number; end: number } | null>(null);
   const savedCopies = useRef(new Set<string>());
@@ -60,6 +72,10 @@ export function NoteScreen({ target, revision, focused, startEditing, onOpen, on
   const conflicts = data?.conflicts ?? [];
   const daily = target.kind === "daily";
   const isEditable = editor.draftReady && !!data && (daily || !!note) && !note?.trashed && conflicts.length === 0;
+
+  useEffect(() => {
+    if (note?.title) onTitle?.(note.title);
+  }, [note?.title, onTitle]);
 
   async function action(run: () => Promise<void>) {
     setWorking(true);
@@ -115,35 +131,38 @@ export function NoteScreen({ target, revision, focused, startEditing, onOpen, on
     });
   }
 
+  function changeNote(actionName: NoteAction) {
+    if (!note) return;
+    void action(async () => {
+      const updated = await mobile.noteAction(note.id, actionName);
+      editor.setData(current => current && { ...current, note: updated });
+      if (actionName === "trash") {
+        setEditing(false);
+        setTrashedHere(true);
+      }
+      if (actionName === "restore") setTrashedHere(false);
+      editor.refresh();
+      onChange();
+    });
+  }
+
   return <section className="note-screen" aria-label={daily ? "Daily Note" : "Note"}>
-    {!daily && note && !editing && <h1>{note.title}</h1>}
     {editor.error && <p role="alert">{editor.error} <button onClick={editor.refresh}>Retry</button></p>}
     {!data && !editor.error && <p role="status">Loading note…</p>}
     {data && !daily && !note && !draft && <p>This note is unavailable.</p>}
-    {note?.trashed && <p role="status">This note is in Trash.</p>}
-    <div className="note-actions">
-      {isEditable && !editing && <button className="primary" onClick={() => setEditing(true)}>{daily && !body ? "Write in Daily Note" : "Edit"}</button>}
+    <div className="note-actions note-toolbar">
+      {isEditable && !editing && <button className="quiet" onClick={() => setEditing(true)}>{daily && !body ? "Write in Daily Note" : "Edit"}</button>}
       {editing && isEditable && !stale && <button className="primary" disabled={saving || composing} onClick={async () => {
         if (await editor.save()) { setEditing(false); onChange(); }
       }}>Done</button>}
-      {note && !note.trashed && <>
-        <button disabled={working} onClick={() => void action(async () => {
-          await mobile.noteAction(note.id, note.starred ? "unstar" : "star");
-          editor.refresh();
-          onChange();
-        })}>{note.starred ? "Unstar" : "Star"}</button>
-        <button disabled={working || !!draft || saving} onClick={() => void action(async () => {
-          await mobile.noteAction(note.id, "trash");
-          setEditing(false);
-          editor.refresh();
-          onChange();
-        })}>Move to Trash</button>
-      </>}
-      {note?.trashed && <button disabled={working} onClick={() => void action(async () => {
-        await mobile.noteAction(note.id, "restore");
-        editor.refresh();
-        onChange();
-      })}>Restore</button>}
+      {note && !note.trashed && <ActionsMenu label="Note actions">
+        <button disabled={working} onClick={() => changeNote(note.starred ? "unstar" : "star")}>{note.starred ? "Unstar" : "Star"}</button>
+        <button className="danger" disabled={working || !!draft || saving} onClick={() => changeNote("trash")}>Move to Trash</button>
+      </ActionsMenu>}
+      {note?.trashed && <div className="action-feedback">
+        <span role="status">{trashedHere ? "Note moved to Trash." : "This note is in Trash."}</span>
+        <button className="quiet" disabled={working} onClick={() => changeNote("restore")}>{trashedHere ? "Undo" : "Restore"}</button>
+      </div>}
     </div>
     {(actionError || editor.saveError) && <p role="alert">{actionError || editor.saveError}</p>}
     {editor.draftError && <p role="alert">
@@ -221,11 +240,11 @@ export function NoteScreen({ target, revision, focused, startEditing, onOpen, on
         placeholder="Write here…" />
       <p role="status" className="muted">{saving ? "Saving…" : editor.draftPending ? "Saving draft…" : draft ? "Draft on this device" : "Saved on this device"}</p>
     </div> : body && <NotePreview body={body} items={!draft ? data?.document?.items ?? [] : []} disabled={!!draft || working || !!note?.trashed || !!conflicts.length}
-      focused={focused} onCheck={check} onWiki={name => void openWiki(name)}
+      daily={daily} focused={focused} onCheck={check} onWiki={name => void openWiki(name)}
       onUrl={url => void action(() => mobile.openUrl(url))} />}
     {data?.document?.warning && <p role="status">{data.document.warning}</p>}
     {!!data?.links?.backlinks.length && <details className="backlinks">
-      <summary>Backlinks</summary>
+      <summary>Backlinks <span>{data.links.backlinks.length}</span><ChevronDown size={18} aria-hidden="true" /></summary>
       <ul className="rows">{data.links.backlinks.map((item, index) => <li key={`${item.noteId}-${index}`}>
         <button className="row-button" onClick={() => onOpen(parseNoteTargetKey(item.noteId))}>
           <strong>{item.title}</strong><span>{item.context}</span>
@@ -257,7 +276,6 @@ export function NewNote({ onSave, onCancel }: { onSave(note: Note): void; onCanc
     finally { setSaving(false); }
   }
   return <form className="editor" onSubmit={submit}>
-    <h1>New Note</h1>
     <label>Title<input disabled={!journal.ready || saving} value={draft.title} autoFocus required onChange={event => edit({ title: event.target.value })} /></label>
     <label>Note text<textarea disabled={!journal.ready || saving} value={draft.body} onChange={event => edit({ body: event.target.value })} /></label>
     {(issue || journal.error) && <p role="alert">{issue || journal.error} {!journal.ready && <button type="button" onClick={journal.retry}>Retry</button>}</p>}

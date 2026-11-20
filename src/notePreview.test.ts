@@ -14,6 +14,8 @@ describe("note previews", () => {
   });
 
   it("cut at the preview length", () => {
+    const words = "words ".repeat(23);
+    expect(notePreview(`${words}longer ending`)).toBe(`${words.trimEnd()}…`);
     const below = "a".repeat(NOTE_PREVIEW_CHARS - 1);
     expect(notePreview(below)).toBe(below);
     expect(notePreview("a".repeat(NOTE_PREVIEW_CHARS))).toBe("a".repeat(NOTE_PREVIEW_CHARS));
