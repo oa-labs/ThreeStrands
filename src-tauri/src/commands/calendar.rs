@@ -879,6 +879,20 @@ pub(crate) async fn list_events_created_between(
                 .unwrap_or_else(|| meeting.event.id.clone()),
         )
     });
+    // Guests Google does not name take their name from the user's contacts.
+    let addresses: Vec<String> = merged
+        .iter()
+        .flat_map(|meeting| meeting.event.attendees.iter().cloned())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if !addresses.is_empty() {
+        let database = state.database.clone();
+        let names =
+            crate::run_database_task(move || database.contact_names_for_addresses(&addresses))
+                .await?;
+        calendar::fill_attendee_names(&mut merged, &names);
+    }
     Ok(CreatedEventsResult {
         events: merged,
         errors,

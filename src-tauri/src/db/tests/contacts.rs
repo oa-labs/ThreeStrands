@@ -99,6 +99,71 @@ fn saved_contact_search_links_addresses_and_enforces_unique_ownership() {
 }
 
 #[test]
+fn contact_names_for_addresses_prefers_saved_names_then_system_and_skips_unnamed() {
+    use crate::system_contacts::{ContactConnection, SystemContact};
+    let database = database();
+    let save = |name: Option<&str>, addresses: &[&str]| {
+        database
+            .save_contact_profile(&SaveContactRequest {
+                birthday: None,
+                keep_in_touch: None,
+                id: None,
+                display_name: name.map(Into::into),
+                role: None,
+                company: None,
+                location: None,
+                bio: None,
+                notes: None,
+                links: vec![],
+                photo_data: None,
+                favorite: false,
+                addresses: addresses.iter().map(|a| a.to_string()).collect(),
+                time_zone: None,
+            })
+            .unwrap()
+    };
+    save(Some("Jane Rivera"), &["jane@example.com"]);
+    database
+        .replace_system_contacts(
+            &ContactConnection {
+                sources: vec![],
+                selected_sources: vec!["icloud".into()],
+                refreshed_at: None,
+            },
+            &[
+                SystemContact {
+                    id: "1".into(),
+                    source_id: "icloud".into(),
+                    display_name: Some("Jane (Mac)".into()),
+                    company: None,
+                    role: None,
+                    addresses: vec!["jane@example.com".into(), "mac@example.com".into()],
+                },
+                SystemContact {
+                    id: "2".into(),
+                    source_id: "icloud".into(),
+                    display_name: None,
+                    company: None,
+                    role: None,
+                    addresses: vec!["nameless@example.com".into()],
+                },
+            ],
+        )
+        .unwrap();
+    let names = database
+        .contact_names_for_addresses(&[
+            "JANE@example.com".into(),
+            "mac@example.com".into(),
+            "nameless@example.com".into(),
+            "stranger@example.com".into(),
+        ])
+        .unwrap();
+    assert_eq!(names.len(), 2);
+    assert_eq!(names["jane@example.com"], "Jane Rivera");
+    assert_eq!(names["mac@example.com"], "Jane (Mac)");
+}
+
+#[test]
 fn contact_ids_for_addresses_maps_every_linked_address_to_its_saved_owner() {
     let database = database();
     let saved = database

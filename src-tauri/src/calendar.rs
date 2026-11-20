@@ -188,6 +188,18 @@ struct GoogleEvents {
     /// The caller's access to the listed calendar, for example `owner` or `reader`.
     #[serde(default)]
     access_role: String,
+}
+
+/// A page of an `updatedMin` listing. Items stay raw: Google always includes
+/// events deleted since then, as stubs with no start or end, and one stub must
+/// not fail the whole page.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleUpdatedEvents {
+    #[serde(default)]
+    items: Vec<serde_json::Value>,
+    #[serde(default)]
+    access_role: String,
     #[serde(default)]
     next_page_token: Option<String>,
 }
@@ -511,6 +523,8 @@ struct GoogleExtendedProperties {
 #[derive(Deserialize)]
 struct GoogleAttendee {
     email: Option<String>,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
     #[serde(rename = "responseStatus")]
     response_status: Option<String>,
     #[serde(rename = "self", default)]
@@ -782,6 +796,29 @@ pub struct CreatedEvent {
     pub event: ScheduleEvent,
     /// When the user created the event (RFC 3339), as Google reports it.
     pub created: String,
+    /// Display names Google gives the guests, by lowercased address; only
+    /// guests it names appear. Callers add names from contacts.
+    pub attendee_names: BTreeMap<String, String>,
+}
+
+/// The names Google gives `people`, keyed by lowercased address.
+fn attendee_names(
+    organizer: Option<&GoogleAttendee>,
+    attendees: &[GoogleAttendee],
+    people: &[String],
+) -> BTreeMap<String, String> {
+    let mut names = BTreeMap::new();
+    for person in organizer.into_iter().chain(attendees) {
+        let (Some(email), Some(name)) = (person.email.as_deref(), person.display_name.as_deref())
+        else {
+            continue;
+        };
+        let (email, name) = (email.trim().to_ascii_lowercase(), name.trim());
+        if !name.is_empty() && people.contains(&email) {
+            names.entry(email).or_insert_with(|| name.to_string());
+        }
+    }
+    names
 }
 
 /// Events on one calendar that the user organized with at least one other
@@ -833,13 +870,40 @@ fn created_meetings(
             .then_some((event, created))
         })
         .collect();
-    let times: Vec<String> = kept.iter().map(|(_, created)| created.clone()).collect();
-    let (events, _): (Vec<_>, Vec<_>) = kept.into_iter().unzip();
-    normalize_events(events, account_id, calendar_id, writable)
-        .into_iter()
-        .zip(times)
-        .map(|(event, created)| CreatedEvent { event, created })
+    // Normalize one event at a time: a dropped event must not shift the
+    // created times of the ones after it.
+    kept.into_iter()
+        .filter_map(|(event, created)| {
+            let names = attendee_names(
+                event.organizer.as_ref(),
+                &event.attendees,
+                &event_people(event.organizer.as_ref(), &event.attendees),
+            );
+            let event = normalize_events(vec![event], account_id, calendar_id, writable)
+                .into_iter()
+                .next()?;
+            Some(CreatedEvent {
+                event,
+                created,
+                attendee_names: names,
+            })
+        })
         .collect()
+}
+
+/// Adds contact names for guests Google did not name. Google's own display
+/// name wins, and an address with no name anywhere gets no entry.
+pub fn fill_attendee_names(events: &mut [CreatedEvent], contact_names: &HashMap<String, String>) {
+    for meeting in events {
+        for email in &meeting.event.attendees {
+            if let Some(name) = contact_names.get(email) {
+                meeting
+                    .attendee_names
+                    .entry(email.clone())
+                    .or_insert_with(|| name.clone());
+            }
+        }
+    }
 }
 
 /// Reads every page of events on a calendar updated since `created_min`.
@@ -869,10 +933,15 @@ async fn fetch_updated_pages(
         if let Some(token) = &page_token {
             request = request.query(&[("pageToken", token)]);
         }
-        let page: GoogleEvents =
+        let page: GoogleUpdatedEvents =
             checked_json(request.send().await.map_err(|error| error.to_string())?).await?;
         writable = writable_access_role(&page.access_role);
-        events.extend(page.items);
+        // Stubs for deleted or cancelled events have no start; skip them.
+        events.extend(
+            page.items
+                .into_iter()
+                .filter_map(|item| serde_json::from_value::<GoogleEvent>(item).ok()),
+        );
         match page.next_page_token.filter(|token| !token.is_empty()) {
             None => break,
             Some(token) => {
@@ -2230,36 +2299,42 @@ mod tests {
                     attendees: vec![
                         GoogleAttendee {
                             email: Some("work@example.com".into()),
+                            display_name: None,
                             response_status: Some("needsAction".into()),
                             is_self: true,
                             resource: false,
                         },
                         GoogleAttendee {
                             email: Some("Jane@Example.com".into()),
+                            display_name: None,
                             response_status: Some("accepted".into()),
                             is_self: false,
                             resource: false,
                         },
                         GoogleAttendee {
                             email: Some("bob@example.com".into()),
+                            display_name: None,
                             response_status: Some("declined".into()),
                             is_self: false,
                             resource: false,
                         },
                         GoogleAttendee {
                             email: Some("kim@example.com".into()),
+                            display_name: None,
                             response_status: Some("delegated".into()),
                             is_self: false,
                             resource: false,
                         },
                         GoogleAttendee {
                             email: Some("room-4b@resource.example.com".into()),
+                            display_name: None,
                             response_status: Some("accepted".into()),
                             is_self: false,
                             resource: true,
                         },
                         GoogleAttendee {
                             email: None,
+                            display_name: None,
                             response_status: None,
                             is_self: false,
                             resource: false,
@@ -2267,6 +2342,7 @@ mod tests {
                     ],
                     organizer: Some(GoogleAttendee {
                         email: Some("jane@example.com".into()),
+                        display_name: None,
                         response_status: None,
                         is_self: false,
                         resource: false,
@@ -2649,6 +2725,138 @@ mod tests {
         }
         assert_eq!(queries[1]["pageToken"], "second");
         assert_eq!(queries[2]["pageToken"], "third");
+    }
+
+    #[tokio::test]
+    async fn deleted_and_cancelled_stubs_do_not_fail_the_page() {
+        use axum::{routing::get, Json, Router};
+        let page = || async {
+            Json(serde_json::json!({"accessRole": "owner", "items": [
+                {"kind": "calendar#event", "etag": "\"1\"", "id": "gone", "status": "cancelled"},
+                {"kind": "calendar#event", "id": "weekly_20270127", "status": "cancelled",
+                 "recurringEventId": "weekly", "originalStartTime": {"dateTime": "2027-01-27T09:30:00-07:00"}},
+                {"id": "real", "start": {"date": "2026-12-05"}, "end": {"date": "2026-12-06"}}
+            ]}))
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url =
+            url::Url::parse(&format!("http://{}/events", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/events", get(page)))
+                .await
+                .unwrap()
+        });
+        let (events, writable) =
+            fetch_updated_pages(&calendar_client().unwrap(), "t", url, WINDOW_MIN, "UTC")
+                .await
+                .unwrap();
+        server.abort();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            ["real"]
+        );
+        assert!(writable);
+    }
+
+    #[test]
+    fn created_times_stay_paired_when_an_earlier_event_is_dropped() {
+        let broken = meeting(
+            "broken",
+            serde_json::json!({"created": "2026-12-02T09:00:00Z", "start": {}}),
+        );
+        let first = meeting(
+            "first",
+            serde_json::json!({"created": "2026-12-02T10:00:00Z"}),
+        );
+        let second = meeting(
+            "second",
+            serde_json::json!({"created": "2026-12-02T11:00:00Z"}),
+        );
+        let found = created_meetings(
+            vec![broken, first, second],
+            "me@example.com",
+            "primary",
+            true,
+            WINDOW_MIN,
+            WINDOW_MAX,
+        );
+        let pairs: Vec<_> = found
+            .iter()
+            .map(|m| (m.event.id.as_str(), m.created.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("primary:first", "2026-12-02T10:00:00Z"),
+                ("primary:second", "2026-12-02T11:00:00Z")
+            ]
+        );
+    }
+
+    #[test]
+    fn google_display_names_are_kept_for_guests_and_blank_ones_ignored() {
+        let found = created_meetings(
+            vec![meeting(
+                "named",
+                serde_json::json!({
+                    "organizer": {"email": "me@example.com", "self": true, "displayName": "Me"},
+                    "attendees": [
+                        {"email": "me@example.com", "self": true, "displayName": "Me"},
+                        {"email": "Ana@Example.com", "displayName": "  Ana Diaz "},
+                        {"email": "blank@example.com", "displayName": "   "},
+                        {"email": "plain@example.com"}
+                    ]
+                }),
+            )],
+            "me@example.com",
+            "primary",
+            true,
+            WINDOW_MIN,
+            WINDOW_MAX,
+        );
+        assert_eq!(found[0].attendee_names.len(), 1);
+        assert_eq!(found[0].attendee_names["ana@example.com"], "Ana Diaz");
+        let json = serde_json::to_value(&found[0]).unwrap();
+        assert_eq!(json["attendeeNames"]["ana@example.com"], "Ana Diaz");
+    }
+
+    #[test]
+    fn guest_names_come_from_google_then_contacts_and_unknown_guests_get_none() {
+        let mut found = created_meetings(
+            vec![meeting(
+                "names",
+                serde_json::json!({"attendees": [
+                    {"email": "me@example.com", "self": true},
+                    {"email": "ana@example.com", "displayName": "Ana (Google)"},
+                    {"email": "ben@example.com", "displayName": " "},
+                    {"email": "cy@example.com"},
+                    {"email": "stranger@example.com"}
+                ]}),
+            )],
+            "me@example.com",
+            "primary",
+            true,
+            WINDOW_MIN,
+            WINDOW_MAX,
+        );
+        let contacts: HashMap<String, String> = [
+            ("ana@example.com", "Ana (Contacts)"),
+            ("ben@example.com", "Ben Contact"),
+            ("cy@example.com", "Cy Contact"),
+        ]
+        .into_iter()
+        .map(|(email, name)| (email.to_string(), name.to_string()))
+        .collect();
+        fill_attendee_names(&mut found, &contacts);
+        let names = &found[0].attendee_names;
+        assert_eq!(names["ana@example.com"], "Ana (Google)");
+        assert_eq!(names["ben@example.com"], "Ben Contact");
+        assert_eq!(names["cy@example.com"], "Cy Contact");
+        assert!(!names.contains_key("stranger@example.com"));
+        assert!(!names.contains_key("me@example.com"));
     }
 
     #[tokio::test]
@@ -3185,6 +3393,7 @@ mod tests {
             (0..count)
                 .map(|index| GoogleAttendee {
                     email: Some(format!("person{index}@example.com")),
+                    display_name: None,
                     response_status: None,
                     is_self: false,
                     resource: false,

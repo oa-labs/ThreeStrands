@@ -456,6 +456,9 @@ describe("showcase dataset", () => {
     expect(events.every((event) => !event.canRespond && event.attendees?.length && !event.sourceTaskId && !event.eventType
       && event.created >= from && event.created < to)).toBe(true);
     expect(events.map((event) => event.created)).toEqual(events.map((event) => event.created).sort().reverse());
+    const named = events.flatMap((event) => Object.entries(event.attendeeNames ?? {}).map(([address, name]) => ({ event, address, name })));
+    expect(named.length).toBeGreaterThan(0);
+    expect(named.every(({ event, address, name }) => event.attendees?.includes(address) && name.trim() && name !== address)).toBe(true);
     const [first] = events;
     const exact = await client.listEventsCreatedBetween(first!.created, new Date(Date.parse(first!.created) + 1).toISOString(), "UTC");
     expect(exact.events.map((event) => event.id)).toContain(first!.id);

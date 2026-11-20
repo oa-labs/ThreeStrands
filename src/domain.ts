@@ -183,7 +183,11 @@ export type ScheduleEvent = {
 };
 
 /** A meeting the user set up, with when they created it (ISO). */
-export type CreatedScheduleEvent = ScheduleEvent & { created: string };
+export type CreatedScheduleEvent = ScheduleEvent & {
+  created: string;
+  /** Names for guests, by lowercased address; only guests with a known name appear. */
+  attendeeNames?: Record<string, string>;
+};
 
 export type CreatedEventsResult = {
   events: CreatedScheduleEvent[];
