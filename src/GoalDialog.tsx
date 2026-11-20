@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
 import type { CreateGoalRequest, Goal, GoalHorizon, GoalStatus, UpdateGoalRequest } from "./domain";
 import { errorMessage } from "./errors";
@@ -55,7 +55,7 @@ export function GoalDialog({
   defaultAccountId: string | null;
   now?: Date;
   onCreate(request: CreateGoalRequest): Promise<void>;
-  onUpdate(request: Omit<UpdateGoalRequest, "id">): Promise<void>;
+  onUpdate(request: Omit<UpdateGoalRequest, "id">): Promise<Goal>;
   onDelete(): Promise<void>;
   onClose(): void;
 }) {
@@ -83,6 +83,10 @@ export function GoalDialog({
   const [busy, setBusy] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
+  const savedGoal = useRef(goal);
+  const pendingSave = useRef<{ drafts: GoalDrafts; done: Promise<boolean> } | null>(null);
+  const closing = useRef(false);
+  useEffect(() => { savedGoal.current = goal; }, [goal]);
 
   const candidates = useMemo(
     () => parentCandidates(goals, { id: goal?.id ?? "", accountId: drafts.accountId, horizon: drafts.horizon, period: drafts.period })
@@ -90,25 +94,39 @@ export function GoalDialog({
     [drafts.accountId, drafts.horizon, drafts.parentGoalId, drafts.period, goal?.id, goals],
   );
 
-  /** Saves the fields of an existing goal that differ from it. */
-  const commit = (next: GoalDrafts = draftsRef.current) => {
-    if (!goal) return;
-    const request: Omit<UpdateGoalRequest, "id"> = {};
-    const title = next.title.trim();
-    if (!title) {
-      setError("A goal needs a title.");
-    } else if (title !== goal.title) {
-      request.title = title;
-    }
-    const notes = next.notes.trim() || null;
-    if (notes !== goal.notes) request.notes = notes;
-    if (next.horizon !== goal.horizon) request.horizon = next.horizon;
-    if (next.period !== goal.period) request.period = next.period;
-    if (next.status !== goal.status) request.status = next.status;
-    if ((next.parentGoalId || null) !== goal.parentGoalId) request.parentGoalId = next.parentGoalId || null;
-    if (Object.keys(request).length === 0) return;
-    if (title) setError(null);
-    onUpdate(request).catch((reason) => setError(errorMessage(reason)));
+  const commit = (next: GoalDrafts = draftsRef.current): Promise<boolean> => {
+    const previous = pendingSave.current;
+    if (previous?.drafts === next) return previous.done;
+
+    // Diff against the last completed write. A newer draft may undo a field
+    // change that an earlier blur is still saving.
+    const save = async () => {
+      const current = savedGoal.current;
+      if (!current) return true;
+      const request: Omit<UpdateGoalRequest, "id"> = {};
+      const title = next.title.trim();
+      if (title && title !== current.title) request.title = title;
+      const notes = next.notes.trim() || null;
+      if (notes !== current.notes) request.notes = notes;
+      if (next.horizon !== current.horizon) request.horizon = next.horizon;
+      if (next.period !== current.period) request.period = next.period;
+      if (next.status !== current.status) request.status = next.status;
+      if ((next.parentGoalId || null) !== current.parentGoalId) request.parentGoalId = next.parentGoalId || null;
+      if (!title) setError("A goal needs a title.");
+      if (Object.keys(request).length === 0) return true;
+      if (title) setError(null);
+      try {
+        savedGoal.current = await onUpdate(request);
+        return true;
+      } catch (reason) {
+        setError(errorMessage(reason));
+        return false;
+      }
+    };
+    const done = previous ? previous.done.then(save) : save();
+    pendingSave.current = { drafts: next, done };
+    void done.then(() => { if (pendingSave.current?.done === done) pendingSave.current = null; });
+    return done;
   };
 
   const change = (patch: Partial<GoalDrafts>, save = false) => {
@@ -120,12 +138,17 @@ export function GoalDialog({
     }
     draftsRef.current = next;
     setDrafts(next);
-    if (save) commit(next);
+    if (save) void commit(next);
   };
 
   const close = () => {
-    commit();
-    onClose();
+    if (closing.current || busy) return;
+    closing.current = true;
+    const next = draftsRef.current;
+    void commit(next).then((saved) => {
+      closing.current = false;
+      if (saved && next === draftsRef.current) onClose();
+    });
   };
 
   const create = async () => {
@@ -167,7 +190,7 @@ export function GoalDialog({
           else void create();
         } else if (editing && event.key === "Enter" && event.target instanceof HTMLInputElement) {
           event.preventDefault();
-          commit();
+          void commit();
         }
       }}>
         {!editing && !defaultAccountId && accountOptions.length > 1 ? <label>
@@ -179,7 +202,7 @@ export function GoalDialog({
         </label> : null}
         <label className="task-detail-title-field">
           <span>Goal</span>
-          <input ref={titleRef} value={drafts.title} onChange={(event) => change({ title: event.target.value })} onBlur={() => commit()} maxLength={240} placeholder="What do you want to achieve?" />
+          <input ref={titleRef} value={drafts.title} onChange={(event) => change({ title: event.target.value })} onBlur={() => { void commit(); }} maxLength={240} placeholder="What do you want to achieve?" />
         </label>
         <div className="task-detail-row">
           <label><span>Horizon</span><select value={drafts.horizon} onChange={(event) => {
@@ -204,7 +227,7 @@ export function GoalDialog({
         </select></label> : null}
         <label>
           <span>Notes</span>
-          <textarea value={drafts.notes} onChange={(event) => change({ notes: event.target.value })} onBlur={() => commit()} rows={4} maxLength={8000} placeholder="Why it matters, how you'll know it's done" />
+          <textarea value={drafts.notes} onChange={(event) => change({ notes: event.target.value })} onBlur={() => { void commit(); }} rows={4} maxLength={8000} placeholder="Why it matters, how you'll know it's done" />
         </label>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         {editing ? <footer className="task-detail-hints goal-dialog-footer">

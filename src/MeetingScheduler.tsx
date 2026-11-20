@@ -28,6 +28,8 @@ type CheckState =
   | { phase: "specific"; check: ProposedTimeCheck; conflictTitles: string[]; match: CalendarMatch | null; dayEvents: ScheduleEvent[] | null }
   | { phase: "range"; candidates: AvailabilityCandidate[]; verified: boolean; unchecked: string[]; errors: string[] };
 
+type DayLookup = { day: string; identity: EventIdentity } & ({ match: CalendarMatch | null } | { error: string });
+
 /** Names the calendars a check could not read, once for the whole card, such as "Couldn't check Team, so these times may conflict with it." */
 export function uncheckedNote(unchecked: string[], subject: "this time" | "these times"): string {
   if (unchecked.length === 0) return `Some calendars couldn’t be checked, so ${subject} may conflict with them.`;
@@ -193,9 +195,10 @@ export function MeetingScheduler({
   /** The caller's own actions, after the scheduler's, while the event is not on the calendar. */
   extraActions?: ReactNode;
 }) {
-  // Plans computed from "now" differ on every render; keep the one this
-  // scheduler mounted with. Callers key the scheduler by what it schedules.
-  const [plan] = useState(initialPlan);
+  // Searches computed from "now" differ on every render. A date-only
+  // invitation names an explicit day and follows any change to that day.
+  const [mountedPlan] = useState(initialPlan);
+  const plan = mountedPlan.day ? initialPlan : mountedPlan;
   // Re-check only when preference values change, not when an equal object
   // arrives: replacing the result with "Checking…" reads as a flash.
   const profileChoice = useContext(AvailabilityProfileChoiceContext);
@@ -341,19 +344,20 @@ export function MeetingScheduler({
     return () => { current = false; };
     // `attempt` re-runs after a failure or a calendar change.
   }, [calendarConnected, query, attempt, run, needsHours]);
-  // A bare day is not checked for conflicts, only for the event already being on it.
-  const [dayMatch, setDayMatch] = useState<CalendarMatch | null>(null);
+  // A date-only lookup checks whether this event is already on that day.
+  const day = plan.day;
+  const [dayLookup, setDayLookup] = useState<DayLookup | null>(null);
+  const currentDay = calendarConnected && !query && dayLookup?.day === day && dayLookup?.identity === identity ? dayLookup : null;
+  const dayMatch = currentDay && "match" in currentDay ? currentDay.match : null;
   useEffect(() => {
-    const day = plan.day;
     if (!calendarConnected || query || !day || !identity) return;
     let current = true;
     const [year, month, date] = day.split("-").map(Number);
     eventsOnDay(new Date(year, month - 1, date))
-      .then((events) => { if (current) setDayMatch(findDayMatch(identity, day, events)); })
-      // Without the schedule the day still adds as usual.
-      .catch(() => undefined);
+      .then((events) => { if (current) setDayLookup({ day, identity, match: findDayMatch(identity, day, events) }); })
+      .catch((reason) => { if (current) setDayLookup({ day, identity, error: errorMessage(reason) }); });
     return () => { current = false; };
-  }, [calendarConnected, plan.day, query, identity]);
+  }, [calendarConnected, day, query, identity, attempt]);
   const matchedEvent = useStableValue(query
     ? (state.phase === "specific" && state.match?.kind === "same" ? state.match.event : null)
     : (plan.day ? dayMatch?.event ?? null : null), sameMatchedEvent);
@@ -426,12 +430,15 @@ export function MeetingScheduler({
     </div>;
   }
   // A bare day or an undated event has nothing to check against the calendar.
-  const day = plan.day;
   if (!query && day) {
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
       {/* The calendar copy says when it happens, which the email did not. */}
       <p className="meeting-slot">{formatDay(day)} · {dayMatch ? matchedTime(dayMatch.event, timeZone) : "Time not set"}</p>
       {dayMatch ? <p className="meeting-slot-status meeting-slot-added"><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> Already on your calendar</p> : null}
+      {currentDay && "error" in currentDay ? <div className="meeting-scheduler-error" role="alert">
+        <p>Couldn’t check whether this event is already on your calendar. {currentDay.error}</p>
+        <button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button>
+      </div> : null}
       {dayMatch ? <div className="meeting-scheduler-actions">
         {onOpenCalendarEvent ? <button type="button" className="btn btn-sm btn-primary" onClick={() => onOpenCalendarEvent(dayMatch.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
         {matchedActions}

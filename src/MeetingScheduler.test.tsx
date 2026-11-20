@@ -502,6 +502,41 @@ describe("MeetingScheduler", () => {
       expect(screen.queryByText("Already on your calendar")).not.toBeInTheDocument();
     });
 
+    it.each(["date", "meeting"])("clears an earlier calendar match when the %s changes and retries a failed lookup", async (change) => {
+      const fromDay = "2026-11-07";
+      const toDay = change === "date" ? "2026-11-08" : fromDay;
+      const title = change === "meeting" ? "Fall Gala" : "Pittsburgh Marathon";
+      const dayPlan: SchedulePlan = { query: null, day: fromDay, durationMinutes: 30, timeZoneAssumed: false, announced: true };
+      const first = { id: "race", accountId: "you@example.com", title: "Pittsburgh Marathon", allDay: true, start: fromDay, end: "2026-11-08" };
+      const next = { ...first, id: "current", title, start: toDay, end: "2026-11-09" };
+      let reject!: (reason: Error) => void;
+      const list = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValueOnce({ events: [first], errors: [] })
+        .mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }))
+        .mockResolvedValueOnce({ events: [next], errors: [] });
+      const onMatchChange = vi.fn();
+      const onOpenCalendarEvent = vi.fn();
+      const handlers = {
+        onMatchChange, onOpenCalendarEvent,
+        onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onOpenCalendarSettings: vi.fn(),
+      };
+      const view = render(<MeetingScheduler plan={dayPlan} identity={{ title: first.title }} preferences={preferences} calendarConnected {...handlers} />);
+      expect(await screen.findByRole("button", { name: "Open in Calendar" })).toBeInTheDocument();
+      await waitFor(() => expect(onMatchChange).toHaveBeenLastCalledWith(first));
+
+      view.rerender(<MeetingScheduler plan={{ ...dayPlan, day: toDay }} identity={{ title }} preferences={preferences} calendarConnected {...handlers} />);
+      expect(screen.queryByRole("button", { name: "Open in Calendar" })).not.toBeInTheDocument();
+      await waitFor(() => expect(onMatchChange).toHaveBeenLastCalledWith(null));
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+      await act(async () => reject(new Error("Calendar temporarily unavailable")));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Calendar temporarily unavailable");
+      expect(screen.queryByText("Already on your calendar")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Open in Calendar" }));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(list).toHaveBeenCalledTimes(3);
+      expect(onOpenCalendarEvent).toHaveBeenCalledExactlyOnceWith(next);
+    });
+
     it("finds an event added from this email at another time that day, even when the suggested time is free", async () => {
       vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       // 23:00Z is 6:00 PM in America/New_York, an hour after the suggested 4:00 PM ends.

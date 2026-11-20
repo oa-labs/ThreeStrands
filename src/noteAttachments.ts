@@ -1,4 +1,5 @@
 import { mailClient } from "./data/client";
+import { errorMessage, logBackgroundFailure } from "./errors";
 import { formatAttachmentSize } from "./threadPresentation";
 
 /** How a note's Markdown names an attached file: `attachment:<id>`. */
@@ -25,18 +26,29 @@ export type NoteFiles = {
 };
 
 /**
- * The files of the note `noteId`. A failure is reported through `onError`.
- * An image another device added that hasn't downloaded yet waits, and
- * appears once `retry` finds it here (call it after each sync).
+ * Reports failures to save or open files through `onError`.
+ * Images that are still downloading or could not be read wait for `retry`
+ * after sync, so the existing editor image can appear as soon as it's ready.
  */
 export function noteFiles(noteId: () => string | null, onError: (message: string) => void): NoteFiles & { retry(): void } {
   const images = new Map<string, Promise<string | undefined>>();
-  const waiting = new Map<string, Array<(url: string | undefined) => void>>();
-  const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
+  const waiting = new Set<() => Promise<void>>();
+  const reportImageFailure = logBackgroundFailure("Note attachment image");
 
-  const load = (id: string): Promise<string | null> => mailClient.noteAttachmentImage(id);
-  const waitFor = (id: string) => new Promise<string | undefined>((resolve) => {
-    waiting.set(id, [...waiting.get(id) ?? [], resolve]);
+  const readImage = (id: string) => new Promise<string | undefined>((resolve) => {
+    const read = async () => {
+      waiting.delete(read);
+      try {
+        const url = await mailClient.noteAttachmentImage(id);
+        if (url) { resolve(url); return; }
+        const attachment = await mailClient.noteAttachment(id);
+        if (!(attachment?.image && !attachment.available)) { resolve(undefined); return; }
+      } catch (reason) {
+        reportImageFailure(reason);
+      }
+      waiting.add(read);
+    };
+    void read();
   });
 
   return {
@@ -51,7 +63,7 @@ export function noteFiles(noteId: () => string | null, onError: (message: string
         const attachment = await mailClient.addNoteAttachment(id, file);
         return `${ATTACHMENT_SCHEME}${attachment.id}`;
       } catch (reason) {
-        onError(message(reason));
+        onError(errorMessage(reason));
         return undefined;
       }
     },
@@ -60,13 +72,7 @@ export function noteFiles(noteId: () => string | null, onError: (message: string
       if (!id) return Promise.resolve(undefined);
       let found = images.get(id);
       if (!found) {
-        found = load(id).then(async (url) => {
-          if (url) return url;
-          const attachment = await mailClient.noteAttachment(id);
-          // Not here yet: show it once sync brings it. Anything else isn't a picture to show.
-          if (attachment && attachment.image && !attachment.available) return waitFor(id);
-          return undefined;
-        }).catch(() => undefined);
+        found = readImage(id);
         images.set(id, found);
       }
       return found;
@@ -79,16 +85,10 @@ export function noteFiles(noteId: () => string | null, onError: (message: string
     },
     open(href) {
       const id = attachmentIdOf(href);
-      if (id) void mailClient.openNoteAttachment(id).catch((reason) => onError(message(reason)));
+      if (id) void mailClient.openNoteAttachment(id).catch((reason) => onError(errorMessage(reason)));
     },
     retry() {
-      for (const [id, resolvers] of waiting) {
-        void load(id).then((url) => {
-          if (!url) return;
-          waiting.delete(id);
-          for (const resolve of resolvers) resolve(url);
-        }, () => undefined);
-      }
+      for (const read of waiting) void read();
     },
   };
 }

@@ -1,4 +1,5 @@
 import { mailClient } from "./data/client";
+import { errorMessage } from "./errors";
 import { notesChanged, prepareNoteMutation } from "./noteMutations";
 import { noteTargetKey } from "./noteDrafts";
 import type { AddToNoteTarget } from "./noteEntities";
@@ -18,9 +19,9 @@ export type AddToNoteChoice =
  * Add to Note: one guarded native write of a passage (or a link to the
  * conversation) and copies of the chosen files, after saving any open typing
  * in the note. A meeting without a note first gets one, as Add Note's
- * "Create backlinked note" does; if the addition then fails, that is taken
- * back too. Undo restores the note while nothing changed it since, deletes
- * the files this action stored, and moves a note it created to Trash.
+ * "Create backlinked note" does; if the addition fails, try taking back
+ * the meeting note setup. Undo restores the note while nothing changed it
+ * since, deletes the files this action stored, and moves a note it created to Trash.
  */
 export async function addToNote(input: { choice: AddToNoteChoice; thread: string; message: string; quote: string | null; dateLabel: string; files: string[] }) {
   const { choice } = input;
@@ -49,7 +50,15 @@ export async function addToNote(input: { choice: AddToNoteChoice; thread: string
       }
     } };
   } catch (reason) {
-    if (meeting?.added) await meeting.undo().catch(() => undefined);
+    if (meeting?.added) {
+      try {
+        await meeting.undo();
+      } catch (rollbackFailure) {
+        throw new AggregateError([reason, rollbackFailure],
+          `Add to Note failed (${errorMessage(reason)}). Could not fully undo the meeting note setup. ${errorMessage(rollbackFailure)}`,
+          { cause: rollbackFailure });
+      }
+    }
     throw reason;
   }
 }
