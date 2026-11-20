@@ -130,6 +130,53 @@ async fn render_data_uri(
     )))
 }
 
+/// The smallest edge requested from the Windows Shell. Its thumbnail
+/// providers and cache work at standard sizes and may decline a request as
+/// small as an attachment chip, so a smaller thumbnail is requested at this
+/// size and shrunk to fit afterwards.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const SHELL_MIN_REQUEST_EDGE: u32 = 256;
+
+/// Shrinks RGBA pixels to fit within `edge` on both sides, keeping the aspect
+/// ratio, by averaging each destination pixel's source area. Pixels already
+/// within `edge` are returned unchanged.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn fit_rgba_within(pixels: Vec<u8>, width: u32, height: u32, edge: u32) -> (Vec<u8>, u32, u32) {
+    if width <= edge && height <= edge {
+        return (pixels, width, height);
+    }
+    let scale = f64::from(edge) / f64::from(width.max(height));
+    let fit_width = ((f64::from(width) * scale).round() as u32).clamp(1, edge);
+    let fit_height = ((f64::from(height) * scale).round() as u32).clamp(1, edge);
+    let (width, height) = (width as usize, height as usize);
+    let (fit_w, fit_h) = (fit_width as usize, fit_height as usize);
+    let mut fitted = Vec::with_capacity(fit_w * fit_h * 4);
+    for y in 0..fit_h {
+        let (top, bottom) = (
+            y * height / fit_h,
+            ((y + 1) * height / fit_h).max(y * height / fit_h + 1),
+        );
+        for x in 0..fit_w {
+            let (left, right) = (
+                x * width / fit_w,
+                ((x + 1) * width / fit_w).max(x * width / fit_w + 1),
+            );
+            let mut sum = [0u64; 4];
+            for row in top..bottom {
+                for column in left..right {
+                    let at = (row * width + column) * 4;
+                    for channel in 0..4 {
+                        sum[channel] += u64::from(pixels[at + channel]);
+                    }
+                }
+            }
+            let count = ((bottom - top) * (right - left)) as u64;
+            fitted.extend(sum.map(|total| ((total + count / 2) / count) as u8));
+        }
+    }
+    (fitted, fit_width, fit_height)
+}
+
 fn png_is_valid(png: &[u8]) -> bool {
     png.starts_with(b"\x89PNG\r\n\x1a\n") && crate::image_format::validate_raster(png).is_ok()
 }
@@ -273,9 +320,11 @@ mod windows_shell {
     }
 
     /// Draws a real thumbnail of `source` through the Shell and writes it to
-    /// `output` as PNG. Returns `Ok(false)` when the Shell produced no
-    /// thumbnail (we ask `THUMBNAILONLY`, so a generic file icon is declined,
-    /// matching macOS), and `Err` on an unexpected API failure.
+    /// `output` as a PNG that fits within `edge`. Returns `Err` when the Shell
+    /// produced no thumbnail (we ask `THUMBNAILONLY`, so a generic file icon is
+    /// declined, matching macOS) or an API call failed, and `Ok(false)` when
+    /// the bitmap it returned could not be read. The caller treats both as no
+    /// preview; the error says why.
     pub(super) fn render_png(
         source: &Path,
         output: &Path,
@@ -288,19 +337,17 @@ mod windows_shell {
         let factory: IShellItemImageFactory =
             unsafe { SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None)? };
 
+        let request = edge.max(super::SHELL_MIN_REQUEST_EDGE) as i32;
         let size = SIZE {
-            cx: edge as i32,
-            cy: edge as i32,
+            cx: request,
+            cy: request,
         };
         // THUMBNAILONLY: never fall back to an icon. A missing thumbnail comes
-        // back as an error we translate to Ok(false), so the panel keeps its
-        // own icon rather than showing a generic file glyph.
-        let bitmap = match unsafe { factory.GetImage(size, SIIGBF_THUMBNAILONLY) } {
-            Ok(handle) => OwnedBitmap(handle),
-            Err(_) => return Ok(false),
-        };
+        // back as an error, so the panel keeps its own icon rather than
+        // showing a generic file glyph.
+        let bitmap = OwnedBitmap(unsafe { factory.GetImage(size, SIIGBF_THUMBNAILONLY)? });
 
-        let Some(png) = encode_bitmap_as_png(bitmap.0) else {
+        let Some(png) = encode_bitmap_as_png(bitmap.0, edge) else {
             return Ok(false);
         };
         std::fs::write(output, png).map_err(|error| {
@@ -312,9 +359,9 @@ mod windows_shell {
     }
 
     /// Reads the bitmap's pixels with GDI as 32-bit top-down BGRA and encodes
-    /// them as an RGBA PNG. Returns `None` if the bitmap has no pixels or GDI
-    /// refuses the read.
-    fn encode_bitmap_as_png(bitmap: HBITMAP) -> Option<Vec<u8>> {
+    /// them as an RGBA PNG that fits within `edge`. Returns `None` if the
+    /// bitmap has no pixels or GDI refuses the read.
+    fn encode_bitmap_as_png(bitmap: HBITMAP, edge: u32) -> Option<Vec<u8>> {
         // A bottom-up DIB would arrive upside down; a negative height asks GDI
         // for top-down rows so row 0 is the top of the image.
         let mut info = BITMAPINFO {
@@ -382,10 +429,12 @@ mod windows_shell {
             pixel.swap(0, 2); // B <-> R
             pixel[3] = 0xff;
         }
+        let (buffer, width, height) =
+            super::fit_rgba_within(buffer, width as u32, height as u32, edge);
 
         let mut png = Vec::new();
         {
-            let mut encoder = png::Encoder::new(&mut png, width as u32, height as u32);
+            let mut encoder = png::Encoder::new(&mut png, width, height);
             encoder.set_color(png::ColorType::Rgba);
             encoder.set_depth(png::BitDepth::Eight);
             let mut writer = encoder.write_header().ok()?;
@@ -532,6 +581,71 @@ mod tests {
             assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
         }
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn shell_bitmaps_are_shrunk_to_fit_the_requested_edge() {
+        let edge = crate::image_format::ATTACHMENT_THUMBNAIL_EDGE;
+        // Within the edge: untouched, including at exactly the edge.
+        for (width, height) in [(edge - 1, edge - 1), (edge, edge), (edge, 1)] {
+            let pixels = vec![7u8; (width * height * 4) as usize];
+            assert_eq!(
+                fit_rgba_within(pixels.clone(), width, height, edge),
+                (pixels, width, height)
+            );
+        }
+        // Past the edge: shrunk, keeping the aspect ratio, with whole pixels.
+        for (width, height, fitted) in [
+            (edge + 1, edge + 1, (edge, edge)),
+            (256, 192, (edge, edge * 3 / 4)),
+            (192, 256, (edge * 3 / 4, edge)),
+            (4_000, 1, (edge, 1)),
+        ] {
+            let pixels = vec![200u8; (width * height * 4) as usize];
+            let (out, w, h) = fit_rgba_within(pixels, width, height, edge);
+            assert_eq!((w, h), fitted);
+            assert_eq!(out.len(), (w * h * 4) as usize);
+            assert!(out.iter().all(|&channel| channel == 200));
+        }
+        // Each destination pixel averages its source area.
+        let checker: Vec<u8> = (0..4u32)
+            .flat_map(|i| {
+                if i % 3 == 0 {
+                    [0u8, 0, 0, 255]
+                } else {
+                    [255, 255, 255, 255]
+                }
+            })
+            .collect();
+        assert_eq!(
+            fit_rgba_within(checker, 2, 2, 1),
+            (vec![128, 128, 128, 255], 1, 1)
+        );
+    }
+
+    /// Calls the Shell directly so a declined thumbnail fails with its HRESULT.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn the_shell_draws_a_photo_thumbnail_within_the_chip_edge() {
+        let directory = std::env::temp_dir().join(format!("shell-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("photo.jpg");
+        fs::write(
+            &source,
+            include_bytes!("../../src/data/showcaseImages/ridge-line.jpg"),
+        )
+        .unwrap();
+        crate::attachment_security::quarantine(&source).unwrap();
+        let output = directory.join("preview.png");
+        let drawn = windows_shell::render_png(
+            &source,
+            &output,
+            crate::image_format::ATTACHMENT_THUMBNAIL_EDGE,
+        );
+        let png = fs::read(&output);
+        let _ = fs::remove_dir_all(&directory);
+        assert!(drawn.expect("the Shell draws a JPEG thumbnail"));
+        assert!(crate::image_format::valid_thumbnail(&png.unwrap()));
     }
 
     #[test]
