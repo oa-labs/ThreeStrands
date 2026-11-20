@@ -1,13 +1,15 @@
-import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKey, noteReferenceSeriesKey, contactNoteReferences, markdownEntityLink, type NoteDocument } from "../noteEntities";
+import { noteItemRanges, extractNoteEntityLinks, MAX_NOTE_TASKS, noteReferenceKey, noteReferenceSeriesKey, contactNoteReferences, type NoteDocument } from "../noteEntities";
 import type { ContactProfile, Thread, ThreadTask, ScheduleEvent, Note, NoteBacklink, NoteLinks, NoteSave, NoteSearchHit, NoteSummary, NoteTitle } from "../domain";
 import { collapseWhitespace, extractWikiLinks, noteTitleKey, rewriteWikiLinks } from "../noteWikiLinks";
 import { notePlainText, notePreview, noteInlineText } from "../notePreview";
 import { insertMeetingLine, meetingLine, meetingNoteTitle } from "../noteMeetings";
 import { meetingBlocks } from "../meetingExcerpt";
+import { MAX_ADDITION_QUOTE_CHARS } from "../addToNotePolicy";
+import { appendBlock, composeAddition } from "../noteAdditions";
 import type { MailClient } from "./client";
 import type { DemoNoteSeed } from "./demoDataset";
 
-type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "captureNoteConversation" | "addMeetingToDailyNote" | "listRecentNotes" | "listStarredNotes" | "setNoteStarred" | "listNotesDoneBetween" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
+type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "addToNote" | "undoAddToNote" | "addMeetingToDailyNote" | "listRecentNotes" | "listStarredNotes" | "setNoteStarred" | "listNotesDoneBetween" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = collapseWhitespace;
@@ -148,17 +150,42 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
       return (contacts.find((contact) => contact.id === reference.contact) ?? contacts.find((contact) => contact.addresses.includes(reference.id)))?.id ?? null;
     },
     async resolveNoteConversation(reference) { return sources.threads().find((thread) => thread.accountId === reference.account && thread.providerThreadId === reference.id)?.id ?? null; },
-    async captureNoteConversation(date, thread, expected) {
-      const id = `daily:${date}`, note = notes.get(id);
-      if ((note?.updatedAt ?? null) !== expected || note?.trashed) throw new Error("Today's note changed. Open it before adding this conversation.");
-      const source = sources.threads().find((item) => item.id === thread);
+    async addToNote(request) {
+      const source = sources.threads().find((item) => item.id === request.thread);
       if (!source) throw new Error("Conversation unavailable on this device");
-      const previousBody = note?.body ?? "", reference = { version: 1 as const, kind: "conversation" as const, id: source.providerThreadId, account: source.accountId };
-      if (extractNoteEntityLinks(previousBody).unclosedFence) throw new Error("Today's note ends inside a code block. Open it before adding this conversation.");
-      const added = !document(note ?? { body: "" } as Note).links.some((link) => noteReferenceKey(link.reference) === noteReferenceKey(reference));
-      const body = added ? `${previousBody}${previousBody && !previousBody.endsWith("\n") ? "\n" : ""}- ${markdownEntityLink(source.subject || "(No subject)", reference)}\n` : previousBody;
-      const next = note ? edit(note, note.title, body) : { id, title: date, body: normalize(id, body), dailyDate: date, createdAt: now(), updatedAt: now(), trashed: false, trashedAt: null };
-      notes.set(id, next); return { note: structuredClone(next), added, previousBody };
+      if (request.files.length) throw new Error("Copying files into notes needs the ThreeStrands app");
+      if (request.quote !== null && [...request.quote].length > MAX_ADDITION_QUOTE_CHARS) throw new Error(`That passage is longer than ${MAX_ADDITION_QUOTE_CHARS} characters. Select less of the message.`);
+      const reference = { version: 1 as const, kind: "conversation" as const, id: source.providerThreadId, account: source.accountId };
+      const id = request.target.kind === "note" ? request.target.id : `demo-note-${crypto.randomUUID()}`;
+      const note = request.target.kind === "note" ? notes.get(id) : undefined;
+      if (request.target.kind === "new") {
+        if (request.expected !== null) throw new Error("A new note has no earlier version");
+        if (titleTaken(noteTitle(request.target.title), id)) throw new Error(`A note named “${noteTitle(request.target.title)}” already exists`);
+      } else {
+        const daily = /^daily:\d{4}-\d{2}-\d{2}$/.test(id);
+        if (!note && !daily) throw new Error("Note not found");
+        if ((note?.updatedAt ?? null) !== request.expected || note?.trashed) throw new Error("This note changed. Open it before adding to it.");
+        if (extractNoteEntityLinks(note?.body ?? "").unclosedFence) throw new Error("This note ends inside a code block. Open it before adding to it.");
+      }
+      const previousBody = note?.body ?? "";
+      const linkPresent = document(note ?? { body: "" } as Note).links.some((link) => noteReferenceKey(link.reference) === noteReferenceKey(reference));
+      const block = composeAddition({ quote: request.quote, subject: source.subject, reference, dateLabel: request.dateLabel, linkPresent });
+      if (block === null) return { note: structuredClone(note!), added: false, previousBody, createdNote: false, attachments: [] };
+      const body = appendBlock(previousBody, block);
+      let next: Note;
+      if (request.target.kind === "new") {
+        const time = now();
+        next = { id, title: noteTitle(request.target.title), body: normalize(id, body), dailyDate: null, createdAt: time, updatedAt: time, trashed: false, trashedAt: null };
+      } else if (note) next = edit(note, note.title, body);
+      else { const date = id.slice("daily:".length), time = now(); next = { id, title: date, body: normalize(id, body), dailyDate: date, createdAt: time, updatedAt: time, trashed: false, trashedAt: null }; }
+      notes.set(id, next);
+      return { note: structuredClone(next), added: true, previousBody, createdNote: request.target.kind === "new", attachments: [] };
+    },
+    async undoAddToNote(request) {
+      const note = notes.get(request.noteId);
+      if (!note || note.trashed || note.updatedAt !== request.expected) throw new Error("This note changed after it was added to. Open Note to remove the addition.");
+      const restored = edit(note, note.title, request.previousBody);
+      return request.createdNote ? setTrashed(restored.id, true) : structuredClone(restored);
     },
     async addMeetingToDailyNote(date, expected, entry) {
       const id = `daily:${date}`, note = notes.get(id);

@@ -66,7 +66,7 @@ Type `@` at the start of a word to find a contact, an email conversation, or a t
 
 To start a note about a task, click **Add Note** in the task's details. To link a calendar event too, click the **+** beside **Links** in the side panel, or **Link contact or conversation** when the note has no links yet. **Link to…** lets you choose a contact, conversation, task, or event and search for it.
 
-While reading a conversation in **Mail**, choose **Add to Today's Note** from the conversation's **⋯** menu to add it to today's note. A conversation, task, event, or contact that a note links to lists that note under **Notes** in its side panel, and a contact's details list the notes that mention them.
+While reading a conversation in **Mail**, press <kbd>W</kbd> or choose **Add to Note…** from the conversation's **⋯** menu to add part of an email to a note. Select a passage first to quote it; otherwise the note gets a link to the conversation, and you can include the message's text. Choose the note (an upcoming meeting's note, today's note, a recent note, or a new one), tick any attachments or images to copy in, and press **Add to Note**. The notice offers **Open Note** and **Undo**. Images that an email loads from the web are not copied. A conversation, task, event, or contact that a note links to lists that note under **Notes** in its side panel, and a contact's details list the notes that mention them.
 
 ## Meeting Notes {#meeting-notes}
 

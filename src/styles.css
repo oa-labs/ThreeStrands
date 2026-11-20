@@ -4234,6 +4234,23 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .notes-details dd { min-width: 0; margin: 0; }
 .notes-workspace .workspace-context-rail > .context-status { padding-inline: calc(var(--context-row-inset) + var(--context-glyph-column)); }
 .new-note-modal { width: min(var(--dialog-w-sm), calc(100vw - var(--dialog-edge))); }
+.add-to-note-modal { width: min(var(--dialog-w-md), calc(100vw - var(--dialog-edge))); overflow-y: auto; }
+.add-to-note-picker { display: grid; gap: var(--space-1); }
+.modal-form .add-to-note-picker > label { color: var(--muted); font-size: var(--text-meta); }
+.add-to-note-options { display: grid; max-height: 200px; margin: 0; padding: var(--space-1); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); list-style: none; }
+.add-to-note-option { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-height: var(--control-h); padding: var(--space-1-5) var(--space-2); border-radius: var(--radius-sm); color: var(--text); font-size: var(--text-body); cursor: pointer; }
+.add-to-note-option > span { min-width: 0; overflow-wrap: anywhere; }
+.add-to-note-option > small { flex: 0 0 auto; color: var(--muted); font-size: var(--text-meta); }
+.add-to-note-option.active { background: var(--hover); }
+.add-to-note-option[aria-selected="true"] > span { font-weight: var(--weight-semibold); }
+.add-to-note-option[aria-disabled="true"] { cursor: default; opacity: var(--opacity-disabled); }
+.add-to-note-adding { display: grid; gap: var(--space-2); }
+.add-to-note-adding h3, .add-to-note-files legend { margin: 0; padding: 0; color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-semibold); }
+.add-to-note-quote { max-height: 120px; margin: 0; padding: var(--space-2) var(--space-2-5); overflow: auto; border-left: 2px solid var(--border-strong); background: var(--input); color: var(--text); font-size: var(--text-body); white-space: pre-wrap; overflow-wrap: anywhere; }
+.add-to-note-files { display: grid; gap: var(--space-1-5); min-width: 0; margin: 0; padding: 0; border: 0; }
+.add-to-note-files .modal-form-check { flex-wrap: wrap; }
+.add-to-note-files .modal-form-check > span { min-width: 0; overflow-wrap: anywhere; }
+.add-to-note-files .modal-form-check > small { color: var(--muted); font-size: var(--text-meta); }
 .file-star-control { display: inline-flex; align-items: center; }
 .file-star-control [aria-pressed="true"] { color: var(--accent); }
 .file-star-control .form-error { font-size: var(--text-meta); }

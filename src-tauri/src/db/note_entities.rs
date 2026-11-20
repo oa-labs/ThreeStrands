@@ -30,13 +30,6 @@ pub struct NoteTask {
     pub completed_at: Option<String>,
     pub conflicted: bool,
 }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NoteCapture {
-    pub note: Note,
-    pub added: bool,
-    pub previous_body: String,
-}
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeetingCapture {
@@ -73,20 +66,30 @@ pub(super) fn begin_daily_insert(
     if !crate::notes::is_daily_date(date) {
         return Err(DatabaseError::invalid("Invalid date"));
     }
-    let id = crate::notes::daily_note_id(date);
-    let note = super::notes::get(tx, &id)?;
+    begin_note_insert(tx, &crate::notes::daily_note_id(date), expected, messages)
+}
+
+/// Checks that note `id` is still the version the action began from, not in
+/// Trash, and without a body conflict, and parses its body.
+pub(super) fn begin_note_insert(
+    tx: &Transaction<'_>,
+    id: &str,
+    expected: Option<&str>,
+    messages: &DailyInsertMessages,
+) -> DbResult<DailyInsertStart> {
+    let note = super::notes::get(tx, id)?;
     if !super::notes::is_current(note.as_ref(), expected) {
         return Err(DatabaseError::invalid(messages.changed));
     }
     let conflicted: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='note' AND entity_id=?1 GROUP BY field HAVING count(DISTINCT value)>1)",
-        [&id], |r| r.get(0),
+        [id], |r| r.get(0),
     )?;
     if conflicted {
         return Err(DatabaseError::invalid(messages.conflict));
     }
     let previous_body = note.as_ref().map(|n| n.body.clone()).unwrap_or_default();
-    let parsed = note_entities::parse(&id, &previous_body).map_err(DatabaseError::invalid)?;
+    let parsed = note_entities::parse(id, &previous_body).map_err(DatabaseError::invalid)?;
     Ok(DailyInsertStart {
         note,
         previous_body,
@@ -165,9 +168,61 @@ fn series_target(tx: &Transaction<'_>, reference: &NoteReference) -> DbResult<Op
         None => Ok(None),
     }
 }
+/// The reference, subject, and link of conversation (thread) `thread`.
+pub(super) fn conversation_reference(
+    tx: &Transaction<'_>,
+    thread: &str,
+) -> DbResult<(NoteReference, String, String)> {
+    let (account, provider, subject): (String, String, String) = tx.query_row(
+        "SELECT account_id,provider_thread_id,subject FROM threads WHERE id=?1",
+        [thread],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    let reference = NoteReference {
+        version: 1,
+        kind: "conversation".into(),
+        id: provider,
+        account: Some(account),
+        calendar: None,
+        note: None,
+        contact: None,
+        series: None,
+    };
+    let href = reference.href().map_err(DatabaseError::invalid)?;
+    Ok((reference, subject, href))
+}
+
+/// Whether a parsed note already links `reference`'s conversation, including
+/// through a verified alias of its thread id.
+pub(super) fn links_conversation(
+    tx: &Transaction<'_>,
+    parsed: &note_entities::ParsedNote,
+    reference: &NoteReference,
+) -> DbResult<bool> {
+    for link in &parsed.links {
+        let same_conversation = link.reference.kind == "conversation"
+            && link.reference.account == reference.account
+            && conversation_id(
+                tx,
+                reference.account.as_deref().unwrap(),
+                &link.reference.id,
+            )?
+            .as_ref()
+                == Some(&reference.id);
+        if &link.reference == reference || same_conversation {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Follow only verified, account-scoped provider aliases. A cycle or a
 /// chain beyond the established provider bound is unavailable, never guessed.
-fn conversation_id(c: &rusqlite::Connection, account: &str, id: &str) -> DbResult<Option<String>> {
+pub(super) fn conversation_id(
+    c: &rusqlite::Connection,
+    account: &str,
+    id: &str,
+) -> DbResult<Option<String>> {
     let mut current = id.to_string();
     let mut seen = std::collections::HashSet::new();
     for _ in 0..64 {
@@ -344,80 +399,6 @@ impl Database {
             .get_contact_profile(&derived)?
             .map(|profile| profile.id))
     }
-    pub fn capture_note_conversation(
-        &self,
-        date: &str,
-        thread: &str,
-        expected: Option<&str>,
-    ) -> DbResult<NoteCapture> {
-        const MESSAGES: DailyInsertMessages = DailyInsertMessages {
-            changed: "Today's note changed. Open it before adding this conversation.",
-            conflict: "Resolve today's note conflict before adding this conversation.",
-            fence:
-                "Today's note ends inside a code block. Open it before adding this conversation.",
-        };
-        self.with_transaction(|tx| {
-            let (account, provider, title): (String, String, String) = tx.query_row(
-                "SELECT account_id,provider_thread_id,subject FROM threads WHERE id=?1",
-                [thread],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )?;
-            let reference = NoteReference {
-                version: 1,
-                kind: "conversation".into(),
-                id: provider,
-                account: Some(account),
-                calendar: None,
-                note: None,
-                contact: None,
-                series: None,
-            };
-            let href = reference.href().map_err(DatabaseError::invalid)?;
-            let start = begin_daily_insert(tx, date, expected, &MESSAGES)?;
-            for link in &start.parsed.links {
-                let same_conversation = link.reference.kind == "conversation"
-                    && link.reference.account == reference.account
-                    && conversation_id(
-                        tx,
-                        reference.account.as_deref().unwrap(),
-                        &link.reference.id,
-                    )?
-                    .as_ref()
-                        == Some(&reference.id);
-                if link.reference == reference || same_conversation {
-                    return Ok(NoteCapture {
-                        note: start.note.unwrap(),
-                        added: false,
-                        previous_body: start.previous_body,
-                    });
-                }
-            }
-            if start.parsed.unclosed_fence {
-                return Err(DatabaseError::invalid(MESSAGES.fence));
-            }
-            let title = if title.trim().is_empty() {
-                "(No subject)"
-            } else {
-                title.trim()
-            };
-            let label = note_meetings::escape_inline(title);
-            let previous_body = start.previous_body;
-            let separator = if previous_body.is_empty() || previous_body.ends_with('\n') {
-                ""
-            } else {
-                "\n"
-            };
-            let body = format!("{previous_body}{separator}- [{label}]({href})\n");
-            let saved = super::notes::save_daily_in(tx, date, &body)?
-                .ok_or(DatabaseError::NotFound("Note"))?;
-            Ok(NoteCapture {
-                note: saved,
-                added: true,
-                previous_body,
-            })
-        })
-    }
-
     /// Writes the meeting's line into the `## Meetings` section of `date`'s
     /// daily note and, when the name links a note, creates that note if no
     /// note outside Trash has its title. Adds nothing when the note already

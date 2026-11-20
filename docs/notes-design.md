@@ -767,9 +767,40 @@ existing **Tasks** workspace. It adds no AI processing.
   changes the same item. Users can explicitly convert between the two.
   Merely linking to an existing task creates no new task.
 
-### Add to Today's Note
+### Add to Note
 
-Add **Add to Today's Note** to the conversation actions menu and command
+**Add to Note…** replaced **Add to Today's Note**. Press <kbd>W</kbd> in Mail
+or choose **⋯ → Add to Note…**; the command is also in the palette. It acts
+on the message holding the text selection, else the message being read, and
+opens a modal dialog with three parts:
+
+- **Note.** A combobox. Without typing it offers, in order, meetings in the
+  next 7 days with someone else on the conversation (the meeting's backlinked
+  note, labelled with the meeting time, or **Create a note for** the meeting
+  when it has none), then **Today's note**, then recently opened notes. Typing
+  searches note titles and ends with **Create note "<text>"**.
+- **Adding.** A selection becomes a block quote with a source line
+  (`> — [Subject](link) · Oct 30`). Without a selection it adds a link to the
+  conversation, and **Include message text** (off) quotes the whole message.
+- **Files.** One unchecked box per attachment part and per inline image that
+  is a part of the message. Images the message loads from the web are never
+  copied; the dialog says how many were left out. Files over the 20 MB note
+  limit are disabled with the reason.
+
+One native write (`add_to_note`) appends to the end of the note after a blank
+line, copies the chosen files as note attachments without passing their bytes
+through the page, and shares the version, conflict, Trash, and open-code-fence
+refusals of the capture it replaced. A bare link already in the note adds
+nothing (**Already in <note>**); a quote is always added. Undo
+(`undo_add_to_note`) restores the body and deletes the files only while the
+note is as the addition left it, moves a note the action created to Trash, and
+for a meeting note also takes back the meeting's line. Limits live in
+`src/addToNotePolicy.ts` and `src-tauri/src/note_additions.rs`.
+
+### Add to Today's Note (replaced)
+
+The first release shipped **Add to Today's Note**, which is now one choice in
+Add to Note. Its design follows. Add **Add to Today's Note** to the conversation actions menu and command
 palette, enabled for the focused conversation. No default keyboard shortcut
 in this release. It appends a bullet containing the subject as an internal
 conversation link; an empty subject displays **(No subject)**. Escape

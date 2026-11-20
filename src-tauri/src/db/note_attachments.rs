@@ -76,7 +76,7 @@ pub(crate) fn attachment_id_of(destination: &str) -> Option<&str> {
 
 /// A file name safe to store and show: the last path segment, with control
 /// characters removed, and no longer than the synchronized limit.
-fn clean_name(name: &str) -> String {
+pub(super) fn clean_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
     let cleaned: String = base
         .chars()
@@ -97,7 +97,7 @@ fn clean_name(name: &str) -> String {
 /// by the name or type it arrived with, so only real raster images are
 /// shown in a note. Anything else keeps a plausible declared type, or
 /// `application/octet-stream`.
-fn stored_mime_type(declared: &str, bytes: &[u8]) -> String {
+pub(super) fn stored_mime_type(declared: &str, bytes: &[u8]) -> String {
     if let Some(sniffed) = image_format::sniff_raster_mime(bytes) {
         return sniffed.to_string();
     }
@@ -216,6 +216,32 @@ pub(super) fn delete_note_attachments(tx: &Transaction<'_>, note_id: &str) -> Db
         remove(tx, &id)?;
         if recorded {
             record_replicated_deletion_in_transaction(tx, EntityType::NoteAttachment, &id)?;
+        }
+    }
+    Ok(())
+}
+
+/// Deletes the named attachments of `note_id`, on every device once the
+/// replica holds them. Ids that name no attachment of that note are left
+/// alone. Used to take back what one action copied in.
+pub(super) fn delete_attachments(
+    tx: &Transaction<'_>,
+    note_id: &str,
+    ids: &[String],
+) -> DbResult<()> {
+    for id in ids {
+        let owned: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM note_attachments WHERE id=?1 AND note_id=?2)",
+            params![id, note_id],
+            |row| row.get(0),
+        )?;
+        if !owned {
+            continue;
+        }
+        let recorded = in_replica(tx, id)?;
+        remove(tx, id)?;
+        if recorded {
+            record_replicated_deletion_in_transaction(tx, EntityType::NoteAttachment, id)?;
         }
     }
     Ok(())

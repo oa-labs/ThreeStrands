@@ -1210,12 +1210,34 @@ fn note_tasks_project_save_toggle_convert_and_restore_without_creating_task_enti
     assert!(db.list_note_tasks().unwrap().is_empty());
 }
 
+fn link_only(
+    db: &Database,
+    thread: &str,
+    expected: Option<&str>,
+) -> DbResult<crate::db::NoteAddition> {
+    use crate::db::note_additions::{AddTarget, AddToNoteRequest};
+    db.add_to_note(
+        &AddToNoteRequest {
+            target: AddTarget::Note {
+                id: format!("daily:{DAY}"),
+            },
+            expected: expected.map(str::to_string),
+            thread: thread.into(),
+            message: String::new(),
+            quote: None,
+            date_label: String::new(),
+            files: Vec::new(),
+        },
+        Vec::new(),
+    )
+}
+
 #[test]
-fn captured_conversation_references_are_atomic_idempotent_and_preserve_authored_text() {
+fn added_conversation_references_are_atomic_idempotent_and_preserve_authored_text() {
     let db = database();
     let before = db.get_daily_note(DAY).unwrap();
     assert!(before.is_none());
-    let captured = db.capture_note_conversation(DAY, "welcome", None).unwrap();
+    let captured = link_only(&db, "welcome", None).unwrap();
     assert!(captured.added);
     let doc = db.note_document(&captured.note.id).unwrap();
     assert_eq!(doc.links.len(), 1);
@@ -1226,46 +1248,20 @@ fn captured_conversation_references_are_atomic_idempotent_and_preserve_authored_
         Some("welcome")
     );
     assert_eq!(db.note_backlinks(reference).unwrap().len(), 1);
-    let duplicate = db
-        .capture_note_conversation(DAY, "welcome", Some(&captured.note.updated_at))
-        .unwrap();
+    let duplicate = link_only(&db, "welcome", Some(&captured.note.updated_at)).unwrap();
     assert!(!duplicate.added);
     assert_eq!(duplicate.note.updated_at, captured.note.updated_at);
-    assert!(db.capture_note_conversation(DAY, "roadmap", None).is_err());
+    assert!(link_only(&db, "roadmap", None).is_err());
     let saved = db
         .save_daily_note_edit(DAY, "User text\n```\n", Some(&captured.note.updated_at))
         .unwrap()
         .note
         .unwrap();
-    assert!(db
-        .capture_note_conversation(DAY, "roadmap", Some(&saved.updated_at))
-        .is_err());
+    assert!(link_only(&db, "roadmap", Some(&saved.updated_at)).is_err());
     assert_eq!(db.get_note(&saved.id).unwrap().unwrap().body, saved.body);
     db.trash_note(&saved.id).unwrap();
     assert!(db.note_backlinks(reference).unwrap().is_empty());
-    assert!(db
-        .capture_note_conversation(DAY, "welcome", Some(&saved.updated_at))
-        .is_err());
-}
-
-#[test]
-fn captured_conversation_label_escapes_only_markdown_that_would_change_it() {
-    let db = database();
-    db.connection()
-        .unwrap()
-        .execute(
-            "UPDATE threads SET subject = 'Re: Q3 plan (v2.1) - ann_lee@example.com [draft] #ops' WHERE id = 'welcome'",
-            [],
-        )
-        .unwrap();
-    let captured = db.capture_note_conversation(DAY, "welcome", None).unwrap();
-    assert!(
-        captured.note.body.starts_with(
-            "- [Re: Q3 plan (v2.1) - ann_lee@example.com \\[draft\\] \\#ops](threestrands:conversation/"
-        ),
-        "{}",
-        captured.note.body
-    );
+    assert!(link_only(&db, "welcome", Some(&saved.updated_at)).is_err());
 }
 
 #[test]

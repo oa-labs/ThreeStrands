@@ -264,6 +264,12 @@ Current primary commands are:
   next day's note in Notes;
 - `d`: add a task linked to the selected conversation in Mail, or a blank,
   standalone task in the Tasks view;
+- `w` in Mail: add to a note from the message being read, or the one holding
+  the text selection. A dialog picks the note (an upcoming meeting's note,
+  today's, a recent one, or a new one), shows what will be added (the
+  selected passage as a quote, or a link to the conversation), and offers the
+  message's attachments and inline images. Nothing is written until the
+  dialog is submitted;
 - `t`: go to today in Calendar and Notes, otherwise toggle Calendar;
 - `\`: hide or show the side panel (in Mail, open or close the drawer in a
   narrow window);

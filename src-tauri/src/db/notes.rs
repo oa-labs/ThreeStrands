@@ -423,7 +423,7 @@ pub(super) fn create(tx: &Transaction<'_>, mut note: Note) -> DbResult<Note> {
     get(tx, &note.id)?.ok_or(DatabaseError::NotFound("Note"))
 }
 
-fn set_trashed(tx: &Transaction<'_>, id: &str, trashed: bool) -> DbResult<Note> {
+pub(super) fn set_trashed(tx: &Transaction<'_>, id: &str, trashed: bool) -> DbResult<Note> {
     let mut note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
     if note.trashed == trashed {
         return Ok(note);

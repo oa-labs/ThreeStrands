@@ -40,7 +40,7 @@ type Options = {
   draftSelection: ReturnType<typeof useDraftSelection>;
   selectAllOutbox(): void;
   createCalendarEvent?: () => void;
-  addToTodaysNote?: () => Promise<CommandResult>;
+  addToNote?: () => void;
   addMeetingNote?: () => void;
   prepareMeeting?: () => void;
   meetingPrepOpen?: boolean;
@@ -88,7 +88,7 @@ type Options = {
 
 /** Binds global commands to the current domain controllers and interaction scope. */
 export function useAppCommandContext({
-  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, addToTodaysNote, addMeetingNote, prepareMeeting, meetingPrepOpen, delegateSelected, snoozeSelected, returnSnoozedSelected,
+  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, addToNote, addMeetingNote, prepareMeeting, meetingPrepOpen, delegateSelected, snoozeSelected, returnSnoozedSelected,
   recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox, mutateIds, view, ui,
 }: Options) {
   const outboxEditSource = useMemo(() => outboxEditAsNewSource(outboxSelection.selectedEntry), [outboxSelection.selectedEntry]);
@@ -194,7 +194,7 @@ export function useAppCommandContext({
     selectedTaskHasThread,
     selectedTaskIsNote,
     createCalendarEvent,
-    addToTodaysNote,
+    addToNote,
     addMeetingNote,
     prepareMeeting,
     meetingPrepOpen,
@@ -346,7 +346,7 @@ export function useAppCommandContext({
     toggleMessageFilter,
   }), [
     createCalendarEvent,
-    addToTodaysNote, addMeetingNote, prepareMeeting, meetingPrepOpen, snoozeSelected, returnSnoozedSelected, correspondence.context, parkedDraft, openDraft, openDraftRow, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
+    addToNote, addMeetingNote, prepareMeeting, meetingPrepOpen, snoozeSelected, returnSnoozedSelected, correspondence.context, parkedDraft, openDraft, openDraftRow, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
     selectedId, selected, canUnsubscribe, returnStep, goBack, canReturnFromCalendar, returnFromCalendar, canReturnFromContacts, returnFromContacts, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread, selectedTaskIsNote,

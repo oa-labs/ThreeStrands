@@ -230,7 +230,7 @@ test("list items and paragraphs sit close together, at the reading size", async 
   expect(layout.fontSize).toBe("15px");
 });
 
-test("conversation capture stays in Mail, opens today's reference, and returns to the same message", async ({ page }) => {
+test("adding a conversation to today's note stays in Mail, opens today's reference, and returns to the same message", async ({ page }) => {
   await page.goto("/");
   const selected = page.getByRole("listbox").getByRole("option", { selected: true });
   await expect(selected).toBeVisible();
@@ -239,8 +239,16 @@ test("conversation capture stays in Mail, opens today's reference, and returns t
   await expect(reader.locator(".message-active")).toHaveCount(1);
   const active = await reader.locator(".message-active").getAttribute("data-message-id");
   const expanded = await reader.locator(".message-card-expanded").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-message-id")));
-  await reader.getByRole("button", { name: "Conversation actions" }).click();
-  await page.getByRole("menuitem", { name: "Add to Today's Note" }).click();
+  const addToTodaysNote = async () => {
+    await reader.getByRole("button", { name: "Conversation actions" }).click();
+    await page.getByRole("menuitem", { name: "Add to Note…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Add to Note" });
+    await expect(dialog.getByRole("combobox", { name: "Note" })).toBeFocused();
+    await dialog.getByRole("option", { name: /Today's note/ }).click();
+    await dialog.getByRole("button", { name: "Add to Note" }).click();
+    await expect(dialog).toHaveCount(0);
+  };
+  await addToTodaysNote();
   await expect(page.getByRole("status").filter({ hasText: "Added to today's note" })).toBeVisible();
   await expect(reader.locator(".message-active")).toHaveAttribute("data-message-id", active!);
   await page.getByRole("button", { name: "Open Note", exact: true }).click();
@@ -249,8 +257,7 @@ test("conversation capture stays in Mail, opens today's reference, and returns t
   await notes.getByRole("button", { name: "Back to Mail" }).click();
   await expect(reader.locator(".message-active")).toHaveAttribute("data-message-id", active!);
   expect(await reader.locator(".message-card-expanded").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-message-id")))).toEqual(expanded);
-  await reader.getByRole("button", { name: "Conversation actions" }).click();
-  await page.getByRole("menuitem", { name: "Add to Today's Note" }).click();
+  await addToTodaysNote();
   await expect(page.getByRole("status").filter({ hasText: "Already in today's note" })).toBeVisible();
   await page.keyboard.press("z");
   await expect(page.getByRole("complementary", { name: "Conversation context" }).getByRole("region", { name: "Notes", exact: true })).toHaveCount(0);

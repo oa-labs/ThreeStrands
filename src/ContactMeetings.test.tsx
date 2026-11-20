@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ContactMeetings, MAX_UPCOMING_MEETINGS } from "./ContactMeetings";
+import { ContactMeetings, MAX_UPCOMING_MEETINGS, upcomingMeetingsWith } from "./ContactMeetings";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { ScheduleEvent } from "./domain";
@@ -126,5 +126,14 @@ describe("ContactMeetings", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     renderMeetings([meeting("soon", 2, ["jane@example.com"])], ["team@example.com: Calendar unavailable"]);
     expect(await screen.findByRole("region", { name: "Upcoming meetings" })).toHaveTextContent("Meeting soon");
+  });
+});
+
+describe("upcomingMeetingsWith", () => {
+  it("keeps events still ahead with a listed attendee, soonest first, up to the limit", () => {
+    const people = [{ email: "Jane@Example.com", name: "Jane" }];
+    const events = [meeting("c", 30, ["jane@example.com"]), meeting("a", 1, ["jane@example.com"]), meeting("gone", -3, ["jane@example.com"]), meeting("other", 2, ["bob@example.com"]), meeting("b", 5, ["x@example.com", "JANE@example.com"])];
+    expect(upcomingMeetingsWith(events, people, Date.now(), 10).map(({ event, name }) => [event.id, name])).toEqual([["a", "Jane"], ["b", "Jane"], ["c", "Jane"]]);
+    expect(upcomingMeetingsWith(events, people, Date.now(), 2).map(({ event }) => event.id)).toEqual(["a", "b"]);
   });
 });

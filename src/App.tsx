@@ -1,5 +1,9 @@
 import { outboxBelongsToThread } from "./queuedReplies";
-import { addMeetingToDailyNote, captureConversation, planningMeetingNote } from "./noteCapture";
+import { addMeetingToDailyNote, addToNote, planningMeetingNote, type AddToNoteChoice } from "./noteCapture";
+import { AddToNoteDialog } from "./AddToNoteDialog";
+import { conversationParticipants } from "./conversationParticipants";
+import { snapshotMessageSelection } from "./messageSelection";
+import type { MessageQuote } from "./selectedMessageQuote";
 import { prepareNoteMutation } from "./noteMutations";
 import { MeetingNoteDialog } from "./MeetingNoteDialog";
 import { meetingDate, meetingEventReference, primaryMeetingNote } from "./meetingNoteEntry";
@@ -14,7 +18,7 @@ import { markdownEntityLink, parseNoteReference, noteReferenceHref } from "./not
 import { NoteBacklinks } from "./NoteEntityContext";
 import { MoreActionsMenu } from "./MoreActionsMenu";
 import { useAgentTasks, type AgentStart } from "./useAgentTasks";
-import type { Thread } from "./domain";
+import type { Message, Thread } from "./domain";
 import { useSignatures } from "./useSignatures";
 import type { FilesWorkspaceSnapshot } from "./FilesWorkspace";
 import type { CalendarWorkspaceSnapshot } from "./CalendarWeekView";
@@ -74,7 +78,7 @@ import { CalendarSidebar } from "./CalendarSidebar";
 import { eventDate, startOfLocalDay } from "./calendarTime";
 import { chatAttachmentOptions } from "./chatAttachments";
 import { STARRED_INBOX_ID } from "./starredInbox";
-import { labelCommand, undoResult, type CommandResult, type MailboxKind } from "./commands";
+import { commands, labelCommand, undoResult, type CommandResult, type MailboxKind } from "./commands";
 import { FILES_CHANGED } from "./FileStarButton";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
@@ -670,26 +674,6 @@ export function App() {
   }, [selectedThreadRowRef, setQuery, setSearchOpen, activeSavedSearch, goToInboxTab]);
   const [notesReturnMail, setNotesReturnMail] = useState(false);
   const openCapturedNote = (id: string, referenceHref?: string) => { setNotesReturnMail(true); openNote(id, undefined, referenceHref); };
-  const addToTodaysNote = async (): Promise<CommandResult> => {
-    if (!visibleDetail) return {};
-    try {
-      const thread = visibleDetail.thread;
-      const capture = await captureConversation(thread.id);
-      const href = noteReferenceHref({ version: 1, kind: "conversation", id: thread.providerThreadId, account: thread.accountId });
-      const action = { label: "Open Note", run: () => openCapturedNote(capture.note.id, href) };
-      if (!capture.added) { setNotice({ message: "Already in today's note", action }); return {}; }
-      return {
-        message: "Added to today's note", action,
-        undoAction: async () => {
-          try { await capture.undo(); }
-          catch (e) { setNotice({ message: errorMessage(e), action }); }
-        },
-      };
-    } catch (e) {
-      setNotice({ message: errorMessage(e), action: { label: "Open Today's Note", run: () => { setNotesReturnMail(true); workspaces.openTodaysNote(); } } });
-      return {};
-    }
-  };
   // Add Note for a calendar event, from an agenda, Today, the event's
   // details, or the palette while those details are open.
   const [meetingNoteEvent, setMeetingNoteEvent] = useState<ScheduleEvent | null>(null);
@@ -720,6 +704,41 @@ export function App() {
     }
   };
   const meetingOwnAddresses = useMemo(() => [...ownAddresses, ...calendar.accounts.map((account) => account.email)], [ownAddresses, calendar.accounts]);
+  // Add to Note: the message holding the selection, else the one being read.
+  // The selection is read when the command starts, or as the ⋯ menu begins to
+  // open, because opening a menu or dialog can clear it.
+  const [addToNoteSource, setAddToNoteSource] = useState<{ message: Message; quote: string | null } | null>(null);
+  const menuSelectionRef = useRef<MessageQuote | null>(null);
+  const openAddToNote = (snapshot?: MessageQuote | null) => {
+    if (!visibleDetail) return;
+    const quote = snapshot === undefined ? snapshotMessageSelection() : snapshot;
+    const quoted = quote ? displayedMessages.find((item) => item.id === quote.messageId) : undefined;
+    const message = quoted ?? displayedMessages.find((item) => item.id === (activeMessageId ?? latestDisplayedMessageId));
+    if (!message || message.id.startsWith("outbox-")) { setNotice({ message: "That message hasn't been sent yet." }); return; }
+    setAddToNoteSource({ message, quote: quoted ? quote!.text : null });
+  };
+  const addToNoteParticipants = useMemo(
+    () => addToNoteSource ? conversationParticipants(visibleDetail, new Set(accounts.map((account) => account.email.toLocaleLowerCase()))) : [],
+    [addToNoteSource, visibleDetail, accounts],
+  );
+  const submitAddToNote = async (input: { choice: AddToNoteChoice; quote: string | null; dateLabel: string; files: string[] }) => {
+    if (!visibleDetail || !addToNoteSource) return;
+    const thread = visibleDetail.thread;
+    const added = await addToNote({ ...input, thread: thread.id, message: addToNoteSource.message.id });
+    setAddToNoteSource(null);
+    const name = added.note.dailyDate ? dailyNoteName(added.note.dailyDate) : added.note.title;
+    const href = noteReferenceHref({ version: 1, kind: "conversation", id: thread.providerThreadId, account: thread.accountId });
+    const action = { label: "Open Note", run: () => openCapturedNote(added.note.id, added.added ? href : undefined) };
+    if (!added.added) { setNotice({ message: `Already in ${name}`, action }); return; }
+    const result: CommandResult = {
+      message: `Added to ${name}`, action,
+      undoAction: async () => {
+        try { await added.undo(); }
+        catch (e) { setNotice({ message: errorMessage(e), action }); }
+      },
+    };
+    rememberUndo(commands.find((command) => command.id === "notes.add")!, result);
+  };
   const openPlanningMeetingNote = async (event: ScheduleEvent) => {
     try {
       const target = await planningMeetingNote(event, meetingOwnAddresses);
@@ -835,7 +854,7 @@ export function App() {
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
     delegateSelected,
     createCalendarEvent: () => { openCalendarView(); setCreateCalendarEventRequested(true); },
-    addToTodaysNote,
+    addToNote: () => openAddToNote(),
     addMeetingNote: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => { void openMeetingNote(calendarSelectedEvent); } : undefined,
     prepareMeeting: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent)
       ? () => setCalendarPreparing((current) => current === preparationKey(calendarSelectedEvent) ? null : preparationKey(calendarSelectedEvent)) : undefined,
@@ -1436,7 +1455,7 @@ export function App() {
                 </div>
               </div>
               <div className="reader-actions">
-                <MoreActionsMenu label="Conversation actions" actions={[{ label: "Add to Today's Note", onSelect: () => executeById("notes.capture") }]} />
+                <MoreActionsMenu label="Conversation actions" onBeforeOpen={() => { menuSelectionRef.current = snapshotMessageSelection(); }} actions={[{ label: "Add to Note…", onSelect: () => openAddToNote(menuSelectionRef.current) }]} />
                 <HoverTooltip label={selected?.starred ? "Unstar" : "Star"} shortcut="s" placement="bottom">
                   <ActionButton
                     label={selected?.starred ? "Unstar" : "Star"}
@@ -2077,6 +2096,11 @@ export function App() {
       {meetingNoteEvent ? (
         <MeetingNoteDialog event={meetingNoteEvent} ownAddresses={meetingOwnAddresses} onClose={() => setMeetingNoteEvent(null)} onSubmit={addMeeting}
           onOpenNote={(date) => { setMeetingNoteEvent(null); openNote(`daily:${date}`); }} />
+      ) : null}
+      {addToNoteSource && visibleDetail ? (
+        <AddToNoteDialog thread={visibleDetail.thread} message={addToNoteSource.message} quote={addToNoteSource.quote} accounts={accounts} ownAddresses={meetingOwnAddresses}
+          people={addToNoteParticipants} calendarConnected={calendarConnected} timeZone={availabilityPreferences.timeZone}
+          onClose={() => setAddToNoteSource(null)} onSubmit={submitAddToNote} />
       ) : null}
       {paletteOpen ? (
         <CommandPalette

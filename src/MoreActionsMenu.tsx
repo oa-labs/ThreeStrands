@@ -6,7 +6,11 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 export type MoreAction = { label: string; disabled?: boolean; onSelect(): void };
 
 /** A ⋯ button holding the actions a card keeps out of its main row. */
-export function MoreActionsMenu({ label, actions, compact = false }: { label: string; actions: MoreAction[]; compact?: boolean }) {
+export function MoreActionsMenu({ label, actions, compact = false, onBeforeOpen }: {
+  label: string; actions: MoreAction[]; compact?: boolean;
+  /** Runs as the user starts to open the menu (pointer down on the trigger, or an arrow key or keyboard click), before opening can move focus or selection. */
+  onBeforeOpen?(): void;
+}) {
   const [open, setOpen] = useState(false);
   const group = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -27,9 +31,10 @@ export function MoreActionsMenu({ label, actions, compact = false }: { label: st
   return <div className="more-actions" ref={group} onBlur={(event) => {
     if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
   }}>
-    <button ref={trigger} type="button" className={compact ? "btn-icon btn-icon-sm" : "btn btn-sm"} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined} onClick={() => setOpen((value) => !value)} onKeyDown={(event) => {
+    <button ref={trigger} type="button" className={compact ? "btn-icon btn-icon-sm" : "btn btn-sm"} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined} onPointerDown={() => { if (!open) onBeforeOpen?.(); }} onClick={(event) => { if (!open && event.detail === 0) onBeforeOpen?.(); setOpen((value) => !value); }} onKeyDown={(event) => {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
+        if (!open) onBeforeOpen?.();
         setOpen(true);
       }
     }}><Ellipsis size={ICON_SIZE.sm} /></button>

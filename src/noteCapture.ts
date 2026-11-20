@@ -1,25 +1,57 @@
 import { mailClient } from "./data/client";
 import { notesChanged, prepareNoteMutation } from "./noteMutations";
-import { noteTargetKey, todayTarget } from "./noteDrafts";
+import { noteTargetKey } from "./noteDrafts";
+import type { AddToNoteTarget } from "./noteEntities";
 import type { ScheduleEvent } from "./domain";
 import { meetingDate, meetingEventReference, primaryMeetingNote } from "./meetingNoteEntry";
 import { noteReferenceHref } from "./noteEntities";
 import type { MeetingEntry } from "./noteMeetings";
 import { defaultMeetingEntry } from "./meetingPrep";
 
-/** Local date is captured once, before asynchronous work. */
-export async function captureConversation(threadId: string, now = new Date()) {
-  const target = todayTarget(now), id = noteTargetKey(target);
-  await prepareNoteMutation(id);
-  const current = await mailClient.getDailyNote(target.date);
-  const captured = await mailClient.captureNoteConversation(target.date, threadId, current?.updatedAt ?? null);
-  await notesChanged(id);
-  return { ...captured, async undo() {
-    await prepareNoteMutation(id);
-    const result = await mailClient.saveDailyNote(target.date, captured.previousBody, captured.note.updatedAt);
-    if (!result.saved) throw new Error("Today's note changed after capture. Open Note to remove this reference.");
-    await notesChanged(id);
-  } };
+/** Where the user chose to add: a note (a daily note is `daily:<date>` and may not exist yet), a new note named by the user, or a note to create for a meeting. */
+export type AddToNoteChoice =
+  | { kind: "note"; id: string }
+  | { kind: "new"; title: string }
+  | { kind: "meeting"; date: string; entry: MeetingEntry };
+
+/**
+ * Add to Note: one guarded native write of a passage (or a link to the
+ * conversation) and copies of the chosen files, after saving any open typing
+ * in the note. A meeting without a note first gets one, as Add Note's
+ * "Create backlinked note" does; if the addition then fails, that is taken
+ * back too. Undo restores the note while nothing changed it since, deletes
+ * the files this action stored, and moves a note it created to Trash.
+ */
+export async function addToNote(input: { choice: AddToNoteChoice; thread: string; message: string; quote: string | null; dateLabel: string; files: string[] }) {
+  const { choice } = input;
+  let meeting: Awaited<ReturnType<typeof addMeetingToDailyNote>> | null = null;
+  try {
+    let target: AddToNoteTarget, expected: string | null = null;
+    if (choice.kind === "meeting") {
+      meeting = await addMeetingToDailyNote(choice.date, { ...choice.entry, linkNote: true });
+      if (!meeting.meetingNote) throw new Error("That meeting is already in its day's note. Open the day's note to give it a note of its own.");
+      target = { kind: "note", id: meeting.meetingNote.id };
+      expected = meeting.meetingNote.updatedAt;
+    } else target = choice.kind === "new" ? { kind: "new", title: choice.title } : { kind: "note", id: choice.id };
+    if (target.kind === "note") {
+      await prepareNoteMutation(target.id);
+      if (choice.kind === "note") expected = (await mailClient.getNote(target.id))?.updatedAt ?? null;
+    }
+    const added = await mailClient.addToNote({ target, expected, thread: input.thread, message: input.message, quote: input.quote, dateLabel: input.dateLabel, files: input.files });
+    if (added.added) await notesChanged(added.note.id);
+    const parent = meeting;
+    return { ...added, async undo() {
+      if (added.added) {
+        await prepareNoteMutation(added.note.id);
+        const restored = await mailClient.undoAddToNote({ noteId: added.note.id, expected: added.note.updatedAt, previousBody: added.previousBody, createdNote: added.createdNote, attachments: added.attachments.map((file) => file.id) });
+        await notesChanged(added.note.id);
+        await parent?.undo({ meetingNoteVersion: restored.updatedAt });
+      }
+    } };
+  } catch (reason) {
+    if (meeting?.added) await meeting.undo().catch(() => undefined);
+    throw reason;
+  }
 }
 
 /** Writes a meeting's line into `date`'s daily note (the event's own day,
@@ -35,7 +67,7 @@ export async function addMeetingToDailyNote(date: string, entry: MeetingEntry) {
     await notesChanged(id);
     if (captured.createdMeetingNote && captured.meetingNote) await notesChanged(captured.meetingNote.id);
   }
-  return { ...captured, async undo() {
+  return { ...captured, async undo(options?: { meetingNoteVersion?: string }) {
     if (!captured.added) return;
     await prepareNoteMutation(id);
     const result = await mailClient.saveDailyNote(date, captured.previousBody, captured.note.updatedAt);
@@ -44,7 +76,8 @@ export async function addMeetingToDailyNote(date: string, entry: MeetingEntry) {
     const created = captured.createdMeetingNote ? captured.meetingNote : null;
     if (!created) return;
     const now = await mailClient.getNote(created.id);
-    if (now && !now.trashed && now.body === "" && now.updatedAt === created.updatedAt) {
+    // `meetingNoteVersion` is the version of the note after something this action wrote there was taken back.
+    if (now && !now.trashed && now.body === "" && now.updatedAt === (options?.meetingNoteVersion ?? created.updatedAt)) {
       await mailClient.trashNote(created.id);
       await notesChanged(created.id);
     }

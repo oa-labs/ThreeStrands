@@ -1,3 +1,4 @@
+import { conversationParticipants } from "./conversationParticipants";
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
@@ -5,7 +6,7 @@ import { ContactFilesSection, RecentEmailsSection, ThreadOutlineSection, type Re
 import { PersonSummary } from "./RecipientSections";
 import { isColleagueAddress } from "./contactContext";
 import { messagePerson } from "./readingMessage";
-import { parseAddress, splitAddressList } from "./emailAddress";
+import { parseAddress } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { SenderDecisions, TrustSection, useSenderHistory, type SenderActions, type SenderTarget } from "./SenderSections";
 import { bulkMessage, latestInbound, type TrustLink } from "./senderSignals";
@@ -90,19 +91,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
   idle?: ReactNode;
 }) {
   const own = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
-  const participants = useMemo(() => {
-    if (!detail) return [];
-    const byEmail = new Map<string, string>();
-    for (const message of detail.messages) {
-      for (const raw of [message.sender, ...message.recipients.flatMap(splitAddressList)]) {
-        const address = parseAddress(raw);
-        if (address.email.includes("@") && !own.has(address.email.toLocaleLowerCase())) {
-          byEmail.set(address.email.toLocaleLowerCase(), address.name);
-        }
-      }
-    }
-    return [...byEmail].map(([email, name]) => ({ email, name }));
-  }, [detail, own]);
+  const participants = useMemo(() => conversationParticipants(detail, own), [detail, own]);
   const preferred = useMemo(() => {
     if (!detail) return "";
     const reading = detail.messages.find((message) => message.id === readingMessageId);

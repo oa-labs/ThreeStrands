@@ -1,6 +1,6 @@
 import { invokeAi } from "../aiRequests";
 import type { WritingProfile } from "../writingProfiles";
-import type { NoteDocument, NoteTaskRecord, NoteReference, NoteCapture, NoteBacklink } from "../noteEntities";
+import type { NoteDocument, NoteTaskRecord, NoteReference, NoteBacklink, AddToNoteRequest, NoteAddition, UndoAddToNote } from "../noteEntities";
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
 import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
@@ -466,7 +466,10 @@ export interface MailClient extends CorrespondenceClient {
   resolveNoteConversation(reference: NoteReference): Promise<string | null>;
   /** The contact a contact reference opens, or null when this device has none. */
   resolveNoteContact(reference: NoteReference): Promise<string | null>;
-  captureNoteConversation(date: string, thread: string, expected: string | null): Promise<NoteCapture>;
+  /** Appends a passage of a message, a link to its conversation, and copies of its files to a note in one guarded write. */
+  addToNote(request: AddToNoteRequest): Promise<NoteAddition>;
+  /** Takes an addition back while its note is as the addition left it. */
+  undoAddToNote(request: UndoAddToNote): Promise<Note>;
   /** Writes a meeting's line into `date`'s daily note, if that note is still at `expected`. */
   addMeetingToDailyNote(date: string, expected: string | null, entry: MeetingEntry): Promise<MeetingCapture>;
   listRecentNotes(limit: number): Promise<NoteSummary[]>;
@@ -755,7 +758,8 @@ const tauriClient: MailClient = {
   planSources: (date, source, accountId = null, cursor = null) => read("plan_sources", { date, source, accountId, cursor }),
   resolveNoteConversation: (reference) => read("resolve_note_conversation", { reference }),
   resolveNoteContact: (reference) => read("resolve_note_contact", { reference }),
-  captureNoteConversation: (date, thread, expected) => complete("capture_note_conversation", { date, thread, expected }),
+  addToNote: (request) => complete("add_to_note", { request }),
+  undoAddToNote: (request) => complete("undo_add_to_note", { request }),
   addMeetingToDailyNote: (date, expected, entry) => complete("add_meeting_to_daily_note", { date, expected, entry }),
   listRecentNotes: (limit) => read("list_recent_notes", { limit }),
   listStarredNotes: (limit) => read("list_starred_notes", { limit }),

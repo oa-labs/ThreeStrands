@@ -1,5 +1,5 @@
 import { notePreview, noteInlineText } from "./notePreview";
-import type { Note, NoteBacklink, ThreadTask } from "./domain";
+import type { Note, NoteAttachment, NoteBacklink, ThreadTask } from "./domain";
 
 /** An inert link from a note to an item elsewhere in the app. A contact
  * reference's `id` is the person's address, normalized as contact lookup
@@ -11,7 +11,22 @@ export type NoteItem = { id: string; title: string; checked: boolean; task: bool
 export type EntityLink = { reference: NoteReference; href: string; label: string; context: string; start: number };
 export type NoteDocument = { items: NoteItem[]; links: EntityLink[]; warning: string | null };
 export type NoteTaskRecord = { id: string; markerId: string; noteId: string; noteTitle: string; title: string; checked: boolean; updatedAt: string; completedAt: string | null; conflicted: boolean };
-export type NoteCapture = { note: Note; added: boolean; previousBody: string };
+/** Where Add to Note writes: a note that exists (or a daily note that may not yet), or a new note. */
+export type AddToNoteTarget = { kind: "note"; id: string } | { kind: "new"; title: string };
+export type AddToNoteRequest = {
+  target: AddToNoteTarget;
+  /** The note's `updatedAt` the action began from; null for a missing daily note and a new note. */
+  expected: string | null;
+  thread: string;
+  message: string;
+  /** The passage to quote; null adds a link to the conversation. */
+  quote: string | null;
+  dateLabel: string;
+  /** Attachment ids of the message to copy into the note. */
+  files: string[];
+};
+export type NoteAddition = { note: Note; added: boolean; previousBody: string; createdNote: boolean; attachments: NoteAttachment[] };
+export type UndoAddToNote = { noteId: string; expected: string; previousBody: string; createdNote: boolean; attachments: string[] };
 export type { NoteBacklink };
 export const MAX_NOTE_REFERENCE_BYTES = 2048;
 export const MAX_NOTE_TASKS = 500;

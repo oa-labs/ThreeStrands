@@ -18,6 +18,22 @@ function eventEnd(event: ScheduleEvent): number {
 }
 
 /**
+ * The first `limit` events still ahead at `now` (ms) whose attendees include
+ * one of `people`, soonest first, each with the name of the first such attendee.
+ */
+export function upcomingMeetingsWith(events: readonly ScheduleEvent[], people: readonly { email: string; name: string }[], now: number, limit: number): { event: ScheduleEvent; name: string }[] {
+  const namesByEmail = new Map(people.map(({ email, name }) => [email.toLocaleLowerCase(), name]));
+  return events
+    .flatMap((event) => {
+      if (eventEnd(event) <= now) return [];
+      const attendee = event.attendees?.find((address) => namesByEmail.has(address.toLocaleLowerCase()));
+      return attendee ? [{ event, name: namesByEmail.get(attendee.toLocaleLowerCase())! }] : [];
+    })
+    .sort((left, right) => eventDate(left.event).getTime() - eventDate(right.event).getTime())
+    .slice(0, limit);
+}
+
+/**
  * The next few calendar events that include someone on the conversation.
  * Renders nothing when there are none or the schedule can't be loaded, since
  * this is supplemental context; events from calendars that did load still show
@@ -35,16 +51,7 @@ export function ContactMeetings({ people, timeZone, onOpenEvent }: {
     return { timeMin: start.toISOString(), timeMax: addDays(start, UPCOMING_MEETING_DAYS).toISOString() };
   });
   const { events } = useCalendarSchedule({ ...range, timeZone });
-  const namesByEmail = new Map(people.map(({ email, name }) => [email.toLocaleLowerCase(), name]));
-  const now = Date.now();
-  const meetings = events
-    .flatMap((event) => {
-      if (eventEnd(event) <= now) return [];
-      const attendee = event.attendees?.find((address) => namesByEmail.has(address.toLocaleLowerCase()));
-      return attendee ? [{ event, name: namesByEmail.get(attendee.toLocaleLowerCase())! }] : [];
-    })
-    .sort((left, right) => eventDate(left.event).getTime() - eventDate(right.event).getTime())
-    .slice(0, MAX_UPCOMING_MEETINGS);
+  const meetings = upcomingMeetingsWith(events, people, Date.now(), MAX_UPCOMING_MEETINGS);
   if (meetings.length === 0) return null;
 
   return <ContextSection

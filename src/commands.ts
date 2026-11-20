@@ -126,7 +126,8 @@ export type CommandContext = {
   openNotesView?(): void;
   /** Opens Notes on today's daily note. */
   openTodaysNote?(): void;
-  addToTodaysNote?(): Promise<CommandResult>;
+  /** Opens Add to Note for the message being read. */
+  addToNote?(): void;
   /** Opens Add Note for the calendar event whose details are open. */
   addMeetingNote?(): void;
   /** Toggles preparation for the meeting whose details are open in Calendar. */
@@ -701,9 +702,11 @@ export const commands: Command[] = [
     enabled: (c) => !c.composerActive, run: (c) => complete(() => c.openNotesView?.()),
   },
   {
-    id: "notes.capture", title: "Add to Today's Note", keys: [], group: "Triage",
-    enabled: (c) => c.focusedPane === "mail" && Boolean(c.selectedId) && !c.composerActive && Boolean(c.addToTodaysNote),
-    run: (c) => c.addToTodaysNote?.() ?? Promise.resolve({}), undo: undoResult,
+    id: "notes.add", title: "Add to Note…", keys: ["w"], group: "Application",
+    keywords: ["quote", "passage", "selection", "attachment", "image", "file", "capture", "link", "today's note", "meeting note"],
+    // Opens a dialog for the message being read; the write happens when the dialog is submitted.
+    enabled: (c) => c.focusedPane === "mail" && c.selectedId !== null && isThreadMailbox(c) && !c.composerActive && Boolean(c.addToNote),
+    run: (c) => complete(() => c.addToNote?.()), undo: undoResult,
   },
   {
     id: "notes.meeting", title: "Add Meeting to Daily Note", keywords: ["add note", "meeting notes", "calendar", "event"], keys: [], group: "Application",

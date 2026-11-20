@@ -617,16 +617,49 @@ pub(crate) async fn add_meeting_to_daily_note(
     run_database_task(move || db.add_meeting_to_daily_note(&date, expected.as_deref(), &entry))
         .await
 }
+/// Adds a passage of a message, a link to its conversation, and copies of
+/// its files to a note, in one guarded write. The files' bytes are read and
+/// stored here, never sent through the page.
 #[tauri::command]
-pub(crate) async fn capture_note_conversation(
-    date: String,
-    thread: String,
-    expected: Option<String>,
+pub(crate) async fn add_to_note(
+    request: crate::db::AddToNoteRequest,
     state: State<'_, AppState>,
-) -> AppResult<crate::db::NoteCapture> {
+) -> AppResult<crate::db::NoteAddition> {
+    request.check().map_err(AppError::message)?;
     let db = state.database.clone();
-    run_database_task(move || db.capture_note_conversation(&date, &thread, expected.as_deref()))
-        .await
+    let mut files = Vec::with_capacity(request.files.len());
+    if !request.files.is_empty() {
+        let (message, thread) = (request.message.clone(), request.thread.clone());
+        let belongs = run_database_task({
+            let db = db.clone();
+            move || db.message_in_thread(&message, &thread)
+        })
+        .await?;
+        if !belongs {
+            return Err(AppError::message("That message isn't in this conversation"));
+        }
+    }
+    for id in &request.files {
+        let (name, mime_type, bytes) =
+            super::attachments::load_attachment(&request.message, id, &state).await?;
+        crate::db::note_attachments::check_attachment_size(bytes.len())?;
+        files.push(crate::db::note_additions::AddedFile {
+            name,
+            mime_type,
+            bytes,
+        });
+    }
+    run_database_task(move || db.add_to_note(&request, files)).await
+}
+
+/// Takes back an addition while its note is as the addition left it.
+#[tauri::command]
+pub(crate) async fn undo_add_to_note(
+    request: crate::db::note_additions::UndoAddToNote,
+    state: State<'_, AppState>,
+) -> AppResult<Note> {
+    let db = state.database.clone();
+    run_database_task(move || db.undo_add_to_note(&request)).await
 }
 
 #[tauri::command]

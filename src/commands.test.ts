@@ -238,6 +238,26 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "diagnostics.open")).toBeUndefined();
   });
 
+  it("adds to a note with a plain w while reading mail, and no other command owns w", () => {
+    const add = commands.find((command) => command.id === "notes.add")!;
+    expect(add.title).toBe("Add to Note…");
+    expect(add.keys).toEqual(["w"]);
+    expect(commands.filter((command) => command.keys.some((key) => key.toLowerCase() === "w")).map((command) => command.id)).toEqual(["notes.add"]);
+    expect(commands.find((command) => command.id === "notes.capture")).toBeUndefined();
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "w" }), "w")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "w", metaKey: true }), "w")).toBe(false);
+    const addToNote = vi.fn();
+    const reading = { ...noopContext(), selectedId: "thread-1", addToNote };
+    expect(add.enabled(reading)).toBe(true);
+    expect(add.enabled({ ...reading, composerActive: true })).toBe(false);
+    expect(add.enabled({ ...reading, selectedId: null })).toBe(false);
+    expect(add.enabled({ ...reading, addToNote: undefined })).toBe(false);
+    for (const focusedPane of ["tasks", "notes", "contacts", "files", "calendar", "agents", "today"] as const) expect(add.enabled({ ...reading, focusedPane })).toBe(false);
+    for (const mailbox of ["drafts", "outbox"] as const) expect(add.enabled({ ...reading, mailbox })).toBe(false);
+    void add.run(reading);
+    expect(addToNote).toHaveBeenCalledOnce();
+  });
+
   it("keeps shortcut collisions limited to commands in mutually exclusive focused panes", () => {
     const owners = new Map<string, string[]>();
     for (const command of commands) {
