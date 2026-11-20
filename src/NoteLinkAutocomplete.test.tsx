@@ -1,4 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import postcss from "postcss";
 import { createRef } from "react";
 import { MarkdownEditor, type EditorHandle } from "@meowdown/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -41,6 +43,15 @@ describe("note link autocomplete", () => {
     vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(768);
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("lays the popup out as a block, so its frame wraps the rows and its height limit applies", () => {
+    // The popup is a custom element, inline unless styled otherwise.
+    const display: string[] = [];
+    postcss.parse(readFileSync("src/styles.css", "utf8")).walkRules((rule) => {
+      if (rule.selectors.includes(".note-autocomplete-popup")) rule.walkDecls("display", (declaration) => { display.push(declaration.value); });
+    });
+    expect(display).toEqual(["block"]);
+  });
 
   it.each(["name@example.com", "(@Ada", "https://example.com/@Ada", "@ ", "hello@@Ada"])("keeps %s literal", (text) => {
     expect(NOTE_LINK_TRIGGER.test(text)).toBe(false);
