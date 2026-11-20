@@ -368,7 +368,7 @@ mod tests {
         clear().unwrap();
         let saved: Vec<Entry> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert!(saved.is_empty());
-        *STORE.lock().unwrap() = Store::default();
+        *STORE.lock().unwrap_or_else(|e| e.into_inner()) = Store::default();
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
