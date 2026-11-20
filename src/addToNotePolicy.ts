@@ -4,8 +4,6 @@
  * the dialog checks them first so it can say why instead of failing on
  * submit. Nothing here is clamped: a value over a limit is refused.
  */
-import { MAX_NOTE_ATTACHMENT_BYTES } from "./noteAttachments";
-
 /** How far ahead the note picker looks for meetings with a participant of the conversation. */
 export const ADD_TO_NOTE_MEETING_DAYS = 7;
 /** Most meetings offered as note suggestions. */
@@ -20,8 +18,8 @@ export const MAX_NEW_NOTE_TITLE_CHARS = 200;
 export const MAX_ADDITION_QUOTE_CHARS = 20_000;
 /** Most files one addition copies (`MAX_ADDITION_FILES`). */
 export const MAX_ADDITION_FILES = 20;
-/** The largest file a note can hold. */
-export { MAX_NOTE_ATTACHMENT_BYTES };
+/** The largest file a note can hold, as natively (`MAX_NOTE_ATTACHMENT_BYTES`). */
+export const MAX_NOTE_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 /** Whether `text` is within the quote limit, counting characters as natively (code points). */
 export const quoteWithinLimit = (text: string): boolean => [...text].length <= MAX_ADDITION_QUOTE_CHARS;

@@ -17,7 +17,7 @@ import { DEMO_ACCOUNT_ID, defaultDemoDataset, type DemoDataset } from "./demoDat
 import { buildShowcaseDataset } from "./showcaseDataset";
 import { parseAddress, splitAddressList } from "../emailAddress";
 import { TODAY_MAIL_LIMIT } from "../todayMail";
-import { isCalendarAttachment } from "../CalendarAttachment";
+import { isCalendarAttachment } from "../calendarInvitations";
 import { MAX_KEEP_IN_TOUCH_DAYS } from "../keepInTouch";
 import { MAX_CONTACT_GROUP_MEMBERS, MAX_CONTACT_GROUP_NAME, MAX_CONTACT_GROUPS } from "../contactGroups";
 import type {

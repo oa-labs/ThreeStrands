@@ -1,12 +1,12 @@
 import { mailClient } from "./data/client";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { formatAttachmentSize } from "./threadPresentation";
+import { MAX_NOTE_ATTACHMENT_BYTES } from "./addToNotePolicy";
+
+export { MAX_NOTE_ATTACHMENT_BYTES } from "./addToNotePolicy";
 
 /** How a note's Markdown names an attached file: `attachment:<id>`. */
 export const ATTACHMENT_SCHEME = "attachment:";
-
-/** The largest file a note can hold, as natively (`MAX_NOTE_ATTACHMENT_BYTES`). */
-export const MAX_NOTE_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 /** The attachment id a Markdown destination names, or null. */
 export function attachmentIdOf(destination: string): string | null {

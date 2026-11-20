@@ -51,11 +51,13 @@ describe("delegated workspace", () => {
     const report = screen.getByRole("region", { name: "Agent result" });
     const original = within(report).getByText(/Fixture report\./).textContent;
     fireEvent.change(screen.getByRole("textbox", { name: "Follow-up message" }), { target: { value: "Why is this only a demonstration?" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByText(/This is a demonstration response/);
     expect(within(report).getByText(/Fixture report\./).textContent).toBe(original);
     await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled());
     fireEvent.change(screen.getByRole("textbox", { name: "Follow-up message" }), { target: { value: "Focus on sales <img src=x onerror=alert(1)>" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Revise report" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Revise report" }));
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Report version" }).querySelectorAll("option")).toHaveLength(2));
     expect(within(report).getByText(/Revision request:/)).toHaveTextContent("Focus on sales <img src=x onerror=alert(1)>");

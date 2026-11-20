@@ -7,8 +7,7 @@ import { meetingAttendees, meetingEntry, meetingEventReference } from "./meeting
 import { MAX_MEETING_ATTENDEES, type MeetingEntry } from "./noteMeetings";
 import { normalizeContactAddress, noteReferenceKey } from "./noteEntities";
 
-/** Most meetings one readiness request may name; matches the native limit. */
-export const MAX_READINESS_EVENTS = 50;
+export { MAX_READINESS_EVENTS } from "./meetingReadinessPolicy";
 
 /** The meeting's line as Add Note would write it without changes: the
  * event's title and its other attendees, named from contacts. */

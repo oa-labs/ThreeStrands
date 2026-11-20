@@ -111,7 +111,7 @@ describe("Notes settings", () => {
       fireEvent.click(section.getByRole("button", { name: "Export to Markdown Folder…" }));
       const confirm = within(await section.findByRole("group", { name: "Replace earlier export" }));
       expect(confirm.getByText("Replace the earlier export in /Users/me/Notes?")).toBeInTheDocument();
-      expect(confirm.getByRole("button", { name: "Cancel" })).toHaveFocus();
+      await waitFor(() => expect(confirm.getByRole("button", { name: "Cancel" })).toHaveFocus());
       fireEvent.click(confirm.getByRole("button", { name: "Cancel" }));
       expect(exportNotes).not.toHaveBeenCalled();
 

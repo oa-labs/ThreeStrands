@@ -598,7 +598,7 @@ describe("Notes workspace", () => {
     fireEvent.change(title, { target: { value: name } });
     fireEvent.keyDown(title, { key: "Enter", metaKey: true });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(await screen.findByRole("textbox", { name: "Title" })).toHaveValue(name);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(name));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Note text" })).toHaveFocus());
     expect(noteList().getByRole("button", { name: new RegExp(name) })).toHaveAttribute("aria-current", "true");
   });

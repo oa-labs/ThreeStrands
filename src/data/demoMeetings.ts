@@ -1,7 +1,7 @@
 import type { FollowThroughRecord, FollowThroughSave, MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingReadiness, MeetingSection, PrepReservation, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
 import { boundedText, insertPrepTask, meetingBlocks, occurrenceBlocks, PREP_TASK_PREFIX, type MeetingBlock } from "../meetingExcerpt";
 import { insertMeetingLine, meetingLine } from "../noteMeetings";
-import { MAX_READINESS_EVENTS } from "../meetingPrep";
+import { MAX_READINESS_EVENTS } from "../meetingReadinessPolicy";
 import { followThroughSections, insertFollowThrough } from "../meetingFollowThrough";
 import { extractNoteEntityLinks, normalizeContactAddress, noteReferenceKey, type NoteReference } from "../noteEntities";
 import { extractWikiLinks } from "../noteWikiLinks";

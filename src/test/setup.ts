@@ -8,9 +8,8 @@ import { clearAvailabilityCache } from "../availabilityCache";
 // wait. A longer wait only slows tests that are already failing.
 configure({ asyncUtilTimeout: 5_000 });
 
-// Vitest globals are off, so Testing Library cannot register its own
-// automatic cleanup; without this, rendered trees and hooks (and their
-// intervals) from one test stay mounted into the next. The app also reopens
+// Use the same explicit cleanup with both runners. Vitest globals are off,
+// and the Bun launcher disables Testing Library's automatic cleanup. The app reopens
 // the last workspace it showed, so each test starts back in Mail, and reopens
 // conversations where they were left, so each test starts at the latest message.
 afterEach(() => {

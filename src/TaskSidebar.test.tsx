@@ -827,6 +827,7 @@ describe("TaskSidebar", () => {
     fireEvent.change(description, { target: { value: "Prepare launch checklist" } });
     fireEvent.blur(description);
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", notes: "Prepare launch checklist" }));
+    await waitFor(() => expect(onTasksChanged).toHaveBeenCalledTimes(2));
 
     fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
     expect(updateTask).toHaveBeenCalledTimes(2);
@@ -834,12 +835,15 @@ describe("TaskSidebar", () => {
     // Enter in an input saves it in place.
     fireEvent.keyDown(dialog.getByLabelText("Due Date"), { key: "Enter" });
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", dueKind: "date", dueValue: "2030-10-01", timeZone: null }));
+    await waitFor(() => expect(onTasksChanged).toHaveBeenCalledTimes(3));
 
     fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "none" } });
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", dueKind: "none", dueValue: null, timeZone: null }));
+    await waitFor(() => expect(onTasksChanged).toHaveBeenCalledTimes(4));
 
     fireEvent.change(dialog.getByRole("combobox", { name: "Type" }), { target: { value: "follow_up" } });
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", kind: "follow_up" }));
+    await waitFor(() => expect(onTasksChanged).toHaveBeenCalledTimes(5));
     const repeat = dialog.getByRole("spinbutton", { name: "Repeat Every (Days)" });
     fireEvent.change(repeat, { target: { value: "0" } });
     fireEvent.blur(repeat);
@@ -847,7 +851,7 @@ describe("TaskSidebar", () => {
     fireEvent.change(repeat, { target: { value: "7" } });
     fireEvent.blur(repeat);
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", repeatIntervalDays: 7 }));
-    expect(onTasksChanged).toHaveBeenCalledTimes(6);
+    await waitFor(() => expect(onTasksChanged).toHaveBeenCalledTimes(6));
 
     // An emptied title is never saved; the last good title stays.
     fireEvent.change(title, { target: { value: "  " } });
@@ -1364,7 +1368,7 @@ describe("TaskSidebar goals", () => {
     fireEvent.click(dialog.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(updateGoal).toHaveBeenCalledTimes(2);
-    fireEvent.click(screen.getByRole("button", { name: "Edit goal Ship" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit goal Ship" }));
     expect(screen.getByRole("textbox", { name: "Notes" })).toHaveValue("Keep this note");
   });
 

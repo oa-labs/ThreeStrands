@@ -1386,12 +1386,20 @@ describe("ContactsWorkspace",()=>{
       const name=await screen.findByRole("textbox",{name:"Group Name"});
       // Enter-to-blur is covered directly in ContactGroupViews.test.tsx.
       // Keep this async workspace test focused on persistence and recovery.
-      fireEvent.change(name,{target:{value:"Directors"}});
-      fireEvent.blur(name);
+      await waitFor(() => expect(name).toBeEnabled());
+      act(() => name.focus());
+      await act(async () => {
+        fireEvent.change(name, { target: { value: "Directors" } });
+      });
+      act(() => name.blur());
       await waitFor(()=>expect(mailClient.renameContactGroup).toHaveBeenCalledWith(board.id,"Directors"));
       expect(await screen.findByRole("button",{name:/Directors/})).toBeInTheDocument();
-      fireEvent.change(name,{target:{value:"Family"}});
-      fireEvent.blur(name);
+      await waitFor(() => expect(name).toBeEnabled());
+      act(() => name.focus());
+      await act(async () => {
+        fireEvent.change(name, { target: { value: "Family" } });
+      });
+      act(() => name.blur());
       expect(await screen.findByRole("alert")).toHaveTextContent("already exists");
       expect(name).toHaveValue("Directors");
       // Leaving the name unchanged saves nothing.

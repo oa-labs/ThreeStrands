@@ -9,6 +9,8 @@ on:
       - 'crates/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
+      - 'bunfig.toml'
+      - 'scripts/test-frontend.mjs'
       - '.github/workflows/android-build.yml'
   workflow_dispatch:
     inputs:
@@ -43,7 +45,7 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsc --noEmit
-      - run: pnpm exec vitest run apps/mobile
+      - run: pnpm test apps/mobile
       - name: Build test APK
         if: inputs.version_code == ''
         run: |

@@ -34,6 +34,13 @@ pnpm build
 pnpm tauri dev # native app with local SQLite
 ```
 
+`pnpm test` runs the desktop and mobile frontend suites with Bun. The first
+run downloads a checksum-pinned Bun canary to the user's cache. This build
+has the Vitest compatibility the suite needs. pnpm installs the project
+dependencies. To run a subset, pass a file path or name filter, for example
+`pnpm test apps/mobile`. Use `pnpm test:watch` for watch mode and
+`pnpm test:coverage` for the Vitest coverage reports.
+
 Rust code is formatted with `rustfmt`, and CI rejects unformatted code. The
 root workspace excludes `src-tauri`, so format both:
 

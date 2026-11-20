@@ -70,8 +70,8 @@ describe("Add to Note wiring", () => {
     fireEvent.click(await dialog.findByRole("option", { name: /Today's note/ }));
     fireEvent.click(dialog.getByRole("button", { name: "Add to Note" }));
     const notice = (await screen.findByText("Added to today's note")).closest("[role='status']") as HTMLElement;
-    expect(within(notice).getByRole("button", { name: "Open Note" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Add to Note" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add to Note" })).not.toBeInTheDocument());
+    expect(await within(notice).findByRole("button", { name: "Open Note" })).toBeInTheDocument();
     const day = todayTarget().date;
     expect((await mailClient.getDailyNote(day))?.body).toMatch(/^> quoted line\n> — \[Welcome to ThreeStrands\]/);
     fireEvent.click(within(notice).getByRole("button", { name: "Undo" }));

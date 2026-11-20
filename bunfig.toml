@@ -1,0 +1,10 @@
+telemetry = false
+env = false
+
+[install]
+auto = "disable"
+
+[test]
+environment = "jsdom"
+preload = ["./src/test/setup.ts"]
+pathIgnorePatterns = ["tests/**", "scripts/**", "site/**", "dist/**", "src-tauri/**", "crates/**"]

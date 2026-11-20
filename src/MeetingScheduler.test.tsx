@@ -572,7 +572,7 @@ describe("MeetingScheduler", () => {
         moreActions: [{ label: "Edit", onSelect: onEdit }],
       });
       expect(await screen.findByRole("button", { name: "Dismiss" })).toBeInTheDocument();
-      expect(onMatchChange).toHaveBeenLastCalledWith(added);
+      await waitFor(() => expect(onMatchChange).toHaveBeenLastCalledWith(added));
       fireEvent.click(screen.getByRole("button", { name: "More actions" }));
       expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Add Again", "Edit"]);
       fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
