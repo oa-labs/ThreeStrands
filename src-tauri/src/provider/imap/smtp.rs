@@ -615,7 +615,7 @@ pub struct SmtpFailure {
 #[derive(Clone, Debug)]
 pub struct SmtpUnknown {
     #[cfg_attr(
-        not(test),
+        all(desktop, not(test)),
         expect(
             dead_code,
             reason = "tests assert which phase went unknown; send reports every unknown alike"
@@ -631,7 +631,7 @@ pub enum SmtpOutcome {
     /// The server accepted the message (2xx final reply). Carries that reply.
     Accepted {
         #[cfg_attr(
-            not(test),
+            all(desktop, not(test)),
             expect(
                 dead_code,
                 reason = "tests assert the accepting reply; send only needs the verdict"
@@ -645,7 +645,7 @@ pub enum SmtpOutcome {
     /// automatically.
     Unknown(
         #[cfg_attr(
-            not(test),
+            all(desktop, not(test)),
             expect(
                 dead_code,
                 reason = "tests assert the phase; send reports every unknown alike"

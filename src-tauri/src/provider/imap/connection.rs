@@ -272,7 +272,7 @@ pub enum ConnectionRole {
 /// its role's exclusive lock for its lifetime.
 pub struct ConnectionLease {
     #[cfg_attr(
-        not(test),
+        all(desktop, not(test)),
         expect(dead_code, reason = "read only by tests through `role()`")
     )]
     role: ConnectionRole,

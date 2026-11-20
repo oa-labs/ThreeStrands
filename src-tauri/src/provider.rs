@@ -337,8 +337,8 @@ pub enum LabelModel {
 ///
 /// Deliberately minimal: every flag here is one that a code path branches on,
 /// except `provided_threads` and `label_model`. Each provider reports them,
-/// but no production code reads them yet; their `expect(dead_code)`
-/// attributes start warning once something does.
+/// but no production code reads them yet. The desktop build uses
+/// `expect(dead_code)` to flag when that changes.
 #[derive(Clone, Copy, Debug)]
 pub struct ProviderCapabilities {
     /// Whether the provider can find mail the local cache has not ingested.
@@ -352,7 +352,7 @@ pub struct ProviderCapabilities {
     /// conversation ids, so it is `true`; the IMAP provider sets it `false`
     /// when the server does not return `THREADID`.
     #[cfg_attr(
-        not(test),
+        all(desktop, not(test)),
         expect(
             dead_code,
             reason = "reported by each provider; no production reader yet"
@@ -366,7 +366,7 @@ pub struct ProviderCapabilities {
     /// in `db/accounts.rs` derives the same way: the negotiated native model,
     /// else the one the saved label storage implies.
     #[cfg_attr(
-        not(test),
+        all(desktop, not(test)),
         expect(
             dead_code,
             reason = "reported by each provider; no production reader yet"
