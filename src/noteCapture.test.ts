@@ -115,6 +115,20 @@ describe("Add to Note", () => {
       expect(save).toHaveBeenCalledOnce();
     });
 
+    it("reports both the addition failure and a rejected meeting note rollback", async () => {
+      vi.spyOn(mailClient, "addMeetingToDailyNote").mockResolvedValue(meeting);
+      vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null);
+      vi.spyOn(mailClient, "addToNote").mockRejectedValue(new Error("That passage is too long"));
+      const save = vi.spyOn(mailClient, "saveDailyNote").mockResolvedValue({ saved: false, note: day });
+      const trash = vi.spyOn(mailClient, "trashNote");
+
+      await expect(addToNote({ choice: { kind: "meeting", date: "2026-11-12", entry }, ...request })).rejects.toThrow(
+        "Add to Note failed (That passage is too long). Could not fully undo the meeting note setup. That day's note changed after the meeting was added.",
+      );
+      expect(save).toHaveBeenCalledExactlyOnceWith("2026-11-12", "", "day");
+      expect(trash).not.toHaveBeenCalled();
+    });
+
     it("refuses when the meeting is already in its day without a note, writing nothing more", async () => {
       vi.spyOn(mailClient, "addMeetingToDailyNote").mockResolvedValue({ ...meeting, added: false, meetingNote: null, createdMeetingNote: false });
       vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null);

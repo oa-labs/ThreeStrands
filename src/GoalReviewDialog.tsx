@@ -19,7 +19,7 @@ export function GoalReviewDialog({
   goals: readonly Goal[];
   tasks: readonly ThreadTask[];
   now?: Date;
-  onUpdate(goalId: string, request: Omit<UpdateGoalRequest, "id">): Promise<void>;
+  onUpdate(goalId: string, request: Omit<UpdateGoalRequest, "id">): Promise<Goal>;
   onClose(): void;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);

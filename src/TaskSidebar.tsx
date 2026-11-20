@@ -386,6 +386,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     const save = saveQueue.current.then(async () => {
       const updated = await mailClient.updateGoal({ id: goalId, ...request });
       setGoals((current) => current.map((goal) => goal.id === updated.id ? updated : goal));
+      return updated;
     });
     saveQueue.current = save.catch(() => undefined);
     return save;

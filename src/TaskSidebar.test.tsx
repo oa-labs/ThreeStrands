@@ -1338,7 +1338,55 @@ describe("TaskSidebar goals", () => {
     fireEvent.change(dialog.getByRole("textbox", { name: "Notes" }), { target: { value: "Escape keeps this" } });
     fireEvent.keyDown(dialog.getByRole("textbox", { name: "Notes" }), { key: "Escape" });
     await waitFor(() => expect(updateGoal).toHaveBeenLastCalledWith({ id: "ship", notes: "Escape keeps this" }));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it.each(["close", "blur then close"])("keeps a rejected goal edit available to retry on %s", async (action) => {
+    const { updateGoal } = setup([], [workspaceGoal("ship", { title: "Ship" })]);
+    let reject!: (reason: Error) => void;
+    updateGoal.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit goal Ship" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Goal" }));
+    const notes = dialog.getByRole("textbox", { name: "Notes" });
+    fireEvent.change(notes, { target: { value: "Keep this note" } });
+    if (action === "blur then close") fireEvent.blur(notes);
+    fireEvent.keyDown(notes, { key: "Escape" });
+    await waitFor(() => expect(updateGoal).toHaveBeenCalledExactlyOnceWith({ id: "ship", notes: "Keep this note" }));
+    expect(screen.getByRole("dialog", { name: "Goal" })).toBeInTheDocument();
+
+    await act(async () => reject(new Error("Could not save goal")));
+    expect(await dialog.findByRole("alert")).toHaveTextContent("Could not save goal");
+    expect(notes).toHaveValue("Keep this note");
+    expect(updateGoal).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(dialog.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(updateGoal).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Edit goal Ship" }));
+    expect(screen.getByRole("textbox", { name: "Notes" })).toHaveValue("Keep this note");
+  });
+
+  it("saves a goal field reverted while its earlier edit is still being written", async () => {
+    const goal = workspaceGoal("ship", { title: "Ship" });
+    const { updateGoal } = setup([], [goal]);
+    let complete!: (goal: Goal) => void;
+    updateGoal.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit goal Ship" }));
+    const title = screen.getByRole("textbox", { name: "Goal" });
+    fireEvent.change(title, { target: { value: "Ship updates" } });
+    fireEvent.blur(title);
+    await waitFor(() => expect(updateGoal).toHaveBeenCalledExactlyOnceWith({ id: "ship", title: "Ship updates" }));
+    fireEvent.change(title, { target: { value: "Ship" } });
+    fireEvent.keyDown(title, { key: "Escape" });
+    await act(async () => complete({ ...goal, title: "Ship updates" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(updateGoal).toHaveBeenLastCalledWith({ id: "ship", title: "Ship" });
+    expect(screen.getByRole("button", { name: "Edit goal Ship" })).toBeInTheDocument();
   });
 
   it("deletes a goal only after confirmation and unlinks its tasks", async () => {

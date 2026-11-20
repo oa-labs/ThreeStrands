@@ -57,6 +57,7 @@ describe("note files", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     files.retry();
     await vi.waitFor(() => expect(image).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
     expect(shown).toBeUndefined();
     image.mockResolvedValue(PIXEL);
     files.retry();
@@ -67,5 +68,26 @@ describe("note files", () => {
     vi.spyOn(mailClient, "noteAttachmentImage").mockResolvedValue(null);
     vi.spyOn(mailClient, "noteAttachment").mockResolvedValue(attachment({ image: false, mimeType: "application/pdf", available: false }));
     expect(await noteFiles(() => "n-1", vi.fn()).image(`attachment:${ID}`)).toBeUndefined();
+  });
+
+  it("retries a failed read after sync and updates the original image request", async () => {
+    const reason = new Error("Temporary image read failure");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const image = vi.spyOn(mailClient, "noteAttachmentImage")
+      .mockRejectedValueOnce(reason).mockRejectedValueOnce(reason).mockResolvedValue(PIXEL);
+    const files = noteFiles(() => "n-1", vi.fn());
+    const href = `attachment:${ID}`;
+    const displayed = files.image(href);
+    expect(files.image(href)).toBe(displayed);
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith("Note attachment image failed:", reason));
+
+    files.retry();
+    files.retry();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
+    expect(image).toHaveBeenCalledTimes(2);
+
+    files.retry();
+    await expect(displayed).resolves.toBe(PIXEL);
+    expect(image).toHaveBeenCalledTimes(3);
   });
 });
