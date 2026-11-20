@@ -76,7 +76,7 @@ export function AddToNoteDialog({ thread, message, quote: selected, accounts, ow
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState(0);
-  const [chosen, setChosen] = useState<Option | null>(null);
+  const [userPick, setUserPick] = useState<Option | null>(null);
   const [includeText, setIncludeText] = useState(false);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -154,6 +154,9 @@ export function AddToNoteDialog({ thread, message, quote: selected, accounts, ow
     rows.push(...recent.filter((note) => !taken.has(note.id)).slice(0, MAX_RECENT_NOTE_SUGGESTIONS).map((note) => noteOption(note, "Recently opened")));
     return rows;
   }, [term, found, meetings, meetingNotes, meetingKey, recent, today, now]);
+  // Until the user picks, the first suggestion is chosen (a meeting's note when one is offered,
+  // else today's note); it follows the suggestions as they load. A search chooses nothing by itself.
+  const chosen = userPick ?? (term ? null : options[0] ?? null);
   const active = options.length ? Math.min(highlighted, options.length - 1) : -1;
 
   const source = messageSource(message, accounts, now);
@@ -167,7 +170,7 @@ export function AddToNoteDialog({ thread, message, quote: selected, accounts, ow
 
   const choose = (option: Option) => {
     if (!option.choice && !option.meeting) return;
-    setChosen(option);
+    setUserPick(option);
     setError(null);
   };
   const submit = async () => {

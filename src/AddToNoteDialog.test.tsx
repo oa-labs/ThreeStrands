@@ -27,7 +27,7 @@ function renderDialog(props: Partial<Parameters<typeof AddToNoteDialog>[0]> = {}
     people={[{ email: "ada@example.com", name: "Ada Lovelace" }]} calendarConnected={false} timeZone="UTC" now={now} onClose={onClose} onSubmit={onSubmit} {...props} />);
   return { ...view, onClose, onSubmit, dialog: within(screen.getByRole("dialog", { name: "Add to Note" })) };
 }
-const optionLabels = (dialog: ReturnType<typeof within>) => dialog.getAllByRole("option").map((option) => option.querySelector("span")?.textContent);
+const optionLabels = (dialog: { getAllByRole(role: string): HTMLElement[] }) => dialog.getAllByRole("option").map((option) => option.querySelector("span")?.textContent);
 
 describe("AddToNoteDialog", () => {
   beforeEach(() => {
@@ -42,7 +42,7 @@ describe("AddToNoteDialog", () => {
   it("focuses the note picker first, with Cancel before the primary action", async () => {
     const { dialog } = renderDialog();
     expect(dialog.getByRole("combobox", { name: "Note" })).toHaveFocus();
-    expect(dialog.getByRole("button", { name: "Add to Note" })).toBeDisabled();
+    expect(dialog.getByRole("button", { name: "Add to Note" })).toBeEnabled();
     expectPrimaryActionLast(dialog.getByRole("button", { name: "Add to Note" }).parentElement!);
     await dialog.findByRole("option", { name: /Roadmap/ });
   });
@@ -53,11 +53,11 @@ describe("AddToNoteDialog", () => {
     opener.focus();
     const { dialog, onClose, unmount } = renderDialog();
     await dialog.findByRole("option", { name: /Roadmap/ });
-    dialog.getByRole("button", { name: "Cancel" }).focus();
-    fireEvent.keyDown(dialog.getByRole("button", { name: "Cancel" }), { key: "Tab" });
+    dialog.getByRole("button", { name: "Add to Note" }).focus();
+    fireEvent.keyDown(dialog.getByRole("button", { name: "Add to Note" }), { key: "Tab" });
     expect(dialog.getByRole("button", { name: "Close" })).toHaveFocus();
     fireEvent.keyDown(dialog.getByRole("button", { name: "Close" }), { key: "Tab", shiftKey: true });
-    expect(dialog.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(dialog.getByRole("button", { name: "Add to Note" })).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
     unmount();
@@ -115,22 +115,61 @@ describe("AddToNoteDialog", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ choice: { kind: "new", title: "board" } })));
   });
 
-  it("writes nothing until submitted, and Cmd+Enter submits the chosen note with the link", async () => {
+  it("writes nothing until submitted, and Cmd+Enter submits to the preselected note", async () => {
     const write = vi.spyOn(mailClient, "addToNote");
     const create = vi.spyOn(mailClient, "createNote");
     const { dialog, onSubmit } = renderDialog();
     await dialog.findByRole("option", { name: /Roadmap/ });
-    fireEvent.keyDown(dialog.getByRole("combobox", { name: "Note" }), { key: "Enter", metaKey: true });
-    expect(onSubmit).not.toHaveBeenCalled();
-    fireEvent.keyDown(dialog.getByRole("combobox", { name: "Note" }), { key: "ArrowDown" });
-    fireEvent.keyDown(dialog.getByRole("combobox", { name: "Note" }), { key: "ArrowUp" });
-    fireEvent.keyDown(dialog.getByRole("combobox", { name: "Note" }), { key: "Enter" });
     expect(dialog.getByRole("option", { name: /Today's note/ })).toHaveAttribute("aria-selected", "true");
     expect(onSubmit).not.toHaveBeenCalled();
-    fireEvent.keyDown(dialog.getByRole("combobox", { name: "Note" }), { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(dialog.getByRole("combobox", { name: "Note" }), { key: "Enter", metaKey: true });
     await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith({ choice: { kind: "note", id: "daily:2026-11-12" }, quote: null, dateLabel: "Oct 30", files: [] }));
     expect(write).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("preselects the first meeting's note, and Cmd+Enter adds there", async () => {
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [meeting("soon", "Standup", 2)], errors: [] });
+    vi.spyOn(mailClient, "noteBacklinks").mockResolvedValue([{ noteId: "m-note", title: "Standup notes", dailyDate: null, context: "" }]);
+    const { dialog, onSubmit } = renderDialog({ calendarConnected: true });
+    await waitFor(() => expect(dialog.getByRole("option", { name: /Standup notes/ })).toHaveAttribute("aria-selected", "true"));
+    expect(dialog.getByRole("option", { name: /Today's note/ })).toHaveAttribute("aria-selected", "false");
+    fireEvent.keyDown(dialog.getByRole("combobox", { name: "Note" }), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ choice: { kind: "note", id: "m-note" } })));
+  });
+
+  it("moves the preselection to a meeting that arrives later, but never over the user's pick", async () => {
+    let release: (value: { events: ScheduleEvent[]; errors: string[] }) => void = () => undefined;
+    vi.spyOn(mailClient, "listScheduleEvents").mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    vi.spyOn(mailClient, "noteBacklinks").mockResolvedValue([{ noteId: "m-note", title: "Standup notes", dailyDate: null, context: "" }]);
+    const { dialog } = renderDialog({ calendarConnected: true });
+    await dialog.findByRole("option", { name: /Roadmap/ });
+    expect(dialog.getByRole("option", { name: /Today's note/ })).toHaveAttribute("aria-selected", "true");
+    release({ events: [meeting("soon", "Standup", 2)], errors: [] });
+    await waitFor(() => expect(dialog.getByRole("option", { name: /Standup notes/ })).toHaveAttribute("aria-selected", "true"));
+  });
+
+  it("keeps the user's pick as suggestions finish loading", async () => {
+    let release: (value: { events: ScheduleEvent[]; errors: string[] }) => void = () => undefined;
+    vi.spyOn(mailClient, "listScheduleEvents").mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    vi.spyOn(mailClient, "noteBacklinks").mockResolvedValue([{ noteId: "m-note", title: "Standup notes", dailyDate: null, context: "" }]);
+    const { dialog, onSubmit } = renderDialog({ calendarConnected: true });
+    fireEvent.click(await dialog.findByRole("option", { name: /Roadmap/ }));
+    release({ events: [meeting("soon", "Standup", 2)], errors: [] });
+    await dialog.findByRole("option", { name: /Standup notes/ });
+    expect(dialog.getByRole("option", { name: /Roadmap/ })).toHaveAttribute("aria-selected", "true");
+    expect(dialog.getByRole("option", { name: /Standup notes/ })).toHaveAttribute("aria-selected", "false");
+    fireEvent.keyDown(dialog.getByRole("combobox", { name: "Note" }), { key: "Enter", metaKey: true });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ choice: { kind: "note", id: "n1" } })));
+  });
+
+  it("chooses nothing from search results on its own", async () => {
+    vi.spyOn(mailClient, "searchNotes").mockResolvedValue([{ id: "n9", title: "Board prep", dailyDate: null, matchSnippet: "", trashed: false }]);
+    const { dialog } = renderDialog();
+    fireEvent.change(dialog.getByRole("combobox", { name: "Note" }), { target: { value: "board" } });
+    await dialog.findByRole("option", { name: /Board prep/ });
+    expect(dialog.getAllByRole("option").every((option) => option.getAttribute("aria-selected") === "false")).toBe(true);
+    expect(dialog.getByRole("button", { name: "Add to Note" })).toBeDisabled();
   });
 
   it("previews a selection as a quote with its source, and sends exactly that", async () => {
