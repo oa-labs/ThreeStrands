@@ -1726,7 +1726,7 @@ describe("TodayWorkspace", () => {
     it("lists meetings set up today, whatever day they are on, and opens the event", async () => {
       const meeting = (id: string, overrides: Partial<CreatedScheduleEvent> = {}): CreatedScheduleEvent => ({
         id: `primary:${id}`, uid: `${id}@google.com`, accountId: "you@example.com", calendarId: "primary", title: `Meeting ${id}`,
-        start: local(24, 10), end: local(24, 11), allDay: false, attendees: ["ana@example.org", "ben@example.org"], created: local(17, 9, 15), ...overrides,
+        start: local(24, 10), end: local(24, 11), allDay: false, attendees: ["ana@example.org", "ben@example.org"], attendeeNames: { "ana@example.org": "Ana Diaz" }, created: local(17, 9, 15), ...overrides,
       });
       vi.mocked(mailClient.listEventsCreatedBetween).mockResolvedValue({ events: [
         meeting("later"),
@@ -1738,7 +1738,7 @@ describe("TodayWorkspace", () => {
       const card = screen.getByRole("region", { name: "Done Today" });
       const row = await within(card).findByRole("button", { name: /^Meeting later/ });
       const expectedDate = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(local(24, 10)));
-      expect(row).toHaveTextContent(`${expectedDate} · ${formatClockTime(new Date(local(24, 10))).replace(/\s/g, " ")} · ana@example.org, ben@example.org`);
+      expect(row).toHaveTextContent(`${expectedDate} · ${formatClockTime(new Date(local(24, 10))).replace(/\s/g, " ")} · Ana Diaz, ben@example.org`);
       expect(row).toHaveTextContent(formatClockTime(new Date(local(17, 9, 15))).replace(/\s/g, " "));
       const trip = within(card).getByRole("button", { name: /^Meeting trip/ });
       expect(trip).toHaveTextContent("Dec 2 · cy@example.org");

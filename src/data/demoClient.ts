@@ -2,7 +2,7 @@ import { createDemoAgents } from "./demoAgents";
 import { previewScheduleChoices } from "../scheduleTimes";
 import { isHolidayCalendar } from "../calendarAvailability";
 import type { FindAvailabilityRequest } from "../domain";
-import type { SentInRange } from "../domain";
+import type { CreatedScheduleEvent, SentInRange } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
 import { createDemoNotes } from "./demoNotes";
 import { createDemoMeetings } from "./demoMeetings";
@@ -1652,11 +1652,16 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       // Demo events carry no creation time; pretend each meeting was set up two days before it starts. An event with guests and no RSVP is one the user organizes.
       const min = Date.parse(createdMin);
       const max = Date.parse(createdMax);
-      const events = connectedEvents()
+      const events: CreatedScheduleEvent[] = connectedEvents()
         .filter((event) => !event.canRespond && (event.attendees?.length ?? 0) > 0 && !event.sourceTaskId && !event.sourcePlanKey && !event.eventType)
         .map((event) => ({ ...structuredClone(event), created: new Date(eventRange(event)[0] - 2 * 86_400_000).toISOString() }))
         .filter((event) => Date.parse(event.created) >= min && Date.parse(event.created) < max)
         .sort((a, b) => b.created.localeCompare(a.created));
+      const known = new Map((await client.listContactProfiles("", 5000)).flatMap((profile) => profile.displayName ? profile.addresses.map((address) => [address.toLowerCase(), profile.displayName!] as const) : []));
+      for (const event of events) {
+        const names = Object.fromEntries((event.attendees ?? []).flatMap((address) => known.has(address) ? [[address, known.get(address)!]] : []));
+        if (Object.keys(names).length) event.attendeeNames = names;
+      }
       return { events, errors: [] };
     },
     async updateCalendarResponse(event, responseStatus) {

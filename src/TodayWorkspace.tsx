@@ -758,7 +758,7 @@ function TodayLayout({
     ...doneOnDay.meetings.filter((meeting) => accountId === null || meeting.accountId.toLowerCase() === accountId.toLowerCase()).map((meeting): DoneEntry => {
       const key = `meeting:${meeting.uid ?? meeting.id}`;
       const when = meeting.allDay ? formatEventDate(meeting) : `${formatEventDate(meeting)} · ${formatClockTime(eventDate(meeting))}`;
-      const people = (meeting.attendees ?? []).map((address) => parseAddress(address).name || parseAddress(address).email).join(", ");
+      const people = (meeting.attendees ?? []).map((address) => meeting.attendeeNames?.[address] ?? address).join(", ");
       return { id: key, identities: [key], category: "meetings", title: meeting.title, at: meeting.created,
         row: { wrapTitle: true, icon: <CalendarPlus size={ICON_SIZE.sm} />, onActivate: () => onOpenEvent(meeting), detail: [when, people].filter(Boolean).join(" · ") } };
     }),

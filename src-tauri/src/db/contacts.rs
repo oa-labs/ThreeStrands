@@ -903,6 +903,41 @@ impl Database {
         })
     }
 
+    /// Maps each address that belongs to a saved or system (Mac) contact to
+    /// that contact's display name. A saved contact wins over a system one;
+    /// addresses with no named owner are omitted.
+    pub fn contact_names_for_addresses(
+        &self,
+        emails: &[String],
+    ) -> DbResult<std::collections::HashMap<String, String>> {
+        self.with_connection(|connection| {
+            let mut saved = connection.prepare(
+                "SELECT c.display_name FROM contact_addresses a JOIN contacts c ON c.id=a.contact_id WHERE a.email=?1",
+            )?;
+            let mut system = connection.prepare(
+                "SELECT display_name FROM system_contact_addresses WHERE lower(email)=?1 AND display_name IS NOT NULL",
+            )?;
+            let mut names = std::collections::HashMap::new();
+            for raw in emails {
+                let email = raw.trim().to_ascii_lowercase();
+                if email.is_empty() || names.contains_key(&email) {
+                    continue;
+                }
+                let usable = |name: Option<Option<String>>| {
+                    name.flatten().filter(|name| !name.trim().is_empty())
+                };
+                let name = match usable(saved.query_row([&email], |row| row.get(0)).optional()?) {
+                    Some(name) => Some(name),
+                    None => usable(system.query_row([&email], |row| row.get(0)).optional()?),
+                };
+                if let Some(name) = name {
+                    names.insert(email, name.trim().to_string());
+                }
+            }
+            Ok(names)
+        })
+    }
+
     /// Resolves a saved contact id or a `derived:<email>` id to its addresses.
     pub(crate) fn contact_address_list(&self, id: &str) -> DbResult<Vec<String>> {
         if id.starts_with("derived:mac:") {
