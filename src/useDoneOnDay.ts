@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mailClient } from "./data/client";
-import type { DoneNote, SentInRange } from "./domain";
+import type { CreatedScheduleEvent, DoneNote, SentInRange } from "./domain";
 import { addDays, dateInputValue, startOfLocalDay } from "./calendarTime";
 import { errorMessage } from "./errors";
 import { useNoteChanges } from "./noteMutations";
@@ -44,7 +44,7 @@ const noop = () => {};
 
 /**
  * What the Done card reads beyond tasks for `day`: conversations the user sent in
- * and notes created or starred notes last edited on that local day.
+ * meetings set up and notes created or starred notes last edited on that local day.
  * Each source fails on its own.
  */
 export function useDoneOnDay(day: Date, accountId: string | null, refreshKey: string, enabled: boolean) {
@@ -54,5 +54,15 @@ export function useDoneOnDay(day: Date, accountId: string | null, refreshKey: st
   const key = `${dateInputValue(start)}|${accountId ?? ""}`;
   const sent = useDaySource<SentInRange>(key, enabled, refreshKey, () => mailClient.listSentBetween(accountId ?? undefined, startIso, endIso));
   const notes = useDaySource<DoneNote>(key, enabled, refreshKey, () => mailClient.listNotesDoneBetween(startIso, endIso, DONE_NOTES_LIMIT), true);
-  return { sent: sent.items, notes: notes.items, errors: { emails: sent.error ?? undefined, notes: notes.error ?? undefined }, loading: sent.loading || notes.loading };
+  const meetings = useDaySource<CreatedScheduleEvent>(key, enabled, refreshKey, async () => {
+    const result = await mailClient.listEventsCreatedBetween(startIso, endIso, Intl.DateTimeFormat().resolvedOptions().timeZone);
+    // A calendar that could not be read is reported, but the meetings from the others still show.
+    if (result.errors.length && !result.events.length) throw new Error(result.errors.join("; "));
+    return result.events;
+  });
+  return {
+    sent: sent.items, notes: notes.items, meetings: meetings.items,
+    errors: { emails: sent.error ?? undefined, notes: notes.error ?? undefined, meetings: meetings.error ?? undefined },
+    loading: sent.loading || notes.loading || meetings.loading,
+  };
 }

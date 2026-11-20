@@ -446,6 +446,22 @@ describe("showcase dataset", () => {
     expect(wide.events.some((event) => event.id === "offsite")).toBe(true);
   });
 
+  it("lists meetings the user organizes with others by when they were set up", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    const from = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+    const to = new Date(now.getTime() + 30 * 86_400_000).toISOString();
+    const { events, errors } = await client.listEventsCreatedBetween(from, to, "UTC");
+    expect(errors).toEqual([]);
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((event) => !event.canRespond && event.attendees?.length && !event.sourceTaskId && !event.eventType
+      && event.created >= from && event.created < to)).toBe(true);
+    expect(events.map((event) => event.created)).toEqual(events.map((event) => event.created).sort().reverse());
+    const [first] = events;
+    const exact = await client.listEventsCreatedBetween(first!.created, new Date(Date.parse(first!.created) + 1).toISOString(), "UTC");
+    expect(exact.events.map((event) => event.id)).toContain(first!.id);
+    expect((await client.listEventsCreatedBetween(new Date(Date.parse(first!.created) + 1).toISOString(), to, "UTC")).events.map((event) => event.id)).not.toContain(first!.id);
+  });
+
   it("suggests event locations that contain the typed text, ignoring spacing and case", async () => {
     const client = createDemoClient(buildShowcaseDataset(now));
     expect(await client.searchEventLocations("STUDIO")).toEqual(["Riverside Studio", "Studio"]);

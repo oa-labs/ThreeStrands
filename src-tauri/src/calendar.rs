@@ -21,6 +21,10 @@ const CALENDAR_LIST_URL: &str = "https://www.googleapis.com/calendar/v3/users/me
 const CALENDARS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/";
 const FREEBUSY_URL: &str = "https://www.googleapis.com/calendar/v3/freeBusy";
 const MAX_SCHEDULE_EVENTS: usize = 250;
+/// Pages read per calendar when looking for events created in a time range.
+/// Google filters by last update, not creation, so a busy calendar can need
+/// several pages; past this many the oldest-updated events are left out.
+const MAX_CREATED_EVENT_PAGES: usize = 10;
 /// The private extended property naming the email an event was added from.
 /// Private properties live on this calendar's copy only: guests never see them.
 const SOURCE_MESSAGE_PROPERTY: &str = "threestrandsSourceMessage";
@@ -184,6 +188,8 @@ struct GoogleEvents {
     /// The caller's access to the listed calendar, for example `owner` or `reader`.
     #[serde(default)]
     access_role: String,
+    #[serde(default)]
+    next_page_token: Option<String>,
 }
 
 fn writable_access_role(access_role: &str) -> bool {
@@ -474,6 +480,9 @@ struct GoogleEvent {
     event_type: Option<String>,
     #[serde(default)]
     working_location_properties: Option<GoogleWorkingLocation>,
+    /// When the event was created (RFC 3339).
+    #[serde(default)]
+    created: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -763,6 +772,153 @@ pub async fn fetch_schedule(
     }
     schedule.sort_by(|left, right| left.start.cmp(&right.start));
     Ok(schedule)
+}
+
+/// A meeting the user set up, with when they created it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedEvent {
+    #[serde(flatten)]
+    pub event: ScheduleEvent,
+    /// When the user created the event (RFC 3339), as Google reports it.
+    pub created: String,
+}
+
+/// Events on one calendar that the user organized with at least one other
+/// person, created in `[created_min, created_max)`, wherever the event itself
+/// falls. ThreeStrands' own time blocks, cancelled events, and Google's
+/// non-meeting entries (working locations, out of office, focus time) are
+/// left out; events booked from an email count. A recurring series counts
+/// once, as its master; its modified instances are skipped.
+fn created_meetings(
+    events: Vec<GoogleEvent>,
+    account_id: &str,
+    calendar_id: &str,
+    writable: bool,
+    created_min: &str,
+    created_max: &str,
+) -> Vec<CreatedEvent> {
+    let parse = |value: &str| chrono::DateTime::parse_from_rfc3339(value).ok();
+    let (Some(min), Some(max)) = (parse(created_min), parse(created_max)) else {
+        return Vec::new();
+    };
+    let kept: Vec<(GoogleEvent, String)> = events
+        .into_iter()
+        .filter_map(|event| {
+            let created = event.created.clone()?;
+            let at = parse(&created)?;
+            let ours = |key: &str| private_tag(event.extended_properties.as_ref(), key).is_some();
+            let organizer_is_self = event.organizer.as_ref().is_some_and(|o| o.is_self);
+            let has_guest = event.attendees.iter().any(|attendee| {
+                !attendee.is_self
+                    && !attendee.resource
+                    && attendee
+                        .email
+                        .as_deref()
+                        .is_some_and(|email| email.contains('@'))
+            });
+            let ordinary = event
+                .event_type
+                .as_deref()
+                .is_none_or(|kind| kind.is_empty() || kind == "default");
+            (at >= min
+                && at < max
+                && organizer_is_self
+                && has_guest
+                && ordinary
+                && event.recurring_event_id.is_none()
+                && event.status.as_deref() != Some("cancelled")
+                && !ours(SOURCE_TASK_PROPERTY)
+                && !ours(SOURCE_PLAN_PROPERTY))
+            .then_some((event, created))
+        })
+        .collect();
+    let times: Vec<String> = kept.iter().map(|(_, created)| created.clone()).collect();
+    let (events, _): (Vec<_>, Vec<_>) = kept.into_iter().unzip();
+    normalize_events(events, account_id, calendar_id, writable)
+        .into_iter()
+        .zip(times)
+        .map(|(event, created)| CreatedEvent { event, created })
+        .collect()
+}
+
+/// Reads every page of events on a calendar updated since `created_min`.
+/// Google cannot filter by creation time; `updatedMin` is the closest bound,
+/// since an event is never updated before it is created.
+async fn fetch_updated_pages(
+    client: &reqwest::Client,
+    token: &str,
+    url: url::Url,
+    created_min: &str,
+    time_zone: &str,
+) -> Result<(Vec<GoogleEvent>, bool), String> {
+    let max_results = MAX_SCHEDULE_EVENTS.to_string();
+    let mut page_token: Option<String> = None;
+    let mut seen = std::collections::HashSet::new();
+    let mut events = Vec::new();
+    let mut writable = false;
+    for _ in 0..MAX_CREATED_EVENT_PAGES {
+        // No orderBy: Google rejects `startTime` ordering without singleEvents.
+        let mut request = client.get(url.clone()).bearer_auth(token).query(&[
+            ("updatedMin", created_min),
+            ("timeZone", time_zone),
+            ("singleEvents", "false"),
+            ("showDeleted", "false"),
+            ("maxResults", max_results.as_str()),
+        ]);
+        if let Some(token) = &page_token {
+            request = request.query(&[("pageToken", token)]);
+        }
+        let page: GoogleEvents =
+            checked_json(request.send().await.map_err(|error| error.to_string())?).await?;
+        writable = writable_access_role(&page.access_role);
+        events.extend(page.items);
+        match page.next_page_token.filter(|token| !token.is_empty()) {
+            None => break,
+            Some(token) => {
+                if !seen.insert(token.clone()) {
+                    return Err("Calendar repeated an event page".into());
+                }
+                page_token = Some(token);
+            }
+        }
+    }
+    Ok((events, writable))
+}
+
+/// Meetings the user set up in `[created_min, created_max)` on these
+/// calendars, newest first. See `created_meetings` for what counts.
+pub async fn fetch_events_created_between(
+    auth: OAuthCredential,
+    account_id: &str,
+    calendar_ids: &[String],
+    created_min: &str,
+    created_max: &str,
+    time_zone: &str,
+) -> Result<Vec<CreatedEvent>, String> {
+    let access_token = auth
+        .access_token()
+        .await
+        .map_err(|error| error.to_string())?;
+    let client = calendar_client()?;
+    let mut meetings = Vec::new();
+    for calendar_id in calendar_ids {
+        let Some(url) = events_url(calendar_id)? else {
+            continue;
+        };
+        let (events, writable) =
+            fetch_updated_pages(&client, &access_token, url, created_min, time_zone).await?;
+        meetings.extend(created_meetings(
+            events,
+            account_id,
+            calendar_id,
+            writable,
+            created_min,
+            created_max,
+        ));
+    }
+    meetings.sort_by(|left, right| right.created.cmp(&left.created));
+    Ok(meetings)
 }
 
 #[derive(Deserialize)]
@@ -2062,6 +2218,7 @@ mod tests {
                     description: Some("Review the roadmap".into()),
                     hangout_link: Some("https://meet.google.com/abc-defg-hij".into()),
                     conference_data: None,
+                    created: None,
                     start: GoogleEventTime {
                         date: None,
                         date_time: Some("2026-09-18T09:30:00-07:00".into()),
@@ -2128,6 +2285,7 @@ mod tests {
                     description: None,
                     hangout_link: None,
                     conference_data: None,
+                    created: None,
                     start: GoogleEventTime {
                         date: Some("2026-09-18".into()),
                         date_time: None,
@@ -2290,6 +2448,243 @@ mod tests {
             "organizer": {"email": "work@example.com", "self": organizer_self}
         }))
         .unwrap()
+    }
+
+    const WINDOW_MIN: &str = "2026-12-02T08:00:00Z";
+    const WINDOW_MAX: &str = "2026-12-03T08:00:00Z";
+
+    fn meeting(id: &str, overrides: serde_json::Value) -> GoogleEvent {
+        let mut event = serde_json::json!({
+            "id": id,
+            "iCalUID": format!("{id}@google.com"),
+            "summary": "Kickoff",
+            "created": "2026-12-02T15:00:00.000Z",
+            "start": {"dateTime": "2027-01-20T09:30:00-07:00"},
+            "end": {"dateTime": "2027-01-20T10:00:00-07:00"},
+            "organizer": {"email": "me@example.com", "self": true},
+            "attendees": [
+                {"email": "me@example.com", "self": true},
+                {"email": "Ana@Example.com"}
+            ]
+        });
+        for (key, value) in overrides.as_object().unwrap() {
+            event[key] = value.clone();
+        }
+        serde_json::from_value(event).unwrap()
+    }
+
+    fn kept_ids(events: Vec<GoogleEvent>) -> Vec<String> {
+        created_meetings(
+            events,
+            "me@example.com",
+            "primary",
+            true,
+            WINDOW_MIN,
+            WINDOW_MAX,
+        )
+        .into_iter()
+        .map(|meeting| meeting.event.id.trim_start_matches("primary:").to_string())
+        .collect()
+    }
+
+    #[test]
+    fn a_meeting_created_in_the_window_counts_whatever_day_it_is_on() {
+        let found = created_meetings(
+            vec![meeting("future", serde_json::json!({}))],
+            "me@example.com",
+            "primary",
+            true,
+            WINDOW_MIN,
+            WINDOW_MAX,
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].created, "2026-12-02T15:00:00.000Z");
+        assert_eq!(found[0].event.start, "2027-01-20T09:30:00-07:00");
+        assert_eq!(found[0].event.attendees, ["ana@example.com"]);
+        let json = serde_json::to_value(&found[0]).unwrap();
+        assert_eq!(json["created"], "2026-12-02T15:00:00.000Z");
+        assert_eq!(json["title"], "Kickoff");
+    }
+
+    #[test]
+    fn creation_time_is_inclusive_at_the_start_and_exclusive_at_the_end() {
+        let at = |id: &str, created: &str| meeting(id, serde_json::json!({"created": created}));
+        assert_eq!(
+            kept_ids(vec![
+                at("before", "2026-12-02T07:59:59Z"),
+                at("start", "2026-12-02T08:00:00Z"),
+                at("last", "2026-12-03T07:59:59.999Z"),
+                at("end", "2026-12-03T08:00:00Z"),
+                at("offset", "2026-12-02T00:30:00-08:00"),
+            ]),
+            ["start", "last", "offset"]
+        );
+        assert!(kept_ids(vec![meeting("none", serde_json::json!({"created": null}))]).is_empty());
+        assert!(kept_ids(vec![meeting("bad", serde_json::json!({"created": "soon"}))]).is_empty());
+    }
+
+    #[test]
+    fn only_meetings_the_user_organizes_with_someone_else_count() {
+        let events = vec![
+            meeting(
+                "invited",
+                serde_json::json!({"organizer": {"email": "boss@example.com"}}),
+            ),
+            meeting("no-organizer", serde_json::json!({"organizer": null})),
+            meeting("solo", serde_json::json!({"attendees": []})),
+            meeting(
+                "only-me",
+                serde_json::json!({"attendees": [{"email": "me@example.com", "self": true}]}),
+            ),
+            meeting(
+                "room",
+                serde_json::json!({"attendees": [
+                    {"email": "me@example.com", "self": true},
+                    {"email": "room@resource.calendar.google.com", "resource": true}
+                ]}),
+            ),
+            meeting("guest", serde_json::json!({})),
+        ];
+        assert_eq!(kept_ids(events), ["guest"]);
+    }
+
+    #[test]
+    fn time_blocks_are_left_out_but_events_booked_from_an_email_count() {
+        let tagged = |key: &str| serde_json::json!({"extendedProperties": {"private": {key: "x"}}});
+        let events = vec![
+            meeting("task-block", tagged(SOURCE_TASK_PROPERTY)),
+            meeting("plan-block", tagged(SOURCE_PLAN_PROPERTY)),
+            meeting("from-email", tagged(SOURCE_MESSAGE_PROPERTY)),
+        ];
+        assert_eq!(kept_ids(events), ["from-email"]);
+    }
+
+    #[test]
+    fn cancelled_and_non_default_event_types_are_left_out() {
+        let events = vec![
+            meeting("cancelled", serde_json::json!({"status": "cancelled"})),
+            meeting("focus", serde_json::json!({"eventType": "focusTime"})),
+            meeting("ooo", serde_json::json!({"eventType": "outOfOffice"})),
+            meeting("default", serde_json::json!({"eventType": "default"})),
+            meeting("plain", serde_json::json!({})),
+        ];
+        assert_eq!(kept_ids(events), ["default", "plain"]);
+    }
+
+    #[test]
+    fn a_new_recurring_series_counts_once_as_its_master() {
+        let events = vec![
+            meeting(
+                "weekly",
+                serde_json::json!({"recurrence": ["RRULE:FREQ=WEEKLY"]}),
+            ),
+            meeting(
+                "weekly_20270127",
+                serde_json::json!({"recurringEventId": "weekly"}),
+            ),
+        ];
+        assert_eq!(kept_ids(events), ["weekly"]);
+    }
+
+    #[tokio::test]
+    async fn created_event_queries_page_by_update_time_without_expanding_series() {
+        use axum::{extract::Query, routing::get, Json, Router};
+        use std::sync::{Arc, Mutex};
+        let seen: Arc<Mutex<Vec<HashMap<String, String>>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorded = seen.clone();
+        let page = move |Query(query): Query<HashMap<String, String>>| {
+            let recorded = recorded.clone();
+            async move {
+                recorded.lock().unwrap().push(query.clone());
+                let body = match query.get("pageToken").map(String::as_str) {
+                    None => {
+                        serde_json::json!({"accessRole": "owner", "items": [{"id": "a", "start": {"date": "2026-12-05"}, "end": {"date": "2026-12-06"}}], "nextPageToken": "second"})
+                    }
+                    Some("second") => {
+                        serde_json::json!({"accessRole": "owner", "items": [{"id": "b", "start": {"date": "2026-12-05"}, "end": {"date": "2026-12-06"}}], "nextPageToken": "third"})
+                    }
+                    _ => {
+                        serde_json::json!({"accessRole": "owner", "items": [{"id": "c", "start": {"date": "2026-12-05"}, "end": {"date": "2026-12-06"}}]})
+                    }
+                };
+                Json(body)
+            }
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url =
+            url::Url::parse(&format!("http://{}/events", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/events", get(page)))
+                .await
+                .unwrap()
+        });
+        let (events, writable) = fetch_updated_pages(
+            &calendar_client().unwrap(),
+            "test-token",
+            url,
+            WINDOW_MIN,
+            "America/Denver",
+        )
+        .await
+        .unwrap();
+        server.abort();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+        assert!(writable);
+        let queries = seen.lock().unwrap();
+        assert_eq!(queries.len(), 3);
+        for query in queries.iter() {
+            assert_eq!(query["updatedMin"], WINDOW_MIN);
+            assert_eq!(query["singleEvents"], "false");
+            assert_eq!(query["showDeleted"], "false");
+            assert_eq!(query["timeZone"], "America/Denver");
+            assert_eq!(query["maxResults"], MAX_SCHEDULE_EVENTS.to_string());
+            assert!(!query.contains_key("orderBy"));
+            assert!(!query.contains_key("timeMin"));
+        }
+        assert_eq!(queries[1]["pageToken"], "second");
+        assert_eq!(queries[2]["pageToken"], "third");
+    }
+
+    #[tokio::test]
+    async fn created_event_paging_stops_at_the_page_cap() {
+        use axum::{extract::Query, routing::get, Json, Router};
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits = counter.clone();
+        let endless = move |Query(query): Query<HashMap<String, String>>| {
+            let hits = hits.clone();
+            async move {
+                hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let repeated = query.get("pageToken").is_some_and(|token| token == "same");
+                let next = if repeated {
+                    "same".to_string()
+                } else {
+                    format!("t{}", hits.load(std::sync::atomic::Ordering::SeqCst))
+                };
+                Json(serde_json::json!({"items": [], "nextPageToken": next}))
+            }
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url =
+            url::Url::parse(&format!("http://{}/events", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/events", get(endless)))
+                .await
+                .unwrap()
+        });
+        let result =
+            fetch_updated_pages(&calendar_client().unwrap(), "t", url, WINDOW_MIN, "UTC").await;
+        server.abort();
+        assert!(result.is_ok());
+        assert_eq!(
+            counter.load(std::sync::atomic::Ordering::SeqCst),
+            MAX_CREATED_EVENT_PAGES
+        );
     }
 
     #[test]

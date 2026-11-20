@@ -182,6 +182,14 @@ export type ScheduleEvent = {
   workingLocationType?: "home" | "office" | "custom" | null;
 };
 
+/** A meeting the user set up, with when they created it (ISO). */
+export type CreatedScheduleEvent = ScheduleEvent & { created: string };
+
+export type CreatedEventsResult = {
+  events: CreatedScheduleEvent[];
+  errors: string[];
+};
+
 export type ScheduleResult = {
   events: ScheduleEvent[];
   errors: string[];

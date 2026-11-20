@@ -6,8 +6,8 @@ use crate::auth::GoogleConnection;
 use crate::db::Database;
 use crate::models::{
     BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest,
-    CreateCalendarEventRequest, FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent,
-    ScheduleResult, UpdateCalendarEventRequest,
+    CreateCalendarEventRequest, CreatedEventsResult, FindAvailabilityRequest, ProposedTimeCheck,
+    ScheduleEvent, ScheduleResult, UpdateCalendarEventRequest,
 };
 use tauri::State;
 
@@ -814,6 +814,72 @@ pub(crate) async fn list_schedule_events(
     }
     merged.sort_by(|left, right| left.start.cmp(&right.start));
     Ok(ScheduleResult {
+        events: merged,
+        errors,
+    })
+}
+
+/// Meetings the user set up in `[created_min, created_max)`: events they
+/// organize with at least one other person, created in that range, wherever
+/// the meeting itself falls. Without a connected calendar the answer is empty,
+/// not an error, so callers can ask unconditionally.
+#[tauri::command]
+pub(crate) async fn list_events_created_between(
+    created_min: String,
+    created_max: String,
+    time_zone: String,
+    state: State<'_, AppState>,
+) -> AppResult<CreatedEventsResult> {
+    let config = state.auth_config.google()?;
+    let accounts = connected_calendar_accounts(config, &state.database)?;
+    let mut merged: Vec<calendar::CreatedEvent> = Vec::new();
+    let mut errors = Vec::new();
+    for account in accounts {
+        let calendar_ids = match state.database.calendar_selection(&account.email)? {
+            Some(selected) => selected,
+            None => {
+                match calendar_options_for_account(config, &state.database, &account.email).await {
+                    Ok(options) => options
+                        .into_iter()
+                        .filter(|option| option.selected)
+                        .map(|option| option.id)
+                        .collect(),
+                    Err(error) => {
+                        errors.push(format!("{}: {error}", account.email));
+                        continue;
+                    }
+                }
+            }
+        };
+        if calendar_ids.is_empty() {
+            continue;
+        }
+        match calendar::fetch_events_created_between(
+            config.calendar_account(&account.email),
+            &account.email,
+            &calendar_ids,
+            &created_min,
+            &created_max,
+            &time_zone,
+        )
+        .await
+        {
+            Ok(mut events) => merged.append(&mut events),
+            Err(error) => errors.push(format!("{}: {error}", account.email)),
+        }
+    }
+    merged.sort_by(|left, right| right.created.cmp(&left.created));
+    let mut seen = std::collections::HashSet::new();
+    merged.retain(|meeting| {
+        seen.insert(
+            meeting
+                .event
+                .uid
+                .clone()
+                .unwrap_or_else(|| meeting.event.id.clone()),
+        )
+    });
+    Ok(CreatedEventsResult {
         events: merged,
         errors,
     })

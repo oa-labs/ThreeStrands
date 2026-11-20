@@ -23,7 +23,7 @@ import { todayItem, todayThread } from "./test/todayMail";
 import { formatClockTime } from "./agendaEvents";
 import { readDayChoice, TODAY_DAY_KEY } from "./todayDayChoice";
 import { writeTodayBackdrop } from "./backdropPreference";
-import type { DoneNote, SentInRange } from "./domain";
+import type { CreatedScheduleEvent, DoneNote, SentInRange } from "./domain";
 
 vi.mock("./NoteEditor", () => import("./test/NoteEditorStub"));
 vi.mock("./refreshSyncedData", () => ({ refreshSyncedData: vi.fn(async () => {}) }));
@@ -126,6 +126,7 @@ describe("TodayWorkspace", () => {
     vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([]);
     vi.spyOn(mailClient, "listSentBetween").mockResolvedValue([]);
     vi.spyOn(mailClient, "listNotesDoneBetween").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listEventsCreatedBetween").mockResolvedValue({ events: [], errors: [] });
     vi.spyOn(mailClient, "dailyPlan").mockImplementation(async (date) => emptyPlan(date));
     // The inbox reads its paged sources as soon as Today opens.
     vi.spyOn(mailClient, "planSources").mockResolvedValue({ next: null, candidates: [] });
@@ -1720,6 +1721,43 @@ describe("TodayWorkspace", () => {
       fireEvent.click(within(card).getByRole("tab", { name: "Emails" }));
       expect(within(card).queryByRole("button", { name: /^Task mail-task/ })).not.toBeInTheDocument();
       expect(within(card).getByRole("button", { name: /^Sent m1/ })).toBeInTheDocument();
+    });
+
+    it("lists meetings set up today, whatever day they are on, and opens the event", async () => {
+      const meeting = (id: string, overrides: Partial<CreatedScheduleEvent> = {}): CreatedScheduleEvent => ({
+        id: `primary:${id}`, uid: `${id}@google.com`, accountId: "you@example.com", calendarId: "primary", title: `Meeting ${id}`,
+        start: local(24, 10), end: local(24, 11), allDay: false, attendees: ["ana@example.org", "ben@example.org"], created: local(17, 9, 15), ...overrides,
+      });
+      vi.mocked(mailClient.listEventsCreatedBetween).mockResolvedValue({ events: [
+        meeting("later"),
+        meeting("trip", { allDay: true, start: "2026-12-02", end: "2026-12-03", attendees: ["cy@example.org"], created: local(17, 8) }),
+        meeting("other-calendar", { accountId: "other@example.com" }),
+      ], errors: [] });
+      const onOpenEvent = vi.fn();
+      renderToday({ onOpenEvent });
+      const card = screen.getByRole("region", { name: "Done Today" });
+      const row = await within(card).findByRole("button", { name: /^Meeting later/ });
+      const expectedDate = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(local(24, 10)));
+      expect(row).toHaveTextContent(`${expectedDate} · ${formatClockTime(new Date(local(24, 10))).replace(/\s/g, " ")} · ana@example.org, ben@example.org`);
+      expect(row).toHaveTextContent(formatClockTime(new Date(local(17, 9, 15))).replace(/\s/g, " "));
+      const trip = within(card).getByRole("button", { name: /^Meeting trip/ });
+      expect(trip).toHaveTextContent("Dec 2 · cy@example.org");
+      expect(mailClient.listEventsCreatedBetween).toHaveBeenCalledWith(local(17, 0), local(18, 0), expect.any(String));
+      expect(within(card).getByText("2 meetings")).toBeInTheDocument();
+      fireEvent.click(within(card).getByRole("tab", { name: "Meetings" }));
+      expect(within(card).getByRole("button", { name: /^Meeting later/ })).toBeInTheDocument();
+      fireEvent.click(within(card).getByRole("button", { name: /^Meeting later/ }));
+      expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "primary:later" }));
+    });
+
+    it("keeps the other sources when the calendar fails, with the error on Meetings", async () => {
+      vi.mocked(mailClient.listEventsCreatedBetween).mockRejectedValue(new Error("Calendar is offline"));
+      vi.mocked(mailClient.listNotesDoneBetween).mockResolvedValue([created("n1", local(17, 7))]);
+      renderToday();
+      expect(await done().findByRole("alert")).toHaveTextContent("Meetings: Calendar is offline");
+      expect(done().getByRole("button", { name: /^Note n1/ })).toBeInTheDocument();
+      fireEvent.click(done().getByRole("tab", { name: "Emails" }));
+      expect(done().queryByRole("alert")).not.toBeInTheDocument();
     });
 
     it("labels a starred note edit with its saved time and opens the note", async () => {

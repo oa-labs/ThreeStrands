@@ -5,15 +5,15 @@ import { formatClockTime } from "./agendaEvents";
 import { ICON_SIZE } from "./iconSizes";
 import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 
-export type DoneCategory = "tasks" | "emails" | "notes";
+export type DoneCategory = "tasks" | "emails" | "meetings" | "notes";
 export type DoneFilter = "all" | DoneCategory;
 export const DONE_FILTER_KEY = "threestrands.today.doneFilter";
 /** More rows than this collapse to this many behind Show All. */
 export const DONE_COLLAPSED_ROWS = 5;
 const FILTERS: { id: DoneFilter; label: string }[] = [
-  { id: "all", label: "All" }, { id: "tasks", label: "Tasks" }, { id: "emails", label: "Emails" }, { id: "notes", label: "Notes" },
+  { id: "all", label: "All" }, { id: "tasks", label: "Tasks" }, { id: "emails", label: "Emails" }, { id: "meetings", label: "Meetings" }, { id: "notes", label: "Notes" },
 ];
-const ERROR_LABELS: Record<string, string> = { tasks: "Tasks", noteTasks: "Note tasks", emails: "Sent mail", notes: "Notes" };
+const ERROR_LABELS: Record<string, string> = { tasks: "Tasks", noteTasks: "Note tasks", emails: "Sent mail", meetings: "Meetings", notes: "Notes" };
 
 export type DoneEntry = {
   id: string;
@@ -43,18 +43,18 @@ export function sortDoneEntries(entries: DoneEntry[]): DoneEntry[] {
     left.value === right.value ? left.index - right.index : left.value === null ? 1 : right.value === null ? -1 : right.value - left.value).map(({ entry }) => entry);
 }
 
-/** "3 tasks · 2 emails · 1 note", leaving out what is zero. */
+/** "3 tasks · 2 emails · 1 meeting · 1 note", leaving out what is zero. */
 export function doneSummary(entries: readonly DoneEntry[]): string {
   const count = (category: DoneCategory) => entries.filter((entry) => entry.category === category).length;
   const part = (category: DoneCategory, one: string, many: string) => { const total = count(category); return total ? `${total} ${total === 1 ? one : many}` : null; };
-  return [part("tasks", "task", "tasks"), part("emails", "email", "emails"), part("notes", "note", "notes")].filter(Boolean).join(" · ");
+  return [part("tasks", "task", "tasks"), part("emails", "email", "emails"), part("meetings", "meeting", "meetings"), part("notes", "note", "notes")].filter(Boolean).join(" · ");
 }
 
 function initialFilter(): DoneFilter {
   return readLocalStorage<DoneFilter>(DONE_FILTER_KEY, (raw) => FILTERS.some((filter) => filter.id === raw) ? raw as DoneFilter : "all", "all");
 }
 
-/** Progress on the day the schedule shows: finished tasks, sent mail, new notes and edits to starred notes. */
+/** Progress on the day the schedule shows: finished tasks, sent mail, meetings set up, new notes and edits to starred notes. */
 export function DoneCard({ title, today, dayLabel, entries, errors, loading }: {
   /** "Done Today", or "Done" for another day, as the schedule card is named. */
   title: string;
@@ -62,8 +62,8 @@ export function DoneCard({ title, today, dayLabel, entries, errors, loading }: {
   /** The day, written out, when it is not today. */
   dayLabel?: string;
   entries: DoneEntry[];
-  /** Why a source could not be read, by source: tasks, noteTasks, emails, notes. */
-  errors: Partial<Record<"tasks" | "noteTasks" | "emails" | "notes", string | null | undefined>>;
+  /** Why a source could not be read, by source: tasks, noteTasks, emails, meetings, notes. */
+  errors: Partial<Record<"tasks" | "noteTasks" | "emails" | "meetings" | "notes", string | null | undefined>>;
   loading: boolean;
 }) {
   const [filter, setFilter] = useLocalStorageState<DoneFilter>(DONE_FILTER_KEY, initialFilter);

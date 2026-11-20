@@ -61,6 +61,7 @@ import type {
   SearchThreadsRequest,
   SearchReport,
   ScheduleResult,
+  CreatedEventsResult,
   ScheduleEvent,
   Snippet,
   Note,
@@ -391,6 +392,11 @@ export interface MailClient extends CorrespondenceClient {
   setCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
   setAvailabilityCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
+  /**
+   * Meetings the user organizes with other people that were created in `[createdMin, createdMax)`, wherever
+   * the meeting itself falls. Empty without a connected calendar.
+   */
+  listEventsCreatedBetween(createdMin: string, createdMax: string, timeZone: string): Promise<CreatedEventsResult>;
   updateCalendarResponse(event: ScheduleEvent, responseStatus: "accepted" | "declined" | "tentative"): Promise<ScheduleEvent>;
   /** Finds an invitation on the connected calendars by its iCalendar UID; null when none has it. */
   findCalendarInvitation(uid: string): Promise<ScheduleEvent | null>;
@@ -694,6 +700,8 @@ const tauriClient: MailClient = {
     complete("set_calendar_selection", { accountId, calendarIds }),
   listScheduleEvents: (timeMin, timeMax, timeZone) =>
     complete("list_schedule_events", { timeMin, timeMax, timeZone }),
+  listEventsCreatedBetween: (createdMin, createdMax, timeZone) =>
+    complete("list_events_created_between", { createdMin, createdMax, timeZone }),
   updateCalendarResponse: (event, responseStatus) =>
     complete("update_calendar_response", { accountId: event.accountId, calendarId: event.calendarId, eventId: event.id, responseStatus }),
   findCalendarInvitation: (uid) => complete("find_calendar_invitation", { uid }),

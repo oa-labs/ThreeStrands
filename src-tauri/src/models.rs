@@ -129,6 +129,13 @@ pub struct ScheduleResult {
     pub errors: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedEventsResult {
+    pub events: Vec<crate::calendar::CreatedEvent>,
+    pub errors: Vec<String>,
+}
+
 /// A transient scheduling query; never part of settings transfer.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

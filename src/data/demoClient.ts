@@ -1648,6 +1648,17 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         errors: [],
       };
     },
+    async listEventsCreatedBetween(createdMin, createdMax) {
+      // Demo events carry no creation time; pretend each meeting was set up two days before it starts. An event with guests and no RSVP is one the user organizes.
+      const min = Date.parse(createdMin);
+      const max = Date.parse(createdMax);
+      const events = connectedEvents()
+        .filter((event) => !event.canRespond && (event.attendees?.length ?? 0) > 0 && !event.sourceTaskId && !event.sourcePlanKey && !event.eventType)
+        .map((event) => ({ ...structuredClone(event), created: new Date(eventRange(event)[0] - 2 * 86_400_000).toISOString() }))
+        .filter((event) => Date.parse(event.created) >= min && Date.parse(event.created) < max)
+        .sort((a, b) => b.created.localeCompare(a.created));
+      return { events, errors: [] };
+    },
     async updateCalendarResponse(event, responseStatus) {
       const current = scheduleEvents.find((item) => item.id === event.id && item.accountId === event.accountId);
       if (!current || !current.canRespond) throw new Error("This event has no RSVP for your calendar");

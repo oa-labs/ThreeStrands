@@ -19,25 +19,26 @@ describe("DoneCard", () => {
   });
 
   it("names the heading, counts every row, and summarizes only the nonzero categories", () => {
-    const view = render(<DoneCard {...defaults} entries={[entry("a", "tasks", at(9)), entry("b", "tasks", at(10)), entry("c", "tasks", at(11)), entry("d", "emails", at(12)), entry("e", "emails", at(13)), entry("f", "notes", at(14))]} />);
+    const view = render(<DoneCard {...defaults} entries={[entry("a", "tasks", at(9)), entry("b", "tasks", at(10)), entry("c", "tasks", at(11)), entry("d", "emails", at(12)), entry("e", "emails", at(13)), entry("m", "meetings", at(13, 30)), entry("f", "notes", at(14))]} />);
     expect(screen.getByRole("region", { name: "Done Today" })).toBeInTheDocument();
     const icon = screen.getByRole("heading", { name: /Done Today/ }).querySelector("svg");
     expect(icon).toHaveClass("lucide-circle-check");
     expect(icon).toHaveAttribute("aria-hidden", "true");
     expect(icon).toHaveAttribute("width", String(ICON_SIZE.md));
-    expect(screen.getByLabelText("6 finished items")).toHaveTextContent("6");
-    expect(screen.getByText("3 tasks · 2 emails · 1 note")).toBeInTheDocument();
+    expect(screen.getByLabelText("7 finished items")).toHaveTextContent("7");
+    expect(screen.getByText("3 tasks · 2 emails · 1 meeting · 1 note")).toBeInTheDocument();
     view.rerender(<DoneCard {...defaults} entries={[entry("a", "notes", at(9))]} />);
     expect(screen.getByLabelText("1 finished item")).toBeInTheDocument();
     expect(screen.getByText("1 note")).toBeInTheDocument();
+    expect(doneSummary([entry("m1", "meetings", at(9)), entry("m2", "meetings", at(10))])).toBe("2 meetings");
     expect(doneSummary([])).toBe("");
   });
 
   it("filters to Tasks, Emails, or Notes and remembers the choice under its own key", () => {
-    const entries = [entry("A task", "tasks", at(9)), entry("An email", "emails", at(10)), entry("A note", "notes", at(11))];
+    const entries = [entry("A task", "tasks", at(9)), entry("An email", "emails", at(10)), entry("A meeting", "meetings", at(10, 30)), entry("A note", "notes", at(11))];
     const view = render(<DoneCard {...defaults} entries={entries} />);
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["All", "Tasks", "Emails", "Notes"]);
-    for (const [filter, title] of [["Tasks", "A task"], ["Emails", "An email"], ["Notes", "A note"]]) {
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["All", "Tasks", "Emails", "Meetings", "Notes"]);
+    for (const [filter, title] of [["Tasks", "A task"], ["Emails", "An email"], ["Meetings", "A meeting"], ["Notes", "A note"]]) {
       fireEvent.click(screen.getByRole("tab", { name: filter }));
       expect(screen.getByRole("tabpanel")).toHaveAccessibleName(filter);
       expect(within(screen.getByRole("tabpanel")).getAllByRole("button")).toHaveLength(1);
@@ -118,11 +119,13 @@ describe("DoneCard", () => {
   });
 
   it("shows each source's error on the filters it belongs to without hiding the other rows", () => {
-    render(<DoneCard {...defaults} entries={[entry("A task", "tasks", at(9))]} errors={{ noteTasks: "Note tasks failed", emails: "Mail is offline", notes: "Notes are locked" }} />);
-    expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toEqual(["Note tasks: Note tasks failed", "Sent mail: Mail is offline", "Notes: Notes are locked"]);
+    render(<DoneCard {...defaults} entries={[entry("A task", "tasks", at(9))]} errors={{ noteTasks: "Note tasks failed", emails: "Mail is offline", meetings: "Calendar is offline", notes: "Notes are locked" }} />);
+    expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toEqual(["Note tasks: Note tasks failed", "Sent mail: Mail is offline", "Meetings: Calendar is offline", "Notes: Notes are locked"]);
     expect(screen.getByRole("button", { name: /^A task/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Emails" }));
     expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toEqual(["Sent mail: Mail is offline"]);
+    fireEvent.click(screen.getByRole("tab", { name: "Meetings" }));
+    expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toEqual(["Meetings: Calendar is offline"]);
     fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
     expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toEqual(["Notes: Notes are locked"]);
     fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));

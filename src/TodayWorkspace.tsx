@@ -1,6 +1,6 @@
 import { AccountScopeChip } from "./AccountScope";
 import { formatCompactDate } from "./dateFormatting";
-import { CalendarDays, ChevronLeft, ChevronRight, ContactRound, ListChecks, ListPlus, Mail, NotebookPen, Send, Star, Plus, X } from "lucide-react";
+import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, ContactRound, ListChecks, ListPlus, Mail, NotebookPen, Send, Star, Plus, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isPreparable, meetingsToPrepare, preparationKey, readinessByKey, readinessSummary } from "./meetingPrep";
@@ -13,7 +13,7 @@ import { ContextSection } from "./ContextSections";
 import { mailClient } from "./data/client";
 import type { Account, CalendarAccount, CalendarOption, ContactProfile, DailyPlanItem, OpenPromise, PlanCandidate as SourceCandidate, PlanSourceKind, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { agendaEventsFor, formatClockTime, isDeclined, isPastEvent } from "./agendaEvents";
-import { addDays, dateInputValue, eventDate, isSameDay, startOfLocalDay } from "./calendarTime";
+import { addDays, dateInputValue, eventDate, formatEventDate, isSameDay, startOfLocalDay } from "./calendarTime";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
@@ -754,6 +754,14 @@ function TodayLayout({
       row: { wrapTitle: true, icon: <Send size={ICON_SIZE.sm} />, onActivate: () => onOpenThread(sent.thread.id),
         detail: [sent.recipients.map((recipient) => parseAddress(recipient).name || parseAddress(recipient).email).join(", "), accountId === null && mailAccountCount > 1 ? sent.thread.accountId : null].filter(Boolean).join(" · ") || undefined },
     })),
+    // A calendar account is named by its address, so a mail account filter keeps the meetings on the calendar of the same address.
+    ...doneOnDay.meetings.filter((meeting) => accountId === null || meeting.accountId.toLowerCase() === accountId.toLowerCase()).map((meeting): DoneEntry => {
+      const key = `meeting:${meeting.uid ?? meeting.id}`;
+      const when = meeting.allDay ? formatEventDate(meeting) : `${formatEventDate(meeting)} · ${formatClockTime(eventDate(meeting))}`;
+      const people = (meeting.attendees ?? []).map((address) => parseAddress(address).name || parseAddress(address).email).join(", ");
+      return { id: key, identities: [key], category: "meetings", title: meeting.title, at: meeting.created,
+        row: { wrapTitle: true, icon: <CalendarPlus size={ICON_SIZE.sm} />, onActivate: () => onOpenEvent(meeting), detail: [when, people].filter(Boolean).join(" · ") } };
+    }),
     ...doneOnDay.notes.map((note): DoneEntry => ({
       id: `note:${note.id}`, identities: [`note:${note.id}`], category: "notes", title: note.title, at: note.at,
       row: { wrapTitle: true, icon: <NotebookPen size={ICON_SIZE.sm} />, onActivate: () => onOpenNote?.(note.id), detail: [note.edited ? "Edited" : null, note.preview].filter(Boolean).join(" · ") || undefined },
