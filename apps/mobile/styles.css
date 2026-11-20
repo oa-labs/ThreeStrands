@@ -63,6 +63,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
 .daily-heading { border-bottom: 1px solid var(--border); padding-block-end: .8rem; }
+.daily-heading .section-heading > button { flex: none; white-space: nowrap; }
 .date-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .12rem; margin-top: .55rem; }
 .date-strip button { min-inline-size: 0; padding-inline: .1rem; flex-direction: column; border-color: transparent; }
 .date-strip button span { font-size: .75rem; }

@@ -56,7 +56,7 @@ export function SyncScreen({ state }: { state: ReturnType<typeof useSync> }) {
     </div>}
     {(error || issue || status?.lastError) && <p role="alert">{error || issue || status?.lastError}</p>}
     {status && !status.enrolled && <form className="editor" onSubmit={pair}>
-      <p>Your work is saved on this device. To sync it, create a join code in desktop ThreeStrands under Devices with only the HTTPS S3 connector selected.</p>
+      <p>On desktop, open Settings → Integrations → Replicated Sync. Add an HTTPS S3 connector, then choose Devices → Add a device and select only that connector for the join code.</p>
       <label>Join code
         <textarea value={code} spellCheck={false} autoComplete="off" autoCapitalize="off" onChange={event => {
           setCode(event.target.value);

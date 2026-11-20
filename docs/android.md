@@ -11,9 +11,12 @@ versions before you decide which text to keep.
 
 ## Pair a phone with desktop
 
-1. On desktop, configure an HTTPS S3-compatible connector in the existing
-   [encrypted sync group](cross-device-sync.md). A group that already uses
-   other connectors can add an S3 connector to share with Android.
+1. On desktop, open **Settings → Integrations → Replicated Sync** and turn on
+   **Enable replicated sync**. Choose **S3 storage** and enter the HTTPS
+   endpoint, region, bucket, and access key credentials from your provider.
+   Choose **Test Connection**, then **Add connector**. If this is your first
+   device, choose **Create a new sync group** and save the recovery phrase.
+   [Replicated Sync and S3 storage](cross-device-sync.md#s3-storage)
 2. In **Devices → Add a device**, choose only the S3 connector for the join
    code. Decide whether to include its credentials.
 3. On Android, open **Sync settings**, paste the code, and tap
