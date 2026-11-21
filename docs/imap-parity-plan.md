@@ -4,6 +4,8 @@ Status: proposed implementation sequence, recorded 2026-11-06. No runtime
 changes are implemented by this document. Update the checklist as work lands.
 This supplements [the IMAP design](imap-design.md), whose historical phase
 status is not a complete description of today's implementation.
+The [Gmail connection implementation plan](gmail-connection-plan.md) sequences
+this IMAP work and the later organization-supplied OAuth option.
 
 Progress: the [identity audit](imap-identity-audit.md) and regression fixtures
 are complete. [Persistent message identity mappings](imap-identity-mappings.md)
