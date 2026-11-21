@@ -49,7 +49,8 @@ describe("mobile workspace navigation", () => {
     panel.scrollTop = 160;
     fireEvent.scroll(panel);
     fireEvent.click(result);
-    await screen.findByRole("heading", { name: note.title });
+    const heading = await screen.findByRole("heading", { name: note.title });
+    expect(heading.closest("header")).toHaveClass("app-bar-note");
 
     fireEvent.click(tabs().getByRole("button", { name: "Tasks" }));
     fireEvent.click(screen.getByRole("button", { name: "Completed" }));

@@ -15,7 +15,13 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; }
-#root { height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+#root {
+  height: 100dvh;
+  display: grid;
+  /* Intrinsic widths in one row must not widen the app bar, reader, or tabs. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
 main { overflow: auto; overscroll-behavior-y: contain; overflow-anchor: none; }
 .main-content, .app-bar-inner {
   width: min(100%, var(--mobile-width)); margin-inline: auto;
@@ -54,8 +60,15 @@ button:disabled { opacity: .55; cursor: default; }
   display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; min-height: 3.5rem; padding-block: .25rem;
 }
 .app-bar h1 { flex: 1; min-inline-size: min(7rem, 100%); }
-.app-bar h1[title] { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-bar-inner:has(h1[title]) { flex-wrap: nowrap; }
+.app-bar-note .app-bar-inner { flex-wrap: nowrap; align-items: flex-start; }
+.app-bar-note h1 {
+  min-inline-size: 0;
+  /* Keep room to read the note at large system text sizes. */
+  max-block-size: max(var(--touch), 40dvh);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding-block: max(.25rem, calc((var(--touch) - 1.13em) / 2));
+}
 .app-bar-inner > .icon-button { color: var(--secondary); }
 .create-button { padding-inline: .65rem; font-size: .875rem; }
 .create-button svg { flex: none; }

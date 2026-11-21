@@ -61,10 +61,10 @@ export function App() {
   const capturing = captureEntry === entryId;
 
   return <>
-    <header className="app-bar">
+    <header className={screen === "note" ? "app-bar app-bar-note" : "app-bar"}>
       <div className="app-bar-inner">
         {!topLevel && <button className="icon-button" aria-label="Back" onClick={back}><ChevronLeft aria-hidden="true" size={22} /></button>}
-        <h1 title={screen === "note" ? heading : undefined}>{heading}</h1>
+        <h1>{heading}</h1>
         {topLevel && <>
           <button className="primary create-button" aria-expanded={screen === "daily" ? capturing : undefined}
             aria-controls={screen === "daily" && capturing ? "capture-options" : undefined}

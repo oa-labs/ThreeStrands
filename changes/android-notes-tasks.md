@@ -7,3 +7,4 @@
 
 ### Fixed
 - ThreeStrands for Android keeps the header and navigation tabs clear of the system bars.
+- Long note titles wrap on Android, and the note body and bottom tabs stay within the screen.
