@@ -14,6 +14,7 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { ImapAccountSetup } from "./ImapAccountSetup";
 import { GmailSendingSettings } from "./GmailSendingSettings";
+import { SwitchGmailToImap } from "./SwitchGmailToImap";
 import { ImapSendingSettings } from "./ImapSendingSettings";
 import { ImapServerSettings } from "./ImapServerSettings";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
@@ -35,6 +36,7 @@ export function AccountsSettings({
   onSetColor,
   onReorder,
   onImapConnected,
+  onGmailImapSwitched,
   onSignatureDefaults,
 }: {
   authStatus: AuthStatus | null;
@@ -50,6 +52,7 @@ export function AccountsSettings({
   onSetColor(email: string, color: string): Promise<void>;
   onReorder(emails: string[]): Promise<void>;
   onImapConnected?(): Promise<void>;
+  onGmailImapSwitched?(): Promise<void>;
   onSignatureDefaults?(email: string): void;
 }) {
   const { pending: busyEmail, error, setError, runFor } = useSettingsOperation();
@@ -59,6 +62,7 @@ export function AccountsSettings({
   const restoreAddFocus = useRef(false);
   const [imapSaved, setImapSaved] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
+  const [switchingEmail, setSwitchingEmail] = useState<string | null>(null);
   // IMAP reconnects happen in the account's Server editor (a password, not a
   // browser sign-in); the header button bumps this to open and focus it.
   const [imapReconnect, setImapReconnect] = useState<{ email: string; request: number } | null>(null);
@@ -201,7 +205,7 @@ export function AccountsSettings({
                   <button
                     type="button"
                     className="btn btn-sm btn-primary account-reconnect"
-                    disabled={busyEmail !== null}
+                    disabled={busyEmail !== null || switchingEmail === account.email}
                     onClick={() => runFor(`reconnect:${account.email}`, () => onReconnect(account.email))}
                   >
                     {busyEmail === `reconnect:${account.email}` ? "Waiting for Google…" : "Reconnect"}
@@ -261,10 +265,19 @@ export function AccountsSettings({
                     </button>
                   </span>
                 ) : null}
+                {account.provider === "gmail" && <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={busyEmail !== null || switchingEmail !== null}
+                  onClick={() => {
+                    setConfirmEmail(null);
+                    setSwitchingEmail(account.email);
+                  }}
+                >Switch to Gmail via IMAP…</button>}
                 <button
                   type="button"
                   className="btn btn-sm btn-danger account-disconnect"
-                  disabled={busyEmail !== null}
+                  disabled={busyEmail !== null || switchingEmail === account.email}
                   aria-expanded={confirmEmail === account.email}
                   onClick={() => setConfirmEmail(account.email)}
                 >
@@ -280,6 +293,19 @@ export function AccountsSettings({
                   onConnected={() => onImapConnected?.()}
                 />
               ) : null}
+              {switchingEmail === account.email && <SwitchGmailToImap
+                email={account.email}
+                onCancel={() => setSwitchingEmail(null)}
+                onSwitched={async () => {
+                  setSwitchingEmail(null);
+                  setImapSaved(true);
+                  try {
+                    await (onGmailImapSwitched ?? onImapConnected)?.();
+                  } catch (reason) {
+                    setError(errorMessage(reason));
+                  }
+                }}
+              />}
               {confirmEmail === account.email ? (
                 <AccountDisconnectConfirm
                   kind="mail"

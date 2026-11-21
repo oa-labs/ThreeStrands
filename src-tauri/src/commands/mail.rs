@@ -261,6 +261,17 @@ pub(crate) async fn list_sent_page(
 #[tauri::command]
 pub(crate) async fn get_thread(id: String, state: State<'_, AppState>) -> AppResult<ThreadDetail> {
     let database = state.database.clone();
+    let lookup_id = id.clone();
+    match run_database_task(move || database.get_thread(&lookup_id)).await {
+        Err(AppError::Database(crate::db::DatabaseError::NotFound("Thread"))) => {}
+        result => return result,
+    }
+    let Some((email, provider_id)) = state.database.converted_gmail_thread(&id)? else {
+        return Err(crate::db::DatabaseError::NotFound("Thread").into());
+    };
+    let service = resolve_account(&state, Some(&email), |account| account.sync.clone()).await?;
+    service.recover_converted_gmail_thread(&provider_id).await?;
+    let database = state.database.clone();
     run_database_task(move || database.get_thread(&id)).await
 }
 

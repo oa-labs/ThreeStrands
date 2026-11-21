@@ -16,7 +16,7 @@ impl ImapProvider {
         .await
         .map_err(|_| {
             ProviderError::TransientTransport(
-                "Snoozed mail recovery timed out; its return remains pending".into(),
+                "Recovering the conversation from IMAP timed out. Try again.".into(),
             )
         })?
     }
@@ -41,8 +41,12 @@ impl ImapProvider {
         // mailbox reset. Search only reference identifiers, then acquire via
         // the existing bounded, UIDVALIDITY-checked search path. Never assume
         // a cache miss means the provider deleted the email.
-        let plan = self.build_sync_plan()?;
         let mut session = self.open_session().await?;
+        let mut plan = self.build_sync_plan()?;
+        if plan.entries.is_empty() {
+            self.refresh_catalog_if_due(session.as_mut()).await;
+            plan = self.build_sync_plan()?;
+        }
         let native_id = if session.supports_label_extensions() {
             self.store
                 .gmail_thread_lookup_id(&resolved)
@@ -71,7 +75,21 @@ impl ImapProvider {
                 })
                 .collect::<ProviderResult<Vec<_>>>()?
         };
-        for entry in plan.entries.iter().filter(|entry| entry.synced_now) {
+        use crate::provider::imap::MailboxRole;
+        let converted = native_id.is_some_and(|thread| format!("{thread:x}") == id);
+        let search_aggregate = converted
+            && plan
+                .entries
+                .iter()
+                .any(|entry| entry.role == Some(MailboxRole::All));
+        for entry in plan.entries.iter().filter(|entry| {
+            entry.synced_now
+                && (!search_aggregate
+                    || matches!(
+                        entry.role,
+                        Some(MailboxRole::All | MailboxRole::Trash | MailboxRole::Junk)
+                    ))
+        }) {
             let status = session.examine(&entry.mailbox).await?;
             let validity = status.uid_validity.unwrap_or(0) as i64;
             for query in &queries {
@@ -79,7 +97,8 @@ impl ImapProvider {
                 if let Some(thread) = native_id {
                     if uids.len() > policy::MAX_SEARCH_ACQUIRE {
                         return Err(ProviderError::TransientTransport(
-                            "Snoozed mail recovery reached the account's search limit".into(),
+                            "Recovering the conversation reached the account’s IMAP search limit."
+                                .into(),
                         ));
                     }
                     let verified = session.uid_gmail_threads(&uids).await?;
@@ -94,7 +113,8 @@ impl ImapProvider {
                     .map_err(|error| ProviderError::TransientTransport(error.to_string()))?;
                 if acquired.skipped_over_cap > 0 {
                     return Err(ProviderError::TransientTransport(
-                        "Snoozed mail recovery reached the account's search limit".into(),
+                        "Recovering the conversation reached the account’s IMAP search limit."
+                            .into(),
                     ));
                 }
             }
@@ -112,8 +132,7 @@ impl ImapProvider {
             }
         }
         Err(ProviderError::TransientTransport(
-            "Snoozed conversation could not be located on the server; its return remains pending"
-                .into(),
+            "The linked conversation could not be located on the IMAP server.".into(),
         ))
     }
 }

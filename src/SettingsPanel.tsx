@@ -308,6 +308,7 @@ export function Settings({
               onSignatureDefaults={signatures ? setSignatureAccount : undefined}
               onAdd={mailAccounts.add}
               onImapConnected={mailAccounts.refresh}
+              onGmailImapSwitched={mailAccounts.refreshAfterGmailSwitch}
               onRemove={mailAccounts.remove}
               onRemoveEverywhere={mailAccounts.removeEverywhere}
               onReconnect={mailAccounts.reconnect}

@@ -462,78 +462,16 @@ impl MailMutate for ImapProvider {
     }
 
     async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
-        // The six system labels first, in a fixed order, then the account's
-        // dynamic labels read from the LOCAL plan/catalog (no network): `lf:`
-        // labels (kind `user`, name = path relative to the container) for every
-        // label-folder child, then `folder:` labels (kind `folder`, name = full
-        // mailbox name) for every user folder — whether or not any message is
-        // currently in them (fact 2 / item 3). The frontend resolves label ids
-        // through this catalog, so an id absent here renders as raw text.
-        let mut labels = vec![
-            Label {
-                id: "INBOX".into(),
-                name: "Inbox".into(),
-                kind: "system".into(),
-            },
-            Label {
-                id: "SENT".into(),
-                name: "Sent".into(),
-                kind: "system".into(),
-            },
-            Label {
-                id: "SPAM".into(),
-                name: "Spam".into(),
-                kind: "system".into(),
-            },
-            Label {
-                id: "TRASH".into(),
-                name: "Trash".into(),
-                kind: "system".into(),
-            },
-            Label {
-                id: "UNREAD".into(),
-                name: "Unread".into(),
-                kind: "system".into(),
-            },
-            Label {
-                id: "STARRED".into(),
-                name: "Starred".into(),
-                kind: "system".into(),
-            },
-        ];
         let plan = self.build_sync_plan()?;
         let native = self.store.uses_native_labels().map_err(db_err)?;
         let catalog = self.store.mailboxes().map_err(db_err)?;
-        for (id, kind) in plan.dynamic_labels() {
-            if native
-                && !plan.entries.iter().any(|entry| {
-                    entry.location_label_id.as_deref() == Some(&id)
-                        && catalog
-                            .iter()
-                            .any(|row| row.name == entry.mailbox && row.special_use.is_none())
-                })
-            {
-                continue;
-            }
-            // Display name: the id with its `lf:` / `folder:` prefix stripped
-            // (the relative label path, or the full user-folder name).
-            let name = id
-                .strip_prefix("lf:")
-                .or_else(|| id.strip_prefix("folder:"))
-                .unwrap_or(&id)
-                .to_string();
-            let name = crate::provider::imap::write::decode_modified_utf7(&name).unwrap_or(name);
-            labels.push(Label {
-                id,
-                name,
-                kind: if native {
-                    "user".into()
-                } else {
-                    kind.to_string()
-                },
-            });
-        }
-        Ok(labels)
+        Ok(plan.label_catalog(
+            native,
+            catalog
+                .iter()
+                .filter(|row| row.special_use.is_none())
+                .map(|row| row.name.as_str()),
+        ))
     }
 
     async fn create_label(&self, name: &str) -> ProviderResult<Label> {

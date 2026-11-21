@@ -16,6 +16,7 @@ use std::{
 };
 
 mod accounts;
+pub(crate) use accounts::switch_to_imap::{GmailImapSwitchPreview, SplitLabelChoice};
 mod agents;
 mod ai;
 mod calendar_accounts;

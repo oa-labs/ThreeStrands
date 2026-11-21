@@ -42,6 +42,9 @@ export function useSettingsIntegration({
     activeAccountId,
     add: addAccount,
     refresh: refreshAccounts,
+    refreshAfterGmailSwitch: async () => {
+      await Promise.all([refreshAccounts(), refreshSplitInboxes(), loadThreads(query)]);
+    },
     remove: async (email) => {
       const { wasActive } = await removeAccount(email);
       void loadThreads(query, wasActive ? null : undefined);
@@ -61,7 +64,7 @@ export function useSettingsIntegration({
   }), [
     accounts, availableAccounts, activeAccountId, addAccount, authStatus, loadThreads, query, reconnectAccount,
     removeAccount, removeAccountEverywhere, reorderAccounts, setAccountColor,
-    setAccountDisplayName, setAccountNickname, refreshAccounts,
+    setAccountDisplayName, setAccountNickname, refreshAccounts, refreshSplitInboxes,
   ]);
 
   const applyImportedSettings = useCallback(async ({ preferences: imported }: SettingsImportResult) => {

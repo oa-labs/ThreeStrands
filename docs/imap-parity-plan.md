@@ -11,7 +11,9 @@ Progress: the [identity audit](imap-identity-audit.md) and regression fixtures
 are complete. [Persistent message identity mappings](imap-identity-mappings.md)
 and X-GM-MSGID retrieval are implemented. IMAP acquisition now learns Gmail
 conversation IDs and retains existing bindings when identity evidence conflicts.
-Safe conversion from a Gmail API account remains open.
+Settings → Mail Accounts can switch an existing Gmail API account to IMAP on
+one device while preserving tasks, goals and account setup. See stage 3 for
+the scope of that switch.
 
 [All Mail, archive, and search completeness](imap-all-mail.md) is implemented:
 bounded aggregate acquisition, negotiated label membership/system actions,
@@ -126,8 +128,21 @@ No writable capability is offered unless the provider can fulfill it.
 
 ### 3. Offer safe connection conversion
 
-Current removal paths purge cached mail and, depending on sync enrollment and
-removal scope, can also delete workflow records. Removal is not conversion.
+**Switch to Gmail via IMAP** is the first conversion path. It tests both
+connections, reviews label-based Split Inboxes, then changes the Gmail account in
+place. It keeps task IDs, goal IDs, account preferences, sender rules, signature
+defaults, and cached sending addresses. A native Gmail ID reservation reconnects
+mail-linked tasks as mail arrives. Opening an older task conversation can
+recover it by native ID outside the usual sync window. The review flags legacy
+task references and lets the user choose a label for any unmatched Split Inbox.
+
+This one-time path clears local snoozes, drafts, Outbox, scheduled sends, pending
+mail changes, and cached mail for the switched account. Gmail mail remains on
+the server. This path supports one device. The app refuses the switch when
+another active Replicated Sync device still belongs to the space.
+
+The remaining checklist covers a fuller conversion with more workflow state
+and multi-device coordination.
 
 - [ ] Add an explicit change-connection operation for the same mailbox/account.
   Validate IMAP and SMTP before retiring the existing connection; keep Calendar

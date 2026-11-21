@@ -356,3 +356,59 @@ describe("accounts on other devices", () => {
     expect(email).toHaveAttribute("readonly");
   });
 });
+
+describe("switching Gmail to IMAP", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("tests the app password, reviews label mappings, and refreshes the switched account", async () => {
+    const preview = vi.spyOn(mailClient, "previewGmailImapSwitch").mockResolvedValue({
+      taskCount: 2,
+      goalCount: 1,
+      unverifiedTaskLinks: ["Call the nursery"],
+      splitInboxes: [
+        { id: "orchard", name: "Orchard", oldLabelId: "Label_1", oldLabelName: "Projects/Orchard", suggestedLabelId: "folder:Projects/Orchard" },
+        { id: "vendors", name: "Vendors", oldLabelId: "Label_2", oldLabelName: null, suggestedLabelId: null },
+      ],
+      labels: [
+        { id: "folder:Projects/Orchard", name: "Projects/Orchard", kind: "user" },
+        { id: "folder:Vendors", name: "Vendors", kind: "user" },
+      ],
+    });
+    const commit = vi.spyOn(mailClient, "switchGmailToImap").mockResolvedValue({ ...account, provider: "imap" });
+    const onGmailImapSwitched = vi.fn().mockResolvedValue(undefined);
+    const onRemove = vi.fn();
+    renderAccounts(vi.fn(), { onGmailImapSwitched, onRemove });
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Gmail via IMAP…" }));
+    const password = screen.getByLabelText("App Password");
+    expect(password).toHaveFocus();
+    fireEvent.change(password, { target: { value: "abcd efgh ijkl mnop" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Test Connection" })); });
+    expect(preview).toHaveBeenCalledWith(account.email, "abcdefghijklmnop");
+    expect(commit).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Review Gmail switch" })).toHaveFocus();
+    expect(screen.getByText("Call the nursery")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Orchard · Projects/Orchard" })).toHaveValue("folder:Projects/Orchard");
+    fireEvent.change(screen.getByRole("combobox", { name: "Vendors" }), { target: { value: "folder:Vendors" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Switch to Gmail via IMAP" })); });
+    expect(commit).toHaveBeenCalledWith(account.email, "abcdefghijklmnop", [
+      { id: "orchard", oldLabelId: "Label_1", labelId: "folder:Projects/Orchard" },
+      { id: "vendors", oldLabelId: "Label_2", labelId: "folder:Vendors" },
+    ]);
+    expect(onGmailImapSwitched).toHaveBeenCalledOnce();
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("leaves the Gmail connection in place when the connection test fails or is canceled", async () => {
+    vi.spyOn(mailClient, "previewGmailImapSwitch").mockRejectedValue(new Error("The app password was rejected."));
+    const commit = vi.spyOn(mailClient, "switchGmailToImap");
+    renderAccounts(vi.fn());
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Gmail via IMAP…" }));
+    fireEvent.change(screen.getByLabelText("App Password"), { target: { value: "abcd efgh ijkl mnop" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Test Connection" })); });
+    expect(screen.getByRole("alert")).toHaveTextContent("The app password was rejected.");
+    expect(screen.queryByRole("heading", { name: "Review Gmail switch" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Switch to Gmail via IMAP…" })).toBeEnabled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+});

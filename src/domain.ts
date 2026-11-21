@@ -1479,6 +1479,26 @@ export type SendingIdentityInput = {
   isDefault?: boolean;
 };
 
+export type GmailImapSwitchPreview = {
+  taskCount: number;
+  goalCount: number;
+  unverifiedTaskLinks: string[];
+  splitInboxes: {
+    id: string;
+    name: string;
+    oldLabelId: string;
+    oldLabelName: string | null;
+    suggestedLabelId: string | null;
+  }[];
+  labels: Label[];
+};
+
+export type GmailImapSplitLabelChoice = {
+  id: string;
+  oldLabelId: string;
+  labelId: string | null;
+};
+
 /** The payload the IMAP setup form sends for "test and save". */
 export type ImapSetupRequest = {
   email: string;

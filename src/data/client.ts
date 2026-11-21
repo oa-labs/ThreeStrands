@@ -111,6 +111,8 @@ import type {
   ImapCertificateProbe,
   ImapSecurityMode,
   ImapSetupRequest,
+  GmailImapSwitchPreview,
+  GmailImapSplitLabelChoice,
   ImapMailboxMapping,
   ImapMailboxMappingCommit,
   ImapSendingOptions,
@@ -357,6 +359,8 @@ export interface MailClient extends CorrespondenceClient {
   probeSmtpCertificate(host: string, port: number, security: ImapSecurityMode): Promise<ImapCertificateProbe>;
   /** Test the entered IMAP + SMTP settings and, on success, save the account. */
   testAndSaveImapAccount(request: ImapSetupRequest): Promise<Account>;
+  previewGmailImapSwitch(email: string, password: string): Promise<GmailImapSwitchPreview>;
+  switchGmailToImap(email: string, password: string, choices: GmailImapSplitLabelChoice[]): Promise<Account>;
   /** Discover a set-up IMAP account's mailboxes and propose a special-use mapping (persists the catalog). */
   discoverImapMailboxes(email: string): Promise<ImapMailboxMapping>;
   /** Persist the user's confirmed mailbox mapping (Archive choice, per-role overrides, label container). */
@@ -566,7 +570,7 @@ const tauriClient: MailClient = {
   mailboxUnreadCounts: (accountId) => read("mailbox_unread_counts", { accountId }),
   listTodayMail: (accountId) => read("list_today_mail", { accountId }),
   listOpenPromises: (accountId) => read("list_open_promises", { accountId }),
-  getThread: (id) => read("get_thread", { id }),
+  getThread: (id) => complete("get_thread", { id }),
   openAttachment: (messageId, attachmentId) => complete("open_attachment", { messageId, attachmentId }),
   saveAttachment: (messageId, attachmentId) => complete("save_attachment", { messageId, attachmentId }),
   fetchRemoteImage: (url) => complete("fetch_remote_image", { url }),
@@ -675,6 +679,10 @@ const tauriClient: MailClient = {
     complete("probe_smtp_certificate", { host, port, security }),
   testAndSaveImapAccount: (request) =>
     complete("test_and_save_imap_account", { request }),
+  previewGmailImapSwitch: (email, password) =>
+    complete("preview_gmail_imap_switch", { email, password }),
+  switchGmailToImap: (email, password, choices) =>
+    complete("switch_gmail_to_imap", { email, password, choices }),
   discoverImapMailboxes: (email) => complete("discover_imap_mailboxes", { email }),
   commitImapMailboxMapping: (commit) => complete("commit_imap_mailbox_mapping", { commit }),
   finishImapAccountSetup: (email) => complete("finish_imap_account_setup", { email }),

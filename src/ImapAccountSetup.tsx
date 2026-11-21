@@ -36,7 +36,7 @@ export type CertificateState = { endpoint: string; probe: ImapCertificateProbe; 
 export const endpointKey = (host: string, port: number, security: ImapSecurityMode) =>
   JSON.stringify([host.trim(), port, security]);
 
-const GMAIL_APP_PASSWORD_HELP = "https://support.google.com/accounts/answer/185833";
+export const GMAIL_APP_PASSWORD_HELP = "https://support.google.com/accounts/answer/185833";
 
 export function ImapAccountSetup({ onConnected, onCancel, initialEmail, gmailAppPassword = false }: {
   onConnected: (account: Account) => void | Promise<void>;

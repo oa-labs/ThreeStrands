@@ -332,7 +332,7 @@ impl ImapProvider {
     /// nothing. Any failure — the `LIST` itself, a single upsert, or the
     /// retirement — is logged and swallowed, because this must NEVER abort a
     /// poll: if it did, a transient `LIST` error would stop INBOX mail flowing.
-    async fn refresh_catalog_if_due(&self, session: &mut dyn ImapSession) {
+    pub(super) async fn refresh_catalog_if_due(&self, session: &mut dyn ImapSession) {
         let now = (self.now)();
         match self.store.catalog_refresh_due(now) {
             Ok(true) => {}

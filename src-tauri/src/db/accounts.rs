@@ -1,5 +1,8 @@
 //! Account persistence.
 
+#[path = "accounts/switch_to_imap.rs"]
+pub(crate) mod switch_to_imap;
+
 use super::serialization_error;
 use super::DatabaseError;
 use super::{Database, DbResult};
@@ -267,6 +270,11 @@ impl Database {
             )?;
             purge_mail_traces(transaction, email)?;
             purge_outgoing_mail(transaction, email)?;
+            transaction.execute(
+                "DELETE FROM signature_defaults WHERE json_valid(payload)
+                 AND lower(json_extract(payload, '$.account')) = lower(?1)",
+                [email],
+            )?;
             transaction.execute("DELETE FROM threads WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM mutations WHERE account_id = ?1", [email])?;
             transaction.execute(
@@ -512,8 +520,7 @@ fn purge_mail_traces(transaction: &rusqlite::Transaction<'_>, account: &str) -> 
 }
 
 /// Mail the user was writing or sending from the account: drafts, the
-/// outbox (which holds each message's full encoded copy), and the
-/// account's signature choices. Attachment files are removed by the
+/// outbox (which holds each message's full encoded copy). Attachment files are removed by the
 /// caller's attachment cleanup once these rows no longer retain them.
 fn purge_outgoing_mail(transaction: &rusqlite::Transaction<'_>, account: &str) -> DbResult<()> {
     for (table, column) in [
@@ -530,7 +537,6 @@ fn purge_outgoing_mail(transaction: &rusqlite::Transaction<'_>, account: &str) -
     for (table, column, path) in [
         ("drafts", "payload", "$.account"),
         ("discarded_drafts", "payload", "$.account"),
-        ("signature_defaults", "payload", "$.account"),
         ("scheduled_send_summaries", "report", "$.account"),
     ] {
         transaction.execute(

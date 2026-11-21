@@ -1474,6 +1474,18 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       accounts = [...accounts, account];
       return structuredClone(account);
     },
+    async previewGmailImapSwitch(email, _password) {
+      const account = accounts.find((item) => item.email === email);
+      if (account?.provider !== "gmail") throw new Error("This account is no longer set up with Gmail.");
+      return { taskCount: 0, goalCount: 0, unverifiedTaskLinks: [], splitInboxes: [], labels: [] };
+    },
+    async switchGmailToImap(email, _password, _choices) {
+      const account = accounts.find((item) => item.email === email);
+      if (account?.provider !== "gmail") throw new Error("This account is no longer set up with Gmail.");
+      const converted = { ...account, provider: "imap", labelModel: "imapNativeLabels" } as const;
+      accounts = accounts.map((item) => item.email === email ? converted : item);
+      return structuredClone(converted);
+    },
     async discoverImapMailboxes(_email): Promise<ImapMailboxMapping> {
       // The demo backend has no IMAP server; return a plausible primary-account
       // layout so the mapping screen can be exercised in browser preview. The

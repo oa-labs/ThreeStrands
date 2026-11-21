@@ -184,6 +184,54 @@ impl SyncPlan {
         }
         out
     }
+
+    /// The labels exposed by this plan, including empty user mailboxes.
+    pub(crate) fn label_catalog<'a>(
+        &self,
+        native: bool,
+        ordinary_mailboxes: impl Iterator<Item = &'a str>,
+    ) -> Vec<crate::models::Label> {
+        use crate::models::Label;
+        let mut labels: Vec<_> = [
+            ("INBOX", "Inbox"),
+            ("SENT", "Sent"),
+            ("SPAM", "Spam"),
+            ("TRASH", "Trash"),
+            ("UNREAD", "Unread"),
+            ("STARRED", "Starred"),
+        ]
+        .into_iter()
+        .map(|(id, name)| Label {
+            id: id.into(),
+            name: name.into(),
+            kind: "system".into(),
+        })
+        .collect();
+        let ordinary: std::collections::HashSet<_> = ordinary_mailboxes.collect();
+        let native_ids: std::collections::HashSet<_> = self
+            .entries
+            .iter()
+            .filter(|entry| ordinary.contains(entry.mailbox.as_str()))
+            .filter_map(|entry| entry.location_label_id.as_deref())
+            .collect();
+        for (id, kind) in self.dynamic_labels() {
+            if native && !native_ids.contains(id.as_str()) {
+                continue;
+            }
+            let wire_name = id
+                .strip_prefix("lf:")
+                .or_else(|| id.strip_prefix("folder:"))
+                .unwrap_or(&id);
+            let name = super::write::decode_modified_utf7(wire_name)
+                .unwrap_or_else(|_| wire_name.to_string());
+            labels.push(Label {
+                id,
+                name,
+                kind: if native { "user" } else { kind }.into(),
+            });
+        }
+        labels
+    }
 }
 
 /// One selectable catalog mailbox the plan reasons over: its exact name and the
@@ -318,7 +366,7 @@ pub fn build_plan(
     build_plan_with_roles(catalog, delimiter, settings, false)
 }
 
-pub(super) fn build_native_plan(
+pub(crate) fn build_native_plan(
     catalog: &[CatalogMailbox],
     delimiter: Option<&str>,
     settings: &ImapAccountSettings,

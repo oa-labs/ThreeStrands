@@ -760,7 +760,14 @@ fn provider_with(server: Arc<Mutex<MutServer>>) -> (ImapProvider, ImapStateStore
     database
         .adopt_mail_account("me@example.com", crate::models::MailProviderKind::Imap)
         .unwrap();
-    let store = ImapStateStore::new(database.clone(), "me@example.com");
+    provider_with_database(server, database)
+}
+
+fn provider_with_database(
+    server: Arc<Mutex<MutServer>>,
+    database: Arc<Database>,
+) -> (ImapProvider, ImapStateStore) {
+    let store = ImapStateStore::new(database, "me@example.com");
     for (name, folder) in &server.lock().unwrap().folders {
         store
             .upsert_mailbox(&super::super::ImapMailbox {
@@ -4167,6 +4174,60 @@ async fn gmail_threads_use_authoritative_ids_without_merging_on_sender_headers()
         .await
         .unwrap();
     assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 2);
+    assert!(server
+        .lock()
+        .unwrap()
+        .wire()
+        .iter()
+        .any(|line| line == "UID SEARCH X-GM-THRID 2001"));
+}
+
+#[tokio::test]
+async fn gmail_switch_recovers_archived_task_mail_with_its_original_ids() {
+    const EMAIL: &str = "me@example.com";
+    let server = server_with_inbox();
+    {
+        let mut server = server.lock().unwrap();
+        server.capabilities.push("X-GM-EXT-1".into());
+        server
+            .list_attributes
+            .insert("All Mail".into(), "\\All".into());
+        let archive = server.folder("All Mail", 101);
+        archive.add(&["\\Seen"], &message("<same-header@example.com>"));
+        archive.add(&["\\Seen"], &message("<same-header@example.com>"));
+        for (message, (id, thread)) in archive
+            .messages
+            .iter_mut()
+            .zip([(1101, 2001), (1102, 2002)])
+        {
+            message.gmail_message_id = Some(id);
+            message.gmail_thread_id = Some(thread);
+            message.labels = Some(vec![]);
+        }
+    }
+    let database = Arc::new(Database::open_memory());
+    database.adopt_account(EMAIL).unwrap();
+    database
+        .upsert_thread(
+            EMAIL,
+            &[crate::db::test_support::message(
+                "44d",
+                "7d1",
+                "2025-10-06T09:00:00Z",
+                "Original task mail",
+            )],
+        )
+        .unwrap();
+    database
+        .switch_gmail_to_imap(EMAIL, test_settings(), &[], &[])
+        .unwrap();
+    let (provider, store) = provider_with_database(server.clone(), database);
+    provider.prepare_snoozed_thread("7d1", &[]).await.unwrap();
+    let raw = provider.fetch_thread("7d1").await.unwrap();
+    assert_eq!(raw.len(), 1);
+    assert_eq!(raw[0].id, "44d");
+    assert_eq!(raw[0].thread_id, "7d1");
+    assert_eq!(store.locations_in_mailbox("All Mail").unwrap().len(), 1);
     assert!(server
         .lock()
         .unwrap()

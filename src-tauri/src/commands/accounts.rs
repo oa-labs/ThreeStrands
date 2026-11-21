@@ -1,5 +1,8 @@
 //! Mail accounts: Google sign-in, IMAP setup and settings, and removal.
 
+#[path = "accounts/switch_to_imap.rs"]
+pub(crate) mod switch_to_imap;
+
 use crate::auth::{AccountAuth, GoogleConnection, OAuthProvider};
 use crate::db::Database;
 use crate::models::{Account, AuthStatus, MailProviderKind, SyncStatus};

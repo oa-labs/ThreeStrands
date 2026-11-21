@@ -36,7 +36,7 @@ pub(super) fn clear_seed_threads(database: &Database) {
     connection.execute("DELETE FROM threads", []).unwrap();
 }
 
-pub(super) fn message(id: &str, thread_id: &str, date: &str, body: &str) -> NormalizedMessage {
+pub(crate) fn message(id: &str, thread_id: &str, date: &str, body: &str) -> NormalizedMessage {
     NormalizedMessage {
         id: id.into(),
         thread_id: thread_id.into(),

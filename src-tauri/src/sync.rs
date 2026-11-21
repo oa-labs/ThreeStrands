@@ -262,6 +262,29 @@ impl SyncService {
         self.auth.key()
     }
 
+    /// An archived task link can outlive the local mail cache. The caller
+    /// has already verified that this is a conversation reserved by conversion.
+    pub(crate) async fn recover_converted_gmail_thread(&self, thread: &str) -> ProviderResult<()> {
+        self.exclusive(async {
+            let account = self.account_id();
+            let provider = self.auth.provider(&self.database)?;
+            provider.prepare_snoozed_thread(thread, &[]).await?;
+            ingest_threads(
+                &self.database,
+                &account,
+                provider.as_ref(),
+                vec![thread.to_string()],
+            )
+            .await
+        })
+        .await
+        .ok_or_else(|| {
+            ProviderError::InvalidOperation(
+                "The mail connection changed. Try opening the conversation again.".into(),
+            )
+        })?
+    }
+
     pub async fn sync(&self) -> Result<SyncStatus, String> {
         self.sync_provider()
             .await

@@ -77,6 +77,7 @@ export type MailAccountSettings = {
   availableAccounts?: Account[];
   activeAccountId: string | null;
   refresh?(): Promise<void>;
+  refreshAfterGmailSwitch?(): Promise<void>;
   add(): Promise<void>;
   remove(email: string): Promise<void>;
   removeEverywhere(email: string): Promise<void>;
