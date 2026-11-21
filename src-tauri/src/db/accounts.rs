@@ -69,6 +69,11 @@ impl Database {
     ) -> DbResult<Account> {
         self.with_transaction(|transaction| {
             adopt_mail_account_on(transaction, email, MailProviderKind::Imap)?;
+            super::imap::label_edits::retire_changed_connection_bindings(
+                transaction,
+                email,
+                settings,
+            )?;
             super::imap::write_settings_row(transaction, email, settings)
         })?;
         self.get_account(email)?
@@ -178,6 +183,7 @@ impl Database {
             {
                 tx.execute("DELETE FROM imap_sent_copy_detection WHERE account_id=?1", [email])?;
             }
+            super::imap::label_edits::retire_changed_connection_bindings(tx, email, settings)?;
             super::imap::write_settings_row(tx, email, settings)
         })
     }

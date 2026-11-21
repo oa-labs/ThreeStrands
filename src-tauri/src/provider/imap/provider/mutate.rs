@@ -363,7 +363,9 @@ fn classify_message_mutation(
     add: &[String],
     remove: &[String],
 ) -> ProviderResult<MessageMutationKind> {
-    let is_user_label = |id: &String| id.starts_with("lf:") || id.starts_with("folder:");
+    let is_user_label = |id: &String| {
+        id.starts_with("lf:") || id.starts_with("folder:") || id.starts_with("imap-label:")
+    };
     let any_user_label = add.iter().chain(remove.iter()).any(is_user_label);
     if !any_user_label {
         return Ok(MessageMutationKind::Flag);
@@ -481,7 +483,17 @@ impl MailMutate for ImapProvider {
         self.create_label_folder(name).await
     }
 
-    async fn update_label(&self, _id: &str, _name: &str) -> ProviderResult<Label> {
+    async fn update_label(&self, id: &str, name: &str) -> ProviderResult<Label> {
+        if self.store.uses_native_labels().map_err(db_err)? {
+            return self
+                .edit_native_label(id, Some(name))
+                .await?
+                .ok_or_else(|| {
+                    ProviderError::TransientTransport(
+                        "The server has not confirmed the label rename.".into(),
+                    )
+                });
+        }
         // RENAME is deliberately NOT implemented. The `lf:` label id is derived
         // from the label NAME, so a rename changes the id; but the engine and
         // database have no way to migrate stored label ids: there is no label
@@ -502,7 +514,7 @@ impl MailMutate for ImapProvider {
 
     async fn delete_label(&self, id: &str) -> ProviderResult<()> {
         if self.store.uses_native_labels().map_err(db_err)? {
-            return Err(ProviderError::InvalidOperation("Deleting native labels is not supported yet; remove the label from messages instead".into()));
+            return self.edit_native_label(id, None).await.map(|_| ());
         }
         self.delete_label_folder(id).await
     }

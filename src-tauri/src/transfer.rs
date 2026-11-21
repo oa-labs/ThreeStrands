@@ -519,6 +519,8 @@ pub(crate) struct TransferAccount {
     // `docs/imap-design.md` ("Settings transfer and replicated sync").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imap: Option<crate::provider::imap::ImapAccountSettings>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub imap_label_bindings: Vec<crate::db::imap::label_edits::ImapLabelBinding>,
 }
 
 fn default_account_provider() -> String {
@@ -537,6 +539,7 @@ impl From<Account> for TransferAccount {
             // An `Account` row carries no IMAP settings; `export` fills this in
             // from the `imap_account_settings` table for IMAP accounts.
             imap: None,
+            imap_label_bindings: Vec::new(),
         }
     }
 }
@@ -794,6 +797,34 @@ impl TransferPayload {
             if !is_known_account_provider(&account.provider) {
                 return Err("The transfer contains an unrecognized account provider".to_string());
             }
+            let bindings = &account.imap_label_bindings;
+            if bindings.len() > 10_000
+                || (!bindings.is_empty() && (account.imap.is_none() || account.provider != "imap"))
+            {
+                return Err("The transfer contains invalid IMAP label bindings".into());
+            }
+            let mut ids = HashSet::new();
+            let mut names = HashSet::new();
+            for binding in bindings {
+                validate_required_text("IMAP label id", &binding.label_id, MAX_TEXT_LENGTH)?;
+                if !ids.insert(&binding.label_id)
+                    || !(binding.label_id.starts_with("lf:")
+                        || binding.label_id.starts_with("folder:")
+                        || binding.label_id.starts_with("imap-label:"))
+                {
+                    return Err("The transfer contains an invalid IMAP label id".into());
+                }
+                if let Some(mailbox) = &binding.mailbox {
+                    validate_required_text("IMAP label path", mailbox, MAX_TEXT_LENGTH)?;
+                    if !names.insert(mailbox) || !binding.uidvalidity.is_some_and(|uid| uid != 0) {
+                        return Err("The transfer contains an invalid IMAP label binding".into());
+                    }
+                } else if binding.uidvalidity.is_some() {
+                    return Err(
+                        "The transfer contains an invalid retired IMAP label binding".into(),
+                    );
+                }
+            }
         }
         let mut split_ids = HashSet::new();
         for split in &self.split_inboxes {
@@ -992,6 +1023,9 @@ fn build_export_payload(
             // password is never read here — it lives only in the keychain.
             let imap = database.imap_account_settings(&account.email)?;
             let mut transfer = TransferAccount::from(account);
+            if imap.is_some() {
+                transfer.imap_label_bindings = database.imap_label_bindings(&transfer.email)?;
+            }
             transfer.imap = imap;
             Ok::<_, String>(transfer)
         })
@@ -1442,6 +1476,7 @@ mod tests {
                 provider: "gmail".to_string(),
                 sort_order: 0,
                 imap: None,
+                imap_label_bindings: Vec::new(),
             }],
             split_inboxes: vec![],
             snippets: vec![],
@@ -1465,6 +1500,7 @@ mod tests {
             provider: "gmail".to_string(),
             sort_order: 1,
             imap: None,
+            imap_label_bindings: Vec::new(),
         });
         candidate.accounts[0].provider = "imap".to_string();
         let staged = StagedImport::default();
@@ -2732,6 +2768,7 @@ mod tests {
                     provider: "gmail".to_string(),
                     sort_order: 0,
                     imap: None,
+                    imap_label_bindings: Vec::new(),
                 },
                 TransferAccount {
                     email: "other@example.net".to_string(),
@@ -2741,6 +2778,7 @@ mod tests {
                     provider: "gmail".to_string(),
                     sort_order: 1,
                     imap: None,
+                    imap_label_bindings: Vec::new(),
                 },
                 // An IMAP account carrying its non-secret settings — the
                 // version-5 addition. No password: that is keychain-only.
@@ -2751,6 +2789,7 @@ mod tests {
                     color: "#6D4AFF".to_string(),
                     provider: "imap".to_string(),
                     sort_order: 2,
+                    imap_label_bindings: Vec::new(),
                     imap: Some(crate::provider::imap::ImapAccountSettings {
                         imap_host: "127.0.0.1".to_string(),
                         imap_port: 1143,
@@ -2865,6 +2904,39 @@ mod tests {
             .availability_preferences
             .drive_time_buffer_minutes = crate::availability::MAX_DRIVE_TIME_BUFFER_MINUTES + 1;
         assert!(payload.validate().is_err());
+    }
+
+    #[test]
+    fn transfers_renamed_and_retired_imap_label_bindings_and_reads_previous_exports() {
+        use crate::db::imap::label_edits::ImapLabelBinding;
+        let (previous, _) = import_fixture(fixtures::V5_CURRENT);
+        let email = "me@proton.me";
+        assert!(previous.imap_label_bindings(email).unwrap().is_empty());
+        let mut payload = current_fixture_payload();
+        let bindings = vec![
+            ImapLabelBinding {
+                label_id: "folder:Old".into(),
+                mailbox: Some("Revised".into()),
+                uidvalidity: Some(54),
+            },
+            ImapLabelBinding {
+                label_id: "lf:Archived".into(),
+                mailbox: None,
+                uidvalidity: None,
+            },
+        ];
+        let account = payload
+            .accounts
+            .iter_mut()
+            .find(|account| account.email == email)
+            .unwrap();
+        account.imap_label_bindings = bindings.clone();
+        let bytes = encrypt(&payload, fixtures::PASSWORD).unwrap();
+        let (destination, _) = import_fixture(&bytes);
+        assert_eq!(destination.imap_label_bindings(email).unwrap(), bindings);
+        let old = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
+        apply_import(&destination, old).unwrap();
+        assert_eq!(destination.imap_label_bindings(email).unwrap(), bindings);
     }
 
     #[test]

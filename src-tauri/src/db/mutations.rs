@@ -46,6 +46,21 @@ impl Database {
         transaction: &Transaction<'_>,
         mutation: &ThreadMutation,
     ) -> DbResult<()> {
+        if let ThreadMutation::Label {
+            thread_id,
+            label_id,
+            ..
+        } = mutation
+        {
+            let retired: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM imap_label_bindings l JOIN threads t ON t.account_id=l.account_id
+                    WHERE t.id=?1 AND l.label_id=?2 AND l.mailbox IS NULL)",
+                params![thread_id, label_id], |row| row.get(0),
+            )?;
+            if retired {
+                return Err(DatabaseError::invalid("The label is no longer available."));
+            }
+        }
         let kind = match mutation {
             ThreadMutation::Archive { .. } => "archive",
             ThreadMutation::Trash { .. } => "trash",
@@ -419,7 +434,11 @@ impl Database {
             Ok(connection.execute(
                 "UPDATE mutations SET state = 'pending', attempts = 0, last_error = NULL,
                     next_attempt_at = NULL
-                 WHERE state = 'failed'",
+                 WHERE state = 'failed' AND NOT EXISTS (
+                     SELECT 1 FROM imap_label_bindings l WHERE l.account_id=mutations.account_id
+                       AND l.mailbox IS NULL AND mutations.kind='label'
+                       AND l.label_id=json_extract(mutations.payload_json, '$.labelId')
+                 )",
                 [],
             )?)
         })

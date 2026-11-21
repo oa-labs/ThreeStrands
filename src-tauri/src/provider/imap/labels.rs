@@ -124,7 +124,7 @@ pub(super) fn labels_for_server_membership(
         } else if !label.starts_with('\\') {
             let mapped = plan.location_label_ids_for_mailbox(label);
             if mapped.is_empty() {
-                ids.push(format!("folder:{label}"));
+                ids.push(plan.uncatalogued_native_label_id(label));
             } else {
                 ids.extend(mapped);
             }

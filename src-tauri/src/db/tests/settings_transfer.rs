@@ -21,6 +21,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
                     provider: "gmail".to_string(),
                     sort_order: 0,
                     imap: None,
+                    imap_label_bindings: Vec::new(),
                 },
                 TransferAccount {
                     email: "connected@example.com".to_string(),
@@ -30,6 +31,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
                     provider: "gmail".to_string(),
                     sort_order: 1,
                     imap: None,
+                    imap_label_bindings: Vec::new(),
                 },
             ],
             &Default::default(),
@@ -139,6 +141,7 @@ fn import_sets_up_only_the_chosen_accounts_and_never_disconnects_one() {
         provider: "imap".to_string(),
         sort_order: 0,
         imap: None,
+        imap_label_bindings: Vec::new(),
     };
     let not_here = ["skipped@example.com", "connected@example.com"]
         .map(str::to_string)

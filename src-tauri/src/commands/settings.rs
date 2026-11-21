@@ -89,6 +89,23 @@ pub(crate) fn update_split_inbox(
 }
 
 #[tauri::command(async)]
+pub(crate) fn relink_split_inbox_label(
+    id: String,
+    label_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<SplitInbox> {
+    let item = state.database.relink_split_inbox_label(&id, &label_id)?;
+    record_synced_value(
+        &state,
+        threestrands_sync_protocol::EntityType::SplitInbox,
+        &item.id,
+        &item,
+        Some(std::collections::BTreeSet::from(["matchValue".to_string()])),
+    )?;
+    Ok(item)
+}
+
+#[tauri::command(async)]
 pub(crate) fn delete_split_inbox(id: String, state: State<'_, AppState>) -> AppResult<()> {
     state.database.delete_split_inbox(&id)?;
     state

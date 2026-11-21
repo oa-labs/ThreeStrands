@@ -377,6 +377,7 @@ export function Settings({
               onShowStarredInboxChange={preferences.setShowStarredInbox}
               onCreate={splitInboxes.create}
               onRename={splitInboxes.rename}
+              onRelinkLabel={splitInboxes.relinkLabel}
               onDelete={splitInboxes.remove}
               onReorder={splitInboxes.reorder}
             />

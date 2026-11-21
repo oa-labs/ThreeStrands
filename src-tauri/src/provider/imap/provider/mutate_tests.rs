@@ -1,6 +1,7 @@
 use super::*;
 mod all_mail;
 mod native_creation;
+mod native_label_edits;
 use async_trait::async_trait;
 
 use crate::provider::{
@@ -77,6 +78,8 @@ impl MutFolder {
 #[derive(Clone, Default)]
 struct MutServer {
     create_outcome: Option<native_creation::CreateOutcome>,
+    lose_rename_reply: bool,
+    hide_listing_after_rename: bool,
     list_fails: bool,
     literal_list_names: bool,
     list_attributes: BTreeMap<String, String>,
@@ -116,6 +119,8 @@ impl MutServer {
     fn new() -> Self {
         Self {
             create_outcome: None,
+            lose_rename_reply: false,
+            hide_listing_after_rename: false,
             list_fails: false,
             literal_list_names: false,
             list_attributes: Default::default(),
@@ -396,40 +401,56 @@ fn build_response(
             (format!("{tag} NO [ALREADYEXISTS] exists\r\n"), false)
         }
     } else if upper.starts_with("DELETE") {
-        // DELETE <mailbox>: remove the folder. Deleting an absent one
-        // answers NO [NONEXISTENT]; the provider never issues that because
-        // it checks the local catalog first.
-        let name = rest["DELETE".len().min(rest.len())..]
-            .trim()
-            .trim_matches('"')
-            .to_string();
+        let Some(name) = all_mail::parse_astrings(rest[6..].trim())
+            .into_iter()
+            .next()
+        else {
+            return (format!("{tag} BAD invalid label\r\n"), false);
+        };
         if state.folders.remove(&name).is_some() {
+            for message in state
+                .folders
+                .values_mut()
+                .flat_map(|folder| &mut folder.messages)
+            {
+                if let Some(labels) = &mut message.labels {
+                    labels.retain(|label| label != &name);
+                }
+            }
             (format!("{tag} OK DELETE done\r\n"), false)
         } else {
             (format!("{tag} NO [NONEXISTENT] no such mailbox\r\n"), false)
         }
     } else if upper.starts_with("RENAME") {
-        // RENAME <from> <to>: move the folder (and its messages) to a new
-        // name. Absent source -> NO; existing target -> NO. The provider
-        // never issues RENAME (run 4 refuses rename), so this exists only
-        // for completeness / future use.
-        let args: Vec<&str> = rest["RENAME".len().min(rest.len())..]
-            .trim()
-            .split('"')
-            .collect();
-        // Tokens are "from" "to"; split on quotes yields ["", from, " ", to, ""].
-        let from = args.get(1).unwrap_or(&"").to_string();
-        let to = args.get(3).unwrap_or(&"").to_string();
-        match state.folders.remove(&from) {
-            Some(folder) if !state.folders.contains_key(&to) => {
-                state.folders.insert(to, folder);
-                (format!("{tag} OK RENAME done\r\n"), false)
+        let arguments = all_mail::parse_astrings(rest[6..].trim());
+        let [from, to] = arguments.as_slice() else {
+            return (format!("{tag} BAD invalid label\r\n"), false);
+        };
+        if state.folders.contains_key(to) {
+            return (format!("{tag} NO [ALREADYEXISTS] target exists\r\n"), false);
+        }
+        let Some(folder) = state.folders.remove(from) else {
+            return (format!("{tag} NO [NONEXISTENT] no such mailbox\r\n"), false);
+        };
+        state.folders.insert(to.clone(), folder);
+        for message in state
+            .folders
+            .values_mut()
+            .flat_map(|folder| &mut folder.messages)
+        {
+            if let Some(labels) = &mut message.labels {
+                for label in labels.iter_mut().filter(|label| *label == from) {
+                    label.clone_from(to);
+                }
             }
-            Some(folder) => {
-                state.folders.insert(from, folder);
-                (format!("{tag} NO [ALREADYEXISTS] target exists\r\n"), false)
-            }
-            None => (format!("{tag} NO [NONEXISTENT] no such mailbox\r\n"), false),
+        }
+        if std::mem::take(&mut state.hide_listing_after_rename) {
+            state.list_fails = true;
+        }
+        if std::mem::take(&mut state.lose_rename_reply) {
+            (String::new(), true)
+        } else {
+            (format!("{tag} OK RENAME done\r\n"), false)
         }
     } else if upper.starts_with("UID COPY") {
         // UID COPY <set> <dest>: copy the named source UIDs (from the

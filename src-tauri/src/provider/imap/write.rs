@@ -205,6 +205,13 @@ pub trait ImapWriteSession: ImapSession {
     /// possibly non-ASCII names.
     async fn create_mailbox_arg(&mut self, arg: &str) -> WriteResult<()>;
 
+    /// Rename an exact mailbox path using two encoded mailbox arguments.
+    async fn rename_mailbox_arg(
+        &mut self,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), ProviderError>;
+
     /// `DELETE <arg>` where `arg` is an already-encoded mailbox argument. Maps
     /// `NO`/`BAD` through the RFC 5530 map; deleting an absent mailbox is left
     /// to the caller to tolerate (the label-delete path treats it as

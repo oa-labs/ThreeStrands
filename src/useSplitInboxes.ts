@@ -42,6 +42,11 @@ export function useSplitInboxes() {
     );
   }, []);
 
+  const relinkLabel = useCallback(async (id: string, labelId: string) => {
+    const updated = await mailClient.relinkSplitInboxLabel(id, labelId);
+    setSplitInboxes((current) => current.map((splitInbox) => splitInbox.id === id ? updated : splitInbox));
+  }, []);
+
   const remove = useCallback(async (id: string) => {
     if (id.startsWith(SAVED_VIEW_PREFIX)) { setSearches(deleteSavedSearch(id.slice(SAVED_VIEW_PREFIX.length))); return; }
     await mailClient.deleteSplitInbox(id);
@@ -60,5 +65,5 @@ export function useSplitInboxes() {
   const updateSearch = useCallback(async (id: string, search: Omit<SavedSearch, "id">) => {
     setSearches(updateSavedSearch(id.startsWith(SAVED_VIEW_PREFIX) ? id.slice(SAVED_VIEW_PREFIX.length) : id, search));
   }, []);
-  return { splitInboxes, views, loaded, error, refresh, create, createSearch, updateSearch, rename, remove, reorder };
+  return { splitInboxes, views, loaded, error, refresh, create, createSearch, updateSearch, rename, relinkLabel, remove, reorder };
 }

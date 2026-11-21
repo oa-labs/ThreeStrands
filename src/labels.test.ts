@@ -152,8 +152,8 @@ describe("labelCapabilities", () => {
     expect(labelCapabilities("imapNativeLabels")).toEqual({
       canManageLabels: true,
       canCreateLabels: true,
-      canDeleteLabels: false,
-      canRenameLabels: false,
+      canDeleteLabels: true,
+      canRenameLabels: true,
       unavailableReason: null,
     });
   });

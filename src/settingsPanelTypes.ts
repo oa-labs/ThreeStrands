@@ -111,6 +111,7 @@ export type SplitInboxSettingsState = {
   splitInboxes: SplitInbox[];
   create(name: string, matchKind: SplitInboxMatchKind, matchValue: string, accountId: string): Promise<void>;
   rename(id: string, name: string): Promise<void>;
+  relinkLabel?(id: string, labelId: string): Promise<void>;
   remove(id: string): Promise<void>;
   reorder(ids: string[]): Promise<void>;
 };

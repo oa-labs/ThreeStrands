@@ -809,6 +809,15 @@ where
         Ok(())
     }
 
+    async fn rename_mailbox_arg(
+        &mut self,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), ProviderError> {
+        self.run_write_command_plain(&format!("RENAME {source} {destination}"))
+            .await
+    }
+
     async fn delete_mailbox_arg(&mut self, arg: &str) -> Result<(), ProviderError> {
         self.run_write_command_plain(&format!("DELETE {arg}")).await
     }

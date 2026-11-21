@@ -25,7 +25,7 @@ function describeSplitInboxRule(splitInbox: SplitInbox, labelsByAccount: Record<
       const label = (labelsByAccount[splitInbox.accountId] ?? []).find(
         (candidate) => candidate.id === splitInbox.matchValue,
       );
-      return `Label: ${label ? formatLabelName(label) : splitInbox.matchValue}`;
+      return label ? `Label: ${formatLabelName(label)}` : "Label unavailable";
     }
   }
 }
@@ -72,6 +72,7 @@ export function SplitInboxesSettings({
   labelsByAccount,
   onCreate,
   onRename,
+  onRelinkLabel,
   onDelete,
   onReorder, onCreateSearch, onUpdateSearch, catalogError,
 }: {
@@ -86,6 +87,7 @@ export function SplitInboxesSettings({
   labelsByAccount: Record<string, Label[]>;
   onCreate(name: string, matchKind: SplitInboxMatchKind, matchValue: string, accountId: string): Promise<void>;
   onRename(id: string, name: string): Promise<void>;
+  onRelinkLabel?(id: string, labelId: string): Promise<void>;
   onDelete(id: string): Promise<void>;
   onReorder(ids: string[]): Promise<void>;
 }) {
@@ -222,6 +224,26 @@ export function SplitInboxesSettings({
                   </span>
                 </div>
               </div>
+              {!isSavedSearchView(splitInbox) && splitInbox.matchKind === "label" && onRelinkLabel &&
+                labelsByAccount[splitInbox.accountId] &&
+                !labelsByAccount[splitInbox.accountId]!.some((label) => label.id === splitInbox.matchValue) ? (
+                <label className="settings-field settings-field-row">
+                  <span>Replacement label for {splitInbox.name}</span>
+                  <select
+                    disabled={busyId !== null}
+                    value=""
+                    onChange={(event) => {
+                      const selected = event.target.value;
+                      if (selected) runFor(splitInbox.id, () => onRelinkLabel(splitInbox.id, selected));
+                    }}
+                  >
+                    <option value="">Choose a label</option>
+                    {labelsByAccount[splitInbox.accountId]!.filter((label) => label.kind === "user").map((label) =>
+                      <option key={label.id} value={label.id}>{formatLabelName(label)}</option>,
+                    )}
+                  </select>
+                </label>
+              ) : null}
               <div className="account-card-controls">
                 <span className="accounts-list-actions">
                   <span className="account-reorder">

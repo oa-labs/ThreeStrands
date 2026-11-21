@@ -526,13 +526,20 @@ async fn native_label_unknown_ids_mixed_shapes_and_capability_loss_send_no_store
             .is_err());
     }
     assert!(provider.create_label("\\reserved").await.is_err());
-    assert!(provider.delete_label("lf:Keep").await.is_err());
-    assert!(provider.update_label("lf:Keep", "renamed").await.is_err());
+    assert!(provider.delete_label("folder:Missing").await.is_err());
+    assert!(provider
+        .update_label("folder:Missing", "renamed")
+        .await
+        .is_err());
     state
         .lock()
         .unwrap()
         .capabilities
         .retain(|cap| cap != "X-GM-EXT-1");
+    assert!(provider.delete_label("lf:Keep").await.is_err());
+    assert!(provider.update_label("lf:Keep", "renamed").await.is_err());
+    assert_eq!(state.lock().unwrap().count_starting("DELETE"), 0);
+    assert_eq!(state.lock().unwrap().count_starting("RENAME"), 0);
     for _ in 0..2 {
         assert!(provider
             .modify_messages(&[id.clone()], &[], &["lf:Keep".into()])

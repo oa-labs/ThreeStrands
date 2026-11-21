@@ -62,6 +62,31 @@ describe("split inbox settings cards", () => {
     expect(within(card).getByRole("button", { name: "Delete" })).toBeInTheDocument();
   });
 
+  it("offers account-scoped replacement labels for a saved unavailable rule", async () => {
+    const onRelinkLabel = vi.fn().mockResolvedValue(undefined);
+    render(<SplitInboxesSettings
+      showStarredInbox
+      onShowStarredInboxChange={vi.fn()}
+      splitInboxes={[{ ...splitInbox, matchKind: "label", matchValue: "folder:Retired" }]}
+      accounts={[]}
+      activeAccountId={null}
+      labelsByAccount={{
+        [splitInbox.accountId]: [{ id: "folder:Current", name: "Current", kind: "user" }],
+        "separate@example.com": [{ id: "folder:Separate", name: "Separate", kind: "user" }],
+      }}
+      onCreate={vi.fn()}
+      onRename={vi.fn()}
+      onRelinkLabel={onRelinkLabel}
+      onDelete={vi.fn()}
+      onReorder={vi.fn()}
+    />);
+    expect(screen.getByText(/Label unavailable/)).toBeVisible();
+    const replacement = screen.getByRole("combobox", { name: "Replacement label for Upward" });
+    expect(within(replacement).queryByRole("option", { name: "Separate" })).not.toBeInTheDocument();
+    await act(async () => { fireEvent.change(replacement, { target: { value: "folder:Current" } }); });
+    expect(onRelinkLabel).toHaveBeenCalledWith(splitInbox.id, "folder:Current");
+  });
+
   it("requires confirmation and allows cancellation without deleting", () => {
     const onDelete = renderSettings();
 

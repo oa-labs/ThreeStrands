@@ -102,8 +102,9 @@ and negative cases where a label removal must not delete mail.
 
 Existing labels on servers advertising `X-GM-EXT-1` can now be applied and
 removed without a configured container. Their existing IDs are preserved.
-Remaining gaps: native label rename/delete, label-folder rename, and
-keyword writes. Ordinary label-folder writes still require a container.
+Native label rename/delete now covers individual user labels with no nested
+children. Plain IMAP label-folder rename and keyword writes remain open.
+Ordinary label-folder writes require a configured container.
 
 - [x] Read/write advertised `X-GM-LABELS` and expose existing labels directly.
 - [x] Apply/remove existing native labels with verified, additive membership
@@ -111,10 +112,13 @@ keyword writes. Ordinary label-folder writes still require a container.
 - [x] Create native labels, including hierarchy and non-ASCII names, with live
   verification and retry-safe publication. Record the
   [focused reference audit](imap-label-reference-audit.md).
-- [ ] Support native label rename/delete. Preserve Split Inbox references and
-  other saved label references through rename; refresh changes made in other
-  clients. Establish aliases and recovery across the audit's reference owners
-  before enabling these actions.
+- [x] Rename and delete individual native Gmail labels. Keep a stable local
+  identity for renames, preserve deleted rules for explicit relinking, and
+  recover acknowledged edits through a durable local journal. Encrypted settings
+  export carries the identity bindings.
+- [ ] Extend edits to parent labels and coordinate ID bindings across multiple
+  enrolled devices. A verified external disappearance or UIDVALIDITY change
+  leaves an edited label unresolved. The app does not infer external renames.
 - [ ] For plain IMAP, complete folder management and label-folder rename with
   stable references. Implement keyword writes only when permanent flags permit
   them; otherwise describe the available folder behavior clearly.

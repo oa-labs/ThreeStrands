@@ -104,9 +104,38 @@ impl PlanEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyncPlan {
     pub entries: Vec<PlanEntry>,
+    native_names: std::collections::BTreeMap<String, String>,
+    native_bindings: Vec<crate::db::imap::label_edits::ImapLabelBinding>,
 }
 
 impl SyncPlan {
+    /// The mailbox's generated ID can differ from its raw path. In particular,
+    /// a new label at a retired path must never inherit the previous identity.
+    pub(crate) fn set_native_bindings(
+        &mut self,
+        bindings: Vec<crate::db::imap::label_edits::ImapLabelBinding>,
+    ) {
+        for entry in self
+            .entries
+            .iter_mut()
+            .filter(|entry| entry.role.is_none() && !entry.is_inbox)
+        {
+            let Some(base) = entry.location_label_id.as_mut() else {
+                continue;
+            };
+            let effective = native_label_id(&bindings, &entry.mailbox, base);
+            if effective != *base {
+                self.native_names.insert(effective.clone(), base.clone());
+                *base = effective;
+            }
+        }
+        self.native_bindings = bindings;
+    }
+
+    pub(super) fn uncatalogued_native_label_id(&self, mailbox: &str) -> String {
+        native_label_id(&self.native_bindings, mailbox, &format!("folder:{mailbox}"))
+    }
+
     /// Search pins are only valid in the mailbox set the background scheduler
     /// can maintain. Use its same system-first cap rather than just synced_now.
     pub(super) fn sync_eligible_mailboxes(&self) -> std::collections::BTreeSet<String> {
@@ -218,10 +247,11 @@ impl SyncPlan {
             if native && !native_ids.contains(id.as_str()) {
                 continue;
             }
-            let wire_name = id
+            let base = self.native_names.get(&id).unwrap_or(&id);
+            let wire_name = base
                 .strip_prefix("lf:")
-                .or_else(|| id.strip_prefix("folder:"))
-                .unwrap_or(&id);
+                .or_else(|| base.strip_prefix("folder:"))
+                .unwrap_or(base);
             let name = super::write::decode_modified_utf7(wire_name)
                 .unwrap_or_else(|_| wire_name.to_string());
             labels.push(Label {
@@ -358,6 +388,33 @@ fn system_role_label_id(role: MailboxRole) -> Option<&'static str> {
 /// Build the sync plan from the account's selectable catalog + settings.
 /// `delimiter` is the hierarchy delimiter (same for every mailbox on a server);
 /// pass the one discovery recorded, defaulting to `/`.
+pub(crate) fn native_label_id(
+    bindings: &[crate::db::imap::label_edits::ImapLabelBinding],
+    mailbox: &str,
+    base: &str,
+) -> String {
+    if let Some(binding) = bindings
+        .iter()
+        .find(|binding| binding.mailbox.as_deref() == Some(mailbox))
+    {
+        return binding.label_id.clone();
+    }
+    if !bindings.iter().any(|binding| binding.label_id == base) {
+        return base.into();
+    }
+    // A path formerly used by a renamed/deleted label gets a different ID.
+    // Increment only when a prior edit has reserved that generation, so the
+    // ID remains stable across listings and restart without a write on read.
+    for generation in 1_u64.. {
+        let digest = crate::signatures::sha256_hex(format!("{generation}:{base}").as_bytes());
+        let id = format!("imap-label:{digest}");
+        if !bindings.iter().any(|binding| binding.label_id == id) {
+            return id;
+        }
+    }
+    unreachable!("the number of retired label ids is finite")
+}
+
 pub fn build_plan(
     catalog: &[CatalogMailbox],
     delimiter: Option<&str>,
@@ -548,7 +605,11 @@ fn build_plan_with_roles(
     entries.extend(inbox);
     entries.extend(synced);
     entries.extend(rest);
-    SyncPlan { entries }
+    SyncPlan {
+        entries,
+        native_names: Default::default(),
+        native_bindings: Vec::new(),
+    }
 }
 
 /// A stable ordering key for the synced-mailbox walk: Trash, Junk, Sent, then

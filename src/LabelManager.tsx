@@ -6,12 +6,15 @@ import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { formatLabelName, isManageableLabel, type LabelCapabilities } from "./labels";
 import { readLabelUsage, recordLabelUsed } from "./settings";
 import { ICON_SIZE } from "./iconSizes";
+import { InlineConfirm } from "./InlineConfirm";
+import { errorMessage } from "./errors";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 export function LabelManager({
   labels,
   accountId,
   capabilities,
+  nativeLabels = false,
   checkedLabelIds,
   onClose,
   onCreate,
@@ -25,6 +28,7 @@ export function LabelManager({
    * could only fail (rename on IMAP; any label action with no label storage)
    * are hidden, and the no-labels case shows an explanation instead. */
   capabilities: LabelCapabilities;
+  nativeLabels?: boolean;
   checkedLabelIds: Set<string>;
   onClose(): void;
   onCreate(name: string): Promise<Label>;
@@ -35,6 +39,21 @@ export function LabelManager({
   const [renaming, setRenaming] = useState<Label | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState<Label | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const deleteLabel = async (label: Label) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onDelete(label.id);
+      setDeleting(null);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // Labels the user hasn't touched sort alphabetically; ones applied or
   // removed through Dispatch before bubble to the top, most-recent first,
@@ -52,6 +71,7 @@ export function LabelManager({
   }, [labels, accountId]);
 
   const applyLabel = (label: Label) => {
+    if (busy || deleting) return;
     onToggle(label, !checkedLabelIds.has(label.id));
     if (accountId) recordLabelUsed(accountId, label.id);
     onClose();
@@ -59,7 +79,7 @@ export function LabelManager({
 
   const createAndApply = async (name: string) => {
     const trimmed = name.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed || busy || deleting) return;
     setBusy(true);
     try {
       const label = await onCreate(trimmed);
@@ -109,8 +129,10 @@ export function LabelManager({
                   <button
                     className="btn-icon btn-icon-sm"
                     aria-label={`Rename ${label.name}`}
+                    disabled={busy || Boolean(deleting)}
                     onClick={(event) => {
                       event.stopPropagation();
+                      setError(null);
                       setRenaming(label);
                       setRenameValue(label.name);
                     }}
@@ -121,9 +143,13 @@ export function LabelManager({
                 {capabilities.canDeleteLabels ? <button
                   className="btn-icon btn-icon-sm"
                   aria-label={`Delete ${label.name}`}
+                  disabled={busy || Boolean(deleting)}
                   onClick={(event) => {
                     event.stopPropagation();
-                    void onDelete(label.id);
+                    setRenaming(null);
+                    setError(null);
+                    if (nativeLabels) setDeleting(label);
+                    else void deleteLabel(label);
                   }}
                 >
                   <Trash size={ICON_SIZE.sm} />
@@ -141,8 +167,10 @@ export function LabelManager({
             event.preventDefault();
             if (!renameValue.trim() || busy) return;
             setBusy(true);
+            setError(null);
             void onRename(renaming.id, renameValue)
               .then(() => setRenaming(null))
+              .catch((reason) => setError(errorMessage(reason)))
               .finally(() => setBusy(false));
           }}
         >
@@ -157,6 +185,19 @@ export function LabelManager({
           <button type="submit" className="btn btn-sm btn-primary" disabled={!renameValue.trim() || busy}>Save</button>
         </form>
       ) : null}
+      {deleting ? <InlineConfirm
+        ariaLabel={`Delete ${deleting.name} confirmation`}
+        title={`Delete ${formatLabelName(deleting)}?`}
+        stacked
+        focusCancel
+        cancelLabel="Cancel"
+        onCancel={() => { setDeleting(null); setError(null); }}
+        disabled={busy}
+        actions={[{ label: "Delete Label", className: "btn-danger", onClick: () => { void deleteLabel(deleting); } }]}
+      >
+        Your messages stay in Gmail. Split Inboxes that use this label will need a replacement.
+      </InlineConfirm> : null}
+      {error ? <p role="alert">{error}</p> : null}
     </Modal>
   );
 }

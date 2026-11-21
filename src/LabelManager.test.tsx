@@ -87,13 +87,12 @@ describe("LabelManager picker", () => {
     return props;
   }
 
-  it("applies and removes existing native labels without offering rename or delete", () => {
+  it("applies and removes existing native labels without editing them", () => {
     const { onToggle, onDelete, onRename } = renderPicker({
       capabilities: labelCapabilities("imapNativeLabels"),
       checkedLabelIds: new Set([work.id]),
     });
     const input = screen.getByRole("combobox", { name: "Find or Create a Label" });
-    expect(screen.queryByRole("button", { name: /rename|delete/i })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "Work" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onToggle).toHaveBeenCalledWith(work, false);
@@ -143,7 +142,7 @@ describe("LabelManager picker", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("creates and applies a native label while keeping rename and delete unavailable", async () => {
+  it("creates and applies a native label", async () => {
     const { onCreate, onToggle, onDelete, onRename } = renderPicker({
       capabilities: labelCapabilities("imapNativeLabels"),
     });
@@ -155,9 +154,24 @@ describe("LabelManager picker", () => {
     });
     expect(onCreate).toHaveBeenCalledWith("Projects/日本語");
     expect(onToggle).toHaveBeenCalledWith({ id: "new-Projects/日本語", name: "Projects/日本語", kind: "user" }, true);
-    expect(screen.queryByRole("button", { name: /rename|delete/i })).not.toBeInTheDocument();
     expect(onDelete).not.toHaveBeenCalled();
     expect(onRename).not.toHaveBeenCalled();
+  });
+
+  it("renames a native label and confirms before deleting it", async () => {
+    const { onRename, onDelete } = renderPicker({
+      capabilities: labelCapabilities("imapNativeLabels"), nativeLabels: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Rename Work" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Rename Work" }), { target: { value: "Nursery" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
+    expect(onRename).toHaveBeenCalledWith(work.id, "Nursery");
+    fireEvent.click(screen.getByRole("button", { name: "Delete Work" }));
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(screen.getByText(/Your messages stay in Gmail/)).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Delete Label" })); });
+    expect(onDelete).toHaveBeenCalledWith(work.id);
   });
 
   it("marks an applied label as added and removes it when picked again", () => {

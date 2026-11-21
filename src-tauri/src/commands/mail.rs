@@ -405,32 +405,11 @@ pub(crate) async fn list_labels(
     account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<Label>> {
-    // Resolve the account id the same way `resolve_account` does so the cache
-    // is keyed by the account the listing actually came from, defaulting to
-    // the primary account when the caller didn't name one.
-    let resolved_id = match account_id.as_deref() {
-        Some(id) => id.to_string(),
-        None => state.database.primary_account_id(),
-    };
-    let auth = resolve_account(&state, account_id.as_deref(), |account| {
-        account.auth.clone()
-    })
-    .await?;
-
-    let labels = auth
-        .provider(&state.database)
-        .map_err(|error| error.to_string())?
+    resolve_sync(&state, account_id.as_deref())
+        .await?
         .list_labels()
         .await
-        .map_err(|error| error.to_string())?;
-
-    // Best-effort write-through: a SUCCESSFUL listing refreshes the local
-    // label-catalog cache (run 2b-1). A caching failure or an over-limit
-    // catalog is logged and swallowed, never failing the user's action; a
-    // FAILED listing returned above, leaving the cache untouched.
-    crate::db::cache_label_listing(&state.database, &resolved_id, &labels);
-
-    Ok(labels)
+        .map_err(AppError::from)
 }
 
 #[tauri::command]

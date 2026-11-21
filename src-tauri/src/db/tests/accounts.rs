@@ -664,6 +664,8 @@ fn every_table_keyed_by_account_is_purged_on_removal_or_deliberately_kept() {
         "imap_change_journal",
         "imap_copy_intents",
         "imap_hot_threads",
+        "imap_label_bindings",
+        "imap_label_edits",
         "imap_label_snapshots",
         "imap_locations",
         "imap_mailbox_sync_state",

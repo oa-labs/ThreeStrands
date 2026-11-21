@@ -428,6 +428,7 @@ export interface MailClient extends CorrespondenceClient {
   listSplitInboxes(): Promise<SplitInbox[]>;
   createSplitInbox(name: string, matchKind: SplitInboxMatchKind, matchValue: string, accountId: string): Promise<SplitInbox>;
   updateSplitInbox(id: string, name: string): Promise<SplitInbox>;
+  relinkSplitInboxLabel(id: string, labelId: string): Promise<SplitInbox>;
   deleteSplitInbox(id: string): Promise<void>;
   reorderSplitInboxes(ids: string[]): Promise<void>;
   /** Always scoped to the split's own account — see `SplitInbox.accountId`. */
@@ -735,6 +736,7 @@ const tauriClient: MailClient = {
   createSplitInbox: (name, matchKind, matchValue, accountId) =>
     complete("create_split_inbox", { request: { name, matchKind, matchValue, accountId } }),
   updateSplitInbox: (id, name) => complete("update_split_inbox", { request: { id, name } }),
+  relinkSplitInboxLabel: (id, labelId) => complete("relink_split_inbox_label", { id, labelId }),
   deleteSplitInbox: (id) => complete("delete_split_inbox", { id }),
   reorderSplitInboxes: (ids) => complete("reorder_split_inboxes", { ids }),
   listSplitInboxPage: (splitInboxId, offset, limit) =>

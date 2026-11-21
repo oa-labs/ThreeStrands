@@ -49,7 +49,17 @@ impl Database {
                 // export, and every Gmail account, has `imap: None` and writes
                 // nothing here. The password is never in the transfer.
                 if let Some(imap) = &account.imap {
+                    super::imap::label_edits::retire_changed_connection_bindings(
+                        transaction,
+                        &account.email,
+                        imap,
+                    )?;
                     super::imap::write_settings_row(transaction, &account.email, imap)?;
+                    super::imap::label_edits::import_bindings(
+                        transaction,
+                        &account.email,
+                        &account.imap_label_bindings,
+                    )?;
                 }
             }
 

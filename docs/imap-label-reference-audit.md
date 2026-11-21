@@ -1,8 +1,9 @@
 # IMAP label reference audit
 
 Focused audit for native label creation and the subsequent rename/delete work.
-Creation does not introduce a new label ID scheme, migrate references, or enable
-rename/delete. See [native labels](imap-native-labels.md) for shipped behavior.
+See [native labels](imap-native-labels.md) for creation and membership, and
+[the parity plan](imap-parity-plan.md#2-make-labels-and-folders-usable) for current
+rename and delete scope.
 
 ## Identity and reference owners
 
@@ -71,8 +72,16 @@ IDs are unaffected. Keep this case in the future alias/migration fixtures.
    Preserve references as unresolved/tombstoned instead of silently retargeting
    them if another label later reuses the same name.
 
-Required future coverage: nested/case/non-ASCII rename, external rename ambiguity,
+Coverage to retain and extend: nested/case/non-ASCII rename, external rename ambiguity,
 same-name reuse, pending/retried mutations, undo captured before rename, parent
 rename with search pins and stale UIDVALIDITY, interrupted recovery, mixed-device
 Split Inbox updates, preceding settings exports, and ordinary-folder last-copy
-protection. Rename/delete remain disabled until this contract is implemented.
+protection. The first edit path supports one enrolled device and labels without nested
+children. A tagged server acknowledgement and a verified listing preserve the
+local ID on rename. A lost acknowledgement can leave the saved rule unresolved.
+Deleting a label reserves its old ID and keeps the Split Inbox so its label can
+be selected again. A new label at a retired path receives a different ID.
+The settings export carries bindings and retired IDs. Plain IMAP folder rename
+can reuse the identity and journal work once it verifies mailbox coordinates.
+Plain IMAP folder deletion continues to require the existing live last-copy
+checks. Writing plain IMAP keywords needs a separate PERMANENTFLAGS-gated path.

@@ -60,6 +60,9 @@ pub struct ImapStateStore {
     account_id: String,
 }
 
+#[path = "imap/label_edits.rs"]
+pub(crate) mod label_edits;
+
 impl ImapStateStore {
     pub(crate) fn set_native_labels(&self, supported: bool) -> DbResult<()> {
         self.database.with_connection(|c| {

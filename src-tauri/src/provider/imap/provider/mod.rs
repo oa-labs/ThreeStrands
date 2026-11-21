@@ -241,6 +241,10 @@ impl super::write::ImapWriteSession for LeasedSession {
     async fn create_mailbox_arg(&mut self, arg: &str) -> super::write::WriteResult<()> {
         self.session.create_mailbox_arg(arg).await
     }
+    async fn rename_mailbox_arg(&mut self, source: &str, destination: &str) -> ProviderResult<()> {
+        self.session.rename_mailbox_arg(source, destination).await
+    }
+
     async fn delete_mailbox_arg(&mut self, arg: &str) -> ProviderResult<()> {
         self.session.delete_mailbox_arg(arg).await
     }

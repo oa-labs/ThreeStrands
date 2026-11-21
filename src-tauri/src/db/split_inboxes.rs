@@ -102,6 +102,32 @@ impl Database {
         })
     }
 
+    pub(crate) fn relink_split_inbox_label(
+        &self,
+        id: &str,
+        label_id: &str,
+    ) -> DbResult<SplitInbox> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "UPDATE split_inboxes SET match_value=?2
+                 WHERE id=?1 AND match_kind='label' AND EXISTS(
+                     SELECT 1 FROM account_labels l
+                     WHERE l.account_id=split_inboxes.account_id AND l.label_id=?2 AND l.kind='user'
+                 )
+                 RETURNING id,name,match_kind,match_value,sort_order,created_at,account_id",
+                    params![id, label_id],
+                    split_inbox_from_row,
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    DatabaseError::invalid(
+                        "Choose an available label from this Split Inbox’s account.",
+                    )
+                })
+        })
+    }
+
     pub fn delete_split_inbox(&self, id: &str) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute("DELETE FROM split_inboxes WHERE id = ?1", [id])?;

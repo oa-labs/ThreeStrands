@@ -2035,6 +2035,15 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       splitInbox.name = normalizedName;
       return structuredClone(splitInbox);
     },
+    async relinkSplitInboxLabel(id, labelId) {
+      const splitInbox = splitInboxes.find((item) => item.id === id);
+      if (splitInbox?.matchKind !== "label" ||
+          !labels.some((label) => label.id === labelId && label.kind === "user")) {
+        throw new Error("Choose an available label from this Split Inbox’s account.");
+      }
+      splitInbox.matchValue = labelId;
+      return structuredClone(splitInbox);
+    },
     async deleteSplitInbox(id) {
       splitInboxes = splitInboxes.filter((candidate) => candidate.id !== id);
     },

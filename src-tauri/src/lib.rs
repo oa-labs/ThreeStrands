@@ -1728,6 +1728,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::settings::list_split_inboxes,
         commands::settings::create_split_inbox,
         commands::settings::update_split_inbox,
+        commands::settings::relink_split_inbox_label,
         commands::settings::delete_split_inbox,
         commands::settings::reorder_split_inboxes,
         commands::mail::list_split_inbox_page,

@@ -2127,6 +2127,7 @@ export function App() {
         <LabelManager
           labels={labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : []}
           accountId={labelTargetAccountId}
+          nativeLabels={accounts.some((account) => account.email === labelTargetAccountId && account.labelModel === "imapNativeLabels")}
           capabilities={labelCapabilities(
             accounts.find((account) => account.email === labelTargetAccountId)?.labelModel,
           )}
@@ -2156,7 +2157,13 @@ export function App() {
             preferences={preferences}
             mailAccounts={mailAccountSettings}
             calendarAccounts={calendar}
-            splitInboxes={splitInboxCatalog}
+            splitInboxes={{
+              ...splitInboxCatalog,
+              relinkLabel: async (id, labelId) => {
+                await splitInboxCatalog.relinkLabel(id, labelId);
+                await loadThreadsRef.current(queryRef.current);
+              },
+            }}
             mutedSenders={senderRuleCatalog}
             labelsByAccount={labelsByAccount}
             signatures={signatureLibrary}

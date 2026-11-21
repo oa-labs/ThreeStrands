@@ -424,45 +424,71 @@ impl SyncService {
         .unwrap_or_else(|| Ok(SearchReport::not_searched()))
     }
 
+    pub async fn list_labels(&self) -> Result<Vec<Label>, String> {
+        self.exclusive(async {
+            let labels = self
+                .auth
+                .provider(&self.database)
+                .map_err(|error| error.to_string())?
+                .list_labels()
+                .await
+                .map_err(|error| error.to_string())?;
+            crate::db::cache_label_listing(&self.database, &self.account_id(), &labels);
+            Ok(labels)
+        })
+        .await
+        .ok_or_else(|| ACCOUNT_REMOVED.to_string())?
+    }
+
     pub async fn create_label(&self, name: &str) -> Result<Label, String> {
         validate_label_name(name)?;
-        let label = self
-            .auth
-            .provider(&self.database)
-            .map_err(|error| error.to_string())?
-            .create_label(name)
-            .await
-            .map_err(|error| error.to_string())?;
-        self.cache_label_change(&label);
-        Ok(label)
+        self.exclusive(async {
+            let label = self
+                .auth
+                .provider(&self.database)
+                .map_err(|error| error.to_string())?
+                .create_label(name)
+                .await
+                .map_err(|error| error.to_string())?;
+            self.cache_label_change(&label);
+            Ok(label)
+        })
+        .await
+        .ok_or_else(|| ACCOUNT_REMOVED.to_string())?
     }
 
     pub async fn update_label(&self, id: &str, name: &str) -> Result<Label, String> {
         validate_label_name(name)?;
-        let label = self
-            .auth
-            .provider(&self.database)
-            .map_err(|error| error.to_string())?
-            .update_label(id, name)
-            .await
-            .map_err(|error| error.to_string())?;
-        self.cache_label_change(&label);
-        Ok(label)
+        self.exclusive(async {
+            let label = self
+                .auth
+                .provider(&self.database)
+                .map_err(|error| error.to_string())?
+                .update_label(id, name)
+                .await
+                .map_err(|error| error.to_string())?;
+            self.cache_label_change(&label);
+            Ok(label)
+        })
+        .await
+        .ok_or_else(|| ACCOUNT_REMOVED.to_string())?
     }
 
     pub async fn delete_label(&self, id: &str) -> Result<(), String> {
-        self.auth
-            .provider(&self.database)
-            .map_err(|error| error.to_string())?
-            .delete_label(id)
-            .await
-            .map_err(|error| error.to_string())?;
-        // Best-effort cache purge, mirroring create/update: never fail the
-        // user's action if the local cache update does.
-        if let Err(error) = self.database.delete_account_label(&self.account_id(), id) {
-            log::warn!("label cache: could not drop deleted label {id}: {error}");
-        }
-        Ok(())
+        self.exclusive(async {
+            self.auth
+                .provider(&self.database)
+                .map_err(|error| error.to_string())?
+                .delete_label(id)
+                .await
+                .map_err(|error| error.to_string())?;
+            if let Err(error) = self.database.delete_account_label(&self.account_id(), id) {
+                log::warn!("label cache: could not drop deleted label {id}: {error}");
+            }
+            Ok(())
+        })
+        .await
+        .ok_or_else(|| ACCOUNT_REMOVED.to_string())?
     }
 
     /// Best-effort write-through after a successful provider create/update:

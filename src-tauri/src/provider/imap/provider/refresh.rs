@@ -296,7 +296,9 @@ impl ImapProvider {
             })
             .collect();
         let mut plan = if self.store.uses_native_labels().map_err(db_err)? {
-            plan::build_native_plan(&catalog, Some(&delimiter), &self.settings)
+            let mut plan = plan::build_native_plan(&catalog, Some(&delimiter), &self.settings);
+            plan.set_native_bindings(self.store.label_bindings().map_err(db_err)?);
+            plan
         } else {
             plan::build_plan(&catalog, Some(&delimiter), &self.settings)
         };
@@ -336,7 +338,8 @@ impl ImapProvider {
         let now = (self.now)();
         match self.store.catalog_refresh_due(now) {
             Ok(true) => {}
-            Ok(false) => return,
+            Ok(false) if self.store.pending_label_edit().ok().flatten().is_none() => return,
+            Ok(false) => {}
             Err(error) => {
                 log::warn!("imap sync: catalog refresh skipped (state read failed): {error}");
                 return;
@@ -349,6 +352,14 @@ impl ImapProvider {
                 return;
             }
         };
+        if let Err(error) = self.recover_native_label_edit(session, &entries).await {
+            log::warn!("imap sync: checking a pending label edit: {error}");
+            return;
+        }
+        if let Err(error) = self.verify_native_label_bindings(session, &entries).await {
+            log::warn!("imap sync: verifying renamed labels: {error}");
+            return;
+        }
         // The SELECTABLE mailboxes the server reported this LIST (the catalog
         // only ever holds selectable rows; `\Noselect` containers are never
         // catalog locations). This is both the upsert set and the "present"
