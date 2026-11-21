@@ -7,7 +7,7 @@ use crate::mime::RawMessage;
 use crate::provider::{MailFetch, ProviderError, ProviderResult};
 
 use crate::provider::imap::fetch::SessionBodyFetcher;
-use crate::provider::imap::labels::{labels_for_location_ids, merge_label_sets};
+use crate::provider::imap::labels::merge_label_sets;
 use crate::provider::imap::rfc822::{attachment_bytes_from_raw, to_raw_message};
 use crate::provider::imap::session::ImapSession;
 
@@ -82,10 +82,7 @@ impl MailFetch for ImapProvider {
             .map(|location| {
                 let flags: Vec<String> =
                     serde_json::from_str(&location.flags_json).unwrap_or_default();
-                labels_for_location_ids(
-                    &plan.location_label_ids_for_mailbox(&location.mailbox),
-                    &flags,
-                )
+                plan.labels_for_copy(&location.mailbox, &flags)
             })
             .collect();
         // Thread-wide dynamic (`folder:`/`lf:`) union, so a single message read
@@ -100,8 +97,15 @@ impl MailFetch for ImapProvider {
                     .locations_for_message(&message_id)
                     .map_err(db_err)?
                 {
-                    for lid in plan.location_label_ids_for_mailbox(&location.mailbox) {
-                        if (lid.starts_with("folder:") || lid.starts_with("lf:"))
+                    let flags: Vec<String> =
+                        serde_json::from_str(&location.flags_json).unwrap_or_default();
+                    for lid in plan.labels_for_copy(&location.mailbox, &flags) {
+                        if (lid.starts_with("kw:")
+                            || plan.entry_for(&location.mailbox).is_some_and(|entry| {
+                                entry.role.is_none()
+                                    && !entry.is_inbox
+                                    && entry.location_label_id.as_deref() == Some(&lid)
+                            }))
                             && !thread_dynamic.contains(&lid)
                         {
                             thread_dynamic.push(lid);

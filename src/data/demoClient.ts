@@ -1982,13 +1982,13 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async listLabels() {
       return structuredClone(labels);
     },
-    async createLabel(name) {
+    async createLabel(name, _accountId, folder) {
       const normalized = name.trim();
       if (!normalized) throw new Error("Label name is required");
       const label: Label = {
         id: `demo-${crypto.randomUUID()}`,
         name: normalized,
-        kind: "user",
+        kind: folder ? "folder" : "user",
         color: null,
       };
       labels = [...labels, label];

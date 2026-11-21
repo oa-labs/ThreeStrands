@@ -797,8 +797,20 @@ pub async fn verified_store(
     op: StoreOp,
     flags: &[String],
 ) -> Result<(), ProviderError> {
+    store_and_fetch_flags(session, ctx, uids, op, flags)
+        .await
+        .map(|_| ())
+}
+
+pub(super) async fn store_and_fetch_flags(
+    session: &mut dyn ImapWriteSession,
+    ctx: &WriteContext,
+    uids: &[u32],
+    op: StoreOp,
+    flags: &[String],
+) -> Result<std::collections::BTreeMap<u32, Vec<String>>, ProviderError> {
     if uids.is_empty() {
-        return Ok(()); // Nothing to store; sending an empty-set STORE is an error.
+        return Ok(Default::default()); // Nothing to store; sending an empty-set STORE is an error.
     }
     // Capability gate: refuse any flag this mailbox cannot keep.
     for flag in flags {
@@ -811,13 +823,24 @@ pub async fn verified_store(
         }
     }
 
+    let mut actual = std::collections::BTreeMap::new();
     for batch in build_uid_set_batches(uids) {
         session.uid_store(&batch, op, flags).await?;
         // Verify this batch: re-fetch FLAGS and confirm the change took.
         let fetched = session.uid_fetch(&batch, "FLAGS").await?;
         verify_fetched_flags(&fetched, op, flags, &ctx.mailbox)?;
+        actual.extend(fetched.iter().filter_map(|message| {
+            let uid = message.uid?;
+            Some((
+                uid,
+                message
+                    .flags()
+                    .map(|flag| super::session::flag_to_wire(&flag))
+                    .collect(),
+            ))
+        }));
     }
-    Ok(())
+    Ok(actual)
 }
 
 /// Confirm a batch of `UID FETCH (FLAGS)` responses reflects the requested

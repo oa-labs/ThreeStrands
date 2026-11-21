@@ -440,16 +440,19 @@ impl SyncService {
         .ok_or_else(|| ACCOUNT_REMOVED.to_string())?
     }
 
-    pub async fn create_label(&self, name: &str) -> Result<Label, String> {
+    pub async fn create_label(&self, name: &str, folder: bool) -> Result<Label, String> {
         validate_label_name(name)?;
         self.exclusive(async {
-            let label = self
+            let provider = self
                 .auth
                 .provider(&self.database)
-                .map_err(|error| error.to_string())?
-                .create_label(name)
-                .await
                 .map_err(|error| error.to_string())?;
+            let label = if folder {
+                provider.create_folder(name).await
+            } else {
+                provider.create_label(name).await
+            }
+            .map_err(|error| error.to_string())?;
             self.cache_label_change(&label);
             Ok(label)
         })

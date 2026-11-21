@@ -103,7 +103,7 @@ export function SplitInboxesSettings({
   // A split inbox belongs to one account, so only that account's labels are
   // valid matches for it.
   const labelOptions = (labelsByAccount[accountId] ?? [])
-    .filter((label) => label.kind === "user")
+    .filter((label) => label.kind === "user" || label.kind === "folder")
     .sort((a, b) => formatLabelName(a).localeCompare(formatLabelName(b), undefined, { sensitivity: "base" }));
 
 
@@ -238,7 +238,7 @@ export function SplitInboxesSettings({
                     }}
                   >
                     <option value="">Choose a label</option>
-                    {labelsByAccount[splitInbox.accountId]!.filter((label) => label.kind === "user").map((label) =>
+                    {labelsByAccount[splitInbox.accountId]!.filter((label) => label.kind === "user" || label.kind === "folder").map((label) =>
                       <option key={label.id} value={label.id}>{formatLabelName(label)}</option>,
                     )}
                   </select>

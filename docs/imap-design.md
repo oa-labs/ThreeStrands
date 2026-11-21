@@ -30,7 +30,7 @@ advertises and how it changes the design.
 | --- | --- |
 | Which servers | Any standards-compliant IMAP server, whose extension support isn't known in advance. That includes ISP and hosting servers and local bridges such as Proton Mail Bridge, which the primary user runs. The design has to work on a plain IMAP4rev1 server and use newer extensions when a server advertises them. Nothing branches on the server's identity. |
 | Authentication | Password or app password only in v1, stored in the OS keychain, TLS required. OAuth2 (XOAUTH2/OAUTHBEARER) can be added later inside the same credential envelope. |
-| Labels | System states use folders. Archive, Trash, Spam and Sent map to special-use folders. The user's existing folders appear as read-only locations with a Move action. ThreeStrands user labels are stored one of two ways, set per account: as IMAP keywords when `PERMANENTFLAGS` includes `\*`, or as **label folders**, copies in children of a container mailbox the user picks at setup. The primary account uses label folders (decided 2026-10-08). See [User labels](#user-labels). |
+| Labels | System states use folders. Archive, Trash, Spam and Sent map to special-use folders. The user's existing folders appear as locations and have their own management controls. ThreeStrands user labels are stored one of two ways, set per account: as IMAP keywords when `PERMANENTFLAGS` includes `\*`, or as **label folders**, copies in children of a container mailbox the user picks at setup. The primary account uses label folders (decided 2026-10-08). See [User labels](#user-labels). |
 | Calendar and contacts | Mail first. IMAP v1 covers mail and server search. CalDAV/CardDAV is a later step that needs a calendar provider interface. A Google Calendar connection still works alongside an IMAP mail account. |
 
 ## Guiding rules
@@ -303,7 +303,7 @@ Labels are worked out from where a message is stored and its flags:
 | Message is in the `\Trash` mailbox | `TRASH` |
 | No `\Seen` flag | `UNREAD` |
 | `\Flagged` | `STARRED` |
-| Keyword `foo` (keyword mode) | `kw:foo`, a user label. Designed, not implemented yet: the app refuses `kw:` IDs and label folders are the only label store (see [the parity plan](imap-parity-plan.md)). |
+| Keyword `foo` (keyword mode) | `kw:foo`, a user label on keyword-mode accounts. |
 | Copy in `<container>/foo` (label-folder mode) | `lf:foo`, a user label |
 | Message is in user folder `Clients/Acme` | `folder:Clients/Acme`, a new `kind: "folder"` label |
 
@@ -341,8 +341,16 @@ Each account has a `label_storage` setting:
   account settings.
 
 When `PERMANENTFLAGS` lacks `\*` and the user hasn't picked a container, user
-labels are unavailable and the UI hides label actions for that account. It
-never pretends a label stuck.
+labels are unavailable and the UI offers folder management for that account.
+
+In keyword mode, the catalog lists custom keywords from synced mail and locally
+declared labels. Creating a label saves the name locally. IMAP stores the keyword
+when it is first applied to a message. Applying or removing it uses
+`UID STORE ±FLAGS.SILENT` with a fresh writable selection and flag read-back for
+each message copy. System flags and service keywords remain message state.
+Folder creation, renaming, and deletion live in **Manage Folders**. A confirmed
+leaf rename keeps the folder's original ID. Deletion requires a verified
+surviving copy of every message in the folder.
 
 In label-folder mode:
 
@@ -506,7 +514,7 @@ current locations:
 | Spam / not spam | Move to `\Junk` and set `$Junk`, clearing `$NotJunk`. The reverse moves to INBOX and sets `$NotJunk`. The keywords help server-side spam filters learn. They're set only when `PERMANENTFLAGS` allows them; otherwise the move alone counts. |
 | Read / unread | `UID STORE ±FLAGS.SILENT (\Seen)` |
 | Star | `±FLAGS.SILENT (\Flagged)` |
-| Add or remove a user label | Label-folder mode: copy into, or expunge from, `<container>/<label>` (see [User labels](#user-labels)). Keyword mode (`±FLAGS.SILENT (keyword)`) is designed but not implemented yet. With no usable mode, fail with `InvalidOperation` and a clear message. |
+| Add or remove a user label | Label-folder mode: copy into, or expunge from, `<container>/<label>` (see [User labels](#user-labels)). Keyword mode verifies `±FLAGS.SILENT (keyword)` on each synced copy. With no usable mode, fail with `InvalidOperation` and a clear message. |
 | Move to folder (new action) | Move to the chosen mailbox. |
 
 - **Only permanent flags:** a `STORE` is limited to flags the mailbox's

@@ -50,11 +50,13 @@ export function useLabelCatalog(accounts: Account[], detailAccountId: string | u
     for (const accountId of neededAccountIds) void refreshLabels(accountId);
   }, [detailAccountId, labelTargetAccountId, labelsByAccount, accounts, refreshLabels]);
 
-  const createLabel = useCallback(async (name: string) => {
+  const createLabel = useCallback(async (name: string, folder?: boolean) => {
     if (!labelTargetAccountId) throw new Error("No account selected for this label");
-    const label = await mailClient.createLabel(name, labelTargetAccountId);
+    const label = folder
+      ? await mailClient.createLabel(name, labelTargetAccountId, true)
+      : await mailClient.createLabel(name, labelTargetAccountId);
     requests.current.delete(labelTargetAccountId);
-    setLabelsByAccount((current) => ({ ...current, [labelTargetAccountId]: [...(current[labelTargetAccountId] ?? []), label] }));
+    setLabelsByAccount((current) => ({ ...current, [labelTargetAccountId]: [...(current[labelTargetAccountId] ?? []).filter((item) => item.id !== label.id), label] }));
     return label;
   }, [labelTargetAccountId]);
   const deleteLabel = useCallback(async (id: string) => {

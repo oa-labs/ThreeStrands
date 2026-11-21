@@ -82,6 +82,7 @@ struct MutServer {
     lose_rename_reply: bool,
     hide_listing_after_rename: bool,
     list_fails: bool,
+    plain_list: bool,
     literal_list_names: bool,
     list_attributes: BTreeMap<String, String>,
     list_noselect: std::collections::BTreeSet<String>,
@@ -123,6 +124,7 @@ impl MutServer {
             lose_rename_reply: false,
             hide_listing_after_rename: false,
             list_fails: false,
+            plain_list: false,
             literal_list_names: false,
             list_attributes: Default::default(),
             list_noselect: Default::default(),
@@ -222,7 +224,8 @@ fn build_response(
     } else if upper.starts_with("CAPABILITY") {
         let caps = state.capabilities.join(" ");
         (format!("* CAPABILITY {caps}\r\n{tag} OK done\r\n"), false)
-    } else if upper.starts_with("LIST") && state.capabilities.iter().any(|cap| cap == "X-GM-EXT-1")
+    } else if upper.starts_with("LIST")
+        && (state.plain_list || state.capabilities.iter().any(|cap| cap == "X-GM-EXT-1"))
     {
         native_creation::list_response(state, tag)
     } else if upper.starts_with("SELECT") || upper.starts_with("EXAMINE") {
@@ -2465,6 +2468,7 @@ async fn after_a_move_a_following_sweep_sees_no_change_and_no_duplicate() {
 /// (never a folder row); its child `Labels/Clients` is the label mailbox.
 fn server_with_label_folder() -> Arc<Mutex<MutServer>> {
     let mut s = MutServer::new();
+    s.plain_list = true;
     s.folder("INBOX", 100);
     s.folder("Archive", 200);
     s.folder("Sent", 500);
@@ -3107,9 +3111,9 @@ async fn label_ops_in_non_folders_storage_mode_are_rejected_with_zero_commands()
             other => panic!("expected InvalidOperation naming the mode, got {other:?}"),
         }
     }
-    // create / delete likewise refuse naming the mode.
+    // Keyword mode refuses an invalid keyword and deletion of a label folder.
     assert!(matches!(
-        provider.create_label("X").await.unwrap_err(),
+        provider.create_label("Not a keyword").await.unwrap_err(),
         ProviderError::InvalidOperation(_)
     ));
     assert!(matches!(
@@ -3488,31 +3492,6 @@ async fn delete_label_already_absent_is_idempotent_success() {
     assert_eq!(server.lock().unwrap().count_starting("EXAMINE"), 0);
 }
 
-// --- rename (update_label) is refused permanently ----------------------
-
-#[tokio::test]
-async fn update_label_rename_is_refused_permanently_with_a_reason() {
-    let server = server_with_label_folder();
-    let (provider, _store) = provider_with(server.clone());
-
-    let err = provider
-        .update_label("lf:Clients", "Customers")
-        .await
-        .unwrap_err();
-    assert!(!err.retry_mutation(), "a rename refusal is permanent");
-    match err {
-        ProviderError::InvalidOperation(m) => {
-            assert!(m.to_ascii_lowercase().contains("renaming"), "{m}");
-            assert!(m.contains("derived from its name"), "names the reason: {m}");
-        }
-        other => panic!("expected permanent InvalidOperation, got {other:?}"),
-    }
-    // Nothing touched the server (no RENAME, the label mailbox is intact).
-    let g = server.lock().unwrap();
-    assert_eq!(g.count_starting("RENAME"), 0);
-    assert!(g.folders.contains_key("Labels/Clients"));
-}
-
 // --- add label then a following sweep: no change, no duplicate ---------
 
 #[tokio::test]
@@ -3689,6 +3668,7 @@ async fn existing_wire_label_ids_and_encoded_container_are_preserved() {
     let server = server_with_inbox();
     {
         let mut g = server.lock().unwrap();
+        g.plain_list = true;
         g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
         g.folder("&ZeVnLIqe-/Caf&AOk-", 600);
     }
@@ -4380,3 +4360,5 @@ async fn server_owned_sent_copy_needs_neither_message_id_nor_an_imap_session() {
         assert!(server.lock().unwrap().wire().is_empty());
     }
 }
+
+mod plain_labels;

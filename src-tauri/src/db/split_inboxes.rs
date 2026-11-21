@@ -113,7 +113,7 @@ impl Database {
                     "UPDATE split_inboxes SET match_value=?2
                  WHERE id=?1 AND match_kind='label' AND EXISTS(
                      SELECT 1 FROM account_labels l
-                     WHERE l.account_id=split_inboxes.account_id AND l.label_id=?2 AND l.kind='user'
+                     WHERE l.account_id=split_inboxes.account_id AND l.label_id=?2 AND l.kind IN ('user','folder')
                  )
                  RETURNING id,name,match_kind,match_value,sort_order,created_at,account_id",
                     params![id, label_id],

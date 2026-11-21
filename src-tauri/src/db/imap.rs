@@ -124,6 +124,20 @@ impl ImapStateStore {
             json.map(|value| serde_json::from_str(&value).map_err(super::serialization_error)).transpose()
         })
     }
+    /// Local declarations and custom flags observed on any synced copy.
+    pub(crate) fn known_keywords(&self) -> DbResult<Vec<String>> {
+        self.database.with_connection(|c| {
+            let mut query = c.prepare(
+                "SELECT substr(label_id,4) FROM account_labels WHERE account_id=?1 AND label_id GLOB 'kw:*'
+                 UNION
+                 SELECT flag.value FROM imap_locations, json_each(imap_locations.flags_json) AS flag
+                   WHERE account_id=?1 AND flag.type='text' AND substr(flag.value,1,1) NOT IN ('$',char(92))",
+            )?;
+            let rows = query.query_map([&self.account_id], |row| row.get(0))?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+    }
+
     /// Binds a store to one account's rows in the shared database.
     pub fn new(database: Arc<Database>, account_id: impl Into<String>) -> Self {
         Self {

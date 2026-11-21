@@ -9,7 +9,7 @@ use crate::provider::{
 };
 
 use crate::provider::imap::fetch::{fetch_identity, SessionBodyFetcher};
-use crate::provider::imap::labels::{labels_for_location_ids, merge_label_sets};
+use crate::provider::imap::labels::merge_label_sets;
 use crate::provider::imap::plan::{self, CatalogMailbox, SyncPlan};
 use crate::provider::imap::policy::{self, SyncLimits};
 use crate::provider::imap::rfc822::to_raw_message;
@@ -61,10 +61,7 @@ impl ImapProvider {
             .map(|location| {
                 let flags: Vec<String> =
                     serde_json::from_str(&location.flags_json).unwrap_or_default();
-                labels_for_location_ids(
-                    &plan.location_label_ids_for_mailbox(&location.mailbox),
-                    &flags,
-                )
+                plan.labels_for_copy(&location.mailbox, &flags)
             })
             .collect();
         Ok(merge_label_sets(&per_copy))
@@ -498,12 +495,11 @@ impl ImapProvider {
             })
             .collect();
         let mut plan = if self.store.uses_native_labels().map_err(db_err)? {
-            let mut plan = plan::build_native_plan(&catalog, Some(&delimiter), &self.settings);
-            plan.set_native_bindings(self.store.label_bindings().map_err(db_err)?);
-            plan
+            plan::build_native_plan(&catalog, Some(&delimiter), &self.settings)
         } else {
             plan::build_plan(&catalog, Some(&delimiter), &self.settings)
         };
+        plan.set_mailbox_bindings(self.store.label_bindings().map_err(db_err)?);
         // TEST KNOB: re-class named mailboxes as synced USER FOLDERS (role
         // None, synced_now true) so the coverage-epoch logic can be exercised
         // with real server-backed folders that are subject to the per-poll
@@ -554,11 +550,11 @@ impl ImapProvider {
                 return;
             }
         };
-        if let Err(error) = self.recover_native_label_edit(session, &entries).await {
+        if let Err(error) = self.recover_mailbox_label_edit(session, &entries).await {
             log::warn!("imap sync: checking a pending label edit: {error}");
             return;
         }
-        if let Err(error) = self.verify_native_label_bindings(session, &entries).await {
+        if let Err(error) = self.verify_mailbox_label_bindings(session, &entries).await {
             log::warn!("imap sync: verifying renamed labels: {error}");
             return;
         }

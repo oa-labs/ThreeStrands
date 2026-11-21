@@ -62,7 +62,7 @@ export function isManageableLabel(label: Pick<Label, "id" | "kind">): boolean {
 // has resolved them to a name: Gmail's `Label_18`, and IMAP's dynamic
 // `lf:<label folder>` / `folder:<mailbox>` ids (the catalog carries the display
 // name). Showing the raw id while the catalog loads would flash `lf:Clients`.
-const OPAQUE_LABEL_ID = /^(label_\d+|lf:.*|folder:.*)$/i;
+const OPAQUE_LABEL_ID = /^(label_\d+|lf:.*|folder:.*|imap-label:.*|kw:.*)$/i;
 
 export type ConversationLabelGroups = {
   /** Gmail system/category labels, formatted for display (e.g. "UPDATES"). */
@@ -100,12 +100,9 @@ export function conversationLabelGroups(
 }
 
 /** Which label actions the UI may offer for an account, derived from its
- * label model. Offering an action the provider can only reject (rename on an
- * IMAP label-folder account; any label action on an IMAP account with no
- * label storage) would show the user a control that can only fail and roll
- * back, so the UI hides it and, where labels are unavailable entirely, shows
- * `unavailableReason` instead. */
+ * label model. Physical folders are managed separately from membership labels. */
 export type LabelCapabilities = {
+  canManageFolders: boolean;
   /** Existing user labels can be applied and removed. */
   canManageLabels: boolean;
   canCreateLabels: boolean;
@@ -123,23 +120,21 @@ export type LabelCapabilities = {
 export function labelCapabilities(labelModel: LabelModel | undefined): LabelCapabilities {
   switch (labelModel) {
     case "imapLabelFolders":
-      // Create / delete / toggle work; rename is refused permanently because
-      // the label-folder id is derived from the name and nothing migrates it.
-      return { canManageLabels: true, canCreateLabels: true, canDeleteLabels: true, canRenameLabels: false, unavailableReason: null };
-    case "imapNativeLabels":
-      return { canManageLabels: true, canCreateLabels: true, canDeleteLabels: true, canRenameLabels: true, unavailableReason: null };
+      return { canManageFolders: true, canManageLabels: true, canCreateLabels: true, canDeleteLabels: true, canRenameLabels: true, unavailableReason: null };
     case "imapKeywords":
+      return { canManageFolders: true, canManageLabels: true, canCreateLabels: true, canDeleteLabels: false, canRenameLabels: false, unavailableReason: null };
     case "imapNoUserLabels":
-      // No writable user-label storage: every label action would be refused.
       return {
+        canManageFolders: true,
         canManageLabels: false,
         canCreateLabels: false,
         canDeleteLabels: false,
         canRenameLabels: false,
-        unavailableReason: "This account does not support labels yet.",
+        unavailableReason: "This account uses folders.",
       };
+    case "imapNativeLabels":
     case "gmailLabels":
     default:
-      return { canManageLabels: true, canCreateLabels: true, canDeleteLabels: true, canRenameLabels: true, unavailableReason: null };
+      return { canManageFolders: false, canManageLabels: true, canCreateLabels: true, canDeleteLabels: true, canRenameLabels: true, unavailableReason: null };
   }
 }

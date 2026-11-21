@@ -1332,7 +1332,7 @@ export type MailProvider = "gmail" | "imap";
  * label actions the UI offers, so it never presents one the provider can only
  * reject (see `labelCapabilities`). Mirrors the Rust `LabelModel`.
  * - `gmailLabels`: Gmail's many-to-many labels — create, rename, delete, toggle.
- * - `imapKeywords`: IMAP keyword user labels (not yet writable in the app).
+ * - `imapKeywords`: IMAP keyword user labels.
  * - `imapLabelFolders`: IMAP label-folder user labels — create, delete, toggle,
  *   but NOT rename (the folder id is derived from the name, so a rename can
  *   only fail and roll back).

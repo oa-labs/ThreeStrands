@@ -19,6 +19,7 @@ import { ImapSendingSettings } from "./ImapSendingSettings";
 import { ImapServerSettings } from "./ImapServerSettings";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
 import { mailClient } from "./data/client";
+import { labelCapabilities } from "./labels";
 
 /** How long a field's "Saved" confirmation stays visible after autosave. */
 const SAVED_STATUS_MS = 2000;
@@ -38,6 +39,7 @@ export function AccountsSettings({
   onImapConnected,
   onGmailImapSwitched,
   onSignatureDefaults,
+  onManageFolders,
 }: {
   authStatus: AuthStatus | null;
   accounts: Account[];
@@ -54,6 +56,7 @@ export function AccountsSettings({
   onImapConnected?(): Promise<void>;
   onGmailImapSwitched?(): Promise<void>;
   onSignatureDefaults?(email: string): void;
+  onManageFolders?(email: string): void;
 }) {
   const { pending: busyEmail, error, setError, runFor } = useSettingsOperation();
   const [accountSetup, setAccountSetup] = useState<"provider" | "imap" | "gmail-app-password" | null>(null);
@@ -264,6 +267,11 @@ export function AccountsSettings({
                       <ChevronDown size={ICON_SIZE.sm} />
                     </button>
                   </span>
+                ) : null}
+                {onManageFolders && account.onThisDevice && account.provider === "imap" &&
+                  labelCapabilities(account.labelModel).canManageFolders ? (
+                  <button type="button" className="btn btn-sm" disabled={busyEmail !== null}
+                    onClick={() => onManageFolders(account.email)}>Manage Folders…</button>
                 ) : null}
                 {account.provider === "gmail" && <button
                   type="button"

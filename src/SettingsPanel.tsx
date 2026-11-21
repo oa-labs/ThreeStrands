@@ -108,6 +108,7 @@ export function Settings({
   onClose,
   preferences,
   mailAccounts,
+  onManageFolders,
   calendarAccounts,
   splitInboxes,
   mutedSenders,
@@ -126,6 +127,7 @@ export function Settings({
   onClose(): void;
   preferences: SettingsPreferences;
   mailAccounts: MailAccountSettings;
+  onManageFolders?(account: string): void;
   calendarAccounts: CalendarAccountSettingsState;
   splitInboxes: SplitInboxSettingsState;
   mutedSenders: MutedSenderSettingsState;
@@ -306,6 +308,7 @@ export function Settings({
               accounts={mailAccounts.accounts}
               availableAccounts={mailAccounts.availableAccounts}
               onSignatureDefaults={signatures ? setSignatureAccount : undefined}
+              onManageFolders={onManageFolders}
               onAdd={mailAccounts.add}
               onImapConnected={mailAccounts.refresh}
               onGmailImapSwitched={mailAccounts.refreshAfterGmailSwitch}

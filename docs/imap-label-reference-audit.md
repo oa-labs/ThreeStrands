@@ -81,7 +81,9 @@ children. A tagged server acknowledgement and a verified listing preserve the
 local ID on rename. A lost acknowledgement can leave the saved rule unresolved.
 Deleting a label reserves its old ID and keeps the Split Inbox so its label can
 be selected again. A new label at a retired path receives a different ID.
-The settings export carries bindings and retired IDs. Plain IMAP folder rename
-can reuse the identity and journal work once it verifies mailbox coordinates.
-Plain IMAP folder deletion continues to require the existing live last-copy
-checks. Writing plain IMAP keywords needs a separate PERMANENTFLAGS-gated path.
+The settings export carries bindings and retired IDs. Plain IMAP leaf folder
+edits share the journal and ID bindings with native labels. A folder rename
+carries cached UID coordinates forward when UIDVALIDITY is unchanged. Deleting
+a physical folder requires live proof of each surviving copy and of the source
+folder's full UID set. Keyword writes use the selected mailbox’s PERMANENTFLAGS
+and verify the resulting flags by UID.

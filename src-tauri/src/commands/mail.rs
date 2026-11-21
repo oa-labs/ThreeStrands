@@ -419,7 +419,7 @@ pub(crate) async fn create_label(
 ) -> AppResult<Label> {
     resolve_sync(&state, request.account_id.as_deref())
         .await?
-        .create_label(&request.name)
+        .create_label(&request.name, request.folder)
         .await
         .map_err(AppError::from)
 }

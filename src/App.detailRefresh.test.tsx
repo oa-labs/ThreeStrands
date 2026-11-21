@@ -1292,6 +1292,31 @@ it("reloads the local inbox after a refresh even when one account sync fails", a
   await waitFor(() => expect(listCalls).toBeGreaterThan(callsBeforeRefresh));
 });
 
+it("opens the selected plain IMAP account’s folders from Mail Accounts", async () => {
+  const originalAccounts = mailClient.listAccounts.bind(mailClient);
+  vi.spyOn(mailClient, "listAccounts").mockImplementation(async () =>
+    (await originalAccounts()).map((account) => ({
+      ...account, provider: "imap" as const, labelModel: "imapNoUserLabels" as const,
+    })),
+  );
+  vi.spyOn(mailClient, "listLabels").mockImplementation(async (accountId) =>
+    accountId === "demo@example.com" ? [{ id: "folder:Planning", name: "Planning", kind: "folder" }] : [],
+  );
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  fireEvent.click(screen.getByRole("button", { name: "Settings (Ctrl+,)" }));
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  fireEvent.click(within(settings).getByRole("button", { name: "Mail Accounts" }));
+  const openFolders = await within(settings).findByRole("button", { name: "Manage Folders…" });
+  openFolders.focus();
+  fireEvent.click(openFolders);
+  const dialog = await screen.findByRole("dialog", { name: "Manage Folders" });
+  expect(await within(dialog).findByRole("option", { name: "Planning" })).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(await screen.findByRole("dialog", { name: "Settings" })).toBeInTheDocument();
+  expect(openFolders).toHaveFocus();
+});
+
 it("reloads the inbox after reconnecting an imported account", async () => {
   const originalAccounts = mailClient.listAccounts.bind(mailClient);
   const originalList = mailClient.listThreadsPage.bind(mailClient);

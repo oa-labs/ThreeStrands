@@ -17,9 +17,10 @@ the scope of that switch.
 
 [All Mail, archive, and search completeness](imap-all-mail.md) is implemented:
 bounded aggregate acquisition, negotiated label membership/system actions,
-broader server search, and explicit partial coverage. General label management
-remains in progress. Native-label creation and apply/remove support is recorded in
-[native label membership](imap-native-labels.md).
+broader server search, and explicit partial coverage. Creation and individual
+mailbox edits are available for native Gmail labels and plain IMAP folders.
+Plain IMAP keyword accounts can apply and remove supported keywords.
+See [native label membership](imap-native-labels.md).
 
 The Gmail app-password setup route reuses the IMAP/SMTP connection test
 and mailbox review. IMAP can verify interrupted sends against a unique
@@ -104,8 +105,10 @@ and negative cases where a label removal must not delete mail.
 Existing labels on servers advertising `X-GM-EXT-1` can now be applied and
 removed without a configured container. Their existing IDs are preserved.
 Native label rename/delete now covers individual user labels with no nested
-children. Plain IMAP label-folder rename and keyword writes remain open.
-Ordinary label-folder writes require a configured container.
+children. Plain IMAP can create physical folders and rename or safely delete
+individual folders without children. Label-folder storage requires a configured
+container. Keyword storage supports creating, applying, and removing valid
+keywords on mailboxes that permit them.
 
 - [x] Read/write advertised `X-GM-LABELS` and expose existing labels directly.
 - [x] Apply/remove existing native labels with verified, additive membership
@@ -120,12 +123,18 @@ Ordinary label-folder writes require a configured container.
 - [ ] Extend edits to parent labels and coordinate ID bindings across multiple
   enrolled devices. A verified external disappearance or UIDVALIDITY change
   leaves an edited label unresolved. The app does not infer external renames.
-- [ ] For plain IMAP, complete folder management and label-folder rename with
-  stable references. Implement keyword writes only when permanent flags permit
-  them; otherwise describe the available folder behavior clearly.
-- [ ] Keep removing a label, deleting a folder, moving mail, and trashing a message
-  distinct in the provider contract and UI. Specify what happens to the last
-  remaining location before implementing destructive actions.
+- [x] Create ordinary folders and rename or delete leaf folders and label
+  folders with stable references. Reuse the edit journal to preserve Split
+  Inboxes and retire deleted IDs so a new folder cannot inherit a saved rule.
+- [x] In keyword mode, use verified additive or subtractive flag writes only
+  when the selected mailbox advertises permanent support. Keep keyword
+  membership separate from mailbox moves.
+- [x] Show physical folder management separately from applying and removing
+  labels. Require a live surviving copy for every message before deleting a
+  physical folder and verify that its complete UID set is accounted for.
+- [ ] Extend verified mailbox edits to folder subtrees and coordinate their
+  bindings across devices. Keyword rename and catalog-wide deletion need
+  their own server-wide reconciliation.
 
 Acceptance: labels created or changed elsewhere reconcile correctly; renaming
 does not orphan saved rules or duplicate mail; failures roll back coherently.

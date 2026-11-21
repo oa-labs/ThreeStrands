@@ -10,6 +10,7 @@ afterEach(cleanup);
 const labels: Label[] = [
   { id: "lf:Clients", name: "Clients", kind: "user" },
   { id: "lf:Projects", name: "Projects", kind: "user" },
+  { id: "folder:Planning", name: "Planning", kind: "folder" },
 ];
 
 function renderManager(labelModel: Parameters<typeof labelCapabilities>[0]) {
@@ -36,31 +37,31 @@ describe("LabelManager capability gating", () => {
     expect(screen.getByRole("button", { name: "Delete Clients" })).toBeInTheDocument();
   });
 
-  it("hides rename but keeps create/delete for IMAP label folders", () => {
+  it("offers rename, create and guarded delete for IMAP label folders", () => {
     renderManager("imapLabelFolders");
-    // Create still available via the picker, delete still available…
     expect(screen.getByRole("combobox", { name: "Find or Create a Label" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete Clients" })).toBeInTheDocument();
-    // …but rename can only fail and roll back, so it is not offered.
-    expect(screen.queryByRole("button", { name: "Rename Clients" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Rename Projects" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rename Clients" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Delete Clients" }));
+    expect(screen.getByRole("button", { name: "Delete Label" })).toBeInTheDocument();
+    expect(screen.getByText(/another verified server copy/i)).toBeInTheDocument();
   });
 
-  it("hides all label controls and explains why for an IMAP account with no label storage", () => {
+  it("opens folder management for an IMAP account with no label storage", () => {
     renderManager("imapNoUserLabels");
-    const dialog = screen.getByRole("dialog", { name: "Manage Labels" });
-    expect(within(dialog).queryByRole("combobox", { name: "Find or Create a Label" })).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "Delete Clients" })).not.toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Manage Folders" });
+    expect(within(dialog).getByRole("combobox", { name: "Find or Create a Folder" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Rename Planning" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Rename Clients" })).not.toBeInTheDocument();
-    // A short, provider-neutral explanation is shown instead.
-    expect(within(dialog).getByText(/does not support labels/i)).toBeInTheDocument();
   });
 
-  it("hides all label controls for an IMAP keyword account too", () => {
+  it("applies and creates keywords while leaving keyword renames and deletion unavailable", () => {
     renderManager("imapKeywords");
     const dialog = screen.getByRole("dialog", { name: "Manage Labels" });
-    expect(within(dialog).queryByRole("combobox", { name: "Find or Create a Label" })).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/does not support labels/i)).toBeInTheDocument();
+    expect(within(dialog).getByRole("combobox", { name: "Find or Create a Label" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Rename Clients" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Delete Clients" })).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Manage Folders" }));
+    expect(screen.getByRole("dialog", { name: "Manage Folders" })).toBeInTheDocument();
   });
 });
 
@@ -140,6 +141,25 @@ describe("LabelManager picker", () => {
     const created = { id: "new-Project X", name: "Project X", kind: "user" };
     expect(onToggle).toHaveBeenCalledWith(created, true);
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("creates and renames folders without applying them as labels", async () => {
+    const folder: Label = { id: "folder:Planning", name: "Planning", kind: "folder" };
+    const { onCreate, onRename, onToggle } = renderPicker({
+      capabilities: labelCapabilities("imapKeywords"),
+      labels: [work, folder],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Manage Folders" }));
+    const picker = screen.getByRole("combobox", { name: "Find or Create a Folder" });
+    fireEvent.change(picker, { target: { value: "Reports" } });
+    await act(async () => { fireEvent.keyDown(picker, { key: "Enter" }); });
+    expect(onCreate).toHaveBeenCalledWith("Reports", true);
+    fireEvent.change(picker, { target: { value: "Planning" } });
+    fireEvent.keyDown(picker, { key: "Enter" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Rename Planning" }), { target: { value: "Roadmap" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
+    expect(onRename).toHaveBeenCalledWith(folder.id, "Roadmap");
+    expect(onToggle).not.toHaveBeenCalled();
   });
 
   it("creates and applies a native label", async () => {

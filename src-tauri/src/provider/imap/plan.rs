@@ -104,14 +104,15 @@ impl PlanEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyncPlan {
     pub entries: Vec<PlanEntry>,
-    native_names: std::collections::BTreeMap<String, String>,
-    native_bindings: Vec<crate::db::imap::label_edits::ImapLabelBinding>,
+    base_label_ids: std::collections::BTreeMap<String, String>,
+    keyword_labels: bool,
+    mailbox_bindings: Vec<crate::db::imap::label_edits::ImapLabelBinding>,
 }
 
 impl SyncPlan {
     /// The mailbox's generated ID can differ from its raw path. In particular,
     /// a new label at a retired path must never inherit the previous identity.
-    pub(crate) fn set_native_bindings(
+    pub(crate) fn set_mailbox_bindings(
         &mut self,
         bindings: Vec<crate::db::imap::label_edits::ImapLabelBinding>,
     ) {
@@ -123,17 +124,33 @@ impl SyncPlan {
             let Some(base) = entry.location_label_id.as_mut() else {
                 continue;
             };
-            let effective = native_label_id(&bindings, &entry.mailbox, base);
+            let effective = mailbox_label_id(&bindings, &entry.mailbox, base);
             if effective != *base {
-                self.native_names.insert(effective.clone(), base.clone());
+                self.base_label_ids.insert(effective.clone(), base.clone());
                 *base = effective;
             }
         }
-        self.native_bindings = bindings;
+        self.mailbox_bindings = bindings;
     }
 
     pub(super) fn uncatalogued_native_label_id(&self, mailbox: &str) -> String {
-        native_label_id(&self.native_bindings, mailbox, &format!("folder:{mailbox}"))
+        mailbox_label_id(
+            &self.mailbox_bindings,
+            mailbox,
+            &format!("folder:{mailbox}"),
+        )
+    }
+
+    pub(super) fn labels_for_copy(&self, mailbox: &str, flags: &[String]) -> Vec<String> {
+        let mut ids = self.location_label_ids_for_mailbox(mailbox);
+        if self.keyword_labels {
+            ids.extend(
+                flags
+                    .iter()
+                    .filter_map(|flag| super::labels::keyword_label(flag).map(|label| label.id)),
+            );
+        }
+        super::labels::labels_for_location_ids(&ids, flags)
     }
 
     /// Search pins are only valid in the mailbox set the background scheduler
@@ -247,7 +264,7 @@ impl SyncPlan {
             if native && !native_ids.contains(id.as_str()) {
                 continue;
             }
-            let base = self.native_names.get(&id).unwrap_or(&id);
+            let base = self.base_label_ids.get(&id).unwrap_or(&id);
             let wire_name = base
                 .strip_prefix("lf:")
                 .or_else(|| base.strip_prefix("folder:"))
@@ -388,7 +405,7 @@ fn system_role_label_id(role: MailboxRole) -> Option<&'static str> {
 /// Build the sync plan from the account's selectable catalog + settings.
 /// `delimiter` is the hierarchy delimiter (same for every mailbox on a server);
 /// pass the one discovery recorded, defaulting to `/`.
-pub(crate) fn native_label_id(
+pub(crate) fn mailbox_label_id(
     bindings: &[crate::db::imap::label_edits::ImapLabelBinding],
     mailbox: &str,
     base: &str,
@@ -607,8 +624,10 @@ fn build_plan_with_roles(
     entries.extend(rest);
     SyncPlan {
         entries,
-        native_names: Default::default(),
-        native_bindings: Vec::new(),
+        base_label_ids: Default::default(),
+        keyword_labels: !native_labels
+            && settings.label_storage == super::settings::LabelStorage::Keywords,
+        mailbox_bindings: Vec::new(),
     }
 }
 

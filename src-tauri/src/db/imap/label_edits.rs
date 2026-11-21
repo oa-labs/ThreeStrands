@@ -1,4 +1,4 @@
-//! Native IMAP label identity and the durable boundary around a server write.
+//! IMAP mailbox label identity and the durable boundary around a server write.
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,8 @@ pub(crate) struct ImapLabelEdit {
     pub source_uidvalidity: u32,
     pub destination: Option<String>,
     pub acknowledged: bool,
+    #[serde(default)]
+    pub physical_folder: bool,
 }
 
 pub(crate) fn read_bindings(
@@ -224,6 +226,13 @@ impl ImapStateStore {
                         "UPDATE OR IGNORE imap_search_pins SET mailbox=?3
                          WHERE account_id=?1 AND mailbox=?2 AND uidvalidity=?4",
                         params![account, edit.source, wire, validity],
+                    )?;
+                }
+                if edit.physical_folder {
+                    tx.execute(
+                        "UPDATE OR IGNORE imap_copy_intents SET destination=?3
+                         WHERE account_id=?1 AND destination=?2",
+                        params![account, edit.source, wire],
                     )?;
                 }
                 tx.execute(

@@ -15,27 +15,9 @@ use super::moves::PlannedMove;
 use super::mutate::as_write_session;
 use super::{db_err, ImapProvider, INBOX};
 
-// ===========================================================================
-// Phase 3 run 4: USER LABELS in label-folder mode (`label_storage == Folders`).
-//
-// A `lf:<name>` label is a COPY of a message in the mailbox
-// `<container><delim><name>` (Proton Bridge: a message labelled N times has N
-// copies). The engine delivers a user-label change through `modify_messages`
-// (verified in `sync.rs`: `ThreadMutation::Label` resolves to its target
-// message and calls `modify_messages`, never `modify_thread`), as
-// `([lf:X], [])` to ADD or `([], [lf:X])` to REMOVE. `create_label` /
-// `update_label` / `delete_label` manage the label mailboxes themselves.
-//
-// Everything here applies ONLY when `label_storage == Folders` with a
-// configured container. In any other mode these all refuse permanently with
-// `InvalidOperation` naming the mode, BEFORE any command.
-//
-// RENAME is DELIBERATELY NOT IMPLEMENTED (see `update_label` below): the `lf:`
-// id is derived from the name, and the engine/database have no label-id
-// migration (no label alias table; `update_label`'s returned `Label` is handed
-// to the frontend, never used to re-point `threads.labels_json` rows), so a
-// rename would silently orphan every stored `lf:<old>` association.
-// ===========================================================================
+// Label-folder membership uses copies under a configured container. Its
+// deletion checks also protect ordinary folders, where DELETE removes mail
+// copies rather than just removing a label from messages.
 
 /// The hierarchy delimiter the account uses, from any catalog row (every
 /// mailbox on a server shares one), defaulting to `/`.
@@ -53,12 +35,12 @@ fn label_mailbox_name(container: &str, delimiter: &str, name: &str) -> String {
 impl ImapProvider {
     /// Re-check the negotiated server model before any physical folder-label
     /// operation, including the first command after upgrading or importing.
-    async fn open_label_folder_session(&self) -> ProviderResult<Box<dyn ImapSession>> {
+    pub(super) async fn open_plain_session(&self) -> ProviderResult<Box<dyn ImapSession>> {
         let mut session = self.open_session().await?;
         if session.supports_label_extensions() {
             let _ = session.logout().await;
             return Err(ProviderError::InvalidOperation(
-                "This server uses native labels; refresh labels before applying an existing label"
+                "This server uses native labels. Refresh the account before applying labels or editing folders."
                     .into(),
             ));
         }
@@ -80,7 +62,7 @@ impl ImapProvider {
                 )
             }),
             LabelStorage::Keywords => Err(ProviderError::InvalidOperation(
-                "keyword labels are not supported yet (this account's label_storage is 'keywords'); \
+                "this account uses keyword labels instead of label folders; \
                  refusing permanently"
                     .into(),
             )),
@@ -96,15 +78,6 @@ impl ImapProvider {
     pub(super) fn delimiter(&self) -> ProviderResult<String> {
         let rows = self.store.mailboxes().map_err(db_err)?;
         Ok(account_delimiter(rows.iter().find_map(|r| r.delimiter.as_deref())).to_string())
-    }
-
-    /// The mailbox name a `lf:<name>` id refers to, resolved against this
-    /// account's container + delimiter. Returns `None` for an id without the
-    /// `lf:` prefix. Never consults the catalog, so it names the mailbox a
-    /// label WOULD live in even before it is created (used by `create_label`).
-    fn label_mailbox_for_id(&self, id: &str, delimiter: &str, container: &str) -> Option<String> {
-        id.strip_prefix("lf:")
-            .map(|name| label_mailbox_name(container, delimiter, name))
     }
 
     // --- add / remove a user label (modify_messages lf: path) --------------
@@ -131,21 +104,20 @@ impl ImapProvider {
         label_id: &str,
         add: bool,
     ) -> ProviderResult<()> {
-        let container = self.label_container()?;
-        let delimiter = self.delimiter()?;
-        let label_mailbox = self
-            .label_mailbox_for_id(label_id, &delimiter, &container)
-            .ok_or_else(|| {
-                ProviderError::InvalidOperation(format!(
-                    "label id {label_id:?} is not a label-folder id; refusing permanently"
-                ))
-            })?;
+        self.label_container()?;
+        let plan = self.build_sync_plan()?;
+        let label_mailbox = &plan.entries.iter().find(|entry| {
+            entry.label_kind == plan::LabelKind::LabelFolder
+                && entry.location_label_id.as_deref() == Some(label_id)
+        }).ok_or_else(|| ProviderError::InvalidOperation(
+            "This label folder does not exist in the current catalog. Refresh the account before applying it.".into()
+        ))?.mailbox;
 
         if add {
-            self.apply_label_add(message_ids, label_id, &label_mailbox)
+            self.apply_label_add(message_ids, label_id, label_mailbox)
                 .await
         } else {
-            self.apply_label_remove(message_ids, label_id, &label_mailbox)
+            self.apply_label_remove(message_ids, label_id, label_mailbox)
                 .await
         }
     }
@@ -218,10 +190,19 @@ impl ImapProvider {
             return Ok(());
         }
 
-        let mut session = self.open_label_folder_session().await?;
-        let result = self
-            .apply_label_add_on(session.as_mut(), label_mailbox, by_source)
-            .await;
+        let mut session = self.open_plain_session().await?;
+        let result = async {
+            if let Some(binding) = self.store.label_bindings().map_err(db_err)?
+                .into_iter().find(|binding| binding.label_id == label_id)
+            {
+                if session.examine(label_mailbox).await?.uid_validity != binding.uidvalidity {
+                    return Err(ProviderError::InvalidOperation(
+                        "This label folder changed on the server. Refresh the account before applying it.".into(),
+                    ));
+                }
+            }
+            self.apply_label_add_on(session.as_mut(), label_mailbox, by_source).await
+        }.await;
         let _ = session.logout().await;
         result
     }
@@ -407,8 +388,21 @@ impl ImapProvider {
             return Ok(()); // Every message already lacks the label: no command.
         }
         let uidvalidity = by_uidvalidity.expect("non-empty targets carry a UIDVALIDITY");
+        if self
+            .store
+            .label_bindings()
+            .map_err(db_err)?
+            .iter()
+            .any(|binding| {
+                binding.label_id == label_id && binding.uidvalidity != Some(uidvalidity as u32)
+            })
+        {
+            return Err(ProviderError::InvalidOperation(
+                "This label folder changed on the server. Refresh the account before removing its label.".into(),
+            ));
+        }
 
-        let mut session = self.open_label_folder_session().await?;
+        let mut session = self.open_plain_session().await?;
         let result = self
             .apply_label_remove_on(session.as_mut(), label_mailbox, uidvalidity, &targets)
             .await;
@@ -556,17 +550,12 @@ impl ImapProvider {
         // Case-insensitive alias check against the EXISTING labels: a label
         // whose name matches (ignoring case) is returned as-is (idempotent).
         let plan = self.build_sync_plan()?;
-        for (id, _) in plan.dynamic_labels() {
-            if let Some(existing) = id.strip_prefix("lf:") {
-                let display = crate::provider::imap::write::decode_modified_utf7(existing)?;
-                if display.eq_ignore_ascii_case(&clean) {
-                    return Ok(Label {
-                        id: id.clone(),
-                        name: display,
-                        kind: "user".into(),
-                    });
-                }
-            }
+        if let Some(label) = plan
+            .label_catalog(false, std::iter::empty())
+            .into_iter()
+            .find(|label| label.kind == "user" && label.name.eq_ignore_ascii_case(&clean))
+        {
+            return Ok(label);
         }
 
         // Persist LIST-compatible wire names and IDs, as previous versions
@@ -575,7 +564,7 @@ impl ImapProvider {
         let label_mailbox = label_mailbox_name(&container, &delimiter, &wire_name);
         let arg = crate::provider::imap::write::build_wire_mailbox_arg(&label_mailbox)?;
 
-        let mut session = self.open_label_folder_session().await?;
+        let mut session = self.open_plain_session().await?;
         let result = self
             .create_label_folder_on(session.as_mut(), &container, &label_mailbox, &arg)
             .await;
@@ -590,7 +579,11 @@ impl ImapProvider {
             .map_err(db_err)?;
 
         Ok(Label {
-            id: format!("lf:{wire_name}"),
+            id: plan::mailbox_label_id(
+                &self.store.label_bindings().map_err(db_err)?,
+                &label_mailbox,
+                &format!("lf:{wire_name}"),
+            ),
             name: clean,
             kind: "user".into(),
         })
@@ -632,90 +625,91 @@ impl ImapProvider {
         }
     }
 
-    /// Delete a label mailbox only when every known message has another
-    /// synced copy and the server's UIDVALIDITY and UID set match our locations
-    /// (no unsynced mail we cannot vouch for). Otherwise a
-    /// permanent error. Deleting an already-absent label is idempotent success.
-    pub(super) async fn delete_label_folder(&self, id: &str) -> ProviderResult<()> {
-        let container = self.label_container()?;
-        let delimiter = self.delimiter()?;
-        let label_mailbox = self
-            .label_mailbox_for_id(id, &delimiter, &container)
-            .ok_or_else(|| {
-                ProviderError::InvalidOperation(format!(
-                    "label id {id:?} is not a label-folder id; refusing permanently"
-                ))
-            })?;
-
-        // Idempotent: an already-absent label (no catalog row) is success.
-        let catalog: std::collections::BTreeSet<String> = self
-            .store
-            .mailboxes()
-            .map_err(db_err)?
-            .into_iter()
-            .map(|m| m.name)
-            .collect();
-        if !catalog.contains(&label_mailbox) {
-            return Ok(());
-        }
-
-        // Safety: every location in the label mailbox must belong to a message
-        // with at least one OTHER synced location.
-        let locations = self
-            .store
-            .locations_in_mailbox(&label_mailbox)
-            .map_err(db_err)?;
-        let mut would_lose = 0usize;
-        for location in &locations {
-            let others = self
-                .store
-                .locations_for_message(&location.message_id)
-                .map_err(db_err)?
-                .into_iter()
-                .filter(|l| l.mailbox != label_mailbox)
-                .count();
-            if others == 0 {
-                would_lose += 1;
+    /// Folder creation verifies the new path against live LIST, including
+    /// its hierarchy delimiter and configured system and label mailboxes.
+    pub(super) async fn create_user_folder(&self, name: &str) -> ProviderResult<Label> {
+        let mut session = self.open_plain_session().await?;
+        let result = async {
+            let before = session.list_mailboxes().await?;
+            if !before
+                .iter()
+                .any(|row| row.name.eq_ignore_ascii_case(INBOX) && !row.no_select)
+            {
+                return Err(ProviderError::TransientTransport(
+                    "The server has not confirmed the folder listing.".into(),
+                ));
             }
+            self.recover_mailbox_label_edit(session.as_mut(), &before)
+                .await?;
+            self.verify_mailbox_label_bindings(session.as_mut(), &before)
+                .await?;
+            let delimiter = before
+                .iter()
+                .find_map(|row| row.delimiter.as_deref())
+                .unwrap_or_default();
+            let clean = super::native_labels::validate_mailbox_label_name(name, delimiter)?;
+            let wire = crate::provider::imap::write::encode_modified_utf7(&clean);
+            let label = self.mailbox_label_from_listing(&before, &wire, true, false)?;
+            if label.kind != "folder" {
+                return Err(ProviderError::InvalidOperation(
+                    "Choose a folder name outside the configured label container.".into(),
+                ));
+            }
+            if !before.iter().any(|row| row.name == wire) {
+                let arg = crate::provider::imap::write::build_wire_mailbox_arg(&wire)?;
+                let created = as_write_session(session.as_mut())?
+                    .create_mailbox_arg(&arg)
+                    .await
+                    .map_err(|error| error.into_provider_error());
+                let after = session.list_mailboxes().await?;
+                if let Some(row) = after.iter().find(|row| row.name == wire) {
+                    let label = self.mailbox_label_from_listing(&after, &wire, false, false)?;
+                    self.store
+                        .upsert_mailbox_catalog(&wire, row.delimiter.as_deref(), None)
+                        .map_err(db_err)?;
+                    return Ok(label);
+                }
+                created?;
+                return Err(ProviderError::TransientTransport(
+                    "The server did not confirm the new folder.".into(),
+                ));
+            }
+            let row = before
+                .iter()
+                .find(|row| row.name == wire)
+                .expect("verified LIST entry");
+            self.store
+                .upsert_mailbox_catalog(&wire, row.delimiter.as_deref(), None)
+                .map_err(db_err)?;
+            Ok(label)
         }
-        if would_lose > 0 {
-            return Err(ProviderError::InvalidOperation(format!(
-                "cannot delete label {id:?}: {would_lose} message(s) have no other synced copy, so \
-                 deleting its mailbox {label_mailbox:?} would lose them; refusing permanently"
-            )));
-        }
-
-        // Check both the count and exact UID coordinates on the server;
-        // counts alone miss replacements of known mail by unsynced mail.
-        let mut session = self.open_label_folder_session().await?;
-        let result = self
-            .delete_label_folder_on(session.as_mut(), &label_mailbox, &locations)
-            .await;
+        .await;
         let _ = session.logout().await;
-        result?;
-
-        // Retire the catalog row, sync-state and locations in one transaction,
-        // journaling affected hot threads — reusing the slice 5b-2 retirement
-        // helper by passing the full present catalog MINUS the deleted label,
-        // so ONLY that mailbox is retired (nothing else is absent from the set).
-        let present: Vec<String> = catalog
-            .into_iter()
-            .filter(|name| name != &label_mailbox)
-            .collect();
-        self.store
-            .retire_vanished_mailboxes(&present)
-            .map_err(db_err)?;
-        Ok(())
+        result
     }
 
     /// EXAMINE and SEARCH verify the exact UID coordinates before DELETE.
     /// A mismatch refuses deletion. Select INBOX before deleting the mailbox.
-    async fn delete_label_folder_on(
+    pub(super) async fn delete_label_folder_on(
         &self,
         session: &mut dyn ImapSession,
         label_mailbox: &str,
+        expected_validity: u32,
         locations: &[ImapLocation],
     ) -> ProviderResult<()> {
+        for location in locations {
+            if !self
+                .store
+                .locations_for_message(&location.message_id)
+                .map_err(db_err)?
+                .iter()
+                .any(|other| other.mailbox != label_mailbox)
+            {
+                return Err(ProviderError::InvalidOperation(
+                    "This folder has mail with no other synced copy. Move that mail before deleting the folder.".into(),
+                ));
+            }
+        }
         self.confirm_surviving_copies(
             session,
             label_mailbox,
@@ -738,9 +732,10 @@ impl ImapProvider {
             session.uid_search("ALL").await?.into_iter().collect();
         let local_uids: std::collections::BTreeSet<u32> =
             locations.iter().map(|l| l.uid as u32).collect();
-        if locations
-            .iter()
-            .any(|l| status.uid_validity != Some(l.uidvalidity as u32))
+        if status.uid_validity != Some(expected_validity)
+            || locations
+                .iter()
+                .any(|location| location.uidvalidity != i64::from(expected_validity))
             || server_uids != local_uids
         {
             return Err(ProviderError::InvalidOperation(format!(
@@ -761,7 +756,7 @@ impl ImapProvider {
 /// server delimiter, no leading/trailing space or delimiter, within
 /// [`policy::MAX_LABEL_NAME_CHARS`]. Returns the TRIMMED name. A permanent
 /// `InvalidOperation` describes any violation.
-fn validate_label_name(name: &str, delimiter: &str) -> ProviderResult<String> {
+pub(super) fn validate_label_name(name: &str, delimiter: &str) -> ProviderResult<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Err(ProviderError::InvalidOperation(

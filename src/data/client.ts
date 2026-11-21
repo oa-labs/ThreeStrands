@@ -422,7 +422,7 @@ export interface MailClient extends CorrespondenceClient {
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
   /** Mutates the primary account's labels, or the specified account's when provided. */
-  createLabel(name: string, accountId?: string): Promise<Label>;
+  createLabel(name: string, accountId?: string, folder?: boolean): Promise<Label>;
   updateLabel(id: string, name: string, accountId?: string): Promise<Label>;
   deleteLabel(id: string, accountId?: string): Promise<void>;
   listSplitInboxes(): Promise<SplitInbox[]>;
@@ -729,7 +729,7 @@ const tauriClient: MailClient = {
   checkProposedTimes: (request) => complete("check_proposed_times", { request }),
   checkProposedTime: (request) => complete("check_proposed_time", { request }),
   listLabels: (accountId) => read("list_labels", { accountId }),
-  createLabel: (name, accountId) => complete("create_label", { request: { name, accountId } }),
+  createLabel: (name, accountId, folder) => complete("create_label", { request: { name, accountId, folder } }),
   updateLabel: (id, name, accountId) => complete("update_label", { request: { id, name, accountId } }),
   deleteLabel: (id, accountId) => complete("delete_label", { id, accountId }),
   listSplitInboxes: () => read("list_split_inboxes"),

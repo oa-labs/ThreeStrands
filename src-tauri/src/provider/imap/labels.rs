@@ -102,6 +102,22 @@ pub fn labels_for_location_ids(location_ids: &[String], flags: &[String]) -> Vec
     labels
 }
 
+/// Standard IMAP flags and registered service keywords represent message state,
+/// not user labels. Custom labels use a bare, non-reserved keyword atom.
+pub(super) fn keyword_label(flag: &str) -> Option<crate::models::Label> {
+    if flag.starts_with(['\\', '$'])
+        || flag.len() > super::policy::MAX_LABEL_NAME_CHARS
+        || super::write::validate_flag(flag).ok()?.as_str() != flag
+    {
+        return None;
+    }
+    Some(crate::models::Label {
+        id: format!("kw:{flag}"),
+        name: flag.into(),
+        kind: "user".into(),
+    })
+}
+
 /// Full membership from a negotiated label extension outranks locally cached
 /// folder copies. Empty is meaningful: archived mail can have no labels at all.
 pub(super) fn labels_for_server_membership(

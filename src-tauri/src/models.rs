@@ -1291,6 +1291,8 @@ pub struct Label {
 pub struct CreateLabelRequest {
     pub name: String,
     #[serde(default)]
+    pub folder: bool,
+    #[serde(default)]
     pub account_id: Option<String>,
 }
 

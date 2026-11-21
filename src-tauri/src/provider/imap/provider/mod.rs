@@ -55,6 +55,7 @@ use super::{ImapLocation, ImapStateStore};
 
 mod body_fetch;
 mod drafts;
+mod keyword_labels;
 mod label_folders;
 mod label_moves;
 mod mail_send;

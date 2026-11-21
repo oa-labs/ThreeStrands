@@ -410,11 +410,12 @@ export function App() {
   const [createCalendarEventRequested, setCreateCalendarEventRequested] = useState(false);
   const [snoozeTargets, setSnoozeTargets] = useState<Thread[] | null>(null);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
+  const [folderAccountId, setFolderAccountId] = useState<string | null>(null);
   // Label ids belong to an account. Bulk actions target one account, so the
   // first target thread determines which catalog the label manager shows.
-  const labelTargetAccountId = labelTargetIds?.length
+  const labelTargetAccountId = folderAccountId ?? (labelTargetIds?.length
     ? threads.find((thread) => thread.id === labelTargetIds[0])?.accountId ?? activeAccountId ?? undefined
-    : undefined;
+    : undefined);
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const {
     aiProviderChosen, aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
@@ -631,7 +632,7 @@ export function App() {
     ? "compose"
     : paletteOpen
       ? "palette"
-      : Boolean(snoozeTargets) || settingsOpen || shortcutHelpOpen || gettingStartedOpen || Boolean(unsubscribeMessage) || Boolean(splitTarget) || Boolean(muteTarget) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
+      : Boolean(snoozeTargets) || settingsOpen || shortcutHelpOpen || gettingStartedOpen || Boolean(unsubscribeMessage) || Boolean(splitTarget) || Boolean(muteTarget) || Boolean(labelTargetIds?.length) || Boolean(folderAccountId) || Boolean(taskEditor) || Boolean(meetingEditor)
         ? "modal"
         : "read";
 
@@ -2123,30 +2124,6 @@ export function App() {
           onClose={() => setGettingStartedOpen(false)}
         />
       ) : null}
-      {labelTargetIds && labelTargetIds.length > 0 ? (
-        <LabelManager
-          labels={labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : []}
-          accountId={labelTargetAccountId}
-          nativeLabels={accounts.some((account) => account.email === labelTargetAccountId && account.labelModel === "imapNativeLabels")}
-          capabilities={labelCapabilities(
-            accounts.find((account) => account.email === labelTargetAccountId)?.labelModel,
-          )}
-          checkedLabelIds={new Set(
-            (labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : [])
-              .filter((label) =>
-                labelTargetIds.every((id) => threads.find((thread) => thread.id === id)?.labels.includes(label.id)),
-              )
-              .map((label) => label.id),
-          )}
-          onClose={() => setLabelTargetIds(null)}
-          onCreate={createLabel}
-          onDelete={deleteLabel}
-          onRename={renameLabel}
-          onToggle={(label, value) => {
-            executeCommand(labelCommand(label.id, label.name, value));
-          }}
-        />
-      ) : null}
       {settingsOpen ? (
         <ErrorBoundary area="Settings" variant="floating" onDismiss={() => setSettingsOpen(false)}>
         <Suspense fallback={null}>
@@ -2156,6 +2133,7 @@ export function App() {
             onClose={() => setSettingsOpen(false)}
             preferences={preferences}
             mailAccounts={mailAccountSettings}
+            onManageFolders={setFolderAccountId}
             calendarAccounts={calendar}
             splitInboxes={{
               ...splitInboxCatalog,
@@ -2177,6 +2155,32 @@ export function App() {
           />
         </Suspense>
         </ErrorBoundary>
+      ) : null}
+      {folderAccountId || labelTargetIds?.length ? (
+        <LabelManager
+          key={folderAccountId ?? labelTargetAccountId}
+          foldersOnly={folderAccountId !== null}
+          labels={labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : []}
+          accountId={labelTargetAccountId}
+          nativeLabels={accounts.some((account) => account.email === labelTargetAccountId && account.labelModel === "imapNativeLabels")}
+          capabilities={labelCapabilities(
+            accounts.find((account) => account.email === labelTargetAccountId)?.labelModel,
+          )}
+          checkedLabelIds={new Set(
+            (labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : [])
+              .filter((label) =>
+                Boolean(labelTargetIds?.length) && labelTargetIds?.every((id) => threads.find((thread) => thread.id === id)?.labels.includes(label.id)),
+              )
+              .map((label) => label.id),
+          )}
+          onClose={() => { setLabelTargetIds(null); setFolderAccountId(null); }}
+          onCreate={createLabel}
+          onDelete={deleteLabel}
+          onRename={renameLabel}
+          onToggle={(label, value) => {
+            executeCommand(labelCommand(label.id, label.name, value));
+          }}
+        />
       ) : null}
       <EnrollmentRequestNotice
         suppressed={settingsOpen && settingsSection === "replicatedSync"}

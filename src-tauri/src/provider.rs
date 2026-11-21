@@ -617,6 +617,11 @@ pub trait MailMutate: Send + Sync {
     ) -> ProviderResult<()>;
     async fn list_labels(&self) -> ProviderResult<Vec<Label>>;
     async fn create_label(&self, name: &str) -> ProviderResult<Label>;
+    async fn create_folder(&self, _name: &str) -> ProviderResult<Label> {
+        Err(ProviderError::InvalidOperation(
+            "This account does not support physical folders.".into(),
+        ))
+    }
     async fn update_label(&self, id: &str, name: &str) -> ProviderResult<Label>;
     async fn delete_label(&self, id: &str) -> ProviderResult<()>;
 }

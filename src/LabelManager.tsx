@@ -15,6 +15,7 @@ export function LabelManager({
   accountId,
   capabilities,
   nativeLabels = false,
+  foldersOnly = false,
   checkedLabelIds,
   onClose,
   onCreate,
@@ -24,18 +25,19 @@ export function LabelManager({
 }: {
   labels: Label[];
   accountId?: string;
-  /** What label actions this account's provider can perform. Controls that
-   * could only fail (rename on IMAP; any label action with no label storage)
-   * are hidden, and the no-labels case shows an explanation instead. */
+  /** What label and folder actions this account supports. */
   capabilities: LabelCapabilities;
   nativeLabels?: boolean;
+  foldersOnly?: boolean;
   checkedLabelIds: Set<string>;
   onClose(): void;
-  onCreate(name: string): Promise<Label>;
+  onCreate(name: string, folder?: boolean): Promise<Label>;
   onDelete(id: string): Promise<void>;
   onRename(id: string, name: string): Promise<void>;
   onToggle(label: Label, value: boolean): void;
 }) {
+  const [showFolders, setShowFolders] = useState(false);
+  const folders = capabilities.canManageFolders && (foldersOnly || showFolders || !capabilities.canManageLabels);
   const [renaming, setRenaming] = useState<Label | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -62,16 +64,26 @@ export function LabelManager({
   const orderedLabels = useMemo(() => {
     const usage = accountId ? readLabelUsage(accountId) : {};
     return labels
-      .filter(isManageableLabel)
+      .filter((label) => folders ? label.kind === "folder" : isManageableLabel(label))
       .sort((a, b) => {
         const recencyDelta = (usage[b.id] ?? 0) - (usage[a.id] ?? 0);
         if (recencyDelta !== 0) return recencyDelta;
         return formatLabelName(a).localeCompare(formatLabelName(b), undefined, { sensitivity: "base" });
       });
-  }, [labels, accountId]);
+  }, [labels, accountId, folders]);
 
-  const applyLabel = (label: Label) => {
+  const startRename = (label: Label) => {
+    setError(null);
+    setRenaming(label);
+    setRenameValue(label.name);
+  };
+
+  const selectLabel = (label: Label) => {
     if (busy || deleting) return;
+    if (folders) {
+      startRename(label);
+      return;
+    }
     onToggle(label, !checkedLabelIds.has(label.id));
     if (accountId) recordLabelUsed(accountId, label.id);
     onClose();
@@ -81,66 +93,82 @@ export function LabelManager({
     const trimmed = name.trim();
     if (!trimmed || busy || deleting) return;
     setBusy(true);
+    setError(null);
     try {
-      const label = await onCreate(trimmed);
-      onToggle(label, true);
-      if (accountId) recordLabelUsed(accountId, label.id);
-      onClose();
-    } catch {
+      if (folders) {
+        await onCreate(trimmed, true);
+      } else {
+        const label = await onCreate(trimmed);
+        onToggle(label, true);
+        if (accountId) recordLabelUsed(accountId, label.id);
+        onClose();
+      }
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal title="Manage Labels" onClose={onClose}>
-      {!capabilities.canManageLabels ? (
+    <Modal title={folders ? "Manage Folders" : "Manage Labels"} onClose={onClose}>
+      {!foldersOnly && capabilities.canManageFolders && capabilities.canManageLabels ? (
+        <button type="button" className="btn btn-sm" disabled={busy || Boolean(deleting)}
+          onClick={() => {
+            setShowFolders(!folders);
+            setRenaming(null);
+            setError(null);
+          }}>
+          {folders ? "Manage Labels" : "Manage Folders"}
+        </button>
+      ) : null}
+      {!(capabilities.canManageLabels || folders) ? (
         <p className="label-unavailable">{capabilities.unavailableReason}</p>
       ) : (
       <FindOrCreatePicker
         items={orderedLabels}
         getSearchText={(label: Label) => formatLabelName(label)}
-        placeholder={capabilities.canCreateLabels ? "Find or create a label" : "Find a label"}
-        ariaLabel={capabilities.canCreateLabels ? "Find or Create a Label" : "Find a Label"}
-        allowCreate={capabilities.canCreateLabels}
+        key={folders ? "folders" : "labels"}
+        placeholder={folders ? "Find or create a folder" : capabilities.canCreateLabels ? "Find or create a label" : "Find a label"}
+        ariaLabel={folders ? "Find or Create a Folder" : capabilities.canCreateLabels ? "Find or Create a Label" : "Find a Label"}
+        allowCreate={folders || capabilities.canCreateLabels}
         listId="label-options"
-        listLabel="Labels"
-        emptyMessage={capabilities.canCreateLabels ? "No labels yet. Type a name to create one." : "No matching labels."}
-        createLabel={(name) => <>Create label "{name}"</>}
-        onSelect={applyLabel}
+        listLabel={folders ? "Folders" : "Labels"}
+        emptyMessage={folders ? "No matching folders." : capabilities.canCreateLabels ? "No labels yet. Type a name to create one." : "No matching labels."}
+        createLabel={(name) => <>Create {folders ? "folder" : "label"} "{name}"</>}
+        onSelect={selectLabel}
         onCreate={(name) => { void createAndApply(name); }}
         renderItem={(label, option) => (
           <div
             key={label.id}
             id={option.id}
             role="option"
-            aria-label={checkedLabelIds.has(label.id) ? `${formatLabelName(label)}, added` : formatLabelName(label)}
+            aria-label={!folders && checkedLabelIds.has(label.id) ? `${formatLabelName(label)}, added` : formatLabelName(label)}
             aria-selected={option.active}
             className={option.active ? "highlighted" : undefined}
             onMouseEnter={option.onMouseEnter}
             onClick={option.onClick}
           >
             <span className="label-option-name">
-              {checkedLabelIds.has(label.id) ? <Check size={ICON_SIZE.sm} /> : <span className="label-option-check-spacer" />}
+              {!folders && checkedLabelIds.has(label.id) ? <Check size={ICON_SIZE.sm} /> : <span className="label-option-check-spacer" />}
               {formatLabelName(label)}
             </span>
-            {label.kind === "user" ? (
+            {(folders || label.kind === "user") ? (
               <span className="label-actions">
-                {capabilities.canRenameLabels ? (
+                {folders || capabilities.canRenameLabels ? (
                   <button
                     className="btn-icon btn-icon-sm"
                     aria-label={`Rename ${label.name}`}
                     disabled={busy || Boolean(deleting)}
                     onClick={(event) => {
                       event.stopPropagation();
-                      setError(null);
-                      setRenaming(label);
-                      setRenameValue(label.name);
+                      startRename(label);
                     }}
                   >
                     <Pencil size={ICON_SIZE.sm} />
                   </button>
                 ) : null}
-                {capabilities.canDeleteLabels ? <button
+                {folders || capabilities.canDeleteLabels ? <button
                   className="btn-icon btn-icon-sm"
                   aria-label={`Delete ${label.name}`}
                   disabled={busy || Boolean(deleting)}
@@ -148,7 +176,7 @@ export function LabelManager({
                     event.stopPropagation();
                     setRenaming(null);
                     setError(null);
-                    if (nativeLabels) setDeleting(label);
+                    if (nativeLabels || capabilities.canManageFolders) setDeleting(label);
                     else void deleteLabel(label);
                   }}
                 >
@@ -193,9 +221,11 @@ export function LabelManager({
         cancelLabel="Cancel"
         onCancel={() => { setDeleting(null); setError(null); }}
         disabled={busy}
-        actions={[{ label: "Delete Label", className: "btn-danger", onClick: () => { void deleteLabel(deleting); } }]}
+        actions={[{ label: folders ? "Delete Folder" : "Delete Label", className: "btn-danger", onClick: () => { void deleteLabel(deleting); } }]}
       >
-        Your messages stay in Gmail. Split Inboxes that use this label will need a replacement.
+        {nativeLabels
+          ? "Your messages stay in Gmail. Split Inboxes that use this label will need a replacement."
+          : `Each message must have another verified server copy. Split Inboxes that use this ${folders ? "folder" : "label"} will need a replacement.`}
       </InlineConfirm> : null}
       {error ? <p role="alert">{error}</p> : null}
     </Modal>

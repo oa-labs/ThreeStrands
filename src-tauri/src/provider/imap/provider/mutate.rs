@@ -364,7 +364,9 @@ fn classify_message_mutation(
     remove: &[String],
 ) -> ProviderResult<MessageMutationKind> {
     let is_user_label = |id: &String| {
-        id.starts_with("lf:") || id.starts_with("folder:") || id.starts_with("imap-label:")
+        ["lf:", "folder:", "imap-label:", "kw:"]
+            .iter()
+            .any(|prefix| id.starts_with(prefix))
     };
     let any_user_label = add.iter().chain(remove.iter()).any(is_user_label);
     if !any_user_label {
@@ -452,7 +454,9 @@ impl MailMutate for ImapProvider {
             MessageMutationKind::Label { id, add } => {
                 if self.store.uses_native_labels().map_err(db_err)? {
                     self.apply_native_label(ids, &id, add).await
-                } else if id.starts_with("lf:") {
+                } else if let Some(keyword) = id.strip_prefix("kw:") {
+                    self.apply_keyword(ids, keyword, add).await
+                } else if id.starts_with("lf:") || id.starts_with("imap-label:") {
                     self.apply_label_mutation(ids, &id, add).await
                 } else {
                     Err(ProviderError::InvalidOperation(
@@ -467,55 +471,79 @@ impl MailMutate for ImapProvider {
         let plan = self.build_sync_plan()?;
         let native = self.store.uses_native_labels().map_err(db_err)?;
         let catalog = self.store.mailboxes().map_err(db_err)?;
-        Ok(plan.label_catalog(
+        let mut labels = plan.label_catalog(
             native,
             catalog
                 .iter()
                 .filter(|row| row.special_use.is_none())
                 .map(|row| row.name.as_str()),
-        ))
+        );
+        if !native
+            && self.settings.label_storage
+                == crate::provider::imap::settings::LabelStorage::Keywords
+        {
+            labels.extend(
+                self.store
+                    .known_keywords()
+                    .map_err(db_err)?
+                    .iter()
+                    .filter_map(|flag| crate::provider::imap::labels::keyword_label(flag)),
+            );
+        }
+        Ok(labels)
     }
 
     async fn create_label(&self, name: &str) -> ProviderResult<Label> {
         if self.store.uses_native_labels().map_err(db_err)? {
             return self.create_native_label(name).await;
         }
+        if self.settings.label_storage == crate::provider::imap::settings::LabelStorage::Keywords {
+            return self.create_keyword_label(name).await;
+        }
         self.create_label_folder(name).await
     }
 
-    async fn update_label(&self, id: &str, name: &str) -> ProviderResult<Label> {
+    async fn create_folder(&self, name: &str) -> ProviderResult<Label> {
         if self.store.uses_native_labels().map_err(db_err)? {
-            return self
-                .edit_native_label(id, Some(name))
-                .await?
-                .ok_or_else(|| {
-                    ProviderError::TransientTransport(
-                        "The server has not confirmed the label rename.".into(),
-                    )
-                });
+            return Err(ProviderError::InvalidOperation(
+                "This account uses native labels in place of physical folders.".into(),
+            ));
         }
-        // RENAME is deliberately NOT implemented. The `lf:` label id is derived
-        // from the label NAME, so a rename changes the id; but the engine and
-        // database have no way to migrate stored label ids: there is no label
-        // alias table (unlike thread aliases), and `update_label`'s returned
-        // `Label` is handed straight to the frontend, never used to re-point
-        // the `threads.labels_json` rows that carry `lf:<old>`. Renaming would
-        // therefore silently orphan every message/thread labelled with the old
-        // id until each is independently re-ingested. Until a label-id
-        // migration exists, refuse permanently with a plain-language reason.
-        Err(ProviderError::InvalidOperation(
-            "renaming a label is not supported on this account: a label-folder label's id is \
-             derived from its name, and there is no safe migration of the label id already stored \
-             on your messages and threads, so a rename would detach them from the label. Create a \
-             new label and move the messages instead. (Refusing permanently.)"
-                .into(),
-        ))
+        self.create_user_folder(name).await
+    }
+
+    async fn update_label(&self, id: &str, name: &str) -> ProviderResult<Label> {
+        let native = self.store.uses_native_labels().map_err(db_err)?;
+        self.edit_mailbox_label(id, Some(name), native)
+            .await?
+            .ok_or_else(|| {
+                ProviderError::TransientTransport("The server has not confirmed the rename.".into())
+            })
     }
 
     async fn delete_label(&self, id: &str) -> ProviderResult<()> {
-        if self.store.uses_native_labels().map_err(db_err)? {
-            return self.edit_native_label(id, None).await.map(|_| ());
+        let native = self.store.uses_native_labels().map_err(db_err)?;
+        if !native
+            && (id.starts_with("kw:")
+                || (id.starts_with("lf:")
+                    && self.settings.label_storage
+                        != crate::provider::imap::settings::LabelStorage::Folders))
+        {
+            return Err(ProviderError::InvalidOperation(
+                "This account does not support deleting this kind of label.".into(),
+            ));
         }
-        self.delete_label_folder(id).await
+        if !native
+            && !self.build_sync_plan()?.entries.iter().any(|entry| {
+                entry.role.is_none()
+                    && !entry.is_inbox
+                    && entry.location_label_id.as_deref() == Some(id)
+            })
+        {
+            // Idempotent for a vanished folder, and never delete on the basis
+            // of a path parsed out of an unknown or retired ID.
+            return Ok(());
+        }
+        self.edit_mailbox_label(id, None, native).await.map(|_| ())
     }
 }
