@@ -60,9 +60,10 @@ and re-add accounts to test the new path.
   Implemented in [identity mappings](imap-identity-mappings.md).
 - [x] Map advertised `X-GM-THRID` conversation identities for acquired IMAP
   mail. Use the binding for reply drafts and snoozed conversation lookup.
-- [ ] Reconcile preexisting IMAP conversations whose header-derived grouping
-  conflicts with the server's thread IDs. Keep affected existing links intact
-  until messages can be safely reassociated.
+- [x] Recheck retained UIDs on Gmail and repair verified legacy
+  header-derived splits and merges. Keep stable message IDs, move links tied
+  to those messages, and retain a thread alias for a proven whole merge.
+  [Gmail thread repair](imap-gmail-thread-repair.md)
 - [x] Define ambiguous identity handling: no subject-only matches and no silent
   reassociation when Message-ID headers are missing or duplicated. Preserve and
   expose unresolved references rather than deleting workflow data.
@@ -193,7 +194,7 @@ sync does not fetch bodies, and history import cannot starve Inbox updates.
 | Gap | Follow-up and priority |
 | --- | --- |
 | Sending identities | Manual addresses, default From, Reply-To, and reply address selection are available. Automatic Gmail Send mail as discovery still requires the API. Check alias acceptance in the live Gmail SMTP pilot. |
-| Existing conversation grouping | Native thread bindings are in use for acquired mail. Reconcile legacy header-derived grouping where its stored assignments disagree with Gmail. |
+| Unresolved conversation evidence | Cached groups with incomplete or contradictory Gmail evidence stay available with their existing links. A repair also waits for outstanding conversation-wide work to settle. [Repair and deferral rules](imap-gmail-thread-repair.md) |
 | Gmail signature import | Optional convenience. Existing ThreeStrands signatures and defaults should remain usable during conversion. |
 | IMAP OAuth | Separate authentication project. Useful for broader provider compatibility but not an escape from Google's scope verification. |
 

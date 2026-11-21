@@ -63,6 +63,9 @@ pub struct ImapStateStore {
 #[path = "imap/label_edits.rs"]
 pub(crate) mod label_edits;
 
+#[path = "imap/thread_repair.rs"]
+pub(crate) mod thread_repair;
+
 impl ImapStateStore {
     pub(crate) fn set_native_labels(&self, supported: bool) -> DbResult<()> {
         self.database.with_connection(|c| {
@@ -549,28 +552,22 @@ impl ImapStateStore {
                 rusqlite::params![self.account_id, external],
                 |row| row.get::<_, String>(0),
             ).optional()?;
-            let conflict = || DatabaseError::invalid(
-                "Gmail conversation identity conflicts with existing mail. The existing conversation was kept."
-            );
+            let conflicted = thread_repair::record_evidence(transaction, &self.account_id, message_id, &external)?;
+            // Existing grouping remains visible until a complete, verified
+            // repair can update the provider and the application together.
+            if let Some(existing) = existing {
+                return Ok(Some(existing));
+            }
+            if conflicted {
+                return Ok(None);
+            }
             if let Some(bound) = bound {
-                if existing.as_ref().is_some_and(|id| id != &bound) {
-                    return Err(conflict());
-                }
-                return Ok(bound);
+                return Ok(Some(bound));
             }
-            let thread_id = existing.unwrap_or_else(|| {
-                crate::provider::imap::gmail_thread_id(&self.account_id, &external)
-            });
-            let inserted = transaction.execute(
-                "INSERT INTO imap_gmail_threads(account_id,gmail_thread_id,thread_id)
-                 VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",
-                rusqlite::params![self.account_id, external, thread_id],
-            )?;
-            if inserted != 1 {
-                return Err(conflict());
-            }
-            Ok(thread_id)
-        })
+            let thread_id = crate::provider::imap::gmail_thread_id(&self.account_id, &external);
+            thread_repair::bind_thread(transaction, &self.account_id, &external, &thread_id)?;
+            Ok(Some(thread_id))
+        })?.ok_or_else(|| DatabaseError::invalid("Conflicting Gmail conversation evidence for this message."))
     }
 
     pub(crate) fn is_gmail_thread(&self, id: &str) -> DbResult<bool> {

@@ -258,6 +258,13 @@ pub const JOURNAL_RETENTION_GENERATIONS: u64 = 1_000;
 /// SIZE lives here; how the sync routine walks the batches is its own concern.
 pub const UID_BATCH_SIZE: usize = 500;
 
+/// The upgrade rechecks old UIDs separately from normal Inbox/Sent acquisition.
+/// Bound each poll's extra round trips and release the sync gate on slow mailboxes.
+pub(crate) const GMAIL_THREAD_REPAIR_PROBES: usize = 128;
+pub(crate) const GMAIL_THREAD_REPAIR_MAILBOXES: usize = 4;
+pub(crate) const GMAIL_THREAD_REPAIR_DEADLINE: std::time::Duration =
+    std::time::Duration::from_secs(15);
+
 // ---------------------------------------------------------------------------
 // Slice 5b-1: non-INBOX mailbox cadence
 // ---------------------------------------------------------------------------

@@ -567,6 +567,7 @@ fn purge_imap_cache(transaction: &rusqlite::Transaction<'_>, account: &str) -> D
         "imap_threads",
         "imap_thread_aliases",
         "imap_gmail_threads",
+        "imap_gmail_message_threads",
         "imap_change_journal",
         "imap_sync_state",
         "imap_message_tokens",

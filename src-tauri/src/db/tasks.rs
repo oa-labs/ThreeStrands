@@ -91,7 +91,10 @@ pub(super) fn select_sql() -> &'static str {
      FROM tasks"
 }
 
-fn task_by_id(connection: &rusqlite::Connection, id: &str) -> DbResult<Option<ThreadTask>> {
+pub(super) fn task_by_id(
+    connection: &rusqlite::Connection,
+    id: &str,
+) -> DbResult<Option<ThreadTask>> {
     Ok(connection
         .query_row(
             &format!("{} WHERE id = ?1", select_sql()),
@@ -101,7 +104,7 @@ fn task_by_id(connection: &rusqlite::Connection, id: &str) -> DbResult<Option<Th
         .optional()?)
 }
 
-fn record_task(
+pub(super) fn record_task(
     tx: &Transaction<'_>,
     task: &ThreadTask,
     fields: Option<BTreeSet<String>>,
@@ -490,8 +493,21 @@ impl Database {
 impl Database {
     /// Stores a task another device wrote. An existing row keeps its
     /// `created_at`.
-    pub(crate) fn upsert_synced_task(&self, task: ThreadTask) -> DbResult<()> {
+    pub(crate) fn upsert_synced_task(&self, mut task: ThreadTask) -> DbResult<()> {
         self.with_connection(|connection| {
+            if let (Some(_), Some(message)) = (&task.thread_id, &task.source_message_id) {
+                let verified: Option<String> = connection.query_row(
+                    "SELECT t.thread_id FROM imap_threads t
+                     JOIN imap_gmail_message_threads e USING(account_id,message_id)
+                     JOIN imap_gmail_threads b ON b.account_id=t.account_id AND b.thread_id=t.thread_id
+                       AND b.gmail_thread_id=e.gmail_thread_id
+                     WHERE t.account_id=?1 AND t.message_id=?2 AND e.conflicted=0",
+                    params![task.account_id, message], |row| row.get(0),
+                ).optional()?;
+                if let Some(provider_id) = verified {
+                    task.thread_id = Some(super::threads::local_thread_id(&task.account_id, &provider_id));
+                }
+            }
             connection.execute(
                 "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at,goal_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20) ON CONFLICT(id) DO UPDATE SET goal_id=excluded.goal_id, account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
                 params![

@@ -1352,7 +1352,7 @@ pub(crate) fn is_draft_message(message: &crate::mime::RawMessage) -> bool {
 /// long reply chain usually quotes its older messages anyway. Messages are
 /// considered newest first by the provider's receive time, falling back to
 /// the provider's order. Kept messages are returned in the provider's order.
-fn normalize_thread(
+pub(crate) fn normalize_thread(
     messages: &[crate::mime::RawMessage],
 ) -> (Vec<NormalizedMessage>, Vec<(String, String)>) {
     let mut newest_first: Vec<usize> = (0..messages.len()).collect();

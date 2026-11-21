@@ -14,7 +14,7 @@ use rusqlite::{params, Transaction};
 type IngestedThread = (String, Vec<NormalizedMessage>, Vec<(String, String)>);
 
 impl Database {
-    fn apply_thread(
+    pub(super) fn apply_thread(
         transaction: &Transaction<'_>,
         account_id: &str,
         messages: &[NormalizedMessage],

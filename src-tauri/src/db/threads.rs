@@ -216,21 +216,29 @@ impl Database {
 
     pub fn get_thread(&self, id: &str) -> DbResult<ThreadDetail> {
         self.with_connection(|connection| {
-            let thread = connection
-                .query_row(
-                    &format!("SELECT {THREAD_COLUMNS} FROM threads AS t WHERE t.id = ?1"),
-                    [id],
-                    thread_from_row,
-                )
-                .optional()?
-                .ok_or(DatabaseError::NotFound("Thread"))?;
+            let lookup = |id: &str| connection.query_row(
+                &format!("SELECT {THREAD_COLUMNS} FROM threads AS t WHERE t.id = ?1"),
+                [id], thread_from_row,
+            ).optional();
+            let thread = match lookup(id)? {
+                Some(thread) => thread,
+                None => {
+                    let Some((account, provider_id)) = id.split_once(':') else {
+                        return Err(DatabaseError::NotFound("Thread"));
+                    };
+                    let target = super::note_entities::conversation_id(connection, account, provider_id)?
+                        .filter(|target| target != provider_id)
+                        .ok_or(DatabaseError::NotFound("Thread"))?;
+                    lookup(&local_thread_id(account, &target))?.ok_or(DatabaseError::NotFound("Thread"))?
+                }
+            };
 
             let mut statement = connection.prepare(
                 "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
                             body_html_z, body_text_z, unsubscribe_json, unread, attachments_json, cc_json
                      FROM messages WHERE thread_id = ?1 ORDER BY sent_at",
             )?;
-            let rows = statement.query_map([id], |row| {
+            let rows = statement.query_map([&thread.id], |row| {
                 Ok(Message {
                     sent_by_account: None,
                     id: row.get(0)?,

@@ -1,5 +1,6 @@
 use super::*;
 mod all_mail;
+mod gmail_thread_repair;
 mod native_creation;
 mod native_label_edits;
 use async_trait::async_trait;

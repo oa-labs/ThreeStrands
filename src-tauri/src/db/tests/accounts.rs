@@ -678,6 +678,7 @@ fn every_table_keyed_by_account_is_purged_on_removal_or_deliberately_kept() {
         "imap_sync_state",
         "imap_thread_aliases",
         "imap_gmail_threads",
+        "imap_gmail_message_threads",
         "imap_threads",
         "mutations",
         "outbox_messages",

@@ -278,7 +278,209 @@ impl ImapProvider {
                 outstanding
             );
         }
+        if session.supports_label_extensions() {
+            match tokio::time::timeout(
+                policy::GMAIL_THREAD_REPAIR_DEADLINE,
+                self.advance_gmail_thread_repair(session),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) if error.requires_reauthentication() => return Err(error),
+                Ok(Err(error)) => log::warn!(
+                    "imap sync: could not repair Gmail conversation grouping this poll: {error}"
+                ),
+                Err(_) => log::warn!(
+                    "imap sync: Gmail conversation repair timed out; keeping the existing grouping"
+                ),
+            }
+            generation = generation.max(self.store.generation().map_err(db_err)?);
+        }
         Ok(Refreshed { last: generation })
+    }
+
+    async fn advance_gmail_thread_repair(
+        &self,
+        session: &mut dyn ImapSession,
+    ) -> ProviderResult<()> {
+        use std::collections::BTreeMap;
+        let mut by_mailbox = BTreeMap::<String, Vec<_>>::new();
+        for probe in self
+            .store
+            .gmail_thread_probes(policy::GMAIL_THREAD_REPAIR_PROBES)
+            .map_err(db_err)?
+        {
+            if by_mailbox.len() < policy::GMAIL_THREAD_REPAIR_MAILBOXES
+                || by_mailbox.contains_key(&probe.mailbox)
+            {
+                by_mailbox
+                    .entry(probe.mailbox.clone())
+                    .or_default()
+                    .push(probe);
+            }
+        }
+        for (mailbox, probes) in by_mailbox {
+            let status = match session.examine(&mailbox).await {
+                Ok(status) => Some(status),
+                Err(error) if error.requires_reauthentication() => return Err(error),
+                Err(_) => None,
+            };
+            let valid: Vec<_> = probes
+                .iter()
+                .filter(|probe| {
+                    status.as_ref().and_then(|status| status.uid_validity)
+                        == Some(probe.uidvalidity)
+                })
+                .map(|probe| probe.uid)
+                .collect();
+            let observed = session.uid_gmail_threads(&valid).await?;
+            for probe in &probes {
+                self.store
+                    .record_gmail_thread_probe(
+                        probe,
+                        observed.get(&probe.uid).copied().filter(|_| {
+                            status.as_ref().and_then(|status| status.uid_validity)
+                                == Some(probe.uidvalidity)
+                        }),
+                    )
+                    .map_err(db_err)?;
+            }
+        }
+        let limit = crate::mime::MAX_THREAD_MESSAGES;
+        let Some(repair) = self.store.next_gmail_thread_repair(limit).map_err(db_err)? else {
+            return Ok(());
+        };
+        let mut fetched = BTreeMap::new();
+        // Binding-only repairs have no membership to reproject.
+        if repair.changes_membership() {
+            for id in &repair.projected {
+                let members: Vec<_> = repair.groups[id].iter().cloned().collect();
+                let raw = self
+                    .fetch_assigned_messages(id, &members, Some(&mut *session))
+                    .await?;
+                let raw: Vec<_> = raw
+                    .into_iter()
+                    .filter(|message| !crate::sync::is_draft_message(message))
+                    .collect();
+                let (normalized, _) = crate::sync::normalize_thread(&raw);
+                fetched.insert(id.clone(), normalized);
+            }
+        }
+        self.store
+            .commit_gmail_thread_repair(&repair, &fetched, limit)
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    async fn fetch_assigned_messages(
+        &self,
+        thread_id: &str,
+        message_ids: &[String],
+        mut repair_session: Option<&mut dyn ImapSession>,
+    ) -> ProviderResult<Vec<RawMessage>> {
+        let plan = self.build_sync_plan()?;
+
+        // Thread-wide union of DYNAMIC (`folder:` / `lf:`) label ids across
+        // every message's every location (fact 1). The engine builds a thread's
+        // non-system labels from the ROOT message only, so a `folder:`/`lf:`
+        // label that lives on a reply (or on a message whose only location is a
+        // user folder) would be dropped unless EVERY returned message carries
+        // it. We gather the union here and append it to each message below.
+        // System location ids (INBOX/SENT/SPAM/TRASH) are per-copy, NOT in this
+        // union — they are unioned over all messages by the engine already.
+        let mut thread_dynamic: Vec<String> = Vec::new();
+        for message_id in message_ids {
+            let locations = self
+                .store
+                .locations_for_message(message_id)
+                .map_err(db_err)?;
+            for id in self.message_label_ids(&plan, message_id, &locations)? {
+                if (id.starts_with("folder:")
+                    || id.starts_with("lf:")
+                    || id.starts_with("imap-label:"))
+                    && !thread_dynamic.contains(&id)
+                {
+                    thread_dynamic.push(id);
+                }
+            }
+        }
+        thread_dynamic.sort();
+
+        let mut messages = Vec::new();
+        for message_id in message_ids {
+            let locations = self
+                .store
+                .locations_for_message(message_id)
+                .map_err(db_err)?;
+            if locations.is_empty() {
+                // The message's last location was expunged; skip it.
+                continue;
+            }
+            // Labels: the union across every copy, each classified by the
+            // mailbox's RESOLVED location (never an ad-hoc name parse), then
+            // the thread-wide dynamic union appended so every message carries
+            // the thread's `folder:`/`lf:` labels (fact 1).
+            let label_ids = merge_label_sets(&[
+                self.message_label_ids(&plan, message_id, &locations)?,
+                thread_dynamic.clone(),
+            ]);
+
+            // Body: cache first, else fetch from the best live location.
+            let raw = match self.cache.get(message_id).map_err(db_err)? {
+                Some(cached) => cached.raw,
+                None => {
+                    let fetched = match repair_session.as_mut() {
+                        Some(session) => {
+                            self.fetch_body_from_server(&mut **session, message_id)
+                                .await
+                        }
+                        None => {
+                            let mut session = self.open_session().await?;
+                            let fetched = self
+                                .fetch_body_from_server(session.as_mut(), message_id)
+                                .await;
+                            let _ = session.logout().await;
+                            fetched
+                        }
+                    };
+                    match fetched {
+                        Ok(Some(raw)) => raw,
+                        // No body on the server (expunged between sync and read).
+                        Ok(None) => continue,
+                        // Oversize/unfetchable body: skip this message with a
+                        // reason, do NOT fail the whole thread (design rule /
+                        // SLICE5A_FIXES item 2). Only transport/auth propagates.
+                        Err(ProviderError::PermanentClientRejection(reason)) => {
+                            log::warn!(
+                                "imap fetch_thread: skipping {message_id} (oversize body): {reason}"
+                            );
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+            };
+
+            match to_raw_message(&raw, message_id, label_ids) {
+                Ok(mut message) => {
+                    // Point the message at the surviving thread id.
+                    message.thread_id = thread_id.to_string();
+                    messages.push(message);
+                }
+                Err(ProviderError::PermanentClientRejection(reason)) => {
+                    // Per-message oversize: skip this message with a recorded
+                    // reason, do NOT fail the whole thread (design rule).
+                    log::warn!("imap fetch_thread: skipping {message_id}: {reason}");
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        if messages.is_empty() {
+            return Err(ProviderError::NotFound);
+        }
+        Ok(messages)
     }
 
     /// Build the account's sync plan from the persisted catalog + settings.
@@ -1134,7 +1336,7 @@ impl ImapProvider {
         known_gmail: bool,
     ) -> ProviderResult<Option<String>> {
         if let Some((observed_message, thread)) = observed {
-            if Some(observed_message) != gmail_message {
+            if observed_message == 0 || thread == 0 || Some(observed_message) != gmail_message {
                 return Err(ProviderError::TransientTransport(
                     "Gmail message identity changed while reading its conversation".into(),
                 ));
@@ -1844,98 +2046,8 @@ impl MailSync for ImapProvider {
             .clear_hot_thread_emptied(&thread_id)
             .map_err(db_err)?;
 
-        let plan = self.build_sync_plan()?;
-
-        // Thread-wide union of DYNAMIC (`folder:` / `lf:`) label ids across
-        // every message's every location (fact 1). The engine builds a thread's
-        // non-system labels from the ROOT message only, so a `folder:`/`lf:`
-        // label that lives on a reply (or on a message whose only location is a
-        // user folder) would be dropped unless EVERY returned message carries
-        // it. We gather the union here and append it to each message below.
-        // System location ids (INBOX/SENT/SPAM/TRASH) are per-copy, NOT in this
-        // union — they are unioned over all messages by the engine already.
-        let mut thread_dynamic: Vec<String> = Vec::new();
-        for message_id in &message_ids {
-            let locations = self
-                .store
-                .locations_for_message(message_id)
-                .map_err(db_err)?;
-            for id in self.message_label_ids(&plan, message_id, &locations)? {
-                if (id.starts_with("folder:") || id.starts_with("lf:"))
-                    && !thread_dynamic.contains(&id)
-                {
-                    thread_dynamic.push(id);
-                }
-            }
-        }
-        thread_dynamic.sort();
-
-        let mut messages = Vec::new();
-        for message_id in &message_ids {
-            let locations = self
-                .store
-                .locations_for_message(message_id)
-                .map_err(db_err)?;
-            if locations.is_empty() {
-                // The message's last location was expunged; skip it.
-                continue;
-            }
-            // Labels: the union across every copy, each classified by the
-            // mailbox's RESOLVED location (never an ad-hoc name parse), then
-            // the thread-wide dynamic union appended so every message carries
-            // the thread's `folder:`/`lf:` labels (fact 1).
-            let label_ids = merge_label_sets(&[
-                self.message_label_ids(&plan, message_id, &locations)?,
-                thread_dynamic.clone(),
-            ]);
-
-            // Body: cache first, else fetch from the best live location.
-            let raw = match self.cache.get(message_id).map_err(db_err)? {
-                Some(cached) => cached.raw,
-                None => {
-                    let mut session = self.open_session().await?;
-                    let fetched = self
-                        .fetch_body_from_server(session.as_mut(), message_id)
-                        .await;
-                    let _ = session.logout().await;
-                    match fetched {
-                        Ok(Some(raw)) => raw,
-                        // No body on the server (expunged between sync and read).
-                        Ok(None) => continue,
-                        // Oversize/unfetchable body: skip this message with a
-                        // reason, do NOT fail the whole thread (design rule /
-                        // SLICE5A_FIXES item 2). Only transport/auth propagates.
-                        Err(ProviderError::PermanentClientRejection(reason)) => {
-                            log::warn!(
-                                "imap fetch_thread: skipping {message_id} (oversize body): {reason}"
-                            );
-                            continue;
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-            };
-
-            match to_raw_message(&raw, message_id, label_ids) {
-                Ok(mut message) => {
-                    // Point the message at the surviving thread id.
-                    message.thread_id = thread_id.clone();
-                    messages.push(message);
-                }
-                Err(ProviderError::PermanentClientRejection(reason)) => {
-                    // Per-message oversize: skip this message with a recorded
-                    // reason, do NOT fail the whole thread (design rule).
-                    log::warn!("imap fetch_thread: skipping {message_id}: {reason}");
-                    continue;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-
-        if messages.is_empty() {
-            return Err(ProviderError::NotFound);
-        }
-        Ok(messages)
+        self.fetch_assigned_messages(&thread_id, &message_ids, None)
+            .await
     }
 
     /// Server-side search (Phase 5 run 4). Thin wrapper over

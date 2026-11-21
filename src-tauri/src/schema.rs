@@ -59,6 +59,7 @@ const MIGRATIONS: &[Migration] = &[
     (112, to_v112),
     (113, to_v113),
     (114, to_v114),
+    (115, to_v115),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1517,6 +1518,21 @@ fn ensure_note_starred_column(tx: &rusqlite::Transaction) -> Result<(), String> 
 
 /// A saved contact can remember which timezone their proposed meeting times
 /// are in. Null means "same as mine", which is every existing contact.
+fn to_v115(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS imap_gmail_message_threads (
+            account_id TEXT NOT NULL REFERENCES accounts(email) ON DELETE CASCADE,
+            message_id TEXT NOT NULL,
+            gmail_thread_id TEXT,
+            conflicted INTEGER NOT NULL DEFAULT 0,
+            probe_at INTEGER NOT NULL DEFAULT 0,
+            repair_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(account_id, message_id)
+        );",
+    )
+    .map_err(error)
+}
+
 fn to_v114(tx: &rusqlite::Transaction) -> Result<(), String> {
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS imap_label_bindings (
@@ -1878,6 +1894,7 @@ mod tests {
 
     /// Objects each migration above the v74 baseline adds, in `schema_objects` form.
     const ABOVE_BASELINE_OBJECTS: &[&str] = &[
+        "table:imap_gmail_message_threads",
         "table:imap_gmail_threads",
         "table:imap_label_bindings",
         "table:imap_label_edits",
