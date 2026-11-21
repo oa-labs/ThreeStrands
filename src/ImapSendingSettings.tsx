@@ -7,7 +7,7 @@ import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 
 /** One editable secondary-identity row (address + optional display name). */
-type IdentityRow = { address: string; displayName: string };
+type IdentityRow = { address: string; displayName: string; replyTo: string; isDefault: boolean };
 
 /**
  * The "Sending" panel for ONE IMAP account (rendered only when
@@ -22,6 +22,7 @@ export function ImapSendingSettings({ account }: { account: string }) {
   const { pending, busy, error, actFor } = useSettingsOperation();
   const [options, setOptions] = useState<ImapSendingOptions | null>(null);
   const [rows, setRows] = useState<IdentityRow[]>([]);
+  const [primaryReplyTo, setPrimaryReplyTo] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const headingId = useId();
 
@@ -30,7 +31,13 @@ export function ImapSendingSettings({ account }: { account: string }) {
     setOptions(next);
     // The first identity is the sign-in address (read-only); the rest are the
     // editable secondary addresses.
-    setRows(next.identities.slice(1).map((identity) => ({ address: identity.address, displayName: identity.displayName ?? "" })));
+    setPrimaryReplyTo(next.identities[0]?.replyTo ?? "");
+    setRows(next.identities.slice(1).map((identity) => ({
+      address: identity.address,
+      displayName: identity.displayName ?? "",
+      replyTo: identity.replyTo ?? "",
+      isDefault: Boolean(identity.isDefault),
+    })));
   }, [account]);
 
   useEffect(() => {
@@ -59,18 +66,28 @@ export function ImapSendingSettings({ account }: { account: string }) {
 
   const updateRow = (index: number, patch: Partial<IdentityRow>) =>
     setRows((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
-  const addRow = () => setRows((current) => [...current, { address: "", displayName: "" }]);
+  const addRow = () => setRows((current) => [...current, { address: "", displayName: "", replyTo: "", isDefault: false }]);
   const removeRow = (index: number) => setRows((current) => current.filter((_, i) => i !== index));
+  const defaultRow = rows.findIndex((row) => row.isDefault && row.address.trim());
 
   const saveIdentities = () =>
     actFor("identities", async () => {
       const submitted: SendingIdentityInput[] = [
         // The sign-in address is always first and cannot be removed; keep its
         // (read-only) display name if the server reported one.
-        { address: signInAddress, displayName: options.identities[0]?.displayName ?? null },
+        {
+          address: signInAddress,
+          displayName: options.identities[0]?.displayName ?? null,
+          replyTo: primaryReplyTo.trim() || undefined,
+        },
         ...rows
           .filter((row) => row.address.trim())
-          .map((row) => ({ address: row.address.trim(), displayName: row.displayName.trim() || null })),
+          .map((row) => ({
+            address: row.address.trim(),
+            displayName: row.displayName.trim() || null,
+            replyTo: row.replyTo.trim() || undefined,
+            isDefault: row.isDefault || undefined,
+          })),
       ];
       await mailClient.setImapIdentities(account, submitted);
       await load();
@@ -96,6 +113,11 @@ export function ImapSendingSettings({ account }: { account: string }) {
         <h5>Sending addresses</h5>
         <p className="settings-hint">Addresses this account can send mail from.</p>
         <SignInAddressRow address={signInAddress} />
+        <label className="settings-field settings-field-row">
+          <span>Sign-in Address Reply-To</span>
+          <input type="email" value={primaryReplyTo} disabled={busy}
+            onChange={(event) => setPrimaryReplyTo(event.target.value)} />
+        </label>
         <ul className="imap-identity-list">
           {rows.map((row, index) => (
             <IdentityRowFields
@@ -108,6 +130,18 @@ export function ImapSendingSettings({ account }: { account: string }) {
             />
           ))}
         </ul>
+        <label className="settings-field settings-field-row">
+          <span>Default Sending Address</span>
+          <select value={defaultRow} disabled={busy} onChange={(event) => {
+            const selected = Number(event.target.value);
+            setRows((current) => current.map((row, index) => ({ ...row, isDefault: index === selected })));
+          }}>
+            <option value={-1}>Sign-in address</option>
+            {rows.map((row, index) => row.address.trim() && (
+              <option key={index} value={index}>{row.address.trim()}</option>
+            ))}
+          </select>
+        </label>
         <div className="imap-sending-actions">
           <button type="button" className="btn btn-sm" disabled={busy} onClick={addRow}>
             <Plus size={ICON_SIZE.sm} /> Add address
@@ -223,6 +257,7 @@ function IdentityRowFields({
 }) {
   const addressId = useId();
   const nameId = useId();
+  const replyToId = useId();
   return (
     <li className="imap-identity-row">
       <div className="imap-identity-fields">
@@ -242,6 +277,14 @@ function IdentityRowFields({
           disabled={disabled}
           placeholder="Display name"
           onChange={(event) => onChange({ displayName: event.target.value })}
+        />
+        <label htmlFor={replyToId}>Reply-To {index + 1}</label>
+        <input
+          id={replyToId}
+          type="email"
+          value={row.replyTo}
+          disabled={disabled}
+          onChange={(event) => onChange({ replyTo: event.target.value })}
         />
       </div>
       <button

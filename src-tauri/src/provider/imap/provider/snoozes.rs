@@ -43,23 +43,48 @@ impl ImapProvider {
         // a cache miss means the provider deleted the email.
         let plan = self.build_sync_plan()?;
         let mut session = self.open_session().await?;
+        let native_id = if session.supports_label_extensions() {
+            self.store
+                .gmail_thread_lookup_id(&resolved)
+                .map_err(db_err)?
+        } else {
+            None
+        };
+        let queries = if let Some(thread) = native_id {
+            vec![format!("X-GM-THRID {thread}")]
+        } else {
+            references
+                .iter()
+                .map(|reference| {
+                    if reference.len() > 2048
+                        || !reference.is_ascii()
+                        || reference.chars().any(char::is_control)
+                    {
+                        return Err(ProviderError::InvalidOperation(
+                            "Invalid snooze message reference".into(),
+                        ));
+                    }
+                    Ok(format!(
+                        "HEADER Message-ID {}",
+                        super::super::search::quote_search_string(reference)
+                    ))
+                })
+                .collect::<ProviderResult<Vec<_>>>()?
+        };
         for entry in plan.entries.iter().filter(|entry| entry.synced_now) {
             let status = session.examine(&entry.mailbox).await?;
             let validity = status.uid_validity.unwrap_or(0) as i64;
-            for reference in references {
-                if reference.len() > 2048
-                    || !reference.is_ascii()
-                    || reference.chars().any(char::is_control)
-                {
-                    return Err(ProviderError::InvalidOperation(
-                        "Invalid snooze message reference".into(),
-                    ));
+            for query in &queries {
+                let mut uids = session.uid_search(query).await?;
+                if let Some(thread) = native_id {
+                    if uids.len() > policy::MAX_SEARCH_ACQUIRE {
+                        return Err(ProviderError::TransientTransport(
+                            "Snoozed mail recovery reached the account's search limit".into(),
+                        ));
+                    }
+                    let verified = session.uid_gmail_threads(&uids).await?;
+                    uids.retain(|uid| verified.get(uid).is_some_and(|(_, id)| *id == thread));
                 }
-                let query = format!(
-                    "HEADER Message-ID {}",
-                    super::super::search::quote_search_string(reference)
-                );
-                let uids = session.uid_search(&query).await?;
                 if uids.is_empty() {
                     continue;
                 }
@@ -74,6 +99,7 @@ impl ImapProvider {
                 }
             }
         }
+        let _ = session.logout().await;
         let resolved = self.store.resolve_thread_alias(id).map_err(db_err)?;
         for message in self.store.messages_in_thread(&resolved).map_err(db_err)? {
             if !self

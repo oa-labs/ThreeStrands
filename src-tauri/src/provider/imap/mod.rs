@@ -42,6 +42,7 @@ mod settings;
 mod setup;
 mod smtp;
 mod threading;
+pub(crate) use threading::gmail_thread_id;
 mod tls;
 mod write;
 

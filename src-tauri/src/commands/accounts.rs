@@ -176,9 +176,19 @@ pub(crate) struct ImapSetupRequest {
 /// autodiscovery HTTPS fetches, which are driven by the email domain.
 #[tauri::command]
 pub(crate) async fn test_and_save_imap_account(
-    request: ImapSetupRequest,
+    mut request: ImapSetupRequest,
     state: State<'_, AppState>,
 ) -> AppResult<Account> {
+    if let Some(email) = state.database.catalogued_account_email(&request.email)? {
+        request.email = email;
+    }
+    if state
+        .database
+        .get_account(&request.email)?
+        .is_some_and(|account| account.provider != MailProviderKind::Imap.as_str())
+    {
+        return Err("This address is already set up with a different mail connection.".into());
+    }
     let imap_pinned = match &request.imap_pinned_fingerprint {
         Some(hex) => Some(imap::parse_sha256_fingerprint(hex)?),
         None => None,
@@ -228,25 +238,33 @@ pub(crate) async fn test_and_save_imap_account(
     // Store the password in the keychain under the account's address. The
     // IMAP setup path does NOT go through `require_oauth_credential`:
     // `AccountAuth::credential()` has been OAuth-optional since Phase 1 Slice 2.
+    let _guard = state.correspondence.gate.lock().await;
     let auth = state
         .auth_config
         .mail_account(MailProviderKind::Imap, &request.email)?;
     let AccountAuth::Imap(credential) = &auth else {
         return Err("expected an IMAP credential for an IMAP account".into());
     };
+    let previous_password = credential.load().ok();
     credential.save(&crate::credentials::ImapPassword {
         imap: request.imap_password.clone(),
         smtp: request.smtp_password.clone(),
     })?;
 
-    // Adopt the account row and persist the settings. If the settings write
-    // fails, roll back the credential so a retry starts clean.
+    // Restore the previous credential if the database transaction fails.
     let adopt_result =
         save_tested_imap_settings(&state.database, &request, imap_pinned, smtp_pinned);
     let account = match adopt_result {
         Ok(account) => account,
         Err(error) => {
-            let _ = credential.disconnect();
+            match previous_password {
+                Some(previous) => {
+                    let _ = credential.save(&previous);
+                }
+                None => {
+                    let _ = credential.disconnect();
+                }
+            }
             return Err(error);
         }
     };
@@ -295,14 +313,13 @@ fn save_tested_imap_settings(
         identities: vec![imap::Identity {
             address: request.email.clone(),
             display_name: None,
+            ..Default::default()
         }],
         pinned_fingerprints,
         server_saves_sent: false,
     };
 
-    let account = database.adopt_mail_account(&request.email, MailProviderKind::Imap)?;
-    database.save_imap_account_settings(&request.email, &settings)?;
-    Ok(account)
+    Ok(database.adopt_tested_imap_account(&request.email, &settings)?)
 }
 
 /// Discover a set-up IMAP account's mailboxes and propose a special-use
@@ -523,6 +540,9 @@ pub(crate) struct SendingIdentityInput {
     address: String,
     #[serde(default)]
     display_name: Option<String>,
+    reply_to: Option<String>,
+    #[serde(default)]
+    is_default: bool,
 }
 
 /// Load the IMAP settings for `account`, erroring clearly when the account is
@@ -578,6 +598,8 @@ pub(crate) fn set_imap_identities(
         .map(|input| imap::Identity {
             address: input.address,
             display_name: input.display_name,
+            reply_to: input.reply_to,
+            is_default: input.is_default,
         })
         .collect();
     // Validate first; nothing is written unless this returns Ok. The login/
@@ -1383,6 +1405,28 @@ mod imap_setup_tests {
     }
 
     #[test]
+    fn setup_cannot_replace_an_existing_gmail_mailbox() {
+        let database = Database::open_memory();
+        let request = imap_setup_request();
+        database
+            .adopt_mail_account(&request.email, MailProviderKind::Gmail)
+            .unwrap();
+        assert!(super::save_tested_imap_settings(&database, &request, None, None).is_err());
+        assert_eq!(
+            database
+                .get_account(&request.email)
+                .unwrap()
+                .unwrap()
+                .provider,
+            "gmail"
+        );
+        assert!(database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn confirmed_mailbox_mapping_preserves_identifiers_in_saved_settings() {
         let database = Database::open_memory();
         let request = imap_setup_request();
@@ -1453,6 +1497,7 @@ mod imap_setup_tests {
         before.identities.push(super::imap::Identity {
             address: "alias@example.com".into(),
             display_name: Some("Alias".into()),
+            ..Default::default()
         });
 
         let update = connection_update(serde_json::json!({

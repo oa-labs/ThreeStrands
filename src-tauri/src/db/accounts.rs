@@ -50,62 +50,23 @@ impl Database {
 
     /// Ensures an account exists and folds pre-multi-account state onto it.
     ///
-    /// `provider` is the service the account just authorized through, so
-    /// it is recorded on a new row and kept current on an existing one.
+    /// `provider` is the service the account just authorized through. Setup
+    /// and reconnect keep the existing provider's mailbox identity namespace.
     pub fn adopt_mail_account(&self, email: &str, provider: MailProviderKind) -> DbResult<Account> {
+        self.with_transaction(|transaction| adopt_mail_account_on(transaction, email, provider))?;
+        self.get_account(email)?
+            .ok_or(DatabaseError::NotFound("Account"))
+    }
+
+    /// Persist a tested new IMAP connection and its server settings together.
+    pub(crate) fn adopt_tested_imap_account(
+        &self,
+        email: &str,
+        settings: &crate::provider::imap::ImapAccountSettings,
+    ) -> DbResult<Account> {
         self.with_transaction(|transaction| {
-            let exists: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ?1)",
-                [email],
-                |row| row.get(0),
-            )?;
-            if exists {
-                transaction.execute(
-                    "UPDATE accounts SET status = 'connected', provider = ?2, on_this_device = 1 WHERE email = ?1",
-                    params![email, provider.as_str()],
-                )?;
-            } else {
-                let sort_order: i64 = transaction.query_row(
-                    "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM accounts",
-                    [],
-                    |row| row.get(0),
-                )?;
-                let color = ACCOUNT_COLORS[(sort_order as usize) % ACCOUNT_COLORS.len()];
-                transaction.execute(
-                    "INSERT INTO accounts(email, color, status, provider, sort_order, connected_at)
-                     VALUES (?1, ?2, 'connected', ?3, ?4, ?5)",
-                    params![email, color, provider.as_str(), sort_order, Utc::now().to_rfc3339()],
-                )?;
-            }
-            for table in ["mutations", "threads", "triage_events"] {
-                transaction.execute(
-                    &format!("UPDATE {table} SET account_id = ?1 WHERE account_id = 'default'"),
-                    [email],
-                )?;
-            }
-            // Older builds recreated the legacy placeholder row on every
-            // launch. If this account already has real sync state, discard
-            // only that placeholder; otherwise rekey it so first-connect
-            // cursors and errors retain their original behavior.
-            transaction.execute(
-                "DELETE FROM sync_state
-                 WHERE account_id = 'default'
-                   AND account_id <> ?1
-                   AND EXISTS (
-                       SELECT 1 FROM sync_state AS existing
-                       WHERE existing.account_id = ?1
-                   )",
-                [email],
-            )?;
-            transaction.execute(
-                "UPDATE sync_state SET account_id = ?1 WHERE account_id = 'default'",
-                [email],
-            )?;
-            transaction.execute(
-                "INSERT OR IGNORE INTO sync_state(account_id) VALUES (?1)",
-                [email],
-            )?;
-            Ok(())
+            adopt_mail_account_on(transaction, email, MailProviderKind::Imap)?;
+            super::imap::write_settings_row(transaction, email, settings)
         })?;
         self.get_account(email)?
             .ok_or(DatabaseError::NotFound("Account"))
@@ -451,6 +412,78 @@ impl Database {
     }
 }
 
+fn adopt_mail_account_on(
+    transaction: &rusqlite::Transaction<'_>,
+    email: &str,
+    provider: MailProviderKind,
+) -> DbResult<()> {
+    let existing_provider: Option<String> = transaction
+        .query_row(
+            "SELECT provider FROM accounts WHERE email = ?1",
+            [email],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(existing_provider) = existing_provider {
+        if existing_provider != provider.as_str() {
+            return Err(DatabaseError::invalid(
+                "This address is already set up with a different mail connection.",
+            ));
+        }
+        transaction.execute(
+            "UPDATE accounts SET status = 'connected', on_this_device = 1 WHERE email = ?1",
+            [email],
+        )?;
+    } else {
+        let sort_order: i64 = transaction.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM accounts",
+            [],
+            |row| row.get(0),
+        )?;
+        let color = ACCOUNT_COLORS[(sort_order as usize) % ACCOUNT_COLORS.len()];
+        transaction.execute(
+            "INSERT INTO accounts(email, color, status, provider, sort_order, connected_at)
+             VALUES (?1, ?2, 'connected', ?3, ?4, ?5)",
+            params![
+                email,
+                color,
+                provider.as_str(),
+                sort_order,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+    }
+    for table in ["mutations", "threads", "triage_events"] {
+        transaction.execute(
+            &format!("UPDATE {table} SET account_id = ?1 WHERE account_id = 'default'"),
+            [email],
+        )?;
+    }
+    // Older builds recreated the legacy placeholder row on every
+    // launch. If this account already has real sync state, discard
+    // only that placeholder; otherwise rekey it so first-connect
+    // cursors and errors retain their original behavior.
+    transaction.execute(
+        "DELETE FROM sync_state
+         WHERE account_id = 'default'
+           AND account_id <> ?1
+           AND EXISTS (
+               SELECT 1 FROM sync_state AS existing
+               WHERE existing.account_id = ?1
+           )",
+        [email],
+    )?;
+    transaction.execute(
+        "UPDATE sync_state SET account_id = ?1 WHERE account_id = 'default'",
+        [email],
+    )?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO sync_state(account_id) VALUES (?1)",
+        [email],
+    )?;
+    Ok(())
+}
+
 // These provider caches have no foreign keys to the account catalog.
 /// Mail-derived rows keyed by a message or thread id rather than the
 /// account, with no foreign key for the thread delete to cascade through.
@@ -521,6 +554,7 @@ fn purge_imap_cache(transaction: &rusqlite::Transaction<'_>, account: &str) -> D
         "imap_mailboxes",
         "imap_threads",
         "imap_thread_aliases",
+        "imap_gmail_threads",
         "imap_change_journal",
         "imap_sync_state",
         "imap_message_tokens",
@@ -605,8 +639,15 @@ impl Database {
             connection.execute(
                 // A new account from another device is offered here, not
                 // reported as broken: it stays "available" until the user
-                // sets it up on this device. An existing row keeps its state.
-                "INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at,nickname,on_this_device) VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6,?7,0) ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,nickname=excluded.nickname,color=excluded.color,provider=excluded.provider,sort_order=excluded.sort_order",
+                // sets it up on this device. Replicated metadata cannot replace
+                // a locally configured provider or reinterpret its cached IDs.
+                "INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at,nickname,on_this_device)
+                 VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6,?7,0)
+                 ON CONFLICT(email) DO UPDATE SET
+                    display_name=excluded.display_name,nickname=excluded.nickname,
+                    color=excluded.color,sort_order=excluded.sort_order,
+                    provider=CASE WHEN accounts.on_this_device=1 THEN accounts.provider
+                                  ELSE excluded.provider END",
                 params![item.email, item.display_name, item.color, item.provider, item.sort_order, item.connected_at, item.nickname],
             )?;
             Ok(())

@@ -1030,7 +1030,7 @@ impl Correspondence {
                     .upsert_thread(&item.draft.account, &normalized)?;
             }
         } else if provider.capabilities().verifiable_delivery {
-            return Err("Delivery is still uncertain. No automatic retry was made. Check Gmail Sent before composing another message.".into());
+            return Err("Delivery is still uncertain. No automatic retry was made. Check Sent Mail before composing another message.".into());
         } else {
             // The provider keeps no server-side sent copy to confirm against
             // (`docs/imap-design.md`, "Sending": an uncertain SMTP result

@@ -998,6 +998,7 @@ mod provider_level_tests {
             vec![Identity {
                 address: "work@proton.me".into(),
                 display_name: Some("Work".into()),
+                ..Default::default()
             }],
         );
         let raw = b"From: work@proton.me\r\nTo: a@x.test\r\n\r\nbody\r\n";
@@ -1269,6 +1270,7 @@ mod provider_level_tests {
             identities: vec![Identity {
                 address: "second@threestrands.test".into(),
                 display_name: Some("Second".into()),
+                ..Default::default()
             }],
             pinned_fingerprints: pinned,
             server_saves_sent: false,

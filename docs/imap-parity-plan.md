@@ -7,15 +7,20 @@ status is not a complete description of today's implementation.
 
 Progress: the [identity audit](imap-identity-audit.md) and regression fixtures
 are complete. [Persistent message identity mappings](imap-identity-mappings.md)
-and X-GM-MSGID retrieval are implemented; external conversation identities and
-safe account conversion remain later work. The current IMAP user can rebuild
-their account if necessary, so eager legacy identity backfill is not required.
+and X-GM-MSGID retrieval are implemented. IMAP acquisition now learns Gmail
+conversation IDs and retains existing bindings when identity evidence conflicts.
+Safe conversion from a Gmail API account remains open.
 
 [All Mail, archive, and search completeness](imap-all-mail.md) is implemented:
 bounded aggregate acquisition, negotiated label membership/system actions,
 broader server search, and explicit partial coverage. General label management
 remains in progress. Native-label creation and apply/remove support is recorded in
 [native label membership](imap-native-labels.md).
+
+The Gmail app-password setup route reuses the IMAP/SMTP connection test
+and mailbox review. IMAP can verify interrupted sends against a unique
+server-generated Sent copy and supports local default sending addresses
+and Reply-To settings.
 
 ## Goal and scope
 
@@ -49,9 +54,11 @@ and re-add accounts to test the new path.
   without invalidating existing header-derived IMAP IDs: prefer stable internal
   IDs with external mappings over changing primary keys on reconnect.
   Implemented in [identity mappings](imap-identity-mappings.md).
-- [ ] Decide how advertised `X-GM-THRID` conversation identities become external
-  mappings under the same rule; external conversation identities remain later
-  work.
+- [x] Map advertised `X-GM-THRID` conversation identities for acquired IMAP
+  mail. Use the binding for reply drafts and snoozed conversation lookup.
+- [ ] Reconcile preexisting IMAP conversations whose header-derived grouping
+  conflicts with the server's thread IDs. Keep affected existing links intact
+  until messages can be safely reassociated.
 - [x] Define ambiguous identity handling: no subject-only matches and no silent
   reassociation when Message-ID headers are missing or duplicated. Preserve and
   expose unresolved references rather than deleting workflow data.
@@ -144,6 +151,8 @@ exports from the preceding schema if transfer fields change.
 
 Measure throughout stages 1–3; this final stage closes observed regressions.
 
+- [x] Avoid fetching flags and labels twice on initial acquisition. Verify
+  command counts and flag reconciliation on a subsequent poll.
 - [ ] Add repeatable scripted-server workloads and record command counts, fetched
   body bytes, duplicate acquisitions, and foreground progress. Establish numeric
   budgets before optimizing; do not claim API parity without measurements.
@@ -162,9 +171,8 @@ sync does not fetch bodies, and history import cannot starve Inbox updates.
 
 | Gap | Follow-up and priority |
 | --- | --- |
-| Sending identities | Audit existing manual identities before adding anything. Close missing default From, Reply-To, addressed-reply selection, display names, and per-address signature behavior. Important after essentials; automatic Gmail alias discovery may remain unavailable without API access. |
-| Conversation grouping | Use advertised server thread IDs under stage 0's identity contract; retain conservative reference-header threading elsewhere. Exact Gmail grouping is desirable, not required for general IMAP correctness. |
-| Uncertain SMTP delivery | Where the server saves Sent copies, look up the outgoing Message-ID and require adequate evidence before declaring success. A missing copy does not prove non-delivery. Never automatically resend an ambiguous send. |
+| Sending identities | Manual addresses, default From, Reply-To, and reply address selection are available. Automatic Gmail Send mail as discovery still requires the API. Check alias acceptance in the live Gmail SMTP pilot. |
+| Existing conversation grouping | Native thread bindings are in use for acquired mail. Reconcile legacy header-derived grouping where its stored assignments disagree with Gmail. |
 | Gmail signature import | Optional convenience. Existing ThreeStrands signatures and defaults should remain usable during conversion. |
 | IMAP OAuth | Separate authentication project. Useful for broader provider compatibility but not an escape from Google's scope verification. |
 

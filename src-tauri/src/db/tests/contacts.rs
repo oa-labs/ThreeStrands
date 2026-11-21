@@ -1383,10 +1383,12 @@ fn a_message_from_a_secondary_identity_is_indexed_as_sent() {
             Identity {
                 address: "me@proton.me".into(),
                 display_name: None,
+                ..Default::default()
             },
             Identity {
                 address: "work@proton.me".into(),
                 display_name: Some("Work".into()),
+                ..Default::default()
             },
         ],
         pinned_fingerprints: Default::default(),

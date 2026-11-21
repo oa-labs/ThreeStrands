@@ -53,7 +53,7 @@ export function AccountsSettings({
   onSignatureDefaults?(email: string): void;
 }) {
   const { pending: busyEmail, error, setError, runFor } = useSettingsOperation();
-  const [accountSetup, setAccountSetup] = useState<"provider" | "imap" | null>(null);
+  const [accountSetup, setAccountSetup] = useState<"provider" | "imap" | "gmail-app-password" | null>(null);
   const accountSetupId = useId();
   const addButton = useRef<HTMLButtonElement>(null);
   const restoreAddFocus = useRef(false);
@@ -116,13 +116,17 @@ export function AccountsSettings({
               Gmail
             </button>
             <button type="button" className="btn" disabled={busyEmail !== null}
+              onClick={() => setAccountSetup("gmail-app-password")}>
+              Gmail with an app password
+            </button>
+            <button type="button" className="btn" disabled={busyEmail !== null}
               onClick={() => setAccountSetup("imap")}>
               IMAP
             </button>
           </div>
         )}
-        {accountSetup === "imap" && <div>
-          <ImapAccountSetup onCancel={() => {
+        {(accountSetup === "imap" || accountSetup === "gmail-app-password") && <div>
+          <ImapAccountSetup gmailAppPassword={accountSetup === "gmail-app-password"} onCancel={() => {
             setAccountSetup(null);
             addButton.current?.focus();
           }} onConnected={async () => {

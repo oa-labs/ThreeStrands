@@ -84,6 +84,10 @@ pub fn account_identities(login: &str, stored: &[Identity]) -> Vec<SendingIdenti
                 if existing.display_name.is_none() {
                     existing.display_name = sanitize_display_name(identity.display_name.as_deref());
                 }
+                if existing.reply_to.is_none() {
+                    existing.reply_to = clean_reply_to(identity.reply_to.as_deref()).ok().flatten();
+                }
+                existing.is_default |= identity.is_default;
             }
             continue;
         }
@@ -95,7 +99,8 @@ pub fn account_identities(login: &str, stored: &[Identity]) -> Vec<SendingIdenti
         out.push(SendingIdentity {
             address: identity.address.trim().to_string(),
             display_name: sanitize_display_name(identity.display_name.as_deref()),
-            ..Default::default()
+            reply_to: clean_reply_to(identity.reply_to.as_deref()).ok().flatten(),
+            is_default: identity.is_default,
         });
     }
     out
@@ -147,15 +152,18 @@ pub fn validate_identity_edit(
 
     // Find the login among the submitted entries (if present), to carry its
     // chosen display name onto the mandatory first slot.
-    let login_display = submitted
+    let login_entry = submitted
         .iter()
-        .find(|identity| normalize_identity_address(&identity.address) == login_norm)
-        .and_then(|identity| identity.display_name.clone());
+        .find(|identity| normalize_identity_address(&identity.address) == login_norm);
 
     // The login is always the first slot, keeping its own trimmed address.
     let mut out: Vec<Identity> = vec![Identity {
         address: login.trim().to_string(),
-        display_name: clean_display_name(login_display.as_deref())?,
+        display_name: clean_display_name(
+            login_entry.and_then(|entry| entry.display_name.as_deref()),
+        )?,
+        reply_to: clean_reply_to(login_entry.and_then(|entry| entry.reply_to.as_deref()))?,
+        is_default: login_entry.is_some_and(|entry| entry.is_default),
     }];
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     seen.insert(login_norm.clone());
@@ -181,11 +189,25 @@ pub fn validate_identity_edit(
         out.push(Identity {
             address: address.to_string(),
             display_name: clean_display_name(identity.display_name.as_deref())?,
+            reply_to: clean_reply_to(identity.reply_to.as_deref())?,
+            is_default: identity.is_default,
         });
     }
 
     policy::check_identity_count(out.len()).map_err(|err| provider_error_text(&err))?;
+    if out.iter().filter(|identity| identity.is_default).count() > 1 {
+        return Err("Choose one default sending address.".into());
+    }
     Ok(out)
+}
+
+fn clean_reply_to(value: Option<&str>) -> Result<Option<String>, String> {
+    let Some(address) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    smtp::validate_envelope_address(address)
+        .map_err(|error| format!("Reply-To: {}", provider_error_text(&error)))?;
+    Ok(Some(address.to_string()))
 }
 
 /// Validate a display name for an EDIT: reject CR/LF/NUL (header injection)
@@ -272,7 +294,10 @@ pub fn choose_reply_identity(identities: &[SendingIdentity], headers: &ReplyHead
         // This header had addresses but none matched: fall through to the next
         // header (header order beats identity order), per the design.
     }
-    0
+    identities
+        .iter()
+        .position(|identity| identity.is_default)
+        .unwrap_or(0)
 }
 
 /// The Message-ID domain for a From address actually used by an IMAP send.
@@ -326,6 +351,7 @@ mod tests {
         Identity {
             address: address.to_string(),
             display_name: display.map(ToString::to_string),
+            ..Default::default()
         }
     }
 
@@ -335,6 +361,47 @@ mod tests {
             display_name: display.map(ToString::to_string),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn configured_default_yields_to_an_addressed_reply_and_keeps_valid_reply_to() {
+        let primary = Identity {
+            reply_to: Some("  team@example.com  ".into()),
+            ..id("me@example.com", None)
+        };
+        let default = Identity {
+            is_default: true,
+            ..id("other@example.com", None)
+        };
+        let saved =
+            validate_identity_edit("me@example.com", &[primary.clone(), default.clone()]).unwrap();
+        let identities = account_identities("me@example.com", &saved);
+        assert_eq!(identities[0].reply_to.as_deref(), Some("team@example.com"));
+        assert_eq!(
+            choose_reply_identity(&identities, &ReplyHeaders::default()),
+            1
+        );
+        assert_eq!(
+            choose_reply_identity(
+                &identities,
+                &ReplyHeaders {
+                    delivered_to: "me@example.com".into(),
+                    ..Default::default()
+                }
+            ),
+            0
+        );
+        assert!(validate_identity_edit(
+            "me@example.com",
+            &[
+                Identity {
+                    reply_to: Some("me@example.com\r\nBcc: other@example.com".into()),
+                    ..primary
+                },
+                default
+            ]
+        )
+        .is_err());
     }
 
     // ---- A. account_identities edge cases -----------------------------

@@ -1365,7 +1365,7 @@ impl Default for SaveSentConfig {
 /// `uidvalidity` is read from the caller's prior SELECT/EXAMINE (passed in),
 /// since SEARCH does not report it.
 pub async fn find_by_message_id(
-    session: &mut dyn ImapWriteSession,
+    session: &mut dyn ImapSession,
     message_id: &str,
     uidvalidity: u32,
 ) -> Result<Located, ProviderError> {
@@ -1390,7 +1390,10 @@ pub async fn find_by_message_id(
             .uid_fetch(&set, "BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]")
             .await?;
         for message in &fetched {
-            if let Some(header_bytes) = message.header() {
+            if message.uid == Some(uid) {
+                let Some(header_bytes) = message.header() else {
+                    continue;
+                };
                 if header_message_id_matches(header_bytes, &normalized_target) {
                     confirmed.push(uid);
                     break;

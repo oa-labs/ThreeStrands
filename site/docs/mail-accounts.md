@@ -23,6 +23,12 @@ Previously discovered addresses work offline, and drafts preserve the selected a
 
 Aliases are refreshed independently on each computer. The verified sending-address cache is excluded from settings exports and encrypted sync. Gmail plus-addresses appear only if they are explicitly configured as verified Send mail as addresses.
 
+## IMAP Sending Addresses {#imap-sending-addresses}
+
+Under **Settings → Mail Accounts → Sending**, add any additional addresses your mail server lets you send from. Choose the **Default Sending Address** for new messages and optionally set a **Reply-To** for each address. A reply uses a matching sending address from the original message when one is available. The default applies when there is no match.
+
+If a connection drops during a send, **Check Sent Mail** can confirm submission when your mail server saves its own copy and ThreeStrands finds a unique match. A missing copy leaves delivery uncertain.
+
 ## Switch and Recognize Accounts {#switch-and-recognize-accounts}
 
 In **Settings → Mail Accounts**, set an **Account Nickname**, **Sender Name**, and avatar color. Move accounts up or down to change their order. Choosing an account in the sidebar opens its mail, from any view; the combined view shows all accounts. <kbd>⌘/Ctrl + 1</kbd> through <kbd>⌘/Ctrl + 9</kbd> follow this order, and <kbd>⌘/Ctrl + 0</kbd> shows all accounts.

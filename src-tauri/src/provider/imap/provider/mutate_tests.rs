@@ -20,6 +20,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream};
 /// One message on the fake server: its UID, flags and raw bytes.
 #[derive(Clone)]
 struct MutMessage {
+    gmail_thread_id: Option<u64>,
     uid: u32,
     flags: Vec<String>,
     raw: String,
@@ -60,6 +61,7 @@ impl MutFolder {
         let uid = self.uidnext;
         self.uidnext += 1;
         self.messages.push(MutMessage {
+            gmail_thread_id: None,
             gmail_message_id: None,
             labels: None,
             uid,
@@ -254,6 +256,9 @@ fn build_response(
         let server_id = upper
             .strip_prefix("UID SEARCH X-GM-MSGID ")
             .and_then(|value| value.parse::<u64>().ok());
+        let thread_id = upper
+            .strip_prefix("UID SEARCH X-GM-THRID ")
+            .and_then(|value| value.parse::<u64>().ok());
         let uids: Vec<String> = state
             .folders
             .get(selected.as_str())
@@ -261,6 +266,7 @@ fn build_response(
                 f.messages
                     .iter()
                     .filter(|m| server_id.is_none() || m.gmail_message_id == server_id)
+                    .filter(|m| thread_id.is_none() || m.gmail_thread_id == thread_id)
                     .map(|m| m.uid.to_string())
                     .collect()
             })
@@ -319,6 +325,7 @@ fn build_response(
         let set = parse_uid_set(rest);
         let wants_body = upper.contains("BODY.PEEK[]");
         let is_identity = upper.contains("HEADER.FIELDS");
+        let wants_thread = upper.contains("X-GM-THRID");
         let empty = Vec::new();
         let messages = state
             .folders
@@ -328,6 +335,30 @@ fn build_response(
         let mut out = String::new();
         for (seq, uid) in set.iter().enumerate() {
             if let Some(message) = messages.iter().find(|m| &m.uid == uid) {
+                if wants_thread {
+                    if let (Some(message_id), Some(thread_id)) =
+                        (message.gmail_message_id, message.gmail_thread_id)
+                    {
+                        out.push_str(&format!(
+                            "* {} FETCH (UID {uid} X-GM-MSGID {message_id} X-GM-THRID {thread_id})\r\n",
+                            seq + 1,
+                        ));
+                    }
+                    continue;
+                }
+                if upper.contains("HEADER.FIELDS (MESSAGE-ID)") {
+                    let message_id = mail_parser::MessageParser::default()
+                        .parse(message.raw.as_bytes())
+                        .and_then(|message| message.message_id().map(str::to_string))
+                        .unwrap_or_default();
+                    let header = format!("Message-ID: <{message_id}>\r\n\r\n");
+                    out.push_str(&format!(
+                        "* {} FETCH (UID {uid} BODY[HEADER.FIELDS (MESSAGE-ID)] {{{}}}\r\n{header})\r\n",
+                        seq + 1,
+                        header.len(),
+                    ));
+                    continue;
+                }
                 out.push_str(&fetch_line(
                     seq as u32 + 1,
                     message,
@@ -435,6 +466,7 @@ fn build_response(
                 src_uids.push(msg.uid);
                 dst_uids.push(new_uid);
                 folder.messages.push(MutMessage {
+                    gmail_thread_id: msg.gmail_thread_id,
                     uid: new_uid,
                     flags: msg.flags.clone(),
                     raw: msg.raw.clone(),
@@ -490,6 +522,7 @@ fn build_response(
                 src_uids.push(msg.uid);
                 dst_uids.push(new_uid);
                 folder.messages.push(MutMessage {
+                    gmail_thread_id: msg.gmail_thread_id,
                     uid: new_uid,
                     flags: msg.flags.clone(),
                     raw: msg.raw.clone(),
@@ -712,6 +745,7 @@ fn infer_special_use(name: &str) -> Option<String> {
         "Trash" => Some("\\Trash".into()),
         "Junk" | "Spam" => Some("\\Junk".into()),
         "Sent" => Some("\\Sent".into()),
+        "Drafts" => Some("\\Drafts".into()),
         "Archive" => Some("\\Archive".into()),
         "All Mail" => Some("\\All".into()),
         _ => None,
@@ -4080,6 +4114,137 @@ async fn label_removal_checks_every_message_before_destroying_any_copy() {
             assert_eq!(server.count_starting(command), 0);
         }
     }
+}
+
+#[tokio::test]
+async fn gmail_threads_use_authoritative_ids_without_merging_on_sender_headers() {
+    let server = server_with_inbox();
+    {
+        let mut server = server.lock().unwrap();
+        server.capabilities.push("X-GM-EXT-1".into());
+        let inbox = server.folder("INBOX", 100);
+        inbox.add(&[], &message("<shared@example.com>"));
+        inbox.add(&[], &message("<different@example.com>"));
+        inbox.add(&[], &message("<shared@example.com>"));
+        for (message, (identity, thread)) in
+            inbox
+                .messages
+                .iter_mut()
+                .zip([(1101, 2001), (1102, 2001), (1103, 2002)])
+        {
+            message.gmail_message_id = Some(identity);
+            message.gmail_thread_id = Some(thread);
+        }
+        server
+            .list_attributes
+            .insert("Drafts".into(), "\\Drafts".into());
+        let drafts = server.folder("Drafts", 105);
+        drafts.add(&["\\Draft"], &message("<linked-draft@example.com>"));
+        drafts.messages[0].gmail_message_id = Some(3030);
+        drafts.messages[0].gmail_thread_id = Some(2001);
+    }
+    let (provider, store) = provider_with(server.clone());
+    provider.refresh_all().await.unwrap();
+    let locations = store.locations_in_mailbox("INBOX").unwrap();
+    let by_uid: BTreeMap<_, _> = locations
+        .into_iter()
+        .map(|location| {
+            let thread = store
+                .thread_of_message(&location.message_id)
+                .unwrap()
+                .unwrap();
+            (location.uid, thread)
+        })
+        .collect();
+    assert_eq!(by_uid.len(), 3);
+    assert_eq!(by_uid[&1], by_uid[&2]);
+    assert_ne!(by_uid[&1], by_uid[&3]);
+    let fetched = provider.fetch_server_draft("105:1").await.unwrap();
+    assert_eq!(fetched.thread_id.as_deref(), Some(by_uid[&1].as_str()));
+    store.drop_mailbox_locations("INBOX").unwrap();
+    provider
+        .prepare_snoozed_thread(&by_uid[&1], &[])
+        .await
+        .unwrap();
+    assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 2);
+    assert!(server
+        .lock()
+        .unwrap()
+        .wire()
+        .iter()
+        .any(|line| line == "UID SEARCH X-GM-THRID 2001"));
+}
+
+#[tokio::test]
+async fn first_sync_gets_flags_in_the_identity_fetch_and_later_sync_reconciles() {
+    let server = server_with_inbox();
+    server
+        .lock()
+        .unwrap()
+        .folder("INBOX", 100)
+        .add(&[], &message("<flag-check@example.com>"));
+    let (provider, store) = provider_with(server.clone());
+    provider.refresh_all().await.unwrap();
+    let count_flag_fetches = || {
+        server
+            .lock()
+            .unwrap()
+            .wire()
+            .into_iter()
+            .filter(|line| line.starts_with("UID FETCH") && line.contains("(UID FLAGS)"))
+            .count()
+    };
+    assert_eq!(count_flag_fetches(), 0);
+    server.lock().unwrap().folder("INBOX", 100).messages[0].flags = vec!["\\Seen".into()];
+    provider.refresh_all().await.unwrap();
+    assert_eq!(count_flag_fetches(), 1);
+    assert_eq!(
+        serde_json::from_str::<Vec<String>>(
+            &store.locations_in_mailbox("INBOX").unwrap()[0].flags_json
+        )
+        .unwrap(),
+        ["\\Seen"]
+    );
+}
+
+#[tokio::test]
+async fn verifies_only_a_unique_sent_copy_from_the_original_sender() {
+    let server = server_with_inbox();
+    server.lock().unwrap().folder("Sent", 900);
+    let (provider, store) = provider_with(server.clone());
+    store.set_sent_copy_detection(true, 1).unwrap();
+    let find = || provider.find_sent_copy("test-send", "alias@example.com");
+    assert!(provider.capabilities().verifiable_delivery);
+    assert!(find().await.unwrap().is_none());
+
+    let expected =
+        "From: Alias <alias@example.com>\r\nMessage-ID: <test-send@example.com>\r\n\r\nBody";
+    let wrong =
+        "From: Other <other@example.com>\r\nMessage-ID: <test-send@example.com>\r\n\r\nBody";
+    server.lock().unwrap().folder("Sent", 900).add(&[], wrong);
+    assert!(find().await.unwrap().is_none());
+    {
+        let mut held = server.lock().unwrap();
+        let sent = held.folder("Sent", 900);
+        sent.messages.clear();
+        sent.add(&[], expected);
+    }
+    let receipt = find().await.unwrap().expect("delayed Sent copy");
+    assert_eq!(
+        receipt.provider_message_id,
+        crate::provider::imap::send::provider_message_id_for("me@example.com", expected.as_bytes())
+    );
+    server
+        .lock()
+        .unwrap()
+        .folder("Sent", 900)
+        .add(&[], expected);
+    assert!(find().await.unwrap().is_none());
+    let commands = server.lock().unwrap().wire();
+    assert!(commands
+        .iter()
+        .any(|command| command.starts_with("EXAMINE")));
+    assert!(!commands.iter().any(|command| command.starts_with("APPEND")));
 }
 
 #[tokio::test]

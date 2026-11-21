@@ -62,9 +62,17 @@ to body or flag requests and never requests it from a plain IMAP server.
 Both header parsers retain the numeric ID returned by async-imap.
 
 The current library still does not expose RFC 8474 EMAILID. The resolver supports
-that namespace and tests learning it alongside Gmail IDs, but requesting/parsing
-it on the live wire is deferred. X-GM-THRID and server conversation mappings are
-also deferred; current header-based threading and alias migration remain in use.
+that namespace and tests learning it alongside Gmail IDs. Live acquisition is
+deferred.
+
+Migration 113 adds account-scoped Gmail thread bindings. A bounded, typed FETCH
+reads X-GM-THRID and X-GM-MSGID for the same UID. Acquisition checks the message
+ID against the identity fetch before accepting the thread ID. A new server
+conversation gets a deterministic internal ID. A verified existing message
+keeps its established internal conversation, and inconsistent existing bindings
+surface as sync errors. Header-derived grouping continues for ordinary IMAP.
+A known thread binding also lets ThreeStrands match an imported reply draft or
+look up a snoozed conversation with X-GM-THRID.
 
 ## Existing installations and cleanup
 

@@ -24,6 +24,14 @@ ThreeStrands stores your mail cache in a local database on your computer. Sign-i
 3. Sign in to Google in your browser. The button reads **Waiting for Google…** until you finish.
 4. When the browser says *ThreeStrands is connected*, close the tab. Your mail starts syncing.
 
+### Gmail with an app password {#gmail-with-an-app-password}
+
+Choose **Gmail with an app password** in **Add Account**. Enter your Gmail address and the app password from Google, click **Test and Save**, and review the mailbox mapping before you start syncing. ThreeStrands fills in the incoming and outgoing server settings for Gmail.
+
+Google requires 2-Step Verification to create an app password. Some Google accounts, including accounts with Advanced Protection or certain work or school policies, may lack that option. [Create or manage a Google app password](https://support.google.com/accounts/answer/185833).
+
+To replace a revoked app password, open **Settings → Mail Accounts → Reconnect** for the account and enter the new app password. Mail in Gmail stays on the server. Drafts sync through the mapped Drafts mailbox, and search can reach All Mail, including archived messages. [Search coverage](search.html#local-results-and-older-mail).
+
 ## Connect an IMAP Account {#connect-an-imap-account}
 
 Choose **IMAP** instead of Gmail to connect any IMAP/SMTP server.

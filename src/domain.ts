@@ -1472,7 +1472,12 @@ export type ImapConnectionUpdate = {
 };
 
 /** One submitted sending-identity row from the Settings edit form. */
-export type SendingIdentityInput = { address: string; displayName?: string | null };
+export type SendingIdentityInput = {
+  address: string;
+  displayName?: string | null;
+  replyTo?: string;
+  isDefault?: boolean;
+};
 
 /** The payload the IMAP setup form sends for "test and save". */
 export type ImapSetupRequest = {

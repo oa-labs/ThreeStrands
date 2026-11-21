@@ -66,6 +66,45 @@ describe("IMAP account setup", () => {
     expect(mailClient.testAndSaveImapAccount).not.toHaveBeenCalled();
   });
 
+  it("connects Gmail with an app password and then reviews the negotiated mailboxes", async () => {
+    const refresh = vi.fn();
+    const onAdd = vi.fn();
+    render(<AccountsSettings authStatus={null} accounts={[]} onAdd={onAdd} onImapConnected={refresh}
+      onRemove={vi.fn()} onRemoveEverywhere={vi.fn()} onReconnect={vi.fn()}
+      onSetDisplayName={vi.fn()} onSetNickname={vi.fn()} onSetColor={vi.fn()} onReorder={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add Account" }));
+    fireEvent.click(screen.getByRole("button", { name: "Gmail with an app password" }));
+    const address = screen.getByLabelText("Email Address");
+    expect(address).toHaveFocus();
+    expect(screen.getByRole("link", { name: /Google’s app password instructions/ })).toHaveAttribute("href", "https://support.google.com/accounts/answer/185833");
+    expect(screen.queryByRole("group", { name: "Incoming Mail (IMAP)" })).not.toBeInTheDocument();
+    fireEvent.change(address, { target: { value: account.email } });
+    const password = screen.getByLabelText("App Password");
+    expect(password).toHaveAccessibleDescription();
+    fireEvent.change(password, { target: { value: "abcd efgh ijkl mnop" } });
+    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({
+      proposals: [{ role: "all", mailbox: "All Mail", source: "special_use" }],
+      selectable: [{ name: "All Mail", delimiter: "/", specialUse: "\\All" }],
+      labelContainers: [],
+      labelArchive: true,
+    });
+    await save();
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(mailClient.discoverImapSettings).not.toHaveBeenCalled();
+    expect(mailClient.testAndSaveImapAccount).toHaveBeenCalledWith(expect.objectContaining({
+      email: account.email,
+      imapHost: "imap.gmail.com", imapPort: 993, imapSecurity: "implicit_tls",
+      imapUsername: account.email, imapPassword: "abcdefghijklmnop", imapPinnedFingerprint: null,
+      smtpHost: "smtp.gmail.com", smtpPort: 587, smtpSecurity: "start_tls",
+      smtpUsername: account.email, smtpPassword: null, smtpPinnedFingerprint: null,
+    }));
+    expect(screen.getByRole("combobox", { name: "All Mail (Aggregate) Mailbox" })).toHaveValue("All Mail");
+    expect(screen.queryByRole("checkbox", { name: "Create a New Archive Mailbox" })).not.toBeInTheDocument();
+    await confirmMapping();
+    expect(mailClient.finishImapAccountSetup).toHaveBeenCalledWith(account.email);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
   it("opens manual IMAP setup from accounts settings and refreshes saved accounts while preserving Gmail sign-in", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     const refresh = vi.fn().mockResolvedValue(undefined);

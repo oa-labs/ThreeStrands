@@ -503,12 +503,7 @@ impl ImapProvider {
         // polls. Stable during a poll — only the end-of-poll
         // `advance_coverage_epoch_if_complete` changes it.
         let epoch = self.store.complete_walks().map_err(db_err)? as i64;
-        let local_uidvalidity_pre = self
-            .store
-            .locations_in_mailbox(mailbox)
-            .map_err(db_err)?
-            .first()
-            .map(|l| l.uidvalidity);
+        let local_uidvalidity_pre = self.store.location_uidvalidity(mailbox).map_err(db_err)?;
         let uidvalidity_changed =
             matches!(local_uidvalidity_pre, Some(stored) if stored != server_uidvalidity);
         let stored = self.store.mailbox_sync_state(mailbox).map_err(db_err)?;
@@ -671,9 +666,13 @@ impl ImapProvider {
             effective
         };
 
-        let (server_flags, server_labels) = self
-            .fetch_flags(session, &flag_uids.into_iter().collect::<Vec<_>>())
-            .await?;
+        // The identity pass fetches flags and native labels for new locations.
+        // The separate sweep only reconciles already-acquired locations.
+        let existing_flag_uids: Vec<u32> = flag_uids
+            .into_iter()
+            .filter(|uid| !uidvalidity_changed && local_view.flags_by_uid.contains_key(uid))
+            .collect();
+        let (server_flags, server_labels) = self.fetch_flags(session, &existing_flag_uids).await?;
         let server_view = crate::provider::imap::delta::ServerMailboxView {
             uidvalidity: server_uidvalidity,
             all_uids: server_uids.clone(),
@@ -890,7 +889,7 @@ impl ImapProvider {
 
         // Thread the new messages, seeding prior thread state from PERSISTED
         // tokens (never cached bodies), so index-tier messages thread fine.
-        let outcome = if threading_inputs.is_empty() {
+        let mut outcome = if threading_inputs.is_empty() {
             threading::ThreadingOutcome::default()
         } else {
             self.ensure_tokens_backfilled()?;
@@ -901,6 +900,7 @@ impl ImapProvider {
             let mut thread_state = self.load_thread_state_from_tokens(&batch_tokens)?;
             threading::thread_batch(&mut thread_state, &threading_inputs)
         };
+        outcome.assignments.extend(ingest.gmail_threads);
 
         // Resolve each message's thread id after this round's assignments, so
         // hotness and journaling see the final grouping.
@@ -992,8 +992,10 @@ impl ImapProvider {
         makes_hot: bool,
     ) -> ProviderResult<IngestOutcome> {
         let mut outcome = IngestOutcome::default();
+        let known_gmail = self.store.uses_native_labels().map_err(db_err)?;
         for batch in chunk(uids, policy::UID_BATCH_SIZE) {
             let set = uid_set(batch);
+            let native_threads = session.uid_gmail_threads(batch).await?;
             if makes_hot {
                 // Hot mailbox: identity pass + body once (deferred location).
                 let rows = fetch_identity(session, &set).await?;
@@ -1022,6 +1024,17 @@ impl ImapProvider {
                             .unwrap_or_else(|_| "[]".to_string()),
                         modseq: None,
                     });
+                    outcome.changed_message_ids.push(message_id.clone());
+                    outcome.new_message_ids.push(message_id.clone());
+                    if let Some(thread) = self.gmail_thread_for_row(
+                        native_threads.get(&row.uid).copied(),
+                        row.inputs.gmail_message_id,
+                        &message_id,
+                        known_gmail,
+                    )? {
+                        outcome.gmail_threads.push((message_id, thread));
+                        continue;
+                    }
                     let headers = if resolved.body_skipped {
                         crate::provider::imap::rfc822::ThreadingHeaders {
                             message_id: row.inputs.message_id.clone(),
@@ -1048,8 +1061,6 @@ impl ImapProvider {
                         in_reply_to: headers.in_reply_to,
                         references: headers.references,
                     });
-                    outcome.changed_message_ids.push(message_id.clone());
-                    outcome.new_message_ids.push(message_id);
                 }
             } else {
                 // Index-tier mailbox: INDEX identity pass (headers carry the
@@ -1079,6 +1090,17 @@ impl ImapProvider {
                             .unwrap_or_else(|_| "[]".to_string()),
                         modseq: None,
                     });
+                    outcome.changed_message_ids.push(message_id.clone());
+                    outcome.new_message_ids.push(message_id.clone());
+                    if let Some(thread) = self.gmail_thread_for_row(
+                        native_threads.get(&row.uid).copied(),
+                        row.inputs.gmail_message_id,
+                        &message_id,
+                        known_gmail,
+                    )? {
+                        outcome.gmail_threads.push((message_id, thread));
+                        continue;
+                    }
                     outcome.threading_inputs.push(ThreadingInput {
                         message_id: message_id.clone(),
                         message_id_header: threading
@@ -1087,12 +1109,39 @@ impl ImapProvider {
                         in_reply_to: threading.in_reply_to,
                         references: threading.references,
                     });
-                    outcome.changed_message_ids.push(message_id.clone());
-                    outcome.new_message_ids.push(message_id);
                 }
             }
         }
         Ok(outcome)
+    }
+
+    fn gmail_thread_for_row(
+        &self,
+        observed: Option<(u64, u64)>,
+        gmail_message: Option<u64>,
+        message_id: &str,
+        known_gmail: bool,
+    ) -> ProviderResult<Option<String>> {
+        if let Some((observed_message, thread)) = observed {
+            if Some(observed_message) != gmail_message {
+                return Err(ProviderError::TransientTransport(
+                    "Gmail message identity changed while reading its conversation".into(),
+                ));
+            }
+            return self
+                .store
+                .resolve_gmail_thread(message_id, thread)
+                .map(Some)
+                .map_err(db_err);
+        }
+        if known_gmail {
+            if let Some(thread) = self.store.thread_of_message(message_id).map_err(db_err)? {
+                if self.store.is_gmail_thread(&thread).map_err(db_err)? {
+                    return Ok(Some(thread));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Acquire an EXPLICIT list of UIDs in one mailbox and PIN them, for the
@@ -1293,7 +1342,7 @@ impl ImapProvider {
 
         // Thread the newly-fetched messages, seeding prior thread state from
         // PERSISTED tokens, exactly as the live loop does.
-        let outcome = if ingest.threading_inputs.is_empty() {
+        let mut outcome = if ingest.threading_inputs.is_empty() {
             threading::ThreadingOutcome::default()
         } else {
             self.ensure_tokens_backfilled()
@@ -1308,6 +1357,7 @@ impl ImapProvider {
                 .map_err(AcquireError::Provider)?;
             threading::thread_batch(&mut thread_state, &ingest.threading_inputs)
         };
+        outcome.assignments.extend(ingest.gmail_threads);
 
         let mut assignment_of: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();

@@ -1,11 +1,24 @@
 //! Sending ([`MailSend`]): identities, SMTP delivery, and the Sent copy.
 
 use async_trait::async_trait;
+use mail_parser::{HeaderName, MessageParser};
 
 use crate::provider::{Delivery, DeliveryReceipt, MailSend, ProviderError, ProviderResult};
 
 use super::mutate::as_write_session;
 use super::{db_err, ImapProvider};
+
+impl ImapProvider {
+    pub(super) fn can_verify_smtp_delivery(&self) -> ProviderResult<bool> {
+        if self.settings.server_saves_sent {
+            return Ok(true);
+        }
+        match self.store.sent_copy_detection().map_err(db_err)? {
+            Some(server_saves_sent) => Ok(server_saves_sent),
+            None => Ok(self.store.native_label_model().map_err(db_err)?.is_some()),
+        }
+    }
+}
 
 #[async_trait]
 impl MailSend for ImapProvider {
@@ -75,19 +88,51 @@ impl MailSend for ImapProvider {
 
     async fn find_sent_copy(
         &self,
-        _operation: &str,
-        _expected_sender: &str,
+        operation: &str,
+        expected_sender: &str,
     ) -> ProviderResult<Option<DeliveryReceipt>> {
-        // IMAP keeps no server-side sent copy we can confirm an uncertain send
-        // against: only WE would APPEND to `\Sent`, and if the connection
-        // dropped before we could, there is nothing to look up. So this is a
-        // clean `Ok(None)`, NOT an error — `reconcile_with_provider` reads it
-        // together with `verifiable_delivery = false` and resolves the send to
-        // the terminal `Unverifiable` state ("may have been sent"). Returning
-        // an error here instead would make `reconcile_with_provider` abort via
-        // its `map_err(error)?` and the send would never reach that branch.
-        // (Run 4 may add the Sent-copy APPEND; it would revisit this.)
-        Ok(None)
+        if !self.can_verify_smtp_delivery()? {
+            return Ok(None);
+        }
+        let plan = self.build_sync_plan()?;
+        let Some(mailbox) = self.mailbox_with_role(&plan, crate::provider::imap::MailboxRole::Sent)
+        else {
+            return Ok(None);
+        };
+        let domain = crate::provider::imap::message_id_domain_for_address(expected_sender)?;
+        let message_id = format!("{operation}@{domain}");
+        let mut session = self.open_session().await?;
+        let result = async {
+            let status = session.examine(&mailbox).await?;
+            let uidvalidity = status.uid_validity.ok_or_else(|| {
+                ProviderError::TransientTransport("The Sent mailbox reported no UIDVALIDITY".into())
+            })?;
+            let located = crate::provider::imap::write::find_by_message_id(
+                session.as_mut(),
+                &message_id,
+                uidvalidity,
+            )
+            .await?;
+            let [uid] = located.uids.as_slice() else {
+                return Ok(None);
+            };
+            let mut fetched = session
+                .uid_fetch(
+                    &uid.to_string(),
+                    "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM)])",
+                )
+                .await?;
+            fetched.retain(|response| response.uid == Some(*uid) && response.header().is_some());
+            let [candidate] = fetched.as_slice() else {
+                return Ok(None);
+            };
+            Ok(candidate.header().and_then(|headers| {
+                verified_sent_receipt(headers, &message_id, expected_sender, &self.account_id)
+            }))
+        }
+        .await;
+        let _ = session.logout().await;
+        result
     }
 
     /// Save the sender's own copy of a just-sent message into the Sent mailbox,
@@ -203,4 +248,29 @@ impl MailSend for ImapProvider {
     async fn server_draft_version(&self, id: &str) -> ProviderResult<Option<String>> {
         self.draft_copy_version(id).await
     }
+}
+
+fn verified_sent_receipt(
+    headers: &[u8],
+    message_id: &str,
+    expected_sender: &str,
+    account: &str,
+) -> Option<DeliveryReceipt> {
+    let message = MessageParser::default().parse(headers)?;
+    if message.message_id() != Some(message_id)
+        || message.header_values(HeaderName::MessageId).count() != 1
+        || message.header_values(HeaderName::From).count() != 1
+    {
+        return None;
+    }
+    let from = message.from()?;
+    let mut senders = from.iter();
+    let sender = senders.next()?.address()?;
+    if !sender.eq_ignore_ascii_case(expected_sender) || senders.next().is_some() {
+        return None;
+    }
+    Some(DeliveryReceipt {
+        provider_message_id: crate::provider::imap::send::provider_message_id_for(account, headers),
+        thread_id: None,
+    })
 }
