@@ -177,6 +177,12 @@ impl ImapSession for LeasedSession {
     async fn capabilities(&mut self) -> ProviderResult<Vec<String>> {
         self.session.capabilities().await
     }
+    async fn uid_gmail_threads(
+        &mut self,
+        uids: &[u32],
+    ) -> ProviderResult<std::collections::BTreeMap<u32, (u64, u64)>> {
+        self.session.uid_gmail_threads(uids).await
+    }
     async fn list_mailboxes(&mut self) -> ProviderResult<Vec<super::session::MailboxEntry>> {
         self.session.list_mailboxes().await
     }
@@ -352,6 +358,7 @@ pub(super) struct Refreshed {
 #[derive(Debug, Default)]
 pub(super) struct IngestOutcome {
     pub label_snapshots: Vec<(String, Vec<String>)>,
+    pub gmail_threads: Vec<(String, String)>,
     /// Location rows to insert (deferred to the atomic round commit).
     pub locations: Vec<ImapLocation>,
     /// Threading inputs for the batch's messages.
@@ -574,11 +581,7 @@ impl MailProvider for ImapProvider {
                 .ok()
                 .flatten()
                 .unwrap_or(self.label_model),
-            // No server-side sent copy to verify an uncertain send against;
-            // an uncertain IMAP send resolves to the terminal Unverifiable
-            // state via `find_sent_copy` -> Ok(None), not a Gmail-style
-            // lookup.
-            verifiable_delivery: false,
+            verifiable_delivery: self.can_verify_smtp_delivery().unwrap_or(false),
             // IMAP saves the sender's own Sent copy itself, as a durable job
             // the engine drives after an accepted send (run 4b). The engine
             // seeds that job atomically with the `sent` transition because

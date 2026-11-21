@@ -151,10 +151,12 @@ fn a_sent_only_thread_from_a_secondary_identity_teaches_nothing() {
             Identity {
                 address: "me@proton.me".into(),
                 display_name: None,
+                ..Default::default()
             },
             Identity {
                 address: "work@proton.me".into(),
                 display_name: Some("Work".into()),
+                ..Default::default()
             },
         ],
         pinned_fingerprints: Default::default(),

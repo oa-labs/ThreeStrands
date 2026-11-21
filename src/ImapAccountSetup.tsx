@@ -1,3 +1,4 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useId, useRef, useState } from "react";
 import { mailClient } from "./data/client";
 import type {
@@ -35,9 +36,12 @@ export type CertificateState = { endpoint: string; probe: ImapCertificateProbe; 
 export const endpointKey = (host: string, port: number, security: ImapSecurityMode) =>
   JSON.stringify([host.trim(), port, security]);
 
-export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
+const GMAIL_APP_PASSWORD_HELP = "https://support.google.com/accounts/answer/185833";
+
+export function ImapAccountSetup({ onConnected, onCancel, initialEmail, gmailAppPassword = false }: {
   onConnected: (account: Account) => void | Promise<void>;
   onCancel?(): void;
+  gmailAppPassword?: boolean;
   /** Sets up an account already listed from another device: the address is
    * fixed, and the server settings are entered for this device. */
   initialEmail?: string;
@@ -47,11 +51,11 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
   useEffect(() => { emailInput.current?.focus(); }, []);
   const [email, setEmail] = useState(initialEmail ?? "");
   const [password, setPassword] = useState("");
-  const [imapHost, setImapHost] = useState("");
-  const [imapPort, setImapPort] = useState(143);
-  const [imapSecurity, setImapSecurity] = useState<ImapSecurityMode>("start_tls");
+  const [imapHost, setImapHost] = useState(gmailAppPassword ? "imap.gmail.com" : "");
+  const [imapPort, setImapPort] = useState(gmailAppPassword ? 993 : 143);
+  const [imapSecurity, setImapSecurity] = useState<ImapSecurityMode>(gmailAppPassword ? "implicit_tls" : "start_tls");
   const [imapUsername, setImapUsername] = useState("");
-  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpHost, setSmtpHost] = useState(gmailAppPassword ? "smtp.gmail.com" : "");
   const [smtpPort, setSmtpPort] = useState(587);
   const [smtpSecurity, setSmtpSecurity] = useState<ImapSecurityMode>("start_tls");
   const [smtpUsername, setSmtpUsername] = useState("");
@@ -67,6 +71,7 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
   // user confirms (or skips) the special-use mapping.
   const [savedAccount, setSavedAccount] = useState<Account | null>(null);
   const [mapping, setMapping] = useState<ImapMailboxMapping | null>(null);
+  const connectionPassword = gmailAppPassword ? password.replace(/\s/g, "") : password;
   const imapEndpoint = endpointKey(imapHost, imapPort, imapSecurity);
   const smtpEndpoint = endpointKey(smtpHost, smtpPort, smtpSecurity);
   // A trust decision belongs to exactly the endpoint that was probed. Editing
@@ -133,7 +138,7 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
       email: email.trim(),
       imapHost: imapHost.trim(), imapPort, imapSecurity,
       imapUsername: imapUsername.trim() || email.trim(),
-      imapPassword: password,
+      imapPassword: connectionPassword,
       smtpHost: smtpHost.trim(), smtpPort, smtpSecurity,
       smtpUsername: smtpUsername.trim() || imapUsername.trim() || email.trim(),
       smtpPassword: null,
@@ -145,12 +150,13 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
     try {
       const account = await mailClient.testAndSaveImapAccount(request);
       setSavedAccount(account);
+      setPassword("");
       // Account is saved; now discover its mailboxes and present the special-
       // use mapping for confirmation. A discovery failure does not undo the
       // save — the user can still finish with the (empty) proposed mapping.
       setStatus("Account saved. Discovering mailboxes…");
       try {
-        const discovered = await mailClient.discoverImapMailboxes(request.email);
+        const discovered = await mailClient.discoverImapMailboxes(account.email);
         setMapping(discovered);
         setStatus("Review the mailbox mapping below, then confirm.");
       } catch (discoveryError) {
@@ -216,8 +222,14 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
         void testAndSave();
       }}
     >
-      <h2>{initialEmail ? "Set Up on This Device" : "Add an IMAP Account"}</h2>
-      <p>Connect your server and choose which mailboxes to sync.</p>
+      <h2>{gmailAppPassword ? "Gmail with an app password" : initialEmail ? "Set Up on This Device" : "Add an IMAP Account"}</h2>
+      {gmailAppPassword ? <p id={`${hintId}-app-password`}>
+        Use an app password from a Google Account with 2-Step Verification.{" "}
+        <a href={GMAIL_APP_PASSWORD_HELP} onClick={(event) => {
+          event.preventDefault();
+          void openUrl(GMAIL_APP_PASSWORD_HELP).catch((reason) => setError(String(reason)));
+        }}>Google’s app password instructions</a>
+      </p> : <p>Connect your server and choose which mailboxes to sync.</p>}
       <fieldset className="imap-setup-fields" disabled={busy}>
         <label className="settings-field settings-field-row">
           <span>Email Address</span>
@@ -231,6 +243,7 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
             required
           />
         </label>
+        {!gmailAppPassword && <>
         <button type="button" className="btn settings-field-offset" onClick={() => void runDiscovery()} disabled={busy || !email.trim()}>
           Find Settings Automatically
         </button>
@@ -320,11 +333,13 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
         <CertificateCheck kind="SMTP" host={smtpHost} certificate={smtpTrust}
           onProbe={() => void probeCertificate("smtp")}
           onTrust={() => { if (smtpTrust) setSmtpCertificate({ ...smtpTrust, pin: smtpTrust.probe.certificate.sha256Fingerprint }); }} />
+        </>}
 
         <label className="settings-field settings-field-row">
-          <span>Password</span>
+          <span>{gmailAppPassword ? "App Password" : "Password"}</span>
           <input
             type="password"
+            aria-describedby={gmailAppPassword ? `${hintId}-app-password` : undefined}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
@@ -332,7 +347,7 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
           />
         </label>
 
-        <fieldset className="imap-server-settings">
+        {!gmailAppPassword && <fieldset className="imap-server-settings">
           <legend>Labels</legend>
           <label className="settings-field settings-field-row">
             <span>Label Storage</span>
@@ -351,7 +366,7 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
               <input value={labelContainer} placeholder="e.g. Labels" onChange={(e) => setLabelContainer(e.target.value)} />
             </label>
           )}
-        </fieldset>
+        </fieldset>}
 
         <div className="imap-setup-actions settings-field-detail">
           {onCancel && <button type="button" className="btn" onClick={onCancel}>Cancel</button>}
@@ -363,7 +378,7 @@ export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
               !email.trim() ||
               !imapHost.trim() ||
               !smtpHost.trim() ||
-              !password ||
+              !connectionPassword ||
               // A self-signed server must be trusted before we send the password.
               [imapTrust, smtpTrust].some((trust) => trust && !trust.probe.trustedByPlatform && !trust.pin)
             }

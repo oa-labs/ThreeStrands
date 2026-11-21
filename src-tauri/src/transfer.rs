@@ -2767,6 +2767,7 @@ mod tests {
                         identities: vec![crate::provider::imap::Identity {
                             address: "me@proton.me".to_string(),
                             display_name: Some("Me".to_string()),
+                            ..Default::default()
                         }],
                         pinned_fingerprints: std::collections::BTreeMap::from([(
                             "127.0.0.1:1143".to_string(),
@@ -3082,10 +3083,13 @@ mod tests {
             crate::provider::imap::Identity {
                 address: "me@proton.me".into(),
                 display_name: Some("Me".into()),
+                ..Default::default()
             },
             crate::provider::imap::Identity {
                 address: "work@proton.me".into(),
                 display_name: Some("Work".into()),
+                reply_to: Some("team@proton.me".into()),
+                is_default: true,
             },
         ];
         payload
@@ -3107,6 +3111,13 @@ mod tests {
         assert_eq!(imap.identities[0].address, "me@proton.me");
         assert_eq!(imap.identities[1].address, "work@proton.me");
         assert_eq!(imap.identities[1].display_name.as_deref(), Some("Work"));
+        assert_eq!(imap.identities[0].reply_to, None);
+        assert!(!imap.identities[0].is_default);
+        assert_eq!(
+            imap.identities[1].reply_to.as_deref(),
+            Some("team@proton.me")
+        );
+        assert!(imap.identities[1].is_default);
         // The accessor built from the imported settings keeps order and the
         // login first.
         let identities =
@@ -3168,10 +3179,12 @@ mod tests {
                 crate::provider::imap::Identity {
                     address: "me@proton.me".into(),
                     display_name: None,
+                    ..Default::default()
                 },
                 crate::provider::imap::Identity {
                     address: "evil@proton.me\r\nRCPT TO:<x@y>".into(),
                     display_name: Some("Nope".into()),
+                    ..Default::default()
                 },
             ];
         }

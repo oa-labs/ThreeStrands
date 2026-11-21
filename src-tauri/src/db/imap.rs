@@ -9,7 +9,7 @@ mod identity;
 
 use rusqlite::OptionalExtension;
 
-use super::{Database, DbResult};
+use super::{Database, DatabaseError, DbResult};
 use crate::provider::imap::{plan, policy, ImapAccountSettings, LabelStorage, SecurityMode};
 
 /// One IMAP mailbox's catalog row: its LIST wire name, hierarchy delimiter,
@@ -469,6 +469,19 @@ impl ImapStateStore {
         })
     }
 
+    pub(crate) fn location_uidvalidity(&self, mailbox: &str) -> DbResult<Option<i64>> {
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT uidvalidity FROM imap_locations
+                 WHERE account_id=?1 AND mailbox=?2 ORDER BY uidvalidity, uid LIMIT 1",
+                    rusqlite::params![self.account_id, mailbox],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
+    }
+
     /// Delete one UID's location row (expunged by another client). Bodies and
     /// thread rows are untouched; a thread whose last location is gone resolves
     /// to no messages and `fetch_thread` reports it absent.
@@ -514,6 +527,79 @@ impl ImapStateStore {
                     |row| row.get(0),
                 )
                 .ok())
+        })
+    }
+
+    /// Reserve a local conversation for an authoritative Gmail thread. Like
+    /// message identity reservations, this can survive a retried fetch. It
+    /// publishes no locations or thread members by itself.
+    pub(crate) fn resolve_gmail_thread(&self, message_id: &str, external: u64) -> DbResult<String> {
+        let external = format!("{external:x}");
+        self.database.with_transaction(|transaction| {
+            let existing = transaction.query_row(
+                "SELECT thread_id FROM imap_threads WHERE account_id=?1 AND message_id=?2",
+                rusqlite::params![self.account_id, message_id],
+                |row| row.get::<_, String>(0),
+            ).optional()?.map(|thread| self.resolve_thread_alias_conn(transaction, &thread)).transpose()?;
+            let bound = transaction.query_row(
+                "SELECT thread_id FROM imap_gmail_threads WHERE account_id=?1 AND gmail_thread_id=?2",
+                rusqlite::params![self.account_id, external],
+                |row| row.get::<_, String>(0),
+            ).optional()?;
+            let conflict = || DatabaseError::invalid(
+                "Gmail conversation identity conflicts with existing mail. The existing conversation was kept."
+            );
+            if let Some(bound) = bound {
+                if existing.as_ref().is_some_and(|id| id != &bound) {
+                    return Err(conflict());
+                }
+                return Ok(bound);
+            }
+            let thread_id = existing.unwrap_or_else(|| {
+                crate::provider::imap::gmail_thread_id(&self.account_id, &external)
+            });
+            let inserted = transaction.execute(
+                "INSERT INTO imap_gmail_threads(account_id,gmail_thread_id,thread_id)
+                 VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",
+                rusqlite::params![self.account_id, external, thread_id],
+            )?;
+            if inserted != 1 {
+                return Err(conflict());
+            }
+            Ok(thread_id)
+        })
+    }
+
+    pub(crate) fn is_gmail_thread(&self, id: &str) -> DbResult<bool> {
+        self.database.with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM imap_gmail_threads WHERE account_id=?1 AND thread_id=?2)",
+                rusqlite::params![self.account_id, id],
+                |row| row.get(0),
+            )?)
+        })
+    }
+
+    pub(crate) fn bound_gmail_thread(&self, external: u64) -> DbResult<Option<String>> {
+        self.database.with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT thread_id FROM imap_gmail_threads WHERE account_id=?1 AND gmail_thread_id=?2",
+                rusqlite::params![self.account_id, format!("{external:x}")],
+                |row| row.get(0),
+            ).optional()?)
+        })
+    }
+
+    pub(crate) fn gmail_thread_lookup_id(&self, thread: &str) -> DbResult<Option<u64>> {
+        self.database.with_connection(|c| {
+            c.query_row(
+                "SELECT gmail_thread_id FROM imap_gmail_threads WHERE account_id=?1 AND thread_id=?2",
+                rusqlite::params![self.account_id, thread],
+                |row| row.get::<_, String>(0),
+            ).optional()?.map(|external| {
+                u64::from_str_radix(&external, 16)
+                    .map_err(|_| DatabaseError::corrupt("Invalid stored Gmail thread ID"))
+            }).transpose()
         })
     }
 
@@ -667,7 +753,11 @@ impl ImapStateStore {
                      FROM imap_message_tokens mt INDEXED BY imap_message_tokens_by_token
                      CROSS JOIN imap_threads t
                        ON t.account_id = mt.account_id AND t.message_id = mt.message_id
-                     WHERE mt.account_id = ?1 AND mt.token IN ({placeholders})",
+                     WHERE mt.account_id = ?1 AND mt.token IN ({placeholders})
+                       AND NOT EXISTS (
+                            SELECT 1 FROM imap_gmail_threads g
+                            WHERE g.account_id=t.account_id AND g.thread_id=t.thread_id
+                       )",
                 );
                 let mut statement = connection.prepare(&sql)?;
                 let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 1);

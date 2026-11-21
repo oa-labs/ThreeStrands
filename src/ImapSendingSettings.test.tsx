@@ -68,6 +68,21 @@ describe("ImapSendingSettings", () => {
     expect((screen.getByLabelText("Address 2") as HTMLInputElement).value).toBe("work@proton.me");
   });
 
+  it("saves Reply-To for each sending address and a single default", async () => {
+    vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue(options);
+    const save = vi.spyOn(mailClient, "setImapIdentities").mockResolvedValue(options.identities);
+    renderPanel();
+    await screen.findByText("me@proton.me");
+    fireEvent.change(screen.getByLabelText("Sign-in Address Reply-To"), { target: { value: "help@example.com" } });
+    fireEvent.change(screen.getByLabelText("Reply-To 1"), { target: { value: "team@example.com" } });
+    fireEvent.change(screen.getByLabelText("Default Sending Address"), { target: { value: "0" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save addresses" })); });
+    expect(save).toHaveBeenCalledWith("me@proton.me", [
+      { address: "me@proton.me", displayName: null, replyTo: "help@example.com" },
+      { address: "work@proton.me", displayName: "Work", replyTo: "team@example.com", isDefault: true },
+    ]);
+  });
+
   it("toggles the server-saves-sent override", async () => {
     vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue(options);
     const set = vi.spyOn(mailClient, "setImapServerSavesSent").mockResolvedValue();

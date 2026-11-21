@@ -18,7 +18,7 @@ use crate::provider::{
     FetchedServerDraft, ProviderError, ProviderResult, ServerDraft,
 };
 
-use super::{mutate::as_write_session, ImapProvider};
+use super::{db_err, mutate::as_write_session, ImapProvider};
 
 /// A copy's place in the Drafts mailbox.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,8 +254,9 @@ impl ImapProvider {
         let copy = CopyId::parse(id).ok_or(ProviderError::NotFound)?;
         let mut session = self.open_session().await?;
         let result = async {
-            let session = as_write_session(session.as_mut())?;
-            if examined_validity(session, &mailbox).await? != copy.uidvalidity {
+            if examined_validity(as_write_session(session.as_mut())?, &mailbox).await?
+                != copy.uidvalidity
+            {
                 return Err(ProviderError::NotFound);
             }
             let set = build_uid_set(&[copy.uid]).ok_or(ProviderError::NotFound)?;
@@ -267,10 +268,14 @@ impl ImapProvider {
                 .ok_or(ProviderError::NotFound)?
                 .to_vec();
             crate::provider::imap::policy::check_append_bytes(raw.len())?;
-            // IMAP conversations are threaded locally, so a draft names none.
+            let native = session.uid_gmail_threads(&[copy.uid]).await?;
+            let thread_id = match native.get(&copy.uid) {
+                Some((_, thread)) => self.store.bound_gmail_thread(*thread).map_err(db_err)?,
+                None => None,
+            };
             Ok(FetchedServerDraft {
                 draft: copy.server_draft(),
-                thread_id: None,
+                thread_id,
                 raw,
             })
         }

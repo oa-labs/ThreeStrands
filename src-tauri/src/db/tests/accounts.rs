@@ -675,6 +675,7 @@ fn every_table_keyed_by_account_is_purged_on_removal_or_deliberately_kept() {
         "imap_server_capabilities",
         "imap_sync_state",
         "imap_thread_aliases",
+        "imap_gmail_threads",
         "imap_threads",
         "mutations",
         "outbox_messages",
@@ -916,6 +917,7 @@ fn seed_imap_cache(database: &Database, account: &str) {
             c.execute("INSERT INTO imap_locations VALUES (?1, 'INBOX', 1, 1, 'm', '[]', NULL)", [account])?;
             c.execute("INSERT INTO imap_threads VALUES (?1, 'm', 't', 1)", [account])?;
             c.execute("INSERT INTO imap_thread_aliases VALUES (?1, 'old', 't')", [account])?;
+            c.execute("INSERT INTO imap_gmail_threads VALUES (?1, '2a', 't')", [account])?;
             c.execute("INSERT INTO imap_sync_state(account_id, generation, complete_walks) VALUES (?1, 1, 4)", [account])?;
             c.execute("INSERT INTO imap_change_journal VALUES (?1, 1, 't')", [account])?;
             c.execute("INSERT INTO imap_message_tokens VALUES (?1, 'm', '<m@x>')", [account])?;
@@ -934,6 +936,50 @@ fn seed_imap_cache(database: &Database, account: &str) {
             Ok(())
         })
         .unwrap();
+}
+
+#[test]
+fn another_devices_provider_preference_cannot_replace_a_local_connection() {
+    let db = database();
+    db.adopt_account("local@example.com").unwrap();
+    for email in ["local@example.com", "available@example.com"] {
+        db.upsert_synced_account(&serde_json::json!({
+            "email": email,
+            "provider": "imap",
+            "nickname": "Work",
+            "color": "#123456",
+            "sortOrder": 0
+        }))
+        .unwrap();
+    }
+    let local = db.get_account("local@example.com").unwrap().unwrap();
+    assert_eq!(local.provider, "gmail");
+    assert_eq!(local.nickname.as_deref(), Some("Work"));
+    let available = db.get_account("available@example.com").unwrap().unwrap();
+    assert_eq!(available.provider, "imap");
+    assert!(!available.on_this_device);
+}
+
+#[test]
+fn a_failed_imap_settings_write_does_not_leave_a_setup_account() {
+    let db = database();
+    let fixture = "fixture@example.com";
+    db.adopt_mail_account(fixture, crate::models::MailProviderKind::Imap)
+        .unwrap();
+    seed_imap_cache(&db, fixture);
+    let settings = db.imap_account_settings(fixture).unwrap().unwrap();
+    db.connection()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER refuse_settings BEFORE INSERT ON imap_account_settings
+         WHEN NEW.account_id='new@example.com'
+         BEGIN SELECT RAISE(ABORT, 'test write failure'); END;",
+        )
+        .unwrap();
+    assert!(db
+        .adopt_tested_imap_account("new@example.com", &settings)
+        .is_err());
+    assert!(db.get_account("new@example.com").unwrap().is_none());
 }
 
 #[test]
@@ -983,6 +1029,7 @@ fn connection_changes_invalidate_only_the_changed_mailbox_namespace() {
             "identity" => settings.identities.push(Identity {
                 address: "alias@example.com".into(),
                 display_name: None,
+                ..Default::default()
             }),
             _ => unreachable!(),
         }
@@ -1125,6 +1172,7 @@ fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
                     "imap_mailboxes",
                     "imap_threads",
                     "imap_thread_aliases",
+                    "imap_gmail_threads",
                     "imap_sync_state",
                     "imap_change_journal",
                     "imap_message_tokens",

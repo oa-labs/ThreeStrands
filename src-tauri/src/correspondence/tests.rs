@@ -59,10 +59,12 @@ fn imap_database() -> Database {
             Identity {
                 address: "me@proton.me".into(),
                 display_name: None,
+                ..Default::default()
             },
             Identity {
                 address: "work@proton.me".into(),
                 display_name: Some("Work".into()),
+                ..Default::default()
             },
         ],
         pinned_fingerprints: Default::default(),
@@ -921,7 +923,7 @@ mod reconciliation {
                     assert_eq!(resolved.provider_id.as_deref(), Some("confirmed-copy"));
                     assert!(resolved.error.is_none());
                 } else if verifiable_delivery {
-                    assert_eq!(result.unwrap_err(), "Delivery is still uncertain. No automatic retry was made. Check Gmail Sent before composing another message.");
+                    assert_eq!(result.unwrap_err(), "Delivery is still uncertain. No automatic retry was made. Check Sent Mail before composing another message.");
                     assert_eq!(resolved.state, "uncertain");
                     assert_eq!(resolved.error, item.error);
                 } else {

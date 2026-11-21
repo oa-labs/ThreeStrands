@@ -104,12 +104,16 @@ impl LabelStorage {
 /// One sending identity: an address and an optional display name. The account's
 /// ordered identity list (`docs/imap-design.md`, "Identities") is non-secret
 /// and travels in the settings export.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Identity {
     pub address: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_default: bool,
 }
 
 /// All non-secret settings for one IMAP account. Serialized as-is into the
@@ -199,6 +203,7 @@ mod tests {
             identities: vec![Identity {
                 address: "me@proton.me".into(),
                 display_name: Some("Me".into()),
+                ..Default::default()
             }],
             pinned_fingerprints: BTreeMap::new(),
             server_saves_sent: true,

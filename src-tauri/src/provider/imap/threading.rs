@@ -53,6 +53,11 @@ fn thread_hash(normalized_message_id: &str) -> String {
     out
 }
 
+pub(crate) fn gmail_thread_id(account: &str, external: &str) -> String {
+    let token = format!("{account}\0{external}");
+    format!("imap:gmail-thread:{}", thread_hash(&token))
+}
+
 /// One message handed to the threader: its already-derived stable id, and the
 /// raw reference headers as the identity pass collected them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

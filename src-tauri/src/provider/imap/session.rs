@@ -14,6 +14,8 @@
 //! Nothing here fetches, syncs, or discovers mailboxes — those are later
 //! slices. This is the authenticated-session abstraction they build on.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use async_imap::types::{Fetch, Mailbox};
 use async_imap::Session;
 use async_trait::async_trait;
@@ -117,6 +119,14 @@ pub trait ImapSession: Send {
     /// raw `Fetch` responses collected. (The read slices turn these into
     /// `RawMessage`s; Slice 1 only proves the round-trip.)
     async fn uid_fetch(&mut self, uid_set: &str, items: &str) -> Result<Vec<Fetch>, ProviderError>;
+
+    /// The Gmail message and thread IDs for each requested UID.
+    async fn uid_gmail_threads(
+        &mut self,
+        _uids: &[u32],
+    ) -> Result<BTreeMap<u32, (u64, u64)>, ProviderError> {
+        Ok(BTreeMap::new())
+    }
 
     /// The server's advertised capabilities (post-login `CAPABILITY`),
     /// uppercased. Slice 2's "test and save" reads these to confirm the login
@@ -310,6 +320,89 @@ where
             .into_iter()
             .map(|f| f.map_err(|e| map_imap_error(&e)))
             .collect()
+    }
+
+    async fn uid_gmail_threads(
+        &mut self,
+        uids: &[u32],
+    ) -> Result<BTreeMap<u32, (u64, u64)>, ProviderError> {
+        use async_imap::imap_proto::{AttributeValue, Response, Status};
+
+        let mut rows = BTreeMap::new();
+        if !self.gmail_message_ids || uids.is_empty() {
+            return Ok(rows);
+        }
+        let uid_set = uids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        // async-imap exposes MSGID on Fetch but has no THRID accessor.
+        let request = self
+            .session
+            .run_command(format!("UID FETCH {uid_set} (UID X-GM-MSGID X-GM-THRID)"))
+            .await
+            .map_err(|error| map_imap_error(&error))?;
+        let requested: BTreeSet<u32> = uids.iter().copied().collect();
+        let mut conflict = false;
+        loop {
+            let response = self
+                .session
+                .read_response()
+                .await
+                .map_err(|error| map_imap_error(&async_imap::error::Error::Io(error)))?
+                .ok_or_else(|| map_imap_error(&async_imap::error::Error::ConnectionLost))?;
+            match response.parsed() {
+                Response::Fetch(_, attributes) => {
+                    let mut uid = None;
+                    let mut message = None;
+                    let mut thread = None;
+                    for attribute in attributes {
+                        match attribute {
+                            AttributeValue::Uid(value) => uid = Some(*value),
+                            AttributeValue::GmailMsgId(value) => message = Some(*value),
+                            AttributeValue::GmailThrId(value) => thread = Some(*value),
+                            _ => {}
+                        }
+                    }
+                    if let (Some(uid), Some(message), Some(thread)) = (uid, message, thread) {
+                        if requested.contains(&uid) && message != 0 && thread != 0 {
+                            let pair = (message, thread);
+                            conflict |= rows
+                                .insert(uid, pair)
+                                .is_some_and(|previous| previous != pair);
+                        }
+                    }
+                }
+                Response::Data {
+                    status: Status::Bye,
+                    ..
+                } => {
+                    return Err(map_imap_error(&async_imap::error::Error::ConnectionLost));
+                }
+                Response::Done {
+                    tag,
+                    status,
+                    outcome,
+                } if tag.as_bytes() == request.as_bytes() => {
+                    if *status != Status::Ok {
+                        return Err(classify_response_code(
+                            outcome.code.as_ref(),
+                            outcome.information.as_deref().unwrap_or_default(),
+                        )
+                        .into_provider_error());
+                    }
+                    if conflict {
+                        return Err(ProviderError::InvalidOperation(
+                            "Gmail returned conflicting conversation identifiers for a message"
+                                .into(),
+                        ));
+                    }
+                    return Ok(rows);
+                }
+                _ => {}
+            }
+        }
     }
 
     async fn capabilities(&mut self) -> Result<Vec<String>, ProviderError> {
