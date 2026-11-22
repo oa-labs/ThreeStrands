@@ -18,8 +18,15 @@ const SECURITY_LABEL: Record<ImapSecurityMode, string> = Object.fromEntries(
   SECURITY_OPTIONS.map((option) => [option.value, option.label]),
 ) as Record<ImapSecurityMode, string>;
 
-function describe(endpoint: Endpoint): string {
-  return `${endpoint.host}:${endpoint.port} · ${SECURITY_LABEL[endpoint.security]} · ${endpoint.username}`;
+function ServerSummary({ endpoint }: { endpoint: Endpoint }) {
+  return (
+    <dd>
+      {endpoint.host}
+      <span className="imap-server-summary-details">
+        {`:${endpoint.port} · ${SECURITY_LABEL[endpoint.security]} · ${endpoint.username}`}
+      </span>
+    </dd>
+  );
 }
 
 function endpoints(settings: ImapConnectionSettings): Record<Kind, Endpoint> {
@@ -128,9 +135,9 @@ export function ImapServerSettings({
         <>
           <dl className="imap-server-summary">
             <dt>Incoming (IMAP)</dt>
-            <dd>{describe(current.imap)}</dd>
+            <ServerSummary endpoint={current.imap} />
             <dt>Outgoing (SMTP)</dt>
-            <dd>{describe(current.smtp)}</dd>
+            <ServerSummary endpoint={current.smtp} />
           </dl>
           {saved ? <p className="settings-hint" role="status">Server settings saved. Syncing mail…</p> : null}
           <div className="imap-server-actions">

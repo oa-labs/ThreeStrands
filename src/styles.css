@@ -2920,7 +2920,6 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 /* Shared account subsection defaults also cover newly added account panels. */
 .account-card .settings-subsection { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
 .account-card .settings-subsection h4 { margin: 0; }
-.account-card .imap-sending h5 { margin: 0; font-size: var(--text-body); font-weight: var(--weight-semibold); }
 .account-card .settings-subsection p { margin: 0; }
 .sending-address-dialog { overflow-y: auto; }
 .sending-address-details { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-1) var(--dialog-inset) var(--space-4); min-width: 0; overflow-wrap: anywhere; }
@@ -2929,23 +2928,22 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .sending-identity-list li { display: flex; flex-direction: column; gap: var(--space-0-5); min-width: 0; overflow-wrap: anywhere; }
 .sending-identity-detail { color: var(--muted); font-size: var(--text-meta); }
 .account-card .settings-subsection > .btn, .sending-address-details > .btn { align-self: flex-start; }
-.imap-sending-addresses { display: flex; flex-direction: column; gap: var(--space-2); }
-.imap-identity-signin { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
-.imap-identity-signin-address { font-size: var(--text-body); overflow-wrap: anywhere; }
+.imap-identity-signin { display: flex; flex-direction: column; gap: var(--space-0-5); }
+.imap-identity-signin-address { color: var(--text); font-size: var(--text-body); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+.imap-identity-reply-to { max-width: 420px; }
 .imap-identity-list { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 .imap-sending-actions, .imap-server-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-/* Sent mail copy: a fieldset styled as a plain titled group, not the
-   browser's bordered box, with one stacked radio choice per row. */
 .imap-sent-copy { display: flex; flex-direction: column; gap: var(--space-2-5); min-width: 0; margin: 0; padding: 0; border: 0; }
-.imap-sent-copy legend { margin-bottom: var(--space-1); padding: 0; font-size: var(--text-body); font-weight: var(--weight-semibold); }
+.imap-sent-copy legend { margin-bottom: var(--space-3); padding: 0; color: var(--text); font-size: var(--text-body); font-weight: var(--weight-semibold); }
 .imap-sent-copy-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: var(--space-0-5) var(--space-2); }
+.imap-sent-copy-option input { accent-color: var(--accent); }
 .imap-sent-copy-option label { font-size: var(--text-body); }
 .imap-sent-copy-option p { grid-column: 2; }
-.imap-sent-copy-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-2-5); border-radius: var(--radius-sm); background: var(--hover); }
-.imap-sent-copy-status p { flex: 1 1 240px; color: var(--muted); font-size: var(--text-secondary); }
+.imap-sent-copy-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
 .imap-server-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: 0; font-size: var(--text-secondary); }
-.imap-server-summary dt { color: var(--muted); }
-.imap-server-summary dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.imap-server-summary dt { color: var(--text); }
+.imap-server-summary dd { min-width: 0; margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.imap-server-summary-details { color: var(--muted); font-size: var(--text-meta); }
 .imap-server-editor { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .imap-server-editor .imap-server-actions { justify-content: flex-end; }
 .account-card .imap-server p.imap-server-reconnect-notice { padding: var(--space-2) var(--space-2-5); border-radius: var(--radius-sm); color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); font-size: var(--text-secondary); }

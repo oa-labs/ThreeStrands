@@ -1,13 +1,22 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { mailClient } from "./data/client";
-import type { ImapSendingOptions, SendingIdentityInput } from "./domain";
+import type { ImapSendingOptions, SendingIdentity, SendingIdentityInput } from "./domain";
 import { useSettingsOperation } from "./settingsOperations";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 
 /** One editable secondary-identity row (address + optional display name). */
 type IdentityRow = { address: string; displayName: string; replyTo: string; isDefault: boolean };
+
+function editableAddresses(identities: SendingIdentity[]): IdentityRow[] {
+  return identities.slice(1).map((identity) => ({
+    address: identity.address,
+    displayName: identity.displayName ?? "",
+    replyTo: identity.replyTo ?? "",
+    isDefault: Boolean(identity.isDefault),
+  }));
+}
 
 /**
  * The "Sending" panel for ONE IMAP account (rendered only when
@@ -19,45 +28,41 @@ type IdentityRow = { address: string; displayName: string; replyTo: string; isDe
  * second hard-coded copy here.
  */
 export function ImapSendingSettings({ account }: { account: string }) {
-  const { pending, busy, error, actFor } = useSettingsOperation();
+  const { pending, busy, error, errorKey, runFor } = useSettingsOperation();
   const [options, setOptions] = useState<ImapSendingOptions | null>(null);
   const [rows, setRows] = useState<IdentityRow[]>([]);
   const [primaryReplyTo, setPrimaryReplyTo] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [addressesSaved, setAddressesSaved] = useState(false);
+  const [sentModeSaved, setSentModeSaved] = useState(false);
   const headingId = useId();
-
-  const load = useCallback(async () => {
-    const next = await mailClient.getImapSendingOptions(account);
-    setOptions(next);
-    // The first identity is the sign-in address (read-only); the rest are the
-    // editable secondary addresses.
-    setPrimaryReplyTo(next.identities[0]?.replyTo ?? "");
-    setRows(next.identities.slice(1).map((identity) => ({
-      address: identity.address,
-      displayName: identity.displayName ?? "",
-      replyTo: identity.replyTo ?? "",
-      isDefault: Boolean(identity.isDefault),
-    })));
-  }, [account]);
+  const replyToId = useId();
 
   useEffect(() => {
+    let active = true;
+    setOptions(null);
     setLoadError(null);
-    void load().catch((reason) => setLoadError(errorMessage(reason)));
-  }, [load]);
+    setAddressesSaved(false);
+    setSentModeSaved(false);
+    void mailClient.getImapSendingOptions(account).then((next) => {
+      if (!active) return;
+      setOptions(next);
+      setPrimaryReplyTo(next.identities[0]?.replyTo ?? "");
+      setRows(editableAddresses(next.identities));
+    }).catch((reason: unknown) => {
+      if (active) setLoadError(errorMessage(reason));
+    });
+    return () => { active = false; };
+  }, [account]);
 
-  if (loadError) {
+  const heading = <h4 id={headingId}>Sending addresses</h4>;
+  if (loadError || !options) {
     return (
-      <section className="settings-subsection imap-sending" aria-labelledby={headingId}>
-        <h4 id={headingId}>Sending</h4>
-        <p className="form-error" role="alert">{loadError}</p>
-      </section>
-    );
-  }
-  if (!options) {
-    return (
-      <section className="settings-subsection imap-sending" aria-labelledby={headingId}>
-        <h4 id={headingId}>Sending</h4>
-        <p role="status">Loading…</p>
+      <section className="settings-subsection" aria-labelledby={headingId}>
+        {heading}
+        {loadError
+          ? <p className="form-error" role="alert">{loadError}</p>
+          : <p role="status">Loading…</p>}
       </section>
     );
   }
@@ -69,133 +74,157 @@ export function ImapSendingSettings({ account }: { account: string }) {
   const addRow = () => setRows((current) => [...current, { address: "", displayName: "", replyTo: "", isDefault: false }]);
   const removeRow = (index: number) => setRows((current) => current.filter((_, i) => i !== index));
   const defaultRow = rows.findIndex((row) => row.isDefault && row.address.trim());
+  const secondaryAddresses: SendingIdentityInput[] = rows
+    .filter((row) => row.address.trim())
+    .map((row) => ({
+      address: row.address.trim(),
+      displayName: row.displayName.trim() || null,
+      replyTo: row.replyTo.trim() || undefined,
+      isDefault: row.isDefault || undefined,
+    }));
+  const savedSecondaryAddresses = options.identities.slice(1);
+  const addressesChanged = primaryReplyTo.trim() !== (options.identities[0]?.replyTo ?? "")
+    || secondaryAddresses.length !== savedSecondaryAddresses.length
+    || secondaryAddresses.some((address, index) => {
+      const saved = savedSecondaryAddresses[index];
+      return address.address !== saved.address
+        || address.displayName !== (saved.displayName || null)
+        || address.replyTo !== (saved.replyTo || undefined)
+        || Boolean(address.isDefault) !== Boolean(saved.isDefault);
+    });
 
   const saveIdentities = () =>
-    actFor("identities", async () => {
-      const submitted: SendingIdentityInput[] = [
-        // The sign-in address is always first and cannot be removed; keep its
-        // (read-only) display name if the server reported one.
+    runFor("identities", async () => {
+      setAddressesSaved(false);
+      const identities = await mailClient.setImapIdentities(account, [
         {
           address: signInAddress,
           displayName: options.identities[0]?.displayName ?? null,
           replyTo: primaryReplyTo.trim() || undefined,
         },
-        ...rows
-          .filter((row) => row.address.trim())
-          .map((row) => ({
-            address: row.address.trim(),
-            displayName: row.displayName.trim() || null,
-            replyTo: row.replyTo.trim() || undefined,
-            isDefault: row.isDefault || undefined,
-          })),
-      ];
-      await mailClient.setImapIdentities(account, submitted);
-      await load();
+        ...secondaryAddresses,
+      ]);
+      setOptions({ ...options, identities });
+      setPrimaryReplyTo(identities[0]?.replyTo ?? "");
+      setRows(editableAddresses(identities));
+      setAddressesSaved(true);
     });
 
   const setServerSavesSent = (enabled: boolean) =>
-    actFor("sentCopy", async () => {
+    runFor("sentCopy", async () => {
+      setSentModeSaved(false);
       await mailClient.setImapServerSavesSent(account, enabled);
-      await load();
+      setOptions({ ...options, serverSavesSentOverride: enabled });
+      setSentModeSaved(true);
     });
 
   const resetDetection = () =>
-    actFor("resetDetection", async () => {
+    runFor("resetDetection", async () => {
       await mailClient.resetImapSentCopyDetection(account);
-      await load();
+      setOptions({ ...options, sentCopyDetected: null });
     });
 
   const automatic = !options.serverSavesSentOverride;
 
   return (
-    <section className="settings-subsection imap-sending" aria-labelledby={headingId}>
-      <div className="imap-sending-addresses">
-        <h5>Sending addresses</h5>
-        <p className="settings-hint">Addresses this account can send mail from.</p>
-        <SignInAddressRow address={signInAddress} />
-        <label className="settings-field settings-field-row">
-          <span>Sign-in Address Reply-To</span>
-          <input type="email" value={primaryReplyTo} disabled={busy}
+    <>
+      <section className="settings-subsection" aria-labelledby={headingId}>
+        {heading}
+        <p className="imap-identity-signin">
+          <span className="settings-hint">Sign-in address</span>
+          <span className="imap-identity-signin-address">{signInAddress}</span>
+        </p>
+        <div className="settings-field imap-identity-reply-to">
+          <label htmlFor={replyToId}>Reply-To (optional)</label>
+          <input id={replyToId} type="email" value={primaryReplyTo} disabled={busy} aria-describedby={`${replyToId}-hint`}
             onChange={(event) => setPrimaryReplyTo(event.target.value)} />
-        </label>
-        <ul className="imap-identity-list">
-          {rows.map((row, index) => (
-            <IdentityRowFields
-              key={index}
-              index={index}
-              row={row}
-              disabled={busy}
-              onChange={(patch) => updateRow(index, patch)}
-              onRemove={() => removeRow(index)}
-            />
-          ))}
-        </ul>
-        <label className="settings-field settings-field-row">
-          <span>Default Sending Address</span>
-          <select value={defaultRow} disabled={busy} onChange={(event) => {
-            const selected = Number(event.target.value);
-            setRows((current) => current.map((row, index) => ({ ...row, isDefault: index === selected })));
-          }}>
-            <option value={-1}>Sign-in address</option>
-            {rows.map((row, index) => row.address.trim() && (
-              <option key={index} value={index}>{row.address.trim()}</option>
+          <p id={`${replyToId}-hint`} className="settings-hint">Leave blank to receive replies at your sign-in address.</p>
+        </div>
+        {rows.length > 0 && (
+          <ul className="imap-identity-list">
+            {rows.map((row, index) => (
+              <IdentityRowFields
+                key={index}
+                index={index}
+                row={row}
+                disabled={busy}
+                onChange={(patch) => updateRow(index, patch)}
+                onRemove={() => removeRow(index)}
+              />
             ))}
-          </select>
-        </label>
+          </ul>
+        )}
+        {secondaryAddresses.length > 0 && (
+          <label className="settings-field settings-field-row">
+            <span>Default From address</span>
+            <select value={defaultRow} disabled={busy} onChange={(event) => {
+              const selected = Number(event.target.value);
+              setRows((current) => current.map((row, index) => ({ ...row, isDefault: index === selected })));
+            }}>
+              <option value={-1}>{signInAddress}</option>
+              {rows.map((row, index) => row.address.trim() && (
+                <option key={index} value={index}>{row.address.trim()}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="imap-sending-actions">
           <button type="button" className="btn btn-sm" disabled={busy} onClick={addRow}>
             <Plus size={ICON_SIZE.sm} /> Add address
           </button>
-          <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void saveIdentities()}>
+          <button type="button" className="btn btn-sm btn-primary" disabled={busy || !addressesChanged} onClick={saveIdentities}>
             {pending === "identities" ? "Saving…" : "Save addresses"}
           </button>
+          {addressesSaved && !addressesChanged && <p className="settings-hint" role="status">Addresses saved.</p>}
         </div>
+        {error && errorKey === "identities" && <p className="form-error" role="alert">{error}</p>}
+      </section>
+
+      <div className="settings-subsection">
+        <fieldset className="imap-sent-copy" aria-describedby={`${headingId}-sent-copy-intro`}>
+          <legend>Save sent messages</legend>
+          <p id={`${headingId}-sent-copy-intro`} className="settings-hint">
+            Choose who saves a copy in this account&apos;s Sent folder.
+          </p>
+          <SentCopyOption
+            name={`sent-copy-${account}`}
+            checked={automatic}
+            disabled={busy}
+            label="Automatic (recommended)"
+            description="ThreeStrands saves a copy when your server doesn't."
+            onSelect={() => setServerSavesSent(false)}
+          />
+          <SentCopyOption
+            name={`sent-copy-${account}`}
+            checked={!automatic}
+            disabled={busy}
+            label="Use the server’s copy"
+            description="Choose this if your server saves sent messages. Otherwise, sent messages won't appear in your Sent folder."
+            onSelect={() => setServerSavesSent(true)}
+          />
+          {automatic ? (
+            <div className="imap-sent-copy-status">
+              <p className="settings-hint" role="status">{detectionStatus(options.sentCopyDetected)}</p>
+              {options.sentCopyDetected !== null && (
+                <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={resetDetection}>
+                  {pending === "resetDetection" ? "Resetting…" : "Re-check on next send"}
+                </button>
+              )}
+            </div>
+          ) : sentModeSaved && <p className="settings-hint" role="status">Sent settings saved.</p>}
+          {error && errorKey !== "identities" && <p className="form-error" role="alert">{error}</p>}
+        </fieldset>
       </div>
-
-      <fieldset className="imap-sent-copy" aria-describedby={`${headingId}-sent-copy-intro`}>
-        <legend>Sent mail copy</legend>
-        <p id={`${headingId}-sent-copy-intro`} className="settings-hint">
-          Keep a copy of each message you send in this account&apos;s Sent folder.
-        </p>
-        <SentCopyOption
-          name={`sent-copy-${account}`}
-          checked={automatic}
-          disabled={busy}
-          label="Automatic (recommended)"
-          description="ThreeStrands checks whether your server keeps sent mail, and saves a copy only when it doesn't."
-          onSelect={() => void setServerSavesSent(false)}
-        />
-        <SentCopyOption
-          name={`sent-copy-${account}`}
-          checked={!automatic}
-          disabled={busy}
-          label="My mail server saves sent mail itself"
-          description="ThreeStrands never saves a copy. If your server doesn't keep sent mail, sent messages won't appear in your Sent folder."
-          onSelect={() => void setServerSavesSent(true)}
-        />
-        {automatic ? (
-          <div className="imap-sent-copy-status">
-            <p role="status">{detectionStatus(options.sentCopyDetected)}</p>
-            {options.sentCopyDetected === null ? null : (
-              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void resetDetection()}>
-                {pending === "resetDetection" ? "Resetting…" : "Re-check on next send"}
-              </button>
-            )}
-          </div>
-        ) : null}
-      </fieldset>
-
-      {error ? <p className="form-error" role="alert">{error}</p> : null}
-    </section>
+    </>
   );
 }
 
 /** What Automatic mode has learned about the server, in plain words. */
 function detectionStatus(detected: boolean | null): string {
-  if (detected === null) return "Not checked yet. ThreeStrands checks when you send your next message.";
+  if (detected === null) return "ThreeStrands will check on your next send.";
   return detected
-    ? "Checked: your server keeps sent mail, so ThreeStrands doesn't save a copy."
-    : "Checked: your server doesn't keep sent mail, so ThreeStrands saves a copy for you.";
+    ? "Your mail server saves a copy in Sent."
+    : "ThreeStrands saves a copy in Sent.";
 }
 
 /** One stacked radio choice with its own explanation underneath. */
@@ -229,16 +258,6 @@ function SentCopyOption({
       <label htmlFor={id}>{label}</label>
       <p id={`${id}-description`} className="settings-hint">{description}</p>
     </div>
-  );
-}
-
-/** The sign-in address is always a sending address and can't be edited, so it is shown as text. */
-function SignInAddressRow({ address }: { address: string }) {
-  return (
-    <p className="imap-identity-signin">
-      <span className="imap-identity-signin-address">{address}</span>
-      <span className="settings-hint">Sign-in address · always available</span>
-    </p>
   );
 }
 
