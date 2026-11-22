@@ -80,6 +80,10 @@ impl MutFolder {
 struct MutServer {
     create_outcome: Option<native_creation::CreateOutcome>,
     lose_rename_reply: bool,
+    rename_parent_only: bool,
+    rename_reset_validity: Option<String>,
+    keep_deleted_parent_as_container: bool,
+    delete_extra_label: Option<String>,
     hide_listing_after_rename: bool,
     list_fails: bool,
     plain_list: bool,
@@ -122,6 +126,10 @@ impl MutServer {
         Self {
             create_outcome: None,
             lose_rename_reply: false,
+            rename_parent_only: false,
+            rename_reset_validity: None,
+            keep_deleted_parent_as_container: false,
+            delete_extra_label: None,
             hide_listing_after_rename: false,
             list_fails: false,
             plain_list: false,
@@ -412,13 +420,21 @@ fn build_response(
             return (format!("{tag} BAD invalid label\r\n"), false);
         };
         if state.folders.remove(&name).is_some() {
+            if state.keep_deleted_parent_as_container {
+                state.folders.insert(name.clone(), MutFolder::new(700));
+                state.list_noselect.insert(name.clone());
+            }
+            let extra = state.delete_extra_label.take();
+            if let Some(path) = extra.as_ref() {
+                state.folders.remove(path);
+            }
             for message in state
                 .folders
                 .values_mut()
                 .flat_map(|folder| &mut folder.messages)
             {
                 if let Some(labels) = &mut message.labels {
-                    labels.retain(|label| label != &name);
+                    labels.retain(|label| label != &name && Some(label) != extra.as_ref());
                 }
             }
             (format!("{tag} OK DELETE done\r\n"), false)
@@ -433,18 +449,41 @@ fn build_response(
         if state.folders.contains_key(to) {
             return (format!("{tag} NO [ALREADYEXISTS] target exists\r\n"), false);
         }
-        let Some(folder) = state.folders.remove(from) else {
+        if !state.folders.contains_key(from) {
             return (format!("{tag} NO [NONEXISTENT] no such mailbox\r\n"), false);
-        };
-        state.folders.insert(to.clone(), folder);
+        }
+        let child_prefix = format!("{from}{}", state.delimiter);
+        let renames: BTreeMap<_, _> = state
+            .folders
+            .keys()
+            .filter(|name| {
+                *name == from || (!state.rename_parent_only && name.starts_with(&child_prefix))
+            })
+            .map(|name| (name.clone(), format!("{to}{}", &name[from.len()..])))
+            .collect();
+        for (old, new) in &renames {
+            let mut folder = state.folders.remove(old).unwrap();
+            if state.rename_reset_validity.as_ref() == Some(old) {
+                folder.uidvalidity += 1000;
+            }
+            state.folders.insert(new.clone(), folder);
+            if state.list_noselect.remove(old) {
+                state.list_noselect.insert(new.clone());
+            }
+            if let Some(attributes) = state.list_attributes.remove(old) {
+                state.list_attributes.insert(new.clone(), attributes);
+            }
+        }
         for message in state
             .folders
             .values_mut()
             .flat_map(|folder| &mut folder.messages)
         {
             if let Some(labels) = &mut message.labels {
-                for label in labels.iter_mut().filter(|label| *label == from) {
-                    label.clone_from(to);
+                for label in labels.iter_mut() {
+                    if let Some(new) = renames.get(label) {
+                        label.clone_from(new);
+                    }
                 }
             }
         }

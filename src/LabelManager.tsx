@@ -224,7 +224,7 @@ export function LabelManager({
         actions={[{ label: folders ? "Delete Folder" : "Delete Label", className: "btn-danger", onClick: () => { void deleteLabel(deleting); } }]}
       >
         {nativeLabels
-          ? "Your messages stay in Gmail. Split Inboxes that use this label will need a replacement."
+          ? "Your messages stay in Gmail. Nested labels stay in place. Split Inboxes that use this label will need a replacement."
           : `Each message must have another verified server copy. Split Inboxes that use this ${folders ? "folder" : "label"} will need a replacement.`}
       </InlineConfirm> : null}
       {error ? <p role="alert">{error}</p> : null}

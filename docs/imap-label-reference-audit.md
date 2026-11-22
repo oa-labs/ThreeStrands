@@ -76,9 +76,11 @@ Coverage to retain and extend: nested/case/non-ASCII rename, external rename amb
 same-name reuse, pending/retried mutations, undo captured before rename, parent
 rename with search pins and stale UIDVALIDITY, interrupted recovery, mixed-device
 Split Inbox updates, preceding settings exports, and ordinary-folder last-copy
-protection. The first edit path supports one enrolled device and labels without nested
-children. A tagged server acknowledgement and a verified listing preserve the
-local ID on rename. A lost acknowledgement can leave the saved rule unresolved.
+protection. Edits support one enrolled device. Gmail parent renames now journal
+the full visible hierarchy and preserve local IDs after a tagged server
+acknowledgement and verified listing. A lost acknowledgement can leave the saved
+rules for vanished labels unresolved. Parent deletion retires the selected
+label and verifies existing children in place.
 Deleting a label reserves its old ID and keeps the Split Inbox so its label can
 be selected again. A new label at a retired path receives a different ID.
 The settings export carries bindings and retired IDs. Plain IMAP leaf folder

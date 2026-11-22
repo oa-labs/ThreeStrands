@@ -59,18 +59,32 @@ export function useLabelCatalog(accounts: Account[], detailAccountId: string | u
     setLabelsByAccount((current) => ({ ...current, [labelTargetAccountId]: [...(current[labelTargetAccountId] ?? []).filter((item) => item.id !== label.id), label] }));
     return label;
   }, [labelTargetAccountId]);
+  // A native IMAP edit can publish several labels in one transaction. Even
+  // an error can carry verified changes from a partial server operation.
+  const editAffectsHierarchy = accounts.some((account) =>
+    account.email === labelTargetAccountId && account.labelModel === "imapNativeLabels");
+
   const deleteLabel = useCallback(async (id: string) => {
     if (!labelTargetAccountId) return;
-    await mailClient.deleteLabel(id, labelTargetAccountId);
-    requests.current.delete(labelTargetAccountId);
-    setLabelsByAccount((current) => ({ ...current, [labelTargetAccountId]: (current[labelTargetAccountId] ?? []).filter((label) => label.id !== id) }));
-    await reloadThreads();
-  }, [labelTargetAccountId, reloadThreads]);
+    try {
+      await mailClient.deleteLabel(id, labelTargetAccountId);
+      requests.current.delete(labelTargetAccountId);
+      setLabelsByAccount((current) => ({ ...current, [labelTargetAccountId]: (current[labelTargetAccountId] ?? []).filter((label) => label.id !== id) }));
+      await reloadThreads();
+    } finally {
+      if (editAffectsHierarchy) await refreshLabels(labelTargetAccountId);
+    }
+  }, [labelTargetAccountId, editAffectsHierarchy, refreshLabels, reloadThreads]);
+
   const renameLabel = useCallback(async (id: string, name: string) => {
     if (!labelTargetAccountId) return;
-    const updated = await mailClient.updateLabel(id, name, labelTargetAccountId);
-    requests.current.delete(labelTargetAccountId);
-    setLabelsByAccount((current) => ({ ...current, [labelTargetAccountId]: (current[labelTargetAccountId] ?? []).map((label) => label.id === id ? { ...label, ...updated } : label) }));
-  }, [labelTargetAccountId]);
+    try {
+      const updated = await mailClient.updateLabel(id, name, labelTargetAccountId);
+      requests.current.delete(labelTargetAccountId);
+      setLabelsByAccount((current) => ({ ...current, [labelTargetAccountId]: (current[labelTargetAccountId] ?? []).map((label) => label.id === id ? { ...label, ...updated } : label) }));
+    } finally {
+      if (editAffectsHierarchy) await refreshLabels(labelTargetAccountId);
+    }
+  }, [labelTargetAccountId, editAffectsHierarchy, refreshLabels]);
   return { labelsByAccount, createLabel, deleteLabel, renameLabel };
 }

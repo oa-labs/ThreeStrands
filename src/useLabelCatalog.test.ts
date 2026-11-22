@@ -45,8 +45,8 @@ describe("useLabelCatalog", () => {
     unlisten.mockReset();
   });
 
-  function renderCatalog(target: string | undefined = undefined) {
-    return renderHook(({ targetAccount }) => useLabelCatalog(accounts, account, targetAccount, async () => {}), {
+  function renderCatalog(target: string | undefined = undefined, connectedAccounts = accounts) {
+    return renderHook(({ targetAccount }) => useLabelCatalog(connectedAccounts, account, targetAccount, async () => {}), {
       initialProps: { targetAccount: target },
     });
   }
@@ -144,6 +144,40 @@ describe("useLabelCatalog", () => {
     const expected = operation === "create" ? [inbox, clients, projects]
       : operation === "rename" ? [inbox, { ...clients, name: "Customers" }] : [inbox];
     expect(result.current.labelsByAccount[account]).toEqual(expected);
+  });
+
+  it.each(["renamed", "deleted", "partially renamed"] as const)("refreshes nested labels when a native IMAP parent is %s", async (resultKind) => {
+    const nativeAccounts: Account[] = [{
+      email: account, displayName: null, color: "#4285F4", status: "connected",
+      provider: "imap", labelModel: "imapNativeLabels", sortOrder: 0, connectedAt: "",
+      lastSyncedAt: null, onThisDevice: true,
+    }];
+    const child = { ...clients, id: "lf:Clients/Shared", name: "Clients/Shared" };
+    const original = [inbox, clients, child];
+    const renamed = { ...clients, name: "Customers" };
+    const latest = resultKind === "deleted" ? [inbox, child]
+      : [inbox, renamed, resultKind === "renamed" ? { ...child, name: "Customers/Shared" } : child];
+    vi.mocked(mailClient.listLabels).mockResolvedValue(original);
+    const { result } = renderCatalog(account, nativeAccounts);
+    await waitFor(() => expect(result.current.labelsByAccount[account]).toEqual(original));
+    const stale = deferred<Label[]>();
+    vi.mocked(mailClient.listLabels).mockReturnValueOnce(stale.promise);
+    act(() => emit({ accountId: account, active: false }));
+    vi.mocked(mailClient.listLabels).mockResolvedValue(latest);
+    await act(async () => {
+      if (resultKind === "deleted") {
+        vi.spyOn(mailClient, "deleteLabel").mockResolvedValue();
+        await result.current.deleteLabel(clients.id);
+      } else if (resultKind === "partially renamed") {
+        vi.spyOn(mailClient, "updateLabel").mockRejectedValue(new Error("Gmail did not confirm the full rename"));
+        await expect(result.current.renameLabel(clients.id, renamed.name)).rejects.toThrow("full rename");
+      } else {
+        vi.spyOn(mailClient, "updateLabel").mockResolvedValue(renamed);
+        await result.current.renameLabel(clients.id, renamed.name);
+      }
+    });
+    await act(async () => stale.resolve(original));
+    expect(result.current.labelsByAccount[account]).toEqual(latest);
   });
 
   it("stops listening and ignores pending listings after unmount", async () => {

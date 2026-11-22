@@ -31,7 +31,10 @@ pub(super) fn list_response(state: &MutServer, tag: &str) -> (String, bool) {
             });
         let mut attributes = special.unwrap_or("").to_string();
         if state.list_noselect.contains(name) {
-            attributes.push_str(" \\Noselect");
+            if !attributes.is_empty() {
+                attributes.push(' ');
+            }
+            attributes.push_str("\\Noselect");
         }
         let name_argument = if state.literal_list_names {
             format!("{{{}}}\r\n{name}", name.len())

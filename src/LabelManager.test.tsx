@@ -190,6 +190,7 @@ describe("LabelManager picker", () => {
     expect(onDelete).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
     expect(screen.getByText(/Your messages stay in Gmail/)).toBeInTheDocument();
+    expect(screen.getByText(/Nested labels stay in place/)).toBeInTheDocument();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Delete Label" })); });
     expect(onDelete).toHaveBeenCalledWith(work.id);
   });

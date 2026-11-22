@@ -104,8 +104,8 @@ and negative cases where a label removal must not delete mail.
 
 Existing labels on servers advertising `X-GM-EXT-1` can now be applied and
 removed without a configured container. Their existing IDs are preserved.
-Native label rename/delete now covers individual user labels with no nested
-children. Plain IMAP can create physical folders and rename or safely delete
+Gmail label renames carry nested labels with them, and deleting a parent removes
+only the selected label. Plain IMAP can create physical folders and rename or safely delete
 individual folders without children. Label-folder storage requires a configured
 container. Keyword storage supports creating, applying, and removing valid
 keywords on mailboxes that permit them.
@@ -120,9 +120,12 @@ keywords on mailboxes that permit them.
   identity for renames, preserve deleted rules for explicit relinking, and
   recover acknowledged edits through a durable local journal. Encrypted settings
   export carries the identity bindings.
-- [ ] Extend edits to parent labels and coordinate ID bindings across multiple
-  enrolled devices. A verified external disappearance or UIDVALIDITY change
-  leaves an edited label unresolved. The app does not infer external renames.
+- [x] Rename native Gmail label hierarchies while preserving the IDs and
+  Split Inboxes for each verified descendant. Delete a parent label while
+  confirming that the nested labels are still present. See [native label edits](imap-native-labels.md#editing-label-hierarchies).
+- [ ] Coordinate ID bindings across multiple enrolled devices. A verified
+  external disappearance or UIDVALIDITY change leaves an edited label
+  unresolved. The app does not infer external renames.
 - [x] Create ordinary folders and rename or delete leaf folders and label
   folders with stable references. Reuse the edit journal to preserve Split
   Inboxes and retire deleted IDs so a new folder cannot inherit a saved rule.

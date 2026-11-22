@@ -70,5 +70,24 @@ create/apply/remove and suppression of unsupported rename/delete actions. Databa
 cover capability isolation, restart persistence, cleanup, and upgrade from the
 preceding schema without changing message identities or membership.
 
+## Editing label hierarchies
+
+Renaming a Gmail parent sends one IMAP RENAME. ThreeStrands records each
+visible selectable descendant, confirms the destination of every renamed
+label, and publishes all verified paths in one database transaction.
+Split Inboxes and pending label changes keep their label IDs. Cached
+message locations and search pins move only when the destination reports
+the same UIDVALIDITY. A known child missing from LIST blocks the edit.
+A lost rename acknowledgement leaves any vanished IDs available for
+explicit relinking. A partial rename reports the incomplete result and
+keeps verified bindings for labels that moved or stayed in place.
+
+Deleting a Gmail parent sends one DELETE for the selected label. The app
+checks that the parent has disappeared as a selectable label and that the
+children are still present with their original IDs. The parent may remain
+as a non-selectable container. Messages stay in Gmail, and a Split Inbox
+that used the parent can be relinked. Editing continues to require a
+single enrolled device. [IMAP mailbox commands](https://www.rfc-editor.org/rfc/rfc3501.html#section-6.3.4) · [Gmail IMAP extensions](https://developers.google.com/workspace/gmail/imap/imap-extensions#access_to_gmail_labels_x-gm-labels)
+
 Protocol references: [Google IMAP extensions](https://developers.google.com/workspace/gmail/imap/imap-extensions)
 and [IMAP CREATE](https://www.rfc-editor.org/rfc/rfc3501.html#section-6.3.3).

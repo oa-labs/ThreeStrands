@@ -1,5 +1,7 @@
 //! IMAP mailbox label identity and the durable boundary around a server write.
 
+use std::collections::BTreeMap;
+
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
@@ -17,13 +19,41 @@ pub(crate) struct ImapLabelBinding {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ImapLabelEdit {
+    // The root fields are flat in the persisted journal for compatibility
+    // with pending edits written before hierarchy support.
+    #[serde(flatten)]
+    pub root: ImapLabelEditTarget,
+    pub acknowledged: bool,
+    #[serde(default)]
+    pub physical_folder: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub descendants: Vec<ImapLabelEditTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImapLabelEditTarget {
     pub id: String,
     pub source: String,
     pub source_uidvalidity: u32,
     pub destination: Option<String>,
-    pub acknowledged: bool,
-    #[serde(default)]
-    pub physical_folder: bool,
+}
+
+impl ImapLabelEdit {
+    pub(crate) fn targets(&self) -> impl Iterator<Item = &ImapLabelEditTarget> {
+        std::iter::once(&self.root).chain(&self.descendants)
+    }
+}
+
+pub(crate) enum ImapLabelEditOutcome<'a> {
+    Unchanged,
+    Renamed {
+        label: Label,
+        mailbox: &'a str,
+        delimiter: Option<&'a str>,
+        uidvalidity: u32,
+    },
+    Unavailable,
 }
 
 pub(crate) fn read_bindings(
@@ -90,10 +120,12 @@ pub(crate) fn retire_changed_connection_bindings(
         .optional()?;
     if let Some(pending) = pending {
         let edit: ImapLabelEdit = serde_json::from_str(&pending).map_err(serialization_error)?;
-        tx.execute(
-            "INSERT OR IGNORE INTO imap_label_bindings(account_id,label_id) VALUES(?1,?2)",
-            params![account, edit.id],
-        )?;
+        for target in edit.targets() {
+            tx.execute(
+                "INSERT OR IGNORE INTO imap_label_bindings(account_id,label_id) VALUES(?1,?2)",
+                params![account, target.id],
+            )?;
+        }
     }
     for binding in read_bindings(tx, account)? {
         remove_binding_references(tx, account, &binding.label_id)?;
@@ -150,11 +182,13 @@ impl ImapStateStore {
             if inserted == 0 {
                 return Err(DatabaseError::invalid("ThreeStrands is still checking an earlier label change."));
             }
-            tx.execute(
-                "INSERT INTO imap_label_bindings(account_id,label_id,mailbox,uidvalidity)
-                 VALUES(?1,?2,?3,?4) ON CONFLICT(account_id,label_id) DO NOTHING",
-                params![self.account_id, edit.id, edit.source, edit.source_uidvalidity],
-            )?;
+            for target in edit.targets() {
+                tx.execute(
+                    "INSERT INTO imap_label_bindings(account_id,label_id,mailbox,uidvalidity)
+                     VALUES(?1,?2,?3,?4) ON CONFLICT(account_id,label_id) DO NOTHING",
+                    params![self.account_id, target.id, target.source, target.source_uidvalidity],
+                )?;
+            }
             Ok(())
         })
     }
@@ -169,13 +203,18 @@ impl ImapStateStore {
         })
     }
 
-    pub(crate) fn clear_label_edit(&self) -> DbResult<()> {
+    pub(crate) fn cached_native_label_descendants(&self, prefix: &str) -> DbResult<Vec<String>> {
         self.database.with_connection(|connection| {
-            connection.execute(
-                "DELETE FROM imap_label_edits WHERE account_id=?1",
-                [&self.account_id],
+            let mut statement = connection.prepare(
+                "SELECT name FROM imap_mailboxes WHERE account_id=?1 AND substr(name,1,length(?2))=?2
+                 UNION
+                 SELECT mailbox FROM imap_label_bindings WHERE account_id=?1 AND substr(mailbox,1,length(?2))=?2
+                 UNION
+                 SELECT label.value FROM imap_label_snapshots, json_each(labels_json) AS label
+                  WHERE account_id=?1 AND substr(label.value,1,length(?2))=?2",
             )?;
-            Ok(())
+            let rows = statement.query_map(params![self.account_id, prefix], |row| row.get(0))?;
+            Ok(rows.collect::<Result<_, _>>()?)
         })
     }
 
@@ -190,76 +229,108 @@ impl ImapStateStore {
         })
     }
 
-    /// Publish a verified rename, or retire the old identity when the label
-    /// vanished and its destination cannot be proven. The Split Inbox still
-    /// owns the same ID and never follows a newly created mailbox at that path.
+    /// Publish every verified path change together. An uncertain or deleted
+    /// label leaves its saved rules attached to a retired ID for relinking.
     pub(crate) fn finish_label_edit(
         &self,
         edit: &ImapLabelEdit,
-        destination: Option<(&Label, &str, Option<&str>, u32)>,
+        outcomes: &[(&ImapLabelEditTarget, ImapLabelEditOutcome<'_>)],
     ) -> DbResult<()> {
         let account = &self.account_id;
         self.database.with_transaction(|tx| {
-            let (wire, validity) = destination.map(|(_, wire, _, validity)| (wire, validity)).unzip();
-            tx.execute(
-                "INSERT INTO imap_label_bindings(account_id,label_id,mailbox,uidvalidity)
-                 VALUES(?1,?2,?3,?4) ON CONFLICT(account_id,label_id)
-                 DO UPDATE SET mailbox=excluded.mailbox,uidvalidity=excluded.uidvalidity",
-                params![account, edit.id, wire, validity],
-            )?;
-            if let Some((label, wire, delimiter, validity)) = destination {
-                // Reacquire against the destination's real UIDVALIDITY.
-                // Independent Gmail message IDs and local message bodies stay.
+            let mut paths = BTreeMap::new();
+            for (target, outcome) in outcomes {
+                let (wire, validity) = match outcome {
+                    ImapLabelEditOutcome::Unchanged => continue,
+                    ImapLabelEditOutcome::Renamed { mailbox, uidvalidity, .. } => (Some(*mailbox), Some(*uidvalidity)),
+                    ImapLabelEditOutcome::Unavailable => (None, None),
+                };
+                paths.insert(target.source.as_str(), wire);
                 tx.execute(
-                    "INSERT INTO imap_mailboxes(account_id,name,delimiter,uidvalidity,uidnext)
-                     VALUES(?1,?2,?3,?4,0) ON CONFLICT(account_id,name)
-                     DO UPDATE SET delimiter=excluded.delimiter",
-                    params![account, wire, delimiter, validity],
+                    "INSERT INTO imap_label_bindings(account_id,label_id,mailbox,uidvalidity)
+                     VALUES(?1,?2,?3,?4) ON CONFLICT(account_id,label_id)
+                     DO UPDATE SET mailbox=excluded.mailbox,uidvalidity=excluded.uidvalidity",
+                    params![account, target.id, wire, validity],
                 )?;
-                if validity == edit.source_uidvalidity {
+                if let ImapLabelEditOutcome::Renamed { label, mailbox, delimiter, uidvalidity } = outcome {
+                    // The destination was absent from the live listing before
+                    // the edit. Discard any stale coordinates at that path.
+                    clear_mailbox_coordinates(tx, account, mailbox)?;
                     tx.execute(
-                        "UPDATE OR IGNORE imap_locations SET mailbox=?3
-                         WHERE account_id=?1 AND mailbox=?2 AND uidvalidity=?4",
-                        params![account, edit.source, wire, validity],
+                        "INSERT INTO imap_mailboxes(account_id,name,delimiter,uidvalidity,uidnext)
+                         VALUES(?1,?2,?3,?4,0) ON CONFLICT(account_id,name)
+                         DO UPDATE SET delimiter=excluded.delimiter,uidvalidity=excluded.uidvalidity,uidnext=0,highestmodseq=NULL",
+                        params![account, mailbox, delimiter, uidvalidity],
                     )?;
+                    // Independent Gmail message IDs and cached bodies survive
+                    // a reset. Only validated UIDs follow the renamed path.
+                    if *uidvalidity == target.source_uidvalidity {
+                        for table in ["imap_locations", "imap_search_pins"] {
+                            tx.execute(
+                                &format!("UPDATE {table} SET mailbox=?3
+                                    WHERE account_id=?1 AND mailbox=?2 AND uidvalidity=?4"),
+                                params![account, target.source, mailbox, uidvalidity],
+                            )?;
+                        }
+                    }
+                    if edit.physical_folder {
+                        tx.execute(
+                            "UPDATE OR IGNORE imap_copy_intents SET destination=?3
+                             WHERE account_id=?1 AND destination=?2",
+                            params![account, target.source, mailbox],
+                        )?;
+                    }
                     tx.execute(
-                        "UPDATE OR IGNORE imap_search_pins SET mailbox=?3
-                         WHERE account_id=?1 AND mailbox=?2 AND uidvalidity=?4",
-                        params![account, edit.source, wire, validity],
+                        "INSERT OR REPLACE INTO account_labels(account_id,label_id,name,kind) VALUES(?1,?2,?3,?4)",
+                        params![account, label.id, label.name, label.kind],
                     )?;
+                } else {
+                    remove_binding_references(tx, account, &target.id)?;
                 }
-                if edit.physical_folder {
-                    tx.execute(
-                        "UPDATE OR IGNORE imap_copy_intents SET destination=?3
-                         WHERE account_id=?1 AND destination=?2",
-                        params![account, edit.source, wire],
-                    )?;
-                }
+                clear_mailbox_coordinates(tx, account, &target.source)?;
                 tx.execute(
-                    "INSERT OR REPLACE INTO account_labels(account_id,label_id,name,kind) VALUES(?1,?2,?3,?4)",
-                    params![account, label.id, label.name, label.kind],
+                    "DELETE FROM imap_copy_intents WHERE account_id=?1 AND destination=?2",
+                    params![account, target.source],
                 )?;
-            } else {
-                remove_binding_references(tx, account, &edit.id)?;
+                tx.execute(
+                    "DELETE FROM imap_mailboxes WHERE account_id=?1 AND name=?2",
+                    params![account, target.source],
+                )?;
             }
-            // Normalize cached membership from before the server edit. The
-            // next acquisition may refresh it from authoritative Gmail data.
-            tx.execute(
-                "UPDATE imap_label_snapshots SET labels_json=(SELECT json_group_array(DISTINCT
-                    CASE WHEN value=?2 THEN ?3 ELSE value END) FROM json_each(imap_label_snapshots.labels_json)
-                    WHERE value<>?2 OR ?3 IS NOT NULL)
-                 WHERE account_id=?1 AND EXISTS(SELECT 1 FROM json_each(imap_label_snapshots.labels_json) WHERE value=?2)",
-                params![account, edit.source, wire],
-            )?;
-            for table in ["imap_locations", "imap_mailbox_sync_state", "imap_search_pins"] {
-                tx.execute(&format!("DELETE FROM {table} WHERE account_id=?1 AND mailbox=?2"), params![account, edit.source])?;
+            if !paths.is_empty() {
+                // Normalize snapshot memberships in one pass for the entire
+                // hierarchy. Unrelated labels retain their wire paths.
+                tx.execute(
+                    "WITH changes AS MATERIALIZED (SELECT key AS source, value AS destination FROM json_each(?2))
+                     UPDATE imap_label_snapshots AS snapshot
+                        SET labels_json=(SELECT json_group_array(DISTINCT
+                            CASE WHEN changes.source IS NULL THEN label.value ELSE changes.destination END)
+                          FROM json_each(snapshot.labels_json) AS label
+                          LEFT JOIN changes ON changes.source=label.value
+                          WHERE changes.source IS NULL OR changes.destination IS NOT NULL)
+                      WHERE account_id=?1 AND EXISTS(SELECT 1 FROM json_each(snapshot.labels_json) AS label
+                          JOIN changes ON changes.source=label.value)",
+                    params![account, serde_json::to_string(&paths).map_err(serialization_error)?],
+                )?;
             }
-            tx.execute("DELETE FROM imap_copy_intents WHERE account_id=?1 AND destination=?2", params![account, edit.source])?;
-            tx.execute("DELETE FROM imap_mailboxes WHERE account_id=?1 AND name=?2", params![account, edit.source])?;
             tx.execute("DELETE FROM imap_label_edits WHERE account_id=?1", [account])?;
             Ok(())
         })
     }
+}
+
+fn clear_mailbox_coordinates(tx: &Transaction<'_>, account: &str, mailbox: &str) -> DbResult<()> {
+    for table in [
+        "imap_locations",
+        "imap_mailbox_sync_state",
+        "imap_search_pins",
+    ] {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE account_id=?1 AND mailbox=?2"),
+            params![account, mailbox],
+        )?;
+    }
+    Ok(())
 }
 
 fn remove_binding_references(tx: &Transaction<'_>, account: &str, id: &str) -> DbResult<()> {
@@ -280,4 +351,21 @@ fn remove_binding_references(tx: &Transaction<'_>, account: &str, id: &str) -> D
 
 fn serialize(edit: &ImapLabelEdit) -> DbResult<String> {
     serde_json::to_string(edit).map_err(serialization_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_edits_from_before_hierarchy_support_keep_their_original_target() {
+        let json = r#"{"id":"folder:Old","source":"Old","sourceUidvalidity":42,"destination":"New","acknowledged":true}"#;
+        let edit: ImapLabelEdit = serde_json::from_str(json).unwrap();
+        assert_eq!(edit.root.id, "folder:Old");
+        assert_eq!(edit.root.source_uidvalidity, 42);
+        assert_eq!(edit.root.destination.as_deref(), Some("New"));
+        assert!(edit.acknowledged);
+        assert!(!edit.physical_folder);
+        assert_eq!(edit.targets().count(), 1);
+    }
 }
