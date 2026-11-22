@@ -201,9 +201,8 @@ describe("settings section keyboard navigation", () => {
     expect(container).toHaveAttribute("aria-hidden", "true");
 
     const close = within(dialog).getByRole("button", { name: "Close" });
-    expect(within(dialog).getByRole("button", { name: "Disconnect…" })).toBeEnabled();
-    // Primary-only accounts keep alias management behind a disclosure.
-    const lastControl = within(dialog).getByRole("button", { name: "Aliases…" });
+    const lastControl = within(dialog).getByRole("button", { name: "Disconnect…" });
+    expect(lastControl).toBeEnabled();
     lastControl.focus();
     fireEvent.keyDown(lastControl, { key: "Tab" });
     expect(close).toHaveFocus();

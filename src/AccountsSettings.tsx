@@ -14,6 +14,7 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { ImapAccountSetup } from "./ImapAccountSetup";
 import { GmailSendingSettings } from "./GmailSendingSettings";
+import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
 import { SwitchGmailToImap } from "./SwitchGmailToImap";
 import { ImapSendingSettings } from "./ImapSendingSettings";
 import { ImapServerSettings } from "./ImapServerSettings";
@@ -65,7 +66,9 @@ export function AccountsSettings({
   const restoreAddFocus = useRef(false);
   const [imapSaved, setImapSaved] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
+  const [aliasesEmail, setAliasesEmail] = useState<string | null>(null);
   const [switchingEmail, setSwitchingEmail] = useState<string | null>(null);
+  const switchTrigger = useRef<HTMLElement | null>(null);
   // IMAP reconnects happen in the account's Server editor (a password, not a
   // browser sign-in); the header button bumps this to open and focus it.
   const [imapReconnect, setImapReconnect] = useState<{ email: string; request: number } | null>(null);
@@ -83,6 +86,12 @@ export function AccountsSettings({
     const next = moveItem(accounts, index, direction);
     if (account && next) runFor(account.email, () => onReorder(next.map((item) => item.email)));
   };
+
+  function closeGmailSwitch() {
+    setSwitchingEmail(null);
+    switchTrigger.current?.focus({ preventScroll: true });
+    switchTrigger.current = null;
+  }
 
   return (
     <section className="settings-section accounts-manager" aria-label="Mail Accounts">
@@ -172,6 +181,25 @@ export function AccountsSettings({
               name !== account.email ? account.email : null,
               account.lastSyncedAt ? `Last synced ${formatTimeOnly(account.lastSyncedAt)}` : "Not synced yet",
             ].filter(Boolean).join(" · ");
+            const actions: MoreAction[] = [];
+            if (onSignatureDefaults) {
+              actions.push({ label: "Signature Defaults…", onSelect: () => onSignatureDefaults(account.email) });
+            }
+            if (account.provider === "gmail") {
+              actions.push(
+                { label: "Aliases…", onSelect: () => setAliasesEmail(account.email) },
+                {
+                  label: "Switch to Gmail via IMAP…",
+                  disabled: busyEmail !== null || switchingEmail !== null,
+                  onSelect: () => {
+                    const trigger = document.activeElement;
+                    switchTrigger.current = trigger instanceof HTMLElement ? trigger : null;
+                    setConfirmEmail(null);
+                    setSwitchingEmail(account.email);
+                  },
+                },
+              );
+            }
             return (
             <li className="account-card" key={account.email}>
               <div className="account-card-row">
@@ -214,11 +242,13 @@ export function AccountsSettings({
                     {busyEmail === `reconnect:${account.email}` ? "Waiting for Google…" : "Reconnect"}
                   </button>
                 ) : null}
-                <span className="account-provider-badge">
-                  {account.provider === "imap" ? "IMAP" : "Gmail"}
-                </span>
+                <div className="account-card-heading-actions">
+                  <span className="account-provider-badge">
+                    {account.provider === "imap" ? "IMAP" : "Gmail"}
+                  </span>
+                  <MoreActionsMenu compact label={`More actions for ${account.email}`} actions={actions} />
+                </div>
               </div>
-              {onSignatureDefaults ? <div className="account-card-controls"><button type="button" className="btn btn-sm" onClick={() => onSignatureDefaults(account.email)}>Signature Defaults…</button></div> : null}
               <div className="account-card-fields">
                 <AccountNameInput
                   email={account.email}
@@ -273,15 +303,6 @@ export function AccountsSettings({
                   <button type="button" className="btn btn-sm" disabled={busyEmail !== null}
                     onClick={() => onManageFolders(account.email)}>Manage Folders…</button>
                 ) : null}
-                {account.provider === "gmail" && <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={busyEmail !== null || switchingEmail !== null}
-                  onClick={() => {
-                    setConfirmEmail(null);
-                    setSwitchingEmail(account.email);
-                  }}
-                >Switch to Gmail via IMAP…</button>}
                 <button
                   type="button"
                   className="btn btn-sm btn-danger account-disconnect"
@@ -292,7 +313,10 @@ export function AccountsSettings({
                   Disconnect…
                 </button>
               </div>
-              {account.provider === "imap" ? <ImapSendingSettings account={account.email} /> : <GmailSendingSettings account={account.email} />}
+              {account.provider === "imap" ? <ImapSendingSettings account={account.email} /> : null}
+              {account.provider === "gmail" && aliasesEmail === account.email && (
+                <GmailSendingSettings account={account.email} onClose={() => setAliasesEmail(null)} />
+              )}
               {account.provider === "imap" ? (
                 <ImapServerSettings
                   account={account.email}
@@ -303,9 +327,9 @@ export function AccountsSettings({
               ) : null}
               {switchingEmail === account.email && <SwitchGmailToImap
                 email={account.email}
-                onCancel={() => setSwitchingEmail(null)}
+                onCancel={closeGmailSwitch}
                 onSwitched={async () => {
-                  setSwitchingEmail(null);
+                  closeGmailSwitch();
                   setImapSaved(true);
                   try {
                     await (onGmailImapSwitched ?? onImapConnected)?.();

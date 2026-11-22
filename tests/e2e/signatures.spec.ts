@@ -19,10 +19,13 @@ test("creates an imported signature, sets defaults, and preserves its images and
   await expect(editor.getByRole("textbox", { name: "Signature Content" }).locator("td")).toHaveCount(3);
   await editor.getByRole("button", { name: "Save", exact: true }).click();
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
-  await settings.getByRole("button", { name: "Signature Defaults…", exact: true }).first().click();
+  const accountActions = settings.getByRole("button", { name: "More actions for demo@example.com", exact: true });
+  await accountActions.click();
+  await settings.getByRole("menuitem", { name: "Signature Defaults…", exact: true }).click();
   const defaults = page.getByRole("dialog", { name: "Default Signatures" });
   await defaults.getByRole("combobox", { name: "New Messages", exact: true }).selectOption({ label: "Work Full" });
   await defaults.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(accountActions).toBeFocused();
   await settings.getByRole("button", { name: "Close", exact: true }).click();
   await page.setViewportSize({ width: 900, height: 600 });
   await page.getByRole("button", { name: "New Message (c)" }).click();

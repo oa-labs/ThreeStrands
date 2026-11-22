@@ -254,6 +254,39 @@ describe("mail account settings", () => {
     expect(screen.queryByRole("button", { name: `Move ${account.email} up` })).not.toBeInTheDocument();
   });
 
+  it("keeps secondary actions in each account menu and opens the corresponding settings", () => {
+    const work = { ...account, email: "work@example.com", sortOrder: 1 };
+    const onSignatureDefaults = vi.fn();
+    renderAccounts(vi.fn(), { accounts: [account, work], onSignatureDefaults });
+    const workMenu = screen.getByRole("button", { name: `More actions for ${work.email}` });
+    expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Signature Defaults|Aliases|Switch to Gmail/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Sending Addresses" })).not.toBeInTheDocument();
+    fireEvent.keyDown(workMenu, { key: "ArrowDown" });
+    const signatureDefaults = screen.getByRole("menuitem", { name: "Signature Defaults…" });
+    expect(signatureDefaults).toHaveFocus();
+    fireEvent.click(signatureDefaults);
+    expect(onSignatureDefaults).toHaveBeenCalledWith(work.email);
+    expect(workMenu).toHaveFocus();
+
+    fireEvent.click(workMenu);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Aliases…" }));
+    const aliases = screen.getByRole("dialog", { name: "Sending Addresses" });
+    expect(within(aliases).getByText(work.email)).toBeVisible();
+    fireEvent.keyDown(aliases, { key: "Escape" });
+    expect(aliases).not.toBeInTheDocument();
+    expect(workMenu).toHaveFocus();
+  });
+
+  it("offers Signature Defaults for IMAP without the Gmail actions", () => {
+    const onSignatureDefaults = vi.fn();
+    renderAccounts(vi.fn(), { accounts: [{ ...account, provider: "imap" }], onSignatureDefaults });
+    fireEvent.click(screen.getByRole("button", { name: `More actions for ${account.email}` }));
+    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Signature Defaults…" }));
+    expect(onSignatureDefaults).toHaveBeenCalledWith(account.email);
+  });
+
   it("saves only the latest color after continuous picker changes", async () => {
     const onSetColor = vi.fn().mockResolvedValue(undefined);
     renderAccounts(onSetColor);
@@ -378,7 +411,8 @@ describe("switching Gmail to IMAP", () => {
     const onGmailImapSwitched = vi.fn().mockResolvedValue(undefined);
     const onRemove = vi.fn();
     renderAccounts(vi.fn(), { onGmailImapSwitched, onRemove });
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Gmail via IMAP…" }));
+    fireEvent.click(screen.getByRole("button", { name: `More actions for ${account.email}` }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Switch to Gmail via IMAP…" }));
     const password = screen.getByLabelText("App Password");
     expect(password).toHaveFocus();
     fireEvent.change(password, { target: { value: "abcd efgh ijkl mnop" } });
@@ -404,13 +438,17 @@ describe("switching Gmail to IMAP", () => {
     vi.spyOn(mailClient, "previewGmailImapSwitch").mockRejectedValue(new Error("The app password was rejected."));
     const commit = vi.spyOn(mailClient, "switchGmailToImap");
     renderAccounts(vi.fn());
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Gmail via IMAP…" }));
+    const menu = screen.getByRole("button", { name: `More actions for ${account.email}` });
+    fireEvent.click(menu);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Switch to Gmail via IMAP…" }));
     fireEvent.change(screen.getByLabelText("App Password"), { target: { value: "abcd efgh ijkl mnop" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Test Connection" })); });
     expect(screen.getByRole("alert")).toHaveTextContent("The app password was rejected.");
     expect(screen.queryByRole("heading", { name: "Review Gmail switch" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.getByRole("button", { name: "Switch to Gmail via IMAP…" })).toBeEnabled();
+    expect(menu).toHaveFocus();
+    fireEvent.click(menu);
+    expect(screen.getByRole("menuitem", { name: "Switch to Gmail via IMAP…" })).toBeEnabled();
     expect(commit).not.toHaveBeenCalled();
   });
 });

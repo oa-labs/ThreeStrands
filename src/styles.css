@@ -2882,8 +2882,8 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .account-card-heading strong { overflow: hidden; font-size: var(--text-body); text-overflow: ellipsis; white-space: nowrap; }
 .account-card-email { overflow: hidden; color: var(--muted); font-size: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
 .account-provider-badge { align-self: flex-start; }
-/* Cards on other devices have a single row, so the badge centers with Set Up Here. */
-.available-account .account-provider-badge { align-self: center; }
+.account-card-heading-actions { display: flex; flex-shrink: 0; align-self: flex-start; align-items: center; gap: var(--space-1); }
+.account-card-heading-actions .account-provider-badge, .available-account .account-provider-badge { align-self: center; }
 .device-roster-id { display: flex; min-width: 0; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); }
 .device-roster-id code { min-width: 0; overflow-wrap: anywhere; user-select: all; }
 /* The controls row is identical on every card (status-dependent actions
@@ -2922,7 +2922,9 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .account-card .settings-subsection h4 { margin: 0; }
 .account-card .imap-sending h5 { margin: 0; font-size: var(--text-body); font-weight: var(--weight-semibold); }
 .account-card .settings-subsection p { margin: 0; }
-.sending-address-details:not([hidden]) { display: flex; flex-direction: column; gap: var(--space-3); }
+.sending-address-dialog { overflow-y: auto; }
+.sending-address-details { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-1) var(--dialog-inset) var(--space-4); min-width: 0; overflow-wrap: anywhere; }
+.sending-address-details p { margin: 0; }
 .sending-identity-list { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 .sending-identity-list li { display: flex; flex-direction: column; gap: var(--space-0-5); min-width: 0; overflow-wrap: anywhere; }
 .sending-identity-detail { color: var(--muted); font-size: var(--text-meta); }
