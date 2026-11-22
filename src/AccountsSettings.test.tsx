@@ -435,17 +435,26 @@ describe("switching Gmail to IMAP", () => {
   });
 
   it("leaves the Gmail connection in place when the connection test fails or is canceled", async () => {
-    vi.spyOn(mailClient, "previewGmailImapSwitch").mockRejectedValue(new Error("The app password was rejected."));
+    let rejectPreview!: (error: Error) => void;
+    vi.spyOn(mailClient, "previewGmailImapSwitch").mockImplementation(() => new Promise((_, reject) => {
+      rejectPreview = reject;
+    }));
     const commit = vi.spyOn(mailClient, "switchGmailToImap");
     renderAccounts(vi.fn());
     const menu = screen.getByRole("button", { name: `More actions for ${account.email}` });
     fireEvent.click(menu);
     fireEvent.click(screen.getByRole("menuitem", { name: "Switch to Gmail via IMAP…" }));
-    fireEvent.change(screen.getByLabelText("App Password"), { target: { value: "abcd efgh ijkl mnop" } });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Test Connection" })); });
-    expect(screen.getByRole("alert")).toHaveTextContent("The app password was rejected.");
-    expect(screen.queryByRole("heading", { name: "Review Gmail switch" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    const dialog = screen.getByRole("dialog", { name: "Switch to Gmail via IMAP" });
+    fireEvent.change(within(dialog).getByLabelText("App Password"), { target: { value: "abcd efgh ijkl mnop" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Test Connection" }));
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    expect(cancel).toBeDisabled();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(dialog).toBeVisible();
+    await act(async () => rejectPreview(new Error("The app password was rejected.")));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("The app password was rejected.");
+    expect(within(dialog).queryByRole("heading", { name: "Review Gmail switch" })).not.toBeInTheDocument();
+    fireEvent.click(cancel);
     expect(menu).toHaveFocus();
     fireEvent.click(menu);
     expect(screen.getByRole("menuitem", { name: "Switch to Gmail via IMAP…" })).toBeEnabled();

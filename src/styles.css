@@ -3163,6 +3163,10 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .ai-advanced > .settings-disclosure-body { align-items: stretch; }
 .imap-setup, .imap-mailbox-mapping { display: grid; gap: var(--space-3); width: 100%; min-width: 0; padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .imap-setup h2, .imap-mailbox-mapping h2 { margin: 0; font-size: var(--text-card-title); }
+.gmail-imap-switch-dialog { overflow-y: auto; }
+.gmail-imap-switch-dialog .imap-setup { padding: var(--space-1) var(--dialog-inset) var(--space-4); border: 0; overflow-wrap: anywhere; }
+.gmail-imap-switch-dialog .imap-setup :is(h3, p, ul) { margin-block: 0; }
+.gmail-imap-switch-dialog h3 { font-size: var(--text-card-title); }
 .imap-setup-fields, .imap-server-settings { display: grid; gap: var(--space-2); min-width: 0; width: 100%; margin: 0; padding: 0; border: 0; }
 .imap-setup-fields { gap: var(--space-4); }
 .imap-setup legend { margin-bottom: var(--space-3); padding: 0; color: var(--muted); }
