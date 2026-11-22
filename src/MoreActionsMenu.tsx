@@ -28,7 +28,11 @@ export function MoreActionsMenu({ label, actions, compact = false, onBeforeOpen 
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
   if (actions.length === 0) return null;
-  return <div className="more-actions" ref={group} onBlur={(event) => {
+  // WebKit can blur the focused item without focusing the clicked button.
+  // Keep focus in the open menu until the click selects or dismisses it.
+  return <div className="more-actions" ref={group} onMouseDown={(event) => {
+    if (open && event.button === 0) event.preventDefault();
+  }} onBlur={(event) => {
     if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
   }}>
     <button ref={trigger} type="button" className={compact ? "btn-icon btn-icon-sm" : "btn btn-sm"} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined} onPointerDown={() => { if (!open) onBeforeOpen?.(); }} onClick={(event) => { if (!open && event.detail === 0) onBeforeOpen?.(); setOpen((value) => !value); }} onKeyDown={(event) => {

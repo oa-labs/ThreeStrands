@@ -68,7 +68,6 @@ export function AccountsSettings({
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
   const [aliasesEmail, setAliasesEmail] = useState<string | null>(null);
   const [switchingEmail, setSwitchingEmail] = useState<string | null>(null);
-  const switchTrigger = useRef<HTMLElement | null>(null);
   // IMAP reconnects happen in the account's Server editor (a password, not a
   // browser sign-in); the header button bumps this to open and focus it.
   const [imapReconnect, setImapReconnect] = useState<{ email: string; request: number } | null>(null);
@@ -86,12 +85,6 @@ export function AccountsSettings({
     const next = moveItem(accounts, index, direction);
     if (account && next) runFor(account.email, () => onReorder(next.map((item) => item.email)));
   };
-
-  function closeGmailSwitch() {
-    setSwitchingEmail(null);
-    switchTrigger.current?.focus({ preventScroll: true });
-    switchTrigger.current = null;
-  }
 
   return (
     <section className="settings-section accounts-manager" aria-label="Mail Accounts">
@@ -192,8 +185,6 @@ export function AccountsSettings({
                   label: "Switch to Gmail via IMAP…",
                   disabled: busyEmail !== null || switchingEmail !== null,
                   onSelect: () => {
-                    const trigger = document.activeElement;
-                    switchTrigger.current = trigger instanceof HTMLElement ? trigger : null;
                     setConfirmEmail(null);
                     setSwitchingEmail(account.email);
                   },
@@ -327,9 +318,9 @@ export function AccountsSettings({
               ) : null}
               {switchingEmail === account.email && <SwitchGmailToImap
                 email={account.email}
-                onCancel={closeGmailSwitch}
+                onCancel={() => setSwitchingEmail(null)}
                 onSwitched={async () => {
-                  closeGmailSwitch();
+                  setSwitchingEmail(null);
                   setImapSaved(true);
                   try {
                     await (onGmailImapSwitched ?? onImapConnected)?.();
