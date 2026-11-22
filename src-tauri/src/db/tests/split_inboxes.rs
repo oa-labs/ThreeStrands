@@ -165,3 +165,49 @@ fn test_rule(match_kind: &str, match_value: &str) -> SplitInbox {
         account_id: "default".into(),
     }
 }
+
+#[test]
+fn foreign_label_replacement_is_local_and_shared_edits_invalidate_old_bindings() {
+    let db = Database::open_memory();
+    let account = "me@example.com";
+    db.adopt_account(account).unwrap();
+    db.replace_account_labels(
+        account,
+        &[crate::models::Label {
+            id: "Label_8".into(),
+            name: "Orchard".into(),
+            kind: "user".into(),
+        }],
+    )
+    .unwrap();
+    let mut rule = test_rule("label", "folder:External");
+    rule.account_id = account.into();
+    db.upsert_synced_split(rule.clone()).unwrap();
+
+    let (local, shared) = db.relink_split_inbox_label(&rule.id, "Label_8").unwrap();
+    assert!(!shared);
+    assert_eq!(local.match_value, "Label_8");
+    assert_eq!(
+        db.list_split_inboxes().unwrap()[0].match_value,
+        "folder:External"
+    );
+
+    rule.name = "New title".into();
+    db.upsert_synced_split(rule.clone()).unwrap();
+    assert_eq!(
+        db.local_split_inbox(&rule.id).unwrap().match_value,
+        "Label_8"
+    );
+    rule.match_value = "folder:Changed".into();
+    db.upsert_synced_split(rule.clone()).unwrap();
+    assert_eq!(
+        db.local_split_inbox(&rule.id).unwrap().match_value,
+        "folder:Changed"
+    );
+    rule.match_value = "folder:External".into();
+    db.upsert_synced_split(rule.clone()).unwrap();
+    assert_eq!(
+        db.local_split_inbox(&rule.id).unwrap().match_value,
+        "folder:External"
+    );
+}

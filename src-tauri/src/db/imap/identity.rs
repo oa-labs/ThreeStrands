@@ -111,6 +111,9 @@ impl ImapStateStore {
                 // New server-identified messages use deterministic IDs on every
                 // fresh device, independent of which duplicate header arrives
                 // first. Existing exact locations still keep their recorded ID.
+                None if server_ids[0].0 == "gmail-message-id"
+                    && crate::db::accounts::gmail_imap_converted_on(tx, &self.account_id)? =>
+                    server_ids[0].1.clone(),
                 None => external_message_id(&self.account_id, server_ids[0].0, &server_ids[0].1),
             };
             let mut conflict = false;

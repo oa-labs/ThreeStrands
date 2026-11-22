@@ -292,7 +292,7 @@ impl Database {
                 "displayName": account.display_name,
                 "nickname": account.nickname,
                 "color": account.color,
-                "provider": account.provider,
+                "provider": self.replicated_mail_provider(&account)?,
                 "sortOrder": account.sort_order,
             });
             if self.reconcile_one_entity(

@@ -60,6 +60,7 @@ const MIGRATIONS: &[Migration] = &[
     (113, to_v113),
     (114, to_v114),
     (115, to_v115),
+    (116, to_v116),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1533,6 +1534,30 @@ fn to_v115(tx: &rusqlite::Transaction) -> Result<(), String> {
     .map_err(error)
 }
 
+fn to_v116(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let converted_column: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('accounts') WHERE name='gmail_imap_converted')",
+        [],
+        |row| row.get(0),
+    ).map_err(error)?;
+    if !converted_column {
+        tx.execute_batch(
+            "ALTER TABLE accounts ADD COLUMN gmail_imap_converted INTEGER NOT NULL DEFAULT 0;",
+        )
+        .map_err(error)?;
+    }
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS split_inbox_label_bindings (
+            split_id TEXT NOT NULL REFERENCES split_inboxes(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL CHECK(provider IN ('gmail','imap')),
+            source_label_id TEXT NOT NULL,
+            label_id TEXT,
+            PRIMARY KEY(split_id, provider)
+         );",
+    )
+    .map_err(error)
+}
+
 fn to_v114(tx: &rusqlite::Transaction) -> Result<(), String> {
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS imap_label_bindings (
@@ -1894,6 +1919,7 @@ mod tests {
 
     /// Objects each migration above the v74 baseline adds, in `schema_objects` form.
     const ABOVE_BASELINE_OBJECTS: &[&str] = &[
+        "table:split_inbox_label_bindings",
         "table:imap_gmail_message_threads",
         "table:imap_gmail_threads",
         "table:imap_label_bindings",

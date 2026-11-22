@@ -46,7 +46,7 @@ pub(crate) fn cancel_settings_import(state: State<'_, AppState>) -> AppResult<()
 #[tauri::command]
 pub(crate) async fn list_split_inboxes(state: State<'_, AppState>) -> AppResult<Vec<SplitInbox>> {
     let database = state.database.clone();
-    run_database_task(move || database.list_split_inboxes()).await
+    run_database_task(move || database.list_local_split_inboxes()).await
 }
 
 #[tauri::command(async)]
@@ -85,7 +85,7 @@ pub(crate) fn update_split_inbox(
         &item,
         Some(std::collections::BTreeSet::from(["name".to_string()])),
     )?;
-    Ok(item)
+    Ok(state.database.local_split_inbox(&item.id)?)
 }
 
 #[tauri::command(async)]
@@ -94,14 +94,16 @@ pub(crate) fn relink_split_inbox_label(
     label_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<SplitInbox> {
-    let item = state.database.relink_split_inbox_label(&id, &label_id)?;
-    record_synced_value(
-        &state,
-        threestrands_sync_protocol::EntityType::SplitInbox,
-        &item.id,
-        &item,
-        Some(std::collections::BTreeSet::from(["matchValue".to_string()])),
-    )?;
+    let (item, changed_shared_rule) = state.database.relink_split_inbox_label(&id, &label_id)?;
+    if changed_shared_rule {
+        record_synced_value(
+            &state,
+            threestrands_sync_protocol::EntityType::SplitInbox,
+            &item.id,
+            &item,
+            Some(std::collections::BTreeSet::from(["matchValue".to_string()])),
+        )?;
+    }
     Ok(item)
 }
 

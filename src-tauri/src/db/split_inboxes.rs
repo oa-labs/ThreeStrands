@@ -4,8 +4,53 @@ use super::DatabaseError;
 use super::{normalize_sender, Database, DbResult};
 use crate::models::{SplitInbox, Thread, ThreadPage};
 use chrono::Utc;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+// The shared source ID remains the replication value. A binding applies only
+// to that exact rule revision and to the provider installed on this device.
+const LOCAL_SPLIT_LIST: &str = "SELECT s.id, s.name, s.match_kind,
+            CASE WHEN b.split_id IS NULL THEN s.match_value ELSE COALESCE(b.label_id,'') END,
+            s.sort_order, s.created_at, s.account_id
+       FROM split_inboxes s
+       LEFT JOIN accounts a ON a.email=s.account_id
+       LEFT JOIN split_inbox_label_bindings b ON b.split_id=s.id AND b.provider=a.provider
+          AND s.match_kind='label' AND b.source_label_id=s.match_value";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SplitLabelBinding {
+    pub provider: String,
+    pub label_id: Option<String>,
+}
+
+pub(super) fn bind_split_label(
+    connection: &Connection,
+    id: &str,
+    source_label_id: &str,
+    provider: &str,
+    label_id: Option<&str>,
+) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO split_inbox_label_bindings(split_id,provider,source_label_id,label_id)
+         VALUES(?1,?2,?3,?4) ON CONFLICT(split_id,provider)
+         DO UPDATE SET source_label_id=excluded.source_label_id,label_id=excluded.label_id",
+        params![id, provider, source_label_id, label_id],
+    )?;
+    Ok(())
+}
+
+pub(super) fn local_split_inbox_on(connection: &Connection, id: &str) -> DbResult<SplitInbox> {
+    Ok(connection
+        .query_row(
+            &format!("{LOCAL_SPLIT_LIST} WHERE s.id=?1"),
+            [id],
+            split_inbox_from_row,
+        )
+        .optional()?
+        .ok_or(DatabaseError::NotFound("Split inbox"))?)
+}
 
 impl Database {
     pub fn list_split_inboxes(&self) -> DbResult<Vec<SplitInbox>> {
@@ -15,6 +60,36 @@ impl Database {
                  FROM split_inboxes ORDER BY sort_order",
             )?;
             let rows = statement.query_map([], split_inbox_from_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    pub(crate) fn list_local_split_inboxes(&self) -> DbResult<Vec<SplitInbox>> {
+        self.with_connection(|connection| {
+            let query = format!("{LOCAL_SPLIT_LIST} ORDER BY s.sort_order");
+            let mut statement = connection.prepare(&query)?;
+            let rows = statement.query_map([], split_inbox_from_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    pub(crate) fn local_split_inbox(&self, id: &str) -> DbResult<SplitInbox> {
+        self.with_connection(|connection| local_split_inbox_on(connection, id))
+    }
+
+    pub(crate) fn split_label_bindings(&self, id: &str) -> DbResult<Vec<SplitLabelBinding>> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT b.provider,b.label_id FROM split_inbox_label_bindings b
+                 JOIN split_inboxes s ON s.id=b.split_id AND b.source_label_id=s.match_value
+                 WHERE s.id=?1 AND s.match_kind='label' ORDER BY b.provider",
+            )?;
+            let rows = statement.query_map([id], |row| {
+                Ok(SplitLabelBinding {
+                    provider: row.get(0)?,
+                    label_id: row.get(1)?,
+                })
+            })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
     }
@@ -102,29 +177,43 @@ impl Database {
         })
     }
 
+    /// A replacement for a rule authored through another provider is a
+    /// local choice. Replacing a shared label from its own provider still
+    /// updates the replicated rule, as it did before.
     pub(crate) fn relink_split_inbox_label(
         &self,
         id: &str,
         label_id: &str,
-    ) -> DbResult<SplitInbox> {
-        self.with_connection(|connection| {
-            connection
-                .query_row(
-                    "UPDATE split_inboxes SET match_value=?2
-                 WHERE id=?1 AND match_kind='label' AND EXISTS(
-                     SELECT 1 FROM account_labels l
-                     WHERE l.account_id=split_inboxes.account_id AND l.label_id=?2 AND l.kind IN ('user','folder')
-                 )
-                 RETURNING id,name,match_kind,match_value,sort_order,created_at,account_id",
-                    params![id, label_id],
-                    split_inbox_from_row,
-                )
-                .optional()?
-                .ok_or_else(|| {
-                    DatabaseError::invalid(
-                        "Choose an available label from this Split Inbox’s account.",
-                    )
-                })
+    ) -> DbResult<(SplitInbox, bool)> {
+        self.with_transaction(|tx| {
+            let (source_id, provider, locally_bound): (String, String, bool) = tx.query_row(
+                "SELECT s.match_value, COALESCE(a.provider,'gmail'),
+                      EXISTS(SELECT 1 FROM split_inbox_label_bindings b WHERE b.split_id=s.id
+                        AND b.provider=a.provider AND b.source_label_id=s.match_value)
+                 FROM split_inboxes s LEFT JOIN accounts a ON a.email=s.account_id
+                 WHERE s.id=?1 AND s.match_kind='label' AND EXISTS(
+                    SELECT 1 FROM account_labels l
+                    WHERE l.account_id=s.account_id AND l.label_id=?2 AND l.kind IN ('user','folder')
+                 )",
+                params![id, label_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional()?.ok_or_else(|| DatabaseError::invalid(
+                "Choose an available label from this Split Inbox’s account.",
+            ))?;
+            let imap_id = ["folder:", "lf:", "imap-label:", "kw:"]
+                .iter().any(|prefix| source_id.starts_with(prefix));
+            let foreign = (provider == "imap" && source_id.starts_with("Label_"))
+                || (provider == "gmail" && imap_id);
+            let changed_shared_rule = !locally_bound && !foreign;
+            if changed_shared_rule {
+                if source_id != label_id {
+                    tx.execute("UPDATE split_inboxes SET match_value=?2 WHERE id=?1", params![id, label_id])?;
+                    tx.execute("DELETE FROM split_inbox_label_bindings WHERE split_id=?1", [id])?;
+                }
+            } else {
+                bind_split_label(tx, id, &source_id, &provider, Some(label_id))?;
+            }
+            Ok((local_split_inbox_on(tx, id)?, changed_shared_rule))
         })
     }
 
@@ -160,18 +249,7 @@ impl Database {
         offset: usize,
         limit: usize,
     ) -> DbResult<ThreadPage> {
-        let rule = self
-            .with_connection(|connection| {
-                Ok(connection
-                    .query_row(
-                        "SELECT id, name, match_kind, match_value, sort_order, created_at, account_id
-                         FROM split_inboxes WHERE id = ?1",
-                        [split_inbox_id],
-                        split_inbox_from_row,
-                    )
-                    .optional()?)
-            })?
-            .ok_or(DatabaseError::NotFound("Split inbox"))?;
+        let rule = self.local_split_inbox(split_inbox_id)?;
         let matched: Vec<Thread> = self
             .list_threads(Some(&rule.account_id))?
             .into_iter()
@@ -205,7 +283,10 @@ pub(super) fn split_inbox_matches(rule: &SplitInbox, thread: &Thread) -> bool {
             .participants
             .iter()
             .any(|participant| normalize_sender(participant).1 == rule.match_value),
-        "label" => thread.labels.iter().any(|label| label == &rule.match_value),
+        "label" => {
+            !rule.match_value.is_empty()
+                && thread.labels.iter().any(|label| label == &rule.match_value)
+        }
         "pattern" => thread
             .participants
             .iter()
@@ -218,7 +299,13 @@ impl Database {
     /// Stores a split inbox another device wrote. An existing row keeps its
     /// `created_at`; `updated_at` records when it arrived here.
     pub(crate) fn upsert_synced_split(&self, item: SplitInbox) -> DbResult<()> {
-        self.with_connection(|connection| {
+        self.with_transaction(|connection| {
+            connection.execute(
+                "DELETE FROM split_inbox_label_bindings WHERE split_id=?1 AND EXISTS(
+                   SELECT 1 FROM split_inboxes WHERE id=?1 AND
+                     (match_kind<>?2 OR match_value<>?3 OR account_id<>?4))",
+                params![item.id, item.match_kind, item.match_value, item.account_id],
+            )?;
             connection.execute(
                 "INSERT INTO split_inboxes(id,name,match_kind,match_value,sort_order,created_at,account_id,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET name=excluded.name,match_kind=excluded.match_kind,match_value=excluded.match_value,sort_order=excluded.sort_order,account_id=excluded.account_id,updated_at=excluded.updated_at",
                 params![

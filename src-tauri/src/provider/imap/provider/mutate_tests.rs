@@ -4260,7 +4260,7 @@ async fn gmail_switch_recovers_archived_task_mail_with_its_original_ids() {
         )
         .unwrap();
     database
-        .switch_gmail_to_imap(EMAIL, test_settings(), &[], &[])
+        .switch_gmail_to_imap(EMAIL, test_settings(), &[], &[], None)
         .unwrap();
     let (provider, store) = provider_with_database(server.clone(), database);
     provider.prepare_snoozed_thread("7d1", &[]).await.unwrap();

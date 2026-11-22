@@ -578,7 +578,11 @@ impl ImapStateStore {
             if let Some(bound) = bound {
                 return Ok(Some(bound));
             }
-            let thread_id = crate::provider::imap::gmail_thread_id(&self.account_id, &external);
+            let thread_id = if super::accounts::gmail_imap_converted_on(transaction, &self.account_id)? {
+                external.clone()
+            } else {
+                crate::provider::imap::gmail_thread_id(&self.account_id, &external)
+            };
             thread_repair::bind_thread(transaction, &self.account_id, &external, &thread_id)?;
             Ok(Some(thread_id))
         })?.ok_or_else(|| DatabaseError::invalid("Conflicting Gmail conversation evidence for this message."))
@@ -606,14 +610,22 @@ impl ImapStateStore {
 
     pub(crate) fn gmail_thread_lookup_id(&self, thread: &str) -> DbResult<Option<u64>> {
         self.database.with_connection(|c| {
-            c.query_row(
+            let bound: Option<String> = c.query_row(
                 "SELECT gmail_thread_id FROM imap_gmail_threads WHERE account_id=?1 AND thread_id=?2",
                 rusqlite::params![self.account_id, thread],
-                |row| row.get::<_, String>(0),
-            ).optional()?.map(|external| {
-                u64::from_str_radix(&external, 16)
-                    .map_err(|_| DatabaseError::corrupt("Invalid stored Gmail thread ID"))
-            }).transpose()
+                |row| row.get(0),
+            ).optional()?;
+            if let Some(external) = bound {
+                return u64::from_str_radix(&external, 16).map(Some)
+                    .map_err(|_| DatabaseError::corrupt("Invalid stored Gmail thread ID"));
+            }
+            // Tasks and snoozes can arrive from a Gmail API peer before this
+            // device has acquired the thread. The caller still verifies the
+            // ID with X-GM-THRID on the same authenticated mailbox.
+            if super::accounts::gmail_imap_converted_on(c, &self.account_id)? {
+                return Ok(super::accounts::canonical_gmail_id(thread));
+            }
+            Ok(None)
         })
     }
 

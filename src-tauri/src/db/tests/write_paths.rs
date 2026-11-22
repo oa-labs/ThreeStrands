@@ -359,8 +359,8 @@ id=snippet-1 | name=Hey | body=Hello again | created_at=2020-01-02T03:04:05+00:0
 [split_inboxes]
 id=split-1 | name=Newsletters | match_kind=domain | match_value=example.com | sort_order=3 | created_at=2020-01-02T03:04:05+00:00 | account_id=me@example.com | updated_at=<now>
 [accounts]
-email=existing@example.com | display_name=Me | color=#112233 | status=connected | sort_order=5 | connected_at=<now> | last_synced_at=NULL | provider=gmail | nickname=Work | on_this_device=1
-email=new@example.com | display_name=NULL | color=#445566 | status=needs_reauth | sort_order=6 | connected_at=<now> | last_synced_at=NULL | provider=imap | nickname=NULL | on_this_device=0
+email=existing@example.com | display_name=Me | color=#112233 | status=connected | sort_order=5 | connected_at=<now> | last_synced_at=NULL | provider=gmail | nickname=Work | on_this_device=1 | gmail_imap_converted=0
+email=new@example.com | display_name=NULL | color=#445566 | status=needs_reauth | sort_order=6 | connected_at=<now> | last_synced_at=NULL | provider=imap | nickname=NULL | on_this_device=0 | gmail_imap_converted=0
 [calendar_accounts]
 email=cal-a@example.com | connected_at=<now> | selection_initialized=0 | status=needs_reauth | sort_order=4 | availability_calendar_ids=NULL
 email=cal-b@example.com | connected_at=<now> | selection_initialized=0 | status=needs_reauth | sort_order=9 | availability_calendar_ids=NULL
@@ -395,9 +395,9 @@ group_id=<uuid> | contact_id=contact:f0030501023327437b06e5c6f87df7871b8e704ae60
 key=retention_days | value=365
 "##;
 const SETTINGS_IMPORT: &str = r##"[accounts]
-email=Chosen@example.com | display_name=NULL | color=#040506 | status=needs_reauth | sort_order=1 | connected_at=<now> | last_synced_at=NULL | provider=gmail | nickname=NULL | on_this_device=1
-email=elsewhere@example.com | display_name=Elsewhere | color=#070809 | status=needs_reauth | sort_order=2 | connected_at=<now> | last_synced_at=NULL | provider=gmail | nickname=NULL | on_this_device=0
-email=existing@example.com | display_name=Me | color=#010203 | status=connected | sort_order=0 | connected_at=<now> | last_synced_at=NULL | provider=gmail | nickname=Home | on_this_device=1
+email=Chosen@example.com | display_name=NULL | color=#040506 | status=needs_reauth | sort_order=1 | connected_at=<now> | last_synced_at=NULL | provider=gmail | nickname=NULL | on_this_device=1 | gmail_imap_converted=0
+email=elsewhere@example.com | display_name=Elsewhere | color=#070809 | status=needs_reauth | sort_order=2 | connected_at=<now> | last_synced_at=NULL | provider=gmail | nickname=NULL | on_this_device=0 | gmail_imap_converted=0
+email=existing@example.com | display_name=Me | color=#010203 | status=connected | sort_order=0 | connected_at=<now> | last_synced_at=NULL | provider=gmail | nickname=Home | on_this_device=1 | gmail_imap_converted=0
 [split_inboxes]
 id=split-1 | name=News | match_kind=domain | match_value=example.com | sort_order=0 | created_at=2020-01-02T03:04:05+00:00 | account_id=existing@example.com | updated_at=NULL
 [snippets]

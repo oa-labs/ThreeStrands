@@ -2,6 +2,21 @@
 
 #[path = "accounts/switch_to_imap.rs"]
 pub(crate) mod switch_to_imap;
+pub(super) use switch_to_imap::canonical_gmail_id;
+
+pub(super) fn gmail_imap_converted_on(
+    connection: &rusqlite::Connection,
+    account: &str,
+) -> DbResult<bool> {
+    Ok(connection
+        .query_row(
+            "SELECT gmail_imap_converted FROM accounts WHERE email=?1 AND provider='imap'",
+            [account],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(false))
+}
 
 use super::serialization_error;
 use super::DatabaseError;
@@ -12,6 +27,20 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 
 impl Database {
+    pub(crate) fn is_gmail_imap_conversion(&self, account: &str) -> DbResult<bool> {
+        self.with_connection(|connection| gmail_imap_converted_on(connection, account))
+    }
+
+    /// Replication advertises the original setup for a converted mailbox.
+    /// A peer already connected keeps its own installed provider.
+    pub(crate) fn replicated_mail_provider<'a>(&self, account: &'a Account) -> DbResult<&'a str> {
+        if account.provider == "imap" && self.is_gmail_imap_conversion(&account.email)? {
+            Ok("gmail")
+        } else {
+            Ok(&account.provider)
+        }
+    }
+
     /// The account the compose pipeline defaults to and the legacy
     /// single-account commands (`google_auth_status`, `connect_google`,
     /// `disconnect_google`) act on: the first row in `accounts`, or the
@@ -276,6 +305,11 @@ impl Database {
             )?;
             purge_mail_traces(transaction, email)?;
             purge_outgoing_mail(transaction, email)?;
+            transaction.execute(
+                "DELETE FROM scheduled_send_summaries WHERE json_valid(report)
+                 AND lower(json_extract(report, '$.account'))=lower(?1)",
+                [email],
+            )?;
             transaction.execute(
                 "DELETE FROM signature_defaults WHERE json_valid(payload)
                  AND lower(json_extract(payload, '$.account')) = lower(?1)",
@@ -543,7 +577,6 @@ fn purge_outgoing_mail(transaction: &rusqlite::Transaction<'_>, account: &str) -
     for (table, column, path) in [
         ("drafts", "payload", "$.account"),
         ("discarded_drafts", "payload", "$.account"),
-        ("scheduled_send_summaries", "report", "$.account"),
     ] {
         transaction.execute(
             &format!(

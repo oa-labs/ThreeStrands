@@ -9,12 +9,16 @@ use std::collections::BTreeSet;
 use threestrands_sync_protocol::EntityType;
 
 fn group(tx: &Transaction) -> DbResult<Option<String>> {
+    enrolled_schedule_group(tx, false)
+}
+
+fn enrolled_schedule_group(tx: &Transaction, include_paused: bool) -> DbResult<Option<String>> {
     let value: Option<Vec<u8>> = tx
         .query_row(
             "SELECT recovery_public_key FROM sync_spaces WHERE id=?1 AND (enabled=1 OR ?2=1)",
             params![
                 crate::replicated_sync::SPACE_ID,
-                crate::replicated_sync::enabled()
+                include_paused || crate::replicated_sync::enabled()
             ],
             |r| r.get(0),
         )
@@ -30,6 +34,16 @@ pub(crate) fn record_schedule_report(
     id: &str,
     owner: &str,
     at: i64,
+) -> DbResult<()> {
+    record_schedule_report_on(tx, id, owner, at, false)
+}
+
+fn record_schedule_report_on(
+    tx: &Transaction,
+    id: &str,
+    owner: &str,
+    at: i64,
+    include_paused: bool,
 ) -> DbResult<()> {
     let row: Option<(String, String)> = tx.query_row("SELECT schedule_json,state FROM outbox_messages WHERE id=?1 AND schedule_json IS NOT NULL", [id], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
     let Some((json, state)) = row else {
@@ -84,7 +98,9 @@ pub(crate) fn record_schedule_report(
             params![id, updated],
         )?;
     }
-    if schedule.visibility_group_id.is_some() && schedule.visibility_group_id == group(tx)? {
+    if schedule.visibility_group_id.is_some()
+        && schedule.visibility_group_id == enrolled_schedule_group(tx, include_paused)?
+    {
         let entity_id = schedule.report.entity_id();
         let current: Option<String> = tx.query_row("SELECT value FROM sync_values WHERE entity_type='scheduled_send_summary' AND entity_id=?1 AND field='report' ORDER BY lamport DESC LIMIT 1", [&entity_id], |r| r.get(0)).optional()?.flatten();
         if current.as_deref() != Some(report.to_string().as_str()) {
@@ -96,6 +112,29 @@ pub(crate) fn record_schedule_report(
                 &serde_json::json!({"report":report}),
             )?;
         }
+    }
+    Ok(())
+}
+
+/// Account cutover drops the local outbox. Report cancellations only for
+/// deliveries this installation actually owned, never for received summaries.
+pub(crate) fn cancel_schedules_for_connection_switch(
+    tx: &Transaction<'_>,
+    account: &str,
+    owner: &str,
+) -> DbResult<()> {
+    let mut query = tx.prepare(
+        "UPDATE outbox_messages SET state='canceled'
+         WHERE lower(account)=lower(?1) AND state IN ('scheduled','overdue','undo_pending','ready','failed')
+           AND json_valid(schedule_json) AND json_extract(schedule_json,'$.report.ownerInstallationId')=?2
+         RETURNING id",
+    )?;
+    let ids = query
+        .query_map(params![account, owner], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let at = chrono::Utc::now().timestamp_millis();
+    for id in ids {
+        record_schedule_report_on(tx, &id, owner, at, true)?;
     }
     Ok(())
 }

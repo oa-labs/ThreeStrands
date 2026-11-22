@@ -521,6 +521,8 @@ pub(crate) struct TransferAccount {
     pub imap: Option<crate::provider::imap::ImapAccountSettings>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imap_label_bindings: Vec<crate::db::imap::label_edits::ImapLabelBinding>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub gmail_imap_converted: bool,
 }
 
 fn default_account_provider() -> String {
@@ -540,6 +542,7 @@ impl From<Account> for TransferAccount {
             // from the `imap_account_settings` table for IMAP accounts.
             imap: None,
             imap_label_bindings: Vec::new(),
+            gmail_imap_converted: false,
         }
     }
 }
@@ -558,6 +561,8 @@ pub(crate) struct TransferSplitInbox {
     // migration for locally stored rules.
     #[serde(default)]
     pub account_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub label_bindings: Vec<crate::db::split_inboxes::SplitLabelBinding>,
 }
 
 impl From<SplitInbox> for TransferSplitInbox {
@@ -570,6 +575,7 @@ impl From<SplitInbox> for TransferSplitInbox {
             sort_order: split.sort_order,
             created_at: split.created_at,
             account_id: split.account_id,
+            label_bindings: Vec::new(),
         }
     }
 }
@@ -797,6 +803,17 @@ impl TransferPayload {
             if !is_known_account_provider(&account.provider) {
                 return Err("The transfer contains an unrecognized account provider".to_string());
             }
+            if account.gmail_imap_converted
+                && (account.provider != "imap"
+                    || !account.imap.as_ref().is_some_and(|imap| {
+                        imap.imap_host.eq_ignore_ascii_case("imap.gmail.com")
+                            && imap.imap_username.eq_ignore_ascii_case(&account.email)
+                    }))
+            {
+                return Err(
+                    "The transfer contains an invalid Gmail IMAP connection binding".into(),
+                );
+            }
             let bindings = &account.imap_label_bindings;
             if bindings.len() > 10_000
                 || (!bindings.is_empty() && (account.imap.is_none() || account.provider != "imap"))
@@ -840,6 +857,18 @@ impl TransferPayload {
             )?;
             if !matches!(split.match_kind.as_str(), "domain" | "label" | "pattern") {
                 return Err("The transfer contains an invalid Split Inbox rule".to_string());
+            }
+            let mut providers = HashSet::new();
+            for binding in &split.label_bindings {
+                if split.match_kind != "label"
+                    || !matches!(binding.provider.as_str(), "gmail" | "imap")
+                    || !providers.insert(&binding.provider)
+                {
+                    return Err("The transfer contains an invalid Split Inbox label binding".into());
+                }
+                if let Some(id) = &binding.label_id {
+                    validate_required_text("Split Inbox local label id", id, MAX_TEXT_LENGTH)?;
+                }
             }
             if !account_emails.contains(&split.account_id.to_ascii_lowercase()) {
                 return Err(
@@ -1026,6 +1055,7 @@ fn build_export_payload(
             if imap.is_some() {
                 transfer.imap_label_bindings = database.imap_label_bindings(&transfer.email)?;
             }
+            transfer.gmail_imap_converted = database.is_gmail_imap_conversion(&transfer.email)?;
             transfer.imap = imap;
             Ok::<_, String>(transfer)
         })
@@ -1033,8 +1063,12 @@ fn build_export_payload(
     let split_inboxes = database
         .list_split_inboxes()?
         .into_iter()
-        .map(TransferSplitInbox::from)
-        .collect();
+        .map(|split| {
+            let mut transfer = TransferSplitInbox::from(split);
+            transfer.label_bindings = database.split_label_bindings(&transfer.id)?;
+            Ok::<_, String>(transfer)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let snippets = database
         .list_snippets()?
         .into_iter()
@@ -1477,6 +1511,7 @@ mod tests {
                 sort_order: 0,
                 imap: None,
                 imap_label_bindings: Vec::new(),
+                gmail_imap_converted: false,
             }],
             split_inboxes: vec![],
             snippets: vec![],
@@ -1501,6 +1536,7 @@ mod tests {
             sort_order: 1,
             imap: None,
             imap_label_bindings: Vec::new(),
+            gmail_imap_converted: false,
         });
         candidate.accounts[0].provider = "imap".to_string();
         let staged = StagedImport::default();
@@ -2769,6 +2805,7 @@ mod tests {
                     sort_order: 0,
                     imap: None,
                     imap_label_bindings: Vec::new(),
+                    gmail_imap_converted: false,
                 },
                 TransferAccount {
                     email: "other@example.net".to_string(),
@@ -2779,6 +2816,7 @@ mod tests {
                     sort_order: 1,
                     imap: None,
                     imap_label_bindings: Vec::new(),
+                    gmail_imap_converted: false,
                 },
                 // An IMAP account carrying its non-secret settings — the
                 // version-5 addition. No password: that is keychain-only.
@@ -2790,6 +2828,7 @@ mod tests {
                     provider: "imap".to_string(),
                     sort_order: 2,
                     imap_label_bindings: Vec::new(),
+                    gmail_imap_converted: false,
                     imap: Some(crate::provider::imap::ImapAccountSettings {
                         imap_host: "127.0.0.1".to_string(),
                         imap_port: 1143,
@@ -2826,6 +2865,7 @@ mod tests {
                 sort_order: 0,
                 created_at: "2026-09-28T08:00:00+00:00".to_string(),
                 account_id: "other@example.net".to_string(),
+                label_bindings: Vec::new(),
             }],
             snippets: vec![TransferSnippet {
                 id: "snippet-current".to_string(),
@@ -2937,6 +2977,57 @@ mod tests {
         let old = decrypt(fixtures::V5_CURRENT, fixtures::PASSWORD).unwrap();
         apply_import(&destination, old).unwrap();
         assert_eq!(destination.imap_label_bindings(email).unwrap(), bindings);
+    }
+
+    #[test]
+    fn transfers_device_local_split_bindings_and_reads_the_previous_v5_export() {
+        use crate::db::split_inboxes::SplitLabelBinding;
+
+        let mut payload = current_fixture_payload();
+        let baseline_rule = payload.split_inboxes[0].id.clone();
+        let (previous, _) = import_fixture(fixtures::V5_CURRENT);
+        assert!(previous
+            .split_label_bindings(&baseline_rule)
+            .unwrap()
+            .is_empty());
+
+        let email = "me@proton.me";
+        let account = payload
+            .accounts
+            .iter_mut()
+            .find(|item| item.email == email)
+            .unwrap();
+        let imap = account.imap.as_mut().unwrap();
+        imap.imap_host = "imap.gmail.com".into();
+        imap.imap_username = email.into();
+        account.gmail_imap_converted = true;
+        let split = &mut payload.split_inboxes[0];
+        split.account_id = email.into();
+        split.match_kind = "label".into();
+        split.match_value = "Label_26".into();
+        split.label_bindings = vec![SplitLabelBinding {
+            provider: "imap".into(),
+            label_id: Some("folder:Projects/Orchard".into()),
+        }];
+        let expected = split.label_bindings.clone();
+        let bytes = encrypt(&payload, fixtures::PASSWORD).unwrap();
+        let (destination, _) = import_fixture(&bytes);
+        assert!(destination.is_gmail_imap_conversion(email).unwrap());
+        assert_eq!(
+            destination.split_label_bindings(&baseline_rule).unwrap(),
+            expected
+        );
+        assert_eq!(
+            destination.list_split_inboxes().unwrap()[0].match_value,
+            "Label_26"
+        );
+        assert_eq!(
+            destination
+                .local_split_inbox(&baseline_rule)
+                .unwrap()
+                .match_value,
+            "folder:Projects/Orchard"
+        );
     }
 
     #[test]

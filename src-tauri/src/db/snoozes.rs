@@ -409,8 +409,25 @@ impl Database {
     ) -> DbResult<Vec<String>> {
         let records = self.list_snooze_records(Some(account))?;
         self.with_connection(|connection| {
+            let provider: Option<String> = connection
+                .query_row(
+                    "SELECT provider FROM accounts WHERE email=?1",
+                    [account],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let converted = super::accounts::gmail_imap_converted_on(connection, account)?;
             let mut ids = Vec::new();
             for item in records {
+                // An older provider-local reference can still be acted on
+                // where it was created. Leave it alone on a different
+                // connection so it cannot block that device's mail sync.
+                if provider.as_deref() == Some("gmail")
+                    && item.provider_thread_id.starts_with("imap:")
+                {
+                    continue;
+                }
+
                 let pending: bool = connection.query_row(
                     "SELECT pending_apply FROM conversation_snoozes WHERE id=?1",
                     [&item.id],
@@ -421,6 +438,12 @@ impl Database {
                     [&item.id],
                     |row| row.get(0),
                 )?;
+                if converted
+                    && !exists
+                    && super::accounts::canonical_gmail_id(&item.provider_thread_id).is_none()
+                {
+                    continue;
+                }
                 if (pending && item.state != "cancelled")
                     || (item.state == "active"
                         && (!exists

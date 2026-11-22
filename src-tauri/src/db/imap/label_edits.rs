@@ -111,6 +111,15 @@ pub(crate) fn retire_changed_connection_bindings(
     }) {
         return Ok(());
     }
+    tx.execute(
+        "UPDATE accounts SET gmail_imap_converted=0 WHERE email=?1",
+        [account],
+    )?;
+    tx.execute(
+        "UPDATE split_inbox_label_bindings SET label_id=NULL WHERE provider='imap'
+        AND split_id IN (SELECT id FROM split_inboxes WHERE account_id=?1)",
+        [account],
+    )?;
     let pending: Option<String> = tx
         .query_row(
             "SELECT pending_json FROM imap_label_edits WHERE account_id=?1",

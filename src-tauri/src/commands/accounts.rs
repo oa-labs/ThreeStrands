@@ -22,6 +22,15 @@ use crate::{
 };
 
 fn record_mail_account(state: &State<'_, AppState>, account: &Account) -> AppResult<()> {
+    let fields = state
+        .database
+        .is_gmail_imap_conversion(&account.email)?
+        .then(|| {
+            ["email", "displayName", "nickname", "color", "sortOrder"]
+                .into_iter()
+                .map(String::from)
+                .collect()
+        });
     record_synced_value(
         state,
         threestrands_sync_protocol::EntityType::MailAccount,
@@ -31,10 +40,10 @@ fn record_mail_account(state: &State<'_, AppState>, account: &Account) -> AppRes
             "displayName": account.display_name,
             "nickname": account.nickname,
             "color": account.color,
-            "provider": account.provider,
+            "provider": state.database.replicated_mail_provider(account)?,
             "sortOrder": account.sort_order,
         }),
-        None,
+        fields,
     )
 }
 
@@ -1231,7 +1240,7 @@ pub(crate) fn set_account_color(
         &state,
         threestrands_sync_protocol::EntityType::MailAccount,
         &email.to_ascii_lowercase(),
-        &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+        &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":state.database.replicated_mail_provider(&account)?,"sortOrder":account.sort_order}),
         Some(std::collections::BTreeSet::from(["color".to_string()])),
     )
 }
@@ -1253,7 +1262,7 @@ pub(crate) fn set_account_display_name(
         &state,
         threestrands_sync_protocol::EntityType::MailAccount,
         &email.to_ascii_lowercase(),
-        &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+        &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":state.database.replicated_mail_provider(&account)?,"sortOrder":account.sort_order}),
         Some(std::collections::BTreeSet::from(
             ["displayName".to_string()],
         )),
@@ -1277,7 +1286,7 @@ pub(crate) fn set_account_nickname(
         &state,
         threestrands_sync_protocol::EntityType::MailAccount,
         &email.to_ascii_lowercase(),
-        &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+        &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":state.database.replicated_mail_provider(&account)?,"sortOrder":account.sort_order}),
         Some(std::collections::BTreeSet::from(["nickname".to_string()])),
     )
 }
@@ -1290,7 +1299,7 @@ pub(crate) fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) 
             &state,
             threestrands_sync_protocol::EntityType::MailAccount,
             &account.email.to_ascii_lowercase(),
-            &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+            &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":state.database.replicated_mail_provider(&account)?,"sortOrder":account.sort_order}),
             Some(std::collections::BTreeSet::from(["sortOrder".to_string()])),
         )?;
     }

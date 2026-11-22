@@ -68,7 +68,7 @@ mod settings_transfer;
 mod signatures;
 mod snippets;
 pub(crate) mod snoozes;
-mod split_inboxes;
+pub(crate) mod split_inboxes;
 pub(crate) mod sync_state;
 mod synced_preferences;
 mod system_contacts;

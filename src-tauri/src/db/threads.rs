@@ -88,7 +88,7 @@ impl Database {
         offset: usize,
         limit: usize,
     ) -> DbResult<ThreadPage> {
-        let rules = self.list_split_inboxes()?;
+        let rules = self.list_local_split_inboxes()?;
         if rules.is_empty() {
             return self.list_threads_page_where(
                 account_id,
@@ -404,7 +404,7 @@ impl Database {
     /// `list_threads_page` applies — a split inbox never pulls mail out of a
     /// different account's inbox.
     pub fn mailbox_unread_counts(&self, account_id: Option<&str>) -> DbResult<MailboxUnreadCounts> {
-        let rules = self.list_split_inboxes()?;
+        let rules = self.list_local_split_inboxes()?;
         let threads = self.list_threads(account_id)?;
         let mut splits: HashMap<String, i64> = HashMap::new();
         let mut inbox = 0i64;

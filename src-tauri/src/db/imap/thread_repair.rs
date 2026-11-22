@@ -230,6 +230,8 @@ fn plan_repair(
                 } else if source_available {
                     source_available = false;
                     source.to_string()
+                } else if crate::db::accounts::gmail_imap_converted_on(conn, account)? {
+                    native.clone()
                 } else {
                     crate::provider::imap::gmail_thread_id(account, &native)
                 };

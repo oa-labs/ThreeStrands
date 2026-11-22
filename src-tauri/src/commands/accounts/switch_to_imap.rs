@@ -80,15 +80,19 @@ pub(crate) async fn switch_gmail_to_imap(
         service.retire().await;
     }
     let previous_password = credential.load().ok();
+    let schedule_owner = crate::scheduled_send::keychain_identity(false).ok();
     let switched = (|| -> AppResult<Account> {
         credential.save(&crate::credentials::ImapPassword {
             imap: password,
             smtp: None,
         })?;
-        match state
-            .database
-            .switch_gmail_to_imap(&email, settings, &labels, &choices)
-        {
+        match state.database.switch_gmail_to_imap(
+            &email,
+            settings,
+            &labels,
+            &choices,
+            schedule_owner.as_deref(),
+        ) {
             Ok(account) => Ok(account),
             Err(error) => {
                 let restored = match previous_password {

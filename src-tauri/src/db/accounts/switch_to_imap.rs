@@ -1,14 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use threestrands_sync_protocol::EntityType;
 
 use super::{account_from_row, purge_imap_cache, purge_mail_traces, purge_outgoing_mail};
-use crate::db::sync_state::{
-    record_replicated_deletion_in_transaction, record_replicated_write_in_transaction,
-};
-use crate::db::{serialization_error, Database, DatabaseError, DbResult};
+use crate::db::split_inboxes::{bind_split_label, local_split_inbox_on};
+use crate::db::{Database, DatabaseError, DbResult};
 use crate::models::{Account, Label, SplitInbox};
 use crate::provider::imap::{Identity, ImapAccountSettings};
 use crate::provider::SendingIdentity;
@@ -91,10 +88,11 @@ impl Database {
             }
             let mut split_inboxes = Vec::new();
             for split in label_splits(connection, email)? {
+                let local = local_split_inbox_on(connection, &split.id)?;
                 let old_label_name: Option<String> = connection
                     .query_row(
                         "SELECT name FROM account_labels WHERE account_id=?1 AND label_id=?2",
-                        params![email, split.match_value],
+                        params![email, local.match_value],
                         |row| row.get(0),
                     )
                     .optional()?;
@@ -108,6 +106,7 @@ impl Database {
                 let suggested_label_id = candidates
                     .next()
                     .filter(|_| candidates.next().is_none())
+                    .or_else(|| labels.iter().find(|label| label.id == split.match_value))
                     .map(|label| label.id.clone());
                 split_inboxes.push(SplitLabel {
                     id: split.id,
@@ -127,8 +126,8 @@ impl Database {
         })
     }
 
-    /// Canonical Gmail API keys are distinct from normal IMAP conversation
-    /// IDs. Recover only a key the switch actually reserved for this account.
+    /// Recover a canonical conversation reserved by the switch or referenced
+    /// by a task that a Gmail API peer added after this device switched.
     pub(crate) fn converted_gmail_thread(&self, id: &str) -> DbResult<Option<(String, String)>> {
         let Some((email, thread)) = id.rsplit_once(':') else {
             return Ok(None);
@@ -137,16 +136,17 @@ impl Database {
             return Ok(None);
         }
         self.with_connection(|connection| {
-            Ok(connection
-                .query_row(
-                    "SELECT g.account_id,g.thread_id FROM imap_gmail_threads g
-                 JOIN accounts a ON a.email=g.account_id
-                 WHERE g.account_id=?1 AND g.gmail_thread_id=?2 AND g.thread_id=?2
-                    AND a.provider='imap' AND a.on_this_device=1",
-                    params![email, thread],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?)
+            let available: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM accounts a
+                 WHERE a.email=?1 AND a.provider='imap' AND a.on_this_device=1 AND (
+                   EXISTS(SELECT 1 FROM imap_gmail_threads g WHERE g.account_id=a.email
+                     AND g.gmail_thread_id=?2 AND g.thread_id=?2)
+                   OR (a.gmail_imap_converted=1 AND EXISTS(
+                     SELECT 1 FROM tasks WHERE account_id=a.email AND thread_id=?3))))",
+                params![email, thread, id],
+                |row| row.get(0),
+            )?;
+            Ok(available.then(|| (email.into(), thread.into())))
         })
     }
 
@@ -158,8 +158,8 @@ impl Database {
         mut settings: ImapAccountSettings,
         labels: &[Label],
         choices: &[SplitLabelChoice],
+        schedule_owner: Option<&str>,
     ) -> DbResult<Account> {
-        let sync_active = self.replicated_sync_active()?;
         self.with_transaction(|tx| {
             require_switchable_account(tx, email)?;
             let splits = label_splits(tx, email)?;
@@ -178,13 +178,10 @@ impl Database {
                     Identity { address, display_name, reply_to, is_default }
                 }).collect();
             }
-            // A paused, previously enrolled replica also needs the updated
-            // provider and rules when it next resumes.
-            let publish = sync_active || tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE is_self=1)", [], |row| row.get::<_, bool>(0),
-            )?;
-            if publish {
-                discard_replica_schedules(tx, email)?;
+            // Only rows backed by a local, owned delivery can be cancelled.
+            // The projected schedules and snoozes are shared workflow state.
+            if let Some(owner) = schedule_owner {
+                crate::db::scheduled_send::cancel_schedules_for_connection_switch(tx, email, owner)?;
             }
             purge_imap_cache(tx, email)?;
             reserve_gmail_ids(tx, email)?;
@@ -196,24 +193,23 @@ impl Database {
             purge_mail_traces(tx, email)?;
             purge_outgoing_mail(tx, email)?;
             for table in ["threads", "mutations", "sync_state", "sync_recovery_threads",
-                "sync_recovery", "quarantined_messages", "conversation_snoozes", "gmail_sending_identities"]
+                "sync_recovery", "quarantined_messages", "gmail_sending_identities"]
             {
                 tx.execute(&format!("DELETE FROM {table} WHERE account_id=?1"), [email])?;
             }
             tx.execute("INSERT INTO sync_state(account_id) VALUES(?1)", [email])?;
 
-            for mut split in splits {
-                let Some(id) = &selected[split.id.as_str()].label_id else { continue };
-                if split.match_value == *id { continue; }
-                tx.execute("UPDATE split_inboxes SET match_value=?1 WHERE id=?2", params![id, split.id])?;
-                split.match_value.clone_from(id);
-                if publish {
-                    record_replica_fields(tx, EntityType::SplitInbox, &split.id, &split)?;
-                }
+            tx.execute(
+                "UPDATE conversation_snoozes SET pending_apply=1 WHERE account_id=?1
+                 AND json_extract(record_json,'$.state')='active'",
+                [email],
+            )?;
+            for split in splits {
+                bind_split_label(tx, &split.id, &split.match_value, "imap", selected[split.id.as_str()].label_id.as_deref())?;
             }
             super::super::imap::write_settings_row(tx, email, &settings)?;
             let mut account = tx.query_row(
-                "UPDATE accounts SET provider='imap', status='connected', last_synced_at=NULL
+                "UPDATE accounts SET provider='imap', gmail_imap_converted=1, status='connected', last_synced_at=NULL
                  WHERE email=?1 RETURNING email,display_name,color,status,provider,sort_order,
                     connected_at,last_synced_at,nickname,on_this_device",
                 [email], account_from_row,
@@ -223,16 +219,6 @@ impl Database {
                 [email],
             )?;
             account.label_model = crate::provider::LabelModel::ImapNativeLabels;
-            if publish {
-                record_replica_fields(tx, EntityType::MailAccount, &email.to_ascii_lowercase(), &serde_json::json!({
-                    "email": email,
-                    "displayName": account.display_name,
-                    "nickname": account.nickname,
-                    "color": account.color,
-                    "provider": account.provider,
-                    "sortOrder": account.sort_order,
-                }))?;
-            }
             Ok(account)
         })
     }
@@ -247,14 +233,6 @@ fn require_switchable_account(connection: &Connection, email: &str) -> DbResult<
         return Err(DatabaseError::invalid(
             "This account is no longer set up with Gmail on this device.",
         ));
-    }
-    let has_other_device: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE is_self=0 AND status='active')",
-        [],
-        |row| row.get(0),
-    )?;
-    if has_other_device {
-        return Err(DatabaseError::invalid("Switching this connection is available when this is the only device enrolled in Replicated Sync."));
     }
     Ok(())
 }
@@ -278,8 +256,14 @@ fn label_splits(connection: &Connection, email: &str) -> DbResult<Vec<SplitInbox
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub(in crate::db) fn canonical_gmail_id(id: &str) -> Option<u64> {
+    u64::from_str_radix(id, 16)
+        .ok()
+        .filter(|number| format!("{number:x}") == id)
+}
+
 fn is_canonical_gmail_id(id: &str) -> bool {
-    u64::from_str_radix(id, 16).is_ok_and(|number| format!("{number:x}") == id)
+    canonical_gmail_id(id).is_some()
 }
 
 fn reserve_gmail_ids(tx: &Transaction<'_>, email: &str) -> DbResult<()> {
@@ -289,7 +273,9 @@ fn reserve_gmail_ids(tx: &Transaction<'_>, email: &str) -> DbResult<()> {
     let mut threads = tx.prepare(
         "SELECT provider_thread_id FROM threads WHERE account_id=?1
          UNION SELECT substr(thread_id,length(?1)+2) FROM tasks
-         WHERE account_id=?1 AND substr(thread_id,1,length(?1)+1)=?1||':'",
+         WHERE account_id=?1 AND substr(thread_id,1,length(?1)+1)=?1||':'
+         UNION SELECT json_extract(record_json,'$.providerThreadId')
+         FROM conversation_snoozes WHERE account_id=?1",
     )?;
     let mut insert = tx.prepare(
         "INSERT INTO imap_gmail_threads(account_id,gmail_thread_id,thread_id) VALUES(?1,?2,?2)",
@@ -311,35 +297,6 @@ fn reserve_gmail_ids(tx: &Transaction<'_>, email: &str) -> DbResult<()> {
         let id = row?;
         if is_canonical_gmail_id(&id) {
             insert.execute(params![email, id])?;
-        }
-    }
-    Ok(())
-}
-
-fn record_replica_fields(
-    tx: &Transaction<'_>,
-    kind: EntityType,
-    id: &str,
-    value: &impl Serialize,
-) -> DbResult<()> {
-    let payload = serde_json::to_value(value).map_err(serialization_error)?;
-    let fields: BTreeSet<_> = payload
-        .as_object()
-        .into_iter()
-        .flat_map(|fields| fields.keys().cloned())
-        .collect();
-    record_replicated_write_in_transaction(tx, kind, id, &fields, &payload)
-}
-
-fn discard_replica_schedules(tx: &Transaction<'_>, email: &str) -> DbResult<()> {
-    for (kind, sql) in [
-        (EntityType::ConversationSnooze, "SELECT id FROM conversation_snoozes WHERE account_id=?1"),
-        (EntityType::ScheduledSendSummary, "SELECT id FROM scheduled_send_summaries WHERE json_valid(report) AND lower(json_extract(report, '$.account'))=lower(?1)"),
-    ] {
-        let mut statement = tx.prepare(sql)?;
-        let ids = statement.query_map([email], |row| row.get::<_, String>(0))?;
-        for id in ids {
-            record_replicated_deletion_in_transaction(tx, kind, &id?)?;
         }
     }
     Ok(())
@@ -522,6 +479,9 @@ mod tests {
         db.snooze_threads(&[thread_id.clone()], "2099-01-01T00:00:00Z")
             .unwrap();
 
+        db.snooze_threads(&[format!("{ACCOUNT}:unknown")], "2099-01-01T00:00:00Z")
+            .unwrap();
+
         let preview = db
             .preview_gmail_imap_switch(ACCOUNT, labels.clone())
             .unwrap();
@@ -553,6 +513,7 @@ mod tests {
                         label_id: None,
                     },
                 ],
+                None,
             )
             .unwrap();
         assert_eq!(updated.email, ACCOUNT);
@@ -567,7 +528,7 @@ mod tests {
         );
         assert_eq!(db.account_sending_identities(ACCOUNT).unwrap()[1], alias);
         assert_eq!(before, preserved.map(|table| table_rows(&db, table)));
-        let splits = db.list_split_inboxes().unwrap();
+        let splits = db.list_local_split_inboxes().unwrap();
         assert_eq!(
             splits
                 .iter()
@@ -582,7 +543,7 @@ mod tests {
                 .find(|split| split.id == unresolved.id)
                 .unwrap()
                 .match_value,
-            "Label_2"
+            ""
         );
         assert_eq!(
             splits
@@ -602,7 +563,15 @@ mod tests {
         );
         assert!(db.get_thread(&thread_id).is_err());
         assert!(db.get_thread(&format!("{OTHER}:7d1")).is_ok());
-        assert!(db.list_snooze_records(Some(ACCOUNT)).unwrap().is_empty());
+        let snoozes = db.list_snooze_records(Some(ACCOUNT)).unwrap();
+        assert_eq!(snoozes[0].id, thread_id);
+        assert_eq!(snoozes[0].state, "active");
+        assert_eq!(snoozes[1].provider_thread_id, "unknown");
+        assert_eq!(snoozes[1].state, "active");
+        assert_eq!(
+            db.snooze_refresh_ids(ACCOUNT, chrono::Utc::now()).unwrap(),
+            ["7d1"]
+        );
         assert!(db.claim_mutations(ACCOUNT, 10).unwrap().is_empty());
         assert_eq!(
             db.converted_gmail_thread(&thread_id).unwrap(),
@@ -621,71 +590,194 @@ mod tests {
         assert_eq!(store.resolve_gmail_thread("44d", 2001).unwrap(), "7d1");
         assert_eq!(store.gmail_message_id("44d").unwrap(), Some(1101));
         assert_eq!(store.gmail_message_id("450").unwrap(), Some(1104));
+        assert_eq!(store.resolve_gmail_thread("44f", 2005).unwrap(), "7d5");
+        assert_eq!(store.gmail_thread_lookup_id("7d9").unwrap(), Some(2009));
+        assert_eq!(store.gmail_thread_lookup_id("imap:t:legacy").unwrap(), None);
+        let inputs = crate::provider::imap::identity::IdentityInputs {
+            gmail_message_id: Some(1103),
+            ..Default::default()
+        };
+        assert_eq!(
+            store
+                .resolve_message_identity("All Mail", 1, 9, &inputs)
+                .unwrap(),
+            "44f"
+        );
         assert!(db
-            .switch_gmail_to_imap(ACCOUNT, settings(), &labels, &[])
+            .switch_gmail_to_imap(ACCOUNT, settings(), &labels, &[], None)
             .is_err());
     }
 
     #[test]
-    fn switching_rejects_another_active_device_and_records_a_single_device_switch() {
-        let db = Database::open_memory();
-        db.adopt_account(ACCOUNT).unwrap();
-        db.set_beta_features_enabled(true).unwrap();
+    fn devices_switch_separately_without_rewriting_shared_rules_or_peer_schedules() {
+        use threestrands_sync_protocol::EntityType;
+
+        const OTHER_DEVICE: &str = "11111111111111111111111111111111";
+        let first = Database::open_memory();
+        let second = Database::open_memory();
+        for device in [&first, &second] {
+            device.adopt_account(ACCOUNT).unwrap();
+            device.set_beta_features_enabled(true).unwrap();
+            device
+                .with_connection(|conn| {
+                    conn.execute(
+                        "INSERT INTO sync_devices(device_id,status,is_self) VALUES(?1,'active',0)",
+                        [OTHER_DEVICE],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
         let labels = vec![destination()];
-        let split = db
-            .create_split_inbox("Projects", "label", "Label_1", ACCOUNT)
+        let api_label = Label {
+            id: "Label_1".into(),
+            name: labels[0].name.clone(),
+            kind: "user".into(),
+        };
+        second
+            .replace_account_labels(ACCOUNT, std::slice::from_ref(&api_label))
             .unwrap();
-        let choices = [SplitLabelChoice {
-            id: split.id.clone(),
-            old_label_id: split.match_value.clone(),
-            label_id: Some(labels[0].id.clone()),
-        }];
-        db.with_connection(|conn| {
-            conn.execute(
-                "INSERT INTO sync_devices(device_id,status,is_self) VALUES(?1,'active',0)",
-                ["11111111111111111111111111111111"],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-        assert!(db
-            .preview_gmail_imap_switch(ACCOUNT, labels.clone())
-            .is_err());
-        assert!(db
-            .switch_gmail_to_imap(ACCOUNT, settings(), &labels, &choices)
-            .is_err());
-        assert_eq!(db.get_account(ACCOUNT).unwrap().unwrap().provider, "gmail");
-        db.with_connection(|conn| {
-            conn.execute(
-                "UPDATE sync_devices SET status='revoked' WHERE is_self=0",
-                [],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-        db.switch_gmail_to_imap(ACCOUNT, settings(), &labels, &choices)
+        first
+            .replace_account_labels(ACCOUNT, std::slice::from_ref(&api_label))
             .unwrap();
-        let replica = db.load_replica_state().unwrap();
-        let account = replica
-            .fields()
-            .iter()
-            .find(|(key, _)| {
-                key.entity_type == EntityType::MailAccount
-                    && key.entity_id == ACCOUNT
-                    && key.field == "provider"
-            })
+        let rule = second
+            .create_split_inbox("Projects", "label", &api_label.id, ACCOUNT)
             .unwrap();
-        assert_eq!(account.1[0].value, Some(serde_json::json!("imap")));
-        let rule = replica
-            .fields()
-            .iter()
-            .find(|(key, _)| {
-                key.entity_type == EntityType::SplitInbox
-                    && key.entity_id == split.id
-                    && key.field == "matchValue"
-            })
+        first
+            .materialize_entity(
+                EntityType::SplitInbox,
+                &rule.id,
+                Some(&serde_json::to_value(&rule).unwrap()),
+                false,
+            )
             .unwrap();
-        assert_eq!(rule.1[0].value, Some(serde_json::json!(labels[0].id)));
+
+        // A real received scheduled-send summary and snooze remain visible
+        // and keep their replicated state after the local cutover.
+        let report = serde_json::json!({
+            "operationId": "00000000-0000-4000-8000-0000000000a1",
+            "ownerInstallationId": "00000000-0000-4000-8000-000000000001",
+            "ownerSyncDeviceId": OTHER_DEVICE,
+            "ownerNameAtCreation": "Other computer", "account": ACCOUNT,
+            "subject": "Later", "scheduledAt": 1900000000000_i64, "timeZone": "UTC",
+            "state": "scheduled", "blockedReason": null, "reportRevision": 1,
+            "statusChangedAt": 1800000000000_i64
+        });
+        let report_id = "00000000-0000-4000-8000-000000000001:00000000-0000-4000-8000-0000000000a1";
+        let snooze = serde_json::json!({"schedule": {
+            "id": format!("{ACCOUNT}:7d9"), "accountId": ACCOUNT, "providerThreadId": "7d9",
+            "until": "2099-01-01T00:00:00Z", "state": "active", "messageIds": ["44d"],
+        }});
+        for device in [&first, &second] {
+            device
+                .materialize_entity(
+                    EntityType::ScheduledSendSummary,
+                    report_id,
+                    Some(&serde_json::json!({"report": report})),
+                    false,
+                )
+                .unwrap();
+            device
+                .materialize_entity(
+                    EntityType::ConversationSnooze,
+                    snooze["schedule"]["id"].as_str().unwrap(),
+                    Some(&snooze),
+                    false,
+                )
+                .unwrap();
+            device.reconcile_replicated_sync_backlog().unwrap();
+        }
+        let first_before = first.load_replica_state().unwrap();
+
+        let switch = |device: &Database| {
+            let preview = device
+                .preview_gmail_imap_switch(ACCOUNT, labels.clone())
+                .unwrap();
+            assert_eq!(
+                preview.split_inboxes[0].suggested_label_id.as_deref(),
+                Some(labels[0].id.as_str())
+            );
+            device
+                .switch_gmail_to_imap(
+                    ACCOUNT,
+                    settings(),
+                    &labels,
+                    &[SplitLabelChoice {
+                        id: rule.id.clone(),
+                        old_label_id: rule.match_value.clone(),
+                        label_id: Some(labels[0].id.clone()),
+                    }],
+                    None,
+                )
+                .unwrap();
+        };
+        let ingest = |device: &Database, id: &str| {
+            let mut item = message("44e", "7d3", "2026-01-01T00:00:00Z", "Orchard updates");
+            item.labels = vec!["INBOX".into(), "UNREAD".into(), id.into()];
+            device.upsert_thread(ACCOUNT, &[item]).unwrap();
+            assert_eq!(
+                device
+                    .list_split_inbox_page(&rule.id, 0, 10)
+                    .unwrap()
+                    .threads
+                    .len(),
+                1
+            );
+            assert_eq!(
+                device
+                    .mailbox_unread_counts(Some(ACCOUNT))
+                    .unwrap()
+                    .splits
+                    .get(&rule.id),
+                Some(&1)
+            );
+            assert!(device
+                .list_threads_page(Some(ACCOUNT), 0, 10)
+                .unwrap()
+                .threads
+                .iter()
+                .all(|thread| thread.provider_thread_id != "7d3"));
+        };
+
+        switch(&first);
+        assert_eq!(
+            first.get_account(ACCOUNT).unwrap().unwrap().provider,
+            "imap"
+        );
+        assert_eq!(
+            second.get_account(ACCOUNT).unwrap().unwrap().provider,
+            "gmail"
+        );
+        assert_eq!(
+            first.list_split_inboxes().unwrap()[0].match_value,
+            api_label.id
+        );
+        assert_eq!(
+            first.local_split_inbox(&rule.id).unwrap().match_value,
+            labels[0].id
+        );
+        assert_eq!(
+            second.local_split_inbox(&rule.id).unwrap().match_value,
+            api_label.id
+        );
+        first.reconcile_replicated_sync_backlog().unwrap();
+        assert_eq!(
+            first.load_replica_state().unwrap().fields(),
+            first_before.fields()
+        );
+        assert_eq!(
+            first.scheduled_summaries().unwrap()[0]["state"],
+            "scheduled"
+        );
+        assert_eq!(
+            first.list_snooze_records(Some(ACCOUNT)).unwrap()[0].state,
+            "active"
+        );
+
+        ingest(&first, &labels[0].id);
+        ingest(&second, &api_label.id);
+        switch(&second);
+        ingest(&second, &labels[0].id);
     }
 
     #[test]
@@ -712,7 +804,7 @@ mod tests {
             label_id: Some("folder:missing".into()),
         }];
         assert!(db
-            .switch_gmail_to_imap(ACCOUNT, settings(), &labels, &stale)
+            .switch_gmail_to_imap(ACCOUNT, settings(), &labels, &stale, None)
             .is_err());
         let valid = [SplitLabelChoice {
             id: split.id,
@@ -729,7 +821,7 @@ mod tests {
         })
         .unwrap();
         assert!(db
-            .switch_gmail_to_imap(ACCOUNT, settings(), &labels, &valid)
+            .switch_gmail_to_imap(ACCOUNT, settings(), &labels, &valid, None)
             .is_err());
         assert_eq!(db.get_account(ACCOUNT).unwrap().unwrap().provider, "gmail");
         assert!(db.get_thread(&format!("{ACCOUNT}:7d1")).is_ok());

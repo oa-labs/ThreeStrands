@@ -85,9 +85,10 @@ async fn native_label_rename_and_delete_preserve_messages_split_and_identity() {
     assert!(db.get_thread(&local_thread).is_ok());
     db.replace_account_labels(ACCOUNT, &provider.list_labels().await.unwrap())
         .unwrap();
-    let relinked = db
+    let (relinked, shared) = db
         .relink_split_inbox_label(&split.id, &recreated.id)
         .unwrap();
+    assert!(shared);
     assert_eq!(relinked.id, split.id);
     assert_eq!(relinked.name, split.name);
     assert_eq!(relinked.match_value, recreated.id);

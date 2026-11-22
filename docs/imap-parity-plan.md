@@ -153,10 +153,20 @@ mail-linked tasks as mail arrives. Opening an older task conversation can
 recover it by native ID outside the usual sync window. The review flags legacy
 task references and lets the user choose a label for any unmatched Split Inbox.
 
-This one-time path clears local snoozes, drafts, Outbox, scheduled sends, pending
-mail changes, and cached mail for the switched account. Gmail mail remains on
-the server. This path supports one device. The app refuses the switch when
-another active Replicated Sync device still belongs to the space.
+Each device can switch independently while staying in Replicated Sync.
+It keeps the shared account, rules, and snoozes. For each label-based Split
+Inbox, it uses the label confirmed on that device. If a peer creates a rule
+using the other provider or changes its underlying label, choose a matching
+label in Split Inboxes on this device. A replacement chosen for a rule from
+another provider stays local.
+
+The switch rebuilds the local mail cache and clears drafts, Outbox items,
+and pending mail writes on this device. It cancels unsent schedules owned by
+this installation while preserving the reports and delivery authority of
+other devices. Any future mail acquired with verified native Gmail IDs keeps
+the same message and thread IDs as the Gmail API on converted devices. A
+snooze with an older provider-local ID stays recorded and can be acted on by
+the connection that recognizes it.
 
 The remaining checklist covers a fuller conversion with more workflow state
 and multi-device coordination.
@@ -172,9 +182,11 @@ and multi-device coordination.
 - [ ] Define a resumable conversion journal and failure recovery. Keep the old
   connection usable until conversion commits; credential revocation must not
   make an interrupted conversion unrecoverable.
-- [ ] Define behavior when another enrolled device still uses the old provider.
-  Ensure conversion cannot bounce account metadata between providers or replay
-  mutations under the wrong ID scheme. Preserve settings-transfer compatibility.
+- [x] Allow enrolled devices to switch one at a time. Keep the installed provider
+  and the reviewed label bindings local. Settings export carries those bindings
+  with backward-compatible defaults.
+- [ ] Verify retention and replay of drafts, queued writes, and delivery receipts
+  for a future conversion that preserves the local outbox.
 
 Acceptance: conversion survives interruption and restart without workflow loss,
 wrong-message references, duplicate sends, or cross-device provider conflicts.

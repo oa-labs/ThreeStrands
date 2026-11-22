@@ -22,6 +22,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
                     sort_order: 0,
                     imap: None,
                     imap_label_bindings: Vec::new(),
+                    gmail_imap_converted: false,
                 },
                 TransferAccount {
                     email: "connected@example.com".to_string(),
@@ -32,6 +33,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
                     sort_order: 1,
                     imap: None,
                     imap_label_bindings: Vec::new(),
+                    gmail_imap_converted: false,
                 },
             ],
             &Default::default(),
@@ -43,6 +45,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
                 sort_order: 0,
                 created_at: "2026-03-06T00:00:00Z".to_string(),
                 account_id: "new@example.com".to_string(),
+                label_bindings: Vec::new(),
             }],
             &[TransferSnippet {
                 id: "imported-snippet".to_string(),
@@ -142,6 +145,7 @@ fn import_sets_up_only_the_chosen_accounts_and_never_disconnects_one() {
         sort_order: 0,
         imap: None,
         imap_label_bindings: Vec::new(),
+        gmail_imap_converted: false,
     };
     let not_here = ["skipped@example.com", "connected@example.com"]
         .map(str::to_string)

@@ -187,3 +187,53 @@ fn restart_preserves_future_time_and_never_releases_elapsed_schedules() {
     assert_eq!(db.outbox().unwrap()[0].state, "overdue");
     assert!(!db.pending_undo().unwrap());
 }
+
+#[test]
+fn switching_a_connection_cancels_only_owned_local_schedules_even_if_sync_is_paused() {
+    let database = db();
+    group_setup(&database, 7);
+    let item = queue(&database);
+    let report = &item.schedule.as_ref().unwrap().report;
+    let mut peer_report = report.clone();
+    peer_report.owner_installation_id = "00000000-0000-4000-8000-000000000002".into();
+    database
+        .upsert_scheduled_summary(
+            &peer_report.entity_id(),
+            &serde_json::to_string(&peer_report).unwrap(),
+        )
+        .unwrap();
+    database.set_beta_features_enabled(false).unwrap();
+
+    database
+        .with_transaction(|tx| {
+            cancel_schedules_for_connection_switch(tx, "another@example.com", OWNER)?;
+            cancel_schedules_for_connection_switch(
+                tx,
+                "me@example.com",
+                &peer_report.owner_installation_id,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(database.outbox().unwrap()[0].state, "scheduled");
+
+    database
+        .with_transaction(|tx| cancel_schedules_for_connection_switch(tx, "me@example.com", OWNER))
+        .unwrap();
+    assert_eq!(database.outbox().unwrap()[0].state, "canceled");
+    let replica = database.load_replica_state().unwrap();
+    let (_, values) = replica
+        .fields()
+        .iter()
+        .find(|(key, _)| {
+            key.entity_type == EntityType::ScheduledSendSummary
+                && key.field == "report"
+                && key.entity_id == report.entity_id()
+        })
+        .unwrap();
+    assert_eq!(values[0].value.as_ref().unwrap()["state"], "canceled");
+    assert_eq!(
+        database.scheduled_summaries().unwrap()[0]["state"],
+        "scheduled"
+    );
+}

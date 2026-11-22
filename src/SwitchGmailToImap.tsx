@@ -62,7 +62,11 @@ export function SwitchGmailToImap({ email, onCancel, onSwitched }: {
             ThreeStrands will keep {review.taskCount} {review.taskCount === 1 ? "task" : "tasks"}, {review.goalCount} {review.goalCount === 1 ? "goal" : "goals"}, and this account’s settings.
             Your mail will sync again from Gmail.
           </p>
-          <p>This clears ThreeStrands snoozes, local drafts, Outbox items, scheduled sends, and pending mail changes for this account.</p>
+          <p>This switches the connection on this device. Your other devices stay connected and can switch separately.</p>
+          <p>Local drafts, Outbox items, scheduled sends, and pending mail changes for this account are cleared here. Shared snoozes and other devices’ scheduled sends are kept.</p>
+          {review.splitInboxes.length > 0 && (
+            <p>Choose the labels your Split Inboxes will use on this device.</p>
+          )}
           {review.unverifiedTaskLinks.length > 0 && <>
             <p>These tasks will be kept. Their original mail links need review after switching.</p>
             <ul>{review.unverifiedTaskLinks.map((title, index) => <li key={index}>{title}</li>)}</ul>

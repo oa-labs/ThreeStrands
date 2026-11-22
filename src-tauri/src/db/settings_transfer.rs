@@ -55,6 +55,12 @@ impl Database {
                         imap,
                     )?;
                     super::imap::write_settings_row(transaction, &account.email, imap)?;
+                    if account.gmail_imap_converted {
+                        transaction.execute(
+                            "UPDATE accounts SET gmail_imap_converted=1 WHERE email=?1 AND provider='imap'",
+                            [&account.email],
+                        )?;
+                    }
                     super::imap::label_edits::import_bindings(
                         transaction,
                         &account.email,
@@ -77,6 +83,10 @@ impl Database {
                         account_id: &split.account_id,
                     },
                 )?;
+                for binding in &split.label_bindings {
+                    split_inboxes::bind_split_label(transaction, &split.id, &split.match_value,
+                        &binding.provider, binding.label_id.as_deref())?;
+                }
             }
 
             snippets::delete_all_snippets(transaction)?;

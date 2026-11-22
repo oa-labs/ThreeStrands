@@ -387,6 +387,8 @@ describe("switching Gmail to IMAP", () => {
     expect(commit).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Review Gmail switch" })).toHaveFocus();
     expect(screen.getByText("Call the nursery")).toBeVisible();
+    expect(screen.getByText(/Your other devices stay connected and can switch separately/)).toBeVisible();
+    expect(screen.getByText(/Shared snoozes and other devices’ scheduled sends are kept/)).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Orchard · Projects/Orchard" })).toHaveValue("folder:Projects/Orchard");
     fireEvent.change(screen.getByRole("combobox", { name: "Vendors" }), { target: { value: "folder:Vendors" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Switch to Gmail via IMAP" })); });
