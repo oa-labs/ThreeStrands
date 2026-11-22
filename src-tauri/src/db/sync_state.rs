@@ -333,6 +333,19 @@ impl Database {
                     store_value(tx, key, value)?;
                 }
             }
+            // A pulled binding can change the meaning of an existing label ID
+            // before the next scheduled mailbox listing. Wake just its catalog.
+            let changed_imap_accounts: BTreeSet<_> = changed.iter()
+                .filter(|key| key.entity_type == EntityType::MailAccount
+                    && super::imap::label_replica::affects_imap_catalog(&key.field))
+                .map(|key| &key.entity_id)
+                .collect();
+            for account in changed_imap_accounts {
+                tx.execute(
+                    "DELETE FROM imap_mailbox_sync_state WHERE lower(account_id)=?1 AND mailbox=?2",
+                    params![account, super::imap::ImapStateStore::CATALOG_SWEEP_KEY],
+                )?;
+            }
             if local.context() != &context_before {
                 for (device, counter) in local.context() {
                     tx.execute(
@@ -490,6 +503,11 @@ impl Database {
             };
             let mut conflicts = Vec::with_capacity(keys.len());
             for (entity_type, entity_id, field) in keys {
+                if entity_type == EntityType::MailAccount.as_str()
+                    && super::imap::label_replica::is_imap_label_field(&field)
+                {
+                    continue;
+                }
                 let candidates: Vec<(String, i64, Option<String>)> = {
                     let mut statement = connection.prepare(
                         "SELECT device_id, counter, value FROM sync_values WHERE entity_type=?1 AND entity_id=?2 AND field=?3
@@ -536,6 +554,13 @@ impl Database {
         field: &str,
         chosen_operation_id: &str,
     ) -> DbResult<()> {
+        if entity_type == EntityType::MailAccount
+            && super::imap::label_replica::is_imap_label_field(field)
+        {
+            return Err(DatabaseError::invalid(
+                "Editing device and IMAP label bindings cannot be resolved as account preferences.",
+            ));
+        }
         let (device_id, counter) = chosen_operation_id
             .split_once(':')
             .and_then(|(device, counter)| Some((device.to_string(), counter.parse::<i64>().ok()?)))

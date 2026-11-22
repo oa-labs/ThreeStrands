@@ -1,5 +1,5 @@
 import { Check, Pencil, Trash } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Label } from "./domain";
 import { Modal } from "./AppChrome";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
@@ -7,7 +7,8 @@ import { formatLabelName, isManageableLabel, type LabelCapabilities } from "./la
 import { readLabelUsage, recordLabelUsed } from "./settings";
 import { ICON_SIZE } from "./iconSizes";
 import { InlineConfirm } from "./InlineConfirm";
-import { errorMessage } from "./errors";
+import { errorMessage, logBackgroundFailure } from "./errors";
+import { imapLabelEditor, type ImapLabelEditorStatus } from "./replicatedSync";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 export function LabelManager({
@@ -43,6 +44,19 @@ export function LabelManager({
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState<Label | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editor, setEditor] = useState<ImapLabelEditorStatus | null>(null);
+  const imap = nativeLabels || capabilities.canManageFolders;
+  const canEdit = editor?.canEdit !== false;
+
+  useEffect(() => {
+    if (!imap || !accountId) return;
+    let current = true;
+    void imapLabelEditor(accountId).then(
+      (status) => { if (current) setEditor(status); },
+      logBackgroundFailure("IMAP editing device"),
+    );
+    return () => { current = false; };
+  }, [accountId, imap]);
 
   const deleteLabel = async (label: Label) => {
     setBusy(true);
@@ -81,7 +95,7 @@ export function LabelManager({
   const selectLabel = (label: Label) => {
     if (busy || deleting) return;
     if (folders) {
-      startRename(label);
+      if (canEdit) startRename(label);
       return;
     }
     onToggle(label, !checkedLabelIds.has(label.id));
@@ -122,6 +136,13 @@ export function LabelManager({
           {folders ? "Manage Labels" : "Manage Folders"}
         </button>
       ) : null}
+      {!canEdit ? (
+        <p className="settings-hint">
+          {editor?.isEditor && !editor.ready
+            ? "Update and sync every enrolled device before editing."
+            : "Rename and delete on the editing device shown in Mail Accounts."}
+        </p>
+      ) : null}
       {!(capabilities.canManageLabels || folders) ? (
         <p className="label-unavailable">{capabilities.unavailableReason}</p>
       ) : (
@@ -153,7 +174,7 @@ export function LabelManager({
               {!folders && checkedLabelIds.has(label.id) ? <Check size={ICON_SIZE.sm} /> : <span className="label-option-check-spacer" />}
               {formatLabelName(label)}
             </span>
-            {(folders || label.kind === "user") ? (
+            {canEdit && (folders || label.kind === "user") ? (
               <span className="label-actions">
                 {folders || capabilities.canRenameLabels ? (
                   <button

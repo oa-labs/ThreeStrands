@@ -1912,6 +1912,7 @@ impl ReplicatedSync {
         }
         self.database
             .record_self_device_name_if_missing(&encode_id(identity.device_id.as_bytes()))?;
+        self.database.acknowledge_imap_label_editors()?;
         self.database.ensure_protocol_marker_object()?;
 
         let push_result = push_local_state(&self.database, &keys, &transports).await;

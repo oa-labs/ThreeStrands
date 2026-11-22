@@ -18,6 +18,8 @@ import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
 import { SwitchGmailToImap } from "./SwitchGmailToImap";
 import { ImapSendingSettings } from "./ImapSendingSettings";
 import { ImapServerSettings } from "./ImapServerSettings";
+import { ImapLabelEditorSettings } from "./ImapLabelEditorSettings";
+import { replicatedSyncEnabled } from "./replicatedSync";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
 import { mailClient } from "./data/client";
 import { labelCapabilities } from "./labels";
@@ -67,6 +69,8 @@ export function AccountsSettings({
   const [imapSaved, setImapSaved] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
   const [aliasesEmail, setAliasesEmail] = useState<string | null>(null);
+  const [editingDeviceEmail, setEditingDeviceEmail] = useState<string | null>(null);
+  const [syncEnabled, setSyncEnabled] = useState(false);
   const [switchingEmail, setSwitchingEmail] = useState<string | null>(null);
   // IMAP reconnects happen in the account's Server editor (a password, not a
   // browser sign-in); the header button bumps this to open and focus it.
@@ -79,6 +83,15 @@ export function AccountsSettings({
       addButton.current?.focus();
     }
   }, [busyEmail]);
+
+  useEffect(() => {
+    let current = true;
+    void replicatedSyncEnabled().then(
+      (enabled) => { if (current) setSyncEnabled(enabled); },
+      logBackgroundFailure("IMAP editing device"),
+    );
+    return () => { current = false; };
+  }, []);
 
   const move = (index: number, direction: -1 | 1) => {
     const account = accounts[index];
@@ -175,6 +188,9 @@ export function AccountsSettings({
               account.lastSyncedAt ? `Last synced ${formatTimeOnly(account.lastSyncedAt)}` : "Not synced yet",
             ].filter(Boolean).join(" · ");
             const actions: MoreAction[] = [];
+            if (syncEnabled) {
+              actions.push({ label: "IMAP Editing Device…", onSelect: () => setEditingDeviceEmail(account.email) });
+            }
             if (onSignatureDefaults) {
               actions.push({ label: "Signature Defaults…", onSelect: () => onSignatureDefaults(account.email) });
             }
@@ -381,6 +397,12 @@ export function AccountsSettings({
                     >
                       {busyEmail === `reconnect:${account.email}` ? "Waiting for Google…" : "Set Up Here"}
                     </button>
+                    {syncEnabled ? (
+                      <MoreActionsMenu
+                        label={`More actions for ${account.email}`}
+                        actions={[{ label: "IMAP Editing Device…", onSelect: () => setEditingDeviceEmail(account.email) }]}
+                      />
+                    ) : null}
                     <span className="account-provider-badge">
                       {account.provider === "imap" ? "IMAP" : "Gmail"}
                     </span>
@@ -401,6 +423,7 @@ export function AccountsSettings({
           </ul>
         </section>
       ) : null}
+      {editingDeviceEmail ? <ImapLabelEditorSettings accountId={editingDeviceEmail} onClose={() => setEditingDeviceEmail(null)} /> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
   );

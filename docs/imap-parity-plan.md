@@ -105,8 +105,8 @@ and negative cases where a label removal must not delete mail.
 Existing labels on servers advertising `X-GM-EXT-1` can now be applied and
 removed without a configured container. Their existing IDs are preserved.
 Gmail label renames carry nested labels with them, and deleting a parent removes
-only the selected label. Plain IMAP can create physical folders and rename or safely delete
-individual folders without children. Label-folder storage requires a configured
+only the selected label. Plain IMAP can create physical folders, rename folder
+trees, and safely delete individual folders without children. Label-folder storage requires a configured
 container. Keyword storage supports creating, applying, and removing valid
 keywords on mailboxes that permit them.
 
@@ -123,9 +123,10 @@ keywords on mailboxes that permit them.
 - [x] Rename native Gmail label hierarchies while preserving the IDs and
   Split Inboxes for each verified descendant. Delete a parent label while
   confirming that the nested labels are still present. See [native label edits](imap-native-labels.md#editing-label-hierarchies).
-- [ ] Coordinate ID bindings across multiple enrolled devices. A verified
-  external disappearance or UIDVALIDITY change leaves an edited label
-  unresolved. The app does not infer external renames.
+- [x] Coordinate verified ID bindings across enrolled devices with one
+  designated editor per account. A verified external disappearance or
+  UIDVALIDITY change can leave a label unresolved for explicit relinking.
+  [Cross-device edits](imap-native-labels.md#cross-device-edits)
 - [x] Create ordinary folders and rename or delete leaf folders and label
   folders with stable references. Reuse the edit journal to preserve Split
   Inboxes and retire deleted IDs so a new folder cannot inherit a saved rule.
@@ -135,9 +136,12 @@ keywords on mailboxes that permit them.
 - [x] Show physical folder management separately from applying and removing
   labels. Require a live surviving copy for every message before deleting a
   physical folder and verify that its complete UID set is accounted for.
-- [ ] Extend verified mailbox edits to folder subtrees and coordinate their
-  bindings across devices. Keyword rename and catalog-wide deletion need
-  their own server-wide reconciliation.
+- [x] Extend verified rename to plain IMAP folder trees and coordinate their
+  bindings across devices. Keep physical deletion limited to leaf folders.
+- [ ] Add keyword rename and account-wide removal with resumable per-message
+  reconciliation. Verify new membership before removing the original keyword,
+  check every selectable mailbox that can contain it, and report coverage
+  gaps and partial results. See [keyword scope](imap-native-labels.md#keyword-edits).
 
 Acceptance: labels created or changed elsewhere reconcile correctly; renaming
 does not orphan saved rules or duplicate mail; failures roll back coherently.

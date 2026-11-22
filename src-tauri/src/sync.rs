@@ -1487,6 +1487,18 @@ async fn deliver_mutations(
                         .map_err(database_provider_error)?;
                     return Err(error);
                 }
+                Err(ProviderError::LabelBindingPending) => {
+                    // A mailbox refresh can resolve this work. Keep delivering
+                    // other mutations and let this account reach its mail poll.
+                    let next_attempt_at = mutation_next_attempt_at(mutation.attempts);
+                    database
+                        .reject_mutation(
+                            &mutation.id,
+                            &ProviderError::LabelBindingPending.to_string(),
+                            Some(&next_attempt_at),
+                        )
+                        .map_err(database_provider_error)?;
+                }
                 Err(error) if error.retry_mutation() => {
                     // Every mutation still claimed in this batch — not just
                     // the group that hit the temporary failure — must go back

@@ -1,7 +1,9 @@
 //! Existing user-label membership, addressed by authoritative server identity.
 //! Removing a label never deletes a physical copy or replaces the label set.
 use super::{db_err, mutate::as_write_session, ImapProvider};
-use crate::db::imap::label_edits::{ImapLabelEdit, ImapLabelEditOutcome, ImapLabelEditTarget};
+use crate::db::imap::label_edits::{
+    ImapLabelBinding, ImapLabelEdit, ImapLabelEditOutcome, ImapLabelEditTarget,
+};
 use crate::models::Label;
 use crate::provider::imap::{
     plan::{self, CatalogMailbox},
@@ -42,6 +44,7 @@ impl ImapProvider {
         }
         let before = session.list_mailboxes().await?;
         self.recover_mailbox_label_edit(session, &before).await?;
+        self.verify_mailbox_label_bindings(session, &before).await?;
         let delimiter = before.iter().find_map(|entry| entry.delimiter.as_deref());
         if let Some(delimiter) = delimiter {
             validate_mailbox_label_name(clean, delimiter)?;
@@ -274,9 +277,9 @@ impl ImapProvider {
                 "Choose a destination outside this label’s own hierarchy.",
             ));
         }
-        if !native && !children.is_empty() {
+        if !native && destination.is_none() && !children.is_empty() {
             return Err(invalid_label_edit(
-                "Rename or delete the nested folders before changing this parent folder.",
+                "Delete the nested folders before deleting this parent folder.",
             ));
         }
         if let Some(wire) = &destination {
@@ -308,19 +311,21 @@ impl ImapProvider {
             }
         }
 
-        if let Some(prefix) = child_prefix.as_deref().filter(|_| native) {
+        if let Some(prefix) = child_prefix.as_deref() {
             let known = self
                 .store
-                .cached_native_label_descendants(prefix)
+                .cached_mailbox_descendants(prefix)
                 .map_err(db_err)?;
             if known.iter().any(|name| {
                 !children
                     .iter()
                     .any(|child| child.name == *name && !child.no_select)
             }) {
-                return Err(invalid_label_edit(
-                    "A nested label is missing from the IMAP listing. Show it in IMAP in Gmail’s Labels settings, or refresh before changing the parent.",
-                ));
+                return Err(invalid_label_edit(if native {
+                    "A nested label is missing from the IMAP listing. Show it in IMAP in Gmail’s Labels settings, or refresh before changing the parent."
+                } else {
+                    "A nested folder is missing from the IMAP listing. Refresh the account before renaming the parent."
+                }));
             }
             let mut configured_mailboxes = self
                 .settings
@@ -355,7 +360,7 @@ impl ImapProvider {
         let mut descendants = Vec::new();
         for child in children.into_iter().filter(|child| !child.no_select) {
             let child_label =
-                self.mailbox_label_from_listing(&entries, &child.name, false, true)?;
+                self.mailbox_label_from_listing(&entries, &child.name, false, native)?;
             let child_destination = destination.as_ref().map(|wire| {
                 // A child path has the exact source prefix plus the separator
                 // and its remaining segments, including any deeper hierarchy.
@@ -363,7 +368,15 @@ impl ImapProvider {
             });
             if let Some(wire) = child_destination.as_deref() {
                 policy::check_mailbox_name_len(wire.len())?;
-                self.mailbox_label_from_listing(&entries, wire, true, true)?;
+                if self
+                    .mailbox_label_from_listing(&entries, wire, true, native)?
+                    .kind
+                    != child_label.kind
+                {
+                    return Err(invalid_label_edit(
+                        "A nested mailbox would change its role.",
+                    ));
+                }
             }
             let validity = checked_mailbox_validity(
                 session,
@@ -396,8 +409,11 @@ impl ImapProvider {
             acknowledged: false,
             physical_folder: !native,
             descendants,
+            mailbox_scope: None,
         };
-        self.store.begin_label_edit(&edit).map_err(db_err)?;
+        self.store
+            .begin_label_edit(&mut edit, &self.settings)
+            .map_err(db_err)?;
         let result = match destination_arg {
             Some(to) => {
                 as_write_session(session)?
@@ -486,9 +502,10 @@ impl ImapProvider {
                     false,
                     !edit.physical_folder,
                 )?;
-                label.id.clone_from(&target.id);
+                let provisional_id = std::mem::replace(&mut label.id, target.id.clone());
                 ImapLabelEditOutcome::Renamed {
                     label,
+                    provisional_id,
                     mailbox: &row.name,
                     delimiter: row.delimiter.as_deref(),
                     uidvalidity: mailbox_validity(session, &row.name).await?,
@@ -556,25 +573,148 @@ impl ImapProvider {
         {
             return Ok(());
         }
-        for binding in self.store.label_bindings().map_err(db_err)? {
-            let Some(wire) = binding.mailbox else {
+        let native = session.supports_label_extensions();
+        let shared = self
+            .store
+            .shared_label_bindings(&self.settings, !native)
+            .map_err(db_err)?;
+        let coordinating = self.store.has_enrolled_peers().map_err(db_err)?;
+        let mut verified = Vec::new();
+        let mut checked = std::collections::BTreeMap::new();
+        for binding in shared {
+            let mut label = None;
+            if let Some(wire) = &binding.mailbox {
+                if let Ok(mut candidate) =
+                    self.mailbox_label_from_listing(listing, wire, false, native)
+                {
+                    let validity = session.examine(wire).await?.uid_validity;
+                    checked.insert(wire.clone(), validity);
+                    if validity == binding.uidvalidity && validity.is_some() {
+                        candidate.id.clone_from(&binding.label_id);
+                        label = Some(candidate);
+                    }
+                }
+            }
+            verified.push((binding, label));
+        }
+        if !verified.is_empty() {
+            self.store
+                .apply_shared_label_bindings(&verified)
+                .map_err(db_err)?;
+        }
+
+        let bindings = self.store.label_bindings().map_err(db_err)?;
+        for binding in &bindings {
+            let Some(wire) = &binding.mailbox else {
                 continue;
             };
             let attached = if listing
                 .iter()
-                .any(|row| row.name == wire && !row.no_select && row.special_use.is_none())
+                .any(|row| row.name == *wire && !row.no_select && row.special_use.is_none())
             {
-                session.examine(&wire).await?.uid_validity == binding.uidvalidity
+                let validity = match checked.get(wire) {
+                    Some(validity) => *validity,
+                    None => {
+                        let validity = session.examine(wire).await?.uid_validity;
+                        checked.insert(wire.clone(), validity);
+                        validity
+                    }
+                };
+                validity == binding.uidvalidity
             } else {
                 false
             };
             if !attached {
-                self.store
-                    .retire_unavailable_label_binding(&binding.label_id)
-                    .map_err(db_err)?;
+                if coordinating {
+                    // A rename can reach the mail server before its binding
+                    // reaches this peer. Keep queued work parked by stable ID.
+                    self.store
+                        .suspend_unavailable_label_binding(&binding.label_id)
+                        .map_err(db_err)?;
+                } else {
+                    self.store
+                        .retire_unavailable_label_binding(&binding.label_id)
+                        .map_err(db_err)?;
+                }
             }
         }
+
+        if coordinating {
+            let anchored = self.store.label_bindings().map_err(db_err)?;
+            let mut discovered = Vec::new();
+            for row in listing
+                .iter()
+                .filter(|row| !row.no_select && row.special_use.is_none())
+            {
+                if anchored
+                    .iter()
+                    .any(|binding| binding.mailbox.as_deref() == Some(row.name.as_str()))
+                {
+                    continue;
+                }
+                // A shared ID with unverified coordinates must stay reserved,
+                // even when a same-name label appears in the live listing.
+                let Ok(label) = self.mailbox_label_from_listing(listing, &row.name, false, native)
+                else {
+                    continue;
+                };
+                let validity = match checked.get(&row.name) {
+                    Some(validity) => *validity,
+                    None => session.examine(&row.name).await?.uid_validity,
+                };
+                let Some(validity) = validity.filter(|validity| *validity > 0) else {
+                    return Err(ProviderError::TransientTransport(
+                        "The server has not provided a mailbox identity yet.".into(),
+                    ));
+                };
+                discovered.push(ImapLabelBinding {
+                    label_id: label.id,
+                    mailbox: Some(row.name.clone()),
+                    uidvalidity: Some(validity),
+                });
+            }
+            let delimiter = listing.iter().find_map(|row| row.delimiter.as_deref());
+            self.store
+                .remember_mailbox_label_bindings(&discovered, &self.settings, !native, delimiter)
+                .map_err(db_err)?;
+        }
         Ok(())
+    }
+
+    pub(super) async fn verify_mailbox_for_label_write(
+        &self,
+        session: &mut dyn ImapSession,
+        label_id: &str,
+        mailbox: &str,
+    ) -> ProviderResult<()> {
+        let bindings = self.store.label_bindings().map_err(db_err)?;
+        let expected = bindings.iter().find(|binding| binding.label_id == label_id);
+        match session.examine(mailbox).await {
+            Ok(status)
+                if expected.is_none_or(|binding| {
+                    binding.mailbox.as_deref() == Some(mailbox)
+                        && binding.uidvalidity == status.uid_validity
+                }) =>
+            {
+                return Ok(())
+            }
+            Ok(_)
+            | Err(
+                ProviderError::NotFound
+                | ProviderError::InvalidOperation(_)
+                | ProviderError::PermanentClientRejection(_),
+            ) if expected.is_some() && self.store.has_enrolled_peers().map_err(db_err)? => {
+                self.store
+                    .suspend_unavailable_label_binding(label_id)
+                    .map_err(db_err)?;
+                return Err(ProviderError::LabelBindingPending);
+            }
+            Err(error) => return Err(error),
+            Ok(_) => {}
+        }
+        Err(invalid_label_edit(
+            "This label changed on the server. Refresh the account before applying it.",
+        ))
     }
 
     pub(super) async fn apply_native_label(
@@ -583,6 +723,13 @@ impl ImapProvider {
         label_id: &str,
         add: bool,
     ) -> ProviderResult<()> {
+        if !self
+            .store
+            .can_write_label_binding(label_id, &self.settings, false)
+            .map_err(db_err)?
+        {
+            return Err(ProviderError::LabelBindingPending);
+        }
         if self
             .store
             .pending_label_edit()
@@ -634,13 +781,7 @@ impl ImapProvider {
             }
             // In particular, a renamed/deleted label must not be recreated by
             // STORE against an old catalog entry.
-            let status = session.examine(&label.mailbox).await?;
-            let bindings = self.store.label_bindings().map_err(db_err)?;
-            if bindings.iter().find(|binding| binding.label_id == label_id)
-                .and_then(|binding| binding.uidvalidity).is_some_and(|uid| Some(uid) != status.uid_validity)
-            {
-                return Err(invalid("This label changed on the server; refresh the account"));
-            }
+            self.verify_mailbox_for_label_write(session.as_mut(), label_id, &label.mailbox).await?;
             for (id, server_id) in targets {
                 let old = self.store.locations_for_message(id).map_err(db_err)?;
                 // Prefer an aggregate/system mailbox. Never remove the label

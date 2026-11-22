@@ -1,11 +1,11 @@
 //! IMAP mailbox label identity and the durable boundary around a server write.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
-use super::ImapStateStore;
+use super::{label_replica, ImapStateStore};
 use crate::db::{serialization_error, Database, DatabaseError, DbResult};
 use crate::models::Label;
 
@@ -15,6 +15,27 @@ pub(crate) struct ImapLabelBinding {
     pub label_id: String,
     pub mailbox: Option<String>,
     pub uidvalidity: Option<u32>,
+}
+
+impl ImapLabelBinding {
+    fn needs_shared_reservation(
+        &self,
+        settings: &crate::provider::imap::ImapAccountSettings,
+        delimiter: Option<&str>,
+    ) -> bool {
+        let Some(path) = &self.mailbox else {
+            return true;
+        };
+        if let Some(original) = self.label_id.strip_prefix("folder:") {
+            return original != path;
+        }
+        if let Some(original) = self.label_id.strip_prefix("lf:") {
+            return settings.label_container.as_deref().zip(delimiter).and_then(
+                |(container, delimiter)| path.strip_prefix(container)?.strip_prefix(delimiter),
+            ) != Some(original);
+        }
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +49,8 @@ pub(crate) struct ImapLabelEdit {
     pub physical_folder: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub descendants: Vec<ImapLabelEditTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox_scope: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +72,7 @@ pub(crate) enum ImapLabelEditOutcome<'a> {
     Unchanged,
     Renamed {
         label: Label,
+        provisional_id: String,
         mailbox: &'a str,
         delimiter: Option<&'a str>,
         uidvalidity: u32,
@@ -137,7 +161,7 @@ pub(crate) fn retire_changed_connection_bindings(
         }
     }
     for binding in read_bindings(tx, account)? {
-        remove_binding_references(tx, account, &binding.label_id)?;
+        remove_binding_references(tx, account, &binding.label_id, true)?;
     }
     tx.execute(
         "UPDATE imap_label_bindings SET mailbox=NULL,uidvalidity=NULL WHERE account_id=?1",
@@ -175,17 +199,30 @@ impl ImapStateStore {
             .transpose()
     }
 
-    pub(crate) fn begin_label_edit(&self, edit: &ImapLabelEdit) -> DbResult<()> {
+    pub(crate) fn begin_label_edit(
+        &self,
+        edit: &mut ImapLabelEdit,
+        settings: &crate::provider::imap::ImapAccountSettings,
+    ) -> DbResult<()> {
+        let sync_enabled = self.database.replicated_sync_active()?;
         self.database.with_transaction(|tx| {
-            let has_peer: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE is_self=0 AND status='active')",
-                [], |row| row.get(0),
-            )?;
-            if has_peer {
+            let editor = if sync_enabled {
+                label_replica::local_editor(tx, &self.account_id)?
+            } else {
+                None
+            };
+            let blocked = if label_replica::active_peers(tx)? {
+                editor.is_none()
+            } else {
+                label_replica::has_editor_vote(tx, &self.account_id)?
+                    && !label_replica::is_designated_locally(tx, &self.account_id)?
+            };
+            if blocked {
                 return Err(DatabaseError::invalid(
-                    "Rename and delete IMAP labels from a Replicated Sync space with a single enrolled device.",
+                    "Rename or delete IMAP folders and labels on the account’s designated editing device after its enrolled devices have synced.",
                 ));
             }
+            edit.mailbox_scope = editor.map(|_| label_replica::mailbox_scope(settings));
             let inserted = tx.execute("INSERT INTO imap_label_edits(account_id,pending_json) VALUES(?1,?2)
                 ON CONFLICT(account_id) DO NOTHING", params![self.account_id, serialize(edit)?])?;
             if inserted == 0 {
@@ -212,7 +249,7 @@ impl ImapStateStore {
         })
     }
 
-    pub(crate) fn cached_native_label_descendants(&self, prefix: &str) -> DbResult<Vec<String>> {
+    pub(crate) fn cached_mailbox_descendants(&self, prefix: &str) -> DbResult<Vec<String>> {
         self.database.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT name FROM imap_mailboxes WHERE account_id=?1 AND substr(name,1,length(?2))=?2
@@ -228,13 +265,148 @@ impl ImapStateStore {
     }
 
     pub(crate) fn retire_unavailable_label_binding(&self, id: &str) -> DbResult<()> {
+        self.database
+            .with_transaction(|tx| retire_binding(tx, &self.account_id, id, true))
+    }
+
+    pub(crate) fn suspend_unavailable_label_binding(&self, id: &str) -> DbResult<()> {
         self.database.with_transaction(|tx| {
+            retire_binding(tx, &self.account_id, id, false)?;
             tx.execute(
-                "UPDATE imap_label_bindings SET mailbox=NULL,uidvalidity=NULL
-                WHERE account_id=?1 AND label_id=?2",
-                params![self.account_id, id],
+                "DELETE FROM imap_mailbox_sync_state WHERE account_id=?1 AND mailbox=?2",
+                params![self.account_id, Self::CATALOG_SWEEP_KEY],
             )?;
-            remove_binding_references(tx, &self.account_id, id)
+            Ok(())
+        })
+    }
+
+    pub(crate) fn has_enrolled_peers(&self) -> DbResult<bool> {
+        self.database
+            .with_connection(|connection| label_replica::active_peers(connection))
+    }
+
+    pub(crate) fn remember_mailbox_label_bindings(
+        &self,
+        bindings: &[ImapLabelBinding],
+        settings: &crate::provider::imap::ImapAccountSettings,
+        physical_folder: bool,
+        delimiter: Option<&str>,
+    ) -> DbResult<()> {
+        let sync_enabled = self.database.replicated_sync_active()?;
+        self.database.with_transaction(|tx| {
+            import_bindings(tx, &self.account_id, bindings)?;
+            if sync_enabled {
+                label_replica::acknowledge_editor(tx, &self.account_id)?;
+                if label_replica::local_editor(tx, &self.account_id)?.is_some() {
+                    // Backfill existing local edits only once this device is
+                    // authoritative and has checked them against this mailbox.
+                    label_replica::publish_label_bindings(
+                        tx,
+                        &self.account_id,
+                        &label_replica::mailbox_scope(settings),
+                        physical_folder,
+                        read_bindings(tx, &self.account_id)?
+                            .into_iter()
+                            .filter(|binding| {
+                                binding.needs_shared_reservation(settings, delimiter)
+                            }),
+                    )?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn apply_shared_label_bindings(
+        &self,
+        verified: &[(ImapLabelBinding, Option<Label>)],
+    ) -> DbResult<()> {
+        let account = &self.account_id;
+        self.database.with_transaction(|tx| {
+            let local: BTreeMap<_, _> = read_bindings(tx, account)?
+                .into_iter()
+                .map(|binding| (binding.label_id.clone(), binding))
+                .collect();
+            // A full pull may include several sequential edits, including paths
+            // that have changed owners. Release old coordinates before binding
+            // any destinations.
+            let destinations: BTreeMap<_, _> = verified.iter()
+                .filter_map(|(binding, label)| {
+                    label.as_ref()?;
+                    Some((binding.mailbox.as_deref()?, binding.uidvalidity?))
+                })
+                .collect();
+            let mut changed = Vec::new();
+            let mut affected_paths = BTreeSet::new();
+            for (desired, label) in verified {
+                let prior = local.get(&desired.label_id);
+                if label.is_some() && prior == Some(desired) {
+                    continue;
+                }
+                let destination = label.as_ref().and(desired.mailbox.as_deref());
+                if let Some(destination) = destination {
+                    affected_paths.insert(destination);
+                }
+                if let Some(prior) = prior {
+                    if let Some(path) = prior.mailbox.as_deref().filter(|path| Some(*path) != destination) {
+                        affected_paths.insert(path);
+                        if let Some(destination) = destination.filter(|destination| {
+                            prior.uidvalidity == desired.uidvalidity
+                                && !local.values().any(|other| other.mailbox.as_deref() == Some(*destination))
+                        }) {
+                            for table in ["imap_locations", "imap_search_pins"] {
+                                tx.execute(
+                                    &format!("UPDATE OR IGNORE {table} SET mailbox=?3
+                                        WHERE account_id=?1 AND mailbox=?2 AND uidvalidity=?4"),
+                                    params![account, path, destination, desired.uidvalidity],
+                                )?;
+                            }
+                        }
+                        // Replacing a provisional ID for the same verified
+                        // mailbox changes its catalog identity, not its UIDs.
+                        if destinations.get(path).copied() != prior.uidvalidity {
+                            clear_mailbox_coordinates(tx, account, path)?;
+                            tx.execute(
+                                "DELETE FROM imap_copy_intents WHERE account_id=?1 AND destination=?2",
+                                params![account, path],
+                            )?;
+                        }
+                    }
+                }
+                reserve_binding(tx, account, &desired.label_id)?;
+                if label.is_none() {
+                    remove_binding_references(tx, account, &desired.label_id, desired.mailbox.is_none())?;
+                }
+                changed.push((desired, label));
+            }
+            for (desired, label) in changed {
+                let Some(label) = label else { continue };
+                // This peer may have discovered the destination before getting
+                // the edit. Its provisional ID stays reserved for relinking.
+                let displaced: Option<String> = tx.query_row(
+                    "SELECT label_id FROM imap_label_bindings WHERE account_id=?1 AND mailbox=?2 AND label_id<>?3",
+                    params![account, desired.mailbox, desired.label_id],
+                    |row| row.get(0),
+                ).optional()?;
+                if let Some(displaced) = displaced {
+                    retire_binding(tx, account, &displaced, true)?;
+                }
+                tx.execute(
+                    "UPDATE imap_label_bindings SET mailbox=?3,uidvalidity=?4 WHERE account_id=?1 AND label_id=?2",
+                    params![account, desired.label_id, desired.mailbox, desired.uidvalidity],
+                )?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO account_labels(account_id,label_id,name,kind) VALUES(?1,?2,?3,?4)",
+                    params![account, label.id, label.name, label.kind],
+                )?;
+                tx.execute(
+                    "UPDATE mutations SET next_attempt_at=NULL
+                     WHERE account_id=?1 AND kind='label' AND state='pending'
+                     AND json_extract(payload_json, '$.labelId')=?2",
+                    params![account, label.id],
+                )?;
+            }
+            journal_label_paths(tx, account, &affected_paths)
         })
     }
 
@@ -248,6 +420,7 @@ impl ImapStateStore {
         let account = &self.account_id;
         self.database.with_transaction(|tx| {
             let mut paths = BTreeMap::new();
+            let mut changed_bindings = Vec::new();
             for (target, outcome) in outcomes {
                 let (wire, validity) = match outcome {
                     ImapLabelEditOutcome::Unchanged => continue,
@@ -255,13 +428,34 @@ impl ImapStateStore {
                     ImapLabelEditOutcome::Unavailable => (None, None),
                 };
                 paths.insert(target.source.as_str(), wire);
+                changed_bindings.push(ImapLabelBinding {
+                    label_id: target.id.clone(),
+                    mailbox: wire.map(str::to_owned),
+                    uidvalidity: validity,
+                });
                 tx.execute(
                     "INSERT INTO imap_label_bindings(account_id,label_id,mailbox,uidvalidity)
                      VALUES(?1,?2,?3,?4) ON CONFLICT(account_id,label_id)
                      DO UPDATE SET mailbox=excluded.mailbox,uidvalidity=excluded.uidvalidity",
                     params![account, target.id, wire, validity],
                 )?;
-                if let ImapLabelEditOutcome::Renamed { label, mailbox, delimiter, uidvalidity } = outcome {
+                if let ImapLabelEditOutcome::Renamed { label, provisional_id, mailbox, delimiter, uidvalidity } = outcome {
+                    if provisional_id != &target.id {
+                        // A peer can see the new path before its binding arrives.
+                        // Keep that provisional ID from being reused for a
+                        // different label if this destination is later recycled.
+                        let reserved = tx.execute(
+                            "INSERT OR IGNORE INTO imap_label_bindings(account_id,label_id) VALUES(?1,?2)",
+                            params![account, provisional_id],
+                        )?;
+                        if reserved != 0 {
+                            changed_bindings.push(ImapLabelBinding {
+                                label_id: provisional_id.clone(),
+                                mailbox: None,
+                                uidvalidity: None,
+                            });
+                        }
+                    }
                     // The destination was absent from the live listing before
                     // the edit. Discard any stale coordinates at that path.
                     clear_mailbox_coordinates(tx, account, mailbox)?;
@@ -294,7 +488,7 @@ impl ImapStateStore {
                         params![account, label.id, label.name, label.kind],
                     )?;
                 } else {
-                    remove_binding_references(tx, account, &target.id)?;
+                    remove_binding_references(tx, account, &target.id, true)?;
                 }
                 clear_mailbox_coordinates(tx, account, &target.source)?;
                 tx.execute(
@@ -322,10 +516,62 @@ impl ImapStateStore {
                     params![account, serde_json::to_string(&paths).map_err(serialization_error)?],
                 )?;
             }
+            if let Some(scope) = edit.mailbox_scope.as_ref()
+                .filter(|_| !changed_bindings.is_empty())
+            {
+                if label_replica::is_designated_locally(tx, account)? {
+                label_replica::publish_label_bindings(
+                    tx, account, scope, edit.physical_folder, changed_bindings,
+                )?;
+                }
+            }
             tx.execute("DELETE FROM imap_label_edits WHERE account_id=?1", [account])?;
             Ok(())
         })
     }
+}
+
+/// Raw memberships may already have arrived on this peer with provisional
+/// IDs. A verified change in their interpretation still needs to refresh the
+/// cached thread even if its next IMAP flag sweep finds identical data.
+fn journal_label_paths(
+    tx: &Transaction<'_>,
+    account: &str,
+    paths: &BTreeSet<&str>,
+) -> DbResult<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let paths = serde_json::to_string(paths).map_err(serialization_error)?;
+    let mut query = tx.prepare(
+        "SELECT h.thread_id FROM imap_hot_threads h WHERE h.account_id=?1 AND EXISTS (
+            SELECT 1 FROM imap_threads t WHERE t.account_id=h.account_id AND t.thread_id=h.thread_id
+            AND (
+                EXISTS (SELECT 1 FROM imap_locations l WHERE l.account_id=t.account_id
+                    AND l.message_id=t.message_id AND l.mailbox IN (SELECT value FROM json_each(?2)))
+                OR EXISTS (SELECT 1 FROM imap_label_snapshots s, json_each(s.labels_json) label
+                    WHERE s.account_id=t.account_id AND s.message_id=t.message_id
+                    AND label.value IN (SELECT value FROM json_each(?2)))
+            )
+         )",
+    )?;
+    let ids = query
+        .query_map(params![account, paths], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let generation: i64 = tx.query_row(
+        "UPDATE imap_sync_state SET generation=generation+1 WHERE account_id=?1 RETURNING generation",
+        [account], |row| row.get(0),
+    )?;
+    for id in ids {
+        tx.execute(
+            "INSERT INTO imap_change_journal(account_id,generation,thread_id) VALUES(?1,?2,?3)",
+            params![account, generation, id],
+        )?;
+    }
+    Ok(())
 }
 
 fn clear_mailbox_coordinates(tx: &Transaction<'_>, account: &str, mailbox: &str) -> DbResult<()> {
@@ -342,7 +588,26 @@ fn clear_mailbox_coordinates(tx: &Transaction<'_>, account: &str, mailbox: &str)
     Ok(())
 }
 
-fn remove_binding_references(tx: &Transaction<'_>, account: &str, id: &str) -> DbResult<()> {
+fn retire_binding(tx: &Transaction<'_>, account: &str, id: &str, terminal: bool) -> DbResult<()> {
+    reserve_binding(tx, account, id)?;
+    remove_binding_references(tx, account, id, terminal)
+}
+
+fn reserve_binding(tx: &Transaction<'_>, account: &str, id: &str) -> DbResult<()> {
+    tx.execute(
+        "INSERT INTO imap_label_bindings(account_id,label_id) VALUES(?1,?2)
+         ON CONFLICT(account_id,label_id) DO UPDATE SET mailbox=NULL,uidvalidity=NULL",
+        params![account, id],
+    )?;
+    Ok(())
+}
+
+fn remove_binding_references(
+    tx: &Transaction<'_>,
+    account: &str,
+    id: &str,
+    terminal: bool,
+) -> DbResult<()> {
     tx.execute(
         "DELETE FROM account_labels WHERE account_id=?1 AND label_id=?2",
         params![account, id],
@@ -351,10 +616,12 @@ fn remove_binding_references(tx: &Transaction<'_>, account: &str, id: &str) -> D
         FROM json_each(threads.labels_json) WHERE value<>?2)
         WHERE account_id=?1 AND EXISTS(SELECT 1 FROM json_each(threads.labels_json) WHERE value=?2)",
         params![account, id])?;
-    tx.execute("UPDATE mutations SET state='failed',last_error='The label is no longer available.',next_attempt_at=NULL
-        WHERE account_id=?1 AND kind='label' AND state IN ('pending','running')
-            AND json_extract(payload_json, '$.labelId')=?2",
-        params![account, id])?;
+    if terminal {
+        tx.execute("UPDATE mutations SET state='failed',last_error='The label is no longer available.',next_attempt_at=NULL
+            WHERE account_id=?1 AND kind='label' AND state IN ('pending','running')
+                AND json_extract(payload_json, '$.labelId')=?2",
+            params![account, id])?;
+    }
     Ok(())
 }
 

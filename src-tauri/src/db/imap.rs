@@ -63,6 +63,9 @@ pub struct ImapStateStore {
 #[path = "imap/label_edits.rs"]
 pub(crate) mod label_edits;
 
+#[path = "imap/label_replica.rs"]
+pub(crate) mod label_replica;
+
 #[path = "imap/thread_repair.rs"]
 pub(crate) mod thread_repair;
 
@@ -1005,7 +1008,7 @@ impl ImapStateStore {
     /// control character no real IMAP mailbox name contains, so it never
     /// collides with a mailbox and — because the sync plan is built from
     /// `imap_mailboxes`, not this table — never appears in the plan.
-    const CATALOG_SWEEP_KEY: &str = "\u{0}catalog-sweep";
+    pub(super) const CATALOG_SWEEP_KEY: &str = "\u{0}catalog-sweep";
 
     /// Whether the account is due for a periodic catalog refresh (`LIST` +
     /// catalog-only upsert), given `now` (unix seconds). Never refreshed before

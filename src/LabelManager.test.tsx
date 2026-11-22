@@ -1,9 +1,10 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LabelManager } from "./LabelManager";
 import type { Label } from "./domain";
 import { labelCapabilities } from "./labels";
+import * as replicatedSync from "./replicatedSync";
 
 afterEach(cleanup);
 
@@ -52,6 +53,32 @@ describe("LabelManager capability gating", () => {
     expect(within(dialog).getByRole("combobox", { name: "Find or Create a Folder" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Rename Planning" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Rename Clients" })).not.toBeInTheDocument();
+  });
+
+  it("keeps label selection and folder creation available on an enrolled peer", async () => {
+    const status = vi.spyOn(replicatedSync, "imapLabelEditor").mockResolvedValue({
+      hasPeers: true,
+      designated: "editor",
+      isEditor: false,
+      ready: true,
+      canEdit: false,
+      eligibleDevices: ["editor"],
+    });
+    try {
+      renderManager("imapLabelFolders");
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Rename Clients" })).not.toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: "Delete Clients" })).not.toBeInTheDocument();
+      expect(screen.getByRole("option", { name: "Clients" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Manage Folders" }));
+      const picker = screen.getByRole("combobox", { name: "Find or Create a Folder" });
+      fireEvent.change(picker, { target: { value: "Draft plans" } });
+      expect(screen.getByRole("option", { name: /create folder "draft plans"/i })).toBeInTheDocument();
+      fireEvent.change(picker, { target: { value: "" } });
+      fireEvent.click(screen.getByRole("option", { name: "Planning" }));
+      expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    } finally {
+      status.mockRestore();
+    }
   });
 
   it("applies and creates keywords while leaving keyword renames and deletion unavailable", () => {

@@ -215,6 +215,23 @@ export async function replicatedSyncPendingRequests(): Promise<IncomingEnrollmen
   return invoke("replicated_sync_pending_requests");
 }
 
+export type ImapLabelEditorStatus = {
+  hasPeers: boolean;
+  designated: string | null;
+  isEditor: boolean;
+  ready: boolean;
+  canEdit: boolean;
+  eligibleDevices: string[];
+};
+
+export async function imapLabelEditor(accountId: string): Promise<ImapLabelEditorStatus | null> {
+  return isDesktop() ? invoke("imap_label_editor", { accountId }) : null;
+}
+
+export async function handoffImapLabelEditor(accountId: string, deviceId: string): Promise<void> {
+  return invoke("handoff_imap_label_editor", { accountId, deviceId });
+}
+
 export async function replicatedSyncDeviceRoster(): Promise<DeviceRosterEntry[]> {
   return invoke("replicated_sync_device_roster");
 }

@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountsSettings } from "./AccountsSettings";
+import * as replicatedSync from "./replicatedSync";
 import { mailClient } from "./data/client";
 import type { Account } from "./domain";
 import type { ComponentProps } from "react";
@@ -387,6 +388,39 @@ describe("accounts on other devices", () => {
     const email = screen.getByLabelText("Email Address");
     expect(email).toHaveValue("personal@example.com");
     expect(email).toHaveAttribute("readonly");
+  });
+});
+
+describe("IMAP editing device", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("hands off the account from Mail Accounts to an active enrolled peer", async () => {
+    vi.spyOn(replicatedSync, "replicatedSyncEnabled").mockResolvedValue(true);
+    vi.spyOn(replicatedSync, "imapLabelEditor").mockResolvedValue({
+      hasPeers: true, designated: "current", isEditor: true, ready: true, canEdit: true,
+      eligibleDevices: ["current", "other"],
+    });
+    vi.spyOn(replicatedSync, "replicatedSyncDeviceRoster").mockResolvedValue([
+      { deviceId: "current", label: "Desktop", status: "active", isSelf: true },
+      { deviceId: "other", label: "Laptop", status: "active", isSelf: false },
+      { deviceId: "revoked", label: "Retired", status: "revoked", isSelf: false },
+      { deviceId: "phone", label: "Phone", status: "active", isSelf: false },
+    ]);
+    const handoff = vi.spyOn(replicatedSync, "handoffImapLabelEditor").mockResolvedValue(undefined);
+    await act(async () => { renderAccounts(vi.fn()); });
+
+    fireEvent.click(screen.getByRole("button", { name: `More actions for ${account.email}` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "IMAP Editing Device…" }));
+    const dialog = screen.getByRole("dialog", { name: "IMAP Editing Device" });
+    const select = await within(dialog).findByRole("combobox", { name: "New editing device" });
+    expect(within(select).queryByRole("option", { name: "Retired" })).not.toBeInTheDocument();
+    expect(within(select).queryByRole("option", { name: "Phone" })).not.toBeInTheDocument();
+    const save = within(dialog).getByRole("button", { name: "Change Editing Device" });
+    expect(save).toBeDisabled();
+    fireEvent.change(select, { target: { value: "other" } });
+    await act(async () => { fireEvent.click(save); });
+    expect(handoff).toHaveBeenCalledWith(account.email, "other");
+    expect(dialog).not.toBeInTheDocument();
   });
 });
 

@@ -1747,6 +1747,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::mail::create_label,
         commands::mail::update_label,
         commands::mail::delete_label,
+        commands::mail::imap_label_editor,
+        commands::mail::handoff_imap_label_editor,
         // AI assistance
         commands::ai::ai_api_key_configured,
         commands::ai::set_ai_api_key,

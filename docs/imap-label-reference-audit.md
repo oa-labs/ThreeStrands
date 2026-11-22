@@ -76,7 +76,8 @@ Coverage to retain and extend: nested/case/non-ASCII rename, external rename amb
 same-name reuse, pending/retried mutations, undo captured before rename, parent
 rename with search pins and stale UIDVALIDITY, interrupted recovery, mixed-device
 Split Inbox updates, preceding settings exports, and ordinary-folder last-copy
-protection. Edits support one enrolled device. Gmail parent renames now journal
+protection. One designated device performs edits for each Replicated Sync account.
+[Cross-device edits](imap-native-labels.md#cross-device-edits). Gmail parent renames journal
 the full visible hierarchy and preserve local IDs after a tagged server
 acknowledgement and verified listing. A lost acknowledgement can leave the saved
 rules for vanished labels unresolved. Parent deletion retires the selected

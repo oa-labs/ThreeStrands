@@ -31,6 +31,9 @@ pub enum ProviderError {
     NotFound,
     #[error("temporary transport failure: {0}")]
     TransientTransport(String),
+    /// Park a label mutation while this account verifies the current binding.
+    #[error("ThreeStrands is still checking the shared label change.")]
+    LabelBindingPending,
     #[error("authentication failed: {0}")]
     Authentication(String),
     #[error("credentials require reconnection: {0}")]

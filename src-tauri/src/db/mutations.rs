@@ -330,6 +330,11 @@ impl Database {
                                SELECT 1 FROM accounts a
                                WHERE a.email = m.account_id AND a.status = 'needs_reauth'
                            )
+                           AND NOT EXISTS (
+                               SELECT 1 FROM imap_label_bindings l WHERE l.account_id=m.account_id
+                                 AND l.mailbox IS NULL AND m.kind='label'
+                                 AND l.label_id=json_extract(m.payload_json, '$.labelId')
+                           )
                            AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= ?2)
                          ORDER BY m.created_at LIMIT ?3",
                 )?;

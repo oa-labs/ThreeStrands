@@ -518,3 +518,187 @@ async fn native_parent_delete_reports_an_unexpected_child_disappearance() {
         Some(123)
     );
 }
+
+fn exchange_label_replica(source: &Database, target: &Database) {
+    let device =
+        threestrands_sync_envelope::DeviceId::from_bytes(source.local_sync_device_id().unwrap());
+    let (snapshot, _) = source.take_local_snapshot(device, 1, 1).unwrap();
+    let state = crate::db::sync_state::snapshot_to_state(&snapshot).unwrap();
+    let touched = target.merge_replica_state(&state).unwrap();
+    target.materialize_touched_entities(&touched).unwrap();
+}
+
+#[tokio::test]
+async fn peer_replays_verified_rename_after_seeing_the_server_change_first() {
+    check_replica_rename_after_server_change(true).await;
+    check_replica_rename_after_server_change(false).await;
+}
+
+async fn check_replica_rename_after_server_change(recreate_source: bool) {
+    let (server, first, first_store) = hierarchy_fixture();
+    let (second, second_store) = provider_with(server.clone());
+    let a = first_store.database();
+    let b = second_store.database();
+    a.set_beta_features_enabled(true).unwrap();
+    b.set_beta_features_enabled(true).unwrap();
+    let a_id = a.local_sync_device_id().unwrap();
+    let b_id = b.local_sync_device_id().unwrap();
+    use threestrands_sync_envelope::SigningKey;
+    a.trust_device_public_key(&b_id, &SigningKey::from_bytes(&[2; 32]).verifying_key())
+        .unwrap();
+    b.trust_device_public_key(&a_id, &SigningKey::from_bytes(&[1; 32]).verifying_key())
+        .unwrap();
+    a.reconcile_replicated_sync_backlog().unwrap();
+    exchange_label_replica(a, b);
+
+    sync(&first, &first_store).await;
+    assert!(first.update_label(PARENT, "Work").await.is_err());
+    assert_eq!(server.lock().unwrap().count_starting("RENAME"), 0);
+    assert!(a
+        .handoff_imap_label_editor(ACCOUNT, &crate::replicated_sync::encode_id(&b_id))
+        .is_err());
+
+    sync(&second, &second_store).await;
+    exchange_label_replica(b, a);
+    assert!(second.update_label(PARENT, "Other").await.is_err());
+    assert_eq!(server.lock().unwrap().count_starting("RENAME"), 0);
+
+    let split = b
+        .create_split_inbox("Shared work", "label", CHILD, ACCOUNT)
+        .unwrap();
+    let thread = second_store.thread_ids_in_mailbox("INBOX").unwrap()[0].clone();
+    b.mutate_thread(&ThreadMutation::Label {
+        thread_id: format!("{ACCOUNT}:{thread}"),
+        label_id: CHILD.into(),
+        value: true,
+    })
+    .unwrap();
+
+    first.update_label(PARENT, "Work").await.unwrap();
+    if recreate_source {
+        server.lock().unwrap().folder("Projects/Shared", 901);
+    }
+    second_store.force_catalog_refresh_due_for_test();
+    sync(&second, &second_store).await;
+    let labels = second.list_labels().await.unwrap();
+    assert!(!labels.iter().any(|label| label.id == CHILD));
+    if recreate_source {
+        assert!(labels.iter().any(|label| label.name == "Projects/Shared"));
+        assert_ne!(
+            second.create_label("Projects/Shared").await.unwrap().id,
+            CHILD
+        );
+    }
+    assert_eq!(server.lock().unwrap().count_starting("UID STORE"), 0);
+    assert!(b.claim_mutations(ACCOUNT, 10).unwrap().is_empty());
+
+    exchange_label_replica(a, b);
+    sync(&second, &second_store).await;
+    assert!(second
+        .list_labels()
+        .await
+        .unwrap()
+        .iter()
+        .any(|label| label.id == CHILD && label.name == "Work/Shared"));
+    assert_eq!(b.list_local_split_inboxes().unwrap()[0].match_value, CHILD);
+    assert_eq!(
+        b.list_split_inbox_page(&split.id, 0, 10)
+            .unwrap()
+            .threads
+            .len(),
+        1
+    );
+    let pending = b.claim_mutations(ACCOUNT, 10).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert!(
+        matches!(&pending[0].mutation, ThreadMutation::Label { label_id, .. } if label_id == CHILD)
+    );
+
+    let recipient = crate::replicated_sync::encode_id(&b_id);
+    a.handoff_imap_label_editor(ACCOUNT, &recipient).unwrap();
+    assert!(first.update_label(PARENT, "Old editor").await.is_err());
+    exchange_label_replica(a, b);
+    second.delete_label(CHILD).await.unwrap();
+    assert_eq!(server.lock().unwrap().count_starting("DELETE"), 1);
+    let replacement = second.create_label("Work/Shared").await.unwrap();
+    assert_ne!(replacement.id, CHILD);
+    assert_ne!(replacement.id, "folder:Work/Shared");
+    assert!(server
+        .lock()
+        .unwrap()
+        .folders
+        .contains_key("Work/Shared/Calendar"));
+    exchange_label_replica(b, a);
+    sync(&first, &first_store).await;
+    assert!(!first
+        .list_labels()
+        .await
+        .unwrap()
+        .iter()
+        .any(|label| label.id == CHILD));
+}
+
+#[tokio::test]
+async fn plain_imap_renames_folder_trees_but_only_deletes_leaves() {
+    let mut server = MutServer::new();
+    server.plain_list = true;
+    server.folder("INBOX", 1);
+    server.folder("Projects", 2);
+    server.folder("Projects/Shared", 3);
+    server.folder("Projects/Shared/Calendar", 4);
+    server.folder("ProjectsElsewhere", 5);
+    server.folder("Labels/Team", 6);
+    server.folder("Labels/Team/Calendar", 7);
+    let server = Arc::new(Mutex::new(server));
+    let (provider, store) = provider_with(server.clone());
+    let split = store
+        .database()
+        .create_split_inbox(
+            "Calendar",
+            "label",
+            "folder:Projects/Shared/Calendar",
+            ACCOUNT,
+        )
+        .unwrap();
+    assert!(provider
+        .delete_label(PARENT)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("nested folders"));
+    provider.update_label(PARENT, "Work").await.unwrap();
+    provider.update_label("lf:Team", "Office").await.unwrap();
+    let labels = provider.list_labels().await.unwrap();
+    for (id, name) in [
+        (PARENT, "Work"),
+        (CHILD, "Work/Shared"),
+        ("folder:Projects/Shared/Calendar", "Work/Shared/Calendar"),
+        ("folder:ProjectsElsewhere", "ProjectsElsewhere"),
+        ("lf:Team/Calendar", "Office/Calendar"),
+    ] {
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.id == id && label.name == name),
+            "{id} {name}"
+        );
+    }
+    assert_eq!(
+        store
+            .database()
+            .local_split_inbox(&split.id)
+            .unwrap()
+            .match_value,
+        "folder:Projects/Shared/Calendar"
+    );
+    assert!(provider.delete_label(PARENT).await.is_err());
+    provider
+        .delete_label("folder:Projects/Shared/Calendar")
+        .await
+        .unwrap();
+    let server = server.lock().unwrap();
+    assert_eq!(server.count_starting("RENAME"), 2);
+    assert_eq!(server.count_starting("DELETE"), 1);
+    assert!(server.folders.contains_key("Work/Shared"));
+    assert!(!server.folders.contains_key("Work/Shared/Calendar"));
+}

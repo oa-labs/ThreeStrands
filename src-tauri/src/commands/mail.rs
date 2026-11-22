@@ -429,11 +429,12 @@ pub(crate) async fn update_label(
     request: UpdateLabelRequest,
     state: State<'_, AppState>,
 ) -> AppResult<Label> {
-    resolve_sync(&state, request.account_id.as_deref())
+    let label = resolve_sync(&state, request.account_id.as_deref())
         .await?
         .update_label(&request.id, &request.name)
-        .await
-        .map_err(AppError::from)
+        .await?;
+    crate::kick_replicated_sync(&state);
+    Ok(label)
 }
 
 #[tauri::command]
@@ -445,8 +446,30 @@ pub(crate) async fn delete_label(
     resolve_sync(&state, account_id.as_deref())
         .await?
         .delete_label(&id)
-        .await
-        .map_err(AppError::from)
+        .await?;
+    crate::kick_replicated_sync(&state);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn imap_label_editor(
+    account_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<crate::db::imap::label_replica::ImapLabelEditorStatus> {
+    let database = state.database.clone();
+    run_database_task(move || database.imap_label_editor(&account_id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn handoff_imap_label_editor(
+    account_id: String,
+    device_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let database = state.database.clone();
+    run_database_task(move || database.handoff_imap_label_editor(&account_id, &device_id)).await?;
+    crate::kick_replicated_sync(&state);
+    Ok(())
 }
 
 /// Resolves the sync engine for a given account, falling back to the primary

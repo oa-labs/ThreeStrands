@@ -104,6 +104,13 @@ impl ImapProvider {
         label_id: &str,
         add: bool,
     ) -> ProviderResult<()> {
+        if !self
+            .store
+            .can_write_label_binding(label_id, &self.settings, true)
+            .map_err(db_err)?
+        {
+            return Err(ProviderError::LabelBindingPending);
+        }
         self.label_container()?;
         let plan = self.build_sync_plan()?;
         let label_mailbox = &plan.entries.iter().find(|entry| {
@@ -192,17 +199,20 @@ impl ImapProvider {
 
         let mut session = self.open_plain_session().await?;
         let result = async {
-            if let Some(binding) = self.store.label_bindings().map_err(db_err)?
-                .into_iter().find(|binding| binding.label_id == label_id)
+            if self
+                .store
+                .label_bindings()
+                .map_err(db_err)?
+                .iter()
+                .any(|binding| binding.label_id == label_id)
             {
-                if session.examine(label_mailbox).await?.uid_validity != binding.uidvalidity {
-                    return Err(ProviderError::InvalidOperation(
-                        "This label folder changed on the server. Refresh the account before applying it.".into(),
-                    ));
-                }
+                self.verify_mailbox_for_label_write(session.as_mut(), label_id, label_mailbox)
+                    .await?;
             }
-            self.apply_label_add_on(session.as_mut(), label_mailbox, by_source).await
-        }.await;
+            self.apply_label_add_on(session.as_mut(), label_mailbox, by_source)
+                .await
+        }
+        .await;
         let _ = session.logout().await;
         result
     }
@@ -547,15 +557,17 @@ impl ImapProvider {
         let delimiter = self.delimiter()?;
         let clean = validate_label_name(name, &delimiter)?;
 
-        // Case-insensitive alias check against the EXISTING labels: a label
-        // whose name matches (ignoring case) is returned as-is (idempotent).
-        let plan = self.build_sync_plan()?;
-        if let Some(label) = plan
-            .label_catalog(false, std::iter::empty())
-            .into_iter()
-            .find(|label| label.kind == "user" && label.name.eq_ignore_ascii_case(&clean))
-        {
-            return Ok(label);
+        let coordinating = self.store.has_enrolled_peers().map_err(db_err)?;
+        if !coordinating {
+            // A label whose name matches ignoring case is an idempotent alias.
+            let plan = self.build_sync_plan()?;
+            if let Some(label) = plan
+                .label_catalog(false, std::iter::empty())
+                .into_iter()
+                .find(|label| label.kind == "user" && label.name.eq_ignore_ascii_case(&clean))
+            {
+                return Ok(label);
+            }
         }
 
         // Persist LIST-compatible wire names and IDs, as previous versions
@@ -565,11 +577,45 @@ impl ImapProvider {
         let arg = crate::provider::imap::write::build_wire_mailbox_arg(&label_mailbox)?;
 
         let mut session = self.open_plain_session().await?;
-        let result = self
-            .create_label_folder_on(session.as_mut(), &container, &label_mailbox, &arg)
-            .await;
+        let result = async {
+            if coordinating {
+                let before = session.list_mailboxes().await?;
+                if !before
+                    .iter()
+                    .any(|row| row.name.eq_ignore_ascii_case(INBOX) && !row.no_select)
+                {
+                    return Err(ProviderError::LabelBindingPending);
+                }
+                self.recover_mailbox_label_edit(session.as_mut(), &before)
+                    .await?;
+                self.verify_mailbox_label_bindings(session.as_mut(), &before)
+                    .await?;
+                if let Some(row) = before
+                    .iter()
+                    .find(|row| row.name.eq_ignore_ascii_case(&label_mailbox))
+                {
+                    let label =
+                        self.mailbox_label_from_listing(&before, &row.name, false, false)?;
+                    if label.kind != "user" {
+                        return Err(ProviderError::InvalidOperation(
+                            "This name is reserved for a system mailbox.".into(),
+                        ));
+                    }
+                    self.store
+                        .upsert_mailbox_catalog(&row.name, row.delimiter.as_deref(), None)
+                        .map_err(db_err)?;
+                    return Ok(Some(label));
+                }
+            }
+            self.create_label_folder_on(session.as_mut(), &container, &label_mailbox, &arg)
+                .await?;
+            Ok(None)
+        }
+        .await;
         let _ = session.logout().await;
-        result?;
+        if let Some(label) = result? {
+            return Ok(label);
+        }
 
         // Record the catalog row so list_labels reflects it with no sync. A
         // label folder is synced, Folder-class; born with zero counters (the

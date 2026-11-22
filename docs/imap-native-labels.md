@@ -86,8 +86,47 @@ Deleting a Gmail parent sends one DELETE for the selected label. The app
 checks that the parent has disappeared as a selectable label and that the
 children are still present with their original IDs. The parent may remain
 as a non-selectable container. Messages stay in Gmail, and a Split Inbox
-that used the parent can be relinked. Editing continues to require a
-single enrolled device. [IMAP mailbox commands](https://www.rfc-editor.org/rfc/rfc3501.html#section-6.3.4) · [Gmail IMAP extensions](https://developers.google.com/workspace/gmail/imap/imap-extensions#access_to_gmail_labels_x-gm-labels)
+that used the parent can be relinked. [IMAP mailbox commands](https://www.rfc-editor.org/rfc/rfc3501.html#section-6.3.4) · [Gmail IMAP extensions](https://developers.google.com/workspace/gmail/imap/imap-extensions#access_to_gmail_labels_x-gm-labels)
+
+## Cross-device edits
+
+ThreeStrands prefers an active device that introduced the account to
+Replicated Sync as its initial editing device. Every active device
+acknowledges the same assignment before ThreeStrands permits a rename or
+delete. Older clients still read ordinary
+synchronized account data. They need to update and sync before the editor
+can start a structural edit. Conflicting acknowledgements leave structural editing unavailable.
+
+Open **Settings → Mail Accounts → IMAP Editing Device** on the current
+editor to hand the account to another enrolled desktop device. The old editor stops
+issuing structural writes as soon as it saves the handoff. The new editor
+learns its assignment through sync. An unfinished mailbox edit blocks
+handoff until the current editor checks the server result. If the editor is
+offline, it keeps its role. Transfer editing before removing that device
+from Replicated Sync. Revocation without a handoff leaves structural editing
+unavailable.
+
+Verified paths and retired IDs reach peers in the encrypted Mail Account
+record. Each IMAP peer checks the live path and UIDVALIDITY for its own
+matching connection before attaching the old ID. A missing binding parks
+queued label actions until the peer can verify a rename or learns that the
+label was deleted. Other connection settings and provider-specific Split Inbox
+selections stay local. External changes with insufficient evidence leave the
+saved rule available for explicit relinking.
+
+Plain IMAP uses the same journal for renaming physical folder trees. It
+checks each selectable descendant and reports partial server results.
+Deletion is available for individual leaf folders, subject to the existing
+complete UID set and surviving-copy checks.
+
+## Keyword edits
+
+Keyword apply and remove support individual message selections. Account-wide
+rename and removal need a resumable scan of every applicable mailbox, including
+mail outside the local sync window. A rename must verify the replacement flag
+before clearing the original flag on each message. Read-only mailboxes,
+capability changes, and concurrent changes from other clients can leave work
+incomplete. The current app leaves account-wide keyword edits unavailable.
 
 Protocol references: [Google IMAP extensions](https://developers.google.com/workspace/gmail/imap/imap-extensions)
 and [IMAP CREATE](https://www.rfc-editor.org/rfc/rfc3501.html#section-6.3.3).
