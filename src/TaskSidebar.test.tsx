@@ -1,7 +1,7 @@
 import { refreshSyncedData } from "./refreshSyncedData";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createRef } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { mailClient } from "./data/client";
 import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
@@ -32,6 +32,11 @@ async function openTask(title: string) {
 }
 
 describe("TaskSidebar", () => {
+  beforeEach(() => {
+    vi.spyOn(mailClient, "listNoteTasks").mockResolvedValue([]);
+    vi.spyOn(mailClient, "noteTaskWarnings").mockResolvedValue([]);
+  });
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -102,13 +107,20 @@ describe("TaskSidebar", () => {
     expect(screen.queryByRole("textbox", { name: "Due date" })).not.toBeInTheDocument();
   });
 
-  it("excludes note tasks from an explicit account scope", async () => {
+  it("includes note tasks and their warnings under an explicit account scope", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     vi.spyOn(mailClient, "listGoals").mockResolvedValue([]);
-    const notes = vi.spyOn(mailClient, "listNoteTasks");
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
-    await screen.findByText("No tasks yet. Press d to add one.");
-    expect(notes).not.toHaveBeenCalled();
+    const record = { id: "note:daily:2026-11-10:marker", markerId: "marker", noteId: "daily:2026-11-10", noteTitle: "2026-11-10", title: "Send proposal", checked: false, updatedAt: "v1", completedAt: null as string | null, conflicted: false };
+    const notes = vi.spyOn(mailClient, "listNoteTasks").mockResolvedValue([record]);
+    const warnings = vi.spyOn(mailClient, "noteTaskWarnings").mockResolvedValue([["n-warn", "Drafts", "Could not index"]]);
+    const open = vi.fn();
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onOpenNote={open} />);
+    expect(await screen.findByText("Send proposal", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Drafts: Could not index.");
+    expect(notes).toHaveBeenCalled();
+    expect(warnings).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Note · 2026-11-10" }));
+    expect(open).toHaveBeenCalledWith(record.noteId, record.markerId);
   });
 
   it("stays read-only until Add Task opens the quick-add dialog", async () => {

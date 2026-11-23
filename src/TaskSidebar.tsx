@@ -181,11 +181,12 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     setError(null);
     try {
       // Every account's goals load so an empty pane can name the accounts that do have goals.
+      // Notes belong to no single account, so note tasks stay visible under any account scope.
       const [nextTasks, allGoals, noteTasks, warnings] = await Promise.all([
         mailClient.listTasks(accountId ?? undefined),
         mailClient.listGoals(),
-        accountId ? Promise.resolve([]) : mailClient.listNoteTasks(),
-        accountId ? Promise.resolve([]) : mailClient.noteTaskWarnings(),
+        mailClient.listNoteTasks(),
+        mailClient.noteTaskWarnings(),
       ]);
       if (generation!==loadGeneration.current) return;
       setTasks([...nextTasks, ...noteTasks.map(noteTaskAsTask)]);

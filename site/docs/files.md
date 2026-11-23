@@ -18,7 +18,7 @@ Click **Files** in the sidebar or press <kbd>6</kbd>. Files lists attachments fr
 3. Select a result to see its details and source conversation.
 4. Open or save the file, or follow the source conversation to read its context.
 
-A file from a note shows the note's name where a mail attachment shows its sender, and **Source note** opens the note. Notes' files appear while Files shows all accounts; choosing one account, a sender, a direction, or the Calendar type shows mail only. Search finds a note's files by the note's title too. A file another device added to a note shows that it's still on its way until sync brings it.
+A file from a note shows the note's name where a mail attachment shows its sender, and **Source note** opens the note. Notes' files stay visible when you filter by account; choosing a sender, a direction, or the Calendar type shows mail only. Search finds a note's files by the note's title too. A file another device added to a note shows that it's still on its way until sync brings it.
 
 If a file is missing, [search for the email](search.html) first. Older mail may need an online server search before its attachments appear locally. **Mark Spam** removes that email's files from Files, and **Undo** restores them.
 
