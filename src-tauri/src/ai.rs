@@ -375,6 +375,7 @@ mod tests {
                     display_name: None,
                     role: None,
                     company: None,
+                    phone: None,
                     location: None,
                     bio: None,
                     notes: None,

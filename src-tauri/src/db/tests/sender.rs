@@ -755,6 +755,7 @@ fn save_contact(database: &crate::db::Database, name: &str, addresses: &[&str]) 
             display_name: Some(name.into()),
             role: None,
             company: None,
+            phone: None,
             location: None,
             bio: None,
             notes: None,

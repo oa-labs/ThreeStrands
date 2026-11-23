@@ -1,5 +1,5 @@
 import { createContext, useEffect, useId, useState } from "react";
-import { Check, Copy, Heart, Mail, UserPlus } from "lucide-react";
+import { Check, Copy, Heart, Mail, Phone, UserPlus } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { mailClient } from "./data/client";
 import type { ContactProfile } from "./domain";
@@ -28,6 +28,14 @@ export const ContactCardContext = createContext<ContactCardActions | null>(null)
  * from local history. The context panel and the reader's address hover card
  * both show it.
  */
+/** Builds a safe `tel:` URI from a contact's phone number, or null if no dialable digits exist. */
+function phoneHref(phone: string): string | null {
+  const trimmed = phone.trim();
+  const plus = trimmed.startsWith("+") ? "+" : "";
+  const digits = trimmed.replace(/\D/g, "");
+  return digits.length >= 3 ? `tel:${plus}${digits}` : null;
+}
+
 export function ContactCard({ email, fallbackName, profile, loaded = true, facts, titleAs = "h2", showNotes = false, onOpenContact, onProfileSaved, onError }: {
   email: string;
   /** The name from the message, used until a saved contact supplies one. */
@@ -46,7 +54,10 @@ export function ContactCard({ email, fallbackName, profile, loaded = true, facts
   const openHintId = useId();
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  const [copiedPhone, setCopiedPhone] = useState(false);
+  const [copyPhoneFailed, setCopyPhoneFailed] = useState(false);
   useEffect(() => { setCopied(false); setCopyFailed(false); }, [email]);
+  useEffect(() => { setCopiedPhone(false); setCopyPhoneFailed(false); }, [email, profile?.phone]);
   const displayName = profile?.displayName || fallbackName || email;
   const Title = titleAs;
 
@@ -54,7 +65,7 @@ export function ContactCard({ email, fallbackName, profile, loaded = true, facts
     try {
       onProfileSaved(await mailClient.saveContactProfile({
         id: null, displayName: fallbackName ?? null, role: null, company: null,
-        location: null, bio: null, notes: null, links: [], photoData: null,
+        phone: null, location: null, bio: null, notes: null, links: [], photoData: null,
         favorite: false, addresses: [email], birthday: null,
       }));
     } catch (reason) { onError(errorMessage(reason)); }
@@ -74,6 +85,16 @@ export function ContactCard({ email, fallbackName, profile, loaded = true, facts
       setCopyFailed(true);
     }
   };
+  const copyPhone = async (phone: string) => {
+    setCopyPhoneFailed(false);
+    try {
+      await navigator.clipboard.writeText(phone);
+      setCopiedPhone(true);
+    } catch {
+      setCopyPhoneFailed(true);
+    }
+  };
+  const telHref = profile?.phone ? phoneHref(profile.phone) : null;
 
   return (
     <div className="context-contact-body">
@@ -104,6 +125,19 @@ export function ContactCard({ email, fallbackName, profile, loaded = true, facts
             </button>
           </div>
           {copyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}
+          {profile?.phone ? (
+            <div className="contact-sidebar-email-row">
+              {telHref ? (
+                <a href={telHref} onClick={(event) => { event.preventDefault(); void openUrl(telHref); }}><Phone size={ICON_SIZE.xs} /><span>{profile.phone}</span></a>
+              ) : (
+                <span><Phone size={ICON_SIZE.xs} /><span>{profile.phone}</span></span>
+              )}
+              <button type="button" className="contact-sidebar-email-copy" aria-label={copiedPhone ? "Copied phone number" : "Copy phone number"} onClick={() => void copyPhone(profile.phone!)}>
+                {copiedPhone ? <Check size={ICON_SIZE.xs} /> : <Copy size={ICON_SIZE.xs} />}
+              </button>
+            </div>
+          ) : null}
+          {copyPhoneFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy phone number</span> : null}
           {profile?.role || profile?.company ? <p>{[profile.role, profile.company].filter(Boolean).join(" · ")}</p> : null}
           {facts.length > 0 ? <p className="context-contact-activity">{facts.join(" · ")}</p> : null}
           {profile?.keepInTouchDueAt && isKeepInTouchDue(profile) ? <p className="context-contact-keep-in-touch">Keep in touch: {describeDue(profile.keepInTouchDueAt).toLocaleLowerCase()}</p> : null}

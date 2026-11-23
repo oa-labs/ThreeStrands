@@ -32,6 +32,7 @@ fn empty() -> SaveContactRequest {
         display_name: None,
         role: None,
         company: None,
+        phone: None,
         location: None,
         bio: None,
         notes: None,
@@ -73,6 +74,46 @@ fn email_header(header: &str) -> bool {
                 .or_else(|| tail.strip_suffix("address"))
                 .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
     })
+}
+fn phone_header(header: &str) -> bool {
+    matches!(
+        header,
+        "phone"
+            | "phonenumber"
+            | "telephone"
+            | "mobile"
+            | "mobilephone"
+            | "cell"
+            | "cellphone"
+            | "workphone"
+            | "homephone"
+            | "primaryphone"
+    ) || header.strip_prefix("phone").is_some_and(|tail| {
+        !tail.is_empty()
+            && (tail.chars().all(|c| c.is_ascii_digit())
+                || tail
+                    .strip_suffix("value")
+                    .or_else(|| tail.strip_suffix("number"))
+                    .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())))
+    })
+}
+fn unescape_csv_phone(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    // Reverse `csv_cell`'s leading apostrophe on exported `+` / `-` phone numbers.
+    let unescaped = trimmed
+        .strip_prefix('\'')
+        .filter(|rest| rest.trim_start().starts_with(['+', '-']))
+        .unwrap_or(trimmed);
+    optional(unescaped)
+}
+fn strip_tel_uri(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let stripped = if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("tel:") {
+        &trimmed[4..]
+    } else {
+        trimmed
+    };
+    optional(stripped)
 }
 
 fn accept(
@@ -167,6 +208,12 @@ pub fn parse(data: &str, format: ContactFormat) -> Result<ContactImportPreview, 
                             .extend(value.split(" ::: ").map(str::to_string));
                         continue;
                     }
+                    if phone_header(header) {
+                        if contact.phone.is_none() {
+                            contact.phone = value.split(" ::: ").find_map(unescape_csv_phone);
+                        }
+                        continue;
+                    }
                     match header.as_str() {
                         "name" | "displayname" | "fullname" => {
                             contact.display_name = optional(value)
@@ -235,6 +282,7 @@ pub fn parse(data: &str, format: ContactFormat) -> Result<ContactImportPreview, 
                 let mut has_photo = false;
                 let mut unsupported = std::collections::BTreeSet::new();
                 let mut emails = Vec::new();
+                let mut phones = Vec::new();
                 for entry in &card.entries {
                     let text = entry
                         .values
@@ -242,6 +290,30 @@ pub fn parse(data: &str, format: ContactFormat) -> Result<ContactImportPreview, 
                         .filter_map(VCardValue::as_text)
                         .collect::<Vec<_>>()
                         .join(" ");
+                    let pref_rank = || {
+                        let pref = entry
+                            .parameters(&calcard::vcard::VCardParameterName::Pref)
+                            .find_map(|v| {
+                                if let calcard::vcard::VCardParameterValue::Integer(value) = v {
+                                    Some(*value)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(100);
+                        let legacy_preferred = entry
+                            .parameters(&calcard::vcard::VCardParameterName::Type)
+                            .any(|value| {
+                                value
+                                    .as_text()
+                                    .is_some_and(|value| value.eq_ignore_ascii_case("pref"))
+                            });
+                        if legacy_preferred {
+                            1
+                        } else {
+                            pref
+                        }
+                    };
                     match &entry.name {
                         Property::Fn => contact.display_name = optional(&text),
                         Property::N if contact.display_name.is_none() => {
@@ -256,24 +328,12 @@ pub fn parse(data: &str, format: ContactFormat) -> Result<ContactImportPreview, 
                             )
                         }
                         Property::Email => {
-                            let pref = entry
-                                .parameters(&calcard::vcard::VCardParameterName::Pref)
-                                .find_map(|v| {
-                                    if let calcard::vcard::VCardParameterValue::Integer(value) = v {
-                                        Some(*value)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(100);
-                            let legacy_preferred = entry
-                                .parameters(&calcard::vcard::VCardParameterName::Type)
-                                .any(|value| {
-                                    value
-                                        .as_text()
-                                        .is_some_and(|value| value.eq_ignore_ascii_case("pref"))
-                                });
-                            emails.push((if legacy_preferred { 1 } else { pref }, text));
+                            emails.push((pref_rank(), text));
+                        }
+                        Property::Tel => {
+                            if let Some(phone) = strip_tel_uri(&text) {
+                                phones.push((pref_rank(), phone));
+                            }
                         }
                         Property::Title | Property::Role => contact.role = optional(&text),
                         Property::Org => contact.company = optional(&text),
@@ -327,6 +387,8 @@ pub fn parse(data: &str, format: ContactFormat) -> Result<ContactImportPreview, 
                 }
                 emails.sort_by_key(|(pref, _)| *pref);
                 contact.addresses = emails.into_iter().map(|(_, email)| email).collect();
+                phones.sort_by_key(|(pref, _)| *pref);
+                contact.phone = phones.into_iter().next().map(|(_, phone)| phone);
                 if has_photo {
                     warn(
                         &mut preview,
@@ -383,6 +445,9 @@ fn validate_import_fields(contact: &SaveContactRequest) -> Result<(), String> {
     {
         return Err("Contacts support up to 20 valid HTTPS links".into());
     }
+    if let Some(phone) = &contact.phone {
+        crate::db::contacts::normalize_phone(Some(phone)).map_err(String::from)?;
+    }
     if let Some(birthday) = &contact.birthday {
         crate::db::contacts::normalize_birthday(Some(birthday)).map_err(String::from)?;
     }
@@ -435,6 +500,7 @@ pub fn export(contacts: &[ContactProfile], format: ContactFormat) -> Result<Vec<
                 "Name".into(),
                 "Role".into(),
                 "Company".into(),
+                "Phone".into(),
                 "Location".into(),
                 "Bio".into(),
                 "Notes".into(),
@@ -451,6 +517,7 @@ pub fn export(contacts: &[ContactProfile], format: ContactFormat) -> Result<Vec<
                     &contact.display_name,
                     &contact.role,
                     &contact.company,
+                    &contact.phone,
                     &contact.location,
                     &contact.bio,
                     &contact.notes,
@@ -500,6 +567,7 @@ pub fn export(contacts: &[ContactProfile], format: ContactFormat) -> Result<Vec<
                 for (property, value) in [
                     ("TITLE", &contact.role),
                     ("ORG", &contact.company),
+                    ("TEL", &contact.phone),
                     ("NOTE", &contact.notes),
                     ("X-THREESTRANDS-LOCATION", &contact.location),
                     ("X-THREESTRANDS-BIO", &contact.bio),
@@ -545,7 +613,7 @@ mod tests {
 
     #[test]
     fn csv_supports_quoted_multiline_fields_google_headers_and_invalid_row_warnings() {
-        let result = parse("\u{feff}Name,E-mail 1 - Value,E-mail 2 - Value,Notes,Phone\r\n\"Doe, Jane\",JANE@example.com,other@example.com,\"First line\nSecond line\",555\r\nBad,not-an-email,,,\r\n", ContactFormat::Csv).unwrap();
+        let result = parse("\u{feff}Name,E-mail 1 - Value,E-mail 2 - Value,Notes,Phone,Department\r\n\"Doe, Jane\",JANE@example.com,other@example.com,\"First line\nSecond line\",+1 555-0100,Engineering\r\nBad,not-an-email,,,,\r\n", ContactFormat::Csv).unwrap();
         assert_eq!(result.contacts.len(), 1);
         assert_eq!(
             result.contacts[0].display_name.as_deref(),
@@ -559,11 +627,12 @@ mod tests {
             result.contacts[0].notes.as_deref(),
             Some("First line\nSecond line")
         );
+        assert_eq!(result.contacts[0].phone.as_deref(), Some("+1 555-0100"));
         assert_eq!(result.skipped, 1);
         assert!(result
             .warnings
             .iter()
-            .any(|warning| warning.contains("phone")));
+            .any(|warning| warning.contains("department")));
         assert!(parse(
             "Name,Email\nJane,jane@example.com,extra",
             ContactFormat::Csv
@@ -574,7 +643,7 @@ mod tests {
 
     #[test]
     fn vcard_reads_multiple_cards_folding_escaping_preferences_and_birthdays_without_fetches() {
-        let data = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Jane\\, Doe\r\nEMAIL:other@example.com\r\nEMAIL;PREF=1:jane@example.com\r\nNOTE:One\\nTwo very long\r\n  lines\r\nBDAY:1984-12-09\r\nPHOTO;VALUE=URI:https://example.com/photo.jpg\r\nTEL:555\r\nEND:VCARD\r\nBEGIN:VCARD\r\nVERSION:4.0\r\nFN:Person Two\r\nEMAIL:two@example.com\r\nBDAY:--0229\r\nEND:VCARD\r\n";
+        let data = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Jane\\, Doe\r\nEMAIL:other@example.com\r\nEMAIL;PREF=1:jane@example.com\r\nNOTE:One\\nTwo very long\r\n  lines\r\nBDAY:1984-12-09\r\nPHOTO;VALUE=URI:https://example.com/photo.jpg\r\nTEL:555-0101\r\nTEL;PREF=1:+1-555-0102\r\nEND:VCARD\r\nBEGIN:VCARD\r\nVERSION:4.0\r\nFN:Person Two\r\nEMAIL:two@example.com\r\nTEL;VALUE=uri:tel:+1-555-0199\r\nBDAY:--0229\r\nEND:VCARD\r\n";
         let result = parse(data, ContactFormat::Vcard).unwrap();
         assert_eq!(result.contacts.len(), 2);
         assert_eq!(
@@ -589,6 +658,8 @@ mod tests {
             result.contacts[0].notes.as_deref(),
             Some("One\nTwo very long lines")
         );
+        assert_eq!(result.contacts[0].phone.as_deref(), Some("+1-555-0102"));
+        assert_eq!(result.contacts[1].phone.as_deref(), Some("+1-555-0199"));
         assert_eq!(result.contacts[0].birthday.as_deref(), Some("1984-12-09"));
         assert_eq!(result.contacts[1].birthday.as_deref(), Some("02-29"));
         assert!(result.contacts[0].photo_data.is_none());
@@ -612,6 +683,7 @@ mod tests {
         contact.addresses = vec!["primary@example.com".into(), "second@example.com".into()];
         contact.role = Some("Engineer".into());
         contact.company = Some("One; Two".into());
+        contact.phone = Some("+1 (555) 123-4567".into());
         contact.notes = Some("One\nTwo, three; \\four".into());
         contact.bio = Some("Bio".into());
         contact.location = Some("Paris".into());
@@ -622,6 +694,9 @@ mod tests {
         for format in [ContactFormat::Csv, ContactFormat::Vcard] {
             let bytes = export(std::slice::from_ref(&profile), format).unwrap();
             let data = String::from_utf8(bytes).unwrap();
+            if matches!(format, ContactFormat::Csv) {
+                assert!(data.contains("'+1 (555) 123-4567"));
+            }
             if matches!(format, ContactFormat::Vcard) {
                 assert!(data.split("\r\n").all(|line| line.len() <= 75));
             }
@@ -631,6 +706,7 @@ mod tests {
             assert_eq!(imported.addresses, contact.addresses);
             assert_eq!(imported.notes, contact.notes);
             assert_eq!(imported.company, contact.company);
+            assert_eq!(imported.phone, contact.phone);
             assert_eq!(imported.birthday, contact.birthday);
             assert_eq!(imported.bio, contact.bio);
             assert_eq!(imported.location, contact.location);

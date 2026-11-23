@@ -21,13 +21,13 @@ pub struct ContactImportResult {
 
 fn read_record(connection: &Connection, id: &str) -> DbResult<ContactRecord> {
     let mut record = connection.query_row(
-        "SELECT id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at,time_zone FROM contacts WHERE id=?1", [id],
+        "SELECT id,display_name,role,company,phone,location,bio,notes,links_json,photo_data,favorite,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at,time_zone FROM contacts WHERE id=?1", [id],
         |row| Ok(ContactRecord {
-            id: row.get(0)?, display_name: row.get(1)?, role: row.get(2)?, company: row.get(3)?, location: row.get(4)?, bio: row.get(5)?, notes: row.get(6)?,
-            links: serde_json::from_str(&row.get::<_, String>(7)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(error)))?,
-            photo_data: row.get(8)?, favorite: row.get(9)?, birthday: row.get(10)?, addresses: Vec::new(),
-            keep_in_touch: KeepInTouch { interval_days: row.get(11)?, started_at: row.get(12)?, snoozed_until: row.get(13)?, snoozed_at: row.get(14)?, last_touch_at: row.get(15)? },
-            time_zone: row.get(16)?,
+            id: row.get(0)?, display_name: row.get(1)?, role: row.get(2)?, company: row.get(3)?, phone: row.get(4)?, location: row.get(5)?, bio: row.get(6)?, notes: row.get(7)?,
+            links: serde_json::from_str(&row.get::<_, String>(8)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(error)))?,
+            photo_data: row.get(9)?, favorite: row.get(10)?, birthday: row.get(11)?, addresses: Vec::new(),
+            keep_in_touch: KeepInTouch { interval_days: row.get(12)?, started_at: row.get(13)?, snoozed_until: row.get(14)?, snoozed_at: row.get(15)?, last_touch_at: row.get(16)? },
+            time_zone: row.get(17)?,
         })
     ).optional()?.ok_or(DatabaseError::NotFound("Saved contact"))?;
     let mut statement = connection.prepare(
@@ -129,6 +129,7 @@ impl Database {
                 for (label, retained, incoming) in [
                     ("Name", &mut target.display_name, source.display_name.clone()),
                     ("Role", &mut target.role, source.role), ("Company", &mut target.company, source.company),
+                    ("Phone", &mut target.phone, source.phone),
                     ("Location", &mut target.location, source.location), ("Birthday", &mut target.birthday, source.birthday),
                 ] {
                     if retained.is_none() { *retained = incoming; }
@@ -158,7 +159,7 @@ impl Database {
                 tx.execute("DELETE FROM contacts WHERE id=?1", [source_id])?;
                 if sync { record_replicated_deletion_in_transaction(tx, EntityType::Contact, source_id)?; }
             }
-            let request = SaveContactRequest { id: Some(target.id), display_name: target.display_name, role: target.role, company: target.company, location: target.location, bio: target.bio, notes: target.notes, links: target.links, photo_data: target.photo_data, favorite: target.favorite, addresses: target.addresses, birthday: target.birthday, keep_in_touch: Some(target.keep_in_touch), time_zone: Some(target.time_zone) };
+            let request = SaveContactRequest { id: Some(target.id), display_name: target.display_name, role: target.role, company: target.company, phone: target.phone, location: target.location, bio: target.bio, notes: target.notes, links: target.links, photo_data: target.photo_data, favorite: target.favorite, addresses: target.addresses, birthday: target.birthday, keep_in_touch: Some(target.keep_in_touch), time_zone: Some(target.time_zone) };
             save_contact_on(tx, &request)?;
             if sync { record_contact(tx, target_id)?; }
             for (group, fields) in group_fields {
@@ -225,6 +226,7 @@ mod tests {
             display_name: Some(id.into()),
             role: None,
             company: None,
+            phone: None,
             location: None,
             bio: None,
             notes: None,
@@ -293,6 +295,7 @@ mod tests {
         });
         let mut source = request("z-source", "two@example.com");
         source.company = Some("Company".into());
+        source.phone = Some("+1 (555) 123-4567".into());
         source.notes = Some("Second note".into());
         source.favorite = true;
         source.links = vec!["https://example.com".into()];
@@ -320,6 +323,7 @@ mod tests {
         let merged = db.merge_contacts("a-target", &["z-source".into()]).unwrap();
         assert_eq!(merged.addresses, ["one@example.com", "two@example.com"]);
         assert_eq!(merged.company.as_deref(), Some("Company"));
+        assert_eq!(merged.phone.as_deref(), Some("+1 (555) 123-4567"));
         assert!(merged.favorite);
         let notes = merged.notes.as_deref().unwrap();
         assert!(

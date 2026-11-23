@@ -625,11 +625,16 @@ pub(crate) struct TransferContact {
     /// builds that predate it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_zone: Option<String>,
+    /// Earlier exports omit it. Left out of exports when unset so they stay
+    /// readable by builds that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
 }
 impl From<ContactProfile> for TransferContact {
     fn from(c: ContactProfile) -> Self {
         Self {
             time_zone: c.time_zone,
+            phone: c.phone,
             id: c.id,
             display_name: c.display_name,
             role: c.role,
@@ -939,6 +944,10 @@ impl TransferPayload {
             }
             crate::db::contacts::normalize_birthday(contact.birthday.as_deref())
                 .map_err(|_| "The transfer contains an invalid contact birthday")?;
+            if let Some(phone) = &contact.phone {
+                crate::db::contacts::normalize_phone(Some(phone))
+                    .map_err(|_| "The transfer contains an invalid contact phone number")?;
+            }
             if let Some(zone) = &contact.time_zone {
                 crate::db::contacts::validate_time_zone(zone)
                     .map_err(|_| "The transfer contains an invalid contact timezone")?;
@@ -2894,6 +2903,7 @@ mod tests {
                     last_touch_at: Some("2026-09-15T09:00:00+00:00".to_string()),
                 },
                 time_zone: None,
+                phone: None,
             }],
             retention_days: Some(365),
             contact_groups: Some(vec![TransferContactGroup {
@@ -3958,6 +3968,32 @@ mod tests {
         let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
         unknown["contacts"][0]["keepInTouch"]["unexpected"] = serde_json::json!(1);
         assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
+    }
+
+    #[test]
+    fn a_contact_phone_round_trips_validates_and_is_left_out_when_unset() {
+        let mut payload = current_fixture_payload();
+        let unset = serde_json::to_value(&payload).unwrap();
+        assert!(unset["contacts"][0].get("phone").is_none());
+        payload.contacts[0].phone = Some("+1 (555) 123-4567".into());
+        payload.validate().unwrap();
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["contacts"][0]["phone"], "+1 (555) 123-4567");
+        let back: TransferPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back.contacts[0].phone.as_deref(), Some("+1 (555) 123-4567"));
+        // An export from before the field, with no key at all, still reads.
+        let old: TransferPayload = serde_json::from_value(unset).unwrap();
+        assert_eq!(old.contacts[0].phone, None);
+        for invalid in [
+            "abc",
+            "12",
+            "555-1234\nINJECTED",
+            &"5".repeat(crate::db::contacts::MAX_PHONE_LENGTH + 1),
+        ] {
+            let mut bad = current_fixture_payload();
+            bad.contacts[0].phone = Some(invalid.to_string());
+            assert!(bad.validate().is_err(), "{invalid}");
+        }
     }
 
     #[test]

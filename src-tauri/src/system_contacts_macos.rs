@@ -78,6 +78,7 @@ impl AddressBook for Platform {
                 ProtocolObject::from_ref(CNContactEmailAddressesKey),
                 ProtocolObject::from_ref(CNContactOrganizationNameKey),
                 ProtocolObject::from_ref(CNContactJobTitleKey),
+                ProtocolObject::from_ref(CNContactPhoneNumbersKey),
             ]);
             let rows = RefCell::new(Vec::new());
             let overflow = RefCell::new(false);
@@ -111,6 +112,11 @@ impl AddressBook for Platform {
                         .join(" ");
                         let company = contact.organizationName().to_string();
                         let role = contact.jobTitle().to_string();
+                        let phone = contact
+                            .phoneNumbers()
+                            .iter()
+                            .map(|value| value.value().stringValue().to_string())
+                            .find(|value| !value.trim().is_empty());
                         rows.borrow_mut().push(SystemContact {
                             id: contact.identifier().to_string(),
                             source_id: source.clone(),
@@ -122,6 +128,7 @@ impl AddressBook for Platform {
                                 .collect(),
                             company: (!company.is_empty()).then_some(company),
                             role: (!role.is_empty()).then_some(role),
+                            phone,
                         });
                     },
                 );

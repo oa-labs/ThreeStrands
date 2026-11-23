@@ -1545,6 +1545,7 @@ fn saved_contact(db: &Database, name: &str, addresses: &[&str]) -> crate::models
         display_name: Some(name.into()),
         role: None,
         company: None,
+        phone: None,
         location: None,
         bio: None,
         notes: None,

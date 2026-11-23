@@ -49,6 +49,7 @@ fn contact(db: &Database, address: &str) -> crate::models::ContactProfile {
         display_name: Some("Ann".into()),
         role: None,
         company: None,
+        phone: None,
         location: None,
         bio: None,
         notes: None,

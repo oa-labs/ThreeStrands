@@ -23,6 +23,8 @@ pub struct SystemContact {
     pub addresses: Vec<String>,
     pub company: Option<String>,
     pub role: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
 }
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

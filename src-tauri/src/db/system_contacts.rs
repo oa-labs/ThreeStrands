@@ -85,6 +85,10 @@ impl Database {
                 for text in [&mut contact.display_name, &mut contact.company, &mut contact.role] {
                     *text = text.take().map(|s| s.chars().filter(|c| !c.is_control()).take(1000).collect::<String>()).filter(|s| !s.trim().is_empty());
                 }
+                contact.phone = contact
+                    .phone
+                    .take()
+                    .and_then(|s| super::contacts::normalize_phone(Some(&s)).ok().flatten());
                 tx.execute("INSERT INTO system_contact_cache(id,data_json) VALUES(?1,?2)", params![contact.id, serde_json::to_string(&contact).map_err(super::serialization_error)?])?;
                 for email in &contact.addresses { tx.execute("INSERT INTO system_contact_addresses(contact_id,email,display_name) VALUES(?1,?2,?3)", params![contact.id, email, contact.display_name])?; }
             }
@@ -127,6 +131,7 @@ impl Database {
             Ok((contacts, owned, stats))
         })?;
         let needle = query.trim().to_ascii_lowercase();
+        let phone_needle = super::contacts::phone_search_digits(&needle);
         // Saved profiles win. Do not silently merge source records into local
         // profiles, or combine two people solely by their display names.
         let mut profiles = Vec::new();
@@ -134,17 +139,22 @@ impl Database {
             if c.addresses.iter().any(|a| owned.contains(a)) {
                 continue;
             }
-            if !needle.is_empty()
-                && !format!(
-                    "{} {} {} {}",
+            let text_matches = needle.is_empty()
+                || format!(
+                    "{} {} {} {} {}",
                     c.display_name.as_deref().unwrap_or(""),
                     c.company.as_deref().unwrap_or(""),
                     c.role.as_deref().unwrap_or(""),
+                    c.phone.as_deref().unwrap_or(""),
                     c.addresses.join(" ")
                 )
                 .to_ascii_lowercase()
-                .contains(&needle)
-            {
+                .contains(&needle);
+            let phone_matches = !phone_needle.is_empty()
+                && c.phone.as_deref().is_some_and(|value| {
+                    super::contacts::strip_phone_punctuation(value).contains(&phone_needle)
+                });
+            if !text_matches && !phone_matches {
                 continue;
             }
             let mut sent_count = 0;
@@ -173,6 +183,7 @@ impl Database {
                 display_name: c.display_name,
                 role: c.role,
                 company: c.company,
+                phone: c.phone,
                 location: None,
                 bio: None,
                 notes: None,

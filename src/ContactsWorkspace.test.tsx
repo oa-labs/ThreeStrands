@@ -357,7 +357,7 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(screen.getByRole("button",{name:/Project/}));
     expect(onOpenThread).toHaveBeenCalledWith("work-thread");
     fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
-    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,"work@example.com","default"));
+    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","phone","location","bio","link"],false,"work@example.com","default"));
   });
 
   it("does not confirm a contact save that failed",async()=>{
@@ -436,7 +436,7 @@ describe("ContactsWorkspace",()=>{
     await screen.findByDisplayValue("Jane Doe");
     expect(screen.getByLabelText("Company")).toHaveValue("Acme");
     expect(screen.getByLabelText("Notes")).toHaveValue("Met at the conference");
-    for(const label of ["Location","Birthday","About"])expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    for(const label of ["Phone","Location","Birthday","About"])expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox",{name:"Links"})).not.toBeInTheDocument();
     expect(screen.queryByRole("button",{name:"Add company"})).not.toBeInTheDocument();
 
@@ -727,6 +727,33 @@ describe("ContactsWorkspace",()=>{
     expect(screen.queryByText("From the email")).not.toBeInTheDocument();
   });
 
+  it("saves a phone number with the profile form and clears it to null",async()=>{
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.change(field("Phone"),{target:{value:"  +1 (555) 234-5678  "}});
+    fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
+    await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({phone:"+1 (555) 234-5678"})));
+    fireEvent.change(field("Phone"),{target:{value:""}});
+    fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
+    await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenLastCalledWith(expect.objectContaining({phone:null})));
+  });
+
+  it("suggests and applies a phone number from Enhance With AI when Phone is empty",async()=>{
+    localStorage.setItem("threestrands.settings.ai.provider","openai");
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
+    vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[{field:"phone",value:"+1 (555) 234-5678",sourceMessageId:"m1",sourceThreadId:"thread-1",excerpt:"You can reach me at +1 (555) 234-5678."}],messagesReviewed:1,hasMore:false});
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
+    const card=(await screen.findByText("You can reach me at +1 (555) 234-5678.")).closest("article") as HTMLElement;
+    expect(within(card).getByText("Phone")).toBeInTheDocument();
+    expect(within(card).getByText("+1 (555) 234-5678")).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button",{name:"Use suggestion"}));
+    await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({phone:"+1 (555) 234-5678"})));
+    expect(screen.getByLabelText("Phone")).toHaveValue("+1 (555) 234-5678");
+    expect(screen.queryByRole("button",{name:"Use suggestion"})).not.toBeInTheDocument();
+  });
+
   it("enhances with the fast model, reasoning off, when one is set",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.model","gpt-4o");
@@ -735,7 +762,7 @@ describe("ContactsWorkspace",()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
     fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
-    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o-mini",null,["company","location","bio","link"],false,undefined,"off"));
+    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o-mini",null,["company","phone","location","bio","link"],false,undefined,"off"));
   });
 
   it("offers more emails only after the first three produced suggestions",async()=>{
@@ -750,13 +777,13 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await screen.findByText("I work at Acme.");
     expect(screen.getByText("3 emails reviewed")).toBeInTheDocument();
-    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,undefined,"default");
+    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","phone","location","bio","link"],false,undefined,"default");
 
     fireEvent.click(screen.getByRole("button",{name:"Search more emails"}));
     await screen.findByText("I live in Boston.");
     expect(screen.getByText("12 emails reviewed")).toBeInTheDocument();
     expect(screen.getByText("I work at Acme.")).toBeInTheDocument();
-    expect(mailClient.enrichContact).toHaveBeenLastCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],true,undefined,"default");
+    expect(mailClient.enrichContact).toHaveBeenLastCalledWith(jane.id,"openai","gpt-4o",null,["company","phone","location","bio","link"],true,undefined,"default");
     expect(screen.queryByRole("button",{name:"Search more emails"})).not.toBeInTheDocument();
     expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
   });
@@ -774,7 +801,7 @@ describe("ContactsWorkspace",()=>{
     const evidence=(await screen.findByText("I work at Acme.")).closest("article") as HTMLElement;
     // Name and Role already hold values, so they are never asked about, and
     // even a stray answer for them never surfaces.
-    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,undefined,"default");
+    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","phone","location","bio","link"],false,undefined,"default");
     expect(within(evidence).getByText("Company")).toBeInTheDocument();
     expect(screen.queryByText("I am the CEO.")).not.toBeInTheDocument();
     expect(screen.queryByText("CEO")).not.toBeInTheDocument();
@@ -789,7 +816,7 @@ describe("ContactsWorkspace",()=>{
     fireEvent.change(field("Company"),{target:{value:"Typed Co"}});
     fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await screen.findByText("3 emails reviewed");
-    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["location","bio","link"],false,undefined,"default");
+    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["phone","location","bio","link"],false,undefined,"default");
     // Even a stray suggestion for the typed field never surfaces.
     expect(screen.queryByText("I work at Acme.")).not.toBeInTheDocument();
     expect(field("Company")).toHaveValue("Typed Co");
@@ -820,7 +847,7 @@ describe("ContactsWorkspace",()=>{
   it("says so instead of asking the AI when every field already has a value",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
-    const filled:ContactProfile={...jane,role:"CEO",company:"Acme",location:"Boston",bio:"Builds things",links:["https://example.com"]};
+    const filled:ContactProfile={...jane,role:"CEO",company:"Acme",phone:"+1 555-0100",location:"Boston",bio:"Builds things",links:["https://example.com"]};
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([filled]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(filled);
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
