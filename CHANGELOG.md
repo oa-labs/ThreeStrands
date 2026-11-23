@@ -43,7 +43,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Notes search now has a compact **Include Trash** icon inside the search field, matching the scope toggle in Mail.
 - Notes search now opens with **/** and closes with Escape, while an active search stays available when you return to Notes.
 - Use <kbd>⌘/Ctrl + Shift + V</kbd> to paste without formatting in messages, notes, and signatures. Ordinary paste keeps its existing behavior.
-- Selecting text in Notes now shows formatting shortcuts at the bottom, matching the email composer. Both editors offer **Clear Formatting** (<kbd>⌘/Ctrl + \</kbd>) and **Normal Text** (<kbd>⌘/Ctrl + 0</kbd>), with Clear Formatting taking priority over Strikethrough when space is limited.
+- Selecting text in Notes now shows formatting shortcuts at the bottom, matching the email composer. Both editors offer **Clear Formatting** (<kbd>⌘/Ctrl + &#92;</kbd>) and **Normal Text** (<kbd>⌘/Ctrl + 0</kbd>), with Clear Formatting taking priority over Strikethrough when space is limited.
 - The proposed-times card in **Availability** now shows one line, "Times in Eastern Time", instead of a timezone menu. Choose **Change** to pick another zone; the zone you pick is remembered for that sender, so their next email is read in it automatically.
 - Email recipient pills leave less space between the address and the remove icon, keeping long addresses closer to the ×.
 - The task editor puts **Type** and **Due** side by side, leaving more room for notes.

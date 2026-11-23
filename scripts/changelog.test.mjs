@@ -30,6 +30,14 @@ describe("changelog format", () => {
     }
   });
 
+  it("rejects a backslash that would escape an HTML tag, in entries and their continuation lines", () => {
+    const header = "# Changelog\n\n## Unreleased\n\n### Fixed\n";
+    assert.throws(() => parseChangelog(`${header}- Press <kbd>⌘/Ctrl + \\</kbd> to clear.\n`), /line 6: a backslash before an HTML tag/);
+    assert.throws(() => parseChangelog(`${header}- Press\n  <kbd>\\</kbd> to hide.\n`), /line 7: a backslash before an HTML tag/);
+    assert.throws(() => parseChangeFile("### Fixed\n- Press <kbd>\\</kbd>.\n", "changes/x.md"), /a backslash before an HTML tag/);
+    assert.equal(parseChangelog(`${header}- Press <kbd>⌘/Ctrl + &#92;</kbd> or type C:\\Users.\n`).sections[0].groups[0].items.length, 1);
+  });
+
   it("parses unreleased, release, and summary sections with joined continuation lines", () => {
     const { sections } = parseChangelog(history);
     assert.deepEqual(sections.map((section) => [section.kind, section.version ?? section.title]), [

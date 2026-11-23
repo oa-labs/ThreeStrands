@@ -48,6 +48,11 @@ export function parseChangelog(source, { file = "CHANGELOG.md", lineOffset = 0 }
   const fail = (index, message) => {
     throw new Error(`${file} line ${index + 1 + lineOffset}: ${message}`);
   };
+  // Markdown reads `\<` as a literal "<", so `<kbd>\</kbd>` never closes its
+  // tag and swallows the rest of the entry. Write a backslash as `&#92;`.
+  const checkEscapedTag = (line, index) => {
+    if (/\\<\/?[A-Za-z]/.test(line)) fail(index, "a backslash before an HTML tag escapes the tag; write the backslash as &#92;");
+  };
 
   let first = lines.findIndex((line) => line.startsWith("## "));
   if (first < 0) first = lines.length;
@@ -90,10 +95,12 @@ export function parseChangelog(source, { file = "CHANGELOG.md", lineOffset = 0 }
       item = null;
     } else if (line.startsWith("- ")) {
       if (!group) fail(index, "entries belong under a ### New, ### Improved, or ### Fixed group");
+      checkEscapedTag(line, index);
       if (!line.slice(2).trim()) fail(index, "empty entry");
       item = { lines: [line] };
       group.items.push(item);
     } else if (/^ {2,}\S/.test(line) && item) {
+      checkEscapedTag(line, index);
       item.lines.push(line);
     } else if (line.trim() === "") {
       if (item && lines[index + 1]?.match(/^ {2,}\S/)) fail(index + 1, "an entry's continuation lines cannot follow a blank line");
