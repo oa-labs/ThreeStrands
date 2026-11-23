@@ -28,6 +28,7 @@ function setup(initial = draft, available = true, { open = true } = {}) {
   const ref = createRef<ComposerHandle>();
   const actions: DraftReviewActions = {
     readDraft: () => ref.current!.draftReview.readDraft(),
+    applySuggestion: (expected, suggestion) => ref.current!.draftReview.applySuggestion(expected, suggestion),
     replaceDraft: (expected, edit) => ref.current!.draftReview.replaceDraft(expected, edit),
   };
   const onOpenSettings = vi.fn();
@@ -63,6 +64,26 @@ describe("Draft review", () => {
     vi.spyOn(mailClient, "queueDraft");
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
+
+  it("applies and undoes a single edit inside the original formatting", async () => {
+    const { body } = setup();
+    await reviewed();
+    fireEvent.click(screen.getByRole("button", { name: "Apply edit: Ask a clear question" }));
+    expect(body.querySelector("strong")?.textContent).toBe("Would you be open to a brief call?");
+    expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue("Hello");
+    fireEvent.click(screen.getByRole("button", { name: "Undo Last Edit" }));
+    expect(body.querySelector("strong")?.textContent).toBe("Let me know your thoughts.");
+  });
+
+  it("declines a suggestion after its source text changes in the draft", async () => {
+    const { body } = setup();
+    await reviewed();
+    body.querySelector("strong")!.textContent = "I already rewrote this.";
+    fireEvent.input(body);
+    fireEvent.click(screen.getByRole("button", { name: "Apply edit: Ask a clear question" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Your draft changed");
+    expect(body).toHaveTextContent("I already rewrote this.");
+  });
 
   it("reviews the latest unsaved written text as soon as it opens, and again with a goal", async () => {
     const { body, openReview } = setup(draft, true, { open: false });
@@ -257,7 +278,7 @@ describe("Draft review", () => {
   });
 
   it("is absent when Draft Assist is off, and marks Review Again as sending the draft", async () => {
-    const actions: DraftReviewActions = { readDraft: vi.fn(), replaceDraft: vi.fn() };
+    const actions: DraftReviewActions = { readDraft: vi.fn(), applySuggestion: vi.fn(), replaceDraft: vi.fn() };
     const { container } = render(<DraftReviewSection actions={actions} enabled={false} available={false} onOpenSettings={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();
     expect(actions.readDraft).not.toHaveBeenCalled();
@@ -282,9 +303,9 @@ describe("Draft review", () => {
   });
 
   it("starts the review once the API key check confirms one can be sent", async () => {
-    const { rerender } = render(<DraftReviewSection actions={{ readDraft: vi.fn(() => ({ id: "d", account: "me@example.com", subject: "", body: "Hi", bodyHtml: "<p>Hi</p>", fingerprint: "f", hasInlineImages: false, hasInlineQuotes: false })), replaceDraft: vi.fn() }} enabled available={false} />);
+    const { rerender } = render(<DraftReviewSection actions={{ readDraft: vi.fn(() => ({ id: "d", account: "me@example.com", subject: "", body: "Hi", bodyHtml: "<p>Hi</p>", fingerprint: "f", hasInlineImages: false, hasInlineQuotes: false })), applySuggestion: vi.fn(), replaceDraft: vi.fn() }} enabled available={false} />);
     expect(mailClient.reviewDraft).not.toHaveBeenCalled();
-    const actions = { readDraft: vi.fn(() => ({ id: "d", account: "me@example.com", subject: "", body: "Hi", bodyHtml: "<p>Hi</p>", fingerprint: "f", hasInlineImages: false, hasInlineQuotes: false })), replaceDraft: vi.fn() };
+    const actions = { readDraft: vi.fn(() => ({ id: "d", account: "me@example.com", subject: "", body: "Hi", bodyHtml: "<p>Hi</p>", fingerprint: "f", hasInlineImages: false, hasInlineQuotes: false })), applySuggestion: vi.fn(), replaceDraft: vi.fn() };
     rerender(<DraftReviewSection actions={actions} enabled available />);
     await reviewed();
     rerender(<DraftReviewSection actions={actions} enabled available />);

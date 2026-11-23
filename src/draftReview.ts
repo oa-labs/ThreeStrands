@@ -1,5 +1,7 @@
 import type { DraftReviewResult } from "./domain";
 
+export type DraftReviewSuggestion = DraftReviewResult["suggestions"][number];
+
 /** A synchronous capture of the actual editor DOM, including unsaved edits. */
 export type DraftReviewSnapshot = {
   id: string;
@@ -17,6 +19,10 @@ export type DraftReviewEdit = { subject: string } & ({ body: string } | { bodyHt
 
 export type DraftReviewActions = {
   readDraft(): DraftReviewSnapshot;
+  applySuggestion(expected: DraftReviewSnapshot, suggestion: DraftReviewSuggestion): {
+    snapshot: DraftReviewSnapshot;
+    undo(): DraftReviewSnapshot;
+  };
   replaceDraft(expected: DraftReviewSnapshot, edit: DraftReviewEdit): DraftReviewSnapshot;
 };
 

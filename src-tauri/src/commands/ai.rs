@@ -105,6 +105,7 @@ pub(crate) async fn ai_summarize_thread(
         &revision,
         focus_from.as_deref(),
         provenance.as_ref(),
+        Vec::new(),
     )
 }
 
@@ -189,6 +190,7 @@ fn save_thread_summary(
     revision: &str,
     focus_from: Option<&str>,
     provenance: Option<&ai::requests::RequestRecord>,
+    evidence: Vec<crate::models::BriefEvidence>,
 ) -> AppResult<SummaryResult> {
     let generated_at = Utc::now().to_rfc3339();
     if !state.database.set_thread_summary_with_provenance(
@@ -198,6 +200,7 @@ fn save_thread_summary(
         revision,
         focus_from,
         provenance,
+        &evidence,
     )? {
         if let Ok(detail) = state.database.get_thread(thread_id) {
             let thread = detail.thread;
@@ -211,6 +214,7 @@ fn save_thread_summary(
                     generated_at,
                     revision,
                     focus_from: thread.summary_focus_from,
+                    evidence: thread.summary_evidence,
                 });
             }
         }
@@ -220,6 +224,7 @@ fn save_thread_summary(
         generated_at,
         revision: revision.to_string(),
         focus_from: focus_from.map(str::to_string),
+        evidence,
     })
 }
 
@@ -302,7 +307,8 @@ fn cache_thread_analysis(
     provenance: Option<&ai::requests::RequestRecord>,
 ) -> AppResult<ActionAnalysis> {
     let messages = state.database.get_thread(thread_id)?.messages;
-    let analysis = without_invitation_meetings(analysis, &messages);
+    let tasks = state.database.list_tasks_for_thread(thread_id)?;
+    let analysis = without_tracked_tasks(without_invitation_meetings(analysis, &messages), &tasks);
     let saved = database_result(state.database.save_thread_analysis_with_provenance(
         thread_id,
         revision,
@@ -315,13 +321,37 @@ fn cache_thread_analysis(
     if saved {
         return Ok(analysis);
     }
-    Ok(without_invitation_meetings(
-        state
-            .database
-            .thread_analysis(thread_id, revision)?
-            .unwrap_or(analysis),
-        &messages,
+    let saved = state
+        .database
+        .thread_analysis(thread_id, revision)?
+        .unwrap_or(analysis);
+    Ok(without_tracked_tasks(
+        without_invitation_meetings(saved, &messages),
+        &tasks,
     ))
+}
+
+fn without_tracked_tasks(mut analysis: ActionAnalysis, tasks: &[ThreadTask]) -> ActionAnalysis {
+    let normalized = |title: &str| {
+        title
+            .trim_end_matches(['.', '!', '?'])
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    analysis.proposals.retain(|proposal| {
+        let crate::models::ActionProposal::Task(proposal) = proposal else {
+            return true;
+        };
+        let title = normalized(proposal.title.trim());
+        !tasks.iter().any(|task| {
+            task.kind == proposal.kind
+                && task.source_message_id.as_deref() == Some(&proposal.evidence.source_message_id)
+                && normalized(task.title.trim()) == title
+        })
+    });
+    analysis
 }
 
 /// A calendar invitation already defines its event. This applies to fresh
@@ -376,9 +406,9 @@ pub(crate) async fn ai_analyze_thread(
     )
     .await?;
     if let Some(saved) = state.database.thread_analysis(&thread_id, &revision)? {
-        return Ok(without_invitation_meetings(
-            saved,
-            &state.database.get_thread(&thread_id)?.messages,
+        return Ok(without_tracked_tasks(
+            without_invitation_meetings(saved, &state.database.get_thread(&thread_id)?.messages),
+            &state.database.list_tasks_for_thread(&thread_id)?,
         ));
     }
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
@@ -810,18 +840,22 @@ pub(crate) async fn ai_thread_chat(
         .search_mailbox
         .then(|| ai::chat_search_terms(&question));
     let lookup_thread_id = thread_id.clone();
+    let account_id = state.database.get_thread(&thread_id)?.thread.account_id;
+    let task_account = account_id.clone();
+    let scoped_account = request
+        .search_current_account_only
+        .then(|| account_id.clone());
     let (open_tasks, other_threads) = run_database_task(move || {
         let mut tasks: Vec<ThreadTask> = database
-            .list_tasks(None, None)?
+            .list_tasks_for_thread(&lookup_thread_id)?
             .into_iter()
-            .filter(|task| {
-                task.thread_id.as_deref() == Some(lookup_thread_id.as_str())
-                    && matches!(task.status.as_str(), "open" | "in_progress")
-            })
+            .filter(|task| matches!(task.status.as_str(), "open" | "in_progress"))
             .collect();
         if let Some(contact_id) = contact_id {
             for task in database.list_contact_tasks(&contact_id)? {
-                if !tasks.iter().any(|existing| existing.id == task.id) {
+                if task.account_id == task_account
+                    && !tasks.iter().any(|existing| existing.id == task.id)
+                {
                     tasks.push(task);
                 }
             }
@@ -832,6 +866,7 @@ pub(crate) async fn ai_thread_chat(
                 &terms,
                 &lookup_thread_id,
                 ai::MAX_MAILBOX_CHAT_THREADS,
+                scoped_account.as_deref(),
             )? {
                 others.push(database.get_thread(&id)?);
             }
@@ -866,7 +901,9 @@ pub(crate) async fn ai_thread_chat(
                 messages: detail
                     .messages
                     .into_iter()
-                    .map(|message| ai::ThreadMessageInput {
+                    .map(|message| ai::ActionMessageInput {
+                        id: message.id,
+                        recipients: Vec::new(),
                         sender: message.sender,
                         sent_at: message.sent_at,
                         body_text: message.body_text,
@@ -893,7 +930,7 @@ pub(crate) async fn ai_thread_chat(
     );
     purpose.control = control;
     purpose.scope = ai::manifest::SourceScope {
-        account_ids: std::iter::once(state.database.get_thread(&thread_id)?.thread.account_id)
+        account_ids: std::iter::once(account_id)
             .chain(searched.iter().map(|source| source.account_id.clone()))
             .collect(),
         record_id: Some(thread_id.clone()),
@@ -932,6 +969,7 @@ pub(crate) async fn ai_thread_chat(
         ),
         reply_draft: answer.reply_draft,
         sources,
+        evidence: answer.evidence,
         searched,
         attachments: shared_attachments,
         availability: answer.availability,
@@ -1025,6 +1063,7 @@ pub(crate) async fn ai_brief_thread(
         &revision,
         focus_from.as_deref(),
         provenance.as_ref(),
+        brief.evidence,
     )?;
     let analysis = cache_thread_analysis(
         &state,
@@ -1141,7 +1180,11 @@ pub(crate) fn ai_reply_assist_context(
         .source_id
         .ok_or_else(|| "Reply draft has no source message".to_string())?;
     let detail = state.database.get_thread_for_message(&source_id)?;
-    Ok(ai::reply_context(
+    let source_index = detail
+        .messages
+        .iter()
+        .position(|message| message.id == source_id);
+    Ok(ai::reply_context_for_message(
         detail.thread.subject,
         detail
             .messages
@@ -1152,6 +1195,7 @@ pub(crate) fn ai_reply_assist_context(
                 body_text: message.body_text,
             })
             .collect(),
+        source_index,
     ))
 }
 
@@ -1281,7 +1325,7 @@ pub(crate) async fn ai_generate_reply(
     // Re-apply the native bounds even though normal callers received this
     // context from `ai_reply_assist_context`; the webview is not trusted to
     // enforce request size or cost limits.
-    let bounded = ai::reply_context(
+    let bounded = ai::reply_context_for_message(
         context.subject,
         context
             .messages
@@ -1292,6 +1336,7 @@ pub(crate) async fn ai_generate_reply(
                 body_text: message.body_text,
             })
             .collect(),
+        context.reply_to_message_index,
     );
     let mut purpose =
         ai::RequestPurpose::about("reply", &bounded.subject, Some(bounded.messages.len()));

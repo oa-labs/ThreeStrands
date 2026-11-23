@@ -439,7 +439,12 @@ fn archive_after_queue_keeps_only_matching_sends_archived() {
         db.test_connection()
             .unwrap()
             .execute(
-                "INSERT INTO threads SELECT ?1, ?2, subject, snippet, participants_json,
+                "INSERT INTO threads (
+                    id, provider_thread_id, subject, snippet, participants_json,
+                    last_message_at, unread, starred, archived, labels_json, trashed, account_id,
+                    summary, summary_generated_at, has_attachments, last_received_at,
+                    summary_revision, summary_focus_from
+                ) SELECT ?1, ?2, subject, snippet, participants_json,
                 last_message_at, unread, starred, archived, labels_json, trashed, ?3,
                 summary, summary_generated_at, has_attachments, last_received_at,
                 summary_revision, summary_focus_from

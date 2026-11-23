@@ -11,7 +11,7 @@ import {
   type ChatAttachmentOption,
   type Mention,
 } from "./chatAttachments";
-import type { ChatAttachmentSource, ChatAvailability, ChatSource, ScheduleEvent } from "./domain";
+import type { ChatAttachmentSource, ChatAvailability, ChatEvidence, ChatSource, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { AttachmentIcon } from "./AttachmentIcon";
 import { extraSuggestionsText } from "./ThreadAssist";
@@ -22,6 +22,7 @@ export type ChatEntry =
     role: "user";
     content: string;
     searchMailbox: boolean;
+    searchCurrentAccountOnly?: boolean;
     /** Attachments first shared with this question. */
     attachments: ChatAttachmentOption[];
   }
@@ -38,12 +39,17 @@ export type ChatEntry =
     /** Valid suggestions past the per-answer limit, which weren't added. */
     extraSuggestions?: number;
     sources: ChatSource[];
+    evidence?: ChatEvidence[];
     searched: ChatSource[];
     /** Attachments whose text the answer could see. */
     attachments: ChatAttachmentSource[];
     /** A range to show open times for, taken from the user's calendar. */
     availability: ChatAvailability | null;
   };
+
+function searchedOtherMail(entry: ChatEntry | undefined): boolean {
+  return entry?.role === "user" && entry.searchMailbox;
+}
 
 /** Attachments the chat's questions shared so far, each once, in order. */
 export function sharedChatAttachments(entries: ChatEntry[]): ChatAttachmentOption[] {
@@ -88,6 +94,7 @@ export function ThreadChat({
   onRetry,
   onUseReply,
   onOpenThread,
+  onOpenMessage,
   onShowSuggestions,
   onOpenCalendarEvent,
   onOpenSettings,
@@ -104,10 +111,11 @@ export function ThreadChat({
   attachments?: ChatAttachmentOption[];
   /** Attachments earlier questions in this chat already shared. */
   sharedAttachments?: ChatAttachmentOption[];
-  onAsk(question: string, searchMailbox: boolean, attachments: ChatAttachmentOption[]): void;
+  onAsk(question: string, searchMailbox: boolean, attachments: ChatAttachmentOption[], searchCurrentAccountOnly?: boolean): void;
   onRetry(): void;
   onUseReply(text: string): void;
   onOpenThread(threadId: string): void;
+  onOpenMessage?(threadId: string, messageId: string): void;
   onShowSuggestions(): void;
   onOpenCalendarEvent?(event: ScheduleEvent): void;
   onOpenSettings(): void;
@@ -117,6 +125,7 @@ export function ThreadChat({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [searchMailbox, setSearchMailbox] = useState(false);
+  const [searchCurrentAccountOnly, setSearchCurrentAccountOnly] = useState(true);
   const [selected, setSelected] = useState<ChatAttachmentOption[]>([]);
   const [mention, setMention] = useState<Mention | null>(null);
   const [dismissedMention, setDismissedMention] = useState<number | null>(null);
@@ -234,9 +243,11 @@ export function ThreadChat({
   const ask = (question: string) => {
     const text = question.trim();
     if (!text || pending) return;
-    onAsk(text, searchMailbox, selected);
+    if (searchMailbox && searchCurrentAccountOnly) onAsk(text, true, selected, true);
+    else onAsk(text, searchMailbox, selected);
     updateDraft("");
     setSearchMailbox(false);
+    setSearchCurrentAccountOnly(true);
     setSelected([]);
     setMention(null);
   };
@@ -267,11 +278,11 @@ export function ThreadChat({
   if (!enabled) return null;
   return <section className="context-section thread-chat" aria-label="Ask about this conversation">
     {entries.length > 0 ? <div className="thread-chat-log" role="log" aria-label="Conversation with AI" ref={log}>
-      {entries.map((entry) => entry.role === "user" ? (
+      {entries.map((entry, index) => entry.role === "user" ? (
         <p key={entry.id} className="thread-chat-question">
           {entry.content}
           {entry.attachments.length > 0 ? <small>Shared {entry.attachments.map((attachment) => attachment.filename).join(", ")}</small> : null}
-          {entry.searchMailbox ? <small>Searched all mail</small> : null}
+          {entry.searchMailbox ? <small>{entry.searchCurrentAccountOnly ? "Searched cached mail in this account" : "Searched all mail (cached on this device)"}</small> : null}
         </p>
       ) : (
         <div key={entry.id} className="thread-chat-answer">
@@ -293,14 +304,29 @@ export function ThreadChat({
           )) : null}
           {entry.hiddenSuggestions > 0 ? <HiddenSuggestionsNotice count={entry.hiddenSuggestions} /> : null}
           {entry.extraSuggestions ? <small>{extraSuggestionsText(entry.extraSuggestions)}</small> : null}
-          {entry.sources.length > 0 ? <nav className="thread-chat-sources" aria-label="Sources">
+          {entry.evidence?.length ? <div className="thread-chat-sources" aria-label="Evidence">
+            {entry.evidence.map((source, index) => {
+              const sourceThread = source.threadId ?? threadId;
+              const subject = entry.searched.find((item) => item.threadId === sourceThread)?.subject;
+              return <details key={`${source.messageId}:${index}`}>
+                <summary>{source.claim}</summary>
+                <blockquote>{source.excerpt}</blockquote>
+                {sourceThread ? <button type="button" className="btn-link" onClick={() => onOpenMessage ? onOpenMessage(sourceThread, source.messageId) : onOpenThread(sourceThread)}>
+                  {source.filename ? `Show message with ${source.filename}` : subject ? `Show message in ${subject}` : "Show source message"}
+                </button> : null}
+              </details>;
+            })}
+          </div> : null}
+          {!entry.evidence?.length && entry.sources.length > 0 ? <nav className="thread-chat-sources" aria-label="Sources">
             {entry.sources.map((source) => <button type="button" className="btn-link" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}
           </nav> : null}
           {entry.attachments.filter((attachment) => attachment.truncated).map((attachment) => <small key={attachmentKey(attachment)}>
             {attachment.filename} is long, so only its first part was shared.
           </small>)}
+          {entry.searched.length === 0 && searchedOtherMail(entries[index - 1])
+            ? <small>No other matching conversations were found in this device’s mail cache.</small> : null}
           {entry.searched.length > 0 ? <details className="thread-chat-searched">
-            <summary>Shared {entry.searched.length === 1 ? "1 other email" : `${entry.searched.length} other emails`} with AI</summary>
+            <summary>Shared passages from {entry.searched.length === 1 ? "1 other conversation" : `${entry.searched.length} other conversations`}</summary>
             {entry.searched.map((source) => <button type="button" className="btn-link" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}
           </details> : null}
         </div>
@@ -383,8 +409,15 @@ export function ThreadChat({
         <div className="thread-chat-controls">
           <label title="Also search your other mail for this question only">
             <input type="checkbox" checked={searchMailbox} onChange={(event) => setSearchMailbox(event.target.checked)} />
-            Search all mail
+            Search other mail
           </label>
+          {searchMailbox ? <label>
+            <span>Mail search scope</span>
+            <select value={searchCurrentAccountOnly ? "current" : "all"} onChange={(event) => setSearchCurrentAccountOnly(event.target.value === "current")}>
+              <option value="current">This account</option>
+              <option value="all">All accounts</option>
+            </select>
+          </label> : null}
           <button type="submit" className="btn btn-sm btn-primary" disabled={pending || !draft.trim()}><Sparkles size={ICON_SIZE.sm} /> Ask</button>
         </div>
       </form>

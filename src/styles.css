@@ -2343,7 +2343,7 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .thread-chat-attachments { display:flex; flex-wrap:wrap; gap:var(--space-1-5); margin:0; padding:0; list-style:none; }
 .thread-chat-attachments li { display:inline-flex; align-items:center; gap:var(--space-1); max-width:100%; padding:var(--space-0-5) var(--space-1-5); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--secondary); background:var(--hover); font-size:var(--text-meta); }
 .thread-chat-attachments span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.thread-chat-controls { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); color:var(--muted); font-size:var(--text-meta); }
+.thread-chat-controls { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-2); color:var(--muted); font-size:var(--text-meta); }
 .thread-chat-controls label { display:inline-flex; align-items:center; gap:var(--space-1-5); }
 .contact-sidebar-email-row { display:flex; align-items:center; justify-content:center; gap:var(--space-1); width:100%; min-width:0; }
 .contact-sidebar-email-row a { min-width:0; display:flex; align-items:center; gap:var(--space-1-5); color:var(--secondary); font-size:var(--text-body); text-decoration:none; }
@@ -3442,6 +3442,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .reply-assist-context-body article + article { margin-top: var(--space-2-5); padding-top: var(--space-2-5); border-top: 1px solid var(--border); }
 .reply-assist-context-body p { margin: 0 0 var(--space-1); }
 .reply-assist-context-body pre { margin: 0; color: var(--body-text); font: inherit; overflow-wrap: anywhere; white-space: pre-wrap; }
+.reply-assist-intents { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .reply-assist-actions { justify-content: space-between; }
 .reply-assist-actions span { color: var(--muted); font-size: var(--text-meta); }
 .reply-assist-confirm { flex-wrap: wrap; margin: var(--space-2-5) 0; color: var(--secondary); font-size: var(--text-secondary); }

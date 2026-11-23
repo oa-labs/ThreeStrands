@@ -101,6 +101,7 @@ export type ThreadAssistProps = {
   error: string | null;
   /** Runs whatever is missing, or everything when `force` is set. */
   onRun(force: boolean): void;
+  onShowSource?(threadId: string, messageId: string): void;
   onOpenSettings(): void;
 };
 
@@ -392,7 +393,7 @@ function titlesDiffer(suggested: string, calendar: string): boolean {
   return suggested.trim().toLocaleLowerCase() !== calendar.trim().toLocaleLowerCase();
 }
 
-export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, upcoming = false, ownEmails = [], error, onRun, onOpenSettings }: ThreadAssistProps) {
+export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, upcoming = false, ownEmails = [], error, onRun, onShowSource, onOpenSettings }: ThreadAssistProps) {
   const { thread } = detail;
   const ownNames = ownNamesIn(detail.messages ?? [], ownEmails);
   const people = conversationPeople(detail.messages ?? [], ownEmails);
@@ -521,6 +522,16 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
           </li>;
         })}
       </ul> : null}
+      {summaryText && thread.summaryEvidence?.length ? <details className="thread-assist-earlier">
+        <summary>Brief sources</summary>
+        {thread.summaryEvidence.map(({ claim, source }, index) => <div key={`${source.sourceMessageId}:${index}`}>
+          <p>{claim}</p>
+          <blockquote>{source.excerpt}</blockquote>
+          {onShowSource && messageSource(source.sourceMessageId) ? <button type="button" className="btn-link" onClick={() => onShowSource(thread.id, source.sourceMessageId)}>
+            Show message from {messageSource(source.sourceMessageId)}
+          </button> : null}
+        </div>)}
+      </details> : null}
       {earlierLines.length > 0 ? <details key={thread.id} className="thread-assist-earlier">
         <summary>Earlier context</summary>
         {earlierLines.map((line, index) => <p key={index}>{line.replace(EARLIER_PREFIX, "")}</p>)}

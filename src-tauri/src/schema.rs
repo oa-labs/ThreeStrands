@@ -61,6 +61,7 @@ const MIGRATIONS: &[Migration] = &[
     (114, to_v114),
     (115, to_v115),
     (116, to_v116),
+    (117, to_v117),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1532,6 +1533,19 @@ fn to_v115(tx: &rusqlite::Transaction) -> Result<(), String> {
         );",
     )
     .map_err(error)
+}
+
+fn to_v117(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let exists: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('threads') WHERE name='summary_evidence_json')",
+        [],
+        |row| row.get(0),
+    ).map_err(error)?;
+    if !exists {
+        tx.execute_batch("ALTER TABLE threads ADD COLUMN summary_evidence_json TEXT;")
+            .map_err(error)?;
+    }
+    Ok(())
 }
 
 fn to_v116(tx: &rusqlite::Transaction) -> Result<(), String> {

@@ -1868,6 +1868,7 @@ export function App() {
               ownEmails={accounts.map((account) => account.email)}
               error={summaryError ?? actionAnalysisError}
               onRun={(force) => void runBrief({ force })}
+              onShowSource={showMessage}
               onOpenSettings={() => openSettingsAt("ai")}
             />
           ) : null}
@@ -1882,13 +1883,14 @@ export function App() {
               focusRequest={chatFocusRequest}
               attachments={chatAttachmentOptions(visibleDetail.messages)}
               sharedAttachments={sharedChatAttachments(chatByThread[visibleDetail.thread.id] ?? [])}
-              onAsk={(question, searchMailbox, attachments) => void askThread(question, searchMailbox, person?.contactId ?? null, attachments)}
+              onAsk={(question, searchMailbox, attachments, searchCurrentAccountOnly) => void askThread(question, searchMailbox, person?.contactId ?? null, attachments, searchCurrentAccountOnly)}
               onRetry={() => {
                 const failure = chatFailures[visibleDetail.thread.id];
-                if (failure) void askThread(failure.question, failure.searchMailbox, person?.contactId ?? null, failure.attachments);
+                if (failure) void askThread(failure.question, failure.searchMailbox, person?.contactId ?? null, failure.attachments, failure.searchCurrentAccountOnly);
               }}
               onUseReply={(text) => correspondence.replyWithText(text, visibleDetail.messages.at(-1)?.id)}
               onOpenThread={jumpToThread}
+              onOpenMessage={showMessage}
               onShowSuggestions={() => (document.getElementById(THREAD_SUGGESTIONS_ID) ?? document.getElementById(THREAD_ASSIST_ID))?.scrollIntoView?.({ block: "nearest" })}
               onOpenCalendarEvent={(event) => openCalendarView(eventDate(event), event)}
               onOpenSettings={() => openSettingsAt("ai")}

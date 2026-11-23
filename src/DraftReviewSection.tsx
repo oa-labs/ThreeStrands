@@ -5,7 +5,7 @@ import { ContextSectionHeader } from "./ContextSections";
 import { mailClient } from "./data/client";
 import { readAiProvider, readAiRequestConfig } from "./aiSettings";
 import type { DraftReviewResult } from "./domain";
-import { reviewHasRevision, type DraftReviewActions, type DraftReviewSnapshot } from "./draftReview";
+import { reviewHasRevision, type DraftReviewActions, type DraftReviewSnapshot, type DraftReviewSuggestion } from "./draftReview";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { hasWritingProfile, useWritingProfiles, writingProfileFor, type WritingProfile } from "./writingProfiles";
@@ -60,6 +60,7 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
   const [review, setReview] = useState<DraftReviewResult | null>(null);
   const [applied, setApplied] = useState<DraftReviewSnapshot | null>(null);
   const [expanded, setExpanded] = useState(true);
+  const [appliedEdits, setAppliedEdits] = useState<{ index: number; snapshot: DraftReviewSnapshot; undo(): DraftReviewSnapshot }[]>([]);
   const contentId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -99,6 +100,7 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
       setExpanded(true);
       setReview(null);
       setApplied(null);
+      setAppliedEdits([]);
       setSent(request);
       setOriginal(snapshot);
       const { provider, model, endpoint } = readAiRequestConfig("reviewing a draft", "draftReview");
@@ -117,6 +119,30 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
 
   const latestRequest = useRef(requestReview);
   latestRequest.current = requestReview;
+
+  function applyEdit(index: number, suggestion: DraftReviewSuggestion) {
+    const expected = appliedEdits.at(-1)?.snapshot ?? original;
+    if (!expected) return;
+    try {
+      const result = actions.applySuggestion(expected, suggestion);
+      setAppliedEdits([...appliedEdits, { index, ...result }]);
+      setError("");
+    } catch (reason) { setError(errorMessage(reason)); }
+  }
+
+  function undoEdit() {
+    const last = appliedEdits.at(-1);
+    if (!last) return;
+    try {
+      const restored = last.undo();
+      const previous = appliedEdits.slice(0, -1);
+      const previousEdit = previous.at(-1);
+      if (previousEdit) previous[previous.length - 1] = { ...previousEdit, snapshot: restored };
+      else setOriginal(restored);
+      setAppliedEdits(previous);
+      setError("");
+    } catch (reason) { setError(errorMessage(reason)); }
+  }
 
   function apply() {
     if (!original || !review) return;
@@ -164,14 +190,19 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
             <small>{suggestion.field === "subject" ? "Subject" : "Body"}</small>
             {suggestion.excerpt ? <blockquote>{suggestion.excerpt}</blockquote> : null}
             <p>{suggestion.reason}</p>
-            {suggestion.replacement ? <p className="draft-review-wording">Try: {suggestion.replacement}</p> : null}
+            {suggestion.replacement ? <p className="draft-review-wording">Try: {suggestion.replacement}</p> : <p className="draft-review-wording">Remove the selected text.</p>}
+            {!applied && suggestion.excerpt !== suggestion.replacement ? <button
+              type="button" className="btn btn-sm" disabled={appliedEdits.some((edit) => edit.index === index)}
+              aria-label={`Apply edit: ${suggestion.title}`} onClick={() => applyEdit(index, suggestion)}
+            >{appliedEdits.some((edit) => edit.index === index) ? "Applied" : "Apply Edit"}</button> : null}
           </li>)}
         </ol> : <p className="context-section-note">No changes suggested.</p>}
+        {appliedEdits.length ? <button type="button" className="btn btn-sm" onClick={undoEdit}>Undo Last Edit</button> : null}
         {reviewHasRevision(review, original) ? <div className="draft-review-preview">
           <h4>Revised email</h4>
           <p><strong>Subject:</strong> {review.revisedSubject || "(no subject)"}</p>
           <pre>{review.revisedBody}</pre>
-          {!applied ? <>
+          {!applied && appliedEdits.length === 0 ? <>
             <p className="context-section-note">{replacesBody && protectedBody
               ? "Apply body suggestions manually to keep inline images and quoted text in place."
               : replacesBody ? "Applying replaces your written text and its formatting. Undo restores the original. Quoted history and attachments stay in place."

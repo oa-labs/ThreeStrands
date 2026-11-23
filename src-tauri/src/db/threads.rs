@@ -5,7 +5,9 @@ use super::split_inboxes::split_inbox_matches;
 use super::DatabaseError;
 use super::{decode_json, Database, DbResult};
 use crate::mime::{readable_body_text, UnsubscribeMetadata};
-use crate::models::{MailboxUnreadCounts, Message, Thread, ThreadDetail, ThreadPage};
+use crate::models::{
+    BriefEvidence, MailboxUnreadCounts, Message, Thread, ThreadDetail, ThreadPage,
+};
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
@@ -26,7 +28,7 @@ pub(super) const THREAD_COLUMNS: &str = "t.id, t.provider_thread_id, t.subject, 
     t.labels_json, t.trashed, t.account_id, t.summary, t.summary_generated_at,
     t.has_attachments, t.last_received_at, t.summary_revision, t.summary_focus_from,
     (SELECT json_extract(s.record_json, '$.until') FROM conversation_snoozes s
-     WHERE s.id = t.id AND json_extract(s.record_json, '$.state') = 'active')";
+     WHERE s.id = t.id AND json_extract(s.record_json, '$.state') = 'active'), t.summary_evidence_json";
 
 impl Database {
     /// `account_id` merges every account when absent, or scopes to one account.
@@ -313,8 +315,10 @@ impl Database {
             revision,
             focus_from,
             None,
+            &[],
         )
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn set_thread_summary_with_provenance(
         &self,
         thread_id: &str,
@@ -323,7 +327,12 @@ impl Database {
         revision: &str,
         focus_from: Option<&str>,
         provenance: Option<&crate::ai::requests::RequestRecord>,
+        evidence: &[BriefEvidence],
     ) -> DbResult<bool> {
+        let evidence_json = (!evidence.is_empty())
+            .then(|| serde_json::to_string(evidence))
+            .transpose()
+            .map_err(super::serialization_error)?;
         let json = provenance
             .map(serde_json::to_string)
             .transpose()
@@ -331,9 +340,9 @@ impl Database {
         self.with_transaction(|connection| {
             let changed = connection.execute(
                 "UPDATE threads SET summary = ?1, summary_generated_at = ?2, summary_revision = ?3,
-                    summary_focus_from = ?5
+                    summary_focus_from = ?5, summary_evidence_json = ?6
                  WHERE id = ?4 AND (summary_revision IS NULL OR summary_revision <= ?3)",
-                params![summary, generated_at, revision, thread_id, focus_from],
+                params![summary, generated_at, revision, thread_id, focus_from, evidence_json],
             )? > 0;
             if changed {
                 connection.execute("INSERT INTO ai_result_provenance(thread_id,summary_json) VALUES(?1,?2) ON CONFLICT(thread_id) DO UPDATE SET summary_json=excluded.summary_json", rusqlite::params![thread_id, json])?;
@@ -466,7 +475,14 @@ pub(super) fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Threa
         summary_focus_from: row.get(17)?,
         match_snippet: None,
         snoozed_until: row.get(18)?,
+        summary_evidence: decode_summary_evidence(row.get(19)?),
     })
+}
+
+pub(super) fn decode_summary_evidence(value: Option<String>) -> Vec<BriefEvidence> {
+    value
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

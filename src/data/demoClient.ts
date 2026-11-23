@@ -687,7 +687,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const wantsReply = /\b(draft|write|reply)\b/i.test(request.question);
       const wantsTimes = /\b(free|available|availability|when can|find a time)\b/i.test(request.question);
       const now = new Date();
-      const fixture = seed.aiFixtures?.[request.threadId]?.chat;
+      const candidate = seed.aiFixtures?.[request.threadId]?.chat;
+      const fixture = !request.searchCurrentAccountOnly || candidate?.searched.every((source) => source.accountId === detail.thread.accountId)
+        ? candidate : undefined;
       return {
         availability: wantsTimes
           ? {
@@ -738,6 +740,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const detail = await threadForMessage(replyDraft.sourceId);
       return {
         subject: detail.thread.subject,
+        replyToMessageIndex: detail.messages.findIndex((message) => message.id === replyDraft.sourceId),
         messages: detail.messages.map((message) => ({
           sender: message.sender,
           sentAt: message.sentAt,

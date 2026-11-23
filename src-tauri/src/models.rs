@@ -508,6 +508,8 @@ pub struct Thread {
     /// The send time of the first message the summary focused on; earlier
     /// messages were background. `None` for a summary of the whole thread.
     pub summary_focus_from: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub summary_evidence: Vec<BriefEvidence>,
     pub has_attachments: bool,
     pub snoozed_until: Option<String>,
 }
@@ -1011,6 +1013,13 @@ pub struct ContactFieldSuggestion {
     pub excerpt: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BriefEvidence {
+    pub claim: String,
+    pub source: ProposalEvidence,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SummaryResult {
@@ -1020,6 +1029,8 @@ pub struct SummaryResult {
     pub revision: String,
     /// See `Thread::summary_focus_from`.
     pub focus_from: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<BriefEvidence>,
 }
 
 /// One day's AI provider usage for a provider and model. Cost is known only
@@ -1073,6 +1084,8 @@ pub struct ThreadChatRequest {
     #[serde(default)]
     pub history: Vec<ChatTurn>,
     pub search_mailbox: bool,
+    #[serde(default)]
+    pub search_current_account_only: bool,
     pub include_proposals: bool,
     pub contact_id: Option<String>,
     pub user_time_zone: String,
@@ -1129,12 +1142,23 @@ pub struct ChatSource {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatEvidence {
+    pub claim: String,
+    pub excerpt: String,
+    pub message_id: String,
+    pub thread_id: Option<String>,
+    pub filename: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ThreadChatReply {
     pub answer: String,
     pub analysis: ActionAnalysis,
     pub reply_draft: Option<String>,
     /// Other conversations the answer says it relied on.
     pub sources: Vec<ChatSource>,
+    pub evidence: Vec<ChatEvidence>,
     /// Every other conversation shared because the question searched all mail.
     pub searched: Vec<ChatSource>,
     /// Every attachment whose text was shared for this question.
@@ -1167,6 +1191,8 @@ pub struct ReplyAssistMessage {
 #[serde(rename_all = "camelCase")]
 pub struct ReplyAssistContext {
     pub subject: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_message_index: Option<usize>,
     pub messages: Vec<ReplyAssistMessage>,
 }
 

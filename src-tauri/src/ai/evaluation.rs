@@ -215,7 +215,7 @@ async fn execute(case: &Case, provider: AiProvider, options: &Options) -> Result
         ),
         Feature::Brief => {
             let brief = Box::pin(brief(analysis(), key)).await?;
-            Ok(json!({"summary":brief.summary,"analysis":brief.analysis}))
+            Ok(json!({"summary":brief.summary,"analysis":brief.analysis,"evidence":brief.evidence}))
         }
         Feature::Suggestions => Ok(json!({"analysis":analyze(analysis(),key).await?})),
         Feature::Chat => {
@@ -237,7 +237,9 @@ async fn execute(case: &Case, provider: AiProvider, options: &Options) -> Result
                 .map(|body| ChatThreadInput {
                     thread_id: "other-thread".into(),
                     subject: "Earlier decision".into(),
-                    messages: vec![ThreadMessageInput {
+                    messages: vec![ActionMessageInput {
+                        id: "other-message".into(),
+                        recipients: vec![],
                         sender: "colleague@example.test".into(),
                         sent_at: NOW.into(),
                         body_text: body.clone(),
@@ -265,7 +267,7 @@ async fn execute(case: &Case, provider: AiProvider, options: &Options) -> Result
             ))
             .await?;
             Ok(
-                json!({"answer":answer.answer,"analysis":answer.analysis,"sourceThreadIds":answer.source_thread_ids,"availability":answer.availability}),
+                json!({"answer":answer.answer,"analysis":answer.analysis,"sourceThreadIds":answer.source_thread_ids,"evidence":answer.evidence,"availability":answer.availability}),
             )
         }
         Feature::Reply => {

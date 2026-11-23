@@ -665,23 +665,37 @@ fn chat_search_matches_any_word_and_skips_the_open_and_trashed_conversations() {
     let database = database();
     let words = |list: &[&str]| list.iter().map(|word| word.to_string()).collect::<Vec<_>>();
     let found = database
-        .chat_search_thread_ids(&words(&["keyboard", "nosuchword"]), "none", 10)
+        .chat_search_thread_ids(&words(&["keyboard", "nosuchword"]), "none", 10, None)
         .unwrap();
     assert!(found.contains(&"welcome".to_string()));
-    assert!(!database
-        .chat_search_thread_ids(&words(&["keyboard"]), "welcome", 10)
+    let account = database.get_thread("welcome").unwrap().thread.account_id;
+    assert!(database
+        .chat_search_thread_ids(&words(&["keyboard"]), "none", 10, Some(&account))
         .unwrap()
         .contains(&"welcome".to_string()));
     assert!(database
-        .chat_search_thread_ids(&[], "none", 10)
+        .chat_search_thread_ids(
+            &words(&["keyboard"]),
+            "none",
+            10,
+            Some("different@example.test")
+        )
+        .unwrap()
+        .is_empty());
+    assert!(!database
+        .chat_search_thread_ids(&words(&["keyboard"]), "welcome", 10, None)
+        .unwrap()
+        .contains(&"welcome".to_string()));
+    assert!(database
+        .chat_search_thread_ids(&[], "none", 10, None)
         .unwrap()
         .is_empty());
     assert!(database
-        .chat_search_thread_ids(&words(&["keyboard\" OR \"x"]), "none", 10)
+        .chat_search_thread_ids(&words(&["keyboard\" OR \"x"]), "none", 10, None)
         .unwrap()
         .is_empty());
     assert!(database
-        .chat_search_thread_ids(&words(&["keyboard"]), "none", 0)
+        .chat_search_thread_ids(&words(&["keyboard"]), "none", 0, None)
         .unwrap()
         .is_empty());
     database
@@ -691,7 +705,7 @@ fn chat_search_matches_any_word_and_skips_the_open_and_trashed_conversations() {
         })
         .unwrap();
     assert!(!database
-        .chat_search_thread_ids(&words(&["keyboard"]), "none", 10)
+        .chat_search_thread_ids(&words(&["keyboard"]), "none", 10, None)
         .unwrap()
         .contains(&"welcome".to_string()));
 }

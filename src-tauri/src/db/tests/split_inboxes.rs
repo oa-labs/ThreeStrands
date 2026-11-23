@@ -149,6 +149,7 @@ fn test_thread(participants: &[&str], labels: &[&str]) -> Thread {
         summary_generated_at: None,
         summary_revision: None,
         summary_focus_from: None,
+        summary_evidence: Vec::new(),
         has_attachments: false,
         snoozed_until: None,
     }

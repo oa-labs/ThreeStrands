@@ -11,6 +11,7 @@ pub struct ThreadMessageInput {
 /// One bounded message supplied to explicit thread-action extraction. The
 /// message id is retained so every proposal can point back to verifiable
 /// evidence without giving the model access to any application tools.
+#[derive(Clone)]
 pub struct ActionMessageInput {
     pub id: String,
     pub sender: String,
@@ -60,6 +61,54 @@ pub(super) fn action_context(
         .collect()
 }
 
+/// Keep the opening message and a few related requests in scope even when
+/// the thread has more messages than a normal brief can send.
+pub(super) fn brief_context(
+    messages: &[ActionMessageInput],
+    focus_from: Option<&str>,
+) -> Vec<ActionMessageInput> {
+    if messages.len() <= MAX_MESSAGES {
+        return action_context(messages, focus_from);
+    }
+    const EARLIER_MESSAGES: usize = 3;
+    let recent_start = messages.len() - (MAX_MESSAGES - EARLIER_MESSAGES);
+    let terms = super::chat::chat_search_terms(&messages.last().unwrap().body_text);
+    let mut ranked: Vec<_> = messages[1..recent_start]
+        .iter()
+        .enumerate()
+        .map(|(index, message)| {
+            let words = message.body_text.to_lowercase();
+            let overlap = terms
+                .iter()
+                .filter(|term| words.contains(term.as_str()))
+                .count();
+            (index + 1, overlap, words.contains('?'))
+        })
+        .collect();
+    ranked.sort_by_key(|&(index, overlap, asks)| {
+        (
+            std::cmp::Reverse(overlap),
+            std::cmp::Reverse(asks),
+            std::cmp::Reverse(index),
+        )
+    });
+    let mut earlier: Vec<_> = std::iter::once(0)
+        .chain(
+            ranked
+                .into_iter()
+                .take(EARLIER_MESSAGES - 1)
+                .map(|(index, _, _)| index),
+        )
+        .collect();
+    earlier.sort_unstable();
+    let selected: Vec<_> = earlier
+        .into_iter()
+        .chain(recent_start..messages.len())
+        .map(|index| messages[index].clone())
+        .collect();
+    action_context(&selected, focus_from)
+}
+
 pub(super) fn truncate_chars(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
 }
@@ -80,11 +129,23 @@ pub(super) fn bounded_bodies<'a>(
 pub(super) fn bounded_bodies_capped<'a>(
     bodies: impl IntoIterator<Item = (&'a str, usize)>,
 ) -> Vec<String> {
+    bounded_bodies_retaining_message(bodies, None)
+}
+
+pub(super) fn bounded_bodies_retaining_message<'a>(
+    bodies: impl IntoIterator<Item = (&'a str, usize)>,
+    retain_index: Option<usize>,
+) -> Vec<String> {
     let mut history = crate::quoted_history::ThreadHistory::default();
     bodies
         .into_iter()
-        .map(|(body, max_chars)| {
-            let new_len = history.new_text_len(body);
+        .enumerate()
+        .map(|(index, (body, max_chars))| {
+            let new_len = if Some(index) == retain_index {
+                body.len()
+            } else {
+                history.new_text_len(body)
+            };
             let new_text = if new_len < body.len() {
                 body[..new_len].trim_end()
             } else {

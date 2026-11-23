@@ -25,8 +25,8 @@ pub use brief::{
 pub use chat::{chat, chat_search_terms, ChatAttachmentInput, ChatRequest, ChatThreadInput};
 pub(crate) use chat::{MAX_CHAT_TURN_CHARS, MAX_MAILBOX_CHAT_THREADS};
 pub use compose::{
-    generate_reply, reply_context, review_draft, DraftReviewRequest, DraftReviewResult,
-    ReplyWritingProfile,
+    generate_reply, reply_context, reply_context_for_message, review_draft, DraftReviewRequest,
+    DraftReviewResult, ReplyWritingProfile,
 };
 pub(crate) use compose::{MAX_WRITING_PROFILE_ABOUT_CHARS, MAX_WRITING_PROFILE_INSTRUCTIONS_CHARS};
 pub use contact::{
@@ -210,7 +210,7 @@ mod tests {
         request.other_threads = vec![ChatThreadInput {
             thread_id: "other".into(),
             subject: "Feed".into(),
-            messages,
+            messages: actions,
         }];
         let prompt: serde_json::Value =
             serde_json::from_str(&build_chat_prompt(&request, &[]).unwrap()).unwrap();
@@ -319,6 +319,7 @@ mod tests {
         let _ = generate_reply(
             &ReplyAssistContext {
                 subject: "Hello".into(),
+                reply_to_message_index: None,
                 messages: vec![ReplyAssistMessage {
                     sender: "jane@example.com".into(),
                     sent_at: "2026-09-25".into(),

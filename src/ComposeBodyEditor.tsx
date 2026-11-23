@@ -38,6 +38,7 @@ export type ComposeBodyEditorHandle = {
   focusBody(): void;
   reviewBody(): { html: string; text: string; hasInlineImages: boolean; hasInlineQuotes: boolean };
   replaceAuthoredHtml(html: string): void;
+  editAuthoredExcerpt(excerpt: string, replacement: string): () => void;
 };
 
 type ComposeBodyEditorProps = {
@@ -267,6 +268,46 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
         // authored paragraph without also changing somebody else's words.
         hasInlineQuotes: Boolean(bodyEditor.current.querySelector('blockquote[type="cite"]')),
       };
+    },
+    editAuthoredExcerpt: (excerpt, replacement) => {
+      const editor = bodyEditor.current;
+      if (!editor || busy) throw new Error("Finish the current composer action first");
+      const text = serializeComposeBody(editor).text;
+      const start = text.indexOf(excerpt);
+      if (!excerpt.trim() || start < 0 || text.indexOf(excerpt, start + 1) >= 0) {
+        throw new Error("This edit needs a single matching passage in your draft.");
+      }
+      const nodes = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      for (let node = nodes.nextNode() as Text | null; node; node = nodes.nextNode() as Text | null) {
+        if (node.parentElement?.closest('blockquote, [contenteditable="false"]')) continue;
+        const before = node.data;
+        const offset = before.replace(/\u00a0/g, " ").indexOf(excerpt);
+        if (offset < 0) continue;
+        const parts = replacement.split(/\r?\n/);
+        const inserted: Node[] = [];
+        const tail = before.slice(offset + excerpt.length);
+        node.data = before.slice(0, offset) + parts[0] + (parts.length === 1 ? tail : "");
+        let previous: Node = node;
+        for (const [index, part] of parts.slice(1).entries()) {
+          const lineBreak = document.createElement("br");
+          const line = document.createTextNode(part + (index === parts.length - 2 ? tail : ""));
+          previous.parentNode!.insertBefore(lineBreak, previous.nextSibling);
+          lineBreak.after(line);
+          inserted.push(lineBreak, line);
+          previous = line;
+        }
+        lastBodyRange.current = null;
+        editBody();
+        const target = node;
+        return () => {
+          if (!editor.contains(target) || busy) throw new Error("This edit has changed in the draft.");
+          target.data = before;
+          for (const item of inserted) item.parentNode?.removeChild(item);
+          lastBodyRange.current = null;
+          editBody();
+        };
+      }
+      throw new Error("Apply this edit manually because it spans formatting or quoted text.");
     },
     replaceAuthoredHtml: (html) => {
       if (!bodyEditor.current || busy) throw new Error("Finish the current composer action first");

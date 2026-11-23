@@ -272,6 +272,7 @@ impl Database {
         terms: &[String],
         exclude_thread_id: &str,
         limit: usize,
+        account_id: Option<&str>,
     ) -> DbResult<Vec<String>> {
         let words: Vec<&String> = terms
             .iter()
@@ -289,6 +290,8 @@ impl Database {
             let mut statement = connection.prepare(
                 "SELECT t.id FROM thread_search s JOIN threads t ON t.id = s.thread_id
                  WHERE thread_search MATCH ?1 AND t.trashed = 0 AND t.id <> ?2
+                   AND (?4 IS NULL OR t.account_id = ?4)
+                   AND NOT EXISTS (SELECT 1 FROM json_each(t.labels_json) WHERE value = 'SPAM')
                  ORDER BY rank, t.last_received_at DESC
                  LIMIT ?3",
             )?;
@@ -296,7 +299,8 @@ impl Database {
                 params![
                     query,
                     exclude_thread_id,
-                    i64::try_from(limit).unwrap_or(i64::MAX)
+                    i64::try_from(limit).unwrap_or(i64::MAX),
+                    account_id,
                 ],
                 |row| row.get(0),
             )?;
@@ -403,7 +407,14 @@ mod tests {
                 revision,
                 revision,
                 None,
-                Some(&provenance)
+                Some(&provenance),
+                &[crate::models::BriefEvidence {
+                    claim: "Waiting for the final figures".into(),
+                    source: crate::models::ProposalEvidence {
+                        source_message_id: "message-1".into(),
+                        excerpt: "I will send the figures".into(),
+                    },
+                }],
             )
             .unwrap());
         assert!(database
@@ -420,6 +431,16 @@ mod tests {
         let (summary, suggestions) = database.ai_result_provenance("account:thread").unwrap();
         assert_eq!(summary.unwrap().prompt_revision, "prompt-hash");
         assert_eq!(suggestions.unwrap().request_id, "request");
+        assert_eq!(
+            database
+                .get_thread("account:thread")
+                .unwrap()
+                .thread
+                .summary_evidence[0]
+                .source
+                .source_message_id,
+            "message-1"
+        );
         // A late result must not detach the metadata from the winning result.
         assert!(!database
             .set_thread_summary_with_provenance(
@@ -428,7 +449,8 @@ mod tests {
                 revision,
                 "2026-09-19T10:00:00Z",
                 None,
-                None
+                None,
+                &[],
             )
             .unwrap());
         assert!(!database

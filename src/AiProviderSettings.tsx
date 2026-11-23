@@ -333,7 +333,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           <div className="settings-toggle-list">
             <SettingsToggle
               label="Reading"
-              description={`Get Brief summarizes the open conversation and suggests tasks and meetings. Ask About This Conversation answers questions; press q or ${formatShortcut("Mod+j")} to ask, and Escape returns to shortcuts. Other emails are shared only for a question where you choose Search all mail.`}
+              description={`Get Brief summarizes the open conversation and suggests tasks and meetings. Ask About This Conversation answers questions; press q or ${formatShortcut("Mod+j")} to ask, and Escape returns to shortcuts. Other emails are shared only for a question where you choose Search other mail.`}
               checked={reading}
               onChange={(value) => updateArea("reading", value)}
             />

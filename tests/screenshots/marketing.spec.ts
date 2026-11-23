@@ -259,7 +259,8 @@ const scenes: Scene[] = [
       await chat.getByRole("option", { name: /Q4-launch-plan-v7.pdf/ }).click();
       await question.press("End");
       await question.pressSequentially(" What changed in onboarding and how will we roll it out?");
-      await chat.getByRole("checkbox", { name: "Search all mail", exact: true }).check();
+      await chat.getByRole("checkbox", { name: "Search other mail", exact: true }).check();
+      await chat.getByRole("combobox", { name: "Mail search scope" }).selectOption("all");
       await chat.getByRole("button", { name: "Ask", exact: true }).click();
       await expect(chat.getByRole("log")).toContainText("EU and APAC following 48 hours later");
       // Submitting can return the dock to read mode; reopen it to show shared files.

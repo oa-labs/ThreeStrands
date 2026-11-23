@@ -166,6 +166,15 @@ impl Database {
         })
     }
 
+    pub(crate) fn list_tasks_for_thread(&self, thread_id: &str) -> DbResult<Vec<ThreadTask>> {
+        self.with_connection(|connection| {
+            let mut statement =
+                connection.prepare(&format!("{} WHERE thread_id = ?1", select_sql()))?;
+            let rows = statement.query_map([thread_id], task_from_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
     /// Open tasks linked to any conversation that includes one of the
     /// contact's addresses. `id` is a saved contact id or `derived:<email>`.
     pub fn list_contact_tasks(&self, id: &str) -> DbResult<Vec<ThreadTask>> {

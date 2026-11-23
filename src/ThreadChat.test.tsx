@@ -112,16 +112,34 @@ describe("ThreadChat", () => {
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     expect(onAsk).not.toHaveBeenCalled();
 
-    const search = screen.getByRole("checkbox", { name: "Search all mail" });
+    const search = screen.getByRole("checkbox", { name: "Search other mail" });
     fireEvent.click(search);
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(onAsk).toHaveBeenCalledWith("Line one", true, []);
+    expect(onAsk).toHaveBeenCalledWith("Line one", true, [], true);
     expect(input).toHaveValue("");
     expect(search).not.toBeChecked();
     expect(input).toHaveFocus();
 
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onAsk).toHaveBeenCalledTimes(1);
+  });
+
+  it("can search all accounts for one question and follows an exact cited message", () => {
+    const onAsk = vi.fn(), onOpenMessage = vi.fn();
+    render(<ThreadChat {...props({ onAsk, onOpenMessage, entries: [answer({
+      evidence: [{ claim: "The reference was 782.", excerpt: "The Bluefern reference is 782.", threadId: "source-thread", messageId: "source-message", filename: null }],
+    })] })} />);
+    fireEvent.click(screen.getByText("The reference was 782."));
+    expect(screen.getByText("The Bluefern reference is 782.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show source message" }));
+    expect(onOpenMessage).toHaveBeenCalledWith("source-thread", "source-message");
+    fireEvent.click(screen.getByRole("button", { name: /Ask about this conversation/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Search other mail" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Mail search scope" }), { target: { value: "all" } });
+    const input = screen.getByRole("textbox", { name: "Ask About This Conversation" });
+    fireEvent.change(input, { target: { value: "Where did it change?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onAsk).toHaveBeenCalledWith("Where did it change?", true, []);
   });
 
   it("offers quick questions before the first exchange and restores the prompt when left empty", () => {
@@ -160,7 +178,7 @@ describe("ThreadChat", () => {
     })} />);
 
     const log = screen.getByRole("log", { name: "Conversation with AI" });
-    expect(within(log).getByText("Searched all mail")).toBeInTheDocument();
+    expect(within(log).getByText("Searched all mail (cached on this device)")).toBeInTheDocument();
     expect(within(log).getByText("<img src=x onerror=alert(1)> Sure.")).toBeInTheDocument();
     expect(log.querySelector("img")).toBeNull();
     fireEvent.click(within(log).getByRole("button", { name: "Use as Reply" }));
@@ -171,7 +189,7 @@ describe("ThreadChat", () => {
     expect(within(log).getByText("4 more suggestions weren’t shown. Ask about one by name to add it.")).toBeInTheDocument();
     fireEvent.click(within(within(log).getByRole("navigation", { name: "Sources" })).getByRole("button", { name: "Pricing" }));
     expect(onOpenThread).toHaveBeenCalledWith("t2");
-    expect(within(log).getByText("Shared 2 other emails with AI")).toBeInTheDocument();
+    expect(within(log).getByText("Shared passages from 2 other conversations")).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Suggested questions" })).not.toBeInTheDocument();
   });
 

@@ -4,11 +4,11 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::error_text::display;
-use crate::models::{ActionAnalysis, ActionProposal};
+use crate::models::{ActionAnalysis, ActionProposal, BriefEvidence, ProposalEvidence};
 
 use super::context::{
-    action_context, bounded_bodies_capped, is_new_message, ActionMessageInput, ThreadMessageInput,
-    MAX_BACKGROUND_BODY_CHARS, MAX_BODY_CHARS, MAX_MESSAGES,
+    action_context, bounded_bodies_capped, brief_context, is_new_message, ActionMessageInput,
+    ThreadMessageInput, MAX_BACKGROUND_BODY_CHARS, MAX_BODY_CHARS, MAX_MESSAGES,
 };
 use super::output::{decode_json_output, OutputDecodeError};
 use super::proposals::{
@@ -169,11 +169,13 @@ userAddresses lists the user's own email addresses, and each message's to field 
 
 A message whose sender is one of userAddresses is the user's own: it answers what it quotes or replies to, and times it offers are the user's availability, already sent. Never propose a reply, a meeting to schedule, or a task to answer a request from the user's own message; from it, propose only an event it confirms at a set time or something the user promised to do or is waiting for.
 
-Return ONLY a JSON object of the form {"kind":"other","status":"...","summary":[...],"toClose":null,"proposals":[...],"offeredTimes":null}, with no markdown fences, commentary, prose, or extra keys. status, toClose, and each summary entry are short plain-text strings without bullet characters or markdown. The user is the person reading the brief, so write you and your for them, never their name and never "the user", including when a message names one of userNames or is from or to one of userAddresses. Refer to other people by name, or as they, instead of guessing he or she from a name; use other pronouns only when the email states them.
+Return ONLY a JSON object of the form {"kind":"other","status":"...","summary":[...],"toClose":null,"proposals":[...],"offeredTimes":null,"statusEvidence":[],"toCloseEvidence":[],"awaitingReply":false}, with no markdown fences, commentary, prose, or extra keys. status, toClose, and each summary entry are short plain-text strings without bullet characters or markdown. The user is the person reading the brief, so write you and your for them, never their name and never "the user", including when a message names one of userNames or is from or to one of userAddresses. Refer to other people by name, or as they, instead of guessing he or she from a name; use other pronouns only when the email states them.
 
 kind says what the thread is for; decide it first: support for a problem someone needs fixed, deal for a sale, purchase, renewal, or negotiation, scheduling for agreeing a time to meet, decision for an approval, choice, or sign-off someone must give, fyi for an announcement, newsletter, notification, or update that asks nothing, otherwise other.
 
-status is one sentence saying where the thread stands after the new messages and whose move it is. Put what you are asked to do, and by when, first; otherwise say who is waiting on whom, and for what. Aim for at most 25 words. Read the whole thread, earlier messages included, to judge it. When the thread is waiting on someone and the newest message's sentAt is at least two days before currentTime, say how long, such as "no reply in 9 days". For an fyi thread, status says what it announces; do not invent an action.
+status is one sentence saying where the thread stands after the new messages and whose move it is. Put what you are asked to do, and by when, first; otherwise say who is waiting on whom, and for what. Aim for at most 25 words. Read the supplied conversation, including earlier messages, and check for later answers, reassignments, and cancellations before claiming someone owes work. Use the named owner and stated deadline when supported. Distinguish a proposal from an agreement. If an owner, date, or decision is unclear, name that uncertainty and preserve the original terms. Set awaitingReply only when the most recent message is still waiting for a reply; do not calculate elapsed time. For an fyi thread, status says what it announces; do not invent an action.
+
+Use statusEvidence and toCloseEvidence for the specific messages that support status and toClose. Each contains up to three {"sourceMessageId":"message-id","excerpt":"exact text from that message"} objects. Include both the original request and later changes when needed. Use an empty array when the field is absent or when the available text cannot establish it; state what is unclear in status.
 
 summary is an array of 0 to 2 supporting facts, with at most one additional earlier-context string. Each string is one short sentence and must add information not already stated in status or an earlier string. Summarize only the new messages; do not restate earlier messages. When needed to understand the new messages, add one string beginning "Earlier: " recapping earlier context; omit it when the lead and supporting facts make sense on their own. A request is open only while no later message answers it or reports it done: never present an answered request as something you still need to do, and when someone else already answered a request sent to a group that includes you, leave it out or say it was answered. Summarize a list of people, items, or records by count and kind, such as "six affected employees, with their IDs", unless you must act on each one yourself. Scale the brief to the email: a short message of a few sentences needs no summary strings beyond status. The whole brief must read in a fraction of the time the email takes; never pad, and leave out background the reader already knows from the subject.
 
@@ -197,6 +199,7 @@ offeredTimes is independent of task and meeting proposals. When the latest new i
 #[derive(Debug)]
 pub struct ThreadBrief {
     pub summary: String,
+    pub evidence: Vec<BriefEvidence>,
     pub analysis: ActionAnalysis,
     pub offered_times: Option<crate::proposed_times::OfferedTimes>,
     pub offered_times_error: Option<String>,
@@ -204,7 +207,7 @@ pub struct ThreadBrief {
 
 pub async fn brief(request: AnalyzeRequest, api_key: &str) -> Result<ThreadBrief, String> {
     let focus_from = request.focus_from.as_deref();
-    let bounded = action_context(&request.messages, focus_from);
+    let bounded = brief_context(&request.messages, focus_from);
     let subject: String = request.subject.chars().take(MAX_BODY_CHARS).collect();
     let prompt = build_action_prompt(
         &subject,
@@ -231,7 +234,7 @@ pub async fn brief(request: AnalyzeRequest, api_key: &str) -> Result<ThreadBrief
         api_key,
     })
     .await?;
-    let mut brief = parse_thread_brief(&content, &bounded)?;
+    let mut brief = parse_thread_brief_with_time(&content, &bounded, Some(&request.current_time))?;
     keep_known_goal_links(&mut brief.analysis, &request.goals);
     drop_background_proposals(&mut brief.analysis, &bounded, focus_from);
     drop_own_scheduling_proposals(&mut brief.analysis, &bounded, &request.user_addresses);
@@ -314,16 +317,25 @@ pub(super) fn action_output_schema() -> OutputSchema {
 }
 
 pub(super) fn brief_output_schema() -> OutputSchema {
+    let evidence = json!({"type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["sourceMessageId", "excerpt"], "properties": {
+            "sourceMessageId": {"type": "string"}, "excerpt": {"type": "string"}
+        }
+    }});
     OutputSchema {
         name: "thread_brief",
         description: "Where the thread stands, a short summary, what would complete it, plus possible meetings and tasks, each citing an exact excerpt from the thread.",
         schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["kind", "status", "summary", "toClose", "proposals", "offeredTimes"],
+            "required": ["kind", "status", "summary", "toClose", "proposals", "offeredTimes", "statusEvidence", "toCloseEvidence", "awaitingReply"],
             "properties": {
                 "kind": {"type": "string", "enum": BRIEF_KINDS},
                 "status": {"type": "string"},
+                "statusEvidence": evidence,
+                "toCloseEvidence": evidence,
+                "awaitingReply": {"type": "boolean"},
                 "summary": {"type": "array", "items": {"type": "string"}},
                 "toClose": {"anyOf": [{"type": "null"}, {"type": "string"}]},
                 "proposals": proposal_array_schema(),
@@ -545,9 +557,18 @@ pub(super) fn parse_action_proposals(
     validate_proposal_items(items, messages)
 }
 
+#[cfg(test)]
 fn parse_thread_brief(
     content: &str,
     messages: &[ActionMessageInput],
+) -> Result<ThreadBrief, String> {
+    parse_thread_brief_with_time(content, messages, None)
+}
+
+fn parse_thread_brief_with_time(
+    content: &str,
+    messages: &[ActionMessageInput],
+    current_time: Option<&str>,
 ) -> Result<ThreadBrief, String> {
     let value = decode_json_output(content, "thread brief").map_err(|error| {
         match error {
@@ -588,8 +609,44 @@ fn parse_thread_brief(
         Some(serde_json::Value::String(text)) => Ok(Some(text)),
         Some(_) => Err(invalid()),
     };
-    let status = optional_text(object.remove("status"))?;
-    let to_close = optional_text(object.remove("toClose"))?;
+    let mut status = optional_text(object.remove("status"))?;
+    let mut to_close = optional_text(object.remove("toClose"))?;
+    let has_status_evidence = object.contains_key("statusEvidence");
+    let has_closing_evidence = object.contains_key("toCloseEvidence");
+    let status_evidence = brief_evidence(object.remove("statusEvidence"), messages);
+    let closing_evidence = brief_evidence(object.remove("toCloseEvidence"), messages);
+    if has_status_evidence && status_evidence.is_empty() {
+        status = Some("The available messages did not establish the current status.".into());
+    }
+    if has_closing_evidence && closing_evidence.is_empty() {
+        to_close = None;
+    }
+    let awaiting_reply = object
+        .remove("awaitingReply")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if awaiting_reply {
+        let days = messages
+            .last()
+            .filter(|latest| {
+                status_evidence
+                    .iter()
+                    .any(|item| item.source_message_id == latest.id)
+            })
+            .and_then(|latest| {
+                let now = chrono::DateTime::parse_from_rfc3339(current_time?).ok()?;
+                let sent = chrono::DateTime::parse_from_rfc3339(&latest.sent_at).ok()?;
+                Some(now.signed_duration_since(sent).num_days())
+            });
+        if let (Some(text), Some(days)) = (&mut status, days.filter(|days| *days >= 2)) {
+            if !text.trim().is_empty() && kind.as_deref() != Some("fyi") {
+                *text = format!(
+                    "{} · No reply in {days} days",
+                    text.trim_end_matches([' ', '.'])
+                );
+            }
+        }
+    }
     if object.len() != 2 {
         return Err(invalid());
     }
@@ -601,12 +658,48 @@ fn parse_thread_brief(
     // An fyi thread has nothing to complete, whatever toClose says.
     let to_close = to_close.filter(|_| kind.as_deref() != Some("fyi"));
     let summary = brief_summary_text(status.as_deref(), &summary, to_close.as_deref())?;
+    let mut evidence = Vec::new();
+    for (claim, sources) in [(status, status_evidence), (to_close, closing_evidence)] {
+        if let Some(claim) = claim.filter(|text| !text.trim().is_empty()) {
+            evidence.extend(sources.into_iter().map(|source| BriefEvidence {
+                claim: claim.clone(),
+                source,
+            }));
+        }
+    }
     Ok(ThreadBrief {
         summary,
+        evidence,
         analysis: validate_proposal_items(items, messages)?,
         offered_times,
         offered_times_error,
     })
+}
+
+fn brief_evidence(
+    value: Option<serde_json::Value>,
+    messages: &[ActionMessageInput],
+) -> Vec<ProposalEvidence> {
+    let Some(serde_json::Value::Array(items)) = value else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .take(3)
+        .filter_map(|item| {
+            let item: ProposalEvidence = serde_json::from_value(item).ok()?;
+            let excerpt = item.excerpt.trim();
+            (!excerpt.is_empty()
+                && excerpt.chars().count() <= 300
+                && messages.iter().any(|message| {
+                    message.id == item.source_message_id && message.body_text.contains(excerpt)
+                }))
+            .then(|| ProposalEvidence {
+                source_message_id: item.source_message_id,
+                excerpt: excerpt.to_owned(),
+            })
+        })
+        .collect()
 }
 
 fn parse_offered_times(
@@ -787,6 +880,7 @@ mod tests {
         }];
         let own = vec!["me@example.com".into()];
         let make = || ThreadBrief {
+            evidence: Vec::new(),
             summary: "Choose a time".into(),
             analysis: ActionAnalysis::default(),
             offered_times_error: None,
@@ -1238,11 +1332,11 @@ mod tests {
 
     #[test]
     fn brief_prompt_leads_with_where_the_thread_stands_and_what_would_complete_it() {
-        // Status reads the whole thread and says whose move it is, and how
-        // long a thread has waited once that is worth knowing.
+        // The model identifies whose move it is and whether a reply is outstanding.
+        // Native code owns elapsed time.
         assert!(BRIEF_SYSTEM_PROMPT.contains("status is one sentence saying where the thread stands after the new messages and whose move it is"));
-        assert!(BRIEF_SYSTEM_PROMPT.contains("Read the whole thread, earlier messages included"));
-        assert!(BRIEF_SYSTEM_PROMPT.contains("at least two days before currentTime, say how long"));
+        assert!(BRIEF_SYSTEM_PROMPT.contains("including earlier messages, and check for later answers, reassignments, and cancellations"));
+        assert!(BRIEF_SYSTEM_PROMPT.contains("do not calculate elapsed time"));
         // toClose may surface an open commitment from an earlier message.
         assert!(BRIEF_SYSTEM_PROMPT
             .contains("toClose is at most one short sentence naming the eventual outcome"));
@@ -1292,10 +1386,66 @@ mod tests {
                 "summary",
                 "toClose",
                 "proposals",
-                "offeredTimes"
+                "offeredTimes",
+                "statusEvidence",
+                "toCloseEvidence",
+                "awaitingReply"
             ])
         );
         assert_eq!(schema["properties"]["kind"]["enum"], json!(BRIEF_KINDS));
+    }
+
+    #[test]
+    fn verifies_status_excerpts_and_computes_wait_from_the_latest_message() {
+        let messages = brief_messages();
+        let mut result = json!({
+            "kind": "decision",
+            "status": "You owe the proposal by Friday.",
+            "toClose": "Send the proposal.",
+            "summary": [],
+            "proposals": [],
+            "statusEvidence": [{"sourceMessageId": "message-1", "excerpt": "Please send the proposal by Friday."}],
+            "toCloseEvidence": [{"sourceMessageId": "other-message", "excerpt": "Please send the proposal by Friday."}],
+            "awaitingReply": true,
+        });
+        let current = Some("2026-09-22T14:00:00Z");
+        let brief = parse_thread_brief_with_time(&result.to_string(), &messages, current).unwrap();
+        assert!(brief.summary.contains("No reply in 3 days"));
+        assert!(!brief.summary.contains("To close"));
+        assert_eq!(brief.evidence.len(), 1);
+        assert_eq!(brief.evidence[0].source.source_message_id, "message-1");
+
+        result["statusEvidence"][0]["excerpt"] = json!("Invented evidence");
+        let brief = parse_thread_brief_with_time(&result.to_string(), &messages, current).unwrap();
+        assert!(brief
+            .summary
+            .contains("did not establish the current status"));
+        assert!(!brief.summary.contains("owe the proposal"));
+        assert!(brief.evidence.is_empty());
+    }
+
+    #[test]
+    fn long_brief_reads_the_opening_request_and_the_latest_updates() {
+        let messages: Vec<_> = (0..MAX_MESSAGES + 5)
+            .map(|index| ActionMessageInput {
+                id: index.to_string(),
+                sender: "vendor@example.test".into(),
+                recipients: vec![],
+                sent_at: format!("2026-10-01T{index:02}:00:00Z"),
+                body_text: if index == 0 {
+                    "Please review the renewal before signing.".into()
+                } else {
+                    format!("Vendor correspondence {index}")
+                },
+            })
+            .collect();
+        let context = brief_context(&messages, Some("2026-10-01T19:00:00Z"));
+        assert_eq!(context.len(), MAX_MESSAGES);
+        assert_eq!(
+            context.first().unwrap().body_text,
+            "Please review the renewal before signing."
+        );
+        assert_eq!(context.last().unwrap().id, "19");
     }
 
     #[test]

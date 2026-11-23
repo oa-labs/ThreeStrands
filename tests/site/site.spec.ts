@@ -217,7 +217,7 @@ test.describe("feature claims", () => {
     await expect(ai).toContainText("AI starts off. Set up your provider and key, then enable the features you want.");
     await expect(ai).toContainText("Proactive briefs are a separate opt-in");
     await expect(ai).toContainText("qualifying conversations are sent to your provider");
-    await expect(ai).toContainText("Chat searches other mail only when you choose Search all mail. You select which readable attachments to share");
+    await expect(ai).toContainText("Chat searches other mail only when you choose Search other mail. You select which readable attachments to share");
     await expect(ai).toContainText("Contact enrichment reviews correspondence with that person when you request it");
     await expect(ai).toContainText("You review and apply tasks, calendar events, contact changes, and drafts. You choose when to send.");
     await expect(ai).toContainText("estimated costs");

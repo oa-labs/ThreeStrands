@@ -24,7 +24,7 @@ import { moveAddressesToBcc, replaceAddress } from "./composeChecks";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
-import type { DraftReviewActions } from "./draftReview";
+import type { DraftReviewActions, DraftReviewSnapshot } from "./draftReview";
 import { plainTextToHtml } from "./richText";
 import { ComposeShortcutHints, FormattingHints } from "./FormattingHints";
 import { ScheduleSendPicker } from "./ScheduleSendPicker";
@@ -342,8 +342,35 @@ export const Composer = forwardRef<ComposerHandle, {
         current.subject, current.body, current.bodyHtml, current.signature, current.attachments]),
     };
   }
+  function unchangedReviewDraft(expected: DraftReviewSnapshot) {
+    const current = readReviewDraft();
+    if (current.id !== expected.id || current.fingerprint !== expected.fingerprint) {
+      throw new Error("Your draft changed. Review it again before applying or undoing this edit.");
+    }
+    return current;
+  }
   const draftReview: DraftReviewActions = {
     readDraft: readReviewDraft,
+    applySuggestion: (expected, suggestion) => {
+      const current = unchangedReviewDraft(expected);
+      const { excerpt, replacement } = suggestion;
+      let undoEdit: () => void;
+      if (suggestion.field === "subject") {
+        const start = current.subject.indexOf(excerpt);
+        const unique = excerpt ? start >= 0 && current.subject.indexOf(excerpt, start + 1) < 0 : !current.subject;
+        if (!unique || /[\r\n]/.test(replacement)) throw new Error("This edit needs a single matching passage in the subject.");
+        edit("subject", current.subject.slice(0, start) + replacement + current.subject.slice(start + excerpt.length));
+        undoEdit = () => edit("subject", current.subject);
+      } else {
+        undoEdit = bodyEditor.current!.editAuthoredExcerpt(excerpt, replacement);
+      }
+      const snapshot = readReviewDraft();
+      return { snapshot, undo: () => {
+        unchangedReviewDraft(snapshot);
+        undoEdit();
+        return readReviewDraft();
+      } };
+    },
     replaceDraft: (expected, replacement) => {
       const current = readReviewDraft();
       if (current.id !== expected.id || current.fingerprint !== expected.fingerprint) {
@@ -599,6 +626,13 @@ export const Composer = forwardRef<ComposerHandle, {
                 onChange={(event) => setReplyInstruction(event.target.value)}
               />
             </label>
+            <div className="reply-assist-intents" role="group" aria-label="Reply intent">
+              {[
+                ["Answer questions", "Answer the sender's questions with facts from the conversation. Flag any question I still need to answer."],
+                ["Decline", "Decline the request politely and briefly. Avoid inventing a reason."],
+                ["Ask for clarification", "Ask a concise question about the information needed before I can respond."],
+              ].map(([label, instruction]) => <button className="btn btn-sm" type="button" key={label} onClick={() => setReplyInstruction(instruction)}>{label}</button>)}
+            </div>
             {replyAssistInstruction ? <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction}</p> : null}
             {replyAssistContext ? (
               <details open className="reply-assist-context">
@@ -612,6 +646,7 @@ export const Composer = forwardRef<ComposerHandle, {
                   <p><strong>Subject:</strong> {replyAssistContext.subject}</p>
                   {replyAssistContext.messages.map((message, index) => (
                     <article key={`${message.sentAt}-${index}`}>
+                      {replyAssistContext.replyToMessageIndex === index ? <p><strong>Replying to this message</strong></p> : null}
                       <p><strong>From:</strong> {message.sender}</p>
                       <p><strong>Date:</strong> {message.sentAt}</p>
                       <pre>{message.bodyText}</pre>

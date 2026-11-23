@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message, ThreadDetail, Thread } from "./domain";
 import type { MessageResponseKind } from "./MessageCard";
 import type { MailboxKind } from "./commands";
@@ -64,19 +64,25 @@ export function useReaderActions({
       return next;
     });
   }, [activateMessage, pendingMessageToggleFocusRef, setMessageExpansionOverrides]);
-  // Context panel links reveal a message: expanded, active, and scrolled into
-  // view when it is in the open conversation, otherwise by opening its thread.
+  const pendingMessage = useRef<{ threadId: string; messageId: string } | null>(null);
+  // Open a source conversation and reveal its message when it loads.
   const showMessage = useCallback((threadId: string, messageId: string) => {
     if (threadId !== visibleDetail?.thread.id) {
+      pendingMessage.current = { threadId, messageId };
       jumpToThread(threadId);
       return;
     }
+    pendingMessage.current = null;
     activateMessage(messageId);
     setMessageExpansionOverrides((current) => new Map(current).set(messageId, true));
     requestAnimationFrame(() => {
       messageRefs.current.get(messageId)?.scrollIntoView?.({ block: "start", behavior: scrollBehavior() });
     });
   }, [activateMessage, jumpToThread, messageRefs, setMessageExpansionOverrides, visibleDetail?.thread.id]);
+  useEffect(() => {
+    const target = pendingMessage.current;
+    if (target && target.threadId === visibleDetail?.thread.id) showMessage(target.threadId, target.messageId);
+  }, [showMessage, visibleDetail?.thread.id]);
   // The Trust section's Show link: expands the message and hands its card
   // the link, which scrolls itself into view once the email has loaded.
   const [linkReveal, setLinkReveal] = useState<{ messageId: string; reveal: LinkReveal } | null>(null);

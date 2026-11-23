@@ -501,7 +501,15 @@
       "sourceThreadIds": [
         "other-thread"
       ],
-      "availability": null
+      "availability": null,
+      "citations": [
+        {
+          "claim": "The approved budget is 15,000.",
+          "excerpt": "We approved a budget of 15,000.",
+          "sourceMessageId": "other-message",
+          "attachmentIndex": null
+        }
+      ]
     },
     "checks": [
       {
@@ -515,6 +523,11 @@
         "value": [
           "other-thread"
         ]
+      },
+      {
+        "path": "/evidence/0/messageId",
+        "op": "eq",
+        "value": "other-message"
       }
     ],
     "question": "What budget did we approve?",
@@ -719,6 +732,11 @@
         "path": "/suggestions",
         "op": "count",
         "value": 1
+      },
+      {
+        "path": "/revisedSubject",
+        "op": "eq",
+        "value": "Synthetic evaluation"
       }
     ],
     "instruction": "Ask for a short introductory call.",

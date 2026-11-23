@@ -34,6 +34,7 @@ export type Thread = {
    * Null or absent when the summary read the whole conversation.
    */
   summaryFocusFrom?: string | null;
+  summaryEvidence?: BriefEvidence[];
   hasAttachments: boolean;
   snoozedUntil?: string | null;
 };
@@ -750,7 +751,10 @@ export type TodayMailPage = {
   total: number;
 };
 
+export type BriefEvidence = { claim: string; source: ProposalEvidence };
+
 export type SummaryResult = {
+  evidence?: BriefEvidence[];
   summary: string;
   generatedAt: string;
   /** The thread's `lastMessageAt` the summary was written from. */
@@ -794,6 +798,7 @@ export type ThreadChatRequest = {
   question: string;
   history: ChatTurn[];
   searchMailbox: boolean;
+  searchCurrentAccountOnly?: boolean;
   includeProposals: boolean;
   contactId: string | null;
   userTimeZone: string;
@@ -817,12 +822,21 @@ export type ChatAvailability = {
 /** Another conversation shared with the provider while answering. */
 export type ChatSource = { threadId: string; accountId: string; subject: string; lastMessageAt: string };
 
+export type ChatEvidence = {
+  claim: string;
+  excerpt: string;
+  messageId: string;
+  threadId: string | null;
+  filename: string | null;
+};
+
 export type ThreadChatReply = {
   answer: string;
   analysis: ActionAnalysis;
   replyDraft: string | null;
   /** Conversations the answer says it relied on. */
   sources: ChatSource[];
+  evidence?: ChatEvidence[];
   /** Every other conversation shared because the question searched all mail. */
   searched: ChatSource[];
   /** Every attachment whose text was shared for this question. */
@@ -904,6 +918,7 @@ export type ReplyAssistMessage = {
 /** The exact, bounded mailbox content that will be sent to the selected AI provider. */
 export type ReplyAssistContext = {
   subject: string;
+  replyToMessageIndex?: number;
   messages: ReplyAssistMessage[];
 };
 

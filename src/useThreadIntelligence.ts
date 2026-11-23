@@ -265,11 +265,11 @@ export function useThreadIntelligence({
   // removed from the transcript and offered again through Try Again.
   const [chatByThread, setChatByThread] = useState<Record<string, ChatEntry[]>>({});
   const [chatPendingThreads, setChatPendingThreads] = useState<ReadonlySet<string>>(() => new Set());
-  const [chatFailures, setChatFailures] = useState<Record<string, { message: string; question: string; searchMailbox: boolean; attachments: ChatAttachmentOption[] }>>({});
+  const [chatFailures, setChatFailures] = useState<Record<string, { message: string; question: string; searchMailbox: boolean; searchCurrentAccountOnly?: boolean; attachments: ChatAttachmentOption[] }>>({});
   const [chatFocusRequest, setChatFocusRequest] = useState(0);
   const chatEntrySequence = useRef(0);
   const chatSuggestionOrigins = useRef(new WeakMap<ActionProposal, { threadId: string; entryId: string }>());
-  const askThread = useCallback(async (question: string, searchMailbox: boolean, contactId: string | null, attachments: ChatAttachmentOption[]) => {
+  const askThread = useCallback(async (question: string, searchMailbox: boolean, contactId: string | null, attachments: ChatAttachmentOption[], searchCurrentAccountOnly?: boolean) => {
     if (!visibleDetail || !actionProposalKey) return;
     const threadId = visibleDetail.thread.id;
     const proposalKey = actionProposalKey;
@@ -280,7 +280,7 @@ export function useThreadIntelligence({
     const shared = new Map<string, ChatAttachmentOption>();
     for (const attachment of [...sharedChatAttachments(earlier), ...attachments]) shared.set(attachmentKey(attachment), attachment);
     const nextId = () => `chat-${chatEntrySequence.current += 1}`;
-    const questionEntry: ChatEntry = { id: nextId(), role: "user", content: question, searchMailbox, attachments };
+    const questionEntry: ChatEntry = { id: nextId(), role: "user", content: question, searchMailbox, searchCurrentAccountOnly, attachments };
     setChatByThread((current) => ({ ...current, [threadId]: [...(current[threadId] ?? []), questionEntry] }));
     setChatPendingThreads((current) => new Set(current).add(threadId));
     setChatFailures((current) => {
@@ -296,6 +296,7 @@ export function useThreadIntelligence({
         question,
         history: earlier.map((entry) => ({ role: entry.role, content: entry.content })),
         searchMailbox,
+        ...(searchCurrentAccountOnly ? { searchCurrentAccountOnly } : {}),
         includeProposals: aiActionAvailable,
         contactId,
         userTimeZone: availabilityPreferences.timeZone,
@@ -315,6 +316,7 @@ export function useThreadIntelligence({
         extraSuggestions: reply.analysis.extraCount ?? 0,
         availability: reply.availability,
         sources: reply.sources,
+        evidence: reply.evidence,
         searched: reply.searched,
         attachments: reply.attachments,
       };
@@ -324,7 +326,7 @@ export function useThreadIntelligence({
       setChatByThread((current) => ({ ...current, [threadId]: [...(current[threadId] ?? []), answer] }));
     } catch (error) {
       setChatByThread((current) => ({ ...current, [threadId]: (current[threadId] ?? []).filter((entry) => entry.id !== questionEntry.id) }));
-      setChatFailures((current) => ({ ...current, [threadId]: { message: describeAnalysisError(errorMessage(error)).summary, question, searchMailbox, attachments } }));
+      setChatFailures((current) => ({ ...current, [threadId]: { message: describeAnalysisError(errorMessage(error)).summary, question, searchMailbox, searchCurrentAccountOnly, attachments } }));
     } finally {
       setChatPendingThreads((current) => {
         const next = new Set(current);

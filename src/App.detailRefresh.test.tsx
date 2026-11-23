@@ -846,12 +846,12 @@ describe("conversation brief", () => {
       fireEvent.keyDown(window, { key: "q" });
       const input = await within(panel).findByRole("textbox", { name: "Ask About This Conversation" });
       fireEvent.change(input, { target: { value: "What is this about?" } });
-      fireEvent.click(within(panel).getByRole("checkbox", { name: "Search all mail" }));
+      fireEvent.click(within(panel).getByRole("checkbox", { name: "Search other mail" }));
       fireEvent.keyDown(input, { key: "Enter" });
 
       expect(await within(panel).findByText("It introduces the shortcuts.")).toBeInTheDocument();
       expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({
-        threadId: "welcome", question: "What is this about?", history: [], searchMailbox: true, includeProposals: true,
+        threadId: "welcome", question: "What is this about?", history: [], searchMailbox: true, searchCurrentAccountOnly: true, includeProposals: true,
       }), "openai", expect.any(String), null);
       const suggestions = within(panel).getByRole("region", { name: "Suggestions" });
       expect(within(suggestions).getByText("Try the command palette")).toBeInTheDocument();
