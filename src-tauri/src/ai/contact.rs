@@ -59,8 +59,9 @@ fn contact_field_definition(field: &str) -> &'static str {
         "displayName" => "the person's full name as they write it",
         "role" => "their job title or position",
         "company" => "the organization they work for",
+        "phone" => "a direct call or mobile number for the person",
         "location" => "the city, region, or country where they are based",
-        "bio" => "one or two sentences on what they do or are known for, without restating their name, job title, employer, home base, or web addresses",
+        "bio" => "one or two sentences on what they do or are known for, without restating their name, job title, employer, mobile or office numbers, home base, or web addresses",
         "link" => "an https URL of their own website or public profile",
         _ => "",
     }
@@ -80,7 +81,7 @@ fn contact_field_definitions(allowed: &[&'static str]) -> String {
 /// field the user already filled in.
 fn contact_system_prompt(allowed: &[&'static str]) -> String {
     format!(
-        "{CONTACT_SYSTEM_PROMPT} Allowed fields: {}. Never suggest a value for any other field. Field definitions: {}. Each value holds only the fact its field defines: never put a name, job title, employer, place, or URL into a field defined for something else, even when no allowed field fits it; leave that fact out instead.",
+        "{CONTACT_SYSTEM_PROMPT} Allowed fields: {}. Never suggest a value for any other field. Field definitions: {}. Each value holds only the fact its field defines: never put a name, job title, employer, mobile or office number, place, or URL into a field defined for something else, even when no allowed field fits it; leave that fact out instead.",
         allowed.join(", "),
         contact_field_definitions(allowed)
     )
@@ -216,8 +217,15 @@ fn describe_contact_batch(batch: &[ContactMessageInput], allowed: &[&'static str
     )
 }
 
-pub(super) const CONTACT_FIELDS: [&str; 6] =
-    ["displayName", "role", "company", "location", "bio", "link"];
+pub(super) const CONTACT_FIELDS: [&str; 7] = [
+    "displayName",
+    "role",
+    "company",
+    "phone",
+    "location",
+    "bio",
+    "link",
+];
 
 /// The suggestible fields that hold nothing on the stored profile. Links is
 /// empty only while there are no links at all: enhancement never appends to a
@@ -231,6 +239,7 @@ fn empty_contact_fields(profile: &ContactProfile) -> Vec<&'static str> {
             "displayName" => blank(profile.display_name.as_deref()),
             "role" => blank(profile.role.as_deref()),
             "company" => blank(profile.company.as_deref()),
+            "phone" => blank(profile.phone.as_deref()),
             "location" => blank(profile.location.as_deref()),
             "bio" => blank(profile.bio.as_deref()),
             "link" => profile.links.is_empty(),
@@ -306,6 +315,8 @@ fn retain_contact_suggestions_for_fields(
             }
             let key = if suggestion.field == "link" {
                 canonical_contact_link(&suggestion.value)
+            } else if suggestion.field == "phone" {
+                canonical_contact_phone(&suggestion.value)
             } else {
                 suggestion
                     .value
@@ -327,6 +338,10 @@ fn canonical_contact_link(value: &str) -> String {
     url::Url::parse(value)
         .map(|url| url.to_string())
         .unwrap_or_else(|_| value.trim().to_string())
+}
+
+fn canonical_contact_phone(value: &str) -> String {
+    crate::db::contacts::strip_phone_punctuation(value)
 }
 
 fn bound_contact_messages(mut messages: Vec<ContactMessageInput>) -> Vec<ContactMessageInput> {
@@ -401,18 +416,20 @@ enum ContactSuggestionDrop {
     TooLong,
     ExcerptNotFound,
     InvalidLink,
+    InvalidPhone,
     FieldNotEmpty,
     Duplicate,
 }
 
 impl ContactSuggestionDrop {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Incomplete,
         Self::UnsupportedField,
         Self::UnknownMessage,
         Self::TooLong,
         Self::ExcerptNotFound,
         Self::InvalidLink,
+        Self::InvalidPhone,
         Self::FieldNotEmpty,
         Self::Duplicate,
     ];
@@ -425,6 +442,7 @@ impl ContactSuggestionDrop {
             Self::TooLong => "value or excerpt too long",
             Self::ExcerptNotFound => "excerpt not found in message",
             Self::InvalidLink => "not an https link",
+            Self::InvalidPhone => "not a valid phone number",
             Self::FieldNotEmpty => "field not empty",
             Self::Duplicate => "duplicate",
         }
@@ -515,6 +533,15 @@ fn check_contact_suggestion(
         match url::Url::parse(text) {
             Ok(url) if url.scheme() == "https" && url.host_str().is_some() => url.to_string(),
             _ => return Err(ContactSuggestionDrop::InvalidLink),
+        }
+    } else if field == "phone" {
+        let digits = text.bytes().filter(u8::is_ascii_digit).count();
+        if digits < 7 || text.contains('@') || text.contains("://") {
+            return Err(ContactSuggestionDrop::InvalidPhone);
+        }
+        match crate::db::contacts::normalize_phone(Some(text)) {
+            Ok(Some(phone)) => phone,
+            _ => return Err(ContactSuggestionDrop::InvalidPhone),
         }
     } else {
         text.to_string()
@@ -694,7 +721,7 @@ mod tests {
         // About is told not to repeat the facts the other fields hold, so a
         // title has nowhere to go when Role is already filled.
         let prompt = contact_system_prompt(&["bio"]);
-        assert!(prompt.contains("Field definitions: bio: one or two sentences on what they do or are known for, without restating their name, job title, employer, home base, or web addresses."));
+        assert!(prompt.contains("Field definitions: bio: one or two sentences on what they do or are known for, without restating their name, job title, employer, mobile or office numbers, home base, or web addresses."));
         for other in CONTACT_FIELDS.iter().filter(|field| **field != "bio") {
             assert!(!prompt.contains(other), "{other}");
         }
@@ -702,13 +729,14 @@ mod tests {
 
     #[test]
     fn contact_enrichment_only_suggests_fields_that_are_empty() {
-        // Only role, location and bio are empty here; the rest already hold
+        // Only role, phone, location and bio are empty here; the rest already hold
         // something and must not be suggested for again.
         let profile = ContactProfile {
             id: "contact-jane".into(),
             display_name: Some("Jane Smith".into()),
             role: None,
             company: Some("Acme".into()),
+            phone: None,
             location: None,
             bio: None,
             notes: Some("Private note".into()),
@@ -740,6 +768,8 @@ mod tests {
                 suggestion("role", "CEO"),
                 suggestion("role", "ceo"),
                 suggestion("role", "CTO"),
+                suggestion("phone", "+1 (555) 123-4567"),
+                suggestion("phone", "+1-555-123-4567"),
                 suggestion("location", "Boston"),
                 suggestion("bio", "Builds useful things"),
             ],
@@ -754,13 +784,43 @@ mod tests {
             vec![
                 ("role", "CEO"),
                 ("role", "CTO"),
+                ("phone", "+1 (555) 123-4567"),
                 ("location", "Boston"),
                 ("bio", "Builds useful things"),
             ],
         );
         assert_eq!(
             tally.summary(filtered.len()),
-            "0 returned, 4 kept (field not empty: 3, duplicate: 1)"
+            "0 returned, 5 kept (field not empty: 3, duplicate: 2)"
+        );
+    }
+
+    #[test]
+    fn contact_enrichment_suggests_valid_phone_numbers_and_rejects_invalid_ones() {
+        let messages = vec![ContactMessageInput {
+            id: "m1".into(),
+            thread_id: "thread-1".into(),
+            sender: "jane@example.com".into(),
+            sent_at: String::new(),
+            subject: "My number".into(),
+            body_text: "You can reach me at +1 (555) 234-5678 anytime. See you in 2026 or email jane@example.com.".into(),
+            from_contact: true,
+            is_thread_starter: true,
+        }];
+        let output = json!([
+            {"field":"phone","value":"+1 (555) 234-5678","sourceMessageId":"m1","excerpt":"reach me at +1 (555) 234-5678"},
+            {"field":"phone","value":"2026","sourceMessageId":"m1","excerpt":"in 2026"},
+            {"field":"phone","value":"jane@example.com","sourceMessageId":"m1","excerpt":"jane@example.com"},
+        ])
+        .to_string();
+        let mut tally = ContactSuggestionTally::default();
+        let kept = parse_contact_suggestions(&output, &messages, &mut tally).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].field, "phone");
+        assert_eq!(kept[0].value, "+1 (555) 234-5678");
+        assert_eq!(
+            tally.summary(kept.len()),
+            "3 returned, 1 kept (not a valid phone number: 2)"
         );
     }
 
@@ -841,6 +901,7 @@ mod tests {
             display_name: Some("Jane Smith".into()),
             role: None,
             company: Some("Acme".into()),
+            phone: None,
             location: None,
             bio: None,
             notes: None,
@@ -937,6 +998,7 @@ mod tests {
                     display_name: Some("Jane Smith".into()),
                     role: None,
                     company: existing_company.then(|| "Acme".into()),
+                    phone: None,
                     location: None,
                     bio: None,
                     notes: None,
@@ -1052,6 +1114,7 @@ mod tests {
             display_name: display_name.map(String::from),
             role: None,
             company: company.map(String::from),
+            phone: Some("+1 555-0100".into()),
             location: None,
             bio: Some("Builds useful things".into()),
             notes: None,
@@ -1105,6 +1168,7 @@ mod tests {
             assert!(system.contains("Allowed fields: role, location, link."));
             assert!(!system.contains("displayName"));
             assert!(!system.contains("company"));
+            assert!(!system.contains("phone"));
             assert!(!system.contains("bio"));
             assert_eq!(field_schema["enum"], json!(["role", "location", "link"]));
             // Each allowed field is defined, in the instructions and in the output
@@ -1122,6 +1186,7 @@ mod tests {
             display_name: Some("Jane Smith".into()),
             role: Some("CEO".into()),
             company: Some("Acme".into()),
+            phone: Some("+1 555-0100".into()),
             location: Some("Boston".into()),
             links: vec!["https://example.com/".into()],
             ..profile(Some("Jane Smith"), Some("Acme"))

@@ -2681,6 +2681,7 @@ mod replicator_tests {
                 display_name: Some("Local owner".into()),
                 role: None,
                 company: None,
+                phone: None,
                 location: None,
                 bio: None,
                 notes: Some("Keep local profile".into()),
@@ -2748,6 +2749,7 @@ mod replicator_tests {
             display_name: Some("Local owner".into()),
             role: None,
             company: None,
+            phone: None,
             location: None,
             bio: None,
             notes: Some("Keep local profile".into()),
@@ -2777,6 +2779,7 @@ mod replicator_tests {
             display_name: Some("Local".into()),
             role: None,
             company: None,
+            phone: None,
             location: None,
             bio: None,
             notes: None,
@@ -2808,6 +2811,45 @@ mod replicator_tests {
         let cleared = db.get_contact_profile("kit-contact").unwrap().unwrap();
         assert_eq!(cleared.birthday, None);
         assert_eq!(cleared.keep_in_touch, crate::models::KeepInTouch::default());
+    }
+
+    #[test]
+    fn a_contact_record_from_an_older_build_keeps_the_local_phone() {
+        let db = Database::open_memory();
+        let saved = db
+            .save_contact_profile(&crate::models::SaveContactRequest {
+                id: Some("phone-contact".into()),
+                display_name: Some("Sam".into()),
+                role: None,
+                company: None,
+                phone: Some("+1 (555) 234-5678".into()),
+                location: None,
+                bio: None,
+                notes: None,
+                links: vec![],
+                photo_data: None,
+                favorite: false,
+                addresses: vec!["sam@example.com".into()],
+                birthday: None,
+                keep_in_touch: None,
+                time_zone: None,
+            })
+            .unwrap();
+        let legacy = json!({"id":saved.id,"displayName":"Sam Renamed","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["sam@example.com"],"birthday":null,"keepInTouch":{},"timeZone":null});
+        db.upsert_synced_contact(&legacy).unwrap();
+        let merged = db.get_contact_profile("phone-contact").unwrap().unwrap();
+        assert_eq!(merged.display_name.as_deref(), Some("Sam Renamed"));
+        assert_eq!(merged.phone.as_deref(), Some("+1 (555) 234-5678"));
+        let mut current = legacy.clone();
+        current["phone"] = Value::Null;
+        db.upsert_synced_contact(&current).unwrap();
+        assert_eq!(
+            db.get_contact_profile("phone-contact")
+                .unwrap()
+                .unwrap()
+                .phone,
+            None
+        );
     }
 
     #[test]
@@ -2877,6 +2919,7 @@ mod replicator_tests {
                     display_name: Some(email.into()),
                     role: None,
                     company: None,
+                    phone: None,
                     location: None,
                     bio: None,
                     notes: None,
@@ -5245,6 +5288,7 @@ mod reconciliation_tests {
                 display_name: Some("Sweep person".into()),
                 role: None,
                 company: None,
+                phone: None,
                 location: None,
                 bio: None,
                 notes: None,

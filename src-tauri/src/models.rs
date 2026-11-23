@@ -769,6 +769,8 @@ pub struct ContactProfile {
     pub display_name: Option<String>,
     pub role: Option<String>,
     pub company: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
     pub location: Option<String>,
     pub bio: Option<String>,
     pub notes: Option<String>,
@@ -820,6 +822,8 @@ pub struct ContactRecord {
     pub display_name: Option<String>,
     pub role: Option<String>,
     pub company: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
     pub location: Option<String>,
     pub bio: Option<String>,
     pub notes: Option<String>,
@@ -845,6 +849,7 @@ impl From<&ContactProfile> for ContactRecord {
             display_name: c.display_name.clone(),
             role: c.role.clone(),
             company: c.company.clone(),
+            phone: c.phone.clone(),
             location: c.location.clone(),
             bio: c.bio.clone(),
             notes: c.notes.clone(),
@@ -997,6 +1002,8 @@ pub struct SaveContactRequest {
     pub display_name: Option<String>,
     pub role: Option<String>,
     pub company: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
     pub location: Option<String>,
     pub bio: Option<String>,
     pub notes: Option<String>,

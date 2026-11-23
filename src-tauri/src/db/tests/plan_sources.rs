@@ -94,6 +94,7 @@ fn suggested_offers_pressing_tasks_then_promises_then_due_check_ins() {
             display_name: Some(name.into()),
             role: None,
             company: None,
+            phone: None,
             location: None,
             bio: None,
             notes: None,

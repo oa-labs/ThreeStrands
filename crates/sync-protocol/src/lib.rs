@@ -430,6 +430,7 @@ impl EntityType {
                 optional_string(object, "displayName", 200)?;
                 optional_string(object, "role", 200)?;
                 optional_string(object, "company", 200)?;
+                optional_string(object, "phone", 64)?;
                 optional_string(object, "location", 200)?;
                 optional_string(object, "bio", 4_000)?;
                 optional_string(object, "notes", 8_000)?;
@@ -1167,8 +1168,14 @@ mod tests {
 
     #[test]
     fn validates_contact_sync_payload_and_bounded_photo() {
-        let valid = json!({"id":"contact:jane@example.com","displayName":"Jane","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["jane@example.com"],"sentCount":0,"receivedCount":0,"lastInteractedAt":null});
+        let valid = json!({"id":"contact:jane@example.com","displayName":"Jane","role":null,"company":null,"phone":"+1 555-123-4567","location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["jane@example.com"],"sentCount":0,"receivedCount":0,"lastInteractedAt":null});
         assert!(EntityType::Contact.validate_payload(&valid).is_ok());
+        let mut exact_phone = valid.clone();
+        exact_phone["phone"] = json!("1".repeat(64));
+        assert!(EntityType::Contact.validate_payload(&exact_phone).is_ok());
+        let mut long_phone = valid.clone();
+        long_phone["phone"] = json!("1".repeat(65));
+        assert!(EntityType::Contact.validate_payload(&long_phone).is_err());
         let mut invalid = valid.clone();
         invalid["addresses"] = json!([]);
         assert!(EntityType::Contact.validate_payload(&invalid).is_err());

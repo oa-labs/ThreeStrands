@@ -44,7 +44,7 @@ impl Feature {
             Self::Chat => 2,
             Self::Reply => 2,
             Self::DraftReview => 2,
-            Self::Contact => 1,
+            Self::Contact => 2,
             Self::FindTimes => 1,
             Self::Connection => 1,
         }
@@ -52,7 +52,7 @@ impl Feature {
     pub fn schema_version(self) -> u32 {
         match self {
             Self::Summary | Self::Reply | Self::Connection => 0,
-            Self::Brief | Self::Chat | Self::DraftReview => 2,
+            Self::Brief | Self::Chat | Self::DraftReview | Self::Contact => 2,
             _ => 1,
         }
     }

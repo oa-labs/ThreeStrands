@@ -23,9 +23,11 @@ pub(crate) const MAX_CONTACT_FILES: usize = 100;
 pub(crate) const MAX_KEEP_IN_TOUCH_DAYS: i64 = 730;
 /// Furthest a keep-in-touch reminder can be snoozed: two years.
 const MAX_KEEP_IN_TOUCH_SNOOZE_DAYS: i64 = 730;
-/// Birthday, interval, and keep-in-touch timestamps, read by [`contact_extras`].
+/// Maximum character length of a contact phone number.
+pub(crate) const MAX_PHONE_LENGTH: usize = 64;
+/// Birthday, interval, keep-in-touch timestamps, timezone, and phone, read by [`contact_extras`].
 const CONTACT_EXTRA_COLUMNS: &str =
-    "c.birthday,c.kit_interval_days,c.kit_started_at,c.kit_snoozed_until,c.kit_snoozed_at,c.kit_last_touch_at,c.time_zone";
+    "c.birthday,c.kit_interval_days,c.kit_started_at,c.kit_snoozed_until,c.kit_snoozed_at,c.kit_last_touch_at,c.time_zone,c.phone";
 
 pub(super) fn index_contact_message(
     tx: &rusqlite::Transaction<'_>,
@@ -151,6 +153,7 @@ impl Database {
                 display_name: display_name.map(ToOwned::to_owned),
                 role: None,
                 company: None,
+                phone: None,
                 location: None,
                 bio: None,
                 notes: None,
@@ -198,9 +201,9 @@ impl Database {
                 row.get::<_,Option<String>>(13)?,contact_extras(row,14)?,
             )))?;
             rows.map(|row|{
-                let(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,(birthday,keep_in_touch,time_zone))=row?;
+                let(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,(birthday,keep_in_touch,time_zone,phone))=row?;
                 let keep_in_touch_due_at=keep_in_touch_due_at(&keep_in_touch,last_interacted_at.as_deref());
-                Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses:serde_json::from_str(&addresses).unwrap_or_default(),sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at,time_zone})
+                Ok(ContactProfile{id,display_name,role,company,phone,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses:serde_json::from_str(&addresses).unwrap_or_default(),sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at,time_zone})
             }).collect()
         })
     }
@@ -220,6 +223,7 @@ impl Database {
         account_id: Option<&str>,
     ) -> DbResult<Vec<ContactProfile>> {
         let needle = query.trim().to_ascii_lowercase();
+        let phone_needle = phone_search_digits(&needle);
         let limit = limit.clamp(1, MAX_CONTACTS);
         let saved = self.with_connection(|connection| {
             // A saved profile is shared across accounts. In a scoped view it
@@ -232,9 +236,11 @@ impl Database {
                  WHERE (?3 IS NULL
                    OR EXISTS(SELECT 1 FROM contact_addresses a JOIN contact_interactions ci ON ci.email=a.email WHERE a.contact_id=c.id AND ci.account_id=?3)
                    OR NOT EXISTS(SELECT 1 FROM contact_addresses a JOIN contact_interactions ci ON ci.email=a.email WHERE a.contact_id=c.id))
-                   AND (?2='' OR lower(coalesce(c.display_name,'') || ' ' || coalesce(c.role,'') || ' ' || coalesce(c.company,'') || ' ' || coalesce(c.location,'') || ' ' || coalesce(c.bio,'') || ' ' || coalesce(c.notes,'') || ' ' || coalesce(c.links_json,'') || ' ' || coalesce((SELECT group_concat(email,' ') FROM contact_addresses a WHERE a.contact_id=c.id),'')) LIKE '%' || ?2 || '%')
+                   AND (?2=''
+                     OR lower(coalesce(c.display_name,'') || ' ' || coalesce(c.role,'') || ' ' || coalesce(c.company,'') || ' ' || coalesce(c.phone,'') || ' ' || coalesce(c.location,'') || ' ' || coalesce(c.bio,'') || ' ' || coalesce(c.notes,'') || ' ' || coalesce(c.links_json,'') || ' ' || coalesce((SELECT group_concat(email,' ') FROM contact_addresses a WHERE a.contact_id=c.id),'')) LIKE '%' || ?2 || '%'
+                     OR (?4 <> '' AND replace(replace(replace(replace(replace(replace(coalesce(c.phone,''),' ',''),'-',''),'(',''),')',''),'.',''),'+','') LIKE '%' || ?4 || '%'))
                  ORDER BY c.favorite DESC,c.updated_at DESC LIMIT ?1"))?;
-            let rows = statement.query_map(params![limit as i64,needle,account_id], |row| {
+            let rows = statement.query_map(params![limit as i64,needle,account_id,phone_needle], |row| {
                 Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,
                     row.get::<_,Option<String>>(3)?,row.get::<_,Option<String>>(4)?,row.get::<_,Option<String>>(5)?,
                     row.get::<_,Option<String>>(6)?,row.get::<_,String>(7)?,row.get::<_,Option<String>>(8)?,
@@ -281,15 +287,16 @@ impl Database {
             links,
             photo,
             favorite,
-            (birthday, keep_in_touch, time_zone),
+            (birthday, keep_in_touch, time_zone, phone),
         ) in saved
         {
             let addresses = self.contact_addresses(&id)?;
             let query_text = format!(
-                "{} {} {} {} {} {} {} {}",
+                "{} {} {} {} {} {} {} {} {}",
                 name.as_deref().unwrap_or(""),
                 role.as_deref().unwrap_or(""),
                 company.as_deref().unwrap_or(""),
+                phone.as_deref().unwrap_or(""),
                 location.as_deref().unwrap_or(""),
                 bio.as_deref().unwrap_or(""),
                 notes.as_deref().unwrap_or(""),
@@ -297,7 +304,11 @@ impl Database {
                 addresses.join(" ")
             )
             .to_ascii_lowercase();
-            if !needle.is_empty() && !query_text.contains(&needle) {
+            let phone_matches = !phone_needle.is_empty()
+                && phone
+                    .as_deref()
+                    .is_some_and(|value| strip_phone_punctuation(value).contains(&phone_needle));
+            if !needle.is_empty() && !query_text.contains(&needle) && !phone_matches {
                 continue;
             }
             let mut sent = 0;
@@ -328,6 +339,7 @@ impl Database {
                 display_name: name,
                 role,
                 company,
+                phone,
                 location,
                 bio,
                 notes,
@@ -365,6 +377,7 @@ impl Database {
                 display_name: item.display_name.clone(),
                 role: None,
                 company: None,
+                phone: None,
                 location: None,
                 bio: None,
                 notes: None,
@@ -451,6 +464,7 @@ impl Database {
                 display_name: matching.iter().find_map(|item| item.display_name.clone()),
                 role: None,
                 company: None,
+                phone: None,
                 location: None,
                 bio: None,
                 notes: None,
@@ -471,11 +485,11 @@ impl Database {
             let row = connection.query_row(
                 &format!("SELECT c.id,c.display_name,c.role,c.company,c.location,c.bio,c.notes,c.links_json,c.photo_data,c.favorite,{CONTACT_EXTRA_COLUMNS} FROM contacts c WHERE c.id=?1"),[id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,row.get::<_,Option<String>>(3)?,row.get::<_,Option<String>>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,String>(7)?,row.get::<_,Option<String>>(8)?,row.get::<_,bool>(9)?,contact_extras(row,10)?))).optional()?;
             Ok(row)
-        })?.map(|(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,(birthday,keep_in_touch,time_zone))| {
+        })?.map(|(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,(birthday,keep_in_touch,time_zone,phone))| {
             let addresses=self.contact_addresses(&id)?;
             let (sent_count,received_count,last_interacted_at)=self.contact_interaction_summary(&addresses)?;
             let keep_in_touch_due_at=keep_in_touch_due_at(&keep_in_touch,last_interacted_at.as_deref());
-            Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at,time_zone})
+            Ok(ContactProfile{id,display_name,role,company,phone,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at,time_zone})
         }).transpose()
     }
 
@@ -531,6 +545,7 @@ impl Database {
                         .map(|name| name.chars().take(200).collect()),
                     role: None,
                     company: None,
+                    phone: None,
                     location: None,
                     bio: None,
                     notes: None,
@@ -701,6 +716,7 @@ impl Database {
             display_name: profile.display_name,
             role: profile.role,
             company: profile.company,
+            phone: profile.phone,
             location: None,
             bio: None,
             notes: None,
@@ -991,7 +1007,7 @@ fn clean_contact_text(value: Option<&str>, max: usize) -> DbResult<Option<String
 fn contact_extras(
     row: &rusqlite::Row<'_>,
     start: usize,
-) -> rusqlite::Result<(Option<String>, KeepInTouch, Option<String>)> {
+) -> rusqlite::Result<(Option<String>, KeepInTouch, Option<String>, Option<String>)> {
     Ok((
         row.get(start)?,
         KeepInTouch {
@@ -1002,7 +1018,52 @@ fn contact_extras(
             last_touch_at: row.get(start + 5)?,
         },
         row.get(start + 6)?,
+        row.get(start + 7)?,
     ))
+}
+
+/// Validates and trims a contact phone number. Preserves formatting (spaces,
+/// dashes, parentheses, `+`, extensions) while rejecting control characters,
+/// overlong strings, and values without at least three digits.
+pub(crate) fn normalize_phone(value: Option<&str>) -> DbResult<Option<String>> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    if raw.chars().any(char::is_control) {
+        return Err(DatabaseError::invalid("Enter a valid phone number"));
+    }
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.chars().count() > MAX_PHONE_LENGTH {
+        return Err(DatabaseError::invalid("Phone number is too long"));
+    }
+    if value.bytes().filter(u8::is_ascii_digit).count() < 3 {
+        return Err(DatabaseError::invalid("Enter a valid phone number"));
+    }
+    Ok(Some(value.to_string()))
+}
+
+pub(crate) fn strip_phone_punctuation(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !matches!(character, ' ' | '-' | '(' | ')' | '.' | '+'))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+pub(crate) fn phone_search_digits(needle: &str) -> String {
+    let trimmed = needle.trim();
+    if trimmed.is_empty()
+        || !trimmed.bytes().any(|byte| byte.is_ascii_digit())
+        || !trimmed.chars().all(|character| {
+            character.is_ascii_digit() || matches!(character, ' ' | '-' | '(' | ')' | '.' | '+')
+        })
+    {
+        return String::new();
+    }
+    strip_phone_punctuation(trimmed)
 }
 
 fn parse_instant(value: &str) -> Option<DateTime<Utc>> {
@@ -1136,6 +1197,7 @@ pub(super) fn save_contact_on(
     let name = clean_contact_text(request.display_name.as_deref(), 200)?;
     let role = clean_contact_text(request.role.as_deref(), 200)?;
     let company = clean_contact_text(request.company.as_deref(), 200)?;
+    let phone = normalize_phone(request.phone.as_deref())?;
     let location = clean_contact_text(request.location.as_deref(), 200)?;
     let bio = clean_contact_text(request.bio.as_deref(), 4000)?;
     let notes = clean_contact_text(request.notes.as_deref(), 8000)?;
@@ -1232,13 +1294,14 @@ pub(super) fn save_contact_on(
                 return Err(DatabaseError::invalid("That address already belongs to another saved contact. Remove it there before linking it here."));
             }
         }
-        tx.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at,time_zone) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?19) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,role=excluded.role,company=excluded.company,location=excluded.location,bio=excluded.bio,notes=excluded.notes,links_json=excluded.links_json,photo_data=excluded.photo_data,favorite=excluded.favorite,updated_at=excluded.updated_at,birthday=excluded.birthday,
+        tx.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at,time_zone,phone) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?19,?21) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,role=excluded.role,company=excluded.company,location=excluded.location,bio=excluded.bio,notes=excluded.notes,links_json=excluded.links_json,photo_data=excluded.photo_data,favorite=excluded.favorite,updated_at=excluded.updated_at,birthday=excluded.birthday,
                 kit_interval_days=CASE WHEN ?18 THEN excluded.kit_interval_days ELSE contacts.kit_interval_days END,
                 kit_started_at=CASE WHEN ?18 THEN excluded.kit_started_at ELSE contacts.kit_started_at END,
                 kit_snoozed_until=CASE WHEN ?18 THEN excluded.kit_snoozed_until ELSE contacts.kit_snoozed_until END,
                 kit_snoozed_at=CASE WHEN ?18 THEN excluded.kit_snoozed_at ELSE contacts.kit_snoozed_at END,
                 kit_last_touch_at=CASE WHEN ?18 THEN excluded.kit_last_touch_at ELSE contacts.kit_last_touch_at END,
-                time_zone=CASE WHEN ?20 THEN excluded.time_zone ELSE contacts.time_zone END",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339(),birthday,keep_in_touch.interval_days,keep_in_touch.started_at,keep_in_touch.snoozed_until,keep_in_touch.snoozed_at,keep_in_touch.last_touch_at,replace_keep_in_touch,time_zone,replace_time_zone])?;
+                time_zone=CASE WHEN ?20 THEN excluded.time_zone ELSE contacts.time_zone END,
+                phone=excluded.phone",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339(),birthday,keep_in_touch.interval_days,keep_in_touch.started_at,keep_in_touch.snoozed_until,keep_in_touch.snoozed_at,keep_in_touch.last_touch_at,replace_keep_in_touch,time_zone,replace_time_zone,phone])?;
         tx.execute("DELETE FROM contact_addresses WHERE contact_id=?1", [&id])?;
         for (position, email) in addresses.iter().enumerate() {
             insert_contact_address(tx, &id, email, position as i64)?;
@@ -1267,6 +1330,7 @@ mod tests {
             display_name: Some("Zed".into()),
             role: None,
             company: None,
+            phone: None,
             location: None,
             bio: None,
             notes: None,
@@ -1324,6 +1388,7 @@ mod tests {
                 display_name: Some("Jane".into()),
                 role: None,
                 company: None,
+                phone: None,
                 location: None,
                 bio: None,
                 notes: None,
@@ -1421,6 +1486,37 @@ mod tests {
     }
 
     #[test]
+    fn phone_numbers_accept_formatted_numbers_and_reject_control_chars_or_overlong_values() {
+        assert_eq!(
+            normalize_phone(Some("  +1 (555) 123-4567 ext. 42  "))
+                .unwrap()
+                .as_deref(),
+            Some("+1 (555) 123-4567 ext. 42")
+        );
+        assert_eq!(
+            normalize_phone(Some("555")).unwrap().as_deref(),
+            Some("555")
+        );
+        assert_eq!(
+            normalize_phone(Some(&"5".repeat(MAX_PHONE_LENGTH)))
+                .unwrap()
+                .as_deref(),
+            Some("5".repeat(MAX_PHONE_LENGTH).as_str())
+        );
+        assert_eq!(normalize_phone(Some("   ")).unwrap(), None);
+        assert_eq!(normalize_phone(None).unwrap(), None);
+        for invalid in [
+            "12",
+            "no digits here",
+            "555-1234\nINJECTED",
+            "555-1234\r",
+            &"5".repeat(MAX_PHONE_LENGTH + 1),
+        ] {
+            assert!(normalize_phone(Some(invalid)).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
     fn birthdays_accept_month_day_with_or_without_a_year() {
         assert_eq!(
             normalize_birthday(Some(" 12-09 ")).unwrap().as_deref(),
@@ -1477,7 +1573,7 @@ pub(super) fn insert_imported_contact(
     contact: &crate::transfer::TransferContact,
 ) -> DbResult<()> {
     let kit = &contact.keep_in_touch;
-    connection.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at,time_zone) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(super::serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339(),contact.birthday,kit.interval_days,kit.started_at,kit.snoozed_until,kit.snoozed_at,kit.last_touch_at,contact.time_zone])?;
+    connection.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at,time_zone,phone) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(super::serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339(),contact.birthday,kit.interval_days,kit.started_at,kit.snoozed_until,kit.snoozed_at,kit.last_touch_at,contact.time_zone,contact.phone])?;
     Ok(())
 }
 

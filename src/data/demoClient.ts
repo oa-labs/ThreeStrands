@@ -937,7 +937,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       for (const item of contacts.filter((contact) => contact.sentCount > 0 || contact.pinned)) {
         const email = item.email.toLocaleLowerCase();
         if (savedContactProfiles.some((profile) => profile.addresses.includes(email))) continue;
-        byEmail.set(email, { id: `derived:${email}`, displayName: item.displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: item.pinned, addresses: [email], sentCount: item.sentCount, receivedCount: item.receivedCount, lastInteractedAt: item.lastInteractedAt, birthday: null, keepInTouch: { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null });
+        byEmail.set(email, { id: `derived:${email}`, displayName: item.displayName, role: null, company: null, phone: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: item.pinned, addresses: [email], sentCount: item.sentCount, receivedCount: item.receivedCount, lastInteractedAt: item.lastInteractedAt, birthday: null, keepInTouch: { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null });
       }
       const values = [...savedContactProfiles, ...byEmail.values()].filter((profile) => {
         if (!accountId) return true;
@@ -945,7 +945,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         return matching.length === 0 || matching.some((thread) => thread.accountId === accountId);
       });
       const needle = query.trim().toLocaleLowerCase();
-      return structuredClone(values.filter((profile) => !needle || `${profile.displayName ?? ""} ${profile.addresses.join(" ")} ${profile.company ?? ""} ${profile.role ?? ""} ${profile.location ?? ""} ${profile.bio ?? ""} ${profile.notes ?? ""}`.toLocaleLowerCase().includes(needle))
+      const phoneNeedle = /^[\d\s\-().+]+$/.test(needle) && /\d/.test(needle) ? needle.replace(/[\s\-().+]/g, "") : "";
+      return structuredClone(values.filter((profile) => !needle || `${profile.displayName ?? ""} ${profile.addresses.join(" ")} ${profile.company ?? ""} ${profile.phone ?? ""} ${profile.role ?? ""} ${profile.location ?? ""} ${profile.bio ?? ""} ${profile.notes ?? ""}`.toLocaleLowerCase().includes(needle) || (!!phoneNeedle && !!profile.phone && profile.phone.replace(/[\s\-().+]/g, "").toLocaleLowerCase().includes(phoneNeedle)))
         .sort((a,b) => Number(b.favorite)-Number(a.favorite) || (b.lastInteractedAt ?? "").localeCompare(a.lastInteractedAt ?? "") || (a.displayName ?? a.addresses[0]).localeCompare(b.displayName ?? b.addresses[0])).slice(0,limit));
     },
     async resolveContactIds(emails) {
@@ -962,7 +963,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       if (saved) return structuredClone(saved);
       const email = id.startsWith("derived:") ? id.slice(8) : id;
       const suggestion = contacts.find((contact) => contact.email === email);
-      return suggestion ? { id: `derived:${email}`, displayName: suggestion.displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: suggestion.pinned, addresses: [email], sentCount: suggestion.sentCount, receivedCount: suggestion.receivedCount, lastInteractedAt: suggestion.lastInteractedAt, birthday: null, keepInTouch: { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null } : null;
+      return suggestion ? { id: `derived:${email}`, displayName: suggestion.displayName, role: null, company: null, phone: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: suggestion.pinned, addresses: [email], sentCount: suggestion.sentCount, receivedCount: suggestion.receivedCount, lastInteractedAt: suggestion.lastInteractedAt, birthday: null, keepInTouch: { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null } : null;
     },
     async saveContactProfile(request: SaveContactRequest) {
       const addresses = request.addresses.map((address) => address.trim().toLocaleLowerCase());
@@ -970,11 +971,16 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       if (addresses.some((address) => savedContactProfiles.some((profile) => profile.id !== id && profile.addresses.includes(address)))) throw new Error("That address already belongs to another saved contact.");
       const previous = savedContactProfiles.find((profile) => profile.id === id);
       const derived = !previous && request.id?.startsWith("derived:") ? contacts.find((contact) => contact.email === addresses[0]) : undefined;
+      const phone = request.phone?.trim() || null;
+      if (phone) {
+        if (phone.length > 64) throw new Error("Phone number is too long");
+        if (/[\x00-\x1f\x7f]/.test(phone) || (phone.match(/\d/g)?.length ?? 0) < 3) throw new Error("Enter a valid phone number");
+      }
       if (request.birthday && !validDemoBirthday(request.birthday)) throw new Error("Enter a birthday as MM-DD or YYYY-MM-DD");
       // Like the backend, the form never carries keep-in-touch settings: a
       // re-save keeps them, whatever the request object holds.
       const candidate = withKeepInTouchDue({
-        id, displayName: request.displayName, role: request.role, company: request.company, location: request.location, bio: request.bio, notes: request.notes,
+        id, displayName: request.displayName, role: request.role, company: request.company, phone, location: request.location, bio: request.bio, notes: request.notes,
         links: request.links, photoData: request.photoData, favorite: request.favorite, addresses, birthday: request.birthday?.trim() || null,
         sentCount: previous?.sentCount ?? derived?.sentCount ?? 0, receivedCount: previous?.receivedCount ?? derived?.receivedCount ?? 0, lastInteractedAt: previous?.lastInteractedAt ?? derived?.lastInteractedAt ?? null,
         keepInTouch: previous?.keepInTouch ?? { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null,
@@ -1020,8 +1026,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         const source = savedContactProfiles.find(profile => profile.id === id);
         if (!source) throw new Error("Saved contact not found");
         const conflicts: string[] = [];
-        for (const [key, label] of [["displayName", "Name"], ["role", "Role"], ["company", "Company"], ["location", "Location"], ["birthday", "Birthday"]] as const) {
-          if (!target[key]) target[key] = source[key];
+        for (const [key, label] of [["displayName", "Name"], ["role", "Role"], ["company", "Company"], ["phone", "Phone"], ["location", "Location"], ["birthday", "Birthday"]] as const) {
+          if (!target[key]) target[key] = source[key] ?? null;
           else if (source[key] && source[key] !== target[key]) conflicts.push(`${label}: ${source[key]}`);
         }
         target.notes = join(join(target.notes, source.notes), conflicts.length ? `Merged profile details:\n${conflicts.join("\n")}` : null);

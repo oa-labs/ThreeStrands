@@ -229,12 +229,14 @@ impl Database {
     pub(crate) fn upsert_synced_contact(&self, value: &Value) -> DbResult<()> {
         let item: ContactRecord =
             serde_json::from_value(value.clone()).map_err(serialization_error)?;
-        // A device on a build before birthdays and keep-in-touch sends
-        // records without those keys. Treat a missing key as "unknown to the
-        // sender" and keep the local value rather than clearing it.
+        // A device on a build before birthdays, keep-in-touch, timezones, or
+        // phone numbers sends records without those keys. Treat a missing key
+        // as "unknown to the sender" and keep the local value rather than
+        // clearing it.
         let local = if value.get("birthday").is_none()
             || value.get("keepInTouch").is_none()
             || value.get("timeZone").is_none()
+            || value.get("phone").is_none()
         {
             self.get_contact_profile(&item.id)?
         } else {
@@ -244,10 +246,14 @@ impl Database {
             (Some(local), None) => local.birthday.clone(),
             _ => item.birthday,
         };
-        // Likewise a record from a build before remembered timezones.
+        // Likewise a record from a build before remembered timezones or phone numbers.
         let time_zone = match (&local, value.get("timeZone")) {
             (Some(local), None) => local.time_zone.clone(),
             _ => item.time_zone,
+        };
+        let phone = match (&local, value.get("phone")) {
+            (Some(local), None) => local.phone.clone(),
+            _ => item.phone,
         };
         let keep_in_touch = match (&local, value.get("keepInTouch")) {
             (Some(local), None) => local.keep_in_touch.clone(),
@@ -258,6 +264,7 @@ impl Database {
             display_name: item.display_name,
             role: item.role,
             company: item.company,
+            phone,
             location: item.location,
             bio: item.bio,
             notes: item.notes,

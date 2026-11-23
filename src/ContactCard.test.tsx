@@ -47,6 +47,21 @@ describe("ContactCard",()=>{
     expect(await screen.findByRole("button",{name:"Copied email address"})).toBeInTheDocument();
   });
 
+  it("shows a saved phone number as a tel link and copies it",async()=>{
+    const writeText=vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
+    Object.defineProperty(navigator,"clipboard",{value:{writeText},configurable:true});
+    render(<Host initial={{...bob,phone:"+1 (555) 234-5678"}}/>);
+    const link=screen.getByRole("link",{name:"+1 (555) 234-5678"});
+    expect(link).toHaveAttribute("href","tel:+15552345678");
+    fireEvent.click(link);
+    expect(openUrl).toHaveBeenCalledWith("tel:+15552345678");
+    fireEvent.click(screen.getByRole("button",{name:"Copy phone number"}));
+    expect(writeText).toHaveBeenCalledWith("+1 (555) 234-5678");
+    expect(await screen.findByRole("button",{name:"Copied phone number"})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Copied phone number"}));
+    expect(await screen.findByRole("status")).toHaveTextContent("Could not copy phone number");
+  });
+
   it("opens the saved profile in the address book from the name",()=>{
     const onOpenContact=vi.fn();
     render(<Host initial={bob} onOpenContact={onOpenContact}/>);

@@ -481,6 +481,7 @@ export type ContactProfile = {
   displayName: string | null;
   role: string | null;
   company: string | null;
+  phone?: string | null;
   location: string | null;
   bio: string | null;
   notes: string | null;
@@ -697,7 +698,7 @@ export type WorkspaceConversation = { threadId: string; accountId: string; subje
 
 /** Keep-in-touch settings change only through their own commands, never through the profile form. */
 export type SaveContactRequest = Omit<ContactProfile, "sentCount" | "receivedCount" | "lastInteractedAt" | "id" | "keepInTouch" | "keepInTouchDueAt" | "timeZone"> & { id: string | null };
-export type ContactFieldSuggestion = { field: "displayName" | "role" | "company" | "location" | "bio" | "link"; value: string; sourceMessageId: string; sourceThreadId: string; excerpt: string };
+export type ContactFieldSuggestion = { field: "displayName" | "role" | "company" | "phone" | "location" | "bio" | "link"; value: string; sourceMessageId: string; sourceThreadId: string; excerpt: string };
 export type ContactEnrichmentResult = { suggestions: ContactFieldSuggestion[]; messagesReviewed: number; hasMore: boolean };
 
 export type ThreadPage = {

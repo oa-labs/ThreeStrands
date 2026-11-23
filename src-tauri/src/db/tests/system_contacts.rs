@@ -13,6 +13,7 @@ fn contact() -> SystemContact {
         display_name: Some("Ada Lovelace".into()),
         company: Some("Analytical Engines".into()),
         role: Some("Programmer".into()),
+        phone: Some("+44 20 7946 0958".into()),
         addresses: vec![
             "ADA@example.com".into(),
             "ada+work@example.org".into(),
@@ -99,6 +100,7 @@ fn deliberate_local_copies_survive_refresh_disconnect_and_source_deletions() {
     assert_eq!(local.notes.as_deref(), Some("Local notes"));
     assert!(local.favorite);
     assert_eq!(local.company.as_deref(), Some("Analytical Engines"));
+    assert_eq!(local.phone.as_deref(), Some("+44 20 7946 0958"));
     assert!(db.get_contact_profile(&p.id).unwrap().is_none());
 }
 #[test]

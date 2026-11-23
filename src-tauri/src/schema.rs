@@ -62,6 +62,7 @@ const MIGRATIONS: &[Migration] = &[
     (115, to_v115),
     (116, to_v116),
     (117, to_v117),
+    (118, to_v118),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1535,6 +1536,21 @@ fn to_v115(tx: &rusqlite::Transaction) -> Result<(), String> {
     .map_err(error)
 }
 
+fn to_v118(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('contacts') WHERE name='phone')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
+    if !exists {
+        tx.execute_batch("ALTER TABLE contacts ADD COLUMN phone TEXT;")
+            .map_err(error)?;
+    }
+    Ok(())
+}
+
 fn to_v117(tx: &rusqlite::Transaction) -> Result<(), String> {
     let exists: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('threads') WHERE name='summary_evidence_json')",
@@ -2209,6 +2225,32 @@ mod tests {
         assert_eq!(version, super::LATEST_VERSION);
         // Running it again changes nothing.
         super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v118_adds_a_nullable_contact_phone_and_keeps_contacts() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE contacts DROP COLUMN phone; PRAGMA user_version=117;
+                 INSERT INTO contacts(id,display_name,updated_at) VALUES('c-phone','Ana','2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let (name, phone): (String, Option<String>) = connection
+            .query_row(
+                "SELECT display_name,phone FROM contacts WHERE id='c-phone'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((name.as_str(), phone), ("Ana", None));
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
     }
 
     #[test]
